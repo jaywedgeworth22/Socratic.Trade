@@ -1516,8 +1516,8 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
-  branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, code done, ready for
-  the serialized Land phase.** #1266 hardened the merge-shepherd job with an `if: github.ref
+  branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
+  with squash-auto-merge armed (round-3 pickup landing).** #1266 hardened the merge-shepherd job with an `if: github.ref
   == 'refs/heads/main'` guard, but that guard is branch-editable — a `workflow_dispatch`
   against a non-main branch loads THAT branch's copy of the YAML, so a branch could in theory
   strip or invert the guard before it's evaluated. Honest fix is a GitHub **Environment** with
@@ -1535,7 +1535,18 @@ As of 2026-07-08 (assignment-rule update).
   is presently just using `GITHUB_TOKEN`), so there is nothing to migrate; when/if the owner
   adds it, it should go on as an **environment secret** scoped to `merge-shepherd` rather than
   a repo secret (the API cannot read/copy secret values, only an interactive owner action can
-  set one). See `docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
+  set one). **Landing-round finding, NOT fixed here (PR #1353 review):** codex-connector
+  correctly points out the `environment:` reference is itself branch-editable — a branch can
+  delete that one line from its own workflow_dispatch copy just as easily as the `if:` guard,
+  and a job with no environment reference skips the deployment_branch_policy check entirely. A
+  genuine close needs the sensitive job moved into a reusable workflow pinned to `@main`
+  (`uses: ./.github/workflows/_merge-shepherd-impl.yml@main` — GitHub loads a pinned `uses:`
+  target from that ref regardless of the caller's ref), which is real CI architecture work
+  deserving its own session — filed as a follow-up rather than rushed here. Practical severity
+  today is bounded: no `SHEPHERD_TOKEN` secret exists yet to be environment-gated, and this
+  repo's ruleset already requires 0 approving reviews (only `verify` gates a merge), so a rogue
+  branch could already self-merge through the normal PR flow without this side-channel. See
+  `docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
 - **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
   `monet/mistral-rebench-docs`) — ✅ COMPLETED 2026-07-10: base results merged to `main` via
   PR #1329; a follow-up rotation-pool commit is riding the same branch, landing now.**

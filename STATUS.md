@@ -22,8 +22,32 @@ environment makes GitHub track a deployment record per run and this workflow alr
 `GITHUB_TOKEN` down to an explicit list. `SHEPHERD_TOKEN` does not currently exist as a repo secret — nothing to migrate; if/when
 added it should be an **environment secret** on `merge-shepherd`, which needs an owner
 action (the API can create/gate the environment but cannot read or copy secret values). No
-app code touched — workflow + docs only. Ready for the serialized Land phase. See
+app code touched — workflow + docs only. See
 `docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
+
+**Landing-round finding, deliberately NOT fixed in this PR (PR #1353 review):** codex-connector
+correctly flagged that the `environment: merge-shepherd` reference is itself still part of the
+branch's own copy of the workflow YAML — a branch can delete that one line from its own copy just
+as easily as it could delete the `if:` guard, and GitHub only evaluates an environment's
+`deployment_branch_policy` for a job that actually references that environment; a job with no
+environment reference at all skips the check entirely. So this PR narrows the bypass (from "delete
+one `if:` line" to "delete one `environment:` line") without structurally closing it. A genuine
+close requires moving the sensitive job into a **reusable workflow pinned to `@main`**
+(`uses: ./.github/workflows/_merge-shepherd-impl.yml@main`): GitHub loads a `uses:`-referenced
+workflow from the pinned ref regardless of which ref dispatched the caller, so a branch cannot
+edit away the `environment:` declaration living inside the pinned file. That's a real CI
+architecture change (new file, `workflow_call` trigger wiring, verifying environment protection
+still applies inside a reusable workflow) that deserves its own dedicated, carefully-tested
+session rather than a rushed addition here — filed as a follow-up (see below).
+
+Practical severity today is bounded: `SHEPHERD_TOKEN` doesn't exist as a repo/environment secret,
+so there's no environment-gated secret currently exposed by this gap — the fallback
+`GITHUB_TOKEN` is already scoped to an explicit low(er)-privilege allow-list regardless of whether
+the environment check runs. Separately, this repo's branch-protection ruleset requires 0 approving
+reviews (only the `verify` CI check gates a merge), so a rogue/buggy agent branch could already
+self-merge through the normal PR flow without needing this side-channel at all — this workflow's
+gap is real but not the weakest link in the current threat model. Landed with the finding
+acknowledged and cross-referenced rather than silently resolved.
 
 ## 2026-07-10 — Activity-audit item 10: account-attribution sweep (CLAUDE, branch `claude/audit-item10-attribution`)
 Picked up the reserved item-10 row (split out of MONET's P1 batch per owner, unclaimed since
