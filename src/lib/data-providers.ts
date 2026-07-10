@@ -3301,7 +3301,6 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           logApiHealth({ service: this.name, ok: false, errorText: `TwelveData API error: ${msg}`, keySource: this.keySource, userId: this.userId });
           continue;
         }
-        logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         if (typeof rawObj.symbol === "string") {
           // Single-symbol response
           quoteMap[rawObj.symbol as string] = rawObj;
@@ -3390,11 +3389,13 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           }
         }
 
-        // The whole batch surfaced embedded transient errors (429/5xx inside the HTTP 200 body) and
-        // produced NO usable symbol data. The ok:true logged above only reflects the outer HTTP/JSON
-        // success, so without this the lane looks healthy while every symbol failed — a mis-sized
-        // credit budget or upstream outage would then never trip the circuit breaker and the same
-        // bad lane gets retried every window. A partial batch (some symbols usable) stays ok:true.
+        // Log exactly ONE health row for this batch, deferred until after per-symbol validation. If the
+        // whole batch surfaced embedded transient errors (429/5xx inside the HTTP 200 body) and produced
+        // NO usable symbol data, log only the failure — logging ok:true here (reflecting only the outer
+        // HTTP/JSON success) AND ok:false below for the same batch would pair them up, and getLaneHealth's
+        // circuit breaker trips only when the LAST 5 rows are all failures: alternating success/failure
+        // rows for repeated all-transient batches would never reach that state, defeating the point of
+        // this health signal. A partial batch (at least one usable symbol) still logs ok:true.
         if (!anyUsableSymbolData && anyEmbeddedTransientError) {
           logApiHealth({
             service: this.name,
@@ -3403,6 +3404,8 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
             keySource: this.keySource,
             userId: this.userId
           });
+        } else {
+          logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         }
       } catch (err) {
         if (isTransientError(err)) {

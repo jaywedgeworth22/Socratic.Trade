@@ -440,6 +440,7 @@ describe("enrichment cache consent gate", () => {
 
     const key = `env-key-${randomUUID()}`;
     const provider = new TwelveDataEnrichmentProvider(key, "env");
+    const beforeCount = getServiceHealthLog("twelvedata", 1000).length;
     const res = await provider.enrich(["RATELIMITED1", "RATELIMITED2"]);
     expect(res.RATELIMITED1).toEqual({});
     expect(res.RATELIMITED2).toEqual({});
@@ -452,6 +453,14 @@ describe("enrichment cache consent gate", () => {
     expect(rows.some((r) => r.ok === 0)).toBe(true);
     const failure = rows.find((r) => r.ok === 0);
     expect(failure?.error_text).toContain("transient");
+
+    // Exactly ONE health row for this call, and it's the failure — NOT an ok:true (outer HTTP/JSON
+    // success) paired with an ok:false (all-transient) for the same batch. getLaneHealth's circuit
+    // breaker trips only when the last 5 rows are ALL failures; pairing success+failure per batch
+    // would make repeated all-transient batches alternate forever and never trip it.
+    const afterCount = getServiceHealthLog("twelvedata", 1000).length;
+    expect(afterCount - beforeCount).toBe(1);
+    expect(rows[0].ok).toBe(0);
   });
 
   it("TwelveData stays ok:true on a PARTIAL batch (some symbols usable, some embedded-transient)", async () => {
