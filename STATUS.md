@@ -46,6 +46,36 @@ regression), and a simulated race (monkeypatched `os.stat` to tamper with the li
 confirmed exit 4, output file untouched). Re-ran the real-data dry-run against `docs/EFFORT-LOG.md`
 with no regressions (227 items, no false positives/negatives). Landed via `scripts/land.sh`, PR
 #1354, squash-auto-merge armed.
+## 2026-07-10 — Mistral benchmark data surfaced in the model-picker UI (MONET, branch `monet/mistral-benchmark-ui`)
+Owner-directed: users had no way to see the 2026-07-10 Mistral re-benchmark numbers when picking a
+model — they only lived in a docs note. Filled two ALREADY-BUILT UI surfaces instead of inventing a
+new one (the custom `ModelPicker` listbox is dead code, zero JSX usages — reviving it would have
+been a much larger rewrite than this data-wiring task warranted): (1) the Model Stats drawer's
+benchmark column, which previously showed a dash for all four Mistral rows (the 2026-07-08 sweep
+recorded 0 successes — the capability-map bug #1279 fixed) — now shows real cost/latency via a safe
+array-concat into the existing `normalizeBenchmarkSummaries` pipeline; (2) the Mistral Medium
+reasoning-effort advice text, extended with the concrete None (fast/cheap, proposes nothing) vs High
+(slow/costly, actually proposes) tradeoff the benchmark revealed. High-effort probe data deliberately
+NOT merged into the drawer (would collide with the default-effort row for the same model+role) —
+feeds the advice prose instead. Verified live end-to-end in-browser (own worktree dev server + a
+throwaway seeded API key, with a fixed `ENCRYPTION_KEY` shared between the seed script and the dev
+server so the app's own decrypt-and-validate save path passes — the default per-process random key
+otherwise makes cross-process seeding silently fail). Gate: lint 0 errors / tsc clean / 315 files
+3387 tests / build. See `docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
+
+## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)
+Owner-directed: the merged-vs-deployed distinction was pure friction, so production now auto-deploys on
+every push to `main` (merge == live, no manual step). Two fixes made it work: (1) flipped Coolify's
+native `is_auto_deploy_enabled=true` on `socratic-trade-prod` (DB-only setting; API is CF-blocked, done
+via the box); (2) GitHub's push webhooks were being 403'd by the `jays.services` Cloudflare zone's
+IP-allowlist — whitelisted GitHub's documented **webhook** ranges (the stable 6, not the variable
+runner IPs; expanded to 40 `/24` + IPv6), bot protection stays on for everything else. **Proven
+end-to-end**: webhook-triggered deploy `e9e9138b` (`is_webhook=t`) reached `finished`; prod = `main`
+HEAD, healthy. **Fleet: announce-then-deploy is retired — do NOT post deploy claims or manually deploy.**
+Rollback: `is_auto_deploy_enabled=false`. Separately diagnosed + handed to AG a pre-existing deploy
+incident (transient github.com git-clone window + a zombie deploy holding the `concurrent_builds=1`
+queue; now resolved). Docs: `docs/rollouts/2026-07-10-auto-deploy-on.md`; AGENTS.md + AGENT-SYNC.md
+updated.
 ## 2026-07-10 — PR #1229 residual (a): dead `pending_cancel` rows now self-heal (CLAUDE, branch `claude/broker-stop-residuals`)
 Closes the accepted-residual follow-up tracked in `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`
 ("Follow-ups / still-open blockers"). `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`)

@@ -501,6 +501,16 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **AUTO-DEPLOY ON — merge-to-main auto-deploys prod (MONET, branch `monet/auto-deploy-on`) — DONE +
+  PROVEN 2026-07-10, PR pending via land.sh.** Owner-directed: production now auto-deploys on every push
+  to `main` (merge == live). Fixes: (1) Coolify native `is_auto_deploy_enabled=true` on
+  `socratic-trade-prod` (DB-only setting, done via box SSH — API is CF-blocked); (2) whitelisted
+  GitHub's stable **webhook** IP ranges (40 `/24` + IPv6) on the `jays.services` CF IP-allowlist that
+  was 403'ing them (bot protection stays on elsewhere). End-to-end proven: `e9e9138b` webhook deploy
+  (`is_webhook=t`) FINISHED; prod = `main` HEAD, healthy. **ANNOUNCE-THEN-DEPLOY RETIRED** — fleet must
+  stop manual deploy claims/triggers. Rollback: `is_auto_deploy_enabled=false`. Diagnosed + handed AG a
+  pre-existing deploy incident (transient git-clone window + zombie deploy holding the build queue; now
+  resolved). See `docs/rollouts/2026-07-10-auto-deploy-on.md`; AGENTS.md + AGENT-SYNC.md updated.
 - **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (CLAUDE, branch `claude/audit-item10-attribution`) — IN PROGRESS 2026-07-10, built and locally committed, not yet pushed/landed.** Picked up the RESERVED row (split out of MONET's P1 batch per owner). Threaded `connectedAccountId` into all 54 in-scope `audit()` sites that had it available but omitted it: 41 in `src/lib/strategy.ts` (`runStrategyOnce`'s local const; `policy.connectedAccountId` in every function that already takes a full `policy` param — `resolveScanScoringWeights`, `applyCorrelationClusterGate`, `applyEarningsBlackoutTag`, `applyRiskReceipts`, `applyDeterministicSizing`, `executeProposal`; `autoRevertOnCapBreach`'s own audit call now uses the param it already had; `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` gained an optional trailing `connectedAccountId` param, wired at their `runStrategyOnce` call sites) + all 13 `audit()` sites in `src/lib/synthetic-stops.ts` (one more than the report's "12" — `broker_protective_stop_reconcile_error` fixed too for consistency, same function scope). `strategy_bull_truncated` + post-mortem.ts/`setUserSetting` left untouched — already fixed by the P1 batch. Zero behavior changes to trading logic (4th-arg audit attribution + two new optional trailing params only). Verify: `npx tsc --noEmit` clean, eslint 0 errors (9 pre-existing grandfathered warnings), 46 focused test files / 523 tests green under node@24 (all `strategy-*`/`synthetic-stops`/sizing/gate/veto/wash-sale/reconciliation/scheduler suites touching these two files). Full gate (`npm test` full run + `npm run build`) deferred to the Land phase. Rollout: `docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
 
 - **Framework Models card truth fixes — Proposer blank-select display + Reviewer "inherits
@@ -1551,6 +1561,26 @@ As of 2026-07-08 (assignment-rule update).
   fixtures (atomic write, duplicate-row regression + fix, simulated race via monkeypatched
   `os.stat`) plus a clean real-data dry-run re-run against the 227-item `docs/EFFORT-LOG.md`.
 
+- **Mistral benchmark data in the model-picker UI (MONET, session worktree
+  `distracted-albattani-dfc422`, branch `monet/mistral-benchmark-ui`) — IN PROGRESS
+  2026-07-10, owner-directed, PR landing.** Research found the app already has two
+  purpose-built surfaces for exactly this data — filled both rather than inventing new UI
+  (the custom `ModelPicker` listbox that could show subtitles is dead code, zero JSX
+  usages; reviving it would have been a much larger out-of-scope rewrite). (1) Model Stats
+  drawer (`app/api/llm-usage/model-stats/route.ts` + `model-stats-drawer.tsx`): merges the
+  2026-07-10 default-effort re-benchmark into the existing benchmark pipeline —
+  concatenation is provably safe since `normalizeBenchmarkSummaries` already drops the
+  2026-07-08 all-error Mistral rows; all four Mistral rows now show real cost/latency
+  instead of a dash. (2) Reasoning-effort advice text
+  (`src/lib/model-reasoning-recommendations.ts`): `MISTRAL_MEDIUM_ADVICE` extended with the
+  concrete None (fast/cheap, proposes nothing) vs High (slow/costly, actually proposes)
+  tradeoff. High-effort probe data deliberately NOT merged into the drawer (would collide
+  with the default-effort row for the same model+role) — it feeds the advice prose instead.
+  Verified live in-browser end to end (seeded a throwaway dev API key + fixed
+  `ENCRYPTION_KEY` so the app's own save-time key validation passes): Model Stats drawer
+  shows real Mistral numbers, advice text renders exactly as authored under the Mistral
+  Medium reasoning control. Gate: lint 0 / tsc clean / 315 files 3387 tests / build.
+  Rollout: `docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
 - **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
   (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
   open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual
@@ -1626,8 +1656,10 @@ As of 2026-07-08 (assignment-rule update).
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
 - **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
-  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — IN PROGRESS 2026-07-10;
-  code+tests done + fully verified, PR opening via land.sh (built off merged `main` 6f1aaf87).**
+  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — DEPLOYED TO PROD 2026-07-10;
+  merged to `main` as squash `79b542e3` (PR #1328, verify-green + auto-merge), then AUTO-DEPLOYED —
+  `79b542e3` is an ancestor of main HEAD `e9e9138b` (#1352), the healthy webhook build (~12:45Z) running
+  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired).**
   `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
   advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
   the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
