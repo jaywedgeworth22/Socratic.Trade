@@ -521,6 +521,20 @@ export async function reconcileBrokerProtectiveStops(args: {
         );
         continue;
       }
+      // The tracked order is actively EXECUTING at the broker right now (partial fill in
+      // progress) — never cancel it into a quantity-drift "replacement": the broker may refuse
+      // the cancel outright (order already filling), or accept it and abort the remainder of an
+      // exit that was already correctly working, leaving those shares covered only by whatever
+      // the (possibly stale) synthetic monitor can see until conditions recover (Codex review, PR
+      // #1331). The row is left exactly as-is; once the fill settles to a terminal state this
+      // same check on a later tick either recovers it (isDoneRestingState, above) or the drift
+      // check runs cleanly against the final position size.
+      if (trackedOrder && String(trackedOrder.state ?? "").trim().toLowerCase() === "partially_filled") {
+        audit("broker_protective_stop_skipped", {
+          symbol: sym, kind: symKind, note: "tracked order is partially filled and actively executing at the broker — leaving it resting rather than cancelling into an uncertain in-flight state"
+        }, userId);
+        continue;
+      }
       const qty = desiredStopQuantity(pos, sym, symKind, existingStop.brokerOrderId);
       // Coverage from OTHER live exit orders is unknown this tick (a real order-list fetch
       // failed) — do not treat that as evidence of drift on its own. But whether the row's OWN

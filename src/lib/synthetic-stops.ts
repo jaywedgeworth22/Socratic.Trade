@@ -165,9 +165,15 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
    * which fire_generation may advance (rolling the client_order_id forward is safe exactly when the
    * old id's order can no longer execute). Layered, and ambiguity always fails to `false`:
    *  - the broker's order list was successfully fetched THIS tick (a failed fetch proves nothing);
-   *  - it shows NO live exit order for the symbol (any working exit blocks — quantity-blind);
-   *  - the recorded last_attempt_ref_id (if any) appears in no live-state order, matched by
-   *    client_order_id directly so it can't hide behind symbol/side parsing;
+   *  - when the row HAS a recorded last_attempt_ref_id (every row that has ever fired does — it's
+   *    recorded before the broker call, unconditionally), check THAT SPECIFIC order by
+   *    client_order_id — never a symbol-wide "any live exit order" sweep. A coverage-aware PARTIAL
+   *    fire (the synthetic sells only the remainder a broker-held stop doesn't cover) can coexist
+   *    with that OTHER, unrelated, still-live broker order for the rest of the position — a
+   *    quantity-blind sweep would see that unrelated order and refuse to re-arm the remainder's own
+   *    protection forever, even after the remainder's own exit attempt is confirmed dead (Codex
+   *    review, PR #1331). Only a row with NO recorded attempt id (no specific order to check) falls
+   *    back to the conservative quantity-blind "nothing live for this symbol at all" sweep;
    *  - no synthetic-exit fill for the symbol is still pending reconciliation;
    *  - (re-arm pass only) the row is older than the 15-min grace, so a slow in-flight placement
    *    spanning ticks can't race a re-arm. The grace is keyed off updated_at, which for ACTIVE rows
@@ -177,8 +183,11 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   const confirmedPriorExitDead = (stop: SyntheticTrailingStop, requireGrace: boolean): boolean => {
     if (!brokerOrdersListed) return false;
     const sym = normalizeSymbol(stop.symbol);
-    if (hasAnyLiveExitOrder(sym, stop.side)) return false;
-    if (stop.lastAttemptRefId && brokerOrders.some((o) => o.clientOrderId === stop.lastAttemptRefId && isLiveState(o.state))) return false;
+    if (stop.lastAttemptRefId) {
+      if (brokerOrders.some((o) => o.clientOrderId === stop.lastAttemptRefId && isLiveState(o.state))) return false;
+    } else if (hasAnyLiveExitOrder(sym, stop.side)) {
+      return false;
+    }
     if (pendingExitSymbols.has(sym)) return false;
     if (requireGrace && Date.now() - Date.parse(stop.updatedAt) < REARM_CONFIRM_GRACE_MS) return false;
     return true;

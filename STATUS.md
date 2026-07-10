@@ -37,7 +37,13 @@ back twice on round 5's OCO time-window heuristic): pairing now requires a NEW `
 field (mapped from Alpaca's own `order_class`) on BOTH legs — a real bracket/OCO sibling check, not a
 timing guess — and a partial native-trail placement no longer blanket-skips the synthetic fire path
 (its known quantity now folds into coverage so the uncovered fractional remainder still fires), plus
-an honest short-position caveat added to the stop-flow diagram's broker-held node. Next action: watch for
+an honest short-position caveat added to the stop-flow diagram's broker-held node; round 7: a
+`partially_filled` (actively executing) broker-held stop is no longer cancelled by the quantity-drift
+check, and `confirmedPriorExitDead`'s re-arm confirmation now checks the SPECIFIC tracked order (by
+client_order_id) instead of a symbol-wide sweep, so an unrelated still-live broker stop (covering
+different shares) can no longer permanently block re-arming a partial remainder's own dead exit; plus
+a docs fix clarifying Alpaca REST (native trailing) vs Alpaca MCP (ratcheted) in the Guardrails hint.
+Next action: watch for
 further review rounds / merge; then live-verify the RH ratchet lane before flipping
 `robinhoodBrokerStops` on.
 ## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)

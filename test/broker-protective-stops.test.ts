@@ -843,3 +843,31 @@ describe("reconcileBrokerProtectiveStops — per-position stop plans (never inve
     expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 92 });
   });
 });
+
+describe("reconcileBrokerProtectiveStops — round-7: never cancel an ACTIVELY EXECUTING order (Codex review, PR #1331)", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("leaves a 'partially_filled' tracked stop resting untouched even when the recomputed quantity would otherwise look like drift", async () => {
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R7-1"), accountNumber: "R7-1", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(gw.placed).toHaveLength(1);
+    // The resting stop is actively executing (partial fill in progress) — the position hasn't yet
+    // reflected the full effect, so the naive recompute below would look like a quantity mismatch,
+    // but cancelling an order mid-execution risks aborting the rest of a working exit.
+    const partiallyFilledOrder: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "partially_filled",
+      quantity: 10, filledQuantity: 4, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R7-1"), accountNumber: "R7-1", gateway: gw,
+      positions: [longPos("AAPL", 6, 100)], executionMode: "broker/live", running: true,
+      orders: [partiallyFilledOrder]
+    });
+    expect(r.cancelled).toBe(0);
+    expect(gw.cancelled).toEqual([]);
+    expect(listBrokerProtectiveStops("R7-1", "local")[0]).toMatchObject({ brokerOrderId: "ord-1", quantity: 10 });
+  });
+});

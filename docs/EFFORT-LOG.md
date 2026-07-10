@@ -1539,8 +1539,8 @@ As of 2026-07-08 (assignment-rule update).
   plumbing" advanced group merged into ONE "Protective stops" card with a dynamic stop-flow
   diagram (ATR → beta → flat distance fallback, trailing overlay, broker-held → app-monitor
   enforcement). Rollout: `docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`.
-  **PR #1331 open, 6 Codex review rounds fixed so far** (see the rollout doc's "Review fixes
-  round 1-6" sections); round 5: OCO-pairing now requires a created-together time window (no
+  **PR #1331 open, 7 Codex review rounds fixed so far** (see the rollout doc's "Review fixes
+  round 1-7" sections); round 5: OCO-pairing now requires a created-together time window (no
   longer conflates two independent equal-qty manual orders as one bracket), a stale `resting`
   broker-stop row is now checked against the tracked order's actual terminal state, an oversized
   existing stop is cancelled even when other-order coverage is unknown this tick, and a pure
@@ -1551,8 +1551,13 @@ As of 2026-07-08 (assignment-rule update).
   broker's own verified sibling identity — and a partial native-trail placement no longer
   blanket-skips the synthetic fire path (its known quantity folds into coverage so the uncovered
   fractional remainder still fires this tick), plus an honest short-position caveat on the
-  stop-flow diagram's broker-held node. Gates green (lint/tsc/3431 tests/build) in the isolated
-  worktree.
+  stop-flow diagram's broker-held node; round 7: a `partially_filled` (actively executing)
+  broker-held stop is no longer cancelled by the quantity-drift mismatch check, and
+  `confirmedPriorExitDead`'s re-arm confirmation now checks the SPECIFIC tracked order (by
+  client_order_id) instead of a symbol-wide sweep, so an unrelated still-live broker stop
+  (covering different shares) can no longer permanently block re-arming a partial remainder's
+  own dead exit; plus an Alpaca REST-vs-MCP trailing-copy docs fix. Gates green
+  (lint/tsc/3434 tests/build) in the isolated worktree.
 - **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
   (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
   open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual
