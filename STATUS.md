@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Activity-feed audit close-out + bump-to-floor merged (MONET, intro-anim session)
+The owner-directed 3-day activity-feed audit is complete: 36-agent workflow over the prod DB,
+every finding adversarially verified. Full ranked report: `docs/reviews/2026-07-09-activity-feed-audit.md`
+(3 quiet P1s — Roth proposer token-cap truncation, thesis-tag split-brain, cross-account reflection
+contamination — plus P2/P3 backlog; the historical feed storms were verified already-fixed).
+Bump-to-floor (owner ruling) merged as PR #1297 `4ef60cd3`, co-finished with the original bump lane
+after the #1280 collision resolved in #1297's favor. Fix backlog items are separate claims.
+
 ## 2026-07-09 — Unsaved-changes nav prompt: 3 options (MONET, branch `monet/unsaved-changes-3opt`)
 Owner: the unsaved-changes warning when clicking a nav tab/menu should offer three choices, not two.
 `app/console/lib/useDirtyGuard.tsx` rewritten — the 2-option `window.confirm` becomes an in-app
