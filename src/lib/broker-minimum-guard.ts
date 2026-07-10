@@ -119,7 +119,10 @@ const BUMP_PRICE_DRIFT_HEADROOM = 1.02;
  *    notional, buying power) at its bumped size — so a bump can never over-size past the owner's
  *    caps; if the floor itself violates a cap, the normal policy engine blocks it with an honest
  *    reason. A sell/cover whose bump would meet or exceed the whole held position becomes a
- *    full-position exit instead (brokers permit liquidating dust below the minimum).
+ *    full-position exit instead (brokers permit liquidating dust below the minimum) — but ONLY
+ *    when the original order's quantity was within the held position; an order that already asks
+ *    for more than is held blocks instead (it would have been rejected by the policy engine's
+ *    holdings check un-bumped, and a bump must never upgrade that reject into a liquidation).
  *  - "skip": the pre-2026-07-09 behavior — don't place a guaranteed-reject order, record + alert.
  */
 export type BrokerMinimumResolution =
@@ -218,13 +221,23 @@ export function resolveBrokerMinimum(
     if (
       (order.side === "sell" || order.side === "cover") &&
       order.positionQuantity != null &&
-      order.positionQuantity > 0 &&
-      bumpedQty >= order.positionQuantity - FULL_POSITION_QTY_EPSILON
+      order.positionQuantity > 0
     ) {
-      // Selling at least the whole position — cap at the position and let the dust-exit
-      // exemption carry it (brokers permit whole-position liquidation below the minimum).
-      bumpedQty = order.positionQuantity;
-      becomesFullExit = true;
+      if (order.quantity > order.positionQuantity + FULL_POSITION_QTY_EPSILON) {
+        // The ORIGINAL order already asks for more than is held. Un-bumped, the policy engine's
+        // sellQuantityExceedsHoldings check (policy.ts) would deterministically reject it as a
+        // correctness error — and any bumped quantity is strictly larger, so a bump can only
+        // launder a malformed/stale-holdings order into a full liquidation the proposal never
+        // asked for. Fail safe to block (honest below-minimum record), matching the guard's
+        // other unbumpable paths.
+        return { action: "block", reason };
+      }
+      if (bumpedQty >= order.positionQuantity - FULL_POSITION_QTY_EPSILON) {
+        // Selling at least the whole position — cap at the position and let the dust-exit
+        // exemption carry it (brokers permit whole-position liquidation below the minimum).
+        bumpedQty = order.positionQuantity;
+        becomesFullExit = true;
+      }
     }
     if (!(bumpedQty > order.quantity) && !becomesFullExit) {
       // Degenerate: bump math produced no increase (shouldn't happen when reason fired) — fail safe.

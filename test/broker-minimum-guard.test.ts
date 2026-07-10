@@ -223,6 +223,23 @@ describe("resolveBrokerMinimum", () => {
     }
   });
 
+  it("blocks (not full-exit bumps) a sell whose ORIGINAL quantity already exceeds the held position", async () => {
+    const { resolveBrokerMinimum } = await import("../src/lib/broker-minimum-guard");
+    // Sell 0.02 while holding only 0.01 (~$10/share => $0.20 notional, below the $1 floor).
+    // Un-bumped, sellQuantityExceedsHoldings (policy.ts) would deterministically reject this as a
+    // correctness error; the full-exit cap must NOT convert it into a placed full liquidation.
+    const res = resolveBrokerMinimum(
+      baseReview({ estimatedNotional: 0.2 }),
+      "robinhood",
+      { quantity: 0.02, side: "sell", positionQuantity: 0.01 },
+      "bump"
+    );
+    expect(res.action).toBe("block");
+    if (res.action === "block") {
+      expect(res.reason).toContain("below the broker's");
+    }
+  });
+
   it("blocks (not bumps) when the broker's floor is unknown even if a preflight block fired", async () => {
     const { resolveBrokerMinimum } = await import("../src/lib/broker-minimum-guard");
     const review = baseReview({
