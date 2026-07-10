@@ -539,6 +539,18 @@ As of 2026-07-08 (assignment-rule update).
   Gate green (tsc / lint 0-err / 3383 tests / build) + live browser smoke of all four items. PR via
   land.sh (number recorded on the live board once open). Rollout:
   `docs/rollouts/2026-07-10-per-team-reasoning.md`.
+- **AUTO-DEPLOY ON — merge-to-main auto-deploys prod (MONET, branch `monet/auto-deploy-on`) — DONE +
+  PROVEN 2026-07-10, PR pending via land.sh.** Owner-directed: production now auto-deploys on every push
+  to `main` (merge == live). Fixes: (1) Coolify native `is_auto_deploy_enabled=true` on
+  `socratic-trade-prod` (DB-only setting, done via box SSH — API is CF-blocked); (2) whitelisted
+  GitHub's stable **webhook** IP ranges (40 `/24` + IPv6) on the `jays.services` CF IP-allowlist that
+  was 403'ing them (bot protection stays on elsewhere). End-to-end proven: `e9e9138b` webhook deploy
+  (`is_webhook=t`) FINISHED; prod = `main` HEAD, healthy. **ANNOUNCE-THEN-DEPLOY RETIRED** — fleet must
+  stop manual deploy claims/triggers. Rollback: `is_auto_deploy_enabled=false`. Diagnosed + handed AG a
+  pre-existing deploy incident (transient git-clone window + zombie deploy holding the build queue; now
+  resolved). See `docs/rollouts/2026-07-10-auto-deploy-on.md`; AGENTS.md + AGENT-SYNC.md updated.
+- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (CLAUDE, branch `claude/audit-item10-attribution`) — IN PROGRESS 2026-07-10, built and locally committed, not yet pushed/landed.** Picked up the RESERVED row (split out of MONET's P1 batch per owner). Threaded `connectedAccountId` into all 54 in-scope `audit()` sites that had it available but omitted it: 41 in `src/lib/strategy.ts` (`runStrategyOnce`'s local const; `policy.connectedAccountId` in every function that already takes a full `policy` param — `resolveScanScoringWeights`, `applyCorrelationClusterGate`, `applyEarningsBlackoutTag`, `applyRiskReceipts`, `applyDeterministicSizing`, `executeProposal`; `autoRevertOnCapBreach`'s own audit call now uses the param it already had; `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` gained an optional trailing `connectedAccountId` param, wired at their `runStrategyOnce` call sites) + all 13 `audit()` sites in `src/lib/synthetic-stops.ts` (one more than the report's "12" — `broker_protective_stop_reconcile_error` fixed too for consistency, same function scope). `strategy_bull_truncated` + post-mortem.ts/`setUserSetting` left untouched — already fixed by the P1 batch. Zero behavior changes to trading logic (4th-arg audit attribution + two new optional trailing params only). Verify: `npx tsc --noEmit` clean, eslint 0 errors (9 pre-existing grandfathered warnings), 46 focused test files / 523 tests green under node@24 (all `strategy-*`/`synthetic-stops`/sizing/gate/veto/wash-sale/reconciliation/scheduler suites touching these two files). Full gate (`npm test` full run + `npm run build`) deferred to the Land phase. Rollout: `docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
+
 - **Framework Models card truth fixes — Proposer blank-select display + Reviewer "inherits
   proposer" false copy (CLAUDE, branch `claude/models-card-truth`) — IN PROGRESS 2026-07-10,
   follow-up to the per-team-reasoning effort below.** Two pre-existing `app/console/strategy/page.tsx`
@@ -1551,6 +1563,53 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Mistral benchmark data in the model-picker UI (MONET, session worktree
+  `distracted-albattani-dfc422`, branch `monet/mistral-benchmark-ui`) — IN PROGRESS
+  2026-07-10, owner-directed, PR landing.** Research found the app already has two
+  purpose-built surfaces for exactly this data — filled both rather than inventing new UI
+  (the custom `ModelPicker` listbox that could show subtitles is dead code, zero JSX
+  usages; reviving it would have been a much larger out-of-scope rewrite). (1) Model Stats
+  drawer (`app/api/llm-usage/model-stats/route.ts` + `model-stats-drawer.tsx`): merges the
+  2026-07-10 default-effort re-benchmark into the existing benchmark pipeline —
+  concatenation is provably safe since `normalizeBenchmarkSummaries` already drops the
+  2026-07-08 all-error Mistral rows; all four Mistral rows now show real cost/latency
+  instead of a dash. (2) Reasoning-effort advice text
+  (`src/lib/model-reasoning-recommendations.ts`): `MISTRAL_MEDIUM_ADVICE` extended with the
+  concrete None (fast/cheap, proposes nothing) vs High (slow/costly, actually proposes)
+  tradeoff. High-effort probe data deliberately NOT merged into the drawer (would collide
+  with the default-effort row for the same model+role) — it feeds the advice prose instead.
+  Verified live in-browser end to end (seeded a throwaway dev API key + fixed
+  `ENCRYPTION_KEY` so the app's own save-time key validation passes): Model Stats drawer
+  shows real Mistral numbers, advice text renders exactly as authored under the Mistral
+  Medium reasoning control. Gate: lint 0 / tsc clean / 315 files 3387 tests / build.
+  Rollout: `docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
+- **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
+  (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
+  open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual
+  follow-up from `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md` ("Follow-ups / still-open
+  blockers"): a `pending_cancel` row whose `gateway.cancelEquityOrder` retry kept throwing (e.g.
+  stale "not found" after an earlier cancel actually landed, or the stop simply filled) retried
+  forever and permanently blocked section-4 re-placement for that symbol (still protected by the
+  always-on synthetic fallback, but broker-held protection stayed off for the rest of the
+  session). `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`) now takes an
+  optional `orders?: EquityOrder[]` (the caller's freshly fetched `getEquityOrders()` list); on a
+  cancel failure it checks whether the row's `brokerOrderId` shows up there already done resting
+  (`isRejectedOrCanceledState` OR `filled`) and deletes the row if so; a rejected/canceled/expired
+  recovery re-places same-call (position never moved), a `filled` recovery defers re-placement to
+  the next call (see landing-round fix below — the position DID move, and the caller's `positions`
+  snapshot predates `orders`). Absent-from-list or still-live stays ambiguous and keeps retrying.
+  Wired `src/lib/synthetic-stops.ts` to pass its already-fetched `brokerOrders`. Also verified the
+  recon's companion issue (b), the `!exec.orderId` defensive branch, is ALREADY FIXED by PR
+  #1269's round-3 review (`isRejectedOrCanceledState` already precedes it) — no change needed
+  there. **Landing-round fix (PR #1352 review):** codex-connector flagged a real P1 — same-call
+  re-placement after a `filled` recovery could size a fresh stop off the caller's stale
+  pre-fill `positions` snapshot (fetched before `orders`), resting a sell stop for shares already
+  sold. Fixed with a `filledRecoverySymbols` set scoped to `filled`-specifically recoveries;
+  section 4 now skips those symbols for the current call only, resuming next call once a fresh
+  position read is in hand. +3 tests in `test/broker-protective-stops.test.ts` (recovers via a
+  terminal-state order-list match; recovers via `filled` — updated to assert same-call deferral
+  plus next-call resumption; stays conservative on absent/still-live). node@24: `land.sh` gate
+  green (tsc clean, 3386 tests, build clean).
 - **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
   `monet/mistral-rebench-docs`) — ✅ COMPLETED 2026-07-10: base results merged to `main` via
   PR #1329; a follow-up rotation-pool commit is riding the same branch, landing now.**
@@ -1599,8 +1658,10 @@ As of 2026-07-08 (assignment-rule update).
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
 - **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
-  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — IN PROGRESS 2026-07-10;
-  code+tests done + fully verified, PR opening via land.sh (built off merged `main` 6f1aaf87).**
+  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — DEPLOYED TO PROD 2026-07-10;
+  merged to `main` as squash `79b542e3` (PR #1328, verify-green + auto-merge), then AUTO-DEPLOYED —
+  `79b542e3` is an ancestor of main HEAD `e9e9138b` (#1352), the healthy webhook build (~12:45Z) running
+  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired).**
   `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
   advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
   the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
@@ -2003,7 +2064,7 @@ As of 2026-07-08 (assignment-rule update).
 
 
 
-- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch).** Thread `connectedAccountId` into ~42 `audit()` sites in `src/lib/strategy.ts` (scope map in the report: `runStrategyOnce` local at :311, `executeProposal`/`proposeTrades` via `policy`, `autoRevertOnCapBreach` param at :3425; incl. `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` signatures) and all 12 `synthetic-stops.ts` sites (`policy.connectedAccountId` is a parameter). NOTE: the `strategy_bull_truncated` emission site is EXCLUDED — handled in the P1 batch (`monet/activity-audit-p1-batch`); post-mortem.ts + `setUserSetting` no-audit flag also ride the P1 batch. Report §1.10: `docs/reviews/2026-07-09-activity-feed-audit.md`.
+- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch). MOVED 2026-07-10 to 🚧 In Progress (same title, this file) — see that row for the current record.** _(Corrected in place per protocol, not deleted; annotation by CLAUDE.)_
 - **Activity-audit P2.4: congress_share_daily retry storm (active, unbounded) — PLANNED 2026-07-10, unclaimed.** OPS half (do first): whitelist the new box 135.181.192.190 on the congress.trade CF zone (documented un-done follow-up, hetzner-migration rollout) — every POST is 403ing 32/32 and the marker never advances. CODE half: module-level in-flight promise + persisted last-attempt timestamp with 30-60 min failure backoff (`src/lib/congress-share.ts:588-800`, `scheduler.ts:313`). Report §1.4.
 - **Activity-audit P2.5: notification status recorder lies ("Not sent" on 1035/1035 while 378 delivered) — PLANNED 2026-07-10, unclaimed.** Return `NotifyChannelResult[]` from `sendDirectNotification`, derive sent/failed/skipped honestly, update reason mapping (`src/lib/notifications.ts:59-131`, `dashboard-ui.ts:335`); keep the operator-fallback email lane intact. Report §1.5.
 - **Activity-audit P2.6: `order_placement_uncertain` misclassifies definitive rejections (48/48 all-time) — PLANNED 2026-07-10, unclaimed.** Typed `OrderValidationError` for pre-flight throws → blocked/rejected; broker 4xx → `rejected_by_broker`; reserve "uncertain" for timeouts/5xx/undecodable. Consider Alpaca whole-share-bracket pre-flight sizing. NOTE: touches `strategy.ts` placement catch — coordinate with the item-10 sweep session. Report §1.6.
