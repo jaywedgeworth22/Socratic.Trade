@@ -171,14 +171,14 @@ describe("buildLlmRequestBody", () => {
     expect(xai.reasoning_effort).toBe("high");
 
     // Only mistral-medium-3-5 carries a Mistral reasoning capability (provider enforces
-    // reasoning_effort high|none); an explicit xhigh request normalizes to "high" and the
-    // reasoning prompt mode rides along on that tier.
+    // reasoning_effort high|none); an explicit xhigh request normalizes to "high", sent WITHOUT
+    // prompt_mode (2026-07-10 keyed probe: medium-3-5 rejects prompt_mode:"reasoning" too).
     const mistral = buildLlmRequestBody(
       { provider: "mistral", transport: "chat-completions" },
       { model: "mistral-medium-3-5", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
     ) as Record<string, any>;
     expect(mistral.reasoning_effort).toBe("high");
-    expect(mistral.prompt_mode).toBe("reasoning");
+    expect(mistral.prompt_mode).toBeUndefined();
 
     // The rest of the Mistral family (small-2603 rejects the reasoning prompt mode outright;
     // benchmark 2026-07-08) sends a plain body with no reasoning params at all.

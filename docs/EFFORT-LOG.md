@@ -1456,6 +1456,23 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
+  `monet/mistral-rebench-docs`) — IN PROGRESS 2026-07-10, owner-directed; docs PR landing.**
+  The re-benchmark deferred from #1279: 12/12 live calls ok, zero 400s (was 0/12 pre-fix) —
+  capability-map fix proven against Mistral's API. small-2603 green: p50 3.6s / ~$0.0015/call /
+  100% schema-valid + full bracket coverage. medium-3-5 green (reasoning off): fast+valid but
+  EMPTY proposals; high-reasoning tier untested (script lacks an effort flag — follow-up).
+  Red verdicts both models correctly shaped + sharp; benchmark's 0% red schema-valid is a
+  validator artifact (green proposals-check applied to red — follow-up filed). Keys resolved
+  at runtime from Infisical prod (automation identity), never written to disk. Results:
+  `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Pool NOT changed — re-add
+  recommendation = owner call (`docs/rollouts/2026-07-10-mistral-rebench.md`).
+  _Probe addendum (owner question "why no proposals"): reasoning-off empty list = model
+  judgment (param-stripped probe identical). High-tier probes found + FIXED two more
+  shaper bugs (medium-3-5 rejects prompt_mode too — validation-order masked; reasoning
+  tier rejects greedy sampling → no temperature when thinking). With fixes it proposes
+  (2 valid + brackets, 50.1s, ~$0.074/call, 1/2 rounds hit the 150s timeout) — hold from
+  pool. Script gained `--effort <tier|omit>`._
 - **Model recommendation rethink: per-team re-derivation of the Green/Red rec chips (CLAUDE,
   branch `claude/model-recs-rethink`) — LANDING 2026-07-10: PR #1295 went dirty as `main`
   advanced 16 commits; re-synced (`git merge origin/main`, zero conflicts — `main` never touched
