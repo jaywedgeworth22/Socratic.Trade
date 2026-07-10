@@ -39,6 +39,15 @@ REPO="${GITHUB_REPOSITORY:-jaywedgeworth22/Socratic.Trade}"
 DRY="${SHEPHERD_DRY_RUN:-0}"
 HAS_PAT="${SHEPHERD_HAS_PAT:-1}"
 ISSUE_TITLE="Merge shepherd status"
+# Who am I? Needed so the reran-marker check below (Codex review, round 3) only
+# trusts a comment we ourselves posted, not one any commenter could spoof. A PAT
+# resolves to its owning user via /user; the default Actions GITHUB_TOKEN is an
+# app-installation token that 403s on /user, and always posts comments as the
+# literal login "github-actions[bot]" -- so that's the fallback (and the direct
+# value whenever HAS_PAT=0, skipping a doomed API call).
+ME=""
+[ "$HAS_PAT" = "1" ] && ME="$(gh api user --jq '.login' 2>/dev/null)"
+ME="${ME:-github-actions[bot]}"
 TMP="$(mktemp)"; trap 'rm -f "$TMP" "$TMP.md"' EXIT
 
 row() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$TMP"; }   # bucket \t num \t note
@@ -79,8 +88,11 @@ for num in $nums; do
   # in-flight PR isn't mistaken for "no CI at all" and re-synced mid-CI.
   running=$(jq -r '[.statusCheckRollup[]? | select((.status // "")=="IN_PROGRESS" or (.status // "")=="QUEUED" or (.status // "")=="WAITING" or (.status // "")=="REQUESTED" or (.status // "")=="PENDING" or (.state // "")=="PENDING" or (.state // "")=="EXPECTED")] | length' <<<"$d")
   # Reran marker is a PR comment scoped to this head sha (not a PR-wide label), so a
-  # flaky failure on a later head still gets its own one-time rerun.
-  reran=$(jq -r --arg sha "$sha" '[.comments[]? | (.body // "") | select(contains("shepherd-reran:" + $sha))] | length > 0' <<<"$d")
+  # flaky failure on a later head still gets its own one-time rerun. Also scoped to
+  # comments authored by us ($ME, resolved above) -- otherwise any PR commenter could
+  # copy the visible head sha into a comment and trick the shepherd into skipping its
+  # one-time flake-recovery rerun (Codex review, round 3).
+  reran=$(jq -r --arg sha "$sha" --arg me "$ME" '[.comments[]? | select((.author.login // "")==$me) | (.body // "") | select(contains("shepherd-reran:" + $sha))] | length > 0' <<<"$d")
 
   if [ "$draft" = "true" ]; then row DRAFT "$num" "$title"; continue; fi
   if [ "$armed" != "true" ]; then row NOT-ARMED "$num" "$title  (verify=$verify -- parked / not landed via land.sh)"; continue; fi
@@ -124,23 +136,34 @@ for num in $nums; do
     # Flake recovery: re-run non-passing workflow runs for this head sha, exactly once.
     # REST API conclusions are lowercase snake_case, mirroring is_failure_conclusion().
     runids=$(gh api "repos/$REPO/actions/runs?head_sha=$sha" \
-               --jq '.workflow_runs[] | select(.conclusion=="failure" or .conclusion=="cancelled" or .conclusion=="timed_out" or .conclusion=="action_required" or .conclusion=="startup_failure" or .conclusion=="stale") | .id' 2>/dev/null)
+               --jq '.workflow_runs[] | select(.conclusion=="failure" or .conclusion=="cancelled" or .conclusion=="timed_out" or .conclusion=="action_required" or .conclusion=="startup_failure" or .conclusion=="stale") | "\(.id)\t\(.conclusion)"' 2>/dev/null)
     rerun_ok=0
-    for rid in $runids; do
-      # A run cancelled/timed-out/etc before any job actually failed has no failed
-      # jobs -- /rerun-failed-jobs 4xxs on that ("nothing to rerun"). Use the
-      # all-jobs /rerun endpoint in that case instead.
-      failed_jobs=$(gh api "repos/$REPO/actions/runs/$rid/jobs" \
-                      --jq '[.jobs[]? | select(.conclusion=="failure")] | length' 2>/dev/null)
-      if [ "${failed_jobs:-0}" -gt 0 ]; then
-        endpoint="rerun-failed-jobs"
+    while IFS="$(printf '\t')" read -r rid rconclusion; do
+      [ -z "$rid" ] && continue
+      # Only a cleanly "failure"-concluded run is safe to narrow to /rerun-failed-jobs
+      # (and even then, only when it actually has a failed job -- a run that failed via
+      # e.g. a required check never dispatching has none, and /rerun-failed-jobs 4xxs on
+      # that with "nothing to rerun"). Every other run conclusion (cancelled/timed_out/
+      # action_required/startup_failure/stale) can leave the REQUIRED job itself
+      # cancelled or never-started rather than "failed" -- rerun-failed-jobs only
+      # re-runs jobs with conclusion==failure (+ dependents), so it can silently never
+      # re-trigger a cancelled/timed-out required check (Codex review, round 3). Always
+      # use the all-jobs endpoint for those conclusions.
+      if [ "$rconclusion" = "failure" ]; then
+        failed_jobs=$(gh api "repos/$REPO/actions/runs/$rid/jobs" \
+                        --jq '[.jobs[]? | select(.conclusion=="failure")] | length' 2>/dev/null)
+        if [ "${failed_jobs:-0}" -gt 0 ]; then
+          endpoint="rerun-failed-jobs"
+        else
+          endpoint="rerun"
+        fi
       else
         endpoint="rerun"
       fi
       if gh api -X POST "repos/$REPO/actions/runs/$rid/$endpoint" >/dev/null 2>&1; then
         rerun_ok=1
       fi
-    done
+    done <<<"$runids"
     if [ "$rerun_ok" = "1" ]; then
       # Only mark this head sha as retried when a rerun POST actually succeeded --
       # otherwise a failed rerun attempt would falsely block the one-time retry.
