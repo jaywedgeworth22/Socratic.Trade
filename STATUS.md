@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — db-health.ts `ts DESC` tie-sweep (CLAUDE, branch `claude/db-health-tie-sweep`)
+Same-millisecond writes to `api_health_log` made 7 remaining `ORDER BY ts DESC` reads in
+`src/lib/db-health.ts` nondeterministic (ties resolve to ascending insertion order absent a
+tiebreaker, i.e. OLDEST-first) — most critically `getLaneHealth`'s consecutive-failure window
+(`last5`, line ~44) and the FIFO-cap DELETE subquery (line ~142); the pattern was already fixed
+at line 311 for `getServiceHealthLog` per a prior test-stability fix. Added `, rowid DESC` to all
+7 sites (matching the line-311 idiom): `getLaneHealth`'s `last5`/`lastSuccess`/`lastFailure`
+(lines 44/47/50), the FIFO-cap DELETE subquery (line 142), and `getServiceHealthSummaries`'s
+`lastSuccess`/`lastFailure`/`last5` (lines 221/229/256). New regression test in
+`test/api-circuit-breaker.test.ts` inserts same-timestamp rows with known insertion order and
+proves (a) it fails without the fix and (b) passes with it. Gate green: tsc clean, lint 0 errors,
+311 files / 3286 tests, build succeeds. Closes the task-chip suggestion spawned from the #1267
+lane (round-2 TwelveData health-row fix touched the same file/pattern). See
+`docs/rollouts/2026-07-10-db-health-tie-sweep.md`.
 ## 2026-07-10 — Enrichment starvation round-2 + disposition (MONET; PR #1272 closed superseded by #1287)
 PR #1272 (the starvation fix) sat BLOCKED on two real codex-connector findings: held names INSIDE
 the ranked top-N could still starve behind the force-included extras, and user-policy scan shapes
