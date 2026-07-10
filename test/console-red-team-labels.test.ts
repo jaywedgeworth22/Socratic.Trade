@@ -39,4 +39,11 @@ describe("redTeamFailureModel (never blame a model that provably never ran)", ()
     expect(redTeamFailureModel(verdict({ failureKind: "provider_error" }), undefined)).toBeNull();
     expect(redTeamFailureModel(verdict({ failureKind: "provider_error" }), "   ")).toBeNull();
   });
+
+  it("never displays the '__rotate__' rotation sentinel as the failed reviewer", () => {
+    // A rotating policy's configured value is a rotation marker, not a model that ran — the
+    // fallback must skip it (a persisted concrete pick on the verdict still wins as usual).
+    expect(redTeamFailureModel(verdict({ failureKind: "provider_error" }), "__rotate__")).toBeNull();
+    expect(redTeamFailureModel(verdict({ model: "gpt-5.4-mini", failureKind: "timeout" }), "__rotate__")).toBe("gpt-5.4-mini");
+  });
 });

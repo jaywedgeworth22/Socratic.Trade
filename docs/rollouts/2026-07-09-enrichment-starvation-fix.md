@@ -156,3 +156,26 @@ Revised semantics (this branch, landed on top of the #1272 content):
   who wins scarce TwelveData credits.
 - Regression tests updated: unclamped override (60 > old cap honored), no-env 120-symbol
   list fully enriched, plus the two #1272 coverage tests unchanged.
+
+## Disposition (MONET, 2026-07-10): PR #1272 closed superseded; codex round-2 findings
+
+Two `chatgpt-codex-connector` threads blocked #1272's armed auto-merge — both REAL:
+(1) held names INSIDE the ranked top-N could still starve (round-1's order only
+front-loaded `heldExtra`, so a holding ranked inside a large top-N sat behind all the
+extras in the first-wins slice); (2) user-policy scan shapes (`scanMarket` options from
+the settings UI) bypassed any env-derived budget. Round-2 fixes — a stable-sort
+`orderCandidatesForEnrichment` helper (all held → outliers → rest by rank) and a budget
+simplified to `min(FMP_MAX_SYMBOLS ?? 50, 50)` — were pushed to the branch (`36d613b8`,
+gate green at 3219 tests) and the threads replied-to and resolved. But #1287 had
+meanwhile merged this branch's content (at `90c55579`) and revised it per the
+owner-ruling section above, which addresses BOTH findings structurally: held-in-top-N
+names are hoisted in main's enrichment order, and with no cap at all no scan shape can
+be under-covered. That same ruling makes the round-2 cap-50 budget obsolete — a hard
+ceiling is exactly what the owner ruled out — so #1272 was closed as superseded
+(2026-07-10T05:30Z, closure comment on the PR) rather than conflict-resolved into a
+near-empty diff. Nothing from it is lost on main except the deliberately-dropped cap;
+the branch survives as `monet/bold-lamport-20a8f9`. Boards: effort row flipped to
+✅ Completed-via-#1287 (repo mirror + live board), Planned-section duplicate
+annotations consolidated. Deploy: `main@597b991c` (includes #1287) went out under the
+ANNOUNCE-THEN-DEPLOY claim of 2026-07-10T05:35Z; the deployer session owns
+health-verify and the Deployed flips.
