@@ -248,6 +248,18 @@ As of 2026-07-08 (assignment-rule update).
   commits — unclaimed again), PR #1083 (recommend close as duplicate of merged #1082 — owner
   call). NO deploys (honored the migration deploy-hold). Rollout:
   `docs/rollouts/2026-07-09-monet-usage-cap-pickup.md`.
+  **ROUND 2 (same evening ~21:45 CDT — MONET re-capped after a productive resumed session; CLAUDE
+  picked up again, owner-directed):** MONET's 4 new PRs shepherded — #1279 mistral-capmap, #1280
+  bump-to-floor (oversized below-minimum exits now BLOCK instead of full-exit-bumping), #1281
+  unsaved-changes (all threads fixed/resolved, armed); #1278 learning-review — adopted MONET's
+  uncommitted trigger feature, fixed its 7 threads PLUS a review-caught REAL blocker (max-age
+  sweep unreachable for learned rows outside the 7-day window; empirically reproduced,
+  regression-tested), armed. Round-3 bot threads on #1266/#1267/#1269 fixed (incl. a spoofable
+  flake-rerun marker and an ok:true health log that neutered the new circuit breaker); #1272
+  un-dirtied. MONET's aapl lane (owner-ruled NO-CAP enrichment + RAG filings warm-up receipts;
+  supersedes #1272 content, ordering documented) committed + landed as PR #1287 (full gate
+  3261/3261). All 9 PRs armed, merging on CI. Activity audit REMAINS not-started (MONET's on
+  return). Round-2 addendum in the rollout note.
 - **Short stop-loss default (8%) + surface short settings in main Essentials (MONET, branch
   `monet/short-stop-default-and-surface`) — NOT YET MERGED: PR #1221 open, auto-merge armed
   2026-07-09 (code complete; this row stays out of the "merged to `main`" sense of Completed
@@ -427,6 +439,476 @@ As of 2026-07-08 (assignment-rule update).
   Rollout doc: `docs/rollouts/2026-07-05-cursor-session.md` (describes intended scope; now
   confirmed-merged via #844).
 
+---
+
+## 🚧 In Progress
+
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
+  enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — IN
+  PROGRESS 2026-07-09; PR opened via land.sh, auto-merge armed (MONET's work, landed by CLAUDE
+  under the owner-directed usage-cap pickup: committed MONET's uncommitted fix, merged
+  `origin/main` incl. PR #1222's TwelveData negative-cache — different region, both kept — and
+  re-ran the full gate green).** Root cause of "AAPL fundamentals all dashes": every enrichment provider
+  slices its symbol list to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts)
+  while `scanMarket` enriches top-`candidateLimit` (30) ranked + up to 8 event outliers + ALL held
+  positions (src/lib/market.ts) — the force-included extras past index 30 (systematically the
+  owner's held names; verified in prod 2026-07-09T19:41Z, exactly 30/42 enriched) get zero fields
+  from every provider: blank Fundamentals drawer, neutral-50 factor defaults, no fundamentals for
+  the LLM/FCF-veto on exactly the owned positions. Fix: derive the per-provider budget from the
+  real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still
+  bounds cost; PR #1087 pacer handles the extra calls); order the `enrich()` symbol list held →
+  outliers → ranked so a budget shortfall starves the ranked tail, never holdings; tooltip honesty
+  (`withProvenance`/`cellTitle` no longer stamp "Received <time>" on fields no provider returned);
+  regression test for candidateLimit+extras full coverage. PR via land.sh when verify is green.
+
+- **Enrichment NO-CAP revision + filings warm-up receipts/ingestion (MONET, session
+  `aapl-fundamentals-missing-e3ea01`, branch `monet/aapl-fundamentals-missing-e3ea01`) — IN
+  PROGRESS 2026-07-09, owner-directed; MONET-authored, CLAUDE-landed under the usage-cap
+  pickup round 2 (follow-on refinements committed: held-in-top-N enrichment priority,
+  budget-skip un-record in `ingestFiling`, forced-run TTL-stamp skip); PR opened via
+  land.sh with auto-merge armed. Supersedes PR #1272 (stuck on a phantom GitHub DIRTY
+  mergeable-state; `git merge-tree` clean; its content is merged into this branch).** Owner
+  rulings in-session: (1) NO hard enrichment-symbol cap — "no cap at all or multiple hundreds",
+  >50 positions is a supported future; `maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS` set
+  (unclamped explicit throttle); `HELD_SYMBOL_ALLOWANCE`/`MAX_SYMBOLS_CAP` removed; webull +
+  robinhood-options env overrides unclamped (defaults unchanged). (2) Fix the "document looked
+  for but not found" receipts: neutral "Filings library still warming up" copy with ingested
+  counts (was warning-orange "never ingested" on every stock); demand-first SEC ingestion
+  (watchlists + last-scan candidates incl. holdings before the alphabetical universe); paid-tier
+  per-run default 25 (was 1); `SEC_FILING_INGEST_TTL_HOURS` cadence knob; admin reindex route
+  forces past the TTL stamp (used to silently no-op). Rollouts:
+  `2026-07-09-filings-warmup-receipts-and-ingest-pacing.md` + owner-ruling revision section in
+  `2026-07-09-enrichment-starvation-fix.md`. Prod env follow-up after deploy:
+  `VECTOR_EMBED_BATCH_DELAY_MS=0`, `SEC_FILING_INGEST_TTL_HOURS=24`.
+
+- **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
+  `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
+  2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the
+  ALREADY-BUILT per-reviewer-model veto value-add in the drawer's 4th column, replacing the hard-coded
+  dash for the Reviewer role. No DB/schema/`strategy.ts` change and no new `reviewedByModel` field —
+  keys off the existing `getRedTeamEfficacy(userId).byModel`. Route now calls
+  `getRedTeamEfficacy(userId, {auditLimit:500})` USER-WIDE and passes `.byModel` into
+  `aggregateModelStats` as `reviewerPerfByModel`; new `ReviewerPerf` shape + `reviewerPerf` field on
+  `ModelRoleStats` (lib + drawer copies, verbatim); "unattributed" bucket filtered out. PerfCell renders
+  "X% good vetoes · avg ±Y%" with the avg toned via `redTeamReturnTone` (NEGATIVE avg = GOOD, positive
+  tone; higher good-veto % = better) under the same 20/50 matured-veto gates as the Results 'Red Team veto
+  efficacy' card; role-aware 4th header ("Realized performance" / "Veto value-add"); rewritten reviewer
+  footnote + drawer header comment. Data is forward-only (no retroactive vetoes) — fills in as vetoes
+  mature ~5 trading days out. Concurrent with `monet/model-stats-drawer-wide` (different region of the same
+  file; clean hunk-level merge). Gate green: tsc 0 / lint 0-err / 3171 tests / build ok. See
+  `docs/rollouts/2026-07-09-reviewer-veto-valueadd-drawer.md`.
+- **Connected-accounts UI: "Currently Loaded / Other Accounts" restructure + kill Test-Account
+  mock-label spam (MONET, worktree `~/apps/trading-monet-acct-ui`, branch
+  `monet/account-mgmt-ui`) — IN PROGRESS 2026-07-09.** Display-copy + JSX only; no execution/data
+  model/`isActive` changes. (A) partition account list into loaded-first + Other Accounts headings,
+  remove ambiguous `active` chip, rename "Make active" → "Load"; (B) shorten `TEST_ACCOUNT_LABEL`
+  to "Test Account", drop the `broker === "test"` special-case in `realityForAccount` so it reads as
+  a normal paper account, delete the "local mock" chips + repeated "simulated/local" wording (keep
+  one terse "excluded from wash-sale accounting" note — verified real via `tax.ts:197`). Preserves
+  live/paper reality correctness for real broker accounts.
+- **Single-adversary consolidation — ✅ COMPLETED via PR #1191 (merged 2026-07-09, squash `f9a37611`;
+  feature author = Cowork Claude session, landing operator = MONET Mac session).**
+  _2026-07-09 (MONET landing): merged `origin/main` into the branch and resolved the conflicts per
+  `/Users/jay/apps/monet-handoff-2026-07-09.md` — deleted dead inline-Bear stopgaps
+  (`parseBearSurvivors`, orphaned `BEAR_UNAVAILABLE_*` alert constants + the
+  `inline-bear-parse`/`strategy-bear-alert-cooldown` tests), kept main's Proposer/Reviewer naming +
+  ModelStatsButton with the consolidation's no-defaults fail-closed semantics, fixed the e2e
+  money-path test + benchmark script to the single-reviewer API. Landing operator also integrated a
+  late `origin/main` (#1190, async run-once + Gemini maxItems schema): clean re-merge, one semantic
+  fix (the async-route + tuning fixtures had to satisfy the branch's new no-defaults Green-model
+  gate). 4 codex threads resolved: 1 FIXED (tuning blank-model → local-rules, commit `4d4812b0`); 3
+  documented-accepted/intentional (isRiskAddingOpening §3.5 flip-edge, chat MockLLM offline
+  fallthrough, approve-at-half hold label) with owner follow-ups filed. Gate green: tsc 0 / lint
+  0-err / full vitest / build ok. Migration v15 (main took v14). Post-merge: closed PR #1035
+  (superseded), deleted remote `claude/single-adversary-consolidation-wip`. See
+  `docs/rollouts/2026-07-09-single-adversary-landing.md` +
+  `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`._
+- **Proposer/Reviewer Model naming + accurate Red-team role description (MONET, branch
+  `monet/model-picker-copy2`) — ✅ COMPLETED via PR #1109 (merged).** Copy-only on both model
+  pickers; the `reviewedByModel` Red attribution gap was carried into the single-adversary lane
+  (now a filed follow-up post-#1191). Follow-up 2026-07-09: see "Picker copy" row below —
+  owner asked to drop "Model" from these labels and disambiguate the AI-review panel.
+- **Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch
+  `monet/picker-copy-strategist`) — ✅ COMPLETED via PR #1202 (auto-merge armed).** Owner-directed pure
+  display-copy follow-up to PR #1109 above: drops "Model" from both picker labels
+  ("Proposer Model"→"Proposer", "Reviewer Model"→"Reviewer") in
+  `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`. This collided with
+  the separate AI-review (strategy-tuning) panel's own "Reviewer model" field and its "Same
+  As Red Team"/"Same As Green Team" default, so that panel's field is renamed "Strategist"
+  (intro sentence now "A strategist model reads...", inherited-label ternary now renders
+  "Reviewer"/"Proposer"). No functional/variable-name changes; all other Red Team/Green Team
+  concept names untouched. Gate green: tsc clean, lint 0 errors, 3168 tests, build clean. See
+  `docs/rollouts/2026-07-09-picker-copy-strategist.md`.
+- **Run the as-of epoch Pinecone backfill (ops, MONET, session worktree
+  `~/.claude/projects/Socratic.Trade/backfill-asof-epoch-09e06b`, branch
+  `monet/backfill-asof-epoch-09e06b`) — OPS RUN DONE 2026-07-07, docs-only PR landing (this row
+  moves to Completed on merge).** Executed the deferred operational follow-up from CLAUDE's #1019:
+  `scripts/backfill-asof-epoch.ts` vs the shared default Pinecone index, operator ("local") key —
+  dry-run → real run → idempotency re-run. Counts: 341 scanned / **309 updated** / 32 already
+  epoch'd (post-#1019 ingests) / **0 undated / 0 errors**; re-run = 341/341 skippedHasEpoch,
+  0 updated. Corpus fully epoch-stamped: `VECTOR_ASOF_SERVER_FILTER=on` is now safe AND effective;
+  `VECTOR_ASOF_STRICT=on` would currently drop nothing (no undated vectors). NOT done here (owner
+  prod step): flipping either flag — both remain default OFF. See
+  `docs/rollouts/2026-07-07-asof-epoch-backfill-run.md`.
+
+- **Per-account/broker LLM usage attribution (MONET, worktree `~/apps/trading-monet-llmusage`, branch
+  `monet/llm-usage-per-account`) — IN PROGRESS 2026-07-07, PR pending via land.sh.** Owner-requested:
+  make LLM usage/cost filterable + trackable per connected account/broker. Migration 14
+  (`llm_usage_connected_account`) adds nullable `connected_account_id` via a versioned ALTER (never the
+  baseline CREATE TABLE — respects the 2026-07-02 boot-crash scar); `recordLlmUsage` takes an optional
+  `connectedAccountId`; `getLlmUsageSummary` LEFT-JOINs `connected_accounts` for broker/environment/label
+  + adds `connectedAccountId`/`broker` filters; threaded into the 4 account-context call sites
+  (post-mortem, outcome-postmortem, proposal-revalidation, strategy-tuning) via `policy.connectedAccountId`;
+  `/api/llm-usage` + `/api/admin/llm-usage` accept `accountId`/`broker`; shared usage UI splits per account
+  + adds a filter + account badge ("Unattributed" for account-less rows). LOCAL only (external
+  usage-monitor push untouched); budget enforcement UNCHANGED (global-vs-per-account cap deferred as an
+  owner cost-policy decision). DEFERRED: `strategy`/`strategy-bear`/`red-team` attribution (CLAUDE-Cowork
+  keepout) — one-liner each once its single-adversary consolidation lands; flagged on #agent-sync. Gate
+  green (tsc 0 / 2875 tests + 4 new / build ok / lint 0-err). See
+  `docs/rollouts/2026-07-07-llm-usage-per-account.md`.
+- **Console intro: solid backdrop that dissolves on liftoff (CLAUDE cloud, branch
+  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-06, PR open.** Refinement to the merged
+  intro splash (#876/#996): the intro opens with a solid theme-matched backdrop (`var(--con-bg)`)
+  covering the page during the waving-chart phase, then dissolves (0.9s) to reveal the console/page
+  skeleton once the candles start moving up (resolves the transparent-vs-theme-bg question as a
+  hybrid). `intro-canvas.tsx`: model exposes `LIFT=min(BL)`; a solid backdrop `<div>` behind the
+  `position:relative` candle canvas fades opacity→0 at `t>=LIFT`. Gate green after `npm ci` (stale
+  local deps vs `congress-trading-shared#v1.4.1`). Driven live. See
+  `docs/rollouts/2026-07-06-intro-backdrop-dissolve.md`.
+- **Persistent candlestick header logo (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`) —
+  IN PROGRESS 2026-07-06, PR open.** Follow-up to the merged console intro splash (#876). Replaced the
+  typed "Socratic.Trade" top-bar brand with a live candlestick "SOCRATIC TRADE" `<HeaderLogo>` that
+  ticks forever (one column/sec), and made the intro shrink into and hand off to that exact element.
+  New shared `app/console/ui/candle-ticker.ts` (wordmark sampler + 12-unit ticker + `drawTicker`, so
+  intro and logo can't drift) + `app/console/ui/header-logo.tsx` (~248×18px, theme-independent candles
+  on the header surface, reduced-motion-safe). `intro-canvas.tsx`: transparent bg (owner choice), final
+  candles measured onto the real `[data-brand-logo]` box (seamless handoff), header shrunk to ~18px,
+  `END=T4+0.2` (fade at once, no double-draw). tsc/lint/build green + driven live (dark + light).
+  Owner open question: transparent splash shows the console+consent modal behind the candles — offered
+  a one-line switch to `var(--con-bg)`. See `docs/rollouts/2026-07-06-persistent-header-logo.md`.
+- **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
+  (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
+  builds with the app's real components. Render check 30/30 clean; conventions header shipped.
+  Uploaded to two owner accounts (projects `0a962679…` + `1da8546c…`). Additive only —
+  `.design-sync/` inputs + one `.gitignore` block, no app source changed. **PR open** on
+  branch `agent/design-sync-uikit`. Rollout: `docs/rollouts/2026-07-05-design-sync-uikit.md`.
+
+---
+
+## ✅ Completed (merged to `main`, on beta/integration)
+
+- **Plain-English Anthropic usage-limit error (CLAUDE, cloud lane, 2026-07-06).** Owner reported a
+  screenshot where a Roth IRA thesis card's "⚠ RED TEAM FAILED (provider error)" note showed a raw
+  Anthropic JSON error blob (`{"type":"error","error":{"type":"invalid_request_error","message":"You
+  have reached your specified API usage limits...` verbatim, including `request_id`) instead of
+  plain English. Root cause: `humanizeLlmError` (`src/lib/llm-errors.ts`) already recognizes
+  401/403/404/429/5xx/timeout/context-length shapes, but Anthropic's org/workspace-level "specified
+  API usage limit" comes back as a 400 `invalid_request_error` — not a 429 — so it fell through to
+  the generic `${provider} error: ${rawText}` fallback and dumped the JSON body. Fix: added a
+  dedicated `usage limit`/`usage limits` branch that extracts the "regain access on <date>" text (if
+  present) and returns a plain-English sentence naming the provider and reset time, with no raw JSON.
+  This is the single chokepoint most call sites (red-team.ts, strategy.ts, outcome-engine.ts,
+  post-mortem.ts, proposal-revalidation.ts, strategy-tuning.ts, the Assistant console) already route
+  through, so the fix applies everywhere those reasons/rationale strings surface. New regression test
+  in `test/llm-errors.test.ts` pins the exact screenshot payload → plain-English, no `{`/`request_id`
+  in output. Files: `src/lib/llm-errors.ts`, `test/llm-errors.test.ts`. Verification: `npx tsc
+  --noEmit` clean; `npm run lint` 0 errors; `npm test` 2674/2674 passed; `npm run build` fails with a
+  pre-existing `/_not-found` "Invalid URL" collection error reproduced identically on a clean stash
+  of `main` (unrelated to this change, likely a missing env var in this cloud environment — not a
+  regression). See `docs/rollouts/2026-07-06-plain-english-anthropic-usage-limit-error.md`.
+- **PR #979 - Persist retrieved candidate pool for RAG analyzability (CLAUDE, branch
+  `claude/persist-candidate-pool`).** Merged 2026-07-06. Captures the post-recall/post-dedupe
+  candidate pool from `retrieveContextDetailed` (`vector-db.ts`) — including chunks NOT making the
+  final top-`limit` slice — behind new flag `RAG_PERSIST_CANDIDATE_POOL` (default OFF,
+  byte-identical when off). **Known limitation:** it captures `rankPool`'s OUTPUT pool only, so
+  candidates dropped upstream by minScore/asOf/dedupe are never present, and in the flagship
+  production caller (dedupe 0.6 + limit 3, both of which already hard-cap output at `limit`)
+  `used:false` rows are rare/absent — a pre-rankPool v2 with per-stage drop reasons is the real
+  follow-up (see rollout note, and the deferred-work row below). New
+  `src/lib/rag/candidate-pool.ts` (`recordCandidatePool` → `audit("rag_candidate_pool", ...)`, no
+  new table); ids/scores/docType/asOf/`used` only, never raw chunk text. `RetrieveOptions.runId`
+  added (additive) and threaded from both `strategy.ts` retrieval call sites +
+  `experience-memory.ts`. Coordinated with sibling lane `claude/typed-retrieval-status` (same file,
+  disjoint region — this lane owns only the block right before the final slice; landed after it).
+  Local verify: `tsc --noEmit` clean, `test/persist-candidate-pool.test.ts` (new) +
+  `test/rag-retrieval-regression.test.ts` 26/26 green, plus spot-checked adjacent RAG/strategy/
+  experience-memory suites, no regressions; `land.sh` full gate (tsc/test/build) green at merge.
+  Rollout: `docs/rollouts/2026-07-06-persist-candidate-pool.md`.
+- **PR #1019 - Server-side point-in-time (as-of) filtering in Pinecone (CLAUDE, worktree
+  `trading-wt-asof-server`, branch `claude/server-asof-filter`).** Merged 2026-07-06. Owner-approved
+  deferred item from the CLAUDE next-wave RAG triage (see the "DEFERRED" bullet above). Pushes the
+  backtest `asOf` constraint INTO the Pinecone query so topK is filled with eligible (pre-asOf)
+  candidates instead of being decimated by the post-fetch as-of drop — the "empty/small pools in
+  backtests" bug, where the pure-vector top-K is dominated by too-recent filings that then get
+  dropped post-fetch, even though older eligible filings exist in the corpus but rank below the fetch
+  window. Ingest: `cleanMetadata` (`src/lib/vector-db.ts`) additively stamps a numeric
+  `as_of_epoch_ms` on every newly-upserted vector (absent when undated — the fail-open signal).
+  Query: new flag `VECTOR_ASOF_SERVER_FILTER` (default OFF) AND-combines a server epoch clause with
+  the existing symbol/scope/docType filter — **FAIL-OPEN** by default
+  (`$or:[{as_of_epoch_ms:{$lte:X}},{as_of_epoch_ms:{$exists:false}}]`, keeps un-epoch'd vectors so an
+  un-backfilled corpus isn't dropped), escalating to **FAIL-CLOSED** (plain `{$lte}`, drops un-epoch'd
+  server-side) under existing `VECTOR_ASOF_STRICT` for leakage-certified backtests. The post-fetch
+  `isWithinAsOf` guard in `rankPool` stays as the leakage backstop regardless (defense in depth); `asOf`
+  unset or the flag off means filter output is byte-identical to before. Verified against the installed
+  `@pinecone-database/pinecone@8.0.0` client that `$exists`/`$or`/`$lte` all typecheck and forward
+  through the opaque filter object — no design compromise needed. New idempotent backfill
+  `scripts/backfill-asof-epoch.ts` + `backfillAsOfEpoch()`/`computeBackfillEpochUpdate` (iterates the
+  index via `listPaginated`+`fetch`, partial-updates vectors lacking the epoch, `BACKFILL_DRY_RUN=1`
+  supported, emits a `vector_asof_epoch_backfill` audit record). New
+  `test/vector-db-asof-server-filter.test.ts` (10 tests: filter shape fail-open/strict, byte-identical
+  off-path, fail-open + post-fetch backstop, ingest epoch write, backfill pure fn + orchestrator +
+  dry-run). Local verify: `tsc --noEmit` clean; targeted suite (`vector-db-asof-server-filter` +
+  `vector-db-asof-strict` + `rag-retrieval-regression`) 34/34 passing; broader vector-db/RAG spot-check
+  114/114 passing; `land.sh` full gate (tsc/test/build) green at merge. See
+  `docs/rollouts/2026-07-06-server-asof-filter.md`.
+  **Follow-up (operational, not yet done):** run `scripts/backfill-asof-epoch.ts` against prod
+  (dry-run first via `BACKFILL_DRY_RUN=1`) before flipping `VECTOR_ASOF_SERVER_FILTER=on` — fail-open
+  keeps retrieval safe either way, but the topK-fill improvement only reaches the pre-epoch corpus
+  after the backfill completes. Both `VECTOR_ASOF_SERVER_FILTER` and `VECTOR_ASOF_STRICT` remain
+  default OFF pending that operator step.
+- **PR #1021 - persist-pool-v2: pre-rankPool candidate pool + per-stage drop dispositions (CLAUDE,
+  worktree `trading-wt-pool-v2`, branch `claude/persist-pool-v2`).** Merged 2026-07-06. Owner-approved
+  deferred follow-up to #979, which honestly captures only `rankPool`'s OUTPUT pool (post
+  minScore/asOf/hybrid/rerank/dedupe) — candidates dropped upstream were invisible. v2 closes that
+  gap: `rankPool` (vector-db.ts) gained an OPTIONAL `onDispositions` hook that tracks every candidate
+  through each filtering stage (minScore → asOf → rerank-truncate → post-rerank floor → dedupe →
+  kept_not_used/used), byte-identical/zero-cost when the hook is omitted (every existing call site).
+  `retrieveContextDetailed` wires a NEW, independent flag `RAG_PERSIST_CANDIDATE_POOL_FULL` (default
+  OFF, envFlagOn) that captures the PRE-`rankPool` `matches` pool (raw Pinecone recall, or the #822
+  fused multi-query pool) plus the disposition map via `recordCandidatePoolFull` (new fn in
+  `src/lib/rag/candidate-pool.ts`, distinct audit kind `rag_candidate_pool_full`) — v1 and v2 toggle
+  independently. Same "never persist raw text" posture as v1 (ids/scores/relevanceScore/docType/
+  asOf/disposition only). Coordinated with sibling lane `claude/server-asof-filter` (PR #1019, also
+  edited `rankPool`'s as-of stage and landed first) — this lane wraps whatever asOf logic exists
+  rather than re-deriving it, so the merge-forward was mechanical.
+  **Review fixes (same day, pre-merge):** fixed 4 review findings, all observability-only (no change
+  to retrieved/used chunks): (1) new `dropped_dedupe_truncate` disposition + a `dedupeSimilar`
+  optional `report` out-param so genuine near-dup drops are no longer conflated with `dedupeSimilar`'s
+  own internal top-`limit` cap truncation (was mislabeling almost every flagship-config run,
+  `limit=3`/`dedupeSimilarity=0.6`); (2) fixed an id-less match that survives rerank being mislabeled
+  `dropped_rerank_truncate` (rerank's spread-copy breaks object identity for id-less survivors too)
+  via a `__poolKey` stamp that survives the copy; (3) wrapped both the v1 and v2 observability-
+  capture blocks in their own try/catch so a capture throw can never empty out a successful
+  retrieval; (4) added a defensive 500-candidate hard cap on `recordCandidatePoolFull`'s persisted
+  payload. Local verify: `tsc --noEmit` clean; `test/persist-candidate-pool.test.ts` (9/9),
+  `test/persist-candidate-pool-v2.test.ts` (14/14), `test/rag-retrieval-regression.test.ts` (28/28)
+  — 51/51 total; `test/rag-dedupe-similar.test.ts` 15/15; `eslint` 0 errors on all touched files;
+  `land.sh` full gate (tsc/test/build) green at merge. See `docs/rollouts/2026-07-06-persist-pool-v2.md`
+  (including its "Review fixes" section).
+- **PR #977 - Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE, branch
+  `claude/corpus-coverage-receipt`).** Merged 2026-07-06. Advisory-only per-run receipt: when
+  strategy.ts's filings-RAG pass requests a doc type that produces zero chunks THIS run, emits one
+  `audit('rag_doc_type_coverage_empty')` + one kind-`safety` decision-case evidence item. Never
+  touches `ragContext`/sizing/policy — advisory only, no flag (mirrors the unconditional
+  `evidence_age_anomaly` receipt). Rollout: `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`.
+  - **2026-07-06 BLOCKER fix (same day, pre-merge):** the original design gated the receipt on
+    "zero ever-ingested `ingested_accessions` rows corpus-wide" as the producer-existence check.
+    That signal was itself broken: the default-ON 8-K SUMMARY writer
+    (`src/lib/web-sources/sec8k.ts`'s `refreshEightK`, via `storeContexts`) writes retrievable
+    `doc_type: "8-k"` chunks but never calls `insertIngestedAccession` — only the default-OFF
+    full-body writer does. So `ingested_accessions` had ZERO "8-k" rows in the default config even
+    with real 8-K chunks in the corpus, meaning the receipt false-fired "8-k" on any day an 8-K
+    chunk didn't rank top-3 — routinely, not rarely. Investigated `document_chunks` as a
+    corpus-truth replacement (the reviewer's suggestion) and confirmed it's not viable: no
+    `doc_type` column in its schema, not populated unconditionally by every writer, and
+    `source`/prefix values aren't a reliable per-doc_type proxy (`disclosure-rag.ts` shares one
+    prefix across two different doc types). Fixed per the task's documented fallback: dropped the
+    runtime `ingested_accessions` producer-count entirely; added a static
+    `COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q", "8-k"]` allowlist (`src/lib/strategy.ts`) of
+    doc types hand-verified to have a producer in code; `computeEmptyDocTypes`
+    (`src/lib/prompt-safety.ts`) narrowed to `(coverageCheckedDocTypes, retrievedDocTypes)` with no
+    DB dependency at all. Also fixed the companion noise finding: `earnings-transcript` (genuine
+    zero-producer, no writer anywhere) excluded from `COVERAGE_CHECKED_DOC_TYPES` (stays in the
+    harmless retrieval-request literal) so it no longer fires a receipt every single run forever.
+    `ingestedAccessionCountForDocType`/`ingestedAccessionCountsByDocType`
+    (`src/lib/db-learning.ts`) kept as general-purpose diagnostic helpers (doc comment corrected
+    to spell out the "8-k" undercount caveat), just no longer used by this receipt. Added the
+    regression test the fix requires (`test/rag-doc-type-coverage.test.ts`, "(c) REGRESSION"):
+    stores an 8-K summary chunk with NO `insertIngestedAccession` call anywhere and asserts no
+    false-positive receipt for "8-k". 11/11 passing (was 10/10); `npx tsc --noEmit` clean; 42/42 +
+    31/31 regression spot-checks unchanged. Full rationale in the rollout note's new "Correction"
+    section.
+  - **2026-07-06 THIRD fix (same day, pre-merge) — restore both-conditions guard, ledger-complete
+    subset only:** the 2nd fix above traded the 8-K false-positive for a new daily-noise bug:
+    firing on this-run-retrieval-emptiness ALONE (no producer check at all) means 8-K —
+    event-sparse, routinely won't rank top-3 — would fire the receipt on a large fraction of
+    normal runs. Redesigned: `COVERAGE_CHECKED_DOC_TYPES` narrowed to `["10-k", "10-q"]` (only the
+    types whose `ingested_accessions` producer ledger is COMPLETE — `sec-filings.ts` writes an
+    accession row for every 10-K/10-Q ingest; `8-k`'s default-ON summary writer does not, so its
+    ledger can't distinguish "no coverage" from "didn't rank today" — excluded;
+    `earnings-transcript` stays excluded, no producer anywhere). Restored the BOTH-CONDITIONS gate
+    for that subset: `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) gained a third
+    `hasProducerForDocType` predicate parameter — a type is "empty" only when NOT retrieved this
+    run AND the predicate reports zero producer rows. Kept `prompt-safety.ts` DB-free:
+    `strategy.ts` builds the predicate from ONE bulk `ingestedAccessionCountsByDocType()` call + an
+    in-memory prefix lookup (not N per-type queries). Rewrote `test/rag-doc-type-coverage.test.ts`
+    (14/14 passing) including the key low-noise case: a 10-K that didn't retrieve this run but HAS
+    a producer row must stay silent. `npx tsc --noEmit` clean; `strategy-prompt-safety`/
+    `strategy-rag-quickwins-wiring` sweep 5/5. This is the corpus-truth-then-ledger-scoped redesign
+    that shipped — full rationale in the rollout note's new "Second correction" section.
+- **PR #973 - RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822)
+  (CLAUDE), branch `claude/rag-golden-eval-episodic`.** Merged 2026-07-06. Test/fixture/docs only,
+  no production code changed. Added 10 new fixture cases to
+  `test/fixtures/rag-retrieval-eval-fixture.ts` covering `EPISODIC_DOC_TYPES`
+  (`socratic-decision`/`coach-note`/`lesson`) — the prior 462-line fixture had zero non-filings
+  cases, so the harness reportedly saturated at recall 1.0. Each new case has near-miss hard
+  negatives (same symbol/regime, wrong thesis or side) so it's actually discriminating. Added two
+  `describe` blocks to `test/rag-retrieval-eval.test.ts`: an episodic recall@k/MRR suite (reuses
+  the existing scorer via a minimal additive `cases` option on `runFixture`) and a
+  single-query-vs-multi-query suite exercising `RetrieveOptions.queries`/`rrfFuse` (#822) directly
+  against `retrieveContextDetailed`, asserting no-regression + that the fused pool draws from
+  multiple query lists (one `mocks.query` call per fan-out variant). No RAG env flag defaults
+  touched. tsc clean; focused `test/rag-retrieval-eval.test.ts` +
+  `test/rag-retrieval-regression.test.ts` = 36/36 passing (17 new).
+  **2026-07-06 follow-up (2nd commit, pre-merge) — baseline-population + recall-discrimination
+  fixes:** the "filings behavior byte-identical" claim above was actually FALSE — the filings
+  baseline/rerank/hybrid/as-of `it`s had no `cases` filter and were silently scoring the full
+  39-case mix (measured MRR 0.919) instead of the original 29 filings cases (MRR 1.0). Fixed by
+  adding `FILINGS_CASES` and wiring it through every filings-only `it`; filings MRR confirmed back
+  to 1.0. Also added an explicit `recall1` assertion over the episodic cases (`toBeCloseTo(0.4, 5)`,
+  the actual measured value, since recall@3 alone saturates at 1.0 and can't discriminate), and
+  replaced a brittle Set+fixed-array-slice assertion in the multi-query plumbing test with a
+  no-dupes + all-from-pool check. Still 36/36 passing, tsc clean. Rollout:
+  `docs/rollouts/2026-07-06-rag-golden-eval-episodic.md`.
+- **PR #970 - Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`).**
+  Merged 2026-07-06. Distinguishes no-memory vs lookup-failed vs budget-skipped vs degraded
+  instead of every RAG/episodic retrieval outcome collapsing to an indistinguishable `[]`/
+  non-empty result. Additive/advisory-only: new `RetrievalStatus` union + optional
+  `RetrieveOptions.onStatus` callback wired through the four existing classification points in
+  `retrieveContextDetailed` (vector-db.ts), a new `status` field on `ExperienceRetrievalResult`
+  (experience-memory.ts), per-symbol/PORTFOLIO capture in strategy.ts persisted via a new
+  `rag_retrieval_status` audit row alongside `experience_retrieval`, and an additive optional
+  `ragRetrievalStatus` field on `SocraticDecisionCase` (types.ts) — persistence only, no rendering.
+  Never gates/alters chunk selection. Coordinated with sibling lane `claude/persist-candidate-pool`
+  (also edits `vector-db.ts` `retrieveContextDetailed`) — this diff was kept minimal/localized to
+  the early-return points and a thin status output. Tests: `test/rag-retrieval-status.test.ts`
+  (new, 11 cases, network-free). Pre-merge Copilot review caught a real bug:
+  `retrieveContextDetailedWithStatus`'s forwarding call to a caller-supplied `onStatus` would
+  propagate a throwing callback instead of swallowing it (breaking the "throwing callback never
+  affects retrieval" contract every other call site relies on) — fixed with a try/catch + a
+  regression test. Rollout: `docs/rollouts/2026-07-06-typed-retrieval-status.md`.
+- **PR #974 - Held-position retrieval scope (CLAUDE, worktree `~/apps/trading-wt-held-scope`,
+  branch `claude/held-position-retrieval-scope`).** Merged 2026-07-06. Widens the three retrieval
+  scopes in `runStrategyOnce` (filings RAG `topSymbols`, learned-context `learnedSymbols`, episodic
+  `situationCandidates`) to UNION in every held (open) position's symbol, not just the score-sorted
+  top-N scan candidates — so sell/hold/trim decisions on a held name outside the top slice get
+  retrieved memory too (previously zero). Strictly additive: the BUY-candidate scan/prompt set
+  (`marketScan.topCandidates`) and its ordering are unchanged; no risk-gate/sizing/policy touch.
+  Hoisted the pre-existing `heldSymbols` computation (was locally recomputed for take-profit
+  trim-band pruning) to a single shared value. New test:
+  `test/strategy-held-position-retrieval-scope.test.ts` (2 tests, held-symbol inclusion + no
+  duplicate retrieval + top-N regression). tsc clean, focused strategy/market/learned-context/
+  experience-memory suites green. Rollout: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
+  **Follow-up fix (same day, 2nd commit, pre-merge) — episodic-sketch gap:** episodic
+  `buildSituationSketch` (`src/lib/experience-memory.ts`) still did a bare `slice(0, 3)` on
+  candidates, so held symbols appended past top-3 reached the `retrieveDecisionExperiences` call
+  but were dropped before entering the actual sketch/query text — episodic parity was only
+  partial. Fixed with an additive `SituationCandidate.held` flag + a bounded (max 6) held-aware
+  selection in `buildSituationSketch`; non-held path is byte-identical to the old slice. 4
+  new/strengthened tests across `test/experience-memory.test.ts` +
+  `test/strategy-held-position-retrieval-scope.test.ts`; tsc clean; full `npm test` 2678/2678
+  passed. Same rollout note, follow-up section appended.
+  **Pre-merge Copilot review fix — cross-lane catch-block fallback bug:** with `topSymbols` now
+  widened to include `heldSymbols`, the filings-RAG pass could cover more than the original top-3,
+  but the typed-retrieval-status lane's (`#970`) fallback in the later `catch` block still only
+  added receipt rows for `marketScan.topCandidates.slice(0, 3)` — so a full-pass failure (e.g. a
+  vector-db import error) would silently omit held symbols from the `rag_retrieval_status` receipt
+  even though they were now in-scope for retrieval. Fixed (commit `23784ad`): the catch-block
+  fallback now iterates the same held-widened symbol set (`uniqueSymbols([...top-3,
+  ...heldSymbols])`) as the happy path, so a held symbol outside the top-3 still gets a
+  `lookup_failed` receipt row if the whole filings-RAG pass throws. (Same review pass also fixed an
+  O(heldSymbols × topCandidates) `.find()` loop to O(heldSymbols) via a pre-built symbol→candidate
+  map, and corrected a stale code comment on the `SITUATION_SKETCH_MAX_CANDIDATES` cap.)
+- **PR #816 - Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path
+  prompts (CLAUDE).** Merged to `main` 2026-07-05 as squash `041b73b2` (verify/smoke/gitleaks
+  green). Advisory ONLY (owner philosophy: receipts, never blocks): fenced
+  `<owner_strategy_prompt>` + one data-not-command clause in the Bull system prompt covering every
+  untrusted block (headlines/smartMoney/RAG/learned/analogs/coaching/reflection) + Bear equivalent
+  (`STRATEGY_PROMPT_VERSION` 1.4.0→1.5.0); `reflection_summary` moved out of the SYSTEM prompt into
+  Bull userContent as fenced `<reflection_summary>` DATA; new leaf `src/lib/prompt-safety.ts`
+  deterministic injection scanner → `audit('prompt_injection_suspected')` + kind-`safety`
+  decision-case evidence (detection only, never blocks/alters); learned-context lines carry inline
+  provenance (`[origin= source= asserted= conf=]`); same-day high-relevance RAG chunk / same-day
+  fact → aggregated `audit('evidence_age_anomaly')` + `safety` evidence item; post-mortem
+  reflection WRITER fenced at source. Review pass added an excerpt cap on persisted findings (a
+  ~50KB base64 blob could otherwise persist unbounded text repeatedly via the decision-case
+  evidence JSON) and a fence-escape detection pattern (forged closing tags from inside untrusted
+  data). Tests: 2577 total in the full local gate, all green (`test/prompt-safety.test.ts` 31,
+  `test/strategy-prompt-safety.test.ts` 4, plus focused strategy/chat/socratic/learned-context
+  suites). See `docs/rollouts/2026-07-05-prompt-safety-fencing.md`.
+- **PR #819 - Wire `usage-budget` Phase 2 (advisory-first, owner-overridable enforcement) into
+  `runStrategyOnce` (CLAUDE).** Merged to `main` 2026-07-05 as squash `f28322fe`
+  (verify/smoke/gitleaks green). ADVISORY (always on when the monitor is configured):
+  `usage_budget_status` audit receipt every run + a `formatBudgetAdvisory` line injected into the
+  Bull userContent next to `drawdownAdvisory`. ENFORCEMENT (opt-in via `USAGE_BUDGET_ENFORCE`,
+  default off) at the per-user/day LLM budget choke point: skip ends the run before any LLM call
+  (audit + `notifyBudgetSkip`); downgrade swaps `policy.llmModel`/`redTeamLlmModel` on the
+  in-memory run policy only, never persisted. `debateProposal` gained an optional `policyOverride`
+  param so the Bear picks up the same transient downgrade. **Adversarial review caught a BLOCKER
+  pre-merge:** the enforcement block was mutating the shared `policy` object in place, so a
+  same-run cap-breach demotion's `setPolicy({ ...policy, strategyAuthority: "propose" })` would
+  have persisted the downgraded models to the DB permanently, contradicting the "never persisted"
+  contract; fixed with a separately-carried `runLlmOverride`/`runPolicy` never passed to
+  `setPolicy`/`autoRevertOnCapBreach`, plus a regression test that trips both a downgrade and a
+  cap-breach demotion in the same run. Also fixed: scoped the enforcement try/catch so a post-audit
+  throw in the skip path can't be swallowed into the full LLM path; threaded the downgrade into
+  `generateReflectionSummary` (outcome-engine lesson pass left as a documented intentional
+  exemption — fire-and-forget, outlives the run); de-duplicated the budget-status fetch; extended
+  the downgrade test to assert the Red Team request body's model too. Full local gate: 2587 tests
+  across 261 files, all green; build clean. See
+  `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md`.
+- **PR #820 - Durable due-jobs substrate for 15m/1h intraday outcome sampling (CLAUDE).** Merged to
+  `main` 2026-07-05 as squash `e90db1a8` (verify/smoke/gitleaks green). New `due_jobs` table
+  (migration v11) + `src/lib/db-jobs.ts` (lease/reclaim claimable queue — fixes the
+  crashed-row-stuck-forever gap the existing `mobile_commands` queue has). `counterfactual-learning.ts`
+  + `outcome-engine.ts`'s `measureCase` enqueue `sample_intraday_horizon` jobs once a case's basis
+  (fill or ref price) resolves; new `drainDueIntradaySampleJobs` worker drains them through the same
+  `mergeHorizonRows`/write path the existing inline `samplableNow` path uses (belt-and-suspenders,
+  no duplicate rows); one fire-and-forget call added to `scheduler.ts`'s `tick()`. **Adversarial
+  review caught a lost-update-race BLOCKER pre-merge:** `measureCase` held an outcomes snapshot
+  across awaits, so its wholesale write could erase a 15m/1h row the due-jobs worker had already
+  persisted concurrently; fixed by re-merging against a fresh DB read immediately before every
+  terminal/partial write (`writeSocraticDecisionOutcome`, `markSkippedCounterfactualMatured`,
+  `markSkippedCounterfactualUnresolvable`). Also fixed: claimant-fenced the three terminal-transition
+  functions in `db-jobs.ts` (a stale/lease-expired worker could otherwise resurrect an
+  already-completed job); renamed the drain receipt's `failed` counter to `erroredRetried` +
+  removed the dead `'failed'` `DueJobStatus` value; replaced the worker's `caseId.split(":")`
+  counterfactual lookup with an exact `runId`/`horizonDays`-keyed lookup (the split-based lookup
+  could silently match the wrong row when a run/symbol pair had more than one horizon-day config);
+  added `due_jobs` to the account-deletion drift guard. Full local gate green (2529+/2530+ full
+  suite, build clean). See `docs/rollouts/2026-07-05-durable-due-jobs.md`.
+- **PR #822 - HyDE + evidence-derived multi-query retrieval for filings RAG, flag-gated (CLAUDE).**
+  Merged to `main` 2026-07-05 as squash `d97b7c71` (verify/smoke/gitleaks green). New
+  `src/lib/rag/multi-query.ts`: pure `deriveQueryVariants()` (2-4 facet sub-queries from
+  evidence/sector/dominant-factor) + `generateHydePassages()` (one cheap fail-open LLM call, HyDE
+  passages). Two flags `RAG_MULTIQUERY`/`RAG_HYDE` (+`RAG_HYDE_MODEL`), both **default OFF** —
+  byte-identical retrieval when both are off (pinned by a dedicated regression test); not
+  independent, `RAG_HYDE` alone is a no-op without `RAG_MULTIQUERY`. `vector-db.ts`
+  `RetrieveOptions.queries?: string[]`: per-query embed+match (including the original query
+  alongside variants), RRF-fused into the existing `rankPool` pipeline unchanged. **Adversarial
+  review caught a fail-CLOSED BLOCKER pre-merge:** the multi-query fan-out had no per-item catch,
+  so one variant's rejected Voyage/Pinecone call discarded every other variant's already-successful
+  results via a bare `Promise.all`, returning empty filings context instead of falling back to the
+  single-query path; fixed so each fan-out call is caught individually and an all-fail case falls
+  back to plain single-query retrieval (flags-off behavior). Also fixed: first-occurrence-wins id
+  resolution could keep a lower cosine score (now higher-score wins); HyDE's endpoint/model could
+  disagree (could route an OpenAI model id to `api.anthropic.com` under an Anthropic policy,
+  silently returning `[]`; now resolved coherently with an audit on non-OK responses); HyDE spend
+  wasn't gated on the daily LLM budget (now gated via `isOverLlmBudget`). Full local gate: 2619
+  tests across 264 files, all green; build clean. See
+  `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
+- **Push account status metrics to Usage Monitor (AG)** — ✅ COMPLETED 2026-07-05. Pushed metricTypes `balance` and `limit` to API Usage Monitor via `usage-monitor-push.ts` upon portfolio fetch in Alpaca and Robinhood.
+- **Coach chat -> framework primitives (CODEX, M) — ✅ COMPLETED via PR #810.**
+  Focused slice for issue #473: decision-trace coach-note POST can optionally promote into lesson/framework primitives, framework review now carries explicit rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
+
+- **Scan table column customization parity (CODEX, M) — ✅ COMPLETED via PR #806.**
+  Scope: bring `/console/scan` to legacy dashboard parity for column visibility, ordering, reset, and saved browser-local state; allow only tightly related ticker-drawer parity if the scan surface needs it.
+
+- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854.** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
+
+- **Codex autofix storm guard (CODEX/AG, workflow/fleet-infra) — ✅ COMPLETED via PR #1004 (2026-07-06).**
+  Scope: reduced `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
+  Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue comment.
 - **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854 (2026-07-05).** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
   _2026-07-05 (CLAUDE audit-c3): CORRECTION — this row is mis-filed. Per protocol "Completed" = merged
   to `main`; `gh pr view 854` shows state **OPEN**, mergeStateStatus **BLOCKED** (all CI green —
@@ -1231,6 +1713,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
 
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09.** Reservation/diagnosis row; the effort moved to 🚧 In Progress (same title, this file) when implementation began and is now in PR via land.sh, auto-merge armed — see that row for the full record. (Corrected in place per protocol, not deleted; annotation by CLAUDE while landing MONET's work under the owner-directed usage-cap pickup.)
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — LANDED 2026-07-09 as PR #1272 (auto-merge armed, merging on CI; MONET-authored, committed + landed by CLAUDE under the owner-directed usage-cap pickup — full gate green twice, coexistence with #1222's TwelveData change verified).** Fix as designed: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
 

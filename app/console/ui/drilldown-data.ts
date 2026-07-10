@@ -636,13 +636,17 @@ export function targetUpsidePct(view: QuoteView): number | undefined {
 // ── Provenance tooltips ("via Yahoo Finance") ────────────────────────────────
 
 /** Append per-field provenance + freshness to a tooltip when the scan recorded
- *  which provider supplied the field. */
+ *  which provider supplied the field. When no provider supplied it, append
+ *  neither — stamping "Received <time>" on a field no provider returned claims
+ *  freshness for data we never got. */
 export function withProvenance(base: string, view: QuoteView, field: keyof EnrichmentSources): string {
   const parts = [base];
   const source = view.sources?.[field];
-  if (source) parts.push(`Source: ${friendlySource(source)}.`);
-  const received = receivedLabel(view.asOf);
-  if (received) parts.push(`${received}.`);
+  if (source) {
+    parts.push(`Source: ${friendlySource(source)}.`);
+    const received = receivedLabel(view.asOf);
+    if (received) parts.push(`${received}.`);
+  }
   return parts.join(" ");
 }
 
