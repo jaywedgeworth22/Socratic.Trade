@@ -144,13 +144,16 @@ npx tsc --noEmit                             # clean
 - The approval-card "(policy default)" hover copy for the non-rotating no-model case still
   mentions an `OPENAI_MODEL` env default that no longer exists (pre-existing stale copy, out of
   scope here).
-- **Drive-by gate unblock (2026-07-10, one-line, documented here because it rides this PR):**
-  `src/lib/db-health.ts` `getServiceHealthLog` now orders `ts DESC, id DESC`. The new main-tip
-  test `test/data-providers.test.ts` "TwelveData logs an ok:false health row..." (from
-  #1267/#1287) asserts on the NEWEST health row, but `ts` is ms-resolution — on a fast machine
-  sibling tests' rows tie on `ts` and return in arbitrary order, failing the file
-  deterministically on pristine `origin/main` (passes alone, fails after siblings; CI's slower
-  runners rarely tie, hence green there). This blocked `scripts/land.sh`'s local `npm test`
-  gate for every lane landing from this machine. Verified: 93/93 in the file, 4 consecutive
-  runs. Other `ORDER BY ts DESC` sites in db-health.ts (incl. the last-5 circuit-breaker read)
-  share the theoretical tie and are left for a follow-up sweep.
+- **Drive-by gate unblock (2026-07-10, two-line, documented here because it rides this PR):**
+  `src/lib/db-health.ts` `getServiceHealthLog` now orders `ts DESC, rowid DESC`. The new
+  main-tip test `test/data-providers.test.ts` "TwelveData logs an ok:false health row..."
+  (from #1267/#1287) asserts on the NEWEST health row, but `ts` is ms-resolution — on a fast
+  machine sibling tests' rows tie on `ts` and return in arbitrary order, intermittently
+  failing the file on pristine `origin/main` (passes alone; CI's slower runners rarely tie,
+  hence green there). This blocked `scripts/land.sh`'s local `npm test` gate. GOTCHA hit en
+  route: the first attempt used `id DESC`, but `api_health_log.id` is a **randomUUID** TEXT
+  PK — ordering by it is a per-run coin flip, and the flake came back under land.sh's suite
+  run. `rowid` (implicit; a TEXT PRIMARY KEY does not alias it) is the monotonic insertion
+  order. Verified: 93/93 in the file, 6 consecutive runs post-rowid. Other `ORDER BY ts DESC`
+  sites in db-health.ts (incl. the last-5 circuit-breaker read) share the theoretical tie and
+  are left for a follow-up sweep (background chip spawned with the rowid guidance).
