@@ -486,8 +486,9 @@ As of 2026-07-08 (assignment-rule update).
 
 - **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — IN PROGRESS 2026-07-10, owner-assigned.** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team: (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rides here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row). Full gate under node@24 + land.sh.
 - **Learning-review legacy-seed default-blob edge — #1278 deferred finding #3 (MONET, branch
-  `monet/learning-review-legacy-seed-99138a`, follow-up to PR #1278) — IN PROGRESS 2026-07-10; code
-  done + verified, PR opening as a follow-up to #1278.** `seedLegacyLearningReviewFields`
+  `monet/learning-review-legacy-seed-99138a`) — IN PROGRESS 2026-07-10; PR #1326 open, full land.sh gate
+  green, auto-merge armed. #1278 squash-merged to `main` mid-work (`6f1aaf87`), so rebased onto `main`
+  (single commit) — standalone follow-up, not stacked.** `seedLegacyLearningReviewFields`
   (`src/lib/db-profiles.ts`) bailed whenever any `learningReview*` key was present in
   `user_settings.policy`; a legacy FULL blob stamps the DEFAULT `learningReviewEnabled:false` there
   while the real enabled review lives account-scoped (#1116), so a pre-cutover enabled review silently

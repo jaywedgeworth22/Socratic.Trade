@@ -281,6 +281,8 @@ full-blob test pins the finding and the tiered test guards against the naive fix
 `eslint` on touched files: 0 errors (3 pre-existing `_legacy*`-unused warnings in `mergePolicy`, unrelated).
 
 **Delivery.** Built on a branch forked from #1278's tip (`monet/learning-review-model-fixes-99138a`
-@ 150257ae) because the target code only exists on that unmerged PR. Landed as a follow-up to #1278 (per
-addendum 2's "Follow-up PR" designation). Finding **#2** (unshown-item orphaning) remains the only open
-deferred item.
+@ 150257ae) because the target code only lived on that then-unmerged PR. #1278 squash-merged to `main`
+mid-work (`6f1aaf87`, 2026-07-10 08:26Z), so the branch was rebased onto `main` (single commit; #1278's
+now-redundant commits dropped) and delivered as the standalone follow-up **PR #1326** against `main` — per
+addendum 2's "Follow-up PR" designation. Finding **#2** (unshown-item orphaning) remains the only open
+deferred item from #1278.

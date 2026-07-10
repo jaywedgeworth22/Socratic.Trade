@@ -18,9 +18,10 @@ is a stale default → seed over it), and (2) a one-time `learning_review:legacy
 unconditionally on first read, so the seed evaluates only pre-deploy state and can never later re-fire to
 clobber a deliberate disable (the fail-OPEN danger). +2 tests (full-blob recovered; tiered-disable NOT
 clobbered), pre-fix falsified. node@24: tsc clean, learning-review 32/32, policy-scope suites 53/53
-(pr7-merge-gate green), build clean, eslint 0-err. Built off #1278 tip 150257ae (code only exists there).
-See `docs/rollouts/2026-07-09-learning-review-model-fixes.md` addendum 3. Only deferred item still open: #2
-(unshown-item orphaning).
+(pr7-merge-gate green), build clean, eslint 0-err. Built off #1278 tip 150257ae; #1278 squash-merged to
+`main` mid-work (`6f1aaf87`), so rebased onto `main` and delivered as **PR #1326** (full land.sh gate green).
+See `docs/rollouts/2026-07-09-learning-review-model-fixes.md` addendum 3. Only #1278 deferred item still
+open: #2 (unshown-item orphaning).
 
 ## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
 Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
