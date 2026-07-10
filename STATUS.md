@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Settings-UX fixes landed (MONET-authored, CLAUDE usage-cap pickup; branch `monet/settings-ux-fixes`)
+Three-part settings-UX change MONET left uncommitted when its seat hit the usage cap, committed
+as-is and landed by a CLAUDE pickup session: (1) real bug fix in `app/console/lib/policy-diff.ts
+classify()` — the `looserWhen` ternary had identical branches, so lowering a `universeFloor.*`
+value (which WIDENS the universe) was mislabeled "Locks Down"; regression test added; (2)
+`app/console/ui/sheet.tsx` keeps `onClose` in a ref so the focus effect depends only on `open`
+(inline-arrow `onClose` re-ran the effect per keystroke, yanking the caret out of TypedConfirm
+inputs); (3) hint tooltips for maxGrossExposurePct / maxNetExposurePct in
+`app/console/guardrails/field-defs.ts`. `origin/main` merged in — the expected overlap with AG
+#1231 (`8fd8b3ab`, Sheet focus-loop guard) merged cleanly and both sides are verified present.
+See `docs/rollouts/2026-07-09-settings-ux-fixes.md`.
 ## 2026-07-09 — Vitest temp-SQLite leak cleanup (MONET, branch `monet/distracted-albattani-dfc422`)
 The suite leaked every temp DB it created (`DATABASE_URL=file:<tmpdir>/agentic-*.db` beforeAll pattern
 plus older `chat-*`/`trading-test-*`/`llm-provider-test-*` names) — 178k files/~130GB on the fleet Mac
