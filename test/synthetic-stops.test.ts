@@ -7,6 +7,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 import {
   claimSyntheticStop,
   getDb,
+  listBrokerProtectiveStops,
   listFillEvents,
   listSyntheticStops,
   revertSyntheticStopClaim,
@@ -390,6 +391,49 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(broker.placed).toHaveLength(1);
     expect(broker.cancelled).toEqual([]);
     expect(listSyntheticStops("SYN-JUSTPLACED", "local")).toHaveLength(1);
+  });
+
+  it("a PARTIAL synthetic fire (uncovered remainder) does NOT cancel the still-valid broker stop covering the rest of the position", async () => {
+    // A fractional long (10.6 sh) whose whole-share portion is already protected by a native Alpaca
+    // trailing stop placed on an earlier tick (floored to 10 sh — Alpaca rejects fractional trailing
+    // stops); the 0.6-sh remainder has no broker-held coverage. Modeled directly as "tick 2" state
+    // (the resting stop + an already-armed synthetic row) so this test isolates the FIRE loop's
+    // cancel decision from reconcile's own same-tick placement/coverage bookkeeping.
+    broker.positions = [{ symbol: "AAPL", quantity: 10.6, averageCost: 100, marketValue: 10.6 * 90 }];
+    broker.quotes = { AAPL: { price: 90 } }; // breaches a 5% trail off the seeded extreme (100)
+    broker.orders = [{ id: "trail-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "queued", quantity: 10 }];
+    upsertBrokerProtectiveStop({
+      id: "protstop-local-SYN-PARTIALFIRE-AAPL", userId: "local", accountNumber: "SYN-PARTIALFIRE",
+      symbol: "AAPL", brokerOrderId: "trail-1", quantity: 10, stopPrice: 95, status: "resting",
+      kind: "trailing", trailPercent: 5
+    });
+    upsertSyntheticStop({
+      id: "synstop-local-SYN-PARTIALFIRE-AAPL", userId: "local", accountNumber: "SYN-PARTIALFIRE",
+      symbol: "AAPL", side: "long", quantity: 10.6, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active"
+    });
+    connectTestAccount("SYN-PARTIALFIRE", "paper");
+    const policy: TradingPolicy = {
+      ...policyFor("SYN-PARTIALFIRE"),
+      activeBroker: "alpaca",
+      riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5 }
+    };
+    const result = await runSyntheticStopMonitor("local", policy, true);
+    // Reconcile is a no-op this tick — the existing 10-sh trailing stop already matches what it
+    // would place (no mismatch, no re-cancel/replace) — so the only placeEquityOrder call is the
+    // fire loop's own protective exit, sized to the 0.6-sh uncovered remainder.
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("sell");
+    expect(broker.placed[0].quantity).toBeCloseTo(0.6);
+    expect(result.exited).toBe(1);
+    const fills = listFillEvents("SYN-PARTIALFIRE", "paper", 10, "local");
+    expect(fills).toHaveLength(1);
+    expect(fills[0].quantity).toBeCloseTo(0.6);
+    // ...and — the fix under test — must NOT cancel the broker-held stop still covering the other
+    // 10 shares: before the fix, cancelBrokerProtectiveStop ran unconditionally after every fire.
+    expect(broker.cancelled).toEqual([]);
+    const stops = listBrokerProtectiveStops("SYN-PARTIALFIRE", "local");
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toMatchObject({ brokerOrderId: "trail-1", status: "resting", quantity: 10 });
   });
 
   it("books a LIVE stop exit as pending_reconciliation (provisional at quote price, not a final fill)", async () => {

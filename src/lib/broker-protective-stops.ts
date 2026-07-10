@@ -200,13 +200,28 @@ export async function reconcileBrokerProtectiveStops(args: {
    *    best a broker rejection and at worst a double-sell. Orders cancelled by THIS reconcile are
    *    pruned before the coverage check, so a just-replaced stop can't suppress its own
    *    replacement.
-   * Optional and defaults to empty — a caller that omits it (or a failed fetch) keeps the
-   * conservative behavior: rows keep retrying, and placement sizes to the full position
-   * (protection over dedup).
+   * Optional and defaults to empty — a caller that omits it keeps the conservative behavior: rows
+   * keep retrying, and placement sizes to the full position (protection over dedup — no coverage
+   * info was ever meant to be available from this caller).
    */
   orders?: EquityOrder[];
+  /**
+   * Whether `orders` reflects a call to `gateway.getEquityOrders` that actually SUCCEEDED this
+   * tick, as opposed to a caller that tried and failed (passing `orders: []` because the fetch
+   * threw, not because the account genuinely has no open orders). Defaults to `true` so a caller
+   * that never fetched at all (and so never had real coverage info to begin with) keeps the
+   * original protection-over-dedup behavior. Set to `false` ONLY when a real fetch attempt failed
+   * THIS tick: a failed fetch is not evidence of "nothing is resting" — full-size bracket legs or
+   * another exit order could easily be live and simply invisible this tick. Placing (or resizing)
+   * a broker-held stop against that blind spot risks stacking a second sell on shares another
+   * order already commits, so coverage-dependent sizing (`uncoveredQuantity`) returns `null`
+   * ("unknown, don't touch") instead of assuming full coverage-free, and BOTH section 3 (mismatch/
+   * cancel) and section 4 (new placement) skip a symbol entirely rather than act on a guess
+   * (Codex review, PR #1331).
+   */
+  ordersListed?: boolean;
 }): Promise<ReconcileResult> {
-  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [] } = args;
+  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true } = args;
   const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [] };
 
   const kind = desiredBrokerStopKind(policy, executionMode);
@@ -264,10 +279,13 @@ export async function reconcileBrokerProtectiveStops(args: {
   // replacement is about to cancel) from the count; orders this reconcile already cancelled are
   // dropped too. An unknowable order quantity counts as full coverage (failing toward
   // no-duplicate-sell). Without a caller-supplied order list, the full position quantity is used
-  // (pre-coverage behavior — protection over dedup).
-  const uncoveredQuantity = (pos: EquityPosition, sym: string, excludeOrderId?: string): number => {
+  // (pre-coverage behavior — protection over dedup). Returns `null` — coverage genuinely UNKNOWN,
+  // not "known to be zero" — when the caller attempted a real fetch this tick and it failed
+  // (`ordersListed: false`): callers must treat `null` as "don't touch this symbol's broker-held
+  // sizing at all", never as 0 or as full.
+  const uncoveredQuantity = (pos: EquityPosition, sym: string, excludeOrderId?: string): number | null => {
     const full = Math.abs(pos.quantity);
-    if (orders.length === 0) return full; // no list supplied (or empty fetch) — pre-coverage behavior
+    if (orders.length === 0) return ordersListed ? full : null;
     const cancelled = new Set(out.cancelledOrderIds);
     const cov = liveExitOrderCoverage(
       orders.filter((o) => !cancelled.has(o.id) && o.id !== excludeOrderId),
@@ -280,9 +298,11 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   // The share quantity a broker-held stop of this kind should cover: the uncovered remainder,
   // floored to whole shares on the native trailing lane (Alpaca rejects fractional trailing
-  // stops) — the synthetic monitor's quantity-aware coverage picks up any remainder.
-  const desiredStopQuantity = (pos: EquityPosition, sym: string, excludeOrderId?: string): number => {
+  // stops) — the synthetic monitor's quantity-aware coverage picks up any remainder. `null`
+  // propagates from uncoveredQuantity unchanged — "coverage unknown this tick", not "zero".
+  const desiredStopQuantity = (pos: EquityPosition, sym: string, excludeOrderId?: string): number | null => {
     const qty = uncoveredQuantity(pos, sym, excludeOrderId);
+    if (qty === null) return null;
     return kind === "trailing" && nativeTrailing ? Math.floor(qty) : qty;
   };
 
@@ -394,6 +414,14 @@ export async function reconcileBrokerProtectiveStops(args: {
     const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
     if (existingStop && existingStop.status === "resting") {
       const qty = desiredStopQuantity(pos, sym, existingStop.brokerOrderId);
+      // Coverage is genuinely unknown this tick (a real order-list fetch failed) — do not treat
+      // that as evidence of drift. Cancelling a correctly-sized resting stop on a guess, only to
+      // have section 4 ALSO skip replacing it (same unknown-coverage guard), would leave the
+      // position with no broker-held stop at all. Leave the existing stop exactly as-is.
+      if (qty === null) {
+        audit("broker_protective_stop_skipped", { symbol: sym, kind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId);
+        continue;
+      }
       // Where section 4 would place this stop's trigger today (informational for native trailing —
       // the broker moves that trigger itself).
       const newStopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos);
@@ -454,9 +482,17 @@ export async function reconcileBrokerProtectiveStops(args: {
     if (!(pos.averageCost > 0)) continue;
     // The uncovered remainder (coverage-aware — never stack exit quantity on top of a live bracket
     // leg / manual sell; the just-cancelled replacement's own order is pruned inside), floored to
-    // whole shares on the native trailing lane. Zero means either full coverage by other live exit
-    // orders or a sub-share remainder — either way the synthetic monitor keeps covering it.
+    // whole shares on the native trailing lane. `null` means a real order-list fetch failed this
+    // tick — coverage is UNKNOWN, not zero; placing here could double up on shares another,
+    // invisible-this-tick order already commits, so skip entirely and let the synthetic monitor
+    // (which is quantity-aware against whatever it CAN see, and fails safe otherwise) cover the
+    // tick (Codex review, PR #1331). Zero (list fetched fine, just fully covered/sub-share) is a
+    // normal, confident skip.
     const qty = desiredStopQuantity(pos, sym);
+    if (qty === null) {
+      audit("broker_protective_stop_skipped", { symbol: sym, kind, note: "order list unavailable this tick — coverage unknown, deferring placement to the synthetic monitor rather than guessing" }, userId);
+      continue;
+    }
     if (!(qty > 0)) {
       audit("broker_protective_stop_skipped", {
         symbol: sym,

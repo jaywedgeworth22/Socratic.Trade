@@ -534,4 +534,62 @@ describe("reconcileBrokerProtectiveStops — trailing lane", () => {
     expect(gw.cancelled).toEqual(["ord-1"]);
     expect(listBrokerProtectiveStops("TR-8", "local")).toHaveLength(0);
   });
+
+  describe("ordersListed: false — a failed order-list fetch must never be mistaken for confirmed-empty coverage", () => {
+    it("skips NEW placement entirely (never assumes coverage-free) when the caller's fetch failed", async () => {
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-13"), accountNumber: "TR-13", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+        orders: [], ordersListed: false
+      });
+      expect(r.placed).toBe(0);
+      expect(gw.placed).toHaveLength(0);
+      expect(r.placedStopSymbols).toEqual([]);
+      expect(r.partiallyPlacedStopSymbols).toEqual([]);
+      // Recovery: the NEXT tick's successful fetch (even an honestly-empty one) places normally.
+      const recovered = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-13"), accountNumber: "TR-13", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+        orders: [], ordersListed: true
+      });
+      expect(recovered.placed).toBe(1);
+    });
+
+    it("leaves an EXISTING resting stop untouched (no spurious mismatch-cancel) when the caller's fetch failed", async () => {
+      // Place normally first (a genuinely successful, empty fetch).
+      await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-14"), accountNumber: "TR-14", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+        orders: [], ordersListed: true
+      });
+      expect(gw.placed).toHaveLength(1);
+      // Next tick: the fetch THROWS (caller passes ordersListed: false). Without the fix, an
+      // unknown-coverage read collapses to "fully uncovered", the existing 10-sh stop looks
+      // undersized against a phantom "other order" story, and section 3 cancels it — then section 4
+      // ALSO can't verify coverage and skips replacing it, leaving the position with NO broker-held
+      // stop at all this tick.
+      const failed = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-14"), accountNumber: "TR-14", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+        orders: [], ordersListed: false
+      });
+      expect(failed.cancelled).toBe(0);
+      expect(gw.cancelled).toEqual([]);
+      const stops = listBrokerProtectiveStops("TR-14", "local");
+      expect(stops).toHaveLength(1);
+      expect(stops[0]).toMatchObject({ brokerOrderId: "ord-1", status: "resting", quantity: 10 });
+    });
+
+    it("omitting ordersListed (default true) preserves the original protection-over-dedup behavior", async () => {
+      // No `orders` param at all, matching every pre-existing caller/test — must place at full size
+      // exactly as before this fix (ordersListed defaults to true, so an empty `orders` still reads
+      // as "confirmed no coverage", never as "unknown").
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: rhPolicy("TR-15"), accountNumber: "TR-15", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+      });
+      expect(r.placed).toBe(1);
+      expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", quantity: 10 });
+    });
+  });
 });

@@ -77,7 +77,7 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
         title: "Flat base %",
         value: hasBase ? `−${baseStop}%` : "off — no stop",
         active: hasBase,
-        detail: "The always-available floor every other distance rule falls back to. Clearing it turns the per-position stop off entirely."
+        detail: "The always-available floor every other distance rule falls back to. Blanking the field reverts it to the shipped 8% default (it does not disable the stop) — only an explicit 0 turns the per-position stop off entirely."
       }
     ],
     note: hasBase

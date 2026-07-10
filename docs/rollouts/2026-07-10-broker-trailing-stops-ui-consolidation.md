@@ -156,6 +156,31 @@ npm run build
   documented together); PR #1341's connectedAccountId audit threading kept on the merged sites.
   NOTE: main also flipped **auto-deploy ON** (b4c4f4b) — merging this PR auto-deploys production.
 
+## Review fixes round 3 (Codex on `c36c3ab`, three findings)
+
+1. **P2 — coverage-unknown ≠ coverage-free:** when the synthetic monitor's own `getEquityOrders`
+   fetch fails, it was passing an EMPTY order list into `reconcileBrokerProtectiveStops`, which
+   the reconciler read as "confirmed no coverage" — placing (or, worse, resizing/cancelling) a
+   broker-held stop against a blind spot that might actually hide a full-size bracket leg. New
+   `ordersListed?: boolean` param (default `true`, preserving old behavior for every caller that
+   never had real coverage info to begin with) — the synthetic monitor now passes its own
+   `brokerOrdersListed` flag. `uncoveredQuantity`/`desiredStopQuantity` return `null` ("truly
+   unknown") instead of a number when `ordersListed` is `false`, and BOTH section 3 (mismatch/
+   cancel) and section 4 (new placement) skip a symbol entirely on `null` rather than guess.
+2. **P2 — stop-flow tooltip still wrong:** the NEW diagram's "Flat base %" node detail repeated
+   the same "clearing turns it off" claim already fixed in field-defs.ts's hint — corrected to say
+   blanking reverts to the 8% default; only an explicit 0 disables the stop.
+3. **P1 — partial broker stops wiped on a remainder-only exit:** when a broker-held stop covers
+   only PART of a position (e.g. a native Alpaca trail floored 10.6 sh to 10), the synthetic
+   monitor fires for just the uncovered remainder — but then called `cancelBrokerProtectiveStop`
+   UNCONDITIONALLY, tearing down the still-valid 10-share stop covering the rest of the position.
+   Fixed: the cancel now runs only when the fire closes the WHOLE position (`qty >=
+   positionQty - epsilon`); a partial fire leaves the broker-held stop resting undisturbed.
+
+New tests: `test/broker-protective-stops.test.ts` (ordersListed skip on placement/mismatch,
+recovery on the next successful fetch, default-true regression); `test/synthetic-stops.test.ts`
+(partial fire preserves the broker-held stop). Full gate re-run green after these fixes.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing

@@ -221,7 +221,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   const justPlacedBrokerStopSymbols = new Set<string>();
   const justPlacedPartialBrokerStopSymbols = new Set<string>();
   try {
-    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders });
+    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders, ordersListed: brokerOrdersListed });
     if (reconciled.cancelledOrderIds.length > 0) {
       const cancelledIds = new Set(reconciled.cancelledOrderIds);
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));
@@ -511,9 +511,17 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         brokerOrderId: exec.orderId,
         raw: { syntheticStop: true, triggerPrice: evaln.triggerPrice }
       });
-      // If a broker-held protective stop is resting for this symbol, cancel it now so it can't
-      // also fire on shares this synthetic exit is selling (double-sell). Best-effort.
-      await cancelBrokerProtectiveStop(userId, accountNumber, stop.symbol, gateway).catch(() => {});
+      // If a broker-held protective stop is resting for this symbol, cancel it — but ONLY when
+      // this exit closes the WHOLE position (qty covers everything the broker stop didn't). A
+      // PARTIAL synthetic fire (qty < positionQty) means a broker-held stop is already covering
+      // the shares this exit did NOT sell (that's exactly why coverage sized this fire to the
+      // uncovered remainder in the first place) — cancelling it here would strip the still-open
+      // remainder of its broker-held protection for no reason, leaving it covered only by a
+      // 'triggered' synthetic row that stays inert until the 15-min re-arm grace (Codex review, PR
+      // #1331). Best-effort either way.
+      if (qty >= positionQty - QTY_EPSILON) {
+        await cancelBrokerProtectiveStop(userId, accountNumber, stop.symbol, gateway).catch(() => {});
+      }
       // Already 'triggered' via the claim; this just records the final lastPrice.
       upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price });
       result.exited++;
