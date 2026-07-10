@@ -82,3 +82,22 @@ this branch now fixes:
 
 - The other Monet lane's empty claimed branch `monet/broker-min-bump-to-floor`
   (zero commits) can be deleted once this lands.
+
+## Codex review round (2026-07-10, triaged by the MONET bump-lane per #agent-sync handoff)
+
+- Full short-COVER exemption via magnitudes + mixed-form dollar orders never shrink to the floor
+  (threads 2+7, fixed by the authoring lane at da79264a).
+- Bump eligibility now also declines when the daily opening ORDER-COUNT budget is spent and when
+  available BUYING POWER can't fit the floor (both would otherwise manufacture the policy
+  rejection/authority-demotion this design exists to avoid) — both integration-tested.
+- `applyDeterministicSizing`'s own floor-raise is now gated on `brokerMinimumHandling === "bump"` —
+  unconditional, it made "skip" unreachable for autonomous openings.
+- `claimProposalForExecution` persists execution-time proposal sizing (bump/reprice) into the row
+  before placement — crash-recovery (`flagStalePlacingIntents`) books fills from that stored JSON,
+  and Recent/Activity now show the executed order (was the #1280 delta, folded in here).
+- Typed live-confirmation P1: resolved as annotate-not-ceremony — the confirmation is minted
+  against the pre-bump notional; the bump delta is bounded (≤ floor + 0.5% cushion) and is the
+  owner-ruled default, so no re-confirmation ritual; both sizes ride the audit event + rationale.
+- New `test/broker-minimum-bump-execute.test.ts`: 6 integration tests driving the REAL
+  executeProposal (bump+audit+row-persist, cap/buying-power/order-count declines, one-shot
+  fallback with original-sizing restore, skip off-switch).

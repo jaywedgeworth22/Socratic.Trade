@@ -1775,9 +1775,19 @@ export async function runStrategyOnce(
         const openingCapNotional = Math.min(
           applyOpeningOrderHeadroom(openingPolicyNotionalCap(normalizedProposal, policy, workingPortfolio)),
           effectiveMaxDailyNotional - dailyNow.notional,
-          (policy.maxHourlyNotional ?? Infinity) - hourlyNow.notional
+          (policy.maxHourlyNotional ?? Infinity) - hourlyNow.notional,
+          // Mirror policy.ts's buying-power gate (binds when finite && > 0): a bump past available
+          // buying power would be policy-rejected every run instead of falling back to skip.
+          Number.isFinite(workingPortfolio.buyingPower) && workingPortfolio.buyingPower > 0 ? workingPortfolio.buyingPower : Infinity
         );
-        const bumpPlan = planBrokerMinimumBump(
+        // Daily ORDER-COUNT budget (not just notional): when the opening-order count is already
+        // spent, no bump can make this order placeable — planning one would only manufacture the
+        // policy rejection (and authority demotion) this block exists to avoid.
+        const openingCountSpent =
+          (normalizedProposal.side === "buy" || normalizedProposal.side === "short") &&
+          policy.maxDailyOrders != null &&
+          dailyNow.openingOrderCount >= policy.maxDailyOrders;
+        const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
           review,
           policy.activeBroker,
           { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
@@ -3275,6 +3285,11 @@ export function applyDeterministicSizing(
     ? advisedNotional
     : Math.max(0, fallbackBase) * finalMultiplier;
   if (
+    // Honor brokerMinimumHandling here too: under "skip" the owner asked for sub-minimum orders
+    // to be SKIPPED (cooldown-gated), not silently raised — an unconditional raise here would
+    // make skip mode unreachable for autonomous openings because the pre-flight guard downstream
+    // would never see a sub-minimum order.
+    (policy.brokerMinimumHandling ?? "bump") === "bump" &&
     brokerMinDollar > 0 &&
     targetNotional < brokerMinDollar &&
     (targetNotional > 0 || rawSourceNotional > 0) &&
@@ -3723,10 +3738,16 @@ export async function executeProposal(
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
     let attemptedBumpToNotional: number | undefined;
+    // Typed live confirmations and bumps: the owner's confirmation (validated earlier in this
+    // function) was minted against the STORED pre-bump notional. A bump can raise the placed
+    // notional to the broker floor (+0.5% cushion, so ≤ ~$1.01 on Robinhood) — a bounded,
+    // owner-ruled default (brokerMinimumHandling "bump", 2026-07-09), so we deliberately do NOT
+    // force a re-confirmation ceremony for that sub-dollar delta; the order_bumped_broker_minimum
+    // audit records both sizes and the rationale annotates the up-sizing.
     if (brokerMinimumBlockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
       // Same composed cap as the run loop: policy's headroomed per-order cap ∧ remaining
-      // daily/hourly budget — a bump past any of these would be policy-rejected (and a cap
-      // breach can demote authority via autoRevertOnCapBreach).
+      // daily/hourly budget ∧ available buying power — a bump past any of these would be
+      // policy-rejected (and a cap breach can demote authority via autoRevertOnCapBreach).
       const effectiveMaxDailyNotional = Math.min(
         policy.maxDailyNotional ?? Infinity,
         policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * account.portfolio.totalMarketValue : Infinity
@@ -3734,9 +3755,16 @@ export async function executeProposal(
       const openingCapNotional = Math.min(
         applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, account.portfolio)),
         effectiveMaxDailyNotional - daily.notional,
-        (policy.maxHourlyNotional ?? Infinity) - hourly.notional
+        (policy.maxHourlyNotional ?? Infinity) - hourly.notional,
+        // Mirror policy.ts's buying-power gate (binds when finite && > 0).
+        Number.isFinite(account.portfolio.buyingPower) && account.portfolio.buyingPower > 0 ? account.portfolio.buyingPower : Infinity
       );
-      const bumpPlan = planBrokerMinimumBump(
+      // Daily ORDER-COUNT budget (not just notional) — see the run-loop site.
+      const openingCountSpent =
+        (proposal.side === "buy" || proposal.side === "short") &&
+        policy.maxDailyOrders != null &&
+        daily.openingOrderCount >= policy.maxDailyOrders;
+      const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
         review,
         policy.activeBroker,
         { ...proposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
@@ -4000,7 +4028,10 @@ export async function executeProposal(
     // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
     // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
     // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode })) {
+    // `proposal` persists execution-time sizing (broker-minimum bump / approval-time reprice) into
+    // the row before placement, so crash-recovery books any fill at the size actually sent and
+    // Recent/Activity show the executed order rather than the stale original ask.
+    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal })) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
