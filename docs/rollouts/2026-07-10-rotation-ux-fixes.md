@@ -60,9 +60,13 @@ Two owner reports, plus one regression found while investigating them:
     already routes around the sentinel).
 - **`app/console/settings/models.tsx`** — independence hint checks the both-rotate case FIRST
   and shows positive copy: both teams rotate through the curated pool, each run serves concrete
-  audited round-robin picks, the runtime skips same-model pairings when both seats rotate, and
-  per-model history accrues on both sides. One sentinel + concrete stays hint-free; two identical
-  concrete models keep the existing SAME-model warning.
+  audited round-robin picks, the runtime skips same-model pairings whenever more than one model
+  is eligible, and per-model history accrues on both sides. One sentinel + concrete stays
+  hint-free; two identical concrete models keep the existing SAME-model warning. (The skip
+  clause was qualified post-review: `advanceRotationPointers` — merged via #1294 — can only
+  skip with >= 2 eligible models; a single-model eligible pool degenerately serves that model
+  to both seats, so the unqualified "skips when both seats rotate" and the "not one model
+  critiquing itself" absolute were tightened to stay strictly true.)
 - **`app/console/components/approval-card.tsx`** — provenance strings and model badges never
   leak the raw sentinel: "configured to rotate; served X (this run's rotation pick)" replaces the
   "served X; configured primary was __rotate__" anomaly framing; the failover chip no longer
@@ -112,13 +116,26 @@ npx eslint src/lib/llm-request.ts app/console/strategy/page.tsx \
 `npm run build` was not run here (per the pickup's verification scope); the `verify` CI gate and
 `scripts/land.sh` run it before merge.
 
+Post-#1294 re-verification (2026-07-10, after merging `origin/main` @ 597b991c into this
+branch — clean merge, no conflicts):
+
+```bash
+npx vitest run test/model-rotation.test.ts   # 18 tests pass (incl. never-self-pair cases)
+npx vitest run test/llm-request.test.ts test/strategy-reasoning-control.test.ts \
+  test/console-red-team-labels.test.ts test/model-rotation.test.ts   # 4 files, 51 tests pass
+npx tsc --noEmit                             # clean
+```
+
 ## Follow-ups / sequencing
 
-- **Land after (or together with) the parallel rotate-fix lane.** The new independence-hint copy
-  states "the runtime skips same-model pairings when both seats rotate" (owner-specified copy);
-  the skip itself lives in `src/lib/model-rotation.ts`, owned by the parallel lane (untouched
-  here per the coordination keepouts). On today's `advanceRotationPointers` both counters start
-  in lockstep, so that clause is only true once that lane's change merges.
+- **RESOLVED (2026-07-10): the parallel rotate-fix lane merged first, as required.** PR #1294
+  landed the same-model skip in `src/lib/model-rotation.ts` `advanceRotationPointers` (red skips
+  one slot when its pick would equal green's, pool >= 2), and this branch then merged
+  `origin/main`, so the independence-hint skip clause is true of this tree. Re-verified here
+  post-merge: `test/model-rotation.test.ts` (18 tests incl. the never-self-pair cases) passes,
+  and the hint copy was tightened to "whenever more than one model is eligible" so it stays
+  strictly true even for the single-eligible-model degenerate pool (see the models.tsx bullet
+  above).
 - Coordination keepouts honored: no edits to `app/api/strategy/run/route.ts`,
   `app/console/components/chrome.tsx`, `src/lib/model-rotation.ts`, or the
   recommendedGreen/recommendedRed regions of `app/ui/llm-model-catalog.ts`.

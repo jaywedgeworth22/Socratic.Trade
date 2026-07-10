@@ -23,9 +23,12 @@ map); AI review panel now discloses upfront that a blank strategist under all-ro
 rules (no LLM); approval-card provenance/badges and `redTeamFailureModel` never leak the raw
 "__rotate__" sentinel. Page helpers extracted to `app/console/strategy/reasoning-control.ts`
 (unit-tested). Gate: tsc clean, lint 0 errors on touched files, full suite 311 files / 3262 tests.
-Committed locally (not pushed) per the pickup instructions. **Sequencing:** land after (or with)
-the parallel rotate-fix lane's `src/lib/model-rotation.ts` same-model-pairing skip — the new
-independence-hint copy states that behavior. Detail: `docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
+**Sequencing resolved 2026-07-10:** the parallel lane's same-model-pairing skip merged to `main`
+via #1294 (`advanceRotationPointers` skips red one slot when its pick would equal green's, pool
+>= 2) and this branch merged `origin/main`, so the independence-hint copy is true of this tree;
+the copy was additionally tightened to "whenever more than one model is eligible" to stay
+strictly true for a single-eligible-model pool. Detail:
+`docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
 
 ## 2026-07-09 — Mistral capability-map fix (MONET, branch `monet/mistral-capmap-fix`)
 Handoff-queue item 2 (post-#1191 queue): both catalog Mistral models 400'd on every call

@@ -242,7 +242,7 @@ export function ModelsCard() {
   const independenceHint =
     green && red
       ? bothRotate
-        ? "Strategist and Reviewer BOTH rotate through the curated model pool — not one model critiquing itself: each run serves concrete, audited round-robin picks, the runtime skips same-model pairings when both seats rotate, and per-model history accrues on both sides."
+        ? "Strategist and Reviewer BOTH rotate through the curated model pool: each run serves concrete, audited round-robin picks, the runtime skips same-model pairings whenever more than one model is eligible, and per-model history accrues on both sides."
         : green === red
         ? "Strategist and Reviewer are the SAME model — it will be critiquing its own proposals. Allowed, but a different model (ideally a different provider) gives a genuinely independent second opinion."
         : providerOf(green) && providerOf(green) === providerOf(red)
