@@ -225,4 +225,21 @@ describe("liveExitOrderCoverage — OCO bracket legs must not double-count", () 
     const cov = liveExitOrderCoverage(orders, "AAPL", "long");
     expect(cov.coveredQty).toBe(75);
   });
+
+  it("does NOT pair two INDEPENDENT equal-quantity exits placed at very different times — each counts on its own (Codex review, PR #1331)", () => {
+    // An owner manually places a 50-share stop and, separately (hours later), a 50-share take-profit
+    // limit against a 100-share position. Both can genuinely fill — pairing them as if they were one
+    // OCO bracket would undercount coverage (report 50 instead of 100) and let a NEW exit stack on
+    // top of shares that are already fully covered.
+    const oldStop: EquityOrder = {
+      id: "stop-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "new", quantity: 50,
+      timeInForce: "gtc", createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), placedAgent: "alpaca"
+    };
+    const laterLimit: EquityOrder = {
+      id: "tp-1", symbol: "AAPL", side: "sell", type: "limit", quantity: 50, state: "new",
+      timeInForce: "gtc", createdAt: new Date().toISOString(), placedAgent: "alpaca"
+    };
+    const cov = liveExitOrderCoverage([oldStop, laterLimit], "AAPL", "long");
+    expect(cov.coveredQty).toBe(100); // NOT 50 — these are not bracket siblings
+  });
 });

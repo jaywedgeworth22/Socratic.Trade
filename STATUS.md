@@ -23,10 +23,16 @@ overlay, broker-held → app-monitor enforcement; pure `stopFlowModel` unit-test
 LLM-chosen stop plans (fixed/ATR/trailing/none at proposal time) deliberately deferred —
 design sketch in `docs/EFFORT-LOG.md` Planned. Rollout:
 `docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`. PR #1331 open; Codex has run
-4 review rounds so far, all fixed on the branch: coverage-unknown handling (`ordersListed`),
+5 review rounds so far, all fixed on the branch: coverage-unknown handling (`ordersListed`),
 partial-broker-stop preservation, OCO bracket-leg double-counting in `liveExitOrderCoverage`,
-keep-existing-stop-when-replacement-refused, and never seeding a broker trail looser than the
-synthetic monitor's own tracked high-water mark (`extremePriceBySymbol`). Next action: watch for
+keep-existing-stop-when-replacement-refused, never seeding a broker trail looser than the
+synthetic monitor's own tracked high-water mark (`extremePriceBySymbol`); round 5: OCO pairing now
+also requires a `BRACKET_SIBLING_WINDOW_MS` created-together check (no more conflating two
+independent equal-qty manual orders as one bracket), stale `resting` rows are checked against the
+tracked order's actual broker state (mirrors section 1's fill/terminal recovery), an oversized
+existing stop is now cancelled even when other-order coverage is unknown (position-shrink is
+knowable from `positions` alone), and a pure quantity-shrink mismatch on a trailing stop now
+cancels unconditionally instead of being swallowed by the arm-refusal guard. Next action: watch for
 further review rounds / merge; then live-verify the RH ratchet lane before flipping
 `robinhoodBrokerStops` on.
 ## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)

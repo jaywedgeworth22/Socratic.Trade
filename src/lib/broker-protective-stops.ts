@@ -446,13 +446,61 @@ export async function reconcileBrokerProtectiveStops(args: {
   for (const [sym, pos] of liveLongs) {
     const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
     if (existingStop && existingStop.status === "resting") {
+      // The broker order this row tracks may already be done resting (filled naturally, or
+      // rejected/canceled/expired outside our own cancel path) without the row ever going through
+      // section 1's cancel-recovery — e.g. a partial stop that FILLS on its own while the position
+      // stays open. Treating a "resting" row as still live when the tracked order is actually gone
+      // means a coincidental non-mismatch (recomputed qty/price happen to still match the stale
+      // row) never gets caught, and the ghost row then blocks section 4 from placing a real
+      // replacement for the (now differently-covered) remaining shares (Codex review, PR #1331).
+      // Only ACT on positive evidence from a real fetch — an order absent from the list, or
+      // `orders` empty from a failed fetch, stays ambiguous and falls through to the mismatch
+      // checks below unchanged.
+      const trackedOrder = orders.find((o) => o.id === existingStop.brokerOrderId);
+      if (trackedOrder && isDoneRestingState(trackedOrder.state)) {
+        deleteBrokerProtectiveStop(existingStop.id, userId);
+        if (String(trackedOrder.state ?? "").trim().toLowerCase() === "filled") {
+          filledRecoverySymbols.add(sym);
+        }
+        audit(
+          "broker_protective_stop_recovered",
+          { symbol: sym, brokerOrderId: existingStop.brokerOrderId, brokerState: trackedOrder.state, context: "stale_resting_row" },
+          userId
+        );
+        continue;
+      }
       const qty = desiredStopQuantity(pos, sym, existingStop.brokerOrderId);
-      // Coverage is genuinely unknown this tick (a real order-list fetch failed) — do not treat
-      // that as evidence of drift. Cancelling a correctly-sized resting stop on a guess, only to
-      // have section 4 ALSO skip replacing it (same unknown-coverage guard), would leave the
-      // position with no broker-held stop at all. Leave the existing stop exactly as-is.
+      // Coverage from OTHER live exit orders is unknown this tick (a real order-list fetch
+      // failed) — do not treat that as evidence of drift on its own. But whether the row's OWN
+      // recorded quantity now exceeds the CURRENT position size needs no order-list data at all:
+      // if the position has shrunk (e.g. a partial exit filled elsewhere) below the resting stop's
+      // quantity, firing it could sell more shares than the account holds (or open an unintended
+      // short) — a risk that doesn't wait for the next successful order fetch to resolve. Cancel
+      // that oversized row now (letting the always-on synthetic monitor cover the gap until a
+      // later tick can size a proper replacement); only a resize that would depend on OTHER
+      // orders' coverage stays deferred (Codex review, PR #1331).
       if (qty === null) {
-        audit("broker_protective_stop_skipped", { symbol: sym, kind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId);
+        const posQty = Math.abs(pos.quantity);
+        if (existingStop.quantity > posQty + 0.000001 && !liveReplaceBlocked) {
+          try {
+            await gateway.cancelEquityOrder(accountNumber, existingStop.brokerOrderId);
+            deleteBrokerProtectiveStop(existingStop.id, userId);
+            out.cancelled++;
+            out.cancelledOrderIds.push(existingStop.brokerOrderId);
+            audit("broker_protective_stop_mismatch", {
+              symbol: sym,
+              note: "existing stop quantity exceeds current position size (other-order coverage unknown this tick)",
+              kind,
+              oldQty: existingStop.quantity,
+              newQty: posQty
+            }, userId);
+          } catch (err) {
+            audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err) }, userId);
+            upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
+          }
+        } else {
+          audit("broker_protective_stop_skipped", { symbol: sym, kind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId);
+        }
         continue;
       }
       // Where section 4 would place this stop's trigger today (informational for native trailing —
@@ -476,8 +524,16 @@ export async function reconcileBrokerProtectiveStops(args: {
       // replace it THIS pass — otherwise the cancel succeeds, the replacement guard then refuses
       // (mark below entry/tracked extreme, or already breached), and the position is left with NO
       // broker-held stop until conditions recover (Codex review, PR #1331). Keep the
-      // slightly-mismatched stop resting instead; it's still real protection.
-      if (mismatchNote && kind === "trailing" && !canArmTrailingNow(pos, sym, newStopPrice)) {
+      // slightly-mismatched stop resting instead; it's still real protection. EXCEPT a pure
+      // quantity SHRINK: the row is oversized relative to what's actually still uncovered (e.g.
+      // another known live exit order now covers part of the position), so the old full-size stop
+      // is not just non-ideal but actively stacks on top of that other order — if both can fill,
+      // the account gets over-sold. Cancelling never needs to "arm" anything (it only removes
+      // exposure), so this case bypasses the arm-gate and cancels below regardless; section 4's own
+      // canArmTrailingNow gate still decides, independently, whether a resize replacement can be
+      // placed this same tick (Codex review, PR #1331).
+      const isQuantityShrink = mismatchNote === "quantity drift" && qty < existingStop.quantity;
+      if (mismatchNote && kind === "trailing" && !isQuantityShrink && !canArmTrailingNow(pos, sym, newStopPrice)) {
         audit("broker_protective_stop_skipped", {
           symbol: sym, kind, note: `mismatch (${mismatchNote}) detected but the replacement would be refused this tick — keeping the existing stop rather than cancelling into no protection`
         }, userId);

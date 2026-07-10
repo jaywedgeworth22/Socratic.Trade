@@ -664,3 +664,98 @@ describe("reconcileBrokerProtectiveStops — trailing lane", () => {
     });
   });
 });
+
+// ── Round-5 Codex findings: stale rows, oversized-unknown-coverage, and quantity-shrink cancels ──
+
+describe("reconcileBrokerProtectiveStops — round-5 mismatch/staleness fixes (Codex review, PR #1331)", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("clears a stale 'resting' row whose tracked order already went FILLED without going through cancel-recovery, deferring re-placement to the next call", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-1"), accountNumber: "R5-1", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    // The resting stop filled naturally (no app-issued cancel ever ran) — the DB row is still
+    // "resting", but the caller's freshly fetched order list shows ord-1 already FILLED. Without
+    // checking the tracked order's terminal state, section 3 would only look for a numeric
+    // mismatch (which may not exist) and never notice the row is a ghost.
+    const orders: EquityOrder[] = [{ id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled", createdAt: new Date().toISOString() }];
+    gw.nextOrderId = "ord-2";
+    const recovered = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-1"), accountNumber: "R5-1", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true, orders });
+    expect(recovered.cancelled).toBe(0); // no cancel call — the order already finished on its own
+    expect(recovered.placed).toBe(0); // deferred: `positions` may still be the stale pre-fill snapshot
+    expect(listBrokerProtectiveStops("R5-1", "local")).toHaveLength(0); // stale row is gone, not left resting
+    // Next call resumes placement normally once a fresh position read is in hand.
+    const resumed = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-1"), accountNumber: "R5-1", gateway: gw, positions: [longPos("AAPL", 6, 100)], executionMode: "broker/live", running: true });
+    expect(resumed.placed).toBe(1);
+    expect(listBrokerProtectiveStops("R5-1", "local")[0]).toMatchObject({ brokerOrderId: "ord-2", quantity: 6 });
+  });
+
+  it("resizes (cancels) an oversized existing stop when the position has shrunk, even though other-order coverage is unknown this tick", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-2"), accountNumber: "R5-2", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    expect(listBrokerProtectiveStops("R5-2", "local")[0]).toMatchObject({ quantity: 10 });
+    // The position has shrunk to 4 shares (some other exit filled elsewhere), but THIS tick's order
+    // list fetch failed (`ordersListed: false`) — other-order coverage is unknown. The existing
+    // 10-share stop now exceeds the 4-share position: if it ever fires it could sell more shares
+    // than the account holds. That is knowable from `positions` alone and must not wait for a
+    // successful order-list fetch to be corrected.
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R5-2"), accountNumber: "R5-2", gateway: gw,
+      positions: [longPos("AAPL", 4, 100)], executionMode: "broker/live", running: true,
+      orders: [], ordersListed: false
+    });
+    expect(r.cancelled).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("R5-2", "local")).toHaveLength(0);
+    expect(r.placed).toBe(0); // still no same-tick replacement — other coverage stays unknown
+    // Next tick, once the order list can be read again, a correctly-sized stop is placed.
+    gw.nextOrderId = "ord-2";
+    const resumed = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-2"), accountNumber: "R5-2", gateway: gw, positions: [longPos("AAPL", 4, 100)], executionMode: "broker/live", running: true });
+    expect(resumed.placed).toBe(1);
+    expect(listBrokerProtectiveStops("R5-2", "local")[0]).toMatchObject({ brokerOrderId: "ord-2", quantity: 4 });
+  });
+
+  it("leaves an existing stop untouched on unknown coverage when it is NOT oversized for the current position", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-3"), accountNumber: "R5-3", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    // Position UNCHANGED, order-list fetch failed — the row is not oversized, so it must be left
+    // exactly as-is (the pre-existing "unknown coverage" behavior for the common case).
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R5-3"), accountNumber: "R5-3", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      orders: [], ordersListed: false
+    });
+    expect(r.cancelled).toBe(0);
+    expect(gw.cancelled).toEqual([]);
+    expect(listBrokerProtectiveStops("R5-3", "local")[0]).toMatchObject({ brokerOrderId: "ord-1", quantity: 10 });
+  });
+
+  it("cancels a trailing stop on a KNOWN quantity SHRINK even though a replacement would be refused this tick (does not leave it stacked on top of other known coverage)", async () => {
+    // Ratcheted (Robinhood) trailing lane: avg 100, mark 100 → trigger 95, arms fine at 10 shares.
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("R5-4"), accountNumber: "R5-4", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(gw.placed).toHaveLength(1);
+    expect(gw.placed[0]).toMatchObject({ stopPrice: 95, quantity: 10 });
+    // Next tick: another live exit order (a separate manual 4-share limit sell, unrelated to our
+    // resting stop) now covers part of the position, so only 6 shares are actually uncovered — a
+    // genuine quantity-drift mismatch. The mark has also fallen to 90, below the 95 trigger, so a
+    // replacement trail would be REFUSED (already breached) — but the old 10-share stop still stacks
+    // on top of the other 4-share order if both can fill, so it must be cancelled regardless.
+    const otherOrder: EquityOrder = {
+      id: "manual-tp-1", symbol: "AAPL", side: "sell", type: "limit", quantity: 4,
+      state: "new", createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("R5-4"), accountNumber: "R5-4", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 90)], executionMode: "broker/live", running: true,
+      orders: [otherOrder]
+    });
+    expect(r.cancelled).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("R5-4", "local")).toHaveLength(0);
+    expect(r.placed).toBe(0); // a fresh replacement is STILL refused this tick (already breached) — the
+    // synthetic monitor covers the gap until the mark recovers or the next tick re-evaluates
+  });
+});

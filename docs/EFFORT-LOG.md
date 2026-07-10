@@ -1539,6 +1539,13 @@ As of 2026-07-08 (assignment-rule update).
   plumbing" advanced group merged into ONE "Protective stops" card with a dynamic stop-flow
   diagram (ATR → beta → flat distance fallback, trailing overlay, broker-held → app-monitor
   enforcement). Rollout: `docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`.
+  **PR #1331 open, 5 Codex review rounds fixed so far** (see the rollout doc's "Review fixes
+  round 1-5" sections); round 5: OCO-pairing now requires a created-together time window (no
+  longer conflates two independent equal-qty manual orders as one bracket), a stale `resting`
+  broker-stop row is now checked against the tracked order's actual terminal state, an oversized
+  existing stop is cancelled even when other-order coverage is unknown this tick, and a pure
+  quantity-shrink mismatch on a trailing stop cancels unconditionally instead of being swallowed
+  by the arm-refusal guard. Gates green (lint/tsc/3427 tests/build) in the isolated worktree.
 - **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
   (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
   open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual

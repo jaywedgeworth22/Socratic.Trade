@@ -228,6 +228,53 @@ New tests: `test/broker-side.test.ts` (7 new `liveExitOrderCoverage` OCO-pairing
 `test/broker-protective-stops.test.ts` (tracked-extreme seeding, native-lane refusal below tracked
 extreme, keep-existing-stop-when-replacement-refused). Full gate re-run green.
 
+## Review fixes round 5 (Codex on `9d83464`, four findings)
+
+1. **P2 — OCO pairing could conflate two INDEPENDENT equal-quantity exits as one bracket:**
+   round 4's stop/limit quantity-matched pairing in `liveExitOrderCoverage` had no way to tell a
+   real bracket sibling (Alpaca creates both legs together) from an owner's manual stop plus a
+   separately-placed take-profit limit at the same size — pairing the latter undercounts real
+   coverage (reports 50 instead of 100 on a 100-share position) and lets a new exit stack on top of
+   an order that can still fill. Fixed: pairing now also requires the two legs' `createdAt` to fall
+   within a `BRACKET_SIBLING_WINDOW_MS` (5s) window — true bracket legs are created together;
+   independent manual orders placed at different times no longer pair.
+2. **P2 — a stale `resting` broker-stop row was never checked against the tracked order's actual
+   broker state:** section 3 only looked for a numeric qty/price/kind mismatch on an existing
+   `resting` row, so if the tracked order had already finished (filled naturally, or
+   rejected/canceled/expired) without ever going through section 1's cancel-recovery path, and the
+   recomputed values happened to still match the stale row, the ghost row was never cleared —
+   permanently blocking section 4 from placing a real replacement for the (now differently
+   protected) remaining shares. Fixed: section 3 now checks the caller's order list for the tracked
+   order's terminal state first (mirroring section 1's `isDoneRestingState` recovery) and deletes
+   the stale row on positive evidence, deferring same-tick replacement via `filledRecoverySymbols`
+   for an actual fill (same staleness reasoning as the existing section-1 path).
+3. **P2 — an oversized existing stop was left untouched whenever other-order coverage was
+   unknown:** when a real order-list fetch failed this tick (`ordersListed: false`),
+   `desiredStopQuantity` correctly returns `null` (coverage from OTHER orders is unknowable), but
+   the code skipped ALL drift handling on that `null` — including the case where the position
+   itself has shrunk below the existing stop's OWN recorded quantity, which needs no order-list
+   data at all. An oversized resting stop can sell more shares than the account holds (or open an
+   unintended short) if it fires. Fixed: the unknown-coverage path now separately checks
+   `existingStop.quantity` against the current position size and cancels (never blindly replaces)
+   when oversized, regardless of the other-order blind spot; a row that isn't oversized is still
+   left untouched exactly as before.
+4. **P2 — a trailing stop's oversized-by-known-coverage mismatch was discarded whenever a
+   replacement would be refused:** the round-4 `canArmTrailingNow` guard (added to avoid cancelling
+   into a stranded position) blanket-cleared EVERY trailing mismatch when arming would be refused —
+   including a pure quantity SHRINK caused by newly-KNOWN other coverage (e.g. a separate live exit
+   order now covers part of the position). Unlike a price/kind mismatch, cancelling a shrink never
+   needs to "arm" anything — it only removes exposure — so keeping the old full-size stop stacked
+   on top of the other known order risked an over-sell if both filled. Fixed: the arm-gate now
+   exempts a `qty < existingStop.quantity` "quantity drift" mismatch, cancelling it unconditionally;
+   section 4's own `canArmTrailingNow` gate still independently decides whether a same-tick
+   replacement can be placed.
+
+New tests: `test/broker-side.test.ts` (independent-orders-not-paired-by-time case);
+`test/broker-protective-stops.test.ts` (new `round-5 mismatch/staleness fixes` describe block: stale
+filled-row cleanup, oversized-on-unknown-coverage cancel, not-oversized-stays-untouched control case,
+quantity-shrink-cancels-despite-arm-refusal). Full gate (lint/tsc/test/build) re-run green in the
+isolated worktree.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing
