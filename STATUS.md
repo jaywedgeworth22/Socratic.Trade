@@ -61,6 +61,23 @@ One left OPEN as a maintainer question (not guessed): "preserve live edits for m
 core merge-semantics tradeoff (mirror-wins vs live-leads for shared rows) whose two suggested fixes
 break opposite use cases — asked the maintainer via a PR comment. Rollout note updated with round-2
 detail.
+
+**Landing-round fix (round 3, PR #1354 review — codex-autofix):** four more codex-connector P2s.
+Two fixed (both silent-drops of real live-only rows): (1) nested classified-ancestor inheritance —
+the round-2 `section_bucket` only tracked the last **level-2** heading, so a live-only row under a
+`#### child` of a keyword-bearing `### ... (Planned)` beneath an **unclassified `##` parent` reset
+to `None` and vanished from `live.items`. Replaced `section_bucket` with a `heading_bucket_by_level`
+map: a heading closes deeper levels then classifies by own keyword or **inherits the nearest
+classified shallower ancestor at any level** (top-level `##` still resets outright — no regression).
+(2) `PLACEHOLDER_RE` matched bare `record the.*` / `see rollout notes.*` (optional parens), so a
+real row like `Record the P&L reconciliation effort (CLAUDE)` was skipped as scaffolding and never
+recovered — split those two into a paren-required `PLACEHOLDER_PARENS_RE`, applied identically to
+both `effort-log-union-merge.py` and `sync-effort-issues.py` (documented "the two tools never
+disagree" invariant). Two left OPEN (same maintainer decision, not guessed): "preserve live edits
+for mirrored rows" (round 2) and its duplicate-ordering variant "preserve duplicate rows without
+order-based pairing" are both the same shared-row conflict whose fix changes the mirror-wins-vs-
+live-leads contract already parked on the owner. Verify trio green (tsc clean, 3395 tests pass,
+build clean — Python-only change). Rollout note updated with round-3 detail.
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
 verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —

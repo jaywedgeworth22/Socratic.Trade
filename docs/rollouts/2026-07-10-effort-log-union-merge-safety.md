@@ -229,3 +229,51 @@ was left open as a maintainer question (a genuine merge-semantics tradeoff, not 
 Verification (round 2): `python3 -m py_compile scripts/effort-log-union-merge.py` clean; scratch-fixture
 functional tests above; `npx tsc --noEmit` clean (no TS touched); `npm test` + `npm run build` per the
 verify trio before push.
+
+## Codex review round 3 (2026-07-10) — two more silent-drop parser holes fixed; two entangled with the open maintainer decision
+
+Codex's third pass on PR #1354 surfaced four unresolved threads. Two are independent
+parser-correctness bugs (both a silent-drop of real live-only rows — exactly the class this
+tool exists to prevent) and were fixed; two are the same shared-row merge-semantics tradeoff
+already parked on the maintainer and were left open.
+
+1. **Nested classified-ancestor inheritance (`scripts/effort-log-union-merge.py` parse_board).**
+   The round-2 fix tracked only the last **level-2** bucket in `section_bucket`. Codex found the
+   residual hole: a live-only row under a `#### child` heading of a **keyword-bearing nested**
+   section beneath an **unclassified `##` parent** (e.g. `## 2026-07-06 ...` → `### Action ...
+   (Planned)` → `#### Notes` → row) reset `current_bucket` to `section_bucket` (`None`) instead of
+   the nearest classified ancestor (`planned`), so the row parsed into no bucket and was invisible
+   to both recovery and the invariant. Fixed by replacing the single `section_bucket` scalar with a
+   `heading_bucket_by_level` map: a heading at level L closes every strictly-deeper open level, then
+   classifies by its own keyword or **inherits the nearest classified shallower ancestor at any
+   level** (a top-level `##` has no shallower ancestor, so it still resets outright — no regression).
+   Verified on scratch fixtures: the `####`-under-`###(Planned)`-under-unclassified-`##` row now
+   classifies `planned`; unclassified-`##` still resets to None; classified-`##` and keyword-less
+   `###` under a classified `##` both still inherit correctly.
+
+2. **Placeholder pattern over-broad (`PLACEHOLDER_RE`, both `effort-log-union-merge.py` and
+   `sync-effort-issues.py`).** The shared regex made parentheses optional around the broad
+   imperative prefixes `record the.*` and `see rollout notes.*`, so a **real** live effort row whose
+   first line began that way (e.g. `Record the P&L reconciliation effort (CLAUDE)`) was treated as
+   empty-section scaffolding, omitted from `live.items`, and never recovered — the invariant passed
+   because it only checks parsed items. Fixed by splitting those two prefixes into a separate
+   `PLACEHOLDER_PARENS_RE` that requires the wrapping parens (template scaffolding is always
+   parenthesized, e.g. `(record the effort here before starting)`); the bare imperative forms now
+   parse as real rows. Applied **identically to both tools** to preserve the documented "the two
+   tools never disagree about what is a placeholder vs a real row" invariant.
+
+3–4. **(Open, same maintainer decision — NOT auto-fixed.)** The two remaining threads — "Preserve
+   live edits for mirrored rows" (round 2) and its duplicate-ordering variant "Preserve duplicate
+   rows without order-based pairing" — are both the **same** shared-row conflict: when a key appears
+   on both boards but the occurrences differ in bucket/content/order, the count-based earliest-first
+   pairing can adopt the stale mirror copy over the fresher live one. Any fix (bucket-aware pairing,
+   live-wins, abort-on-diff) directly changes the mirror-wins-vs-live-leads contract that is already
+   parked on the maintainer via the round-2 PR comment. Guessing here would silently pick a merge
+   semantics, so both stay open pending the owner's answer; a PR comment notes the duplicate-order
+   thread is the same decision.
+
+Verification (round 3): `python3 -c "import ast; ast.parse(...)"` clean on both scripts; scratch-fixture
+functional tests for the nested-inheritance and bare-imperative-row cases (all pass); real-board dry-run
+(`--live` = copy of `docs/EFFORT-LOG.md`, `--mirror` = same) reports 268/268 items, 0 recovered, exit 0;
+`npx tsc --noEmit` clean, `npm test` 3395 passed (315 files), `npm run build` clean (no TS/product code
+touched — Python-only change).

@@ -1604,6 +1604,17 @@ As of 2026-07-08 (assignment-rule update).
   own keyword or inherits the enclosing `## ` bucket; (2) `PLAN.md` was stale -> added a fleet-infra
   host-side-tooling / no-roadmap-change note. One P2 left OPEN as a maintainer question ("preserve
   live edits for mirrored rows" — a mirror-wins-vs-live-leads merge-semantics tradeoff, not guessed).
+  **Landing-round fix (round 3, codex-autofix):** 2 more silent-drop P2s fixed — (1) the round-2
+  `section_bucket` only tracked the last **level-2** heading, so a live-only row under a `#### child`
+  of a keyword-bearing `### ... (Planned)` beneath an unclassified `##` parent reset to None and
+  vanished -> replaced with a `heading_bucket_by_level` map that inherits the nearest classified
+  ancestor at ANY shallower level (top-level `##` still resets outright); (2) `PLACEHOLDER_RE`
+  matched bare `record the.*`/`see rollout notes.*` (optional parens), skipping real rows like
+  "Record the P&L reconciliation ..." -> split into a paren-required `PLACEHOLDER_PARENS_RE`, applied
+  identically to both `effort-log-union-merge.py` and `sync-effort-issues.py`. Two P2s left OPEN
+  (same maintainer decision): "preserve live edits for mirrored rows" + its duplicate-ordering
+  variant "preserve duplicate rows without order-based pairing" — both change the same shared-row
+  mirror-wins-vs-live-leads contract. Verify trio green (3395 tests). Rollout note round-3 detail.
 
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
   branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open

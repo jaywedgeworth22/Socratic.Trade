@@ -98,7 +98,19 @@ BULLET_RE = re.compile(r"^[-*]\s+(.*)$")
 # exactly the class of loss this tool exists to prevent.
 HEADING_RE = re.compile(r"^(#{2,})\s+(.*)$")
 PLACEHOLDER_RE = re.compile(
-    r"^\(?\s*(none|n/?a\b.*|seeded empty.*|add rows here.*|record the.*|see rollout notes.*)\s*\)?\.?$",
+    r"^\(?\s*(none|n/?a\b.*|seeded empty.*|add rows here.*)\s*\)?\.?$",
+    re.IGNORECASE,
+)
+# Broad imperative prefixes ("record the ...", "see rollout notes ...") only
+# count as empty-section scaffolding when PARENTHESIZED — those template notes
+# are always wrapped, e.g. "(record the effort here before starting)". A bare
+# "Record the P&L reconciliation ..." / "See rollout notes for the X migration"
+# is a REAL effort row; matching it unparenthesized (as the old combined pattern
+# did, with optional parens) silently dropped it — the exact silent-drop class
+# this tool exists to prevent. Requiring the wrapping parens closes that hole
+# while still skipping genuine scaffolding.
+PLACEHOLDER_PARENS_RE = re.compile(
+    r"^\(\s*(record the.*|see rollout notes.*)\s*\)\.?$",
     re.IGNORECASE,
 )
 
@@ -174,12 +186,15 @@ def parse_board(text: str) -> ParsedBoard:
     bucket_insert_at: dict[str, int] = {}
 
     current_bucket: str | None = None
-    # Bucket of the most recent level-2 (`## `) heading. Deeper subsections that
-    # carry no bucket keyword of their own inherit this, so a row under
-    # `### 2026-07-04 backlog ...` still counts as (say) planned when its parent
-    # is `## Planned / Reserved`, while a keyword-bearing `### ... (Planned)`
-    # under an UNCLASSIFIED `##` parent still gets protected.
-    section_bucket: str | None = None
+    # Effective bucket of each currently-open heading level. A subsection that
+    # carries no bucket keyword of its own inherits the NEAREST CLASSIFIED
+    # ANCESTOR at any shallower level -- not merely the last level-2 heading.
+    # Example: `### Action ... (Planned)` under an UNCLASSIFIED `## ...` parent,
+    # then a `#### Notes` child row: the `####` must inherit `planned` from its
+    # `###` ancestor, NOT reset to the unclassified `##`'s None and silently
+    # drop its rows (the exact silent-drop class this tool exists to prevent).
+    # A new heading at level L invalidates every strictly-deeper open level.
+    heading_bucket_by_level: dict[int, str | None] = {}
     current_item: Item | None = None
     current_item_start: int | None = None
 
@@ -205,16 +220,25 @@ def parse_board(text: str) -> ParsedBoard:
             flush_item(idx)
             level = len(heading_match.group(1))
             classified = classify_heading(heading_match.group(2))
-            if level == 2:
-                # Top-level section heading: resets the bucket context outright
-                # (unclassified `##` -> None, as before).
-                section_bucket = classified
-                current_bucket = classified
+            # A heading closes every strictly-deeper open level (their context
+            # no longer applies once we've dedented back to `level`).
+            for open_level in [lvl for lvl in heading_bucket_by_level if lvl >= level]:
+                del heading_bucket_by_level[open_level]
+            if classified is not None:
+                # Keyword-bearing heading classifies itself outright.
+                effective = classified
             else:
-                # Nested subsection: use its own keyword bucket if it has one,
-                # otherwise inherit the enclosing `##` section's bucket rather
-                # than falling to None and silently dropping its rows.
-                current_bucket = classified if classified is not None else section_bucket
+                # Unclassified heading inherits the nearest classified ancestor
+                # (deepest remaining shallower level with a non-None bucket). A
+                # top-level `##` has no shallower ancestor, so it resets to None
+                # -- preserving the prior "unclassified `##` resets outright".
+                effective: str | None = None
+                for lvl in sorted(heading_bucket_by_level, reverse=True):
+                    if heading_bucket_by_level[lvl] is not None:
+                        effective = heading_bucket_by_level[lvl]
+                        break
+            heading_bucket_by_level[level] = effective
+            current_bucket = effective
             continue
 
         if current_bucket is None:
@@ -230,7 +254,7 @@ def parse_board(text: str) -> ParsedBoard:
         if bullet_match:
             flush_item(idx)
             content = bullet_match.group(1).strip()
-            if PLACEHOLDER_RE.match(content):
+            if PLACEHOLDER_RE.match(content) or PLACEHOLDER_PARENS_RE.match(content):
                 continue
             current_item = Item(key=item_key(content), bucket=current_bucket, first_line=content)
             current_item_start = idx
