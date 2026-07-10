@@ -1599,21 +1599,41 @@ As of 2026-07-08 (assignment-rule update).
   tiingo (50/hour+1000/day)**; finnhub/yahoo/alpha-vantage stay on the PACER. Fixes the tiingo 403
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
-- **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
-  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — IN PROGRESS 2026-07-10;
-  code+tests done + fully verified, PR opening via land.sh (built off merged `main` 6f1aaf87).**
-  `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
-  advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
-  the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
-  budget; add `truncated` + `reviewedThroughMs` to the pack; advance the marker to `now` only when NOT
-  truncated (else just below the oldest DROPPED un-reviewed item), while still storing the fingerprint so
-  annotate mode doesn't re-run the LLM daily. Marker only ever becomes MORE conservative than the old
-  unconditional `now` → no regression to 8da047aa's max-age reachability (its regression test still
-  passes). +4 tests (pack-truncation flags; 200-item backlog drains across exactly 3 daily runs in BOTH
-  annotate+decide, every item shown, none silently reviewed). node@24: tsc clean, full suite 3338/3338,
-  learning-review 34/34, eslint 0-err, build clean. Closes the LAST open #1278 deferred item (#3
-  legacy-seed is a separate in-progress peer lane). See
-  `docs/rollouts/2026-07-10-learning-review-backlog-drain.md`.
+- **Learning-review orphan hardening — adversarial re-review of PR #1328 found + fixed 2 more
+  orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`) — IN PROGRESS 2026-07-10;
+  code+tests done + fully verified, PR opening via land.sh (built off merged `main` b4c4f4b1).**
+  A Workflow-based adversarial re-review (4 lenses, each finding independently re-verified by a
+  second agent trying to REFUTE it via empirical execution against the real code, not just reading)
+  of merged PR #1328 found it had 2 real, empirically-reproduced gaps reproducing the SAME
+  "shown to LLM zero times, silently marked reviewed" failure mode via different mechanisms: (1) a
+  tied-timestamp cluster > MAX_REVIEW_ITEMS(80) freezes the drain forever (same id-ordered 80
+  re-selected every run); (2) a budget-deferred item can silently age out of the 7-day pack window
+  before its promised later sweep on a multi-day drain — directly falsifying the shipped rollout
+  note's own "no item ever silently marked reviewed" claim. One fix closes both:
+  `buildLearningReviewContextPack`'s learned-row filter now keeps a row if in-window OR un-reviewed
+  (mirrors the trigger's own window-free design, 8da047aa) + the truncation cut widens to consume a
+  full boundary tie-group. Also closes the previously-"accepted" isolated-old-row self-healing gap
+  as a free side effect (traced to 8da047aa's deliberate, narrower-scoped tradeoff — confirmed real
+  but pre-existing, not a #1328 regression, then closed anyway since the same fix does it for free).
+  Caught+fixed a bug in the fix itself (a stray re-slice silently re-dropping the just-widened items)
+  via its own new test before landing. 2 tests rewritten (asserted the old, now-wrong "self-healing"
+  behavior), 2 new added, all falsified against pre-fix source. node@24: tsc clean, learning-review
+  38/38, full suite 315 files/3388 tests, eslint 0-err, build clean. Closes finding #2 for real — no
+  known open gaps remain in the daily learning-review job's coverage guarantees. See
+  `docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum.
+
+- **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET) — ✅
+  COMPLETED 2026-07-10: PR #1328 merged to `main` (`79b542e3`).** `buildLearningReviewContextPack`
+  sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review advanced `lastReviewedAt` to
+  run-start `now`, so a >80-item store's overflow stopped counting toward the trigger's newCount AND
+  max-age → never audited. Fix: sweep OLDEST un-reviewed first within the budget; add `truncated` +
+  `reviewedThroughMs` to the pack; advance the marker to `now` only when NOT truncated (else just
+  below the oldest DROPPED un-reviewed item), while still storing the fingerprint so annotate mode
+  doesn't re-run the LLM daily. +4 tests (pack-truncation flags; 200-item backlog drains across
+  exactly 3 daily runs in BOTH annotate+decide, every item shown, none silently reviewed). node@24:
+  tsc clean, full suite 3338/3338, learning-review 34/34, eslint 0-err, build clean. **Superseded by
+  the hardening row above** — an adversarial re-review the same day found this fix had 2 adjacent
+  gaps of its own; see that row. See `docs/rollouts/2026-07-10-learning-review-backlog-drain.md`.
 - **Unsaved-changes nav prompt → 3 options (MONET, branch `monet/unsaved-changes-3opt`) — IN
   PROGRESS 2026-07-09, PR pending via land.sh.** Owner: the unsaved-changes warning on a nav
   tab/menu click should offer discard / go-back / review-save, not a 2-option `window.confirm`.

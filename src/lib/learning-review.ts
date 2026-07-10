@@ -150,14 +150,15 @@ export function evaluateLearningReviewTrigger(userId: string, now: number, polic
   const maxWaitDays = positiveIntOr(policy.learningReviewMaxWaitDays, DEFAULT_MAX_WAIT_DAYS);
   const lastReviewedAt = getLastReviewedAt(userId);
 
-  // Deliberately NO LEARNED_WINDOW_DAYS cutoff here (unlike buildLearningReviewContextPack): the
-  // trigger must see EVERY un-reviewed lesson. A window filter made a learned row older than 7 days
-  // vanish from unreviewedAts entirely — it stopped counting toward the threshold AND "max-age"
-  // could never fire for it (at the defaults maxWaitDays == LEARNED_WINDOW_DAYS, a zero-width
-  // firing window; permanently unreachable for maxWaitDays > 7) — so a slow-trickle user's
-  // corrupted lessons aged out unreviewed, the exact gap this trigger exists to close.
-  // Self-healing: a successful review stores lastReviewedAt = now, after which any older row's
-  // assertedAt <= lastReviewedAt and it stops counting/re-triggering.
+  // Deliberately NO LEARNED_WINDOW_DAYS cutoff here — the trigger must see EVERY un-reviewed
+  // lesson. A window filter made a learned row older than 7 days vanish from unreviewedAts
+  // entirely — it stopped counting toward the threshold AND "max-age" could never fire for it (at
+  // the defaults maxWaitDays == LEARNED_WINDOW_DAYS, a zero-width firing window; permanently
+  // unreachable for maxWaitDays > 7) — so a slow-trickle user's corrupted lessons aged out
+  // unreviewed, the exact gap this trigger exists to close. buildLearningReviewContextPack now
+  // mirrors this (deferred findings #2/#3 hardening): an un-reviewed row is a pack candidate
+  // regardless of age, so a row this trigger flags is guaranteed reachable by the pack too — a
+  // successful review only ever advances lastReviewedAt past a row it actually showed the LLM.
   const learnedAts = listLearnedContext(userId).map((row) => Date.parse(row.assertedAt));
   const pendingAts = listPendingLearnedContext(userId, "pending").map((row) => Date.parse(row.createdAt));
   // "Un-reviewed" = appeared/changed after the last review.
@@ -401,8 +402,23 @@ export async function readRecentRolloutNotes(limit = MAX_ROLLOUT_NOTES): Promise
 export async function buildLearningReviewContextPack(userId: string, now: number): Promise<LearningReviewContextPack> {
   const learnedSince = new Date(now - LEARNED_WINDOW_DAYS * 86_400_000).toISOString();
   const historySince = new Date(now - HISTORY_WINDOW_DAYS * 86_400_000).toISOString();
+  const lastReviewedAt = getLastReviewedAt(userId);
 
-  const learnedRows = listLearnedContext(userId).filter((row) => row.assertedAt >= learnedSince);
+  // A learned row is a candidate if it's within the recent LEARNED_WINDOW_DAYS window (bounds the
+  // already-reviewed re-audit filler below to recent history) OR it is UN-REVIEWED
+  // (assertedAt > lastReviewedAt) regardless of age — mirroring evaluateLearningReviewTrigger's own
+  // window-free un-reviewed test (8da047aa). Without the second clause, an un-reviewed row that ages
+  // past the window before its turn comes up (deferred finding #2's own drain taking multiple days,
+  // or simply a backlog older than 7 days when the review is first enabled) silently exits
+  // `candidates` — and once ANY other item is successfully reviewed, `reviewedThroughMs` below
+  // advances lastReviewedAt past it even though it was never shown to the LLM (deferred finding #3:
+  // the same permanent-orphaning failure mode #1328 fixed for the MAX_REVIEW_ITEMS budget, reachable
+  // here via the window instead). The truncation/reviewedThroughMs machinery below already paces an
+  // arbitrarily large backlog safely (MAX_REVIEW_ITEMS/day), so widening this filter adds no new
+  // cost-scaling risk — it only stops genuinely un-reviewed items from silently exiting scope.
+  const learnedRows = listLearnedContext(userId).filter(
+    (row) => row.assertedAt >= learnedSince || Date.parse(row.assertedAt) > lastReviewedAt
+  );
   const pendingRows = listPendingLearnedContext(userId, "pending");
   const pendingById = new Map(pendingRows.map((row) => [row.id, row]));
 
@@ -418,7 +434,6 @@ export async function buildLearningReviewContextPack(userId: string, now: number
   //      every item past 80).
   // Already-reviewed items fill any leftover budget (a re-audit against fresh system-history),
   // newest-first, and never count toward truncation.
-  const lastReviewedAt = getLastReviewedAt(userId);
   const candidates = [...pendingRows.map(pendingRowToItem), ...learnedRows.map(learnedRowToItem)];
   const atMs = (it: LearningReviewItem): number => Date.parse(it.at);
   const byIdAsc = (a: LearningReviewItem, b: LearningReviewItem): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -428,18 +443,37 @@ export async function buildLearningReviewContextPack(userId: string, now: number
   };
   const unreviewed = candidates.filter(isUnreviewed).sort((a, b) => atMs(a) - atMs(b) || byIdAsc(a, b));
   const reviewed = candidates.filter((it) => !isUnreviewed(it)).sort((a, b) => atMs(b) - atMs(a) || byIdAsc(a, b));
-  const items = [...unreviewed, ...reviewed].slice(0, MAX_REVIEW_ITEMS);
 
-  // `truncated` == an un-reviewed item was dropped. When true, the marker may advance only to just
-  // BELOW the oldest dropped un-reviewed item, so every dropped item still counts toward the trigger
-  // and is swept later. Subtracting 1ms (vs. using the newest-SHOWN timestamp) keeps the boundary
-  // tie-safe: a shown item that shares the boundary millisecond with the first dropped item is simply
-  // re-shown next run (harmless) rather than a dropped tie-mate being orphaned. This value only ever
-  // moves the marker to <= `now`, never past an un-shown in-pack item — so it cannot regress the
-  // out-of-window max-age reachability the trigger relies on (that path keeps its `now`/no-advance
-  // semantics via the not-truncated branch and the empty-pack skip).
-  const truncated = unreviewed.length > MAX_REVIEW_ITEMS;
-  const reviewedThroughMs = truncated ? atMs(unreviewed[MAX_REVIEW_ITEMS]) - 1 : now;
+  // Show every un-reviewed item if it fits the MAX_REVIEW_ITEMS budget; otherwise widen the cut to
+  // the END of whatever tied-timestamp cluster straddles the boundary, so the boundary millisecond
+  // is never split between shown and dropped items. Without this widening, a tied cluster LARGER
+  // than the budget (e.g. many rows backfilled with one shared `now()`, or several synchronous
+  // writes landing in the same JS clock tick) would deterministically re-select the identical
+  // id-ordered slice every run — same sort, same cut — freezing `reviewedThroughMs` at the same
+  // value forever and permanently orphaning every item past the cut: the exact class of bug this
+  // whole mechanism exists to prevent. Widening guarantees the marker moves to a genuinely NEW value
+  // after any run touching a tied cluster, at the cost of (rarely) showing more than
+  // MAX_REVIEW_ITEMS items in one call — correctness over a hard cap, since a hard cap here would
+  // just reintroduce the freeze. A non-tied boundary widens by zero, so ordinary runs are unaffected.
+  let unreviewedCut = Math.min(unreviewed.length, MAX_REVIEW_ITEMS);
+  if (unreviewedCut > 0 && unreviewedCut < unreviewed.length) {
+    const boundaryMs = atMs(unreviewed[unreviewedCut - 1]);
+    while (unreviewedCut < unreviewed.length && atMs(unreviewed[unreviewedCut]) === boundaryMs) unreviewedCut += 1;
+  }
+  const shownUnreviewed = unreviewed.slice(0, unreviewedCut);
+
+  // `truncated` == at least one un-reviewed item was dropped (after boundary widening above). When
+  // true, the marker may advance only to just BELOW the oldest dropped un-reviewed item, so every
+  // dropped item still counts toward the trigger and is swept later. This value only ever moves the
+  // marker to <= `now`, never past an un-shown in-pack item. When NOT truncated, fill any REMAINING
+  // budget with already-reviewed items (a re-audit) — but never re-slice shownUnreviewed itself back
+  // down to MAX_REVIEW_ITEMS: boundary widening can legitimately leave it larger than the budget
+  // (the whole point), and slicing here would silently drop exactly the items just widened in for.
+  const truncated = shownUnreviewed.length < unreviewed.length;
+  const items = truncated
+    ? shownUnreviewed
+    : [...shownUnreviewed, ...reviewed.slice(0, Math.max(0, MAX_REVIEW_ITEMS - shownUnreviewed.length))];
+  const reviewedThroughMs = truncated ? atMs(unreviewed[shownUnreviewed.length]) - 1 : now;
 
   const recentLearningMutations = listLearningMutationsSince(userId, learnedSince, 50).map((m) => ({
     subsystem: m.subsystem,
@@ -631,12 +665,13 @@ export async function runDailyLearningReview(
 
   const pack = await buildLearningReviewContextPack(userId, now);
   if (pack.items.length === 0) {
-    // Nothing to review today — terminal for the day. Note: the trigger counts un-reviewed lessons
-    // WITHOUT the pack's LEARNED_WINDOW_DAYS cutoff, so it can fire "max-age" for a learned row too
-    // old for this pack; when such rows are the ONLY candidates, this skip is the accepted outcome
-    // (a cheap daily no-op, no LLM call). lastReviewedAt deliberately does NOT advance here — that
-    // would mark those rows reviewed without any review — so they re-trigger until any newer lesson
-    // arrives and a successful review advances lastReviewedAt past them.
+    // Nothing to review today — terminal for the day. Since buildLearningReviewContextPack no
+    // longer window-excludes un-reviewed learned rows (any un-reviewed row is a candidate,
+    // regardless of age — deferred findings #2/#3 hardening), this branch now fires only when
+    // there are truly zero un-reviewed AND zero re-audit-eligible candidates — not as a disguised
+    // "row too old for the pack" no-op. lastReviewedAt deliberately does NOT advance here — that
+    // would mark any un-reviewed row reviewed without any review — so a genuinely un-reviewed row
+    // keeps re-triggering until a run that actually includes it succeeds.
     advanceMarker();
     // Acknowledge the current config (#1) so a config change that finds nothing to review (e.g. all
     // candidate rows aged out of the pack window) doesn't re-fire this cheap pass every day.
