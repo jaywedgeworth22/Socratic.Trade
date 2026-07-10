@@ -57,6 +57,21 @@ proves (a) it fails without the fix and (b) passes with it. Gate green: tsc clea
 311 files / 3286 tests, build succeeds. Closes the task-chip suggestion spawned from the #1267
 lane (round-2 TwelveData health-row fix touched the same file/pattern). See
 `docs/rollouts/2026-07-10-db-health-tie-sweep.md`.
+## 2026-07-10 — Activity-audit P1 batch (MONET, branch `monet/activity-audit-p1-batch`, owner-assigned)
+The three P1s from the activity-feed audit, built by a cost-tiered agent team (2 Sonnet + 1 Fable
+implementers in isolated worktrees; adversarial verify with Fable on the money-path-subtle fix):
+(1) `strategyProposal` token cap 1500→4000 + honest `strategy_bull_truncated` audit (actual wire
+cap via new `resolveLlmWireOutputCap`, finish_reason, account attribution) — kills the Roth
+zero-proposal truncations; (2) thesis-tag split-brain — `insertProposal` defaults the columns from
+the proposal JSON, COALESCE read fallbacks, self-guarding 543-row backfill — ends the false
+"attribution is unusable" learning-loop directives; (3) reflection keys scoped per account with
+legacy-row retirement on first scoped write — the LIVE account no longer reads test/paper
+reflections, dedupe actually holds (~21 wasted LLM calls/day stop), hourly phantom `policy_change`
+cards stop; chat `get_reflection` follows the active account (verifier catch — would have gone
+silently null). The strategy.ts/synthetic-stops attribution sweep (item 10) is RESERVED for a
+second owner-directed session. Verify: lint 0 err / tsc clean / focused 113+35 / full gate via
+land.sh. Rollout: `docs/rollouts/2026-07-10-activity-audit-p1-batch.md`.
+
 ## 2026-07-10 — Enrichment starvation round-2 + disposition (MONET; PR #1272 closed superseded by #1287)
 PR #1272 (the starvation fix) sat BLOCKED on two real codex-connector findings: held names INSIDE
 the ranked top-N could still starve behind the force-included extras, and user-policy scan shapes
