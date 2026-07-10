@@ -1183,6 +1183,17 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN trade_thesis_tag TEXT");
     database.exec("ALTER TABLE trade_proposals ADD COLUMN entry_market_regime TEXT");
   }
+  // Thesis-tag split-brain backfill (2026-07-10 audit fix): insertProposal historically left
+  // these columns NULL while the same tags were already embedded in the proposal JSON, so the
+  // learning loop's SQL reads saw an empty column even though the data existed. Self-guarding via
+  // the WHERE clause (only touches rows still NULL with a JSON value present) -- safe to re-run
+  // every startup, no separate "already applied" marker needed.
+  database.exec(
+    "UPDATE trade_proposals SET trade_thesis_tag = json_extract(proposal, '$.tradeThesisTag') WHERE trade_thesis_tag IS NULL AND json_extract(proposal, '$.tradeThesisTag') IS NOT NULL"
+  );
+  database.exec(
+    "UPDATE trade_proposals SET entry_market_regime = json_extract(proposal, '$.entryMarketRegime') WHERE entry_market_regime IS NULL AND json_extract(proposal, '$.entryMarketRegime') IS NOT NULL"
+  );
   // Proposal staleness: when a run's LLM re-validation re-checks a still-pending proposal,
   // stamp when and why it still stands so the queue can show "re-checked X ago" rather than
   // implying an old idea is still freshly recommended.

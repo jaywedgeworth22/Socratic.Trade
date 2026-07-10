@@ -3,6 +3,7 @@ import {
   isReasoningModel,
   resolveOpenAiModel,
   withLlmRequestBounds,
+  resolveLlmWireOutputCap,
   interactiveStrategyReasoningEffort,
   isDisallowedInteractiveStrategyReasoningConfig,
   reasoningCapabilityForModel,
@@ -11,6 +12,8 @@ import {
   llmFetchCapturing,
   ALL_LLM_REASONING_EFFORTS,
   LLM_MODEL_ROTATION_SENTINEL,
+  LLM_OUTPUT_TOKEN_CAPS,
+  LLM_REQUEST_DEFAULTS,
   LLM_TIMEOUT_MS,
   ROTATION_UI_REASONING_CAPABILITY,
   type LlmCallOutcome
@@ -103,6 +106,17 @@ describe("llm-request — model resolution", () => {
     expect(ROTATION_UI_REASONING_CAPABILITY.provider).toBe("rotation");
     expect(ROTATION_UI_REASONING_CAPABILITY.options.map((o) => o.value)).toEqual([...ALL_LLM_REASONING_EFFORTS]);
     expect(ROTATION_UI_REASONING_CAPABILITY.settingLabel).toBe("Reasoning / Thinking Effort");
+  });
+
+  it("strategyProposal is a literal 4000, independent of the shared 1500 default (P1 fix: prod Roth truncated to zero proposals 2026-07-09)", () => {
+    expect(LLM_REQUEST_DEFAULTS.maxOutputTokens).toBe(1500);
+    expect(LLM_OUTPUT_TOKEN_CAPS.strategyProposal).toBe(4000);
+    // Every OTHER cap is untouched — still tied to the shared default.
+    expect(LLM_OUTPUT_TOKEN_CAPS.strategyTuning).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.adversaryReview).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.postMortemReflection).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.learningReview).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
   });
 
   it("widens the strategy LLM timeout only for thinking-enabled reasoning models", () => {
@@ -263,6 +277,25 @@ describe("llm-request — withLlmRequestBounds", () => {
     });
     expect(chat.reasoning_effort).toBe("medium");
     expect(chat.max_completion_tokens).toBe(1000 + 4000);
+  });
+
+  it("resolveLlmWireOutputCap exposes the ACTUAL wire cap for LLM_OUTPUT_TOKEN_CAPS.strategyProposal, matching what withLlmRequestBounds embeds in the body", () => {
+    // Non-reasoning: no headroom, wire cap == the raw strategyProposal cap.
+    expect(resolveLlmWireOutputCap("chat-completions", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "gpt-4.1-mini" }))
+      .toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
+
+    // Gemini at medium reasoning effort: +4000 headroom on top of the 4000 base cap — the exact
+    // shape that starved prod Roth proposals on 2026-07-09 (this is the audit's headline example).
+    const geminiBounds = { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "gemini-3.1-pro-preview", reasoningEffort: "medium" as const };
+    const geminiWireCap = resolveLlmWireOutputCap("chat-completions", geminiBounds);
+    expect(geminiWireCap).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal + 4000);
+    // The exported resolver must match exactly what withLlmRequestBounds actually puts on the wire.
+    const geminiBody = withLlmRequestBounds({ model: geminiBounds.model }, "chat-completions", geminiBounds);
+    expect(geminiBody.max_completion_tokens).toBe(geminiWireCap);
+
+    // Anthropic messages: floored at ANTHROPIC_MIN_MAX_TOKENS (4096), not raw headroom math.
+    expect(resolveLlmWireOutputCap("anthropic-messages", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "claude-opus-4-8" }))
+      .toBe(4096);
   });
 
   // Composite review B/high/S: "Reasoning-token headroom exists only for OpenAI — other providers'
