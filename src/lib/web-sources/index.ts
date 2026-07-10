@@ -65,6 +65,7 @@ export {
   getTechnicalDataset,
   getTechnicalSignals,
   getTechnicalStatus,
+  getTechnicalWatchlist,
   recordTradingViewSignal,
   refreshTechnical,
   setTechnicalWatchlist,
