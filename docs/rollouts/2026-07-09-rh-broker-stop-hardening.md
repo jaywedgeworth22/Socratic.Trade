@@ -83,6 +83,53 @@ enable after a live smoke test, without changing any default behavior today.
   test-expectation changes were required — the staged diff was inspected against this note's
   description and matches it exactly.
 
+## Review-fix round (2026-07-09, PR #1229 — 5 confirmed P2 findings)
+
+Code review on PR #1229 confirmed five real P2 gaps in the registration/teardown interplay; all
+fixed in one commit on this branch. Findings 1/2/4 were resolved as ONE coherent design change to
+the auto-registration guard rather than three patches:
+
+1. **Stale order list after the disabled-teardown** — `runSyntheticStopMonitor` fetches
+   `getEquityOrders` BEFORE `reconcileBrokerProtectiveStops` runs, so on the teardown tick the
+   just-cancelled broker stop still looked live and suppressed synthetic auto-registration: the
+   position carried NEITHER protection for one tick. `ReconcileResult` now returns
+   `cancelledOrderIds` (every successful `cancelEquityOrder`), and the monitor prunes those ids
+   from the order list REGISTRATION coverage uses. The fire and confirmed-dead paths deliberately
+   keep the unpruned list — a cancel the broker merely accepted can still fill, and there a stale
+   skip costs one tick while a wrong fire costs a duplicate market sell.
+2. **Quantity-blind symbol-level stop guard** — `brokerStopSymbols.has(sym)` short-circuited before
+   the quantity-aware `liveExitOrderCoverage` check, so a live broker stop covering 40 of 100
+   shares suppressed synthetic protection for the other 60 forever. The symbol shortcut (and
+   `isLiveBrokerStop`) is REMOVED; coverage governs registration alone. A full-size broker stop
+   still fully suppresses (it is a live exit-side order and counts toward coverage), and the fire
+   path already sells only the uncovered remainder.
+3. **`pending_cancel` row overwritten by re-placement** — section 4 of
+   `reconcileBrokerProtectiveStops` excluded `pending_cancel` rows from `existing`, so a failed
+   cancel followed by a placement upserted a new `broker_order_id` over the row (UNIQUE
+   user/account/symbol), orphaning the old still-live GTC stop untracked. A `pending_cancel` row
+   now BLOCKS placement for its symbol until the section-1 retry lands the cancel.
+4. **Side-blind stop guard** (pre-existing, same fix as 2) — `isLiveBrokerStop` never checked order
+   side, so a live stop-BUY add-on marked a long's symbol broker-protected. Coverage
+   (`isLiveExitOrder`) is side-aware, so dropping the shortcut fixes this too.
+5. **`LIVE_ORDER_STATES` drifted from `ACTIVE_BROKER_ORDER_STATES`** — `broker-side.ts` omitted
+   `submitted`/`pending_cancel`/`pending_replace`/`suspended`, which `broker-held-orders.ts`
+   classifies as active; a pending-cancel exit can still fill yet stopped counting as coverage.
+   Added the four states, exported `ACTIVE_BROKER_ORDER_STATES`, and added a superset test so the
+   two vocabularies cannot silently drift again.
+
+Files: `src/lib/synthetic-stops.ts`, `src/lib/broker-protective-stops.ts`, `src/lib/broker-side.ts`,
+`src/lib/broker-held-orders.ts` (export only), `test/synthetic-stops.test.ts` (4 new regressions:
+full-size stop via coverage, partial-size stop fires the remainder, stop-BUY not protection,
+teardown-tick registration; mock gains `cancelEquityOrder`), `test/broker-protective-stops.test.ts`
+(pending_cancel blocks re-placement + recovery), `test/broker-side.test.ts` (new states + superset
+drift guard), this note.
+
+Verification (review-fix round): `npx tsc --noEmit` clean; targeted suites green —
+`npx vitest run test/synthetic-stops.test.ts test/broker-protective-stops.test.ts
+test/broker-side.test.ts test/broker-held-orders.test.ts` (60 tests) plus the four other suites
+importing the touched modules (31 tests); `npx eslint` on touched files: 0 errors (2 pre-existing
+warnings). Full `npm test`/`npm run build` left to the `verify` CI gate on the PR.
+
 ## Follow-ups / still-open blockers
 - **Blocker #1 (RH MCP stop-market/GTC contract unverified live) is NOT closed by this PR.** The
   remaining gate before `robinhoodBrokerStops` can default ON is a single live RH smoke test

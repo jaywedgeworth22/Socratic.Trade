@@ -27,24 +27,15 @@ import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, TradePropo
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
 /**
- * A resting broker-held stop leg (an Alpaca OCO bracket stop, or a Robinhood broker-held protective
- * stop) — a live order whose type is a stop. Liveness is the broker-agnostic `isLiveOrderState`
- * (broker-side.ts), so a Robinhood stop RESTING in queued/confirmed/unconfirmed counts here just
- * like an Alpaca stop in new/accepted/held. This is what lets the monitor see that a symbol is
- * ALREADY protected by a broker stop and skip auto-registering a synthetic trailing stop on top of
- * it — without that, the synthetic could market-sell shares the resting broker stop is also covering
- * (a double exit).
- */
-function isLiveBrokerStop(order: EquityOrder): boolean {
-  return /stop/i.test(order.type) && isLiveOrderState(order.state);
-}
-
-/**
  * A live open order that EXITS the position — market, limit, or stop; any of them reduces the
  * position when it executes, so any of them counts as protection. Only recognizing /stop/i-type
  * orders is what let the 2026-07-08 MU monitor fire again on top of its own resting market sell.
  * A long exits with a sell; a short exits with a cover, which brokers that infer open/close from
- * the position (Alpaca) report as a raw "buy".
+ * the position (Alpaca) report as a raw "buy". A broker-held stop (an Alpaca OCO bracket leg, or a
+ * Robinhood broker-held protective stop in queued/confirmed/unconfirmed) is just a live exit-side
+ * order, so it counts here too — there is deliberately NO separate "symbol has a live stop"
+ * shortcut, which was side- and quantity-blind: a stop-BUY add-on, or a stop covering 10 of 100
+ * shares, suppressed synthetic protection for shares it never covered.
  */
 function isLiveExitOrder(order: EquityOrder, positionSide: "long" | "short"): boolean {
   if (!isLiveOrderState(order.state)) return false;
@@ -160,18 +151,16 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   }
   const liveSymbols = new Set(positions.filter((p) => Math.abs(p.quantity) > 0.000001).map((p) => normalizeSymbol(p.symbol)));
 
-  // Symbols that already carry a broker-held stop (Alpaca OCO bracket). We must NOT also auto-register
-  // a synthetic trailing stop on these: with two exit paths, if the synthetic market-sells first the
-  // broker's resting stop leg is stranded and can later fill as an oversell (an unintended short).
-  // Keyed off ACTUAL resting orders (not policy inference) so a position is never left unprotected —
-  // if listing orders fails or no live broker stop exists, the synthetic still registers below.
-  let brokerStopSymbols = new Set<string>();
+  // Live open orders for the account, feeding the coverage checks below. A broker-held stop
+  // (Alpaca OCO bracket leg, Robinhood broker-held protective stop) is a live exit-side order, so
+  // the quantity-aware liveExitOrderCoverage counts it as protection — keyed off ACTUAL resting
+  // orders (not policy inference) so a position is never left unprotected. If listing orders fails,
+  // coverage sees no orders and the synthetic still registers below (protection over dedup).
   let brokerOrders: EquityOrder[] = [];
   let brokerOrdersListed = false;
   try {
     brokerOrders = await gateway.getEquityOrders(accountNumber);
     brokerOrdersListed = true;
-    brokerStopSymbols = new Set(brokerOrders.filter(isLiveBrokerStop).map((o) => normalizeSymbol(o.symbol)));
   } catch {
     // Can't list orders — fall back to registering synthetic stops (protection over dedup).
   }
@@ -252,8 +241,19 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
 
   // Robinhood true broker-held protective stops (opt-in): place resting stops for open longs and
   // cancel them on close. No-op unless policy.robinhoodBrokerStops is on and execution is live RH.
+  // Orders it CANCELS (e.g. the disabled-teardown) are pruned from the list REGISTRATION coverage
+  // uses: brokerOrders was fetched before this reconcile ran, so a just-torn-down stop would
+  // otherwise still look live and leave the position with NEITHER protection until the next tick.
+  // The fire and confirmed-dead paths keep the UNpruned list on purpose — a cancel the broker
+  // merely accepted can still fill, and there a stale skip costs one tick while a wrong fire costs
+  // a duplicate market sell.
+  let registrationOrders = brokerOrders;
   try {
-    await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running });
+    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running });
+    if (reconciled.cancelledOrderIds.length > 0) {
+      const cancelledIds = new Set(reconciled.cancelledOrderIds);
+      registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));
+    }
   } catch (err) {
     audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId);
   }
@@ -272,17 +272,17 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     );
     for (const pos of positions) {
       const sym = normalizeSymbol(pos.symbol);
-      // Skip symbols already covered by a broker-held stop — the broker bracket is the exit path there.
-      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym) || brokerStopSymbols.has(sym)) continue;
+      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
       const isShort = pos.quantity < 0;
       if (isShort && !policy.shortSellingEnabled) continue;
-      // Live open exit orders (market/limit/stop) are protection too — but only for the shares they
-      // actually cover. Skip registering ONLY when the whole position is covered (or a live exit
-      // order's quantity is unknowable — then assume full coverage, failing toward no-duplicate-
-      // sell). A partial exit (e.g. a 10-of-100-share GTC take-profit trim) must NOT leave the
-      // remaining shares trailing-stop-less through a crash: the stop registers, and the fire path
-      // below sells only the uncovered remainder. Re-checked every tick.
-      const coverage = liveExitOrderCoverage(brokerOrders, sym, isShort ? "short" : "long");
+      // Live open exit orders (market/limit/stop — a full-size broker-held stop leg included) are
+      // protection — but only for the shares they actually cover. Skip registering ONLY when the
+      // whole position is covered (or a live exit order's quantity is unknowable — then assume full
+      // coverage, failing toward no-duplicate-sell). A partial exit (e.g. a 10-of-100-share GTC
+      // take-profit trim, or an undersized broker stop) must NOT leave the remaining shares
+      // trailing-stop-less through a crash: the stop registers, and the fire path below sells only
+      // the uncovered remainder. Re-checked every tick.
+      const coverage = liveExitOrderCoverage(registrationOrders, sym, isShort ? "short" : "long");
       if (coverage.unknownQty || coverage.coveredQty >= Math.abs(pos.quantity) - QTY_EPSILON) continue;
       const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
       upsertSyntheticStop({
