@@ -232,8 +232,10 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 - **Short stop-loss default (8%) + surface short settings in main Essentials (MONET, branch
-  `monet/short-stop-default-and-surface`) — CODE COMPLETE 2026-07-09, PR opened via
-  `scripts/land.sh` (auto-merge to be armed).** Owner-directed fix: enabling short selling with
+  `monet/short-stop-default-and-surface`) — NOT YET MERGED: PR #1221 open, auto-merge armed
+  2026-07-09 (code complete; this row stays out of the "merged to `main`" sense of Completed
+  until the merge actually lands — kept here rather than duplicated under In Progress).**
+  Owner-directed fix: enabling short selling with
   otherwise-default settings rejected every short proposal because the mandatory short-stop gate
   (`policy.ts:433`) had nothing to pass by default. `DEFAULT_RISK_RULES` (`src/lib/defaults.ts`)
   now sets `shortStopLossPct: 8` — a real default (not a `?? stopLossPct` gate fallback, per
@@ -897,6 +899,49 @@ As of 2026-07-08 (assignment-rule update).
   `agentic-vitest-*` dir under the real tmpdir, removed on teardown; setup also sweeps
   stale `agentic-*` leftovers >6h old (janitor parity, parallel-run safe). Zero
   test-file edits. PR via land.sh when gate green.
+- **Settings-UX fixes: universe-floor diff classification + Sheet focus stability + exposure-cap
+  hints (MONET-authored, landed by CLAUDE pickup; branch `monet/settings-ux-fixes`) — PR opened via
+  land.sh 2026-07-09, auto-merge armed.** MONET's work, left uncommitted in its worktree when the
+  Monet seat hit its usage cap; committed AS-IS and landed by a CLAUDE session under the
+  owner-directed usage-cap pickup. (1) REAL bug fix in `policy-diff.ts classify()`: the looserWhen
+  ternary had identical branches, so lowering a `universeFloor.*` value (widens the universe) was
+  mislabeled "Locks Down"/tighter — "down" branch now inverts; regression test added. (2) `Sheet`
+  keeps `onClose` in a ref so the focus effect depends only on `open` — inline-arrow onClose was
+  re-running the effect per keystroke and yanking the caret out of TypedConfirm inputs. (3) hint
+  tooltips on maxGrossExposurePct / maxNetExposurePct. Merged `origin/main` incl. AG #1231
+  (`8fd8b3ab`, Sheet focus-loop guard) — clean, complementary; both sides verified present. Gate
+  green pre-land. Rollout: `docs/rollouts/2026-07-09-settings-ux-fixes.md`.
+- **Hetzner server migration: prod box 91.98.44.8 (4GB fsn1) -> 135.181.192.190 (8GB hel1)
+  (CLAUDE, worktree `.claude/worktrees/hetzner-server-migration-d59cd1`) — IN PROGRESS
+  2026-07-09 ~17:50 CDT.** Owner-directed in-conversation. Full Coolify-instance migration
+  (pg_dump coolify DB + /data/coolify incl. source/.env + ssh keys — preserves the GitHub App
+  source), rsync of the prod SQLite volume (restore-marker intact so no R2 re-restore /
+  single-litestream-writer preserved), redeploy socratic-trade-prod + github-runner service on
+  the new box, then flip the 6 Cloudflare A records (jays.services apex/*/prod +
+  socratictrade.com apex/*/admin) to the new IP. Old box kept STOPPED as rollback. #agent-sync
+  claim posted ~17:49 CDT with deploy-hold request; cutover after the in-flight c4d1bfa deploy
+  reached a terminal state + 10-min objection window. **INFRA DONE 2026-07-09 ~18:20 CDT** —
+  cutover verified (health 200, scheduler ticking, litestream caught up, runners re-registered,
+  old box fully stopped w/ --restart=no as rollback standby; that c4d1bfa deploy FAILED on the
+  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). Remaining: docs
+  PR merge; OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
+  (old-IP Bot-Fight-Mode bypass rule found root-causing the congress-stream SSE 403s; this
+  session was permission-blocked from creating firewall rules on that zone); first
+  announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
+  migration). See docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
+- **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
+  branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09, PR open via land.sh,
+  auto-merge armed.** MONET's work, landed by CLAUDE under the owner-directed usage-cap pickup
+  (2026-07-09): merged `origin/main` clean, full gate green (lint 0-err / tsc / 308 files 3210
+  tests / build), verified post-run that no `agentic-vitest-*` dir lingers in the real tmpdir.
+  The suite leaks every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/
+  `trading-test-*`/`llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB on
+  the fleet Mac before the 2026-07-09 manual cleanup; the disk janitor now reaps them there,
+  but CI and janitor-less machines still accumulate. Fix: vitest `globalSetup` + config-level
+  TMPDIR/TMP/TEMP override pointing the whole test runtime at one per-run
+  `agentic-vitest-*` dir under the real tmpdir, removed on teardown; setup also sweeps
+  stale `agentic-*` leftovers >6h old (janitor parity, parallel-run safe). Zero
+  test-file edits. Rollout: `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
 - **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — IN
   PROGRESS 2026-07-09.** Owner-directed: review ALL activity from the past 2-3 days
   (prod DB post-mortems/runs/alerts, rollouts, merges, channel) for issues needing
