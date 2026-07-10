@@ -1456,6 +1456,26 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
+  (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, committed locally, NOT
+  pushed/landed yet.** Closes the accepted-residual follow-up from
+  `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md` ("Follow-ups / still-open blockers"): a
+  `pending_cancel` row whose `gateway.cancelEquityOrder` retry kept throwing (e.g. stale "not
+  found" after an earlier cancel actually landed, or the stop simply filled) retried forever and
+  permanently blocked section-4 re-placement for that symbol (still protected by the always-on
+  synthetic fallback, but broker-held protection stayed off for the rest of the session).
+  `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`) now takes an optional
+  `orders?: EquityOrder[]` (the caller's freshly fetched `getEquityOrders()` list); on a cancel
+  failure it checks whether the row's `brokerOrderId` shows up there already done resting
+  (`isRejectedOrCanceledState` OR `filled`) and deletes the row if so (section 4 re-places same
+  tick); absent-from-list or still-live stays ambiguous and keeps retrying. Wired
+  `src/lib/synthetic-stops.ts` to pass its already-fetched `brokerOrders`. Also verified the
+  recon's companion issue (b), the `!exec.orderId` defensive branch, is ALREADY FIXED by PR
+  #1269's round-3 review (`isRejectedOrCanceledState` already precedes it) — no change needed
+  there. +3 tests in `test/broker-protective-stops.test.ts`. node@24: tsc clean, focused suite
+  (broker-protective-stops + synthetic-stops + broker-side + broker-held-orders) 68/68, eslint 0
+  errors. Full `npm test`/`npm run build` + `land.sh` deferred to the landing session. See
+  `docs/rollouts/2026-07-10-broker-stop-residual-a-fix.md`.
 - **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
   — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
   a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,

@@ -14,6 +14,13 @@
 // feature previously placed for the account, so disabling the feature tears its resting stops down
 // instead of orphaning them. The always-on synthetic monitor remains the fallback, so this is purely
 // additive protection.
+//
+// A pending_cancel row whose cancel call keeps failing (e.g. "order not found" after an earlier
+// attempt actually landed broker-side) would otherwise retry forever and permanently block
+// re-placement for that symbol. The caller's freshly fetched order list (`orders`, optional) lets
+// section 1 recover: if the order shows up there already done resting (filled/rejected/canceled/
+// expired), the row is deleted instead of retried again. Absent-from-list or still-live stays
+// ambiguous and keeps retrying — never assume terminal without positive evidence.
 
 import {
   audit,
@@ -24,7 +31,22 @@ import {
 import { isRejectedOrCanceledState } from "./broker-side";
 import { normalizeSymbol } from "./money";
 import { livePreflightBlocks } from "./preflight-live-guard";
-import type { BrokerGateway, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
+import type { BrokerGateway, EquityOrder, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
+
+/**
+ * True when a broker order is done resting for reasons other than an app-issued cancel actually
+ * landing — either the broker declined/terminated it (rejected/canceled/expired/failed, both
+ * spellings) or it already FILLED. Both are terminal from a "should we keep retrying the cancel"
+ * standpoint: a filled stop can never be cancelled (the broker will just keep erroring), and a
+ * declined/expired one never rested to begin with. Deliberately narrower than "not live" — an
+ * UNRECOGNIZED state must NOT count as terminal here, or a still-resting order in an unfamiliar
+ * state would get its local row deleted while the broker-side stop keeps resting, letting a later
+ * tick place a second stop over it (two resting sell stops, one invisible — the same failure mode
+ * the section-4 placement guard exists to avoid).
+ */
+function isDoneRestingState(state: string | undefined | null): boolean {
+  return isRejectedOrCanceledState(state) || String(state ?? "").trim().toLowerCase() === "filled";
+}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -105,8 +127,18 @@ export async function reconcileBrokerProtectiveStops(args: {
   positions: EquityPosition[];
   executionMode: ExecutionMode;
   running: boolean;
+  /**
+   * The caller's freshly fetched broker order list (e.g. the synthetic-stop monitor's
+   * `gateway.getEquityOrders` call earlier in the same tick). Used ONLY by the section-1
+   * pending_cancel retry, to recover a row whose cancel call keeps failing even though the
+   * order is already done resting broker-side (e.g. "order not found" after an earlier cancel
+   * attempt actually landed, or the stop simply filled). Optional and defaults to empty — a
+   * caller that omits it (or a failed fetch) just keeps the existing conservative behavior
+   * (absent-from-list stays ambiguous, so the row keeps retrying rather than getting deleted).
+   */
+  orders?: EquityOrder[];
 }): Promise<ReconcileResult> {
-  const { userId, policy, accountNumber, gateway, positions, executionMode, running } = args;
+  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [] } = args;
   const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [] };
 
   // The flag gates only PLACEMENT of new stops — never CANCELLATION. When the feature is disabled
@@ -159,8 +191,27 @@ export async function reconcileBrokerProtectiveStops(args: {
         out.cancelled++;
         out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {
-        // Keep it in DB as pending_cancel to retry on the next tick
-        console.error(`[protective-stops] retry cancel failed for ${row.symbol} order ${row.brokerOrderId}:`, err);
+        // The cancel call itself failed — but that doesn't necessarily mean the order is still
+        // resting broker-side (e.g. a prior cancel attempt actually landed and this one is just
+        // "order not found", or the stop simply filled before the cancel reached the broker).
+        // Check the caller's freshly fetched order list: if the order shows up there in a state
+        // that's done resting (filled/rejected/canceled/expired), the row is stale bookkeeping —
+        // delete it so section 4 can re-place for the symbol on a later tick. If the order is
+        // ABSENT from the list or still live, stay conservative and keep retrying next tick
+        // (an absent order is ambiguous, not confirmed dead — see broker-protective-stops.ts's
+        // module doc and the section-4 "never orphan a possibly-still-live stop" guard).
+        const found = orders.find((o) => o.id === row.brokerOrderId);
+        if (found && isDoneRestingState(found.state)) {
+          deleteBrokerProtectiveStop(row.id, userId);
+          audit(
+            "broker_protective_stop_cancel_recovered",
+            { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err) },
+            userId
+          );
+        } else {
+          // Keep it in DB as pending_cancel to retry on the next tick
+          console.error(`[protective-stops] retry cancel failed for ${row.symbol} order ${row.brokerOrderId}:`, err);
+        }
       }
     }
   }

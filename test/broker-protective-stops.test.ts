@@ -9,7 +9,7 @@ import {
   reconcileBrokerProtectiveStops
 } from "../src/lib/broker-protective-stops";
 import { getDb, listBrokerProtectiveStops } from "../src/lib/db";
-import type { BrokerGateway, EquityPosition, TradingPolicy } from "../src/lib/types";
+import type { BrokerGateway, EquityOrder, EquityPosition, TradingPolicy } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-protstops-${randomUUID()}.db`)}`;
@@ -187,6 +187,88 @@ describe("reconcileBrokerProtectiveStops", () => {
     rows = listBrokerProtectiveStops("PS-BLOCK", "local");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ brokerOrderId: "ord-2", status: "resting" });
+  });
+
+  it("recovers a stuck pending_cancel row once the caller's order list shows it done resting — re-placement resumes the same tick", async () => {
+    // Place a resting stop while enabled.
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-DEAD"), accountNumber: "PS-DEAD", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    // A quantity mismatch triggers cancel-then-replace, but the cancel FAILS every tick (e.g.
+    // "order not found" after an earlier cancel attempt actually landed broker-side) — the row is
+    // stuck as pending_cancel.
+    gw.failCancel = true;
+    const stuck = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-DEAD"), accountNumber: "PS-DEAD", gateway: gw, positions: [longPos("AAPL", 12, 100)], executionMode: "broker/live", running: true });
+    expect(stuck.cancelled).toBe(0);
+    let rows = listBrokerProtectiveStops("PS-DEAD", "local");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-1", status: "pending_cancel" });
+    // Without evidence the order is dead, a bare retry (no `orders` passed) keeps it stuck AND
+    // keeps blocking re-placement for the now-mismatched position.
+    const stillStuck = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-DEAD"), accountNumber: "PS-DEAD", gateway: gw, positions: [longPos("AAPL", 12, 100)], executionMode: "broker/live", running: true });
+    expect(stillStuck.cancelled).toBe(0);
+    expect(stillStuck.placed).toBe(0);
+    expect(listBrokerProtectiveStops("PS-DEAD", "local")).toHaveLength(1);
+    expect(gw.placed).toHaveLength(1); // still no second (orphaning) placement
+    // Now the caller (the synthetic-stop monitor) passes its freshly fetched order list, and
+    // ord-1 shows up there already terminal ("canceled") — the earlier cancel actually landed,
+    // the broker's "not found" response was just stale. Section 1 clears the row from that
+    // evidence (the cancel call itself still throws), which unblocks section 4 in the SAME
+    // reconcile pass — re-placement resumes immediately, not on some later tick.
+    gw.nextOrderId = "ord-2";
+    const orders: EquityOrder[] = [{ id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "canceled", createdAt: new Date().toISOString() }];
+    const recovered = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-DEAD"), accountNumber: "PS-DEAD", gateway: gw, positions: [longPos("AAPL", 12, 100)], executionMode: "broker/live", running: true, orders });
+    expect(recovered.cancelled).toBe(0); // recovered via the order list, not an actual successful cancel
+    expect(recovered.placed).toBe(1); // section 4 immediately re-places once the block clears
+    rows = listBrokerProtectiveStops("PS-DEAD", "local");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-2", status: "resting", quantity: 12 });
+  });
+
+  it("also recovers when the caller's order list shows the stop already FILLED (cancel-of-a-fill always fails)", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-FILLED"), accountNumber: "PS-FILLED", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    gw.failCancel = true;
+    // Position closed (the stop itself filled and sold the shares) → section-2 cancel-on-close
+    // attempts to cancel a now-filled order, which always fails, landing it as pending_cancel.
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-FILLED"), accountNumber: "PS-FILLED", gateway: gw, positions: [], executionMode: "broker/live", running: true });
+    expect(listBrokerProtectiveStops("PS-FILLED", "local")).toHaveLength(1);
+    expect(gw.cancelled).toEqual([]); // the cancel call never actually succeeded
+    // AAPL is re-bought later in the session — a fresh stop is needed, but the dead row still
+    // blocks section 4 without evidence.
+    const blocked = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-FILLED"), accountNumber: "PS-FILLED", gateway: gw, positions: [longPos("AAPL", 5, 110)], executionMode: "broker/live", running: true });
+    expect(blocked.placed).toBe(0);
+    // The caller's order list shows ord-1 already FILLED (a filled order can never be cancelled —
+    // it's just as terminal as a rejection for this purpose).
+    gw.nextOrderId = "ord-3";
+    const orders: EquityOrder[] = [{ id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled", createdAt: new Date().toISOString() }];
+    const recovered = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-FILLED"), accountNumber: "PS-FILLED", gateway: gw, positions: [longPos("AAPL", 5, 110)], executionMode: "broker/live", running: true, orders });
+    expect(recovered.placed).toBe(1);
+    const rows = listBrokerProtectiveStops("PS-FILLED", "local");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-3", status: "resting" });
+  });
+
+  it("stays conservative — never deletes a pending_cancel row when the order is ABSENT from the caller's list or still LIVE", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-LIVE"), accountNumber: "PS-LIVE", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    gw.failCancel = true;
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-LIVE"), accountNumber: "PS-LIVE", gateway: gw, positions: [longPos("AAPL", 12, 100)], executionMode: "broker/live", running: true });
+    expect(listBrokerProtectiveStops("PS-LIVE", "local")).toHaveLength(1);
+    // Order list fetched but doesn't contain ord-1 at all (e.g. broker excludes very old orders
+    // from the default query window) — absence is NOT positive evidence of death.
+    const r1 = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-LIVE"), accountNumber: "PS-LIVE", gateway: gw, positions: [longPos("AAPL", 12, 100)], executionMode: "broker/live", running: true, orders: [] });
+    expect(r1.cancelled).toBe(0);
+    expect(listBrokerProtectiveStops("PS-LIVE", "local")).toHaveLength(1);
+    // Order list contains ord-1 but it's still LIVE (e.g. "confirmed") — the cancel request may
+    // simply not have been processed by the broker yet. Must not delete a row for a still-live
+    // order — that would orphan it (two resting sell stops, one untracked, once section 4 places
+    // a replacement).
+    const liveOrders: EquityOrder[] = [{ id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "confirmed", createdAt: new Date().toISOString() }];
+    const r2 = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-LIVE"), accountNumber: "PS-LIVE", gateway: gw, positions: [longPos("AAPL", 12, 100)], executionMode: "broker/live", running: true, orders: liveOrders });
+    expect(r2.cancelled).toBe(0);
+    const rows = listBrokerProtectiveStops("PS-LIVE", "local");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-1", status: "pending_cancel" });
+    expect(gw.placed).toHaveLength(1); // still no second (orphaning) placement
   });
 
   it("ignores a synchronously REJECTED placement — no row, no placed count, symbol not advertised", async () => {

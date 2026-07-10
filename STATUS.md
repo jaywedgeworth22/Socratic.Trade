@@ -8,6 +8,34 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — PR #1229 residual (a): dead `pending_cancel` rows now self-heal (CLAUDE, branch `claude/broker-stop-residuals`)
+Closes the accepted-residual follow-up tracked in `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`
+("Follow-ups / still-open blockers"). `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`)
+section 1 (pending_cancel retry) previously just logged and kept retrying forever when
+`gateway.cancelEquityOrder` kept throwing — even if the broker order was already done resting
+(e.g. a prior cancel actually landed and this was just a stale "not found", or the stop had
+simply filled). A permanently-stuck `pending_cancel` row silently blocks section 4 from ever
+re-placing a broker-held stop for that symbol (still protected by the always-on synthetic
+fallback, but broker-held protection is gone for the rest of the session). Fix: added an optional
+`orders?: EquityOrder[]` param — the caller's freshly fetched `gateway.getEquityOrders()` list —
+and on a cancel failure, section 1 now checks whether the row's `brokerOrderId` appears in that
+list already done resting (`isRejectedOrCanceledState` OR `filled`); if so, the row is deleted
+(section 4 can re-place, same tick). Absent-from-list or still-live stays ambiguous and keeps
+retrying — never assume terminal without positive evidence (mirrors the existing "never orphan a
+possibly-still-live stop" bias in this file). Wired the synthetic-stop monitor
+(`src/lib/synthetic-stops.ts`) to pass its already-fetched `brokerOrders` through. Issue (b)
+(`!exec.orderId` defensive branch, referenced by the same recon) was checked and found ALREADY
+FIXED by PR #1269's round-3 review — `isRejectedOrCanceledState(exec.state)` already precedes the
+`!exec.orderId` guard at section 4's placement call; no code change needed there, confirmed by
+reading PR #1269's resolved review-comment thread. +3 regression tests in
+`test/broker-protective-stops.test.ts` (recovers via a terminal-state order-list match; recovers
+via `filled`; stays conservative — never deletes on absent-from-list or still-live). node@24:
+`npx tsc --noEmit` clean, focused suite (broker-protective-stops + synthetic-stops + broker-side +
+broker-held-orders) 68/68 green, `npx eslint` on touched files 0 errors (2 pre-existing
+grandfathered warnings, unrelated). **Committed locally on `claude/broker-stop-residuals`, NOT
+pushed / not landed** — full `npm test`/`npm run build` + `land.sh` deferred to the landing
+session. See `docs/rollouts/2026-07-10-broker-stop-residual-a-fix.md`.
+
 ## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
 Owner-directed pure display-copy change. Field labels for the two model pickers now read
 "Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green
