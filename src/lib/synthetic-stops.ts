@@ -244,16 +244,22 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // Orders it CANCELS (e.g. the disabled-teardown) are pruned from the list REGISTRATION coverage
   // uses: brokerOrders was fetched before this reconcile ran, so a just-torn-down stop would
   // otherwise still look live and leave the position with NEITHER protection until the next tick.
-  // The fire and confirmed-dead paths keep the UNpruned list on purpose — a cancel the broker
-  // merely accepted can still fill, and there a stale skip costs one tick while a wrong fire costs
-  // a duplicate market sell.
+  // Symbols it PLACED stops for this tick are the mirror-image staleness: the fresh resting order
+  // CANNOT appear in the pre-reconcile list, so BOTH synthetic registration AND the fire path of
+  // already-registered rows treat them as broker-covered for this tick (see the two
+  // justPlacedBrokerStopSymbols skips below) instead of acting on an undercount. For CANCELLED
+  // orders the fire and confirmed-dead paths keep the UNpruned list on purpose — a cancel the
+  // broker merely accepted can still fill, and there a stale skip costs one tick while a wrong fire
+  // costs a duplicate market sell.
   let registrationOrders = brokerOrders;
+  const justPlacedBrokerStopSymbols = new Set<string>();
   try {
     const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running });
     if (reconciled.cancelledOrderIds.length > 0) {
       const cancelledIds = new Set(reconciled.cancelledOrderIds);
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));
     }
+    for (const sym of reconciled.placedStopSymbols) justPlacedBrokerStopSymbols.add(normalizeSymbol(sym));
   } catch (err) {
     audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId);
   }
@@ -275,6 +281,19 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
       const isShort = pos.quantity < 0;
       if (isShort && !policy.shortSellingEnabled) continue;
+      // Reconcile PLACED (or cancel/REPLACED) a broker-held protective stop for this symbol THIS
+      // tick. That fresh full-size stop cannot appear in the pre-reconcile order list, so the
+      // coverage check below would undercount — the synthetic would register against stale
+      // coverage, and if the quote already breaches the trail it would fire the same tick, selling
+      // shares the replacement already covers and then cancelling that replacement
+      // (cancelBrokerProtectiveStop after the fill booking), leaving the remainder unprotected
+      // until the re-arm grace. Treat the symbol as broker-covered for THIS tick; the next tick's
+      // fresh order fetch sees the real resting order and normal quantity-aware coverage takes
+      // over. The fire path of ALREADY-registered rows carries the same gate (see the fire loop
+      // below): an active row armed on an earlier tick (e.g. one where placement threw, or before
+      // the feature was enabled) would otherwise fire against the same undercount and then cancel
+      // the fresh stop.
+      if (justPlacedBrokerStopSymbols.has(sym)) continue;
       // Live open exit orders (market/limit/stop — a full-size broker-held stop leg included) are
       // protection — but only for the shares they actually cover. Skip registering ONLY when the
       // whole position is covered (or a live exit order's quantity is unknowable — then assume full
@@ -350,6 +369,23 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     const positionQty = Math.abs(posQty); // order/fill quantity is always a positive magnitude (cover qty for shorts)
     if (positionQty <= QTY_EPSILON) {
       deleteSyntheticStop(stop.id, userId);
+      continue;
+    }
+    // Reconcile PLACED (or cancel/REPLACED) a broker-held protective stop for this symbol THIS
+    // tick — the same pre-reconcile-list staleness the registration skip above guards against, but
+    // for a row that was ALREADY active (e.g. registered on a tick where section-4 placement threw,
+    // or armed before robinhoodBrokerStops was enabled). The coverage check below cannot see the
+    // just-placed full-size stop, so firing here would sell shares that stop already covers and
+    // then cancelBrokerProtectiveStop (after the fill booking) would cancel the fresh stop —
+    // duplicate exit, then no protection. Skipping costs one tick of trail responsiveness with
+    // full-size broker-held protection resting; the next tick's fresh order fetch restores real
+    // quantity-aware coverage.
+    if (justPlacedBrokerStopSymbols.has(normalizeSymbol(stop.symbol))) {
+      audit("synthetic_stop_skipped_resting_exit", {
+        symbol: stop.symbol,
+        positionQty,
+        note: "broker-held protective stop placed this tick — full-size protection resting; deferring fire to next tick's fresh coverage"
+      }, userId);
       continue;
     }
     // Quantity-aware double-exit guard: shares already covered by live exit orders are broker-held —
