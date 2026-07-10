@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Enrichment starvation round-2 + disposition (MONET; PR #1272 closed superseded by #1287)
+PR #1272 (the starvation fix) sat BLOCKED on two real codex-connector findings: held names INSIDE
+the ranked top-N could still starve behind the force-included extras, and user-policy scan shapes
+(settings-UI options, not env) bypassed the env-derived budget. Round-2 fixes were pushed and the
+threads resolved — but #1287 ("no-cap enrichment", owner ruling 2026-07-09) had meanwhile landed
+on main carrying this branch's content (merged at 90c55579) revised to the ruling: no hard cap
+(`maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS`, unclamped), held-in-top-N hoisted in the
+enrichment order, tooltip honesty, full regression suite. Both codex findings are structurally
+addressed by #1287, so #1272 was closed as superseded (05:30Z); the round-2 cap-50 approach is
+dead by the ruling — do not resurrect. Boards flipped (effort row → Completed via #1287); deploy
+rode main@597b991c (deployer session owns health-verify + the Deployed flip). See
+`docs/rollouts/2026-07-09-enrichment-starvation-fix.md` (Disposition section).
 ## 2026-07-10 — Rotation-UX fixes (CLAUDE subagent, branch `claude/rotate-ux-fixes`, stacked on #1279)
 Owner reports fixed: (a) with a seat (or both) set to "Rotate all models", the Reasoning/Thinking
 Effort control vanished and the summary falsely claimed the selection "does not expose" a reasoning
