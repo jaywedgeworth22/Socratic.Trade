@@ -21,6 +21,11 @@ import { ConsoleApiError, fetchDashboard } from "./api";
 
 const POLL_MS = 15_000;
 const EVENT_REFRESH_DEBOUNCE_MS = 200;
+// If the very first snapshot hasn't arrived by the time this fires, the shell would otherwise sit
+// on the logo forever (a hung upstream fetch with no client-side deadline). Flip to the existing
+// error card instead — it already auto-retries via the poll interval above.
+const FIRST_LOAD_WATCHDOG_MS = 15_000;
+const FIRST_LOAD_WATCHDOG_MESSAGE = "The dashboard is taking too long to respond. Retrying…";
 
 export type ConsoleStreamStatus = "unsupported" | "connecting" | "live" | "reconnecting";
 
@@ -116,6 +121,19 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       inFlight.current?.abort();
     };
   }, [refresh]);
+
+  // First-load watchdog: self-contained, independent of refresh()/the effect above. While no
+  // snapshot has arrived and no error has been reported yet, arm a timer; if it fires first, flip to
+  // the existing error card (which already auto-retries via the poll interval) instead of sitting on
+  // the shell's logo forever. Re-armed automatically by its own [snapshot, error] deps — a snapshot
+  // or error arriving before the deadline clears the pending timer via the effect cleanup.
+  useEffect(() => {
+    if (snapshot !== null || error !== null) return;
+    const timer = window.setTimeout(() => {
+      setError((prev) => prev ?? FIRST_LOAD_WATCHDOG_MESSAGE);
+    }, FIRST_LOAD_WATCHDOG_MS);
+    return () => window.clearTimeout(timer);
+  }, [snapshot, error]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof EventSource === "undefined") {

@@ -8,6 +8,72 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Enrichment starvation round-2 + disposition (MONET; PR #1272 closed superseded by #1287)
+PR #1272 (the starvation fix) sat BLOCKED on two real codex-connector findings: held names INSIDE
+the ranked top-N could still starve behind the force-included extras, and user-policy scan shapes
+(settings-UI options, not env) bypassed the env-derived budget. Round-2 fixes were pushed and the
+threads resolved — but #1287 ("no-cap enrichment", owner ruling 2026-07-09) had meanwhile landed
+on main carrying this branch's content (merged at 90c55579) revised to the ruling: no hard cap
+(`maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS`, unclamped), held-in-top-N hoisted in the
+enrichment order, tooltip honesty, full regression suite. Both codex findings are structurally
+addressed by #1287, so #1272 was closed as superseded (05:30Z); the round-2 cap-50 approach is
+dead by the ruling — do not resurrect. Boards flipped (effort row → Completed via #1287); deploy
+rode main@597b991c (deployer session owns health-verify + the Deployed flip). See
+`docs/rollouts/2026-07-09-enrichment-starvation-fix.md` (Disposition section).
+## 2026-07-10 — Rotation-UX fixes (CLAUDE subagent, branch `claude/rotate-ux-fixes`, stacked on #1279)
+Owner reports fixed: (a) with a seat (or both) set to "Rotate all models", the Reasoning/Thinking
+Effort control vanished and the summary falsely claimed the selection "does not expose" a reasoning
+control — now the sentinel maps to a UI-only synthetic capability (`ROTATION_UI_REASONING_CAPABILITY`,
+full generic ladder) with honest copy that the chosen effort applies per served model, clamped per
+run to each model's supported range (call-time semantics untouched; the raw sentinel still fails
+closed everywhere server-side); (b) two rotate sentinels no longer trip the "SAME model critiquing
+its own proposals" independence warning — sentinel-aware positive copy instead. Also: the
+c2f0d754 high-tier-only-pair guard no longer hides the whole control (explicit "Per-model default
+(no high-tier escalation)" blank option + per-model "takes no reasoning parameters" note restores
+visibility and an explicit High opt-in without re-widening the evidence-backed Mistral capability
+map); AI review panel now discloses upfront that a blank strategist under all-rotate runs on local
+rules (no LLM); approval-card provenance/badges and `redTeamFailureModel` never leak the raw
+"__rotate__" sentinel. Page helpers extracted to `app/console/strategy/reasoning-control.ts`
+(unit-tested). Gate: tsc clean, lint 0 errors on touched files, full suite 311 files / 3262 tests.
+**Sequencing resolved 2026-07-10:** the parallel lane's same-model-pairing skip merged to `main`
+via #1294 (`advanceRotationPointers` skips red one slot when its pick would equal green's, pool
+>= 2) and this branch merged `origin/main`, so the independence-hint copy is true of this tree;
+the copy was additionally tightened to "whenever more than one model is eligible" to stay
+strictly true for a single-eligible-model pool. Detail:
+`docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
+
+## 2026-07-09 — Mistral capability-map fix (MONET, branch `monet/mistral-capmap-fix`)
+Handoff-queue item 2 (post-#1191 queue): both catalog Mistral models 400'd on every call
+(benchmark 2026-07-08, 0/12) because the shaper claimed a family-wide reasoning capability.
+Per Mistral's own 400s: `mistral-medium-3-5` accepts `reasoning_effort` high|none ONLY (now the
+sole Mistral capability entry, with DeepSeek-style opt-in normalization — high/xhigh/max → high,
+else none, no silent medium→high upgrade); `mistral-small-2603` rejects `prompt_mode:"reasoning"`
+outright, so it and every other Mistral id now send a plain chat body with no reasoning params.
+Rotation-pool re-add deliberately deferred to a keyed re-benchmark (neither model has ever
+completed a benchmarked call). Gate green: lint 0 errors / tsc clean / 310 files 3246 tests /
+build. See `docs/rollouts/2026-07-09-mistral-capmap-fix.md`. Remaining queue: reviewedByModel
+stamp (after bump-to-floor lands — strategy.ts collision), strategy.ts split (needs freeze
+window).
+## 2026-07-09 — Rotation ("__rotate__") now works for manual Run-once (CLAUDE, branch `claude/rotate-runonce-fix`)
+Owner-directed, three fixes in one commit: (1) the Run-once route precheck resolved the PERSISTED
+policy, where the `"__rotate__"` sentinel deliberately reads as unset → 412 every manual run (scheduled
+runs worked; `runStrategyOnce` resolves rotation at run top) — the route now gates a rotating Green on
+`eligibleRotationPool(userId)` being non-empty, with a new actionable 412 message
+(`LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE`) when no key resolves for any catalog model; red sentinel
+never 412s (routes per-opening to human, like blank red). (2) `classifyRunFailure` (chrome.tsx) titled
+EVERY 412 "No LLM key is configured" — model-CHOICE messages now get "Choose your team models" →
+`/console/settings#models-green`; key messages keep the key title. (3) `advanceRotationPointers`
+same-model skip: dual rotation started both counters at 0 → proposer and reviewer served the SAME model
+all first cycle; red now skips one slot when its pick would equal green's (pool >= 2), wrap-advance
+intact. tsc clean; touched suites 26/26 (Node 24); reviewed, landing via `land.sh` (full gate:
+lint/tsc/test/build) — PR opened, auto-merge armed. See `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
+## 2026-07-10 - Infinite-loading fix, CLAUDE layer (PR pending)
+socratictrade.com infinite logo: primary cause = SSE market-data abort-storm (AG PR #1285, land first);
+CLAUDE layer on `claude/console-load-hang` = deadlines on all 9 dashboard upstreams (degraded-not-hung,
+logged), ipv4first in instrumentation register(), 15s first-load watchdog (isolated from refresh()).
+Gate green: tsc, 3261/3261 tests, build, lint. Prod logs via Coolify API: app stdout silent (only
+litestream) - timeout warns now make hangs visible. Detail: docs/rollouts/2026-07-10-dashboard-deadlines-load-watchdog.md
+
 ## 2026-07-09 — Enrichment no-cap revision + filings warm-up receipts (MONET, branch `monet/aapl-fundamentals-missing-e3ea01`)
 Owner rulings from the AAPL-fundamentals session, landed on top of the #1272 content (that PR
 is superseded — GitHub stuck it on a phantom DIRTY mergeable-state; `git merge-tree` is clean):
