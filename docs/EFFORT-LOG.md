@@ -1749,21 +1749,42 @@ As of 2026-07-08 (assignment-rule update).
 ## Planned / Reserved Before Implementation
 
 - **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
-  PLANNED 2026-07-10 (owner ask, stop-loss session).** Today the LLM already proposes a per-trade
-  stop PRICE (`bracketStopLoss`, honored when valid); what it cannot choose is the stop TYPE
-  (fixed / ATR / trailing / none) or have that choice survive for the position's lifetime — held
-  positions are governed by the account-level policy rules. Design sketch: (1) add
-  `TradeProposal.stopPlan` (`style: "default"|"fixed"|"trailing"|"none"` + optional distance
-  overrides + rationale) to the LLM structured-output schema alongside `bracketStopLoss`; (2)
-  persist it per position at fill time in a new `position_stop_plans` table (precedent: the
-  take-profit band ratchet persisted by `recordFillFromProposal`), cleared when the position
-  closes; (3) thread a `stopPlanBySymbol` map into `generateProactiveRiskProposals`,
-  `runSyntheticStopMonitor`, `reconcileBrokerProtectiveStops`, and `enrichOpeningProposal` so all
-  four enforcement layers honor the SAME per-position plan (a "none" plan must annotate honestly
-  everywhere protection status is displayed); (4) `stopPlan: "none"` is an owner-preference gate —
-  overridable per product philosophy, but surfaced loudly on the approval card. Money-path change
-  across ~6 modules + migration — needs its own verify cycle; deliberately NOT ridden along with
-  the 2026-07-10 broker-trailing-stops PR.
+  PLANNED 2026-07-10 (owner ask, stop-loss session; requirements sharpened by owner same day).**
+  Today the LLM already proposes a per-trade stop PRICE (`bracketStopLoss`, honored when valid);
+  what it cannot choose is the stop TYPE (fixed / ATR / trailing / none) or have that choice
+  survive for the position's lifetime — held positions are governed by the account-level policy
+  rules. Design sketch: (1) add `TradeProposal.stopPlan`
+  (`style: "default"|"fixed"|"atr"|"trailing"|"none"` + optional distance overrides + rationale)
+  to the LLM structured-output schema alongside `bracketStopLoss`; (2) persist it per position at
+  fill time in a new `position_stop_plans` table (precedent: the take-profit band ratchet
+  persisted by `recordFillFromProposal`), cleared when the position closes; (3) thread a
+  `stopPlanBySymbol` map into `generateProactiveRiskProposals`, `runSyntheticStopMonitor`,
+  `reconcileBrokerProtectiveStops`, and `enrichOpeningProposal` so all four enforcement layers
+  honor the SAME per-position plan (a "none" plan must annotate honestly everywhere protection
+  status is displayed); (4) `stopPlan: "none"` is an owner-preference gate — overridable per
+  product philosophy, but surfaced loudly on the approval card.
+  **Owner requirement A — no hidden prioritization (2026-07-10):** Settings must NEVER render the
+  stop options as disjointed independent toggles while the engine secretly orders/compose them.
+  The Guardrails stop-flow diagram (PR #1331) is the binding pattern: the precedence/fallback
+  wiring is drawn on screen with arrows, active/inactive states, and the account's current values.
+  This feature must EXTEND that diagram — per-position plans appear as an explicit top lane
+  ("LLM's per-position choice → account defaults when it declines") and every position's ACTIVE
+  plan is visible where the position is shown (Positions table protection column + approval card).
+  Any new stop mechanism added later must join the diagram, not become a stray toggle.
+  **Owner requirement B — universal availability (2026-07-10):** every stop style must be
+  genuinely available for ALL stocks — both currently-HELD positions and every CANDIDATE at
+  consideration/purchase time — so the LLM (or owner) can pick any style for any name. Concretely:
+  (a) ATR: extend the `atrStopPctBySymbol` bars precompute beyond open positions to the full
+  candidate set the LLM sees (bounded by the scan cap), so an ATR plan is priceable pre-purchase;
+  when a name truly has no history, the UI/proposal must say "ATR unavailable for this symbol —
+  falls back to X" rather than silently substituting. (b) Trailing: available on every
+  broker/environment (native Alpaca REST, ratcheted RH-live + alpaca-mcp, synthetic monitor
+  everywhere) — shipped in PR #1331. (c) Fixed and none: intrinsically universal. (d) Broker-held
+  vs app-managed is a PLACEMENT detail, never a different option: the choice set the user/LLM
+  sees is identical for every symbol, and the engine guarantees each style works on any
+  broker/symbol combination, with the actual mechanism (broker order vs app monitor) displayed
+  transparently per position. Money-path change across ~6 modules + migration — needs its own
+  verify cycle; deliberately NOT ridden along with the 2026-07-10 broker-trailing-stops PR.
 
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09.** Reservation/diagnosis row; the effort moved to 🚧 In Progress (same title, this file) when implementation began and is now in PR via land.sh, auto-merge armed — see that row for the full record. (Corrected in place per protocol, not deleted; annotation by CLAUDE while landing MONET's work under the owner-directed usage-cap pickup.)
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
