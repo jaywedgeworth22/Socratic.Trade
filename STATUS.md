@@ -21,6 +21,23 @@ clean, eslint 0 errors, 46 focused test files / 523 tests green under node@24. B
 fresh detached worktree off `origin/main`, committed locally, NOT pushed — full gate
 (`npm test` full run, `npm run build`) and PR/land are a later, separate step. See
 `docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
+## 2026-07-10 — Settings IA restructure: global-only Settings (CLAUDE, branch `claude/settings-global-only`)
+Owner-directed. `/console/settings` is now GLOBAL-ONLY; account-scoped config lives on Framework
+(`/console/strategy`). Models card deleted from Settings entirely (`app/console/settings/models.tsx`
+removed — Framework's Proposer/Reviewer pickers with the working reasoning-effort controls are the
+single source of truth; the Coach picker survives on the Coach page via the same localStorage key).
+Tax treatment extracted to `app/console/strategy/tax-settings.tsx` and appended at the bottom of
+Framework, still account-scoped with a THIS ACCOUNT chip. `requireTypedConfirmation` PROMOTED to
+`USER_LEVEL_POLICY_FIELDS` (db-profiles) — one switch spans all accounts; divergent per-account
+values are superseded (no legacy seed, sole-user ruling; default fails safe to required). Learning
+review verified already user-level. THIS ACCOUNT section + scope-chip explainer removed from
+Settings; anchors preserved (#brokers/#api-keys/#sharing/#danger/#admin) + new #confirmation
+(Settings), #models/#tax (Framework, with the deferred hash-scroll fix). Run-block fix link
+`#models-green` → `/console/strategy#models`; "Settings → LLM models"/"Settings → Tax treatment"
+copy retargeted to Framework across chrome/llm-required/red-team/defaults/db/guardrails/help.
+New regression test in `test/per-account-policy-isolation.test.ts`. Gate green: tsc clean, lint 0
+errors, 3374 tests / 315 files, build clean; browser smoke of both pages clean.
+See `docs/rollouts/2026-07-10-settings-global-only.md`.
 
 ## 2026-07-10 — Learning-review legacy-seed default-blob edge fixed (MONET, branch `monet/learning-review-legacy-seed-99138a`, follow-up to #1278)
 Resolves PR #1278's deferred Codex P2 **finding #3**. `seedLegacyLearningReviewFields` (`src/lib/db-profiles.ts`)

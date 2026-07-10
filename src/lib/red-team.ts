@@ -182,7 +182,7 @@ export async function debateProposal(
   // NO MODEL DEFAULTS: an unchosen Red model resolves to "" — fail closed, never guess a model.
   if (!model) {
     return unavailable(
-      "Red Team reviewer model is not chosen — select it under Settings → LLM models.",
+      "Red Team reviewer model is not chosen — select it under Framework → Models.",
       "not_configured"
     );
   }

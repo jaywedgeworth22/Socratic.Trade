@@ -5,6 +5,15 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
+> change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/
+> reference/danger) settings; account-scoped config lives on Framework (`/console/strategy`):
+> the Settings Models card was DELETED (Framework's pickers with reasoning-effort controls are
+> the single source of truth — the "mandatory explicit Settings picks" in the 2026-07-07 note
+> below are now mandatory explicit *Framework* picks), Tax treatment moved to the bottom of
+> Framework (still account-scoped, THIS ACCOUNT chip), and `requireTypedConfirmation` was
+> promoted to a user-level policy field so Advanced action confirmation genuinely spans all
+> accounts. See `docs/rollouts/2026-07-10-settings-global-only.md`.
 > **2026-07-07 - Single-adversary consolidation IMPLEMENTED (MONET).** Roadmap-relevant change to
 > the Phase-7 strategy engine's adversarial review: the two adversarial LLM passes (in-flow Bear +
 > escalated `debateProposal`) are consolidated into ONE post-sizing Red Team review per risk-adding
