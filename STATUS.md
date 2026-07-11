@@ -11,9 +11,10 @@ failures, retains channel-labelled partial failure detail, and audits legacy web
 the same `notify.sent` / `notify.error` vocabulary plus an aggregate `notification.delivery` receipt.
 Historical/raw reasons render as human text. The operator fallback email remains a lazy extra lane,
 never the gate. The branch is reconciled through `main@0dda52db` after strategy PR #1429 merged.
-Focused Node 24 verification is green: 7 files / 96 tests, touched lint 0 errors / 43 inherited
-warnings, TypeScript clean, and `git diff --check`. Full suite/build, push, replacement PR, and #1442
-supersession remain. Rollout:
+Final Node 24 verification is green: focused 7 files / 96 tests, touched lint 0 errors / 43 inherited
+warnings, repository lint 0 errors / 404 inherited warnings, TypeScript, full Vitest **342 files /
+3,816 tests**, production build, and `git diff --check`. Push, replacement PR, hosted checks, #1442
+supersession, merge, and production verification remain. Rollout:
 `docs/rollouts/2026-07-11-notification-status-truth.md`.
 
 ## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, merged PR #1429)
@@ -42,8 +43,10 @@ after the strategy run instead of before it. The combined focused Node 24 rerun 
 129 tests**; touched ESLint **0 errors / 36 inherited warnings**; repository lint, TypeScript, full
 Vitest **341 files / 3,801 tests**, production build, and `git diff --check` are green. PR #1429
 passed hosted verify, smoke, and gitleaks with zero unresolved threads and merged as `0dda52db` at
-2026-07-11T20:45:27Z. The configured auto-deploy is building; exact production release and health
-verification remain. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+2026-07-11T20:45:27Z. Production now reports that exact release, current scheduler tick/nonexpired
+lease, Litestream IPC replication with no degradation, and green Congress REST/SSE plus usage monitor;
+Alpha remains the known noncritical free-plan daily cap. See
+`docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 ## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
 ## 2026-07-11 — Durable provider/dataset operation leases (CODEX, ready PR #1441)
 

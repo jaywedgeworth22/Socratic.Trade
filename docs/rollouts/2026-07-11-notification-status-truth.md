@@ -55,12 +55,14 @@ Node `v24.18.0`:
 - `git diff --check` — passed.
 - After strategy PR #1429 merged, `origin/main@0dda52db` merged cleanly. The same Node 24 focused
   7-file / 96-test slice, touched ESLint, TypeScript, and diff-check reran green on that base.
+- Root serialized final gate on that base: `npm run lint` passed with 0 errors / 404 inherited
+  warnings; `npx tsc --noEmit` passed; `npm test` passed **342 files / 3,816 tests**; and
+  `npm run build` passed with only inherited Next middleware, Edge/Sentry, and webpack cache warnings.
 
 The isolated worktree required `npm ci`, followed by `npm rebuild better-sqlite3` under Node 24
 because the shell defaulted to Node 26 during dependency installation.
 
 ## Follow-ups
 
-- Run the serialized full lint / TypeScript / Vitest / production-build gate.
 - Push a ready replacement PR, close #1442 as superseded only then, land after hosted checks, and
   verify the auto-deployed production release before moving the effort row to Completed/Deployed.
