@@ -1,5 +1,20 @@
 # Status
 
+## 2026-07-11 — Truthful notification delivery status (CODEX, local replacement branch)
+
+Adversarial review rejected unmerged AG PR #1442 because it still discarded results for the
+`price_alert` / `provider_degraded` direct-delivery paths, converted bridge exceptions into neutral
+skips, hid partial/legacy-webhook failures, and emitted webhook-only or raw internal skip reasons.
+Replacement branch `codex/notification-status-truth` now keeps every delivery inside the
+enabled-event gate, aggregates all channel results without double-send, records bridge exceptions as
+failures, retains channel-labelled partial failure detail, and audits legacy webhook outcomes through
+the same `notify.sent` / `notify.error` vocabulary plus an aggregate `notification.delivery` receipt.
+Historical/raw reasons render as human text. The operator fallback email remains a lazy extra lane,
+never the gate. Focused Node 24 verification is green: 7 files / 96 tests, touched lint 0 errors / 43
+inherited warnings, TypeScript clean, and `git diff --check`. Full suite/build, push, PR, and #1442
+supersession remain intentionally deferred until the strategy-lease branch lands. Rollout:
+`docs/rollouts/2026-07-11-notification-status-truth.md`.
+
 ## 2026-07-11 — Durable provider/dataset operation leases (CODEX, ready PR #1441)
 
 The route-level admin single-flight work is now extended to the underlying provider/dataset

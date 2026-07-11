@@ -17,6 +17,16 @@ filling the missing pieces.
 > green (focused 130, lint 0 errors, typecheck, full 3,759 tests, build); ready-PR delivery remains. See
 > `docs/rollouts/2026-07-11-provider-operation-leases.md`.
 
+> **2026-07-11 - Truthful notification delivery status (CODEX).** No product-roadmap change;
+> delivery observability and preference correctness only. One gated orchestration path now owns
+> push/webhook/email/SMS delivery for ordinary, price-alert, and provider-health events; callers
+> supply only their richer body text. Status derives from every actual result, unexpected bridge
+> failures cannot masquerade as neutral skips, partial failures remain visible, and the legacy
+> policy-webhook lane emits normal channel telemetry. The operator fallback email remains an extra
+> gated lane. Local focused verification is complete; full landing work waits for the strategy-lease
+> merge to avoid competing heavy gates and repeated STATUS/EFFORT reconciliation. See
+> `docs/rollouts/2026-07-11-notification-status-truth.md`.
+
 > **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
 > change; this is an operations-observability slice. `/api/health` gains a public-safe source
 > revision/process identity and hard-deadline, size-capped Litestream daemon status/last-sync
