@@ -233,6 +233,8 @@ As of 2026-07-08 (assignment-rule update).
 ## Completed
 - **Admin server metrics provider-shape and degraded-response hardening (CODEX, PR #1400) — COMPLETED 2026-07-11.** Externally squash-merged to `main` as `432ca6fe` after local and hosted verify/smoke/security passed. Current Hetzner shapes are normalized, provider failures return explicit degraded receipts, fabricated fallback telemetry is removed, and malformed samples are omitted. Main auto-deploy was triggered; production revision remains independently unverified.
 - **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, PR #1398) — COMPLETED 2026-07-11.** Merged externally to `main` as `8fca436d` after hosted verify, smoke, security, and local Node24 gates passed. Removed the retired second-scheduler deploy workflow, synchronized independently runnable workflow/cron observability, and corrected reusable-only `workflow_call` handling. Main auto-deploy was triggered by the merge; production revision has not been independently verified, so this is not marked Deployed. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+- **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, PR #1398) — COMPLETED 2026-07-11.** Merged externally as `8fca436d` after hosted/local gates passed. Removed the retired second-scheduler deploy workflow and synchronized real GitHub workflow/cron observability. Main auto-deploy was triggered; production revision remains independently unverified. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+- **Public auth/rate-limit hardening (CODEX, PR #1399) — COMPLETED 2026-07-11.** Merged externally as `97152c25`; trusted-IP OAuth limiting, bounded limiter state, explicit CF trust parsing, and paid tuning admission are on `main`. Main auto-deploy was triggered; production revision remains independently unverified.
 - **Refactoring strategy.ts (AG, branch `agent/strategy-split`) — COMPLETED 2026-07-11.** Split the monolithic `strategy.ts` into `strategy-risk.ts` and `strategy-execution.ts`, retaining `strategy.ts` as a coordinator/barrel. Cleaned up dependencies and automated import fixes. All tests (3427) passing. Rollout note: `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — ✅ COMPLETED 2026-07-09: PR #1282 merged to `main` (auto-merge squashed).** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
@@ -1597,6 +1599,48 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **Expensive admin-operation abuse/cost controls (CODEX, branch `codex/admin-rate-limits`, READY PR #1409, worktree `/Users/jay/.codex/worktrees/socratic-admin-rate-limits`) — IN PROGRESS 2026-07-11.** Named per-admin anti-repeat budgets and contract-aligned 429/409 responses wrap high-cost admin actions (`reindex-8k`, `reindex-10k`, `backtest-ic`, `tuning-dry-run`, Congress score-eval/share, `refresh-websource`, Robinhood probe). Claims precede quota debit; explicit validation/config rejection precedes admission; public `/api/strategy/tune` shares a per-user single-flight with admin dry-run while retaining legacy 409 fields. Process-wide groups coordinate manual admin route calls only; scheduler/background convergence is separately planned below. Adversarial re-review found no code blocker. Current `origin/main@432ca6fe` is merged source-disjointly; STATUS/EFFORT histories were preserved. Final combined Node24 gate is green: focused 4 files/29 tests, touched ESLint clean, full lint 0 errors/405 inherited warnings, tsc, 328 files/3,633 tests, build. Previous hosted checks were green; the refreshed head will rerun them. AG's contract is green in READY shared PR #144, with adoption deferred until a tagged release. No merge/auto-merge/deploy. Excludes `src/lib/auth/admin.ts`, strategy execution, and provider internals.
+- **Admin server metrics Hetzner response-shape crash fix (CODEX, branch
+  `codex/admin-server-shape-fix`) — IN PROGRESS 2026-07-11.** Production `/admin/server`
+  crashes with React #31 because the API forwards Hetzner's real nested
+  `server_type` and `public_net.ipv4` objects into JSX string slots. Normalize provider
+  metadata and Coolify resource rows to strings at the API boundary, including current
+  `location.name`; retain explicit shape warnings; remove fabricated local metrics/resources;
+  reject provider network/HTTP/JSON failures with a preserved 502 degraded envelope; never mix
+  local-process or hardcoded identity into missing remote fields; and omit malformed samples
+  instead of coercing them to zero. The client now guards all display fields, exposes degraded
+  production state, and renders unavailable telemetry honestly. Current `origin/main@8fca436d`
+  merged cleanly. Final Node 24 gate is green: focused 1 file / 7 tests and touched ESLint clean;
+  full lint 0 errors / 405 inherited warnings, typecheck, 325 files / 3,608 tests, build. A stale
+  post-merge install initially lacked current-main's tracked `ts-morph`; clean locked install
+  repaired it before the passing ordered gate. READY PR #1400 remains the delivery target without
+  merge/auto-merge/deploy. Rendered Browser QA was unavailable because no Browser backend exists.
+  Rollout:
+  `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
+- **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`, READY PR #1398) — IN PROGRESS 2026-07-11.** Removed the disabled `.github/workflows/deploy.yml`, replaced stale deploy/runner docs, removed retired Sentry observers, added every independently runnable workflow, and mapped all active schedules to source cron. The current-main gate caught and fixed reusable-only `_merge-shepherd-impl` parity: it executes inside its caller and cannot emit an independent `workflow_run`. Current `origin/main@1c7c2be8` is merged; final Node24 gate green: lint 0 errors/408 warnings, tsc clean, 325 files/3,604 tests, build clean; focused parity 2/2. Refreshed head `8c49a8ac` is pushed; hosted verify/smoke are running. No product behavior, merge, auto-merge, or deploy. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+- **Usage telemetry lane idempotency keys (CODEX, owner-directed cross-app hardening 2026-07-11).**
+  **OPEN PR #1412**, branch `codex-usage-telemetry-idempotency`. Add explicit stable keys to batched provider-call
+  telemetry so same-flush lanes cannot collide under the shared five-field fallback. Preserve the
+  shared contract algorithm; focused producer tests first. Cross-reference API Usage Monitor branch
+  `codex-app-wide-hardening`. Adversarial fixups preserve exact failed payloads for bounded in-memory
+  retry, reuse ledger timestamps, hash arbitrary source IDs into capped keys, and cancel stale HMR
+  timers. The final Node 24 gate is green: focused producer tests 11/11, repo-wide lint, 325 files/
+  3,614 tests, and Next production build. SHA-256 resolution uses edge-safe Web Crypto after the
+  gate caught a Node-only import in the edge bundle. The queue is not a crash-durable outbox. No
+  merge (which auto-deploys) without an explicit landing decision.
+- **Admin authorization fail-closed hardening (CODEX, branch `codex/admin-fail-closed`, READY PR #1410, worktree
+  `/Users/jay/.codex/worktrees/socratic-admin-fail-closed`) — IN PROGRESS 2026-07-11.** Make the
+  shared `requireAdmin` gate deny by default regardless of `NODE_ENV` or hostname. Middleware now
+  forwards identity provenance; only verified Cloudflare Access/Auth.js primary or allowlisted emails
+  can satisfy email-based admin auth, while the auth-unconfigured primary-email fallback is always
+  denied. The spoofable localhost opt-in was removed, the timing-safe token path remains, and every
+  stale admin-route comment now matches the gate. Focused Node24 security coverage is green (6 files/
+  60 tests). Current `origin/main@432ca6fe` is merged. The only source conflict was
+  `test/server-metrics.test.ts`; its resolved union preserves current provider/degraded-response
+  coverage and adds verified Auth.js provenance to authorized route calls. Final combined Node24
+  verification is green: focused 6 files/64 tests, touched ESLint clean, full lint 0 errors/404
+  inherited warnings, tsc, 325 files/3,620 tests, build. Previous hosted checks were green; the
+  refreshed head will rerun them. No production environment, main merge, auto-merge, or deploy
+  mutation.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch

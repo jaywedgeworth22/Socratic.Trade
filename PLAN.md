@@ -19,6 +19,19 @@ filling the missing pieces.
 > portable rejection contract is a separate shared-package follow-up and will be adopted only after a
 > real package release. See
 > `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+> **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
+> change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger
+> events, broker balance snapshots, and each aggregated provider-call window so same-flush credential
+> lanes cannot collide under the shared five-field fallback. Ledger timestamps are reused on replay,
+> and failed/ambiguous batches retain their exact events for bounded in-memory retry. See
+> `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+> **2026-07-11 - Admin authorization fail-closed hardening (CODEX).** No roadmap scope change;
+> security/correctness only. The shared admin gate now denies by default in every environment unless
+> the caller has a middleware-proven Cloudflare Access/Auth.js admin email or valid admin token. The
+> former broad `NODE_ENV !== "production"` bypass is removed without a hostname-based replacement;
+> the auth-unconfigured primary-email fallback never grants admin access. Current-main Node 24 gate
+> is green (lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build). See
+> `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 > **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
 > change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/

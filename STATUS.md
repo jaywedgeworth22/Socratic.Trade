@@ -38,6 +38,20 @@ lint 0 errors / 408 warnings, tsc clean, 325 Vitest files / 3,604 tests passed, 
 focused workflow-parity regression 2/2 passed. PR #1398 merged externally as `8fca436d`; the configured
 main auto-deploy was triggered, but this session has not independently verified the production revision.
 Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+## 2026-07-11 — Explicit usage-telemetry delivery IDs (CODEX, branch `codex-usage-telemetry-idempotency`)
+Cross-app API Usage Monitor hardening found that aggregated credential lanes share one flush
+timestamp while the shared fallback idempotency basis intentionally omits lane metadata. Distinct
+lanes could therefore derive one key and one event disappeared. This branch gives every aggregate
+window an explicit UUID-backed key and uses a fixed-length hash of the durable local `llm_usage` /
+`rag_usage` row ID for discrete delivery keys; broker balance snapshots also get one delivery
+identity with metric suffixes. Ledger timestamps now flow to the outbound event, failed/ambiguous
+batches retry in memory with the byte-equivalent original event payload, and HMR cancels stale
+module timers before preserving buffered state. The shared five-field fallback algorithm is
+unchanged. Focused usage-push + RAG verification is 18/18 green (11 producer regressions), and
+TypeScript/scoped ESLint pass under Node 24; full pre-PR gates remain pending. The in-memory queue is
+not a crash-durable outbox. No merge/auto-deploy without an explicit landing decision. See
+`docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+
 ## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
 Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
 now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled
@@ -74,6 +88,27 @@ build clean. Previous hosted checks were green; the refreshed head will rerun th
 adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request
 spend ceilings. READY PR #1409 is not merged/auto-merged or deployed. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+3,499 tests, Next build clean). PR #1399 merged externally as `97152c25`; auto-deploy was triggered,
+but this session has not independently verified the production revision. Exact commands
+and the initial Node-ABI mismatch are recorded in
+`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
+## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
+
+The shared `requireAdmin` gate no longer treats `NODE_ENV` or a request hostname as authorization.
+Middleware now forwards identity-source provenance alongside the authenticated email. Email-based
+admin access accepts only Cloudflare Access or Auth.js session provenance; the auth-unconfigured
+`PRIMARY_USER_EMAIL` fallback is denied even when it names the primary operator or appears in
+`ADMIN_USER_EMAILS`. The timing-safe `ADMIN_REINDEX_TOKEN` path remains available in every
+environment. Every stale admin-route comment was updated to match this behavior, and the spoofable
+localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Current
+`origin/main@432ca6fe` is merged. The only source overlap was
+`test/server-metrics.test.ts`; its resolved union preserves current provider-shape/degraded-response
+coverage while adding verified Auth.js provenance to every authorized admin request. The previous
+current-main gate and hosted checks were green. Final combined Node 24 verification is also green:
+focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited warnings,
+TypeScript clean, 325 files / 3,620 tests, and production build clean. READY PR #1410 remains
+unmerged without auto-merge or deployment. See
+`docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
