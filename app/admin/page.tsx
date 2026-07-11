@@ -26,6 +26,11 @@ const ADMIN_PAGES = [
     desc: "What the retrieval index covers and where it is thin."
   },
   {
+    href: "/admin/server",
+    title: "Server & infrastructure",
+    desc: "Real-time metrics, host resource utilization, and Coolify container statuses."
+  },
+  {
     href: "/admin/transcript",
     title: "Chat transcript",
     desc: "Raw assistant transcript view for debugging conversations."
