@@ -1437,18 +1437,33 @@ export interface PositionStopPlan {
   rationale?: string;
   /** Position cost basis when the plan was recorded — resets on a close+rebuy (different lot). */
   avgCost: number;
+  /**
+   * Direction of the lot the plan was recorded against — "long" for an opening buy, "short" for an
+   * opening short. Compared alongside avgCost by filterFullStopPlansByLiveBasis so a long's plan can
+   * never leak onto a short opened later in the same symbol at a coincidentally similar basis (or
+   * vice versa) — closing a long and shorting the same name is a distinct lot, not a continuation
+   * (Codex review, PR #1371). Optional only for backward-compat with rows written before this field
+   * existed; such a row never matches any live position (side is undefined) and simply ages out via
+   * the normal stale-plan cleanup.
+   */
+  side?: "long" | "short";
 }
 
 /** Map of symbol → its recorded per-position stop plan (empty when none set — every position then
  *  falls back to the account's default stop precedence, unchanged from before this feature). */
 export function getStopPlans(accountNumber: string, userId: string = "local"): Record<string, PositionStopPlan> {
   const rows = getDb()
-    .prepare("SELECT symbol, style, rationale, avg_cost FROM position_stop_plans WHERE user_id = ? AND account_number = ?")
-    .all(userId, accountNumber) as Array<{ symbol: string; style: string; rationale: string | null; avg_cost: number }>;
+    .prepare("SELECT symbol, style, rationale, avg_cost, side FROM position_stop_plans WHERE user_id = ? AND account_number = ?")
+    .all(userId, accountNumber) as Array<{ symbol: string; style: string; rationale: string | null; avg_cost: number; side: string | null }>;
   const out: Record<string, PositionStopPlan> = {};
   for (const r of rows) {
     const style = (STOP_PLAN_STYLES as readonly string[]).includes(r.style) ? (r.style as StopPlanStyle) : "default";
-    out[r.symbol] = { style, rationale: r.rationale ?? undefined, avgCost: Number(r.avg_cost) || 0 };
+    out[r.symbol] = {
+      style,
+      rationale: r.rationale ?? undefined,
+      avgCost: Number(r.avg_cost) || 0,
+      side: r.side === "long" || r.side === "short" ? r.side : undefined
+    };
   }
   return out;
 }
@@ -1488,17 +1503,22 @@ export function filterFullStopPlansByLiveBasis(
   plans: Record<string, PositionStopPlan>,
   positions: EquityPosition[]
 ): Record<string, PositionStopPlan> {
-  const liveAvgCostBySymbol = new Map(
+  const liveBySymbol = new Map(
     positions
       .filter((p) => Math.abs(p.quantity) > 0.000001)
-      .map((p) => [normalizeSymbol(p.symbol), p.averageCost])
+      .map((p) => [normalizeSymbol(p.symbol), { avgCost: p.averageCost, side: (p.quantity > 0 ? "long" : "short") as "long" | "short" }])
   );
   const out: Record<string, PositionStopPlan> = {};
   for (const [sym, plan] of Object.entries(plans)) {
     if (plan.style === "default") continue;
     const s = normalizeSymbol(sym);
-    const liveAvgCost = liveAvgCostBySymbol.get(s);
-    if (liveAvgCost === undefined || Math.abs(plan.avgCost - liveAvgCost) >= 0.005) continue;
+    const live = liveBySymbol.get(s);
+    if (!live) continue;
+    if (Math.abs(plan.avgCost - live.avgCost) >= 0.005) continue;
+    // A plan recorded before the `side` field existed (undefined) can't be verified against the
+    // live position's direction — treat as a mismatch (skip) rather than assume a match, since a
+    // false "match" is exactly the stale-plan-leak this filter exists to prevent.
+    if (plan.side !== live.side) continue;
     out[s] = plan;
   }
   return out;
@@ -1512,17 +1532,18 @@ export function recordStopPlan(
   rationale: string | undefined,
   avgCost: number,
   userId: string = "local",
-  now: string = new Date().toISOString()
+  now: string = new Date().toISOString(),
+  side: "long" | "short" = "long"
 ): void {
   const safeStyle = (STOP_PLAN_STYLES as readonly string[]).includes(style) ? style : "default";
   getDb()
     .prepare(
-      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol)
-       DO UPDATE SET style = excluded.style, rationale = excluded.rationale, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at`
+       DO UPDATE SET style = excluded.style, rationale = excluded.rationale, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at, side = excluded.side`
     )
-    .run(userId, accountNumber, symbol, safeStyle, rationale ?? null, Number.isFinite(avgCost) ? avgCost : 0, now);
+    .run(userId, accountNumber, symbol, safeStyle, rationale ?? null, Number.isFinite(avgCost) ? avgCost : 0, now, side);
 }
 
 /** Clear stop plans for the given symbols (e.g. positions that have closed). No-op on empty input. */

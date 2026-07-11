@@ -694,7 +694,16 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
               clearStopPlans(accountNumber, [fill.symbol], userId);
             } else {
               const basis = (await liveBasisFor(fill.symbol)) ?? price;
-              recordStopPlan(accountNumber, fill.symbol, openingProposal.stopPlan.style, openingProposal.stopPlan.rationale, basis, userId);
+              recordStopPlan(
+                accountNumber,
+                fill.symbol,
+                openingProposal.stopPlan.style,
+                openingProposal.stopPlan.rationale,
+                basis,
+                userId,
+                undefined,
+                openingProposal.side === "short" ? "short" : "long"
+              );
             }
           } catch {
             // plan bookkeeping must never break fill reconciliation

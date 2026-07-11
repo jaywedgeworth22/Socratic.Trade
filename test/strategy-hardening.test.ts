@@ -386,7 +386,7 @@ describe("filterStopPlansByLiveBasis (Codex review, PR #1371)", () => {
 
   it("keeps a plan whose recorded avgCost matches the live position exactly", () => {
     const out = filterStopPlansByLiveBasis(
-      { NVDA: { style: "trailing", avgCost: 100 } },
+      { NVDA: { style: "trailing", avgCost: 100, side: "long" } },
       [pos("NVDA", 100)]
     );
     expect(out).toEqual({ NVDA: "trailing" });
@@ -394,10 +394,18 @@ describe("filterStopPlansByLiveBasis (Codex review, PR #1371)", () => {
 
   it("keeps a plan within the small rounding tolerance", () => {
     const out = filterStopPlansByLiveBasis(
-      { NVDA: { style: "fixed", avgCost: 100.001 } },
+      { NVDA: { style: "fixed", avgCost: 100.001, side: "long" } },
       [pos("NVDA", 100)]
     );
     expect(out).toEqual({ NVDA: "fixed" });
+  });
+
+  it("drops a plan recorded for a LONG lot when the live position at the same symbol/basis is now a SHORT (a closed long re-shorted at a coincidentally similar cost basis is a different lot, not a continuation)", () => {
+    const out = filterStopPlansByLiveBasis(
+      { NVDA: { style: "trailing", avgCost: 100, side: "long" } },
+      [pos("NVDA", 100, -10)]
+    );
+    expect(out).toEqual({});
   });
 
   it("drops a STALE plan whose recorded avgCost no longer matches the live position (closed + re-bought at a different basis)", () => {

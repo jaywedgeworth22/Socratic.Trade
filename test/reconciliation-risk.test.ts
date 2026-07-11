@@ -118,7 +118,7 @@ describe("reconcilePendingFills", () => {
     await reconcilePendingFills(mockGateway, "ACC-STOPPLAN-1");
 
     expect(getStopPlans("ACC-STOPPLAN-1")).toEqual({
-      NVDA: { style: "trailing", rationale: "scale into strength", avgCost: 100 }
+      NVDA: { style: "trailing", rationale: "scale into strength", avgCost: 100, side: "long" }
     });
   });
 

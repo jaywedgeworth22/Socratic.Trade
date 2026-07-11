@@ -143,6 +143,24 @@ import-list conflicts from the same relocations, resolved to match main's new mo
 Verify: tsc clean, lint 0 errors/408 pre-existing warnings, 323 files/3590 tests passed, build
 clean. Rollout: `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`.
 
+**2026-07-11 update 5 — round 7 (3 fixed, 1 partially fixed + deferred to owner):** stopPlan
+schema's `"default"` description now makes explicit that it RESETS (clears any persisted
+override) rather than being a safe no-op recommendation, and directs the LLM to leave the field
+null/omitted for a genuine no-change scale-in instead; `PositionStopPlan` grew a `side`
+("long"/"short") field, threaded through `recordStopPlan`'s two call sites (derived from the
+opening proposal's buy/short) and a new `position_stop_plans.side` column (migration 18,
+default 'long' for pre-existing rows), so `filterFullStopPlansByLiveBasis` now matches on
+symbol+avgCost+side — closing a long and shorting the same symbol at a coincidentally similar
+basis no longer inherits the long's plan; the short-stop mandatory-stop-loss gate in policy.ts
+now also accepts an explicit `fixed`/`atr`/`trailing` stopPlan as satisfying the requirement
+(parity with the existing bracket-permission gate), letting those plans work on a bare short
+account. Left open: whether an explicit `none` plan should also bypass that gate — that's a
+pre-existing, short-specific safety invariant (unbounded loss direction) distinct from the
+general "none is never hard-blocked" rule, so posted a PR reply asking the owner rather than
+deciding unilaterally; thread left unresolved pending that call. Verify: tsc clean, lint 0
+errors/408 pre-existing warnings, 323 files/3591 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round7-codex-fixes.md`.
+
 ## 2026-07-11 — Refactoring strategy.ts: split risk and execution (AG, branch `agent/strategy-split`)
 Extracted risk gates, veto rules, and sizing logic into `strategy-risk.ts` and the main execution loop/reconciliation into `strategy-execution.ts`. `strategy.ts` remains as a re-export hub and coordinator. Automated import updates across 100+ files via a custom `ts-morph` script. Gate green: tsc clean, lint 0 errors, 3427 tests passing, build clean. See `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
 

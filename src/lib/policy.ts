@@ -437,8 +437,17 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         : `the connected account does not support short selling`;
       reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
-      if (!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) {
-        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct).`);
+      // An explicit per-position "fixed"/"atr"/"trailing" plan satisfies the mandatory-stop
+      // requirement the same way it satisfies the bracket-permission gate above — it guarantees this
+      // short a real stop (via STOP_PLAN_FALLBACK_STOP_PCT or the trailing lane) even on an account
+      // with no account-wide shortStopLossPct configured (Codex review, PR #1371). A "none" plan does
+      // NOT satisfy this gate — that's a deliberate, separate safety invariant for shorts specifically
+      // (unbounded loss direction), not the general "risk-increasing choices aren't gated" rule this
+      // repo applies to per-position stop plans elsewhere; see the PR comment for the open question.
+      const hasExplicitDistancePlan =
+        proposal.stopPlan?.style === "fixed" || proposal.stopPlan?.style === "atr" || proposal.stopPlan?.style === "trailing";
+      if ((!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) && !hasExplicitDistancePlan) {
+        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct, or an explicit fixed/atr/trailing stopPlan).`);
       }
       if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
         reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);

@@ -322,7 +322,16 @@ export function recordFillFromProposal(input: {
           (existing && Math.abs(existing.quantity) > 0.000001
             ? (existing.averageCost * Math.abs(existing.quantity) + basePrice * quantity) / (Math.abs(existing.quantity) + quantity)
             : basePrice);
-        recordStopPlan(input.accountNumber, symbol, input.proposal.stopPlan.style, input.proposal.stopPlan.rationale, blendedAvgCost, input.userId);
+        recordStopPlan(
+          input.accountNumber,
+          symbol,
+          input.proposal.stopPlan.style,
+          input.proposal.stopPlan.rationale,
+          blendedAvgCost,
+          input.userId,
+          undefined,
+          input.proposal.side === "short" ? "short" : "long"
+        );
       }
     } catch {
       // plan bookkeeping must never break fill recording

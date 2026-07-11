@@ -456,6 +456,22 @@ const MIGRATIONS: Migration[] = [
       }
 
     }
+  },
+  {
+    // position_stop_plans grows a `side` column ('long' | 'short') so filterFullStopPlansByLiveBasis
+    // can distinguish a closed long from a same-symbol short opened later at a similar cost basis —
+    // matching on symbol+avgCost alone let a long's plan leak onto an unrelated short lot (Codex
+    // review, PR #1371). Existing rows default to 'long' (every row written before this field existed
+    // came from an opening buy — "none"/"trailing" plans on shorts came later); idempotent (skips
+    // when already present — fresh DBs get it from CREATE TABLE).
+    version: 18,
+    name: "position_stop_plans_side_column",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(position_stop_plans)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "side")) {
+        database.exec("ALTER TABLE position_stop_plans ADD COLUMN side TEXT NOT NULL DEFAULT 'long'");
+      }
+    }
   }
 ];
 
@@ -864,6 +880,7 @@ function migrate(database: Database.Database): void {
       rationale TEXT,
       avg_cost REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
+      side TEXT NOT NULL DEFAULT 'long',
       PRIMARY KEY (user_id, account_number, symbol)
     );
 

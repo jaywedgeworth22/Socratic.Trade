@@ -18,13 +18,13 @@ describe("position_stop_plans persistence", () => {
     recordStopPlan(acct, "NVDA", "trailing", undefined, 100);
     recordStopPlan(acct, "AAPL", "none", "high-conviction thesis, no stop desired", 200);
     expect(getStopPlans(acct)).toEqual({
-      NVDA: { style: "trailing", rationale: undefined, avgCost: 100 },
-      AAPL: { style: "none", rationale: "high-conviction thesis, no stop desired", avgCost: 200 }
+      NVDA: { style: "trailing", rationale: undefined, avgCost: 100, side: "long" },
+      AAPL: { style: "none", rationale: "high-conviction thesis, no stop desired", avgCost: 200, side: "long" }
     });
 
     // Upsert advances style/rationale/avgCost for the same key (no duplicate row).
     recordStopPlan(acct, "NVDA", "fixed", "reconsidered on a scale-in", 105);
-    expect(getStopPlans(acct).NVDA).toEqual({ style: "fixed", rationale: "reconsidered on a scale-in", avgCost: 105 });
+    expect(getStopPlans(acct).NVDA).toEqual({ style: "fixed", rationale: "reconsidered on a scale-in", avgCost: 105, side: "long" });
 
     expect(getStopPlans("OTHER")).toEqual({}); // scoped per account
 
@@ -32,14 +32,14 @@ describe("position_stop_plans persistence", () => {
     expect(Object.keys(getStopPlans(acct))).toHaveLength(2);
     clearStopPlans(acct, ["NVDA"]);
     expect(getStopPlans(acct)).toEqual({
-      AAPL: { style: "none", rationale: "high-conviction thesis, no stop desired", avgCost: 200 }
+      AAPL: { style: "none", rationale: "high-conviction thesis, no stop desired", avgCost: 200, side: "long" }
     });
   });
 
   it("falls back to 'default' for an unrecognized/invalid style, never throwing", async () => {
     const { getStopPlans, recordStopPlan } = await import("../src/lib/db");
     recordStopPlan("ACCT2", "MSFT", "not-a-real-style", undefined, 50);
-    expect(getStopPlans("ACCT2").MSFT).toEqual({ style: "default", rationale: undefined, avgCost: 50 });
+    expect(getStopPlans("ACCT2").MSFT).toEqual({ style: "default", rationale: undefined, avgCost: 50, side: "long" });
   });
 
   it("scopes plans per userId, not just accountNumber", async () => {
@@ -72,7 +72,7 @@ describe("stop plan is committed ON FILL (an opening buy/short with a fresh stop
       proposal: open({ style: "trailing" }),
       execution: { orderId: "o1", refId: "r1", state: "filled", averagePrice: 100, filledQuantity: 4, raw: {} }
     });
-    expect(getStopPlans("FILLACCT-SP1")).toEqual({ NVDA: { style: "trailing", rationale: undefined, avgCost: 100 } });
+    expect(getStopPlans("FILLACCT-SP1")).toEqual({ NVDA: { style: "trailing", rationale: undefined, avgCost: 100, side: "long" } });
   });
 
   it("persists a 'none' plan with its rationale on an opening SHORT fill", async () => {
