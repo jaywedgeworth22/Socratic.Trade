@@ -1,5 +1,18 @@
 # Status
 
+## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
+Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
+and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change
+(FINRA Notice 26-10 / SEC Release 34-105226, effective 2026-06-04: PDT designation + 4-in-5 count + $25k
+minimum eliminated; $2,000 margin minimum survives; broker phase-in to 2027 — app already on $2k). Owner
+decisions: shorting LIVE (paper-verify in parallel), options FULL incl. spreads (Alpaca-first, RH data-only),
+PDT = read each broker's own requirements only (no app gate), leverage = NAV caps + opt-in. Phased plan
+(read-first BrokerMargin -> shorting -> options single-leg -> leverage -> Tradier options+writing -> spreads)
+in docs/capability-trading-roadmap.md. Foundation PRs in review: Tradier #1380, order-status-reconcile.
+NOTE: merge=auto-deploy-to-live, so money-path PRs are owner-timed, not auto-merged.
+
+# Status
+
 Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.

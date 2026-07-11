@@ -1578,6 +1578,15 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Capability-trading program: margin/shorting/options/PDT (CLAUDE, owner-directed 2026-07-10) —
+  ROADMAP LOCKED, foundations in review.** Owner decisions captured (shorting LIVE + paper-verify;
+  options FULL incl. multi-leg; PDT = read each broker's own requirements, no app gate; leverage =
+  NAV caps + opt-in). Verified $25k PDT rule changed (FINRA Notice 26-10, eff. 2026-06-04; app already
+  on $2k). Plan (docs/capability-trading-roadmap.md): Foundation (Tradier #1380 + order-status-reconcile,
+  owner-timed merge) -> Phase0 BrokerMargin read (covers margin-visibility + broker PDT requirements) ->
+  Phase1 shorting enable+verify -> Phase2 options single-leg (Alpaca) -> Phase3 opt-in leverage sizing ->
+  Phase4 Tradier options+writing -> Phase5 spreads. Sequenced (not parallel) because merge=auto-deploy to
+  the live trading app. Phases not started.
 - **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
   claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
   (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported
