@@ -366,8 +366,17 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // take-profit trim, or an undersized broker stop) must NOT leave the remaining shares
       // trailing-stop-less through a crash: the stop registers, and the fire path below sells only
       // the uncovered remainder. Re-checked every tick.
+      // A PARTIAL broker-held stop this SAME reconcile just placed (e.g. a fractional remainder a
+      // whole-share-only native trail floored away) can't appear in `registrationOrders` — it was
+      // fetched before reconcile ran — so its coverage must be folded in explicitly, exactly like
+      // the fire path below does. Without this, a partial placement that happens to fully cover the
+      // remainder (combined with what registrationOrders already sees) still looks uncovered here
+      // and arms an unnecessary synthetic row that then fights the fresh broker stop on a later tick
+      // (Codex review, PR #1331, round 10).
       const coverage = liveExitOrderCoverage(registrationOrders, sym, isShort ? "short" : "long");
-      if (coverage.unknownQty || coverage.coveredQty >= Math.abs(pos.quantity) - QTY_EPSILON) continue;
+      const justPlacedPartialQty = justPlacedPartialBrokerStopQty.get(sym) ?? 0;
+      const effectiveCoveredQty = coverage.coveredQty + justPlacedPartialQty;
+      if (coverage.unknownQty || effectiveCoveredQty >= Math.abs(pos.quantity) - QTY_EPSILON) continue;
       const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
       upsertSyntheticStop({
         id: `synstop-${userId}-${accountNumber}-${sym}`,

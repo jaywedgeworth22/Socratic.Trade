@@ -353,6 +353,18 @@ export async function reconcileBrokerProtectiveStops(args: {
         deleteBrokerProtectiveStop(row.id, userId);
         out.cancelled++;
         out.cancelledOrderIds.push(row.brokerOrderId);
+        // A successful cancel doesn't mean nothing filled first — a GTC stop can partially execute
+        // before the cancel reaches the broker, and the broker still accepts the cancel for the
+        // remainder. The caller's pre-reconcile order snapshot (`orders`) can still show that
+        // partial fill; book it before the row disappears, or the executed shares never reach
+        // fill_events/P&L/learning, and the caller isn't told the position may be stale (Codex
+        // review, PR #1331, round 10).
+        const preCancelOrder = orders.find((o) => o.id === row.brokerOrderId);
+        if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
+          const s = normalizeSymbol(row.symbol);
+          out.filledRecoverySymbols.push(s);
+          bookBrokerHeldStopFill(row, preCancelOrder);
+        }
       } catch (err) {
         // The cancel failed — but that doesn't necessarily mean the order is still resting
         // broker-side. Mirror section 1's recovery: if the caller's freshly fetched order list shows
@@ -365,6 +377,14 @@ export async function reconcileBrokerProtectiveStops(args: {
         if (found && isDoneRestingState(found.state)) {
           deleteBrokerProtectiveStop(row.id, userId);
           if (hadExecutedFill(found)) {
+            // Signal this recovery to the caller the same way section 1/3 do: `positions` was
+            // captured before `orders` this tick, so a fill discovered only here can still leave
+            // the caller holding a stale (pre-fill) position snapshot for the rest of THIS tick —
+            // it must skip synthetic registration/fire for the symbol, same as a live-lane fill
+            // recovery (Codex review, PR #1331, round 10 — this branch previously booked the fill
+            // but never told the caller).
+            const s = normalizeSymbol(row.symbol);
+            out.filledRecoverySymbols.push(s);
             bookBrokerHeldStopFill(row, found);
           }
           audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "disabled_teardown" }, userId);
