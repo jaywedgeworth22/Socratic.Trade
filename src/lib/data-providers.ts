@@ -366,7 +366,7 @@ function maxSymbols(): number {
 // secret store (in-memory only, never logged or persisted). Used to key the shared request quota
 // (provider-rate-limit.ts) so a per-user stored key with its own upstream quota is never gated by
 // the operator key.
-function apiKeyFingerprint(apiKey: string): string {
+export function apiKeyFingerprint(apiKey: string): string {
   let h = 5381;
   for (let i = 0; i < apiKey.length; i++) h = ((h << 5) + h + apiKey.charCodeAt(i)) | 0;
   return String(h >>> 0);
@@ -385,11 +385,22 @@ function providerNegativeTtlMs(): number {
 
 // How many outbound requests one enriched symbol costs a quota'd provider — passed to the request
 // quota (which budgets in REQUESTS, not symbols). Only providers in RATE_QUOTAS need this: tiingo
-// fires up to 3 sub-calls/symbol (iex, daily, [news]); twelvedata costs 1 credit/symbol. Non-quota'd
-// providers (finnhub, yahoo, alpha-vantage) are paced instead and never consult this.
-function callsPerSymbol(provider: string, opts?: { dropExtra?: boolean }): number {
+// fires up to 3 sub-calls/symbol (iex, daily, [news]); twelvedata costs 1 credit/symbol; fmp fires
+// 2 unconditional (insider + senate) plus up to 3 conditional (ratios-ttm, grades-consensus,
+// price-target-consensus). Non-quota'd providers (finnhub, yahoo, alpha-vantage) are paced instead
+// and never consult this.
+export function callsPerSymbol(
+  provider: string,
+  opts?: { dropExtra?: boolean; skipPe?: boolean; skipConsensus?: boolean; wantTargets?: boolean }
+): number {
   switch (provider) {
     case "tiingo": return opts?.dropExtra ? 2 : 3;  // iex, daily, [news]
+    // 2 unconditional (insider + senate) + ratios-ttm (unless skipPe) + grades-consensus (unless
+    // skipConsensus) + price-target-consensus (only when wantTargets). Mirrors the fetch-path
+    // conditions one-for-one; range 2..5. The caller MUST derive skipPe/skipConsensus/wantTargets
+    // from the SAME skipFlagsFor(symbol) + wantTargets formula it dispatches with, so reservation
+    // equals dispatch per symbol.
+    case "fmp": return 2 + (opts?.skipPe ? 0 : 1) + (opts?.skipConsensus ? 0 : 1) + (opts?.wantTargets ? 1 : 0);
     default: return 1;                               // twelvedata (1 credit/symbol)
   }
 }
@@ -2246,19 +2257,49 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       } else misses.push(symbol);
     }
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
+    if (misses.length === 0) return result;
+
+    // UNIFORM request quota (provider-rate-limit.ts RATE_QUOTAS): fmp = 290/min account-wide (Starter
+    // is 300/min; 290 leaves headroom). Unlike tiingo/twelvedata, FMP's per-symbol cost is VARIABLE —
+    // 2..5 requests depending on this symbol's skip flags — so we budget per symbol, not scan-uniform.
+    // Build a plan per miss (same skipFlagsFor + wantTargets formula the fetch path uses, so reservation
+    // == dispatch), admit the total, then greedily take a best-first prefix of WHOLE symbols and defer
+    // the rest best-effort (the cascade + shared 6h cache cover them; coverage accretes across scans).
+    const targetsEnabled = fmpPriceTargetsEnabled(); // read once per scan
+    const plans = misses.map((symbol) => {
+      const { skipPe, skipConsensus, skipTargets } = skipFlagsFor(symbol);
+      const wantTargets = targetsEnabled && !skipTargets;
+      const cost = callsPerSymbol("fmp", { skipPe, skipConsensus, wantTargets });
+      return { symbol, skipPe, skipConsensus, wantTargets, cost };
+    });
+    const credKey = apiKeyFingerprint(this.apiKey);
+    const totalWanted = plans.reduce((n, p) => n + p.cost, 0);
+    const allowed = admitProviderRequests("fmp", credKey, totalWanted);
+    // Greedy best-first prefix walk: misses arrive best-first, so take whole symbols in order until the
+    // next one doesn't fit, then defer it AND everything after it (preserves priority; mirrors tiingo's
+    // slice tail). `remaining` after the walk is the sub-symbol leftover admit() over-reserved.
+    let remaining = allowed;
+    const toQuery: typeof plans = [];
+    for (const p of plans) {
+      if (p.cost <= remaining) { toQuery.push(p); remaining -= p.cost; }
+      else break;
+    }
+    refundProviderRequests("fmp", credKey, remaining); // hand back the sub-symbol remainder
+    for (const p of plans.slice(toQuery.length)) result[p.symbol] = {}; // deferred; not queried/cached this run
+    if (toQuery.length === 0) return result; // no minute budget left — best-effort only
+
+    for (let i = 0; i < toQuery.length; i += CONCURRENCY) {
+      const chunk = toQuery.slice(i, i + CONCURRENCY);
       await Promise.all(
-        chunk.map(async (symbol) => {
+        chunk.map(async (plan) => {
+          // Reuse the reserved plan flags (do NOT recompute) so dispatch == reservation exactly.
+          const { symbol, skipPe, skipConsensus, wantTargets } = plan;
           // Coverage hint (short-circuit only): when a free upstream (App A) already
           // supplied P/E, analyst consensus, or price targets for this symbol, skip the
           // matching FMP SUB-call — but always keep fetching insider/senate, which App A
           // never supplies, so nothing FMP uniquely provides is lost. (Same flags are
-          // applied to cache hits above.)
-          const { skipPe, skipConsensus, skipTargets } = skipFlagsFor(symbol);
-          // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
-          // and not on every key tier. When off, targets stay undefined and ride null downstream.
-          const wantTargets = fmpPriceTargetsEnabled() && !skipTargets;
+          // applied to cache hits above.) skipTargets is folded into wantTargets already.
+          const skipTargets = !wantTargets;
           const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
             skipPe
               ? Promise.resolve(undefined)
@@ -2362,6 +2403,28 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             ...(targetMedian !== undefined && { targetMedian })
           };
 
+          // Breaker-skip refund: only the sub-calls we ACTUALLY dispatched count (skipped conditional
+          // slots are Promise.resolve(undefined) → "fulfilled", never a real request). When every
+          // dispatched sub-call rejected with CircuitOpenError the breaker threw before any request left
+          // the process — nothing was spent upstream, so hand back this symbol's reservation and don't
+          // cache. The per-service breaker gates all sub-calls of a symbol together, so a partial-symbol
+          // breaker skip can't occur. Mirrors tiingo's `if (breakerSkipped) refund(perSymbol)`.
+          const madeCalls = [
+            ...(skipPe ? [] : [peRaw]),
+            ...(skipConsensus ? [] : [consensusRaw]),
+            insiderRaw,
+            senateRaw,
+            ...(wantTargets ? [targetRaw] : [])
+          ];
+          const breakerSkipped = madeCalls.length > 0 && madeCalls.every(
+            (p) => p.status === "rejected" && p.reason instanceof CircuitOpenError
+          );
+          if (breakerSkipped) {
+            refundProviderRequests("fmp", credKey, plan.cost);
+            result[symbol] = data; // leave a miss to retry once the breaker closes; do NOT cache
+            return;
+          }
+
           const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
           const allRejected = promises.every((p) => p.status === "rejected");
           const hasTransientError = promises.some((p) => p.status === "rejected" && isTransientError(p.reason));
@@ -2404,6 +2467,10 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           service: this.name,
           keySource: this.keySource,
           userId: this.userId,
+          // retries: 0 — each of the up-to-5 endpoints reserves exactly one request in the quota above;
+          // a built-in 429 retry would emit a second UNCOUNTED call and blow past the 290/min reservation
+          // (headroom is only 10). Same rationale as tiingo/twelvedata's getJson.
+          retries: 0,
           // An explicit suppress list wins; otherwise fall back to the old logHealth behavior (403 only).
           suppressHealthStatuses: suppressStatuses ?? (logHealth ? undefined : [403])
         }

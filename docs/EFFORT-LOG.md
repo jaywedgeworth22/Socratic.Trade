@@ -1579,6 +1579,22 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **FMP request-quota wiring — extend the unified quota to FMP (CLAUDE, branch
+  `claude/fmp-rate-limit`) — IN PROGRESS 2026-07-10, PR open.** FMP was the last high-volume
+  enrichment provider NOT metered by the unified quota (PR #1310): `FmpEnrichmentProvider.enrich`
+  fires up to 5 HTTP calls per miss symbol (insider + senate always; ratios-ttm/grades-consensus/
+  price-target-consensus when not skipped) under the single `fmp` circuit-breaker service, bounded
+  only by `FMP_MAX_SYMBOLS`, so a cold-cache scan could burst past FMP Starter's 300/min. Added
+  `fmp: [{290, MINUTE}]` to `RATE_QUOTAS` (290 = 300 minus headroom; NO day window by default —
+  `PROVIDER_QUOTA_FMP_PER_DAY` opts one in for the free 250/day tier); widened `callsPerSymbol` with
+  an `fmp` case (`2 + !skipPe + !skipConsensus + wantTargets`, range 2..5) mirroring the fetch
+  conditions one-for-one; wired admit/greedy-best-first-defer/partial-remainder-refund + breaker-skip
+  refund into `enrich` (exactly the tiingo shape, per-credential lane via `apiKeyFingerprint`); set
+  `retries: 0` on FMP `getJson` so a 429 retry can't emit an uncounted call past the 10-request
+  headroom. Reservation == dispatch (both read the same `skipFlagsFor` + `wantTargets`); cache hits
+  and deferred symbols spend nothing. Docs: `.env.example` FMP block, `docs/market-data-provider-pricing.md`
+  dials table, `docs/rollouts/2026-07-10-fmp-rate-limit.md`. Gate under node@24: tsc clean, lint 0
+  errors, 3412/3412 tests, `npm run build` OK. Extends `docs/rollouts/2026-07-10-unified-provider-quota.md`.
 - **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
   lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**
   Owner reported Anthropic console spend went ~$35 -> ~$50 in 2 hours while

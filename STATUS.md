@@ -1,5 +1,22 @@
 # Status
 
+## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
+Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment
+provider that was still unmetered. `FmpEnrichmentProvider.enrich` fires up to 5 HTTP calls per miss
+symbol (insider + senate always; ratios-ttm / grades-consensus / price-target-consensus when not
+skipped) under one `fmp` circuit-breaker service, previously bounded only by `FMP_MAX_SYMBOLS` — a
+cold-cache scan could burst past FMP Starter's 300/min. Changes: `RATE_QUOTAS.fmp = [{290, MINUTE}]`
+(290 = 300 minus headroom; no day window unless `PROVIDER_QUOTA_FMP_PER_DAY` is set — opt-in for the
+free 250/day tier); `callsPerSymbol("fmp", …)` = `2 + !skipPe + !skipConsensus + wantTargets` (range
+2..5) mirroring the fetch conditions one-for-one; admit / greedy best-first defer / partial-remainder
+refund + breaker-skip refund wired into `enrich`, per-credential via `apiKeyFingerprint` (exactly the
+tiingo shape); `retries: 0` on FMP `getJson` so a 429 retry can't emit an uncounted call past the
+10-request headroom. Reservation == dispatch (both read the same `skipFlagsFor` + `wantTargets`); cache
+hits and deferred symbols spend nothing. Docs: `.env.example` FMP block, `docs/market-data-provider-pricing.md`
+dials table, `docs/rollouts/2026-07-10-fmp-rate-limit.md`. Gate under node@24: tsc clean, lint 0 errors,
+3412/3412 tests, `npm run build` OK. NOTE: merge = auto-deploy to live — this is a data-plane throttle,
+not a money-path change. Blockers: none. Next: land via `scripts/land.sh`, PR ready (do not merge).
+
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
 and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change
