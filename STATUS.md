@@ -1,5 +1,19 @@
 # Status
 
+## 2026-07-11 — Retired deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`)
+Removed the disabled Mac/PM2 `.github/workflows/deploy.yml`, whose YAML still declared `push: main`
+and manual-dispatch triggers; Coolify's GitHub-App auto-deploy remains the sole production path.
+Replaced stale deployment and
+runner instructions with the current Coolify runbook. Updated `Sentry CI Report` to observe every
+active workflow and map all six active scheduled lanes (`CI`, cache cleanup, effort sync, Security,
+Playwright, shared-package pin) to their source cron expressions; `merge-shepherd` is observed for
+failures but has no Sentry Cron mapping because its in-repo workflow is manual-only. Added structural
+Vitest coverage that derives active workflow names and schedules from `.github/workflows/` and fails
+on reporter drift or deploy-workflow resurrection. Full gate green on Node 24: lint 0 errors (378
+grandfathered warnings), tsc clean, 319 Vitest files / 3,490 tests passed, Next build clean; focused
+workflow-parity regression 2/2 passed. Next: commit and open a READY PR; do not merge.
+Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
 and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change

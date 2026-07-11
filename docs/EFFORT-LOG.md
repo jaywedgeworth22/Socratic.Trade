@@ -1579,6 +1579,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`) — IN PROGRESS 2026-07-11.** Removed the disabled `.github/workflows/deploy.yml`, whose YAML still declared `push: main` and manual triggers that would restart the retired Mac PM2 scheduler if the workflow were re-enabled despite Coolify being canonical. Replaced stale deploy/runner docs, removed retired `Deploy`/`Sync Preview Lanes` Sentry observers, added all active workflows, and mapped every active scheduled workflow to its source cron. Focused structural tests enforce workflow-name and cron parity. Full gate green: lint 0 errors, tsc clean, 319 Vitest files / 3,490 tests, build clean. No product behavior or live-board mutation; READY PR pending, do not merge. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
 - **Broker-held trailing stops (Alpaca native + RH ratcheted) + Guardrails stop-consolidation UI
   (CLAUDE, cloud session, branch `claude/stop-loss-preset-options-f1jygn`) — IN PROGRESS
   2026-07-10.** Owner-directed: (1) trailing stops now become BROKER-HELD when
