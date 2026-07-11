@@ -994,4 +994,97 @@ describe("reconcileBrokerProtectiveStops — round-9 (Codex review, PR #1331)", 
     expect(r.cancelled).toBe(1);
     expect(listBrokerProtectiveStops("R9-HWM-2", "local")[0]).toMatchObject({ trailPercent: 6, stopPrice: 126.9 }); // 135 * 0.94
   });
+
+  it("backfills the broker's TRUE ratcheted peak from the LIVE order's reported stopPrice — a native trail placed at entry then rallied is not reseeded looser on a later mismatch", async () => {
+    // Unlike the two tests above (which place the position ALREADY at its peak, so inverting the DB
+    // row happens to recover the true peak), this places AT ENTRY (mark == avgCost == 100). The
+    // native trail's DB row records stopPrice = 100 * 0.95 = 95 and is NEVER repriced as the position
+    // rallies (the broker moves its own trigger; only a trail%/qty mismatch forces a replace). So
+    // inverting ONLY the DB row reconstructs a peak of just 95 / 0.95 = 100 (≈ entry) — missing the
+    // broker's true, silently-ratcheted high-water mark entirely.
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("R13-HWM"), accountNumber: "R13-HWM", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 100)], executionMode: "broker/paper", running: true
+    });
+    expect(listBrokerProtectiveStops("R13-HWM", "local")[0]).toMatchObject({ stopPrice: 95, trailPercent: 5 });
+
+    // The position rallied to a peak of 150 — the broker's native trail silently ratcheted its
+    // trigger to 150 * 0.95 = 142.5, reported on the still-resting order as `stopPrice` — then pulled
+    // back to 140. A trail% change 5% -> 6% forces a mismatch check. Backfilling ONLY from the stale
+    // DB row (95 -> peak 100) would let canArmTrailingNow see mark 140 >= max(100, 100) and PERMIT
+    // replacing the broker's 142.5-equivalent trail with one seeded from 140 (real trigger 131.6) —
+    // measurably LOOSER. The fix also inverts the live order's broker-reported 142.5 (-> peak 150),
+    // takes the max, and thus refuses: 140 is a pullback from the true 150 peak.
+    const restingNativeTrail: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "new",
+      quantity: 10, stopPrice: 142.5, timeInForce: "gtc", createdAt: new Date().toISOString(), placedAgent: "alpaca"
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local",
+      policy: alpacaTrailPolicy("R13-HWM", { riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 6 } }),
+      accountNumber: "R13-HWM", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 140)], executionMode: "broker/paper", running: true,
+      orders: [restingNativeTrail]
+    });
+    expect(r.cancelled).toBe(0); // refused — the live order's 142.5 trigger implies a 150 peak, and 140 is a pullback
+    expect(gw.cancelled).toEqual([]);
+    expect(listBrokerProtectiveStops("R13-HWM", "local")[0]).toMatchObject({ stopPrice: 95, trailPercent: 5 }); // unchanged
+  });
+
+  it("disabled-teardown FILLED recovery via the CATCH branch also reports filledRecoverySymbols so the caller defers off the stale position", async () => {
+    // Place a fixed broker stop while enabled...
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R14-CATCH"), accountNumber: "R14-CATCH", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("R14-CATCH", "local")).toHaveLength(1);
+
+    // ...then the feature is turned off (kind === null) while the stop already FILLED. The cancel
+    // call fails (a filled order can't be cancelled), so recovery comes from the order list. The
+    // fix: besides booking the fill, the catch branch must PUSH filledRecoverySymbols so the caller
+    // skips synthetic registration/fire off the stale (pre-fill) position snapshot this tick.
+    gw.failCancel = true;
+    const filledOrder: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled",
+      filledQuantity: 10, averagePrice: 92, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R14-CATCH", { robinhoodBrokerStops: false }), accountNumber: "R14-CATCH", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true, orders: [filledOrder]
+    });
+    expect(r.cancelled).toBe(0); // the cancel call itself failed
+    expect(r.filledRecoverySymbols).toEqual(["AAPL"]); // recovered AND reported to the caller
+    expect(listBrokerProtectiveStops("R14-CATCH", "local")).toHaveLength(0); // recovered, not left pending_cancel
+    expect(listFillEvents("R14-CATCH", "live")).toHaveLength(1); // the fill IS booked
+  });
+
+  it("disabled-teardown SUCCESS path books a PARTIAL fill and reports filledRecoverySymbols instead of silently dropping the executed shares", async () => {
+    // Place a fixed broker stop while enabled...
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R17-SUCCESS"), accountNumber: "R17-SUCCESS", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("R17-SUCCESS", "local")).toHaveLength(1);
+
+    // ...then the feature is turned off (kind === null). The resting stop PARTIALLY executed (3 of 10
+    // shares) and the broker accepts the cancel of the open remainder — so the cancel SUCCEEDS (this
+    // is the realistic path for a partial, distinct from the catch branch which fires when a fully
+    // filled order's cancel is rejected). The fix: the success path must consult the pre-fetched
+    // order list, book the 3-share fill, and report the symbol — before the fix it deleted the row
+    // with no lookup, dropping the real broker sell from fill_events / P&L / learning.
+    const partiallyFilledThenCancelable: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "partially_filled",
+      filledQuantity: 3, averagePrice: 92, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R17-SUCCESS", { robinhoodBrokerStops: false }), accountNumber: "R17-SUCCESS", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true, orders: [partiallyFilledThenCancelable]
+    });
+    expect(r.cancelled).toBe(1); // the cancel of the open remainder succeeded
+    expect(r.filledRecoverySymbols).toEqual(["AAPL"]); // caller told the position moved
+    expect(listBrokerProtectiveStops("R17-SUCCESS", "local")).toHaveLength(0);
+    const fills = listFillEvents("R17-SUCCESS", "live");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 3, price: 92, status: "filled" }); // the partial, not the full row qty
+  });
 });

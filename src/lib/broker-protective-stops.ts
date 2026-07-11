@@ -648,7 +648,25 @@ export async function reconcileBrokerProtectiveStops(args: {
     if (stop.kind !== "trailing" || !(stop.trailPercent && stop.trailPercent > 0)) continue;
     const sym = normalizeSymbol(stop.symbol);
     if (extremePriceBySymbol[sym]) continue;
-    const impliedExtreme = stop.stopPrice / (1 - stop.trailPercent / 100);
+    let impliedExtreme = stop.stopPrice / (1 - stop.trailPercent / 100);
+    // The DB row's `stopPrice` is written ONCE at placement for a NATIVE trailing stop (it records
+    // the trigger the trail STARTED from) and is never repriced while the broker silently ratchets
+    // its own trigger upward — so a stop placed at entry and then left alone through a rally pins
+    // this reconstruction at ~entry while the broker's real high-water mark has climbed far above.
+    // The caller's freshly fetched order list carries the broker's CURRENT reported trigger for the
+    // still-resting order (`EquityOrder.stopPrice` — "Stop trigger price as the broker reports it",
+    // Alpaca `stop_price`); invert THAT the same way and take the max, so the reconstructed extreme
+    // reflects the broker's true, continuously-updated peak instead of only the placement-time mark.
+    // Max-only: it can only make canArmTrailingNow MORE restrictive (keep the tighter stop), never
+    // loosen protection; it falls back cleanly to the row-derived bound when the order is absent
+    // (e.g. a failed fetch left `orders` empty). Codex review, PR #1331.
+    const liveOrder = orders.find((o) => o.id === stop.brokerOrderId);
+    if (liveOrder && typeof liveOrder.stopPrice === "number" && liveOrder.stopPrice > 0) {
+      const orderImpliedExtreme = liveOrder.stopPrice / (1 - stop.trailPercent / 100);
+      if (Number.isFinite(orderImpliedExtreme) && orderImpliedExtreme > 0) {
+        impliedExtreme = Math.max(impliedExtreme, orderImpliedExtreme);
+      }
+    }
     if (Number.isFinite(impliedExtreme) && impliedExtreme > 0) extremePriceBySymbol[sym] = impliedExtreme;
   }
   for (const [sym, pos] of liveLongs) {
