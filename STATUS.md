@@ -38,6 +38,11 @@ falsified against pre-fix source. node@24: tsc clean, learning-review 38/38, ful
 files/3388 tests, eslint 0-err, build clean. See
 `docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum. This closes finding #2 for
 real — no known open gaps remain in the daily learning-review job's coverage guarantees.
+**Update: PR #1363 merged (`d9dc5d5d`), auto-deployed. Took ~2.5hrs of GitHub mergeStateStatus
+DIRTY re-syncs under a heavy same-day push burst despite being conflict-free the whole time by
+every local check; the reliable tiebreaker turned out to be a direct `gh pr merge <n> --squash`
+(no `--auto`) attempt, which forces a fresh server-side merge check independent of the stale
+cached flag.**
 ## 2026-07-10 — Provider-knob sync: API-Usage-Monitor -> Infisical prod (CLAUDE opus subagent, branch `claude/provider-knob-sync`)
 Mac-side script + launchd template making the API-Usage-Monitor the source of truth for market-data
 subscription plans: it syncs each plan's env-knob values into Infisical prod (where the trading app

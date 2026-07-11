@@ -1810,8 +1810,14 @@ As of 2026-07-08 (assignment-rule update).
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
 - **Learning-review orphan hardening — adversarial re-review of PR #1328 found + fixed 2 more
-  orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`) — IN PROGRESS 2026-07-10;
-  code+tests done + fully verified, PR opening via land.sh (built off merged `main` b4c4f4b1).**
+  orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`) — ✅ DEPLOYED TO PROD
+  2026-07-10: PR #1363 squash-merged to `main` (`d9dc5d5d`), auto-deployed. Took ~2.5hrs of
+  GitHub mergeStateStatus DIRTY re-syncs under a heavy same-day push burst (a new commit landing
+  roughly every 1-2 min) despite the branch being conflict-free by every local check the whole
+  time — GitHub's cached mergeability flag can lag real state under load; the reliable tiebreaker
+  was a direct `gh pr merge <n> --squash` (no `--auto`) attempt, which forces a fresh server-side
+  merge check independent of the stale cached flag. The new `merge-shepherd` scheduled automation
+  also helped by autonomously re-syncing the branch with `main` several times.**
   A Workflow-based adversarial re-review (4 lenses, each finding independently re-verified by a
   second agent trying to REFUTE it via empirical execution against the real code, not just reading)
   of merged PR #1328 found it had 2 real, empirically-reproduced gaps reproducing the SAME
