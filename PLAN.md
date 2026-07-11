@@ -25,17 +25,17 @@ filling the missing pieces.
 > See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
 > **2026-07-11 - Strategy lease correctness + default-on scheduler (CODEX).** No roadmap scope
 > change; this closes a money-path concurrency hole in the existing Phase 1 lock design. Approval
-> invocations use unique owner tokens, heartbeat renewal failures become sticky fail-closed state,
-> and both autonomous and approval paths re-prove ownership immediately before broker placement.
-> Scheduler single-leader remains ON for unset/empty env values and requires an explicit false value
-> to disable; followers cannot refresh the leader heartbeat. Obsolete teardown calls that could not
-> name the real owner are removed. Setup failure cannot leak the renewing timer/lease; approval loss
-> returns typed busy without broker placement, and autonomous loss preserves any proposal results
-> completed before the stop. Review follow-up now re-proves ownership immediately after approval and
-> autonomous broker/setup awaits before any non-placement state, snapshot, breaker, or cap-demotion
-> write. PR #1429 is reconciled through current `main@7c01f87e`; 7 focused files / 38 tests, touched
-> lint, and TypeScript are green. The serialized final full test/build gate and hosted rerun remain. See
-> `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+> and autonomous runs heartbeat unique account leases, snapshot one account for every later read/write,
+> and re-prove ownership after each long await before unrelated persistence. Durable non-placement and
+> broker outcomes remain in failed run receipts when ownership disappears; approval cannot report a
+> persisted block as `busy`. Scheduler signal shutdown retains the leader lease until TTL while detached
+> broker work may exist, and account-scoped auto-tuning runs only after completed strategy runs under its
+> own renewed account lease and LLM reservation. A final independent review additionally fixed the
+> account-bound strategy prompt, propagated account scope into walk-forward evidence, honored a lost
+> proposal-transition race, and computes tuning time only after the strategy run finishes. PR #1429 is
+> reconciled through `main@67e1536d` and is intentionally draft pending the root lane's serialized full
+> gate. The combined final Node 24 slice is green: 11 files / 129 tests, touched lint 0 errors,
+> TypeScript, and diff-check. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
 > change; operator-observability correctness only. The connections-health expected-lane inventory now
 > uses the provider's canonical `alpha-vantage:env` identity, preventing a synthetic empty

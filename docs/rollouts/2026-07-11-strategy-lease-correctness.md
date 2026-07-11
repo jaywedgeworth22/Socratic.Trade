@@ -35,6 +35,19 @@ Branch: `codex/strategy-lease-correctness`
   regression proves an idle process cannot keep `scheduler:lastTick` fresh while the leader is dead.
 - Current-main reconciliation removed the obsolete `heartbeatTimer` cleanup accidentally carried by
   the newly merged broker-health early return; the guard's `finally` is the single stop/release owner.
+- Final account-binding reconciliation snapshots the connected-account id before lease acquisition
+  and uses it for every later policy/account read and write. An active-account switch during guard
+  startup can no longer redirect the run or its failed receipt.
+- Pending-proposal expiry/revalidation accept a run-owned assertion callback and stop between rows;
+  RAG, episodic retrieval, Green generation, ATR/volatility history, Red review, correlation/risk
+  receipts, decision observation, and final macro evidence all re-prove after their awaited work.
+- Durable proposal truth wins over ancillary lease loss: non-placement results are recorded before
+  notification assertions, and broker placement/reconciliation completes its status/fill/result
+  boundary before checking ownership. Approval preserves a terminal block instead of returning busy.
+- SIGTERM/SIGINT retain the scheduler leader lease until its TTL instead of releasing while detached
+  protective-order work may be unresolved; only `beforeExit` releases after the event loop drains.
+- Scheduled auto-tuning is skipped after failed runs, is bound to the scheduled account, and takes the
+  same renewed account strategy lease plus an account-scoped LLM reservation before any tuning work.
 
 ## Why
 
@@ -51,6 +64,11 @@ default-on posture.
 - `src/lib/strategy-lock-guard.ts`
 - `src/lib/strategy.ts`
 - `src/lib/strategy-execution.ts`
+- `src/lib/proposal-revalidation.ts`
+- `src/lib/strategy-risk.ts`
+- `src/lib/strategy-tuning.ts`
+- `src/lib/auto-tune-scheduler.ts`
+- `src/lib/backtest.ts`
 - `src/lib/account-deletion.ts`
 - `src/lib/scheduler.ts`
 - `src/lib/scheduler-lease.ts`
@@ -58,6 +76,12 @@ default-on posture.
 - `test/strategy-lock-loss-integration.test.ts`
 - `test/scheduler-single-leader-default.test.ts`
 - `test/scheduler-leader-heartbeat.test.ts`
+- `test/scheduler-followup-lease.test.ts`
+- `test/auto-tune-scheduler-lease.test.ts`
+- `test/backtest-account-scope.test.ts`
+- `test/proposal-revalidation.test.ts`
+- `test/correlation-cluster-gate.test.ts`
+- `test/risk-receipts.test.ts`
 - `.env.example`
 - `STATUS.md`
 - `PLAN.md`
@@ -132,11 +156,34 @@ default-on posture.
   `test/approval-lock.test.ts`, `test/broker-minimum-bump-execute.test.ts`, and
   `test/protective-exit-reprice.test.ts` — **7 files / 38 tests passed**. Touched ESLint — **0 errors /
   34 inherited warnings**. `npx tsc --noEmit` — **clean**. `git diff --check` — **clean**.
+- Final adversarial reconciliation on merged `origin/main@67e1536d`:
+  `test/proposal-revalidation.test.ts`, `test/strategy-lock-loss-integration.test.ts`,
+  `test/scheduler-followup-lease.test.ts`, `test/auto-tune-scheduler-lease.test.ts`,
+  `test/scheduler-leader-heartbeat.test.ts`, `test/scheduler-single-leader-default.test.ts`,
+  `test/correlation-cluster-gate.test.ts`, and `test/risk-receipts.test.ts` — **8 files / 59 tests
+  passed** under Node 24. This directly covers active-account switching after the account snapshot,
+  loss between proposal-maintenance rows, loss after Red/correlation awaits, durable proposed/blocked
+  notification outcomes, final-macro loss after a successful placement, signal-shutdown fencing,
+  failed-run tuning suppression, scheduled-account propagation, and tuner lease contention.
+- Compatibility slice: `test/strategy-tuning.test.ts`, `test/learning-loop-backlog.test.ts`,
+  `test/learning-loop-followon.test.ts`, `test/learning-loop-autotuning-db.test.ts`, and
+  `test/backtest.test.ts` — **5 files / 116 tests passed** under Node 24.
+- A final independent reviewer found four missed boundaries and each was corrected before the full
+  gate: `getStrategyPrompt` now receives the snapshotted account; `runWalkForwardOOS` propagates its
+  account into factor-observation reads; a lost `transitionProposalIfPending` race returns the current
+  persisted proposal status without a false block notification; and scheduler follow-up time is read
+  only after the strategy run completes. The post-fix combined Node 24 rerun covered **11 files / 129
+  tests**, including the new `test/backtest-account-scope.test.ts`, and passed.
+- Final touched ESLint — **0 errors / 36 inherited warnings**. Three `npx tsc --noEmit` checks
+  completed cleanly during implementation. A final core rerun after docs/current-main refresh passed
+  **4 files / 25 tests**; `git diff --check` is clean. Per owner gate serialization, this lane did not
+  run the full Vitest suite or production build.
 
 ## Follow-ups and boundaries
 
-- Ready PR #1429 remains open. The serialized final full test/build gate, trusted push, hosted checks,
-  merge, and production verification remain; the prior full gate predates the review changes.
+- Draft PR #1429 remains open. The root lane intentionally converted it from ready while this final
+  reconciliation was in flight and owns the serialized full test/build gate, trusted push, hosted
+  checks, readiness, merge, and production verification; prior full gates predate these review fixes.
 - No scheduler provider-boundary locking, production environment/configuration, PR, merge,
   deployment, or live runtime mutation is part of this change. The branch-neutral live effort board
   was updated with implementation and review receipts.

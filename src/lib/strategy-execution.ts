@@ -447,7 +447,28 @@ export async function executeProposal(
 
       // Same in-flight window as the re-escalation above: retire the card as blocked only if it
       // is still pending — never overwrite a rejection/expiry that landed during the async review.
-      transitionProposalIfPending(proposalId, "blocked", userId, { review, estimatedNotional: review.estimatedNotional, decision });
+      if (!transitionProposalIfPending(proposalId, "blocked", userId, { review, estimatedNotional: review.estimatedNotional, decision })) {
+        const current = getProposal(proposalId, userId);
+        audit(
+          "proposal_block_skipped",
+          {
+            proposalId,
+            symbol: proposal.symbol,
+            side: proposal.side,
+            reasons: decision.reasons,
+            currentStatus: current?.status ?? "missing"
+          },
+          userId,
+          policy.connectedAccountId
+        );
+        return {
+          status: current?.status ?? "unknown",
+          reasons: [
+            `Proposal is no longer pending (now ${current?.status ?? "missing"}); the policy block was not applied.`,
+            ...decision.reasons
+          ]
+        };
+      }
       audit("proposal_approved", {
         proposalId,
         symbol: proposal.symbol,
@@ -464,9 +485,18 @@ export async function executeProposal(
         },
         { policy, userId }
       );
-      lockGuard.assertOwned();
+      const blockedResult = { status: "blocked", reasons: decision.reasons };
+      try {
+        lockGuard.assertOwned();
+      } catch (error) {
+        // The row is already terminally blocked. Losing the lease while its ancillary notification
+        // was in flight must not misreport that durable outcome as "busy"/still pending; simply skip
+        // the unrelated authority-demotion write that would require current ownership.
+        if (error instanceof StrategyLockOwnershipLostError) return blockedResult;
+        throw error;
+      }
       autoRevertOnCapBreach(decision.reasons, policy, userId, policy.connectedAccountId);
-      return { status: "blocked", reasons: decision.reasons };
+      return blockedResult;
     }
 
     // Re-assert the proposal is still pending immediately before we act on it. The awaits above

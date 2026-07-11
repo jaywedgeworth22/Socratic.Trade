@@ -1,25 +1,32 @@
 # Status
 
-## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, branch `codex/strategy-lease-correctness`)
+## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, draft PR #1429)
 
-Ready PR #1429 has now gone through two review autofixes (`9d2ba1fb`, `3bfd3122`) pushed by
-`github-actions[bot]`; the repo correctly refused those bot-triggered secret-bearing checks, and no CI
-trust policy was changed. The branch contains human-authored merges through current
-`origin/main@7c01f87e`. Adversarial review found both autofixes too coarse: approval ownership was
-checked before, not after, tradability/review awaits, and run setup did stateful reconciliation before
-re-proving ownership. Autonomous and approval paths now assert after broker health, portfolio/setup
-reads, scans/quotes, stale-order notification, tradability, initial review, and bump re-review before
-non-placement writes. Budget/volatility phases also re-prove before their next policy/audit mutation,
-and a notification-time loss cannot demote authority afterward. Direct regressions prove loss during
-approval/autonomous tradability or review leaves no stale card/broker call, while loss during setup
-account reads stops before market scan or snapshots. The scheduler heartbeat remains after the leader
-gate, and a follower regression proves it cannot refresh `scheduler:lastTick`. Current-main
-reconciliation also removed #1430's obsolete `heartbeatTimer` cleanup; authoritative `finally` owns
-guard stop/release. Current Node 24 scoped verification is green: 7 files / 38 tests, touched ESLint
-0 errors / 34 inherited warnings, TypeScript clean, and `git diff --check` clean. The previous hosted
-full gate was green at human head `ed3793e3` but predates the second autofix reconciliation; the
-serialized final full gate, trusted push, hosted rerun, merge, and production verification remain. See
-`docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+The final adversarial reconciliation is implemented on `codex/strategy-lease-correctness` after
+merging `origin/main@67e1536d`. A run now snapshots one connected-account id before acquiring its
+lease and uses that id for every later policy/account read, breaker write, catch receipt, and tuning
+follow-up even if the active account changes mid-await. Pending-proposal expiry/revalidation,
+ATR/RAG/episodic/Green/Red/risk-receipt phases, and final macro evidence re-prove ownership after
+their long awaits; best-effort catches explicitly rethrow lease loss. Non-placement results are added
+to the run receipt as soon as their DB row is durable, before notification-time ownership checks.
+Once broker placement starts, status/fill/reconciliation and the completed result finish without an
+intervening assertion; ownership is checked only after broker truth is durable. Approval likewise
+returns a durable blocked result instead of a false `busy` result when ownership disappears during
+the block notification.
+
+Scheduler SIGTERM/SIGINT no longer release the leader lease while detached protective-order work may
+still be unresolved; only `beforeExit` releases after the event loop drains, otherwise the 90-second
+TTL fences successors. Auto-tuning now runs only after a completed strategy result, receives the
+scheduled account id, takes and heartbeats that account's strategy lease, reserves LLM budget for the
+same account, reads account-scoped evidence/cadence, and asserts ownership before any policy/ledger
+write. A final independent review caught and fixed four remaining boundaries: strategy prompt lookup
+is account-bound, walk-forward observations receive the account filter, a failed pending-to-blocked
+transition returns the actually persisted status without notifying, and tuning computes its clock
+after the strategy run instead of before it. The combined focused Node 24 rerun is green: **11 files /
+129 tests**; touched ESLint **0 errors / 36 inherited warnings**; TypeScript and `git diff --check`
+clean. PR #1429 is intentionally draft; the root lane
+owns the serialized full test/build gate, trusted push, hosted rerun, readiness, merge, and production
+verification. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 ## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
 ## 2026-07-11 — Durable provider/dataset operation leases (CODEX, ready PR #1441)
 
