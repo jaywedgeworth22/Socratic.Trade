@@ -10,6 +10,7 @@ import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getLastStrategyR
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
+import { checkBrokerHealth } from "./broker-health";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
@@ -419,6 +420,16 @@ async function tick(): Promise<void> {
         }
         const executionState = deriveExecutionState(policy, account);
         const brokerGateway = executionState.submitsBrokerOrders ? getBrokerGateway(policy, userId) : undefined;
+        
+        // Fast pre-proposal broker health gate.
+        // E.g., skips queuing an LLM strategy run if the broker is unreachable, account is suspended, 
+        // or there's an elevated order_placement_uncertain error rate.
+        const healthSignals = await checkBrokerHealth(userId, account, brokerGateway);
+        if (!healthSignals.isHealthy) {
+          console.warn(`[scheduler] Skipping account ${accountId}: ${healthSignals.reason}`);
+          schedule.nextRunAt = null; // Re-evaluate on next tick without advancing the cadence
+          continue;
+        }
 
         if (brokerGateway && !staleExitInFlight.has(key)) {
           staleExitInFlight.add(key);

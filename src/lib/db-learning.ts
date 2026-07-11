@@ -100,6 +100,28 @@ export function listAuditByKind(
 }
 
 /**
+ * Fast count of recent audit events of a specific kind, without loading JSON payloads.
+ * Used for real-time error rate gating (e.g. order_placement_uncertain checks).
+ */
+export function countRecentAuditEvents(
+  kind: string,
+  connectedAccountId: string,
+  minutes: number,
+  userId: string = "local"
+): number {
+  const sinceIso = new Date(Date.now() - minutes * 60000).toISOString();
+  
+  const row = getDb().prepare(
+    `SELECT COUNT(*) as count 
+     FROM audit_events 
+     WHERE kind = ? AND user_id = ? AND (connected_account_id = ? OR connected_account_id IS NULL)
+     AND created_at >= ?`
+  ).get(kind, userId, connectedAccountId, sinceIso) as { count: number };
+  
+  return row.count;
+}
+
+/**
  * Recent audit rows of ANY of `kinds` created at/after `sinceIso`, newest first. One IN-query
  * (not N listAuditByKind calls) so the daily learning review's system-history digest — the set of
  * execution-failure kinds it checks lesson evidence against — is a single cheap read.

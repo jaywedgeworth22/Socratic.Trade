@@ -19,6 +19,19 @@ verification is green: 9 files / 130
 tests, `tsc --noEmit`, and touched-file ESLint with 0 errors (4 inherited warnings); parent review and
 the ordered full gate remain before commit/PR. Rollout:
 `docs/rollouts/2026-07-11-provider-operation-leases.md`.
+## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
+
+The admin connections-health route's expected-lane inventory used `alphavantage:env`, while the
+provider and health log use the canonical `alpha-vantage:env` service name. That mismatch injected a
+phantom never-used card beside the real quota-exhausted lane. The placeholder now uses
+`alpha-vantage`, so the existing `(service,keySource)` dedupe preserves exactly one real env lane.
+An authenticated route regression seeds canonical health history and proves the response contains one
+`alpha-vantage:env` entry and no `alphavantage` entry. This is display/health-inventory correctness
+only: provider dispatch, credentials, quota rotation, and failure classification are unchanged.
+Ready PR #1438 is reconciled with `main@da9558ac`. Final Node 24 verification is green: focused
+Vitest 1/1, lint 0 errors (404 inherited warnings), `tsc --noEmit`, full Vitest 332 files / 3,747
+tests, and the production build. Production UI confirmation remains after merge and auto-deploy. See
+`docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
 Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment
@@ -146,6 +159,14 @@ current-main Node 24 gate is green: focused 4 files / 29 tests, lint 0 errors, T
 attempt exposed only a Node ABI mismatch caused by the earlier dependency refresh running under Node
 26; rebuilding `better-sqlite3` under Node 24 fixed it before the passing rerun. Refreshed hosted
 checks and the matched Congress.Trade peer pin remain pending. The controls are anti-repeat budgets, not hard
+final current-main Node 24 gate is green against `origin/main@e395e65a`: focused 4 files / 29 tests,
+lint 0 errors / 404 inherited warnings, TypeScript clean, 331 files / 3,746 tests, and production
+build clean. The first full-test
+attempt exposed only a Node ABI mismatch caused by the earlier dependency refresh running under Node
+26; rebuilding `better-sqlite3` under Node 24 fixed it before the passing rerun. Antigravity's ready
+Congress.Trade PR #296 exact-pins the same tag/commit and has 940 tests green; its peer check is
+expected red until #1426 lands first, while Congress merge/deploy remains owner-gated. Refreshed
+hosted checks remain pending. The controls are anti-repeat budgets, not hard
 per-request spend ceilings. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 ## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
@@ -189,6 +210,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — Global learning reads + batched AI review of proposals (Claude cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+Owner asked to bring learning "out of the individual account" (keeping provenance) and to review pending
+learning proposals with a single LLM call. Done: (1) lessons (on `socratic_decisions`) and framework
+proposals now read GLOBAL across a user's accounts — dropped the active-account filter on the dashboard
+learning panels while still writing `connected_account_id` for provenance (no migration; also fixes the
+dashboard-vs-decision-detail inconsistency). (2) New `src/lib/framework-review.ts`
+`reviewPendingFrameworkProposals` — one LLM call adjudicates all pending proposals across accounts and
+attaches an ADVISORY recommendation (verdict + rationale + optional rewrite) via a new nullable
+`ai_review` column; owner still makes the final accept/reject/rewrite (not auto-apply). Reviewer model =
+account policy `redTeamLlmModel`→`llmModel` (AI-Review inheritance). Wired: `POST
+/api/socratic/framework/review` + an "AI review pending" button and per-proposal recommendation block in
+`app/console/page.tsx`. Gate green (tsc/lint/build); new `test/framework-review.test.ts` (4 tests) +
+socratic/learning suites pass (31). PR pending. See
+`docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
 ## 2026-07-10 — Tradier fixups round 3: buying-power min() asymmetry (CLAUDE, branch `claude/tradier-broker`, PR #1380)
 Closed a LOW-but-real money-path residual from round 2's PDT buying-power fix. The round-2
 `Math.min` over positive candidates of `[margin.stock_buying_power, pdt.stock_buying_power]` was

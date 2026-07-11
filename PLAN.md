@@ -23,6 +23,12 @@ filling the missing pieces.
 > inspection over its local IPC socket. Production explicitly enables the v0.5.12 socket and skips
 > the non-verifying metadata-file fallback; staleness requires evidence of newer local DB/WAL activity.
 > See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
+> **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
+> change; operator-observability correctness only. The connections-health expected-lane inventory now
+> uses the provider's canonical `alpha-vantage:env` identity, preventing a synthetic empty
+> `alphavantage:env` card beside the real lane. Authenticated route coverage locks the one-lane
+> invariant. No provider, secret, pacing, rotation, or quota semantics changed. See
+> `docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
 > **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
 > scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
 > refresh/share, and broker probes now have named per-admin budgets and single-flight exclusion,
@@ -38,6 +44,10 @@ filling the missing pieces.
 > fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The current-main
 > Node 24 gate is green: focused 29/29, lint 0 errors, tsc, 3,740/3,740 tests, and build. Refreshed
 > hosted checks and the matched Congress.Trade peer pin remain pending. See
+> fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The final
+> `main@e395e65a` Node 24 gate is green: focused 29/29, lint 0 errors, tsc, 3,746/3,746 tests, and
+> build. Antigravity's ready Congress.Trade PR #296 carries the exact matched pin with 940 tests
+> green; its peer check becomes green after #1426 lands first. See
 > `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 > **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
 > change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger

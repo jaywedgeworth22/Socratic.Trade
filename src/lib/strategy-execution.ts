@@ -778,6 +778,10 @@ export async function reconcilePlacementError(p: {
   placeErrorMessage: string;
   runId?: string;
 }): Promise<PlacementReconcileOutcome> {
+  // Wait a brief period to allow the broker's order list to index the new order
+  // and prevent sub-millisecond races (where an accepted order isn't visible yet).
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
   let brokerOrders: EquityOrder[];
   try {
     brokerOrders = await p.gateway.getEquityOrders(p.accountNumber);
