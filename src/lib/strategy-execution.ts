@@ -2,7 +2,7 @@ import { getBrokerGateway } from "./broker";
 import { evaluateBrokerHeldExitAvailability, brokerHeldExitBlockReason } from "./broker-held-orders";
 import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { isRejectedOrCanceledState } from "./broker-side";
-import { audit } from "./db";
+import { audit, clearStopPlans, recordStopPlan } from "./db";
 import { getActiveConnectedAccount } from "./db-api-keys";
 import { acquireStrategyLock, dailyExecutionStats, notionalInLastMinutes, countDayTradesInLastBusinessDays, releaseStrategyLock } from "./db-execution";
 import { listPendingBrokerReconciliationFills, updateFillEvent, listFillEventsByProposalId } from "./db-fills";
@@ -604,6 +604,7 @@ export async function executeProposal(
 
     updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
     const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
+    const preFillPosition = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
     const fill = recordFillFromProposal({
       userId,
       accountNumber: row.accountNumber,
@@ -615,7 +616,8 @@ export async function executeProposal(
       review,
       execution,
       marketScan: approvalScan,
-      status: fillStatus
+      status: fillStatus,
+      existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
     });
     audit("proposal_approved", {
       proposalId,
@@ -649,17 +651,70 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
 
   try {
     const brokerOrders = await gateway.getEquityOrders(accountNumber);
+    // Lazily fetched (only if a pending fill actually carries an opening stopPlan) and cached across
+    // the loop — these orders already EXECUTED at the broker, so the live position's averageCost is
+    // the real POST-fill blended basis (no manual weighting needed, unlike the placement-time callers
+    // in performance.ts that only have the PRE-fill snapshot). Recording the raw single-fill `price`
+    // instead would make `filterStopPlansByLiveBasis` discard a scale-in's plan as stale on the very
+    // next run (Codex review, PR #1371).
+    let liveBasisBySymbol: Map<string, number> | null = null;
+    const liveBasisFor = async (symbol: string): Promise<number | undefined> => {
+      if (!liveBasisBySymbol) {
+        try {
+          const livePositions = await gateway.getEquityPositions(accountNumber);
+          liveBasisBySymbol = new Map(livePositions.map((p) => [normalizeSymbol(p.symbol), p.averageCost]));
+        } catch {
+          liveBasisBySymbol = new Map();
+        }
+      }
+      return liveBasisBySymbol.get(normalizeSymbol(symbol));
+    };
     for (const fill of pending) {
       const matched = brokerOrders.find((bo) => bo.id === fill.brokerOrderId);
       if (!matched) continue;
 
       const execQty = matched.filledQuantity ?? 0;
       const execPrice = matched.averagePrice ?? fill.price;
+      // The stop plan couldn't be committed at placement time — this order was still
+      // pending_reconciliation then, and a canceled/expired-with-nothing-executed order must never
+      // leave a plan row governing a lot that never opened (Codex review, PR #1371). Any executed
+      // quantity (full or partial fill) DID open the lot, so commit the plan now from the original
+      // proposal stamped into this fill's own raw payload.
+      const commitStopPlanIfOpening = async (price: number) => {
+        const openingProposal = (fill.raw as { proposal?: TradeProposal } | undefined)?.proposal;
+        if (
+          openingProposal?.stopPlan &&
+          (openingProposal.side === "buy" || openingProposal.side === "short")
+        ) {
+          try {
+            // An explicit "default" CLEARS any existing override (the only way a scale-in can ever
+            // reset a position back to the account's own precedence) — mirrors
+            // recordFillFromProposal's same-named gate in performance.ts (Codex review, PR #1371).
+            if (openingProposal.stopPlan.style === "default") {
+              clearStopPlans(accountNumber, [fill.symbol], userId);
+            } else {
+              const basis = (await liveBasisFor(fill.symbol)) ?? price;
+              recordStopPlan(
+                accountNumber,
+                fill.symbol,
+                openingProposal.stopPlan.style,
+                openingProposal.stopPlan.rationale,
+                basis,
+                userId,
+                undefined,
+                openingProposal.side === "short" ? "short" : "long"
+              );
+            }
+          } catch {
+            // plan bookkeeping must never break fill reconciliation
+          }
+        }
+      };
       // Book the executed portion of an order. Idempotent: reconcile UPDATES the
       // existing fill record (by fill.id), so a later poll overwriting with a larger
       // executed quantity never double counts; the realtime trade_updates stream funnels
       // into the same record too.
-      const bookExecuted = (auditStatus: string) => {
+      const bookExecuted = async (auditStatus: string) => {
         updateFillEvent(fill.id, {
           status: "filled",
           price: execPrice,
@@ -669,6 +724,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
         audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId, connectedAccountId);
+        await commitStopPlanIfOpening(execPrice);
       };
 
       if (matched.state === "filled") {
@@ -683,18 +739,19 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
         audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId, connectedAccountId);
+        await commitStopPlanIfOpening(price);
         // An order reaching "filled" PROVES it was placed, so clear any lingering "verify with
         // broker" uncertain alert for that proposal (only on a full fill — not while still working).
         if (fill.proposalId) resolveBrokerVerificationNotifications(userId, { proposalId: fill.proposalId, resolution: "placed" });
       } else if (matched.state === "partially_filled") {
         // A live order that has executed some-but-not-all shares: book the executed
         // portion now so it enters P&L/exposure instead of being silently dropped.
-        if (execQty > 0) bookExecuted("partially_filled");
+        if (execQty > 0) await bookExecuted("partially_filled");
       } else if (isRejectedOrCanceledState(matched.state)) {
         if (execQty > 0) {
           // Order terminated AFTER a partial execution — book the executed shares
           // rather than marking the whole fill cancelled and losing them.
-          bookExecuted(`${matched.state}_partial`);
+          await bookExecuted(`${matched.state}_partial`);
         } else {
           updateFillEvent(fill.id, {
             status: matched.state,
@@ -799,6 +856,22 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
     return;
   }
 
+  // Lazily fetched (only if a recovered fill actually carries an opening stopPlan) — these orders
+  // already EXECUTED at the broker, so the live position's averageCost is the real POST-fill blended
+  // basis, same reasoning as reconcilePendingFills' liveBasisFor (Codex review, PR #1371).
+  let liveBasisBySymbol: Map<string, number> | null = null;
+  const liveBasisFor = async (symbol: string): Promise<number | undefined> => {
+    if (!liveBasisBySymbol) {
+      try {
+        const livePositions = await gateway.getEquityPositions(accountNumber);
+        liveBasisBySymbol = new Map(livePositions.map((pos) => [normalizeSymbol(pos.symbol), pos.averageCost]));
+      } catch {
+        liveBasisBySymbol = new Map();
+      }
+    }
+    return liveBasisBySymbol.get(normalizeSymbol(symbol));
+  };
+
   for (const row of stale) {
     const p = row.proposal as TradeProposal | undefined;
     const matched = row.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === row.refId) : undefined;
@@ -823,6 +896,7 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
         if (!alreadyBooked) {
           const recoveredExecutionMode = row.executionMode ?? "broker/live";
           const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
+          const existingAvgCost = p.stopPlan ? await liveBasisFor(p.symbol) : undefined;
           recordFillFromProposal({
             userId,
             accountNumber,
@@ -831,7 +905,11 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
             executionMode: recoveredExecutionMode,
             proposal: p,
             execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
-            status: matched.state === "filled" ? "filled" : "pending_reconciliation"
+            status: matched.state === "filled" ? "filled" : "pending_reconciliation",
+            // The order already executed at the broker, so the live position's averageCost IS the
+            // correct post-fill blended basis already — bypass the pre-fill blend math entirely rather
+            // than re-deriving it from the single recovered fill price.
+            stopPlanBasisOverride: existingAvgCost
           });
         }
       }

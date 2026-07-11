@@ -95,6 +95,30 @@ name's *market* sensitivity (needs a beta). ATR adapts to a name's *realized*
 range and needs only its own bars — useful when a beta is missing or a name's
 idiosyncratic volatility differs from its market beta.
 
+### Per-position stop PLANS — `TradeProposal.stopPlan` **[new 2026-07-10]**
+The account-wide settings above (fixed %, beta-scaled, ATR, trailing) are the *default
+precedence* every position follows. The LLM can instead pin **one specific position** to a
+chosen stop **type** at open time — `stopPlan: { style: "fixed"|"atr"|"trailing"|"none", rationale? }`
+(distinct from `bracketStopLoss`, a per-trade stop *price*) — persisted for the position's life in
+`position_stop_plans` (committed on fill, cleared on close, same pattern as the take-profit band
+ratchet in §below). All four enforcement layers honor the SAME plan for that symbol:
+- `"fixed"`/`"atr"` PIN the distance the proactive generator and any Alpaca bracket use for that
+  position, ignoring the account's own ATR/beta toggles for it — using `STOP_PLAN_FALLBACK_STOP_PCT`
+  (8%) when the account has no stop-loss % configured at all.
+- `"trailing"` makes the synthetic monitor register a trail for that position even when the
+  account's own `trailingStopPct` is 0 (same 8% fallback), and skips the fixed/ATR exit for it.
+- `"none"` is a genuine, owner-accepted no-stop choice for that one position — never hard-blocked
+  (real trading, owner's risk), but never silent either: it tears down any existing broker-held or
+  synthetic registration for that symbol and is surfaced on the Positions table and approval card.
+- Absent/`"default"` — no behavior change; the position follows the account's own precedence.
+
+Every style is genuinely available for every symbol regardless of the account's own
+configuration (a plan-only account still gets real protection via the fallback %), and a
+broker-held stop resolver only *narrows* which of the account's enabled lane(s) apply to a
+plan-pinned symbol — it never invents a broker capability the account doesn't otherwise have; the
+always-on synthetic monitor is what actually guarantees the plan works on any broker. See
+`docs/rollouts/2026-07-10-per-position-stop-plans.md` for the full design/implementation record.
+
 ---
 
 ## B. Order-level protection (survives app downtime / fills at the broker)
@@ -202,8 +226,10 @@ would destroy the disallowed basis); losses *inside* an IRA create no lock.
 
 ## F. Deferred / future
 
-- **Native Alpaca trailing stop (`trail_percent`)** — deferred; the synthetic
-  monitor covers trailing on all brokers without a broad `OrderType` change.
+- **Broker-held short trails (Alpaca)** — deferred; `reconcileBrokerProtectiveStops` only
+  arms broker-held trailing for longs today (`liveLongs`, `p.quantity > 0`) — a short's trailing
+  stop is synthetic-monitor-only even on Alpaca. (Native Alpaca trailing stops for LONGS shipped
+  2026-07-10 — see "Broker-held trailing stops" in §B; this item is the narrower short-side gap.)
 - **Short-specific take-profit notional** — not yet a field (shorts use
   `takeProfitPct`).
 
@@ -224,4 +250,4 @@ would destroy the disallowed basis); losses *inside* an IRA create no lock.
 = volatility-aware via the name's market beta; *ATR* = volatility-aware via the name's
 realized daily range (adapts per-name, no beta needed). Take-profit always stays flat.
 
-_Last verified: 2026-07-10 (broker-held trailing stops + defaults correction: ATR/beta ON since 2026-07-07)._
+_Last verified: 2026-07-10 (per-position stop plans added; broker-held trailing stops + defaults correction: ATR/beta ON since 2026-07-07)._
