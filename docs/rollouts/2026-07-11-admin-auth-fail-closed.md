@@ -101,7 +101,8 @@ Current-main reconciliation: `origin/main@432ca6fe` merged after #1400 landed. T
 conflict was `test/server-metrics.test.ts`; the resolved file keeps all current Hetzner/Coolify,
 malformed-sample, and degraded-provider assertions while attaching verified Auth.js provenance to
 authorized admin requests. STATUS and effort histories were union-merged. The final combined gate is
-running before the PR is refreshed.
+green: focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited
+warnings, TypeScript clean, 325 files / 3,620 tests, and production build clean.
 
 ## Follow-ups / risks
 

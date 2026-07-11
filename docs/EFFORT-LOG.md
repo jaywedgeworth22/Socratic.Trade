@@ -1604,10 +1604,11 @@ As of 2026-07-08 (assignment-rule update).
   stale admin-route comment now matches the gate. Focused Node24 security coverage is green (6 files/
   60 tests). Current `origin/main@432ca6fe` is merged. The only source conflict was
   `test/server-metrics.test.ts`; its resolved union preserves current provider/degraded-response
-  coverage and adds verified Auth.js provenance to authorized route calls. The previous Node24 gate
-  (lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build) and hosted checks were green; final
-  combined verification is running before PR refresh. No production environment, main merge,
-  auto-merge, or deploy mutation.
+  coverage and adds verified Auth.js provenance to authorized route calls. Final combined Node24
+  verification is green: focused 6 files/64 tests, touched ESLint clean, full lint 0 errors/404
+  inherited warnings, tsc, 325 files/3,620 tests, build. Previous hosted checks were green; the
+  refreshed head will rerun them. No production environment, main merge, auto-merge, or deploy
+  mutation.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch

@@ -64,8 +64,10 @@ localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were re
 `origin/main@432ca6fe` is merged. The only source overlap was
 `test/server-metrics.test.ts`; its resolved union preserves current provider-shape/degraded-response
 coverage while adding verified Auth.js provenance to every authorized admin request. The previous
-current-main gate and hosted checks were green; final combined Node 24 verification is running before
-the PR refresh. READY PR #1410 remains unmerged without auto-merge or deployment. See
+current-main gate and hosted checks were green. Final combined Node 24 verification is also green:
+focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited warnings,
+TypeScript clean, 325 files / 3,620 tests, and production build clean. READY PR #1410 remains
+unmerged without auto-merge or deployment. See
 `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
