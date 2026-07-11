@@ -8,6 +8,25 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Order-status reconciliation: kill the perpetual "verify with broker" alert (CLAUDE, branch `claude/order-status-reconcile`)
+A thrown broker `placeEquityOrder` used to leave an order "always uncertain": both catch paths
+(autonomous run-loop + approval) fired a permanent, un-clearable "verify with broker" alert without
+asking the broker what happened, set status `placing_failed` (which the stale sweep — filters
+`status='placing'` — never reconciles), and nothing acked the alert even after the order later
+reconciled. Fix: new shared `reconcilePlacementError()` helper (`strategy.ts`, called from both
+catches) queries the broker via the existing `refId→clientOrderId` idempotency key and maps to a
+DEFINITE status — `placed`/recovered (books the fill, deduped), `rejected_by_broker` (declined), or
+new `not_placed` (safe to retry, sweepable); only a truly unreachable broker keeps status `placing`
++ the still-protected uncertain alert. New `resolveBrokerVerificationNotifications()`
+(`db-notifications`) acks the uncertain alert on any confirmed placement (inline recover, sweep
+recover, or a normal fill reaching `filled`); `isBrokerVerificationRunFailed` is now
+reconcile-marker-driven so `not_placed` self-clears while `uncertain`/`declined` stay protected.
+Idempotency: status gate + a `(proposalId, brokerOrderId)` dedupe guard on BOTH the inline booking
+and the sweep. Money-path: NO change to Alpaca/Robinhood placement or the idempotency keys. Local
+gates green: tsc 0, full suite 3408/3408, lint 0-err, build clean (ran under default node26 — this
+worktree's node_modules is ABI 147). PR: READY, not merged. See
+`docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — open PR, await review.
+
 ## 2026-07-10 — Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch `monet/privacy-terms-pages`)
 Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added `/privacy-policy` +
 `/terms-and-conditions` (boilerplate, matching the existing `/how-it-works`/`/welcome` page

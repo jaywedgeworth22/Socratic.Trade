@@ -16,6 +16,8 @@ import {
   listPendingBrokerReconciliationFills,
   listStalePlacingProposals,
   listFillEvents,
+  listFillEventsByProposalId,
+  resolveBrokerVerificationNotifications,
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
@@ -124,7 +126,7 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -2219,16 +2221,72 @@ export async function runStrategyOnce(
         execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal, refId });
       } catch (placeError) {
         const message = placeError instanceof Error ? placeError.message : String(placeError);
-        // The broker may or may not have accepted the order. Keep the durable intent row and
-        // flag it loudly for reconciliation rather than aborting the whole run.
-        updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
+        const sym = normalizedProposal.symbol;
+        // The broker may or may not have accepted the order. Ask the broker what actually happened
+        // (via the refId idempotency key) instead of immediately firing a perpetual "verify with
+        // broker" alert. Only a truly unreachable broker leaves the durable 'placing' intent behind.
+        const outcome = await reconcilePlacementError({
+          gateway,
+          accountNumber: policy.accountNumber,
+          userId,
+          proposalId,
+          refId,
+          proposal: normalizedProposal,
+          review,
+          marketScan,
+          executionMode,
+          placeErrorMessage: message,
+          runId
+        });
+        if (outcome.kind === "placed") {
+          updateProposalStatus(proposalId, "placed", outcome.orderId, review, review.estimatedNotional, userId);
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
+          auditWashSaleProceed(decision, { runId, proposalId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
+          audit("order_placement_recovered_inline", { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: normalizedProposal.side }, userId, connectedAccountId);
+          resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
+          await sendNotification(
+            { type: "fill", title: `${sym} live order ${outcome.state} (recovered after placement error)`, payload: { runId, proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
+            { policy, userId }
+          );
+          emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { runId, proposalId, symbol: sym, orderId: outcome.orderId } });
+          results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: outcome.orderId });
+          continue;
+        }
+        if (outcome.kind === "declined") {
+          const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
+          updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: { ...decision, approved: false, reasons: [...decision.reasons, declinedMsg] }, status: "rejected_by_broker", review, overrideResolution });
+          audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, connectedAccountId);
+          await sendNotification(
+            { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
+            { policy, userId }
+          );
+          results.push({ proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
+          continue;
+        }
+        if (outcome.kind === "not_placed") {
+          const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
+          updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
+          audit("order_confirmed_not_placed", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
+          await sendNotification(
+            { type: "run_failed", title: `${sym} order was NOT placed — safe to retry`, payload: { runId, proposalId, refId, error: message, reconcile: "not_placed" } },
+            { policy, userId }
+          );
+          results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
+          continue;
+        }
+        // uncertain: broker unreachable — KEEP status 'placing' (not 'placing_failed') so the sweep
+        // retries next run, and emit the (protected) "verify with broker" alert. This is the ONLY
+        // path that still produces a perpetual-until-confirmed alert.
+        updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
-        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId, connectedAccountId);
+        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, connectedAccountId);
         await sendNotification(
-          { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
+          { type: "run_failed", title: `${sym} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: outcome.error, reconcile: "uncertain" } },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${message}`] });
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
         continue;
       }
 
@@ -4051,13 +4109,63 @@ export async function executeProposal(
       execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
     } catch (placeError) {
       const message = placeError instanceof Error ? placeError.message : String(placeError);
-      updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId, policy.connectedAccountId);
+      const sym = proposal.symbol;
+      // Ask the broker what actually happened (via the refId idempotency key) rather than firing a
+      // perpetual "verify with broker" alert. Mirrors the autonomous run-loop catch above.
+      const outcome = await reconcilePlacementError({
+        gateway,
+        accountNumber: row.accountNumber,
+        userId,
+        proposalId,
+        refId,
+        proposal,
+        review,
+        marketScan: approvalScan,
+        executionMode,
+        placeErrorMessage: message,
+        runId: row.runId
+      });
+      if (outcome.kind === "placed") {
+        updateProposalStatus(proposalId, "placed", outcome.orderId, review, review.estimatedNotional, userId);
+        auditWashSaleProceed(decision, { proposalId, symbol: sym, side: proposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId: policy.connectedAccountId });
+        audit("order_placement_recovered_inline", { proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: proposal.side, path: "approval" }, userId, policy.connectedAccountId);
+        resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
+        const fillStatus = outcome.state === "filled" ? "filled" : "pending_reconciliation";
+        await sendNotification(
+          { type: "fill", title: `${sym} order ${outcome.state} (recovered after placement error)`, payload: { proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
+          { policy, userId }
+        );
+        emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: outcome.orderId, symbol: sym } });
+        return { status: "placed", orderId: outcome.orderId, brokerState: outcome.state, fillStatus };
+      }
+      if (outcome.kind === "declined") {
+        const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
+        updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
+        audit("order_rejected_by_broker", { proposalId, refId, symbol: sym, side: proposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, policy.connectedAccountId);
+        await sendNotification(
+          { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
+          { policy, userId }
+        );
+        return { status: "error", reasons: [declinedMsg], orderId: outcome.orderId, brokerState: outcome.state };
+      }
+      if (outcome.kind === "not_placed") {
+        const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
+        updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
+        audit("order_confirmed_not_placed", { proposalId, refId, symbol: sym, side: proposal.side, error: message, path: "approval" }, userId, policy.connectedAccountId);
+        await sendNotification(
+          { type: "run_failed", title: `${sym} order was NOT placed — safe to retry`, payload: { proposalId, refId, error: message, reconcile: "not_placed" } },
+          { policy, userId }
+        );
+        return { status: "not_placed", reasons: [`Order not placed (safe to retry): ${message}`] };
+      }
+      // uncertain: broker unreachable — KEEP status 'placing' so flagStalePlacingIntents retries.
+      updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
+      audit("order_placement_uncertain", { proposalId, refId, symbol: sym, side: proposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, policy.connectedAccountId);
       await sendNotification(
-        { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
+        { type: "run_failed", title: `${sym} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: outcome.error, reconcile: "uncertain" } },
         { policy, userId }
       );
-      return { status: "error", reasons: [`Order placement failed/uncertain: ${message}`] };
+      return { status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] };
     }
 
     // See the matching comment in the autonomous run-loop placement path above: a non-throwing
@@ -5241,6 +5349,9 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
         audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId, connectedAccountId);
+        // An order reaching "filled" PROVES it was placed, so clear any lingering "verify with
+        // broker" uncertain alert for that proposal (only on a full fill — not while still working).
+        if (fill.proposalId) resolveBrokerVerificationNotifications(userId, { proposalId: fill.proposalId, resolution: "placed" });
       } else if (matched.state === "partially_filled") {
         // A live order that has executed some-but-not-all shares: book the executed
         // portion now so it enters P&L/exposure instead of being silently dropped.
@@ -5265,14 +5376,96 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
 }
 
 /**
- * Crash-recovery sweep (companion to the atomic placement path). A "placing" row is an order
- * intent persisted just before the broker call; it flips to "placed"/"placing_failed"
- * synchronously, so one older than the cutoff means a prior run died mid-placement. We can't yet
- * auto-match it to a broker order (that needs client_order_id plumbing into EquityOrder — a
- * follow-up), so we surface it loudly in the audit trail and mark it "placing_stale" so it isn't
- * re-flagged every run. An operator (or the future broker-truth sweep) then reconciles it.
+ * Outcome of an inline broker-truth reconcile after a placement THREW. The three broker-reachable
+ * tiers are all DEFINITE; only `uncertain` (broker unreachable) leaves the durable 'placing' intent
+ * for the later sweep to finish.
  */
-async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: string, userId: string, connectedAccountId?: string): Promise<void> {
+export type PlacementReconcileOutcome =
+  | { kind: "placed"; orderId: string; state: string; fill?: FillEvent; alreadyBooked: boolean }
+  | { kind: "declined"; orderId: string; state: string }
+  | { kind: "not_placed" }
+  | { kind: "uncertain"; error: string };
+
+/**
+ * Inline broker-truth reconcile for a placement that threw. The idempotency key (refId sent as
+ * Alpaca client_order_id / Robinhood ref_id, read back into EquityOrder.clientOrderId) lets us ask
+ * the broker what actually happened instead of immediately firing a perpetual "verify with broker"
+ * alert. Mirrors flagStalePlacingIntents' matching so inline and sweep converge on identical
+ * behavior:
+ *   - getEquityOrders throws            → uncertain (broker unreachable; the ONLY genuinely-unknown case)
+ *   - no order carries our refId        → not_placed (broker reachable, our key absent ⇒ order never
+ *                                          reached the matching engine; safe to retry)
+ *   - order present + terminal-declined → declined (reached the broker but was rejected/canceled)
+ *   - order present + live/filled       → placed (book the fill, idempotently)
+ *
+ * Books the recovered fill HERE (Layer-B dedupe on (proposalId, brokerOrderId), so re-entry — inline
+ * then sweep, or a crash mid-branch — never double-books). The caller owns the proposal-status
+ * transition, notifications, and alert resolution. A booking error degrades to `uncertain` (MP-8) so
+ * the durable 'placing' intent + alert are never dropped.
+ */
+export async function reconcilePlacementError(p: {
+  gateway: BrokerGateway;
+  accountNumber: string;
+  userId: string;
+  proposalId: string;
+  refId: string;
+  proposal: TradeProposal;
+  review?: ReviewedOrder;
+  marketScan?: MarketScan;
+  executionMode: ExecutionMode;
+  placeErrorMessage: string;
+  runId?: string;
+}): Promise<PlacementReconcileOutcome> {
+  let brokerOrders: EquityOrder[];
+  try {
+    brokerOrders = await p.gateway.getEquityOrders(p.accountNumber);
+  } catch {
+    // getEquityOrders throwing is the ONLY genuinely-unknown case.
+    return { kind: "uncertain", error: p.placeErrorMessage };
+  }
+  // Truthiness guard identical to the sweep's (:5249) so undefined === undefined can never false-match.
+  const matched = p.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === p.refId) : undefined;
+  if (!matched) return { kind: "not_placed" };
+  if (isRejectedOrCanceledState(matched.state)) return { kind: "declined", orderId: matched.id, state: matched.state };
+  // Live / filled / any non-terminal state: the order reached the broker. Book it (deduped).
+  try {
+    const existing = listFillEventsByProposalId(p.proposalId, p.userId);
+    const dup = existing.find((f) => f.brokerOrderId === matched.id);
+    if (dup) return { kind: "placed", orderId: matched.id, state: matched.state, fill: dup, alreadyBooked: true };
+    const source: FillSource = p.executionMode === "broker/live" ? "live" : "paper";
+    const fill = recordFillFromProposal({
+      userId: p.userId,
+      accountNumber: p.accountNumber,
+      proposalId: p.proposalId,
+      runId: p.runId,
+      source,
+      executionMode: p.executionMode,
+      proposal: p.proposal,
+      review: p.review,
+      marketScan: p.marketScan,
+      execution: { orderId: matched.id, refId: p.refId, state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
+      status: matched.state === "filled" ? "filled" : "pending_reconciliation"
+    });
+    return { kind: "placed", orderId: matched.id, state: matched.state, fill, alreadyBooked: false };
+  } catch (bookError) {
+    // We KNOW the order exists but booking failed — degrade to uncertain so the 'placing' intent +
+    // alert survive for the sweep to retry, rather than dropping a real order on the floor (MP-8).
+    const detail = bookError instanceof Error ? bookError.message : String(bookError);
+    return { kind: "uncertain", error: `${p.placeErrorMessage} (order confirmed at broker but booking failed: ${detail})` };
+  }
+}
+
+/**
+ * Crash-recovery sweep (companion to the atomic placement path). A "placing" row is an order
+ * intent persisted just before the broker call; it flips to a terminal status synchronously (or, on
+ * a genuine mid-placement crash / broker-unreachable inline reconcile, stays "placing"). One older
+ * than the cutoff is reconciled broker-truth-first: match the broker's order list on our
+ * client_order_id (refId) — recover it into P&L if present, abandon it if absent, or retry next run
+ * if the broker is unreachable. (The client_order_id plumbing this relies on already exists —
+ * EquityOrder.clientOrderId, populated by both broker adapters — so this is a real reconcile, not a
+ * placeholder.)
+ */
+export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: string, userId: string, connectedAccountId?: string): Promise<void> {
   const STALE_PLACING_MS = 2 * 60_000;
   const cutoff = new Date(Date.now() - STALE_PLACING_MS).toISOString();
   let stale: ReturnType<typeof listStalePlacingProposals>;
@@ -5306,20 +5499,31 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
     if (matched) {
       updateProposalStatus(row.id, "placed", matched.id, undefined, undefined, userId);
       if (p) {
-        const recoveredExecutionMode = row.executionMode ?? "broker/live";
-        const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
-        recordFillFromProposal({
-          userId,
-          accountNumber,
-          proposalId: row.id,
-          source: recoveredSource,
-          executionMode: recoveredExecutionMode,
-          proposal: p,
-          execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
-          status: matched.state === "filled" ? "filled" : "pending_reconciliation"
-        });
+        // Layer-B dedupe (crash window): if a prior inline reconcile / sweep already booked this
+        // order (same brokerOrderId) but the status flip didn't persist, don't book a second fill.
+        // Dedupe key = (proposalId, brokerOrderId); the same physical order always yields the same
+        // brokerOrderId (we place with client_order_id = refId), so re-entry matches and no-ops.
+        const existing = listFillEventsByProposalId(row.id, userId);
+        const alreadyBooked = existing.some((f) => f.brokerOrderId === matched.id);
+        if (!alreadyBooked) {
+          const recoveredExecutionMode = row.executionMode ?? "broker/live";
+          const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
+          recordFillFromProposal({
+            userId,
+            accountNumber,
+            proposalId: row.id,
+            source: recoveredSource,
+            executionMode: recoveredExecutionMode,
+            proposal: p,
+            execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
+            status: matched.state === "filled" ? "filled" : "pending_reconciliation"
+          });
+        }
       }
       audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId, connectedAccountId);
+      // A recovered order is a CONFIRMED placement — clear any perpetual "verify with broker" alert
+      // this proposal left behind (the primary fix for "even reconciled orders stay uncertain").
+      resolveBrokerVerificationNotifications(userId, { proposalId: row.id, refId: row.refId ?? undefined, resolution: "recovered" });
     } else {
       updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId, undefined, "Order never confirmed — broker record not found during reconciliation.");
       audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId, connectedAccountId);

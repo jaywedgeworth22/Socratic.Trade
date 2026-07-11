@@ -1578,6 +1578,25 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch
+  `claude/order-status-reconcile`, order-status-reconcile workflow) — IN PROGRESS 2026-07-10,
+  local gates green (tsc 0, full suite 3408/3408, lint 0-err, build running), PR next.** Root
+  cause: on a THROWN placement both catch paths (autonomous run-loop + approval) fired a
+  permanent, un-clearable "verify with broker" run_failed alert without asking the broker what
+  actually happened, set status `placing_failed` (which the stale sweep — filters `status='placing'`
+  — never reconciles), and nothing acked the alert even after the order later reconciled. Fix:
+  new shared `reconcilePlacementError()` helper (strategy.ts) called from both catches queries the
+  broker via the existing refId->clientOrderId idempotency key and maps to a DEFINITE status —
+  placed/recovered (books the fill, deduped), rejected_by_broker (declined), or new `not_placed`
+  (safe to retry, sweepable); only a truly unreachable broker keeps status `placing` + the
+  (still-protected) uncertain alert. New `resolveBrokerVerificationNotifications()` (db-notifications)
+  acks the uncertain alert on any confirmed placement (inline recover, sweep recover, or a normal
+  fill reaching "filled"); `isBrokerVerificationRunFailed` is now reconcile-marker-driven so
+  not_placed self-clears while uncertain/declined stay protected. Idempotency: status gate + a
+  (proposalId, brokerOrderId) dedupe guard added to BOTH the inline booking and the sweep. Tests:
+  test/placement-reconcile.test.ts (5, e2e through executeProposal), placement-reconcile-sweep.test.ts
+  (4), +5 in notification-lifecycle.test.ts. Money-path: no change to Alpaca/Robinhood placement or
+  the idempotency keys. See docs/rollouts/2026-07-10-order-status-reconcile.md.
 - **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) —
   CORRECTED IN PLACE 2026-07-10: this row was stuck at "landing" after the PR actually
   merged. Status is COMPLETED as of commit c2150aae (PR #1368, "docs: canonical market-data
