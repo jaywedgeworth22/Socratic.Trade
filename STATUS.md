@@ -21,6 +21,9 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-11 — Refactoring strategy.ts: split risk and execution (AG, branch `agent/strategy-split`)
+Extracted risk gates, veto rules, and sizing logic into `strategy-risk.ts` and the main execution loop/reconciliation into `strategy-execution.ts`. `strategy.ts` remains as a re-export hub and coordinator. Automated import updates across 100+ files via a custom `ts-morph` script. Gate green: tsc clean, lint 0 errors, 3427 tests passing, build clean. See `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
+
 ## 2026-07-10 — Order-status reconciliation: kill the perpetual "verify with broker" alert (CLAUDE, branch `claude/order-status-reconcile`)
 A thrown broker `placeEquityOrder` used to leave an order "always uncertain": both catch paths
 (autonomous run-loop + approval) fired a permanent, un-clearable "verify with broker" alert without

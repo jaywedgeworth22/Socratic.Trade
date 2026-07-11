@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Refactoring strategy.ts (AG, branch `agent/strategy-split`) — COMPLETED 2026-07-11.** Split the monolithic `strategy.ts` into `strategy-risk.ts` and `strategy-execution.ts`, retaining `strategy.ts` as a coordinator/barrel. Cleaned up dependencies and automated import fixes. All tests (3427) passing. Rollout note: `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — ✅ COMPLETED 2026-07-09: PR #1282 merged to `main` (auto-merge squashed).** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
 - **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
@@ -1579,6 +1580,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch
   `claude/order-status-reconcile`, order-status-reconcile workflow) — IN PROGRESS 2026-07-10,
   local gates green (tsc 0, full suite 3408/3408, lint 0-err, build running), PR next.** Root

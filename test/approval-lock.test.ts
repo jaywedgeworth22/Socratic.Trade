@@ -24,7 +24,7 @@ import {
   setPolicy,
   upsertConnectedAccount
 } from "../src/lib/db";
-import { executeProposal } from "../src/lib/strategy";
+import { executeProposal } from "../src/lib/strategy-execution";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
