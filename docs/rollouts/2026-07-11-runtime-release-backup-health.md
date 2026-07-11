@@ -116,6 +116,25 @@ TypeScript reported missing `ts-morph` types because this worktree's cloned `nod
 #1397's new lockfile dependency. This is a dependency-install state mismatch, not a source failure;
 refresh with Node 24 `npm ci`, then rerun the complete landing gate.
 
+Current-main reconciliation receipt: `origin/main@8fca436d` merged cleanly. The only common files
+were union-managed `PLAN.md`, `STATUS.md`, and `docs/EFFORT-LOG.md`; runtime source/tests were
+disjoint from main's stop-plan and CI changes. The installed dependency tree now contains the locked
+`ts-morph@28.0.0`. The final ordered Node 24 gate passed:
+
+```bash
+npm run lint
+# passed: 0 errors, 408 inherited warnings
+
+npx tsc --noEmit
+# passed
+
+npm test
+# passed: 326 files, 3,625 tests
+
+npm run build
+# passed (existing middleware-deprecation/cache notices only)
+```
+
 ## Follow-ups
 
 - After merge/auto-deploy, confirm `/api/health` reports the deployed `SOURCE_COMMIT`,

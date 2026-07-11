@@ -9,10 +9,13 @@ control socket; the client uses a hard wall-clock deadline, bounded body, and ab
 Production skips the synchronous metadata-file fallback entirely; non-live scanning is bounded.
 Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
 stale when newer DB/WAL activity proves there is work to upload. The pre-reconciliation Node 24 gate
-was green (lint 0 errors, TypeScript clean, 319 files/3,509 tests, production build). READY PR #1405
-is open without merge/auto-merge; the branch now reconciles the latest `origin/main` and its final
-post-merge gate is being rerun after refreshing dependencies added by that mainline merge. No
-deployment or live replica mutation occurred.
+was green. The branch now reconciles current `origin/main@8fca436d`; runtime source/tests were
+disjoint from the incoming stop-plan and CI changes, while union-merged STATUS/PLAN/EFFORT history
+was preserved. Final Node 24 verification is green: lint 0 errors / 408 inherited warnings,
+TypeScript clean, 326 files / 3,625 tests, and production build clean. The earlier missing
+`ts-morph` report was confirmed as stale worktree dependency state and is resolved. READY PR #1405
+remains the delivery target without merge, auto-merge, deployment, or live replica mutation.
+
 ## 2026-07-11 — Retired deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`)
 Removed the disabled Mac/PM2 `.github/workflows/deploy.yml`, whose YAML still declared `push: main`
 and manual-dispatch triggers; Coolify's GitHub-App auto-deploy remains the sole production path.
