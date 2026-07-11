@@ -19,10 +19,10 @@ filling the missing pieces.
 > to disable; followers cannot refresh the leader heartbeat. Obsolete teardown calls that could not
 > name the real owner are removed. Setup failure cannot leak the renewing timer/lease; approval loss
 > returns typed busy without broker placement, and autonomous loss preserves any proposal results
-> completed before the stop. Review follow-up now also re-proves ownership immediately after broker
-> health, tradability, order-review, and bump-review awaits before writing non-placement state. PR
-> #1429 is reconciled through current `main@7c01f87e`; focused tests, touched lint, and TypeScript are
-> green. The serialized final full test/build gate and hosted rerun remain. See
+> completed before the stop. Review follow-up now re-proves ownership immediately after approval and
+> autonomous broker/setup awaits before any non-placement state, snapshot, breaker, or cap-demotion
+> write. PR #1429 is reconciled through current `main@7c01f87e`; 7 focused files / 38 tests, touched
+> lint, and TypeScript are green. The serialized final full test/build gate and hosted rerun remain. See
 > `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
 > change; operator-observability correctness only. The connections-health expected-lane inventory now

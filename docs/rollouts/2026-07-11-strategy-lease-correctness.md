@@ -21,6 +21,10 @@ Branch: `codex/strategy-lease-correctness`
 - Approval ownership loss returns a typed `busy` result, leaves the proposal pending, and never calls
   the broker. An autonomous run that loses ownership after earlier proposal work preserves those
   completed proposal results in its failed receipt rather than returning an empty list.
+- Approval setup, tradability, initial review, and bump re-review now each re-prove ownership before
+  protective-reprice or non-placement status writes. Autonomous setup does the same before
+  reconciliation phases, market scan/snapshot, volatility/budget policy writes, and proposal-loop
+  persistence. A loss during a block notification cannot subsequently demote account authority.
 - Removed obsolete teardown calls from account-deletion preparation and the usage-budget skip. They
   did not carry the actual owner token (and the skip already runs through the authoritative
   `finally` release).
@@ -64,6 +68,7 @@ default-on posture.
 - `docs/phase-11-multi-user.md`
 - `docs/rollouts/2026-06-26-scheduler-lease.md`
 - `docs/rollouts/2026-07-11-strategy-lease-correctness.md`
+- `package-lock.json` (reverts an unrelated autofix normalization; no dependency change)
 
 ## Verification
 
@@ -116,13 +121,25 @@ default-on posture.
   — **4 files / 21 tests passed**.
 - Touched ESLint on `strategy.ts`, `scheduler.ts`, and the four lease/scheduler regression files —
   **0 errors / 33 inherited warnings**. `npx tsc --noEmit` — **clean**. `git diff --check` — **clean**.
+- The first trusted human rerun at `ed3793e3` completed hosted Security, Playwright smoke, and full
+  verify (lint, TypeScript, full tests, production build) green. A second Codex review then found the
+  approval/setup gaps above; autofix `3bfd3122` again arrived from `github-actions[bot]` and was
+  adversarially tightened rather than trusted as-is. Its unrelated `fsevents` lockfile flag was
+  removed so the final dependency graph stays byte-identical to current main.
+- Current second-review Node24 slice:
+  `test/strategy-lock-guard.test.ts`, `test/strategy-lock-loss-integration.test.ts`,
+  `test/scheduler-single-leader-default.test.ts`, `test/scheduler-leader-heartbeat.test.ts`,
+  `test/approval-lock.test.ts`, `test/broker-minimum-bump-execute.test.ts`, and
+  `test/protective-exit-reprice.test.ts` — **7 files / 38 tests passed**. Touched ESLint — **0 errors /
+  34 inherited warnings**. `npx tsc --noEmit` — **clean**. `git diff --check` — **clean**.
 
 ## Follow-ups and boundaries
 
-- Ready PR #1429 remains open. The serialized final full test/build gate, final push, hosted checks,
+- Ready PR #1429 remains open. The serialized final full test/build gate, trusted push, hosted checks,
   merge, and production verification remain; the prior full gate predates the review changes.
 - No scheduler provider-boundary locking, production environment/configuration, PR, merge,
   deployment, or live runtime mutation is part of this change. The branch-neutral live effort board
   was updated with implementation and review receipts.
-- Current-main reconciliation and the full ordered gate are complete. Hosted checks and production
-  verification remain contingent on the ready PR landing through the normal auto-deploy path.
+- Current-main reconciliation is complete. The final full ordered gate and hosted rerun remain after
+  the second review reconciliation; production verification remains contingent on the ready PR
+  landing through the normal auto-deploy path.

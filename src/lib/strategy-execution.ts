@@ -135,7 +135,9 @@ export async function executeProposal(
     // portfolio and positions for the active account — there is no local-simulation alternative.
     const currentPrices = currentPricesFromScan(approvalScan);
     const account = { portfolio, positions };
+    lockGuard.assertOwned();
     await notifyStaleLimitOrders({ userId, policy, orders });
+    lockGuard.assertOwned();
 
     // Approval-held protective exits: an extended-hours marketable-limit stored on the card was
     // priced off the generation-time quote and goes stale while it waits for a human — a quote that
@@ -202,13 +204,8 @@ export async function executeProposal(
       audit("protective_exit_repriced", repriceChange, userId, policy.connectedAccountId);
     }
 
-    // Re-prove ownership before any non-placement writes. The async work above (scans, reprice, broker
-    // review) can take long enough for the lease heartbeat to fail — without this re-check, a lost lease
-    // could let this approval mutate proposal status, send notifications, or trigger cap-demotions under
-    // a stolen lease. Fail-closed parity with the placement path below.
-    lockGuard.assertOwned();
-
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
+    lockGuard.assertOwned();
     if (!tradability[proposal.symbol]?.tradable) {
       const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
       const tradabilityDecision: PolicyDecision = { approved: false, reasons: [reason] };
@@ -226,6 +223,7 @@ export async function executeProposal(
     }
 
     let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+    lockGuard.assertOwned();
 
     // Same broker-minimum pre-flight guard as the autonomous run loop: NAV/sizing can drift between
     // proposal creation and a human clicking Approve, so re-check here too rather than let a
@@ -277,6 +275,7 @@ export async function executeProposal(
         const originalReview = review;
         Object.assign(proposal, bumpPlan.patch);
         review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+        lockGuard.assertOwned();
         const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
         if (!stillBlocked) {
           proposal.rationale = `${proposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
@@ -465,6 +464,7 @@ export async function executeProposal(
         },
         { policy, userId }
       );
+      lockGuard.assertOwned();
       autoRevertOnCapBreach(decision.reasons, policy, userId, policy.connectedAccountId);
       return { status: "blocked", reasons: decision.reasons };
     }

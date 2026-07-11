@@ -1,16 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const lockGuardMocks = vi.hoisted(() => ({
   assertOwned: vi.fn(),
   stop: vi.fn()
 }));
 const brokerMocks = vi.hoisted(() => ({
+  getAccounts: vi.fn(),
   getEquityTradability: vi.fn(),
   reviewEquityOrder: vi.fn(),
   placeEquityOrder: vi.fn()
+}));
+const marketMocks = vi.hoisted(() => ({
+  scanMarket: vi.fn()
 }));
 
 vi.mock("../src/lib/strategy-lock-guard", async (importOriginal) => {
@@ -32,6 +36,9 @@ vi.mock("../src/lib/broker", async (importOriginal) => {
       const gateway = actual.getBrokerGateway(...args);
       return new Proxy(gateway, {
         get(target, property, receiver) {
+          if (property === "getAccounts" && brokerMocks.getAccounts.getMockImplementation()) {
+            return brokerMocks.getAccounts;
+          }
           if (property === "getEquityTradability" && brokerMocks.getEquityTradability.getMockImplementation()) {
             return brokerMocks.getEquityTradability;
           }
@@ -59,31 +66,7 @@ vi.mock("../src/lib/market", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/market")>();
   return {
     ...actual,
-    scanMarket: async (): Promise<import("../src/lib/types").MarketScan> => {
-      const asOf = new Date().toISOString();
-      const quote: import("../src/lib/types").MarketQuote = {
-        symbol: "AAPL",
-        price: 200,
-        bid: 199,
-        ask: 200,
-        volume: 1_000_000,
-        intradayChangePct: 0,
-        positionMarketValue: 0,
-        score: 1,
-        provider: "test-scan",
-        asOf
-      };
-      return {
-        source: "test-scan",
-        generatedAt: asOf,
-        scannedSymbols: 1,
-        returnedQuotes: 1,
-        topCandidates: [quote],
-        sectorBySymbol: {},
-        quotesBySymbol: { AAPL: quote },
-        warnings: []
-      };
-    }
+    scanMarket: marketMocks.scanMarket
   };
 });
 
@@ -102,13 +85,44 @@ import { StrategyLockOwnershipLostError } from "../src/lib/strategy-lock-guard";
 
 const ACCOUNT = "ACC-LOCK-LOSS";
 
+function strategyMarketScan(): import("../src/lib/types").MarketScan {
+  const asOf = new Date().toISOString();
+  const quote: import("../src/lib/types").MarketQuote = {
+    symbol: "AAPL",
+    price: 200,
+    bid: 199,
+    ask: 200,
+    volume: 1_000_000,
+    intradayChangePct: 0,
+    positionMarketValue: 0,
+    score: 1,
+    provider: "test-scan",
+    asOf
+  };
+  return {
+    source: "test-scan",
+    generatedAt: asOf,
+    scannedSymbols: 1,
+    returnedQuotes: 1,
+    topCandidates: [quote],
+    sectorBySymbol: {},
+    quotesBySymbol: { AAPL: quote },
+    warnings: []
+  };
+}
+
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-strategy-lock-loss-${randomUUID()}.db`)}`;
+});
+
+beforeEach(() => {
+  marketMocks.scanMarket.mockReset().mockImplementation(async () => strategyMarketScan());
 });
 
 afterEach(() => {
   lockGuardMocks.assertOwned.mockReset();
   lockGuardMocks.stop.mockReset();
+  brokerMocks.getAccounts.mockReset();
   brokerMocks.getEquityTradability.mockReset();
   brokerMocks.reviewEquityOrder.mockReset();
   brokerMocks.placeEquityOrder.mockReset();
@@ -174,6 +188,46 @@ describe("approval execution ownership loss", () => {
     expect(acquireStrategyLock("replacement-owner", userId, accountId)).toBe(true);
     releaseStrategyLock("replacement-owner", userId, accountId);
   }, 20_000);
+
+  it("does not block the card when ownership is lost during approval tradability", async () => {
+    const userId = `approval-tradability-loss-${randomUUID()}`;
+    const { proposalId } = arrangeProposedOrder(userId);
+    let ownershipLost = false;
+    lockGuardMocks.assertOwned.mockImplementation(() => {
+      if (ownershipLost) throw new StrategyLockOwnershipLostError();
+    });
+    brokerMocks.getEquityTradability.mockImplementation(async () => {
+      ownershipLost = true;
+      return { AAPL: { tradable: false, reason: "fixture block" } };
+    });
+
+    const result = await executeProposal(proposalId, userId);
+
+    expect(result).toMatchObject({ status: "busy", reasons: [expect.stringMatching(/ownership was lost/i)] });
+    expect(getProposal(proposalId, userId)?.status).toBe("proposed");
+    expect(brokerMocks.reviewEquityOrder).not.toHaveBeenCalled();
+    expect(brokerMocks.placeEquityOrder).not.toHaveBeenCalled();
+  }, 20_000);
+
+  it("does not re-evaluate or block the card when ownership is lost during approval review", async () => {
+    const userId = `approval-review-loss-${randomUUID()}`;
+    const { proposalId } = arrangeProposedOrder(userId);
+    let ownershipLost = false;
+    lockGuardMocks.assertOwned.mockImplementation(() => {
+      if (ownershipLost) throw new StrategyLockOwnershipLostError();
+    });
+    brokerMocks.getEquityTradability.mockResolvedValue({ AAPL: { tradable: true, fractional: true } });
+    brokerMocks.reviewEquityOrder.mockImplementation(async () => {
+      ownershipLost = true;
+      return { estimatedNotional: 500, alerts: [], raw: {} };
+    });
+
+    const result = await executeProposal(proposalId, userId);
+
+    expect(result).toMatchObject({ status: "busy", reasons: [expect.stringMatching(/ownership was lost/i)] });
+    expect(getProposal(proposalId, userId)?.status).toBe("proposed");
+    expect(brokerMocks.placeEquityOrder).not.toHaveBeenCalled();
+  }, 20_000);
 });
 
 const STRATEGY_ACCOUNT = "TEST";
@@ -237,6 +291,32 @@ function stubStrategyLlm(): void {
 }
 
 describe("strategy-run ownership loss across broker awaits", () => {
+  it("stops before market scan and snapshots when ownership is lost during setup reads", async () => {
+    const userId = `setup-read-loss-${randomUUID()}`;
+    const accountId = await arrangeStrategyRun(userId);
+    let ownershipLost = false;
+    let accountReads = 0;
+    lockGuardMocks.assertOwned.mockImplementation(() => {
+      if (ownershipLost) throw new StrategyLockOwnershipLostError();
+    });
+    brokerMocks.getAccounts.mockImplementation(async () => {
+      accountReads += 1;
+      if (accountReads === 2) ownershipLost = true;
+      return [{ accountNumber: STRATEGY_ACCOUNT, label: "Test broker", agenticAllowed: true }];
+    });
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const result = await runStrategyOnce(userId, { manual: true, connectedAccountId: accountId });
+    const db = await import("../src/lib/db");
+
+    expect(result).toMatchObject({ status: "failed", proposals: [] });
+    expect(result.summary).toMatch(/ownership was lost/i);
+    expect(accountReads).toBe(2);
+    expect(marketMocks.scanMarket).not.toHaveBeenCalled();
+    expect(db.listRecentProposals(STRATEGY_ACCOUNT, 100, userId)).toEqual([]);
+    expect(brokerMocks.placeEquityOrder).not.toHaveBeenCalled();
+  }, 30_000);
+
   it("does not persist a blocked proposal when ownership is lost during tradability", async () => {
     const userId = `tradability-loss-${randomUUID()}`;
     const accountId = await arrangeStrategyRun(userId);

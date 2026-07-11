@@ -406,6 +406,7 @@ export async function runStrategyOnce(
         // Rotation-resolved view: the preview must reason about the CONCRETE models this run
         // will serve, not the "__rotate__" sentinel (which has no price entry).
         const wouldDecide = await previewBudgetDecision(userId, { ...policy, ...rotationOverride }, { status: budgetStatus });
+        lockGuard.assertOwned();
         audit(
           "usage_budget_status",
           {
@@ -424,21 +425,26 @@ export async function runStrategyOnce(
         );
         budgetAdvisory = formatBudgetAdvisory(budgetStatus);
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof StrategyLockOwnershipLostError) throw error;
       /* advisory is best-effort — never break the run */
     }
 
     const gateway = getBrokerGateway(policy, userId);
+    lockGuard.assertOwned();
     await reconcilePendingFills(gateway, policy.accountNumber, userId, connectedAccountId);
+    lockGuard.assertOwned();
     // Broker-truth reconcile any order-placement intent left "placing" by a prior run that crashed
     // mid-call: match it against the broker by clientOrderId and recover or abandon it.
     await flagStalePlacingIntents(gateway, policy.accountNumber, userId, connectedAccountId);
+    lockGuard.assertOwned();
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
       gateway.getPortfolio(policy.accountNumber),
       gateway.getEquityPositions(policy.accountNumber),
       gateway.getEquityOrders(policy.accountNumber)
     ]);
+    lockGuard.assertOwned();
     const selected = accounts.find((account) => account.accountNumber === policy.accountNumber);
     if (!selected) throw new Error("Selected account is not available.");
     if (!selected.agenticAllowed) throw new Error("Selected account is not agentic_allowed.");
@@ -486,14 +492,12 @@ export async function runStrategyOnce(
     const runLiveFills = listFillEvents(policy.accountNumber, "live", 500, userId);
     const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
     const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
+    lockGuard.assertOwned();
     await notifyStaleLimitOrders({ userId, policy, orders });
 
-    // Re-prove ownership before recording snapshots, breakers, or any other state mutation in the
-    // protected region. The awaited setup above (reconciliation, stale-intent recovery, portfolio/
-    // positions/orders, market scan) takes real wall time — the lease heartbeat can have failed
-    // during those calls, and a lost lease means another process may own the account. Every write
-    // from here down must happen only while this invocation still holds the lease; otherwise
-    // snapshot records, systemState changes, and notifications would execute under a stolen lease.
+    // Re-prove ownership before entering the first stateful maintenance phase. The awaited setup
+    // above takes real wall time; if its heartbeat failed, snapshots and breaker mutations must not
+    // run under a successor's account lease.
     lockGuard.assertOwned();
 
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
@@ -561,6 +565,7 @@ export async function runStrategyOnce(
         fetchMacroDataWithLiveVix(userId).catch(() => undefined),
         getMarketSignals(userId).catch(() => undefined)
       ]);
+      lockGuard.assertOwned();
       const volBrake = evaluateVolatilityBrake(brakeMacro, brakeSignals, policy);
       if (volBrake.brake) {
         policy.systemState = "close_only";
@@ -603,6 +608,7 @@ export async function runStrategyOnce(
     } catch {
       /* fail-open — never let usage-budget enforcement break a run */
     }
+    lockGuard.assertOwned();
     if (enforceDecision.skip) {
       const reason = enforceDecision.reason ?? "Over budget.";
       audit("usage_budget_enforced", { runId, userId, action: "skip", reason }, userId, connectedAccountId);

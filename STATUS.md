@@ -2,23 +2,23 @@
 
 ## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, branch `codex/strategy-lease-correctness`)
 
-Ready PR #1429 is being reconciled after the review autofix commit `9d2ba1fb` was pushed by
-`github-actions[bot]`, which correctly triggered the repo's untrusted-bot CI refusal. The branch now
-contains human-authored merges through current `origin/main@7c01f87e`; no CI trust-policy change was
-made.
-Adversarial review found the bot's non-placement ownership checks were still too late: tradability,
-broker review, bump re-review, and notification awaits could lose ownership before blocked/proposed
-state or follow-on policy writes. The autonomous path now re-proves ownership immediately after each
-broker/health await and before any non-placement persistence; post-notification checks precede later
-side effects. Direct regressions prove loss during tradability or broker review leaves no proposal
-card and never calls the broker. The scheduler heartbeat remains after the leader gate, and a direct
-follower test proves it cannot refresh `scheduler:lastTick`. Current-main reconciliation also removed
-a stale `heartbeatTimer` cleanup from the newly landed broker-health early return; the authoritative
-`finally` owns guard stop and lease release. Current Node 24 scoped verification is green: 4 files / 21
-tests, touched ESLint 0 errors / 33 inherited warnings, TypeScript clean, and `git diff --check` clean.
-Trusted human follow-up `b19650ac` contains the runtime/test reconciliation. The previous full
-3,764-test/build gate predates these review changes; the serialized final full gate, final push, hosted
-checks, merge, and production verification remain. See
+Ready PR #1429 has now gone through two review autofixes (`9d2ba1fb`, `3bfd3122`) pushed by
+`github-actions[bot]`; the repo correctly refused those bot-triggered secret-bearing checks, and no CI
+trust policy was changed. The branch contains human-authored merges through current
+`origin/main@7c01f87e`. Adversarial review found both autofixes too coarse: approval ownership was
+checked before, not after, tradability/review awaits, and run setup did stateful reconciliation before
+re-proving ownership. Autonomous and approval paths now assert after broker health, portfolio/setup
+reads, scans/quotes, stale-order notification, tradability, initial review, and bump re-review before
+non-placement writes. Budget/volatility phases also re-prove before their next policy/audit mutation,
+and a notification-time loss cannot demote authority afterward. Direct regressions prove loss during
+approval/autonomous tradability or review leaves no stale card/broker call, while loss during setup
+account reads stops before market scan or snapshots. The scheduler heartbeat remains after the leader
+gate, and a follower regression proves it cannot refresh `scheduler:lastTick`. Current-main
+reconciliation also removed #1430's obsolete `heartbeatTimer` cleanup; authoritative `finally` owns
+guard stop/release. Current Node 24 scoped verification is green: 7 files / 38 tests, touched ESLint
+0 errors / 34 inherited warnings, TypeScript clean, and `git diff --check` clean. The previous hosted
+full gate was green at human head `ed3793e3` but predates the second autofix reconciliation; the
+serialized final full gate, trusted push, hosted rerun, merge, and production verification remain. See
 `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 ## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
 
