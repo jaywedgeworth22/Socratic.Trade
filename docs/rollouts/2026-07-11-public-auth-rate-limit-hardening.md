@@ -48,7 +48,15 @@ Deliberately untouched because active broker/DB PRs overlap them:
     an APFS copy-on-write clone of a lockfile-identical peer worktree's completed dependency tree;
     no tracked files changed.
 - `git diff --check` — passed.
-- Full lint, full test suite, and build: pending the serialized shared full-gate slot.
+- `npm run lint`
+  - Passed: 0 errors / 378 existing warnings.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh`
+  - Passed: TypeScript clean; 319 test files / 3,499 tests; Next.js build clean.
+  - Pushed the branch and opened READY PR #1399. No merge or auto-merge was requested.
+- The first `land.sh` attempt used the default Node 26 runtime against the copied Node 24
+  `better-sqlite3` binary and failed uniformly with ABI 147 vs 137 before build. Per the shared gate
+  protocol, the lane was released, then reclaimed once for the ABI-matched Node 24 command above;
+  no reinstall or repeated retry loop was performed.
 
 ## Follow-ups
 

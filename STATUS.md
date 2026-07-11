@@ -9,7 +9,9 @@ buckets and caps live subjects at 10,000 with deterministic LRU eviction. Middle
 override cannot re-arm header trust while Auth.js remains fail-closed. Paid `/api/strategy/tune`
 now uses a named 10/min per-user limiter plus a one-in-flight-per-user guard before its LLM call.
 Scope deliberately excludes active broker/DB lanes and the `.env.example` file owned by active
-PR #1389. Verification and PR state are recorded in
+PR #1389. Full verification is green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
+3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge. Exact commands
+and the initial Node-ABI mismatch are recorded in
 `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)

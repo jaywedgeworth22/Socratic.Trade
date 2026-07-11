@@ -508,7 +508,8 @@ As of 2026-07-08 (assignment-rule update).
   before authentication (never by attacker-controlled OAuth state), bound and expire the in-process
   limiter's key space, parse `CF_ACCESS_TRUST_EMAIL_HEADER` with explicit truth semantics so `0` is
   off while Auth.js remains fail-closed, and apply a named per-user limiter plus one-in-flight guard
-  to paid strategy tuning.
+  to paid strategy tuning. Code and full Node 24 gate are green (lint 0 errors, TypeScript clean,
+  319 files / 3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge.
   Scope excludes active broker/DB lanes (`connected-accounts`, `alpaca.ts`, `db-api-keys.ts`,
   `db.ts`). Live board intentionally not modified per coordinator instruction. Rollout:
   `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
