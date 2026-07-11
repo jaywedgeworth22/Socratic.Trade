@@ -17,6 +17,13 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-11 — Codex autofix: broker-stop fill booking on pending-cancel success (this branch)
+Post-merge Codex finding on the merged PR #1331: when a `pending_cancel` broker stop partially filled
+and the retry successfully cancels the remaining shares, the success path was deleting the row without
+checking the order snapshot for partial fills. Fixed by mirroring the disabled-teardown pattern (check
+`orders` for `hadExecutedFill` and book via `bookBrokerHeldStopFill` before delete). Automated fix push
+in PR #____.
+
 > **Board:** `docs/EFFORT-LOG.md` is now the single cross-agent effort ledger
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
