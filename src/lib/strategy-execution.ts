@@ -98,7 +98,8 @@ export async function executeProposal(
   // Approve can each read the same pre-cap totals and both place — jointly
   // exceeding maxDailyNotional / maxHourlyNotional / maxDailyOrders. Acquiring
   // the same lock here serialises approval execution against the strategy loop.
-  if (!acquireStrategyLock(userId, policy.connectedAccountId)) {
+  const lockOwner = `execute-${proposalId}`;
+  if (!acquireStrategyLock(lockOwner, userId, policy.connectedAccountId)) {
     return { status: "busy", reasons: ["A strategy run is in progress; try again in a moment."] };
   }
 
@@ -639,7 +640,7 @@ export async function executeProposal(
     emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
     return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
   } finally {
-    releaseStrategyLock(userId, policy.connectedAccountId);
+    releaseStrategyLock(lockOwner, userId, policy.connectedAccountId);
   }
 }
 export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local", connectedAccountId?: string): Promise<void> {

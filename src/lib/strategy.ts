@@ -3,6 +3,7 @@ export * from "./strategy-risk";
 
 import {
   acquireStrategyLock,
+  renewStrategyLock,
   audit,
   claimProposalForExecution,
   countDayTradesInLastBusinessDays,
@@ -296,11 +297,17 @@ export async function runStrategyOnce(
   // Per-account run lock: prevent overlapping runs from double-counting daily limits,
   // scoped to the target account so a different account isn't blocked.
   const connectedAccountId = targetAccountId ?? getPolicy(userId).connectedAccountId;
-  if (!acquireStrategyLock(userId, connectedAccountId)) {
+  
+  const runId = crypto.randomUUID();
+  if (!acquireStrategyLock(runId, userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
-  const runId = crypto.randomUUID();
+  // Heartbeat lease every 1 minute
+  const heartbeatTimer = setInterval(() => {
+    renewStrategyLock(runId, userId, connectedAccountId);
+  }, 60_000);
+
   insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
   let llmSteps: StrategyLlmStep[] = [];
@@ -336,7 +343,8 @@ export async function runStrategyOnce(
       audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
       result = { runId, status: "completed", summary: reason, proposals: [] };
       finishStrategyRun(runId, "completed", reason, userId);
-      releaseStrategyLock(userId, connectedAccountId);
+      clearInterval(heartbeatTimer);
+      releaseStrategyLock(runId, userId, connectedAccountId);
       return result;
     }
 
@@ -2442,11 +2450,12 @@ export async function runStrategyOnce(
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
+    clearInterval(heartbeatTimer);
     // Release the strategy lock promptly so this account can run again. The LLM reservation is held a bit
     // longer — until the fire-and-forget post-mortem reflection settles — so that background spend stays
     // inside the reserved headroom instead of racing a queued same-user run (the TTL is the crash backstop).
     // We do NOT await here, so runStrategyOnce's return isn't delayed by the reflection.
-    releaseStrategyLock(userId, connectedAccountId);
+    releaseStrategyLock(runId, userId, connectedAccountId);
     if (llmReservationId) {
       const rid = llmReservationId;
       void Promise.resolve(reflectionPromise).finally(() => releaseLlmReservation(userId, rid));

@@ -32,10 +32,10 @@ const TICK_MS = 60_000; // check every 60s; cadence changes take effect within o
 
 /**
  * Returns true iff SCHEDULER_SINGLE_LEADER is set to a truthy value.
- * Truthy: "1", "true", "on", "yes" (case-insensitive, trimmed). Default OFF.
+ * Truthy: "1", "true", "on", "yes" (case-insensitive, trimmed). Default ON.
  */
 function singleLeaderEnabled(): boolean {
-  const v = String(process.env.SCHEDULER_SINGLE_LEADER ?? "").trim().toLowerCase();
+  const v = String(process.env.SCHEDULER_SINGLE_LEADER ?? "true").trim().toLowerCase();
   return ["1", "true", "on", "yes"].includes(v);
 }
 
