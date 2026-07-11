@@ -72,13 +72,16 @@ runStrategyOnce entry ──► usage-budget.ts ──GET /api/budget-status─�
   `service:"broker"`; market-data providers use their `fetchWithRetry` service label
   (finnhub, fmp, yahoo-finance, tradier, …).
 
-Every delivery now carries an explicit idempotency key. LLM and RAG keys are
-anchored to the durable local ledger-row ID; broker balance snapshots share one
-snapshot UUID with a metric suffix; each call-volume lane gets a UUID when its
-aggregate window opens. This preserves transport retry deduplication and prevents
-distinct lanes in one flush from colliding just because they share `provider`,
-`metricType`, and `occurredAt`. The shared five-field fallback remains unchanged
-for other producers.
+Every delivery now carries a fixed-length explicit idempotency key: SHA-256 over
+the event kind plus its source identity. LLM and RAG source identities and
+`occurredAt` values come from the same durable local ledger row; broker balance
+metrics share one snapshot identity with metric suffixes; each call-volume lane
+gets a UUID when its aggregate window opens. A failed or ambiguous POST is kept in
+memory and retried with the exact original payload (including key and timestamp),
+using bounded exponential backoff. This preserves transport retry deduplication
+and prevents distinct lanes in one flush from colliding just because they share
+`provider`, `metricType`, and `occurredAt`. The shared five-field fallback remains
+unchanged for other producers.
 
 The event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
 `UsageTelemetryEventSchema` and the monitor's server parser
@@ -161,6 +164,8 @@ deduplicates identical retries. Its deterministic five-field fallback is retaine
 for producers that omit a key, but lane/detail fields are deliberately outside
 that compatibility basis. This producer therefore supplies explicit source IDs
 where it has stronger event identity instead of changing the shared algorithm.
+Source IDs are hashed before transmission, which keeps keys below the ingest
+length cap even if an upstream identifier is unexpectedly large.
 
 ## Operator setup notes
 

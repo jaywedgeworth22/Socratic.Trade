@@ -40,11 +40,15 @@ Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
 Cross-app API Usage Monitor hardening found that aggregated credential lanes share one flush
 timestamp while the shared fallback idempotency basis intentionally omits lane metadata. Distinct
 lanes could therefore derive one key and one event disappeared. This branch gives every aggregate
-window an explicit UUID-backed key and uses the durable local `llm_usage` / `rag_usage` row ID for
-discrete delivery keys; broker balance snapshots also get one delivery identity with metric suffixes.
-The shared five-field fallback algorithm is unchanged. Focused 7/7 tests, TypeScript, and scoped
-ESLint pass; full pre-PR gates remain pending. No merge/auto-deploy without an explicit landing
-decision. See `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+window an explicit UUID-backed key and uses a fixed-length hash of the durable local `llm_usage` /
+`rag_usage` row ID for discrete delivery keys; broker balance snapshots also get one delivery
+identity with metric suffixes. Ledger timestamps now flow to the outbound event, failed/ambiguous
+batches retry in memory with the byte-equivalent original event payload, and HMR cancels stale
+module timers before preserving buffered state. The shared five-field fallback algorithm is
+unchanged. Focused usage-push + RAG verification is 18/18 green (11 producer regressions), and
+TypeScript/scoped ESLint pass under Node 24; full pre-PR gates remain pending. The in-memory queue is
+not a crash-durable outbox. No merge/auto-deploy without an explicit landing decision. See
+`docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
 
 ## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
 Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback

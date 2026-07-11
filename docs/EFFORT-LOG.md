@@ -1614,8 +1614,11 @@ As of 2026-07-08 (assignment-rule update).
   Branch `codex-usage-telemetry-idempotency`. Add explicit stable keys to batched provider-call
   telemetry so same-flush lanes cannot collide under the shared five-field fallback. Preserve the
   shared contract algorithm; focused producer tests first. Cross-reference API Usage Monitor branch
-  `codex-app-wide-hardening`. Implemented locally: 7/7 focused tests, TypeScript, and scoped ESLint
-  pass; full pre-PR gate pending. No merge (which auto-deploys) without an explicit landing decision.
+  `codex-app-wide-hardening`. Adversarial fixups preserve exact failed payloads for bounded in-memory
+  retry, reuse ledger timestamps, hash arbitrary source IDs into capped keys, and cancel stale HMR
+  timers. Implemented locally: usage-push + RAG tests 18/18 (11 producer regressions), TypeScript,
+  and scoped ESLint pass under Node 24; full pre-PR gate pending. The queue is not a crash-durable
+  outbox. No merge (which auto-deploys) without an explicit landing decision.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch

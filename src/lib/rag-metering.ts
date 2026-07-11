@@ -84,6 +84,7 @@ function approxTokens(texts: string[]): number {
 export function recordRagUsage(entry: RagUsageEntry): void {
   try {
     const usageId = crypto.randomUUID();
+    const occurredAt = new Date().toISOString();
     const userId = entry.userId || "local";
     const provider = entry.provider || "voyage";
     const tokensIn = entry.tokensIn ?? 0;
@@ -106,11 +107,12 @@ export function recordRagUsage(entry: RagUsageEntry): void {
         tokensOut,
         batchCount,
         cost ?? null,
-        new Date().toISOString()
+        occurredAt
       );
     // Fire-and-forget forward to the API Usage Monitor (no-op unless configured; never throws).
     pushRagUsage({
       sourceEventId: usageId,
+      occurredAt,
       provider,
       operation: entry.operation,
       model: entry.model,

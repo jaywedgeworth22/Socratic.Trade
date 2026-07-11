@@ -22,7 +22,7 @@
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   createUsageTelemetryClient,
   type UsageTelemetryEvent,
@@ -92,17 +92,41 @@ interface CallVolumeEntry {
 }
 
 interface PushState {
+  version: number;
   queue: UsageMonitorEvent[];
   callVolume: Map<string, CallVolumeEntry>;
   flushTimer: ReturnType<typeof setTimeout> | null;
   /** Test seam: overrides global fetch when set. */
   fetchImpl: typeof fetch | null;
+  retryAttempt: number;
 }
 
 const host = globalThis as unknown as { __usageMonitorPush?: PushState };
+const STATE_VERSION = 2;
+const priorState = host.__usageMonitorPush;
+const staleState = priorState !== undefined && priorState.version !== STATE_VERSION;
+if (staleState && priorState.flushTimer) {
+  // A preserved HMR timer closes over the old module implementation. Cancel it
+  // before reusing the queue/map so the current flush logic owns every send.
+  clearTimeout(priorState.flushTimer);
+  priorState.flushTimer = null;
+}
 const state: PushState =
-  host.__usageMonitorPush ??
-  (host.__usageMonitorPush = { queue: [], callVolume: new Map(), flushTimer: null, fetchImpl: null });
+  priorState ??
+  (host.__usageMonitorPush = {
+    version: STATE_VERSION,
+    queue: [],
+    callVolume: new Map(),
+    flushTimer: null,
+    fetchImpl: null,
+    retryAttempt: 0,
+  });
+state.version = STATE_VERSION;
+state.retryAttempt ??= 0;
+
+if (staleState && (state.queue.length > 0 || state.callVolume.size > 0)) {
+  scheduleFlush();
+}
 
 // ── Enqueue: discrete cost events (LLM / RAG) ──────────────────────────────────
 
@@ -114,6 +138,8 @@ const state: PushState =
 export function pushLlmUsage(entry: {
   /** Stable ID of the local llm_usage row backing this delivery. */
   sourceEventId?: string;
+  /** Stable timestamp persisted on the same local ledger row. */
+  occurredAt?: string;
   provider: string;
   model?: string;
   context?: string;
@@ -143,7 +169,7 @@ export function pushLlmUsage(entry: {
       costUsd: hasCost ? entry.costUsd : undefined,
       requests: 1,
       confidence: "estimated",
-      occurredAt: new Date().toISOString(),
+      occurredAt: entry.occurredAt ?? new Date().toISOString(),
       metadata: cleanMetadata({
         model: entry.model ?? null,
         context: entry.context ?? null,
@@ -165,6 +191,8 @@ export function pushLlmUsage(entry: {
 export function pushRagUsage(entry: {
   /** Stable ID of the local rag_usage row backing this delivery. */
   sourceEventId?: string;
+  /** Stable timestamp persisted on the same local ledger row. */
+  occurredAt?: string;
   provider: string;
   operation: string;
   model?: string;
@@ -197,7 +225,7 @@ export function pushRagUsage(entry: {
       costUsd: hasCost ? entry.costUsd : undefined,
       requests: 1,
       confidence: "estimated",
-      occurredAt: new Date().toISOString(),
+      occurredAt: entry.occurredAt ?? new Date().toISOString(),
       metadata: cleanMetadata({
         model: entry.model ?? null,
         operation: entry.operation,
@@ -349,12 +377,12 @@ function enqueue(event: UsageMonitorEvent): void {
   scheduleFlush();
 }
 
-function scheduleFlush(): void {
+function scheduleFlush(delayMs = flushDelayMs()): void {
   if (state.flushTimer) return;
   const timer = setTimeout(() => {
     state.flushTimer = null;
     void flushUsageMonitor();
-  }, flushDelayMs());
+  }, delayMs);
   // Don't keep the process alive just for a pending telemetry flush.
   (timer as { unref?: () => void }).unref?.();
   state.flushTimer = timer;
@@ -413,14 +441,27 @@ export async function flushUsageMonitor(): Promise<void> {
   if (pending.length === 0) return;
 
   for (let i = 0; i < pending.length; i += MAX_BATCH) {
-    await postBatch(pending.slice(i, i + MAX_BATCH));
+    const sent = await postBatch(pending.slice(i, i + MAX_BATCH));
+    if (!sent) {
+      // Keep the exact event objects — including explicit key + occurredAt —
+      // so an ambiguous accepted-then-disconnected response retries safely.
+      state.queue.unshift(...pending.slice(i));
+      state.retryAttempt += 1;
+      const retryDelay = Math.min(
+        60_000,
+        flushDelayMs() * 2 ** Math.min(state.retryAttempt - 1, 5)
+      );
+      scheduleFlush(retryDelay);
+      return;
+    }
   }
+  state.retryAttempt = 0;
 }
 
-async function postBatch(events: UsageMonitorEvent[]): Promise<void> {
+async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
-  if (!baseUrl || !token || events.length === 0) return;
+  if (!baseUrl || !token || events.length === 0) return true;
 
   const fetchImpl = state.fetchImpl ?? fetch;
   const start = Date.now();
@@ -432,6 +473,7 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<void> {
       ok: true,
       latencyMs: Date.now() - start,
     });
+    return true;
   } catch (err) {
     logApiHealth({
       service: HEALTH_SERVICE,
@@ -439,6 +481,7 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<void> {
       latencyMs: Date.now() - start,
       errorText: err instanceof Error ? err.message : String(err),
     });
+    return false;
   }
 }
 
@@ -465,7 +508,11 @@ function telemetryIdempotencyKey(
   kind: string,
   sourceId: string = randomUUID()
 ): string {
-  return `${SOURCE_APP}:${kind}:${sourceId}`;
+  const normalizedSourceId = sourceId.trim() || randomUUID();
+  const digest = createHash("sha256")
+    .update(`${kind}\0${normalizedSourceId}`)
+    .digest("hex");
+  return `${SOURCE_APP}:${kind}:${digest}`;
 }
 
 // ── Test seams ─────────────────────────────────────────────────────────────────
@@ -484,4 +531,5 @@ export function __resetUsageMonitorState(): void {
   state.queue.length = 0;
   state.callVolume.clear();
   state.fetchImpl = null;
+  state.retryAttempt = 0;
 }
