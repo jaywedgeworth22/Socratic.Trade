@@ -281,29 +281,23 @@ describe("resolveAlphaVantageKeyPool", () => {
     expect(resolved).toEqual({ keys: ["single-key-value"], source: "env", envVar: "ALPHAVANTAGE_API_KEY" });
   });
 
-  it("parses the plural ALPHAVANTAGE_API_KEYS, trimming whitespace", () => {
+  it("uses ONLY the first key of a legacy plural ALPHAVANTAGE_API_KEYS (no longer pools)", () => {
     process.env.ALPHAVANTAGE_API_KEYS = " key-1 , key-2 ,key-3";
     const resolved = resolveAlphaVantageKeyPool();
-    expect(resolved).toEqual({ keys: ["key-1", "key-2", "key-3"], source: "env", envVar: "ALPHAVANTAGE_API_KEYS" });
+    expect(resolved).toEqual({ keys: ["key-1"], source: "env", envVar: "ALPHAVANTAGE_API_KEYS" });
   });
 
-  it("dedupes the plural list while preserving first-seen order", () => {
-    process.env.ALPHAVANTAGE_API_KEYS = "key-1,key-2,key-1,key-3,key-2";
+  it("skips empty leading entries when taking the first plural key", () => {
+    process.env.ALPHAVANTAGE_API_KEYS = ",,key-1,key-2";
     const resolved = resolveAlphaVantageKeyPool();
-    expect(resolved.keys).toEqual(["key-1", "key-2", "key-3"]);
+    expect(resolved.keys).toEqual(["key-1"]);
   });
 
-  it("drops empty entries from the plural list (trailing/double commas)", () => {
-    process.env.ALPHAVANTAGE_API_KEYS = "key-1,,key-2,";
-    const resolved = resolveAlphaVantageKeyPool();
-    expect(resolved.keys).toEqual(["key-1", "key-2"]);
-  });
-
-  it("prefers the plural list over the singular fallback when both are set", () => {
+  it("prefers the singular ALPHAVANTAGE_API_KEY over a legacy plural list when both are set", () => {
     process.env.ALPHAVANTAGE_API_KEYS = "key-1,key-2";
     process.env.ALPHAVANTAGE_API_KEY = "single-key-value";
     const resolved = resolveAlphaVantageKeyPool();
-    expect(resolved).toEqual({ keys: ["key-1", "key-2"], source: "env", envVar: "ALPHAVANTAGE_API_KEYS" });
+    expect(resolved).toEqual({ keys: ["single-key-value"], source: "env", envVar: "ALPHAVANTAGE_API_KEY" });
   });
 });
 
