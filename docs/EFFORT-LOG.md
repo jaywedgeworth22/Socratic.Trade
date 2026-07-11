@@ -1579,6 +1579,28 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[P2][Infra][S] Provider-knob sync: API-Usage-Monitor -> Infisical (CLAUDE (opus subagent),
+  branch `claude/provider-knob-sync`) — IN PROGRESS 2026-07-10, PR #1370 OPEN (READY, gate green:
+  tsc clean / 3422 tests 316 files / build clean), awaiting owner review — NOT merged. Stays
+  DRY-RUN until api-usage-monitor PR #83 (contract-matching endpoint) deploys; that repo is
+  merge-frozen on a pre-existing migrate-safe.mjs blocker.** Mac-side script +
+  launchd template that makes API-Usage-Monitor the source of truth for market-data subscription
+  plans. `scripts/sync-provider-knobs.sh` (ASCII, bash 3.2-safe) GETs the monitor's token-authed
+  `/api/subscriptions` (Bearer `USAGE_INGEST_TOKEN` from `~/.secrets/usage-monitor.env`), computes
+  each plan's desired knobs via `scripts/provider-knob-diff.mjs` (pure, unit-tested: active ->
+  `knobEnv`, canceled/paused -> `freeTierKnobEnv`, considering/null -> skip), reads current values
+  from Infisical prod over the proven SSH+universal-auth CLI path (box `135.181.192.190`), and
+  WRITES ONLY DIFFS. Hard allow-list guard (`^(PROVIDER_QUOTA_|PROVIDER_RATE_LIMIT_|MASSIVE_|`
+  `TIINGO_DROP_NEWS$|FINNHUB_DROP_RECOMMENDATION$|ALPACA_DATA_FEED$)`) + value-charset guard reject
+  anything else from the API. Dry-run by default (prints diff, exit 0); `--apply` writes + posts one
+  `#agent-sync` line per change. `com.jay.provider-knob-sync.plist` (30-min, `--apply`) NOT installed
+  by default; install command in the rollout note. Monitor-unreachable = exit 0, no spam. Contract
+  against the parallel monitor-side PR (subscription-knob linkage phase 1). Rollout:
+  `docs/rollouts/2026-07-10-provider-knob-sync.md`.
+- **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) — landing
+  2026-07-10.** Owner-directed after two pricing misreads in one day (tiingo annual, AV per-IP):
+  docs/market-data-provider-pricing.md = canonical vendor facts + traps + knob cheat-sheet.
+  Related (paused pending owner): API-Usage-Monitor subscription->knob linkage phase 1.
 - **Hetzner & Coolify metrics on admin dashboard (AG, branch `agent/antigravity-server-metrics`) — IN PROGRESS 2026-07-10.** Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
 - **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
   lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**
@@ -1787,11 +1809,43 @@ As of 2026-07-08 (assignment-rule update).
   tiingo (50/hour+1000/day)**; finnhub/yahoo/alpha-vantage stay on the PACER. Fixes the tiingo 403
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
+- **Learning-review orphan hardening — adversarial re-review of PR #1328 found + fixed 2 more
+  orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`) — ✅ DEPLOYED TO PROD
+  2026-07-10: PR #1363 squash-merged to `main` (`d9dc5d5d`), auto-deployed. Took ~2.5hrs of
+  GitHub mergeStateStatus DIRTY re-syncs under a heavy same-day push burst (a new commit landing
+  roughly every 1-2 min) despite the branch being conflict-free by every local check the whole
+  time — GitHub's cached mergeability flag can lag real state under load; the reliable tiebreaker
+  was a direct `gh pr merge <n> --squash` (no `--auto`) attempt, which forces a fresh server-side
+  merge check independent of the stale cached flag. The new `merge-shepherd` scheduled automation
+  also helped by autonomously re-syncing the branch with `main` several times.**
+  A Workflow-based adversarial re-review (4 lenses, each finding independently re-verified by a
+  second agent trying to REFUTE it via empirical execution against the real code, not just reading)
+  of merged PR #1328 found it had 2 real, empirically-reproduced gaps reproducing the SAME
+  "shown to LLM zero times, silently marked reviewed" failure mode via different mechanisms: (1) a
+  tied-timestamp cluster > MAX_REVIEW_ITEMS(80) freezes the drain forever (same id-ordered 80
+  re-selected every run); (2) a budget-deferred item can silently age out of the 7-day pack window
+  before its promised later sweep on a multi-day drain — directly falsifying the shipped rollout
+  note's own "no item ever silently marked reviewed" claim. One fix closes both:
+  `buildLearningReviewContextPack`'s learned-row filter now keeps a row if in-window OR un-reviewed
+  (mirrors the trigger's own window-free design, 8da047aa) + the truncation cut widens to consume a
+  full boundary tie-group. Also closes the previously-"accepted" isolated-old-row self-healing gap
+  as a free side effect (traced to 8da047aa's deliberate, narrower-scoped tradeoff — confirmed real
+  but pre-existing, not a #1328 regression, then closed anyway since the same fix does it for free).
+  Caught+fixed a bug in the fix itself (a stray re-slice silently re-dropping the just-widened items)
+  via its own new test before landing. 2 tests rewritten (asserted the old, now-wrong "self-healing"
+  behavior), 2 new added, all falsified against pre-fix source. node@24: tsc clean, learning-review
+  38/38, full suite 315 files/3388 tests, eslint 0-err, build clean. Closes finding #2 for real — no
+  known open gaps remain in the daily learning-review job's coverage guarantees. See
+  `docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum.
+
 - **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
   `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — DEPLOYED TO PROD 2026-07-10;
   merged to `main` as squash `79b542e3` (PR #1328, verify-green + auto-merge), then AUTO-DEPLOYED —
   `79b542e3` is an ancestor of main HEAD `e9e9138b` (#1352), the healthy webhook build (~12:45Z) running
-  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired).**
+  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired). **SUPERSEDED same day by
+  the "Learning-review orphan hardening" row above** — an adversarial re-review found this fix had 2
+  adjacent orphaning gaps of its own, currently live in prod until the hardening PR lands+deploys; see
+  that row.**
   `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
   advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
   the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
