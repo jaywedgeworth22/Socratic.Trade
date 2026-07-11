@@ -8,10 +8,11 @@ local Unix-socket `GET /list` endpoint. Production config now explicitly enables
 control socket; the client uses a hard wall-clock deadline, bounded body, and abort/error handling.
 Production skips the synchronous metadata-file fallback entirely; non-live scanning is bounded.
 Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
-stale when newer DB/WAL activity proves there is work to upload. Node 24 verification is green: lint
-0 errors (378 existing warnings), TypeScript clean, 319 files/3,509 tests, and production build clean.
-No deployment or live replica mutation occurred. READY PR #1405 is open without merge/auto-merge;
-the branch also reconciles the latest `origin/main` and is being revalidated before its refresh.
+stale when newer DB/WAL activity proves there is work to upload. The pre-reconciliation Node 24 gate
+was green (lint 0 errors, TypeScript clean, 319 files/3,509 tests, production build). READY PR #1405
+is open without merge/auto-merge; the branch now reconciles the latest `origin/main` and its final
+post-merge gate is being rerun after refreshing dependencies added by that mainline merge. No
+deployment or live replica mutation occurred.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),

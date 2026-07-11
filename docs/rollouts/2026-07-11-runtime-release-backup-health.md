@@ -111,6 +111,11 @@ After PR creation, `origin/main` advanced with #1397. The branch merged that com
 landing workflow re-runs lint plus the post-merge TypeScript/full-test/build gate before refreshing
 PR #1405. No merge, auto-merge, deploy, or live health mutation is part of this work.
 
+The first post-merge landing attempt ran lint cleanly (0 errors, 406 existing warnings), then
+TypeScript reported missing `ts-morph` types because this worktree's cloned `node_modules` predated
+#1397's new lockfile dependency. This is a dependency-install state mismatch, not a source failure;
+refresh with Node 24 `npm ci`, then rerun the complete landing gate.
+
 ## Follow-ups
 
 - After merge/auto-deploy, confirm `/api/health` reports the deployed `SOURCE_COMMIT`,
