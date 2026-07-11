@@ -13,6 +13,8 @@ Ready PR #1438 is reconciled with `main@da9558ac`. Final Node 24 verification is
 Vitest 1/1, lint 0 errors (404 inherited warnings), `tsc --noEmit`, full Vitest 332 files / 3,747
 tests, and the production build. Production UI confirmation remains after merge and auto-deploy. See
 `docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
+## 2026-07-11 — Unified manual and scheduler single-flight locks (AG, branch agent/unify-manual-scheduler-single-flight)
+Unified manual (admin) and background (scheduler) single-flight locks for RAG reindexing, web-source refreshes, and Congress daily share. By pushing the single-flight `withInFlightGuard` lock down into the domain logic, we ensure that any entry point (admin API, scheduler, etc.) respects the same memory lock, avoiding duplicative work and rate limit burns. Tests passed. PR ready to land via land.sh.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
 Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment

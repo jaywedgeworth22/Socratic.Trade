@@ -176,9 +176,17 @@ describe("expensive admin route admission behavior", () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let isHeld = true;
     mocks.reindexEightKDataset.mockImplementationOnce(async () => {
       await held;
+      isHeld = false;
       return { indexed: 1 };
+    });
+    mocks.refreshFilingBodies.mockImplementationOnce(async () => {
+      if (isHeld) {
+        return { attempted: 0, ingested: 0, skipped: 0, deferredForBudget: 0, errors: [], inFlightConflict: true };
+      }
+      return { attempted: 1, ingested: 1, skipped: 0, deferredForBudget: 0, errors: [] };
     });
 
     const first = reindexEightK(request("/api/admin/reindex-8k", {
@@ -192,7 +200,7 @@ describe("expensive admin route admission behavior", () => {
       body: JSON.stringify({ symbols: ["AAPL"] })
     }));
     expect(blocked.status).toBe(409);
-    expect(mocks.refreshFilingBodies).not.toHaveBeenCalled();
+    expect(mocks.refreshFilingBodies).toHaveBeenCalledOnce();
 
     release();
     expect((await first).status).toBe(200);

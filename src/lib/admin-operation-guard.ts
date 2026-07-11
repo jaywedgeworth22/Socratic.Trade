@@ -2,6 +2,7 @@ import { rateLimit, type RateLimitOptions } from "./rate-limit";
 import { resolveRequestUserId } from "./request-user";
 import { withTuningSingleFlight } from "./tuning-singleflight";
 import { operationInFlightResponse, rateLimitedOperationResponse } from "./operation-guard-response";
+import { withInFlightGuard, resetOperationsInFlight } from "./in-flight";
 
 type ConcurrencyScope = "admin" | "manual-admin";
 
@@ -35,13 +36,6 @@ export const ADMIN_OPERATION_LIMITS = {
 } as const satisfies Record<string, AdminOperationLimit>;
 
 export type AdminOperationName = keyof typeof ADMIN_OPERATION_LIMITS;
-
-type AdminOperationGuardHost = typeof globalThis & {
-  __socraticAdminOperationsInFlight?: Map<string, { operation: AdminOperationName; token: symbol }>;
-};
-
-const guardHost = globalThis as AdminOperationGuardHost;
-const inFlight = (guardHost.__socraticAdminOperationsInFlight ??= new Map());
 
 /**
  * Only call this after `requireAdmin` succeeds. `resolveRequestUserId` consumes the trusted
@@ -86,21 +80,13 @@ export async function withAdminOperationGuard(
   }
 
   const flightKey = concurrencyKey(identity, operation);
-  const active = inFlight.get(flightKey);
-  if (active) {
-    return operationInFlightResponse(
-      operation,
-      active.operation,
-      `Admin operation "${operation}" conflicts with "${active.operation}", which is already running.`
-    );
-  }
+  
+  // For operations that manage their own underlying system-wide locks (web sources, congress share, rag reindex), 
+  // we do NOT acquire an admin-level lock. This allows their internal lock to protect against both manual and scheduler runs.
+  const selfGuardedOps = ["reindex-8k", "reindex-10k", "congress-share", "refresh-websource"];
+  const isSelfGuarded = selfGuardedOps.includes(operation);
 
-  const token = Symbol(operation);
-  inFlight.set(flightKey, { operation, token });
-  try {
-    // Claim before debiting quota: duplicate spam returns 409 without consuming the accepted
-    // entrant's budget. Claim + admission are synchronous, so expensive work never starts before
-    // both decisions are complete.
+  const runWithRateLimit = async () => {
     const admission = rateLimit(`${identity}:admin:${operation}`, config);
     if (!admission.allowed) {
       return rateLimitedOperationResponse(
@@ -110,14 +96,24 @@ export async function withAdminOperationGuard(
       );
     }
     return await run();
-  } finally {
-    // Owner-check the release so a test reset/hot-reload edge cannot let an old operation clear a
-    // successor's claim on the same group.
-    if (inFlight.get(flightKey)?.token === token) inFlight.delete(flightKey);
+  };
+
+  if (isSelfGuarded) {
+    return runWithRateLimit();
   }
+
+  const result = await withInFlightGuard(flightKey, runWithRateLimit);
+  if (result && typeof result === "object" && "inFlightConflict" in result && result.inFlightConflict) {
+    return operationInFlightResponse(
+      operation,
+      operation,
+      `Admin operation "${operation}" conflicts with "${result.activeOperation}", which is already running.`
+    );
+  }
+  return result as Response;
 }
 
 /** Test/maintenance hook; does not reset the shared rate limiter. */
 export function resetAdminOperationInFlight(): void {
-  inFlight.clear();
+  resetOperationsInFlight();
 }

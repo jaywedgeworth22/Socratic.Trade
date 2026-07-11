@@ -4,6 +4,7 @@ import { refreshFilingBodies } from "@/lib/web-sources/sec-filings";
 import { getVectorStoreStats } from "@/lib/vector-db";
 import { requireAdmin } from "@/lib/auth/admin";
 import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
+import { operationInFlightResponse } from "@/lib/operation-guard-response";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,7 @@ export async function POST(request: Request) {
     // for up to a week after any scheduler attempt). An explicit `limit` also overrides the
     // free-tier 1-filing cap; omitted, the tier default applies (paid 25 / free 1).
     const result = await refreshFilingBodies(symbols, Date.now(), limit, { force: true });
+    if ("inFlightConflict" in result && result.inFlightConflict) return operationInFlightResponse("reindex-10k", "reindex-10k");
     const stats = await getVectorStoreStats();
     return NextResponse.json({ ok: result.errors.length === 0, result, vectorStore: stats });
   });

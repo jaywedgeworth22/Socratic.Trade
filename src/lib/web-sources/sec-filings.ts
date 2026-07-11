@@ -17,6 +17,7 @@
 import { audit, getInternalSetting, hasIngestedAccession, insertIngestedAccession, setInternalSetting } from "../db";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { loadCikMap } from "./sec8k";
+import { withInFlightGuard } from "../in-flight";
 
 const SEC_BASE = "https://www.sec.gov";
 const EDGAR_DATA_BASE = "https://data.sec.gov";
@@ -72,6 +73,7 @@ export interface RefreshFilingBodiesResult {
    *  mid-run; they are NOT recorded as ingested and retry at the next tick. */
   deferredForBudget: number;
   errors: string[];
+  inFlightConflict?: boolean;
 }
 
 // ── Submission JSON parsing ──────────────────────────────────────────────────
@@ -384,7 +386,7 @@ export function isFilingIngestDue(now: number = Date.now()): boolean {
  *
  * Never throws — all errors are captured in the returned result and the audit log.
  */
-export async function refreshFilingBodies(
+async function _refreshFilingBodies(
   symbols: string[],
   now: number = Date.now(),
   maxPerRun?: number,
@@ -479,4 +481,17 @@ export async function refreshFilingBodies(
 
   audit("sec_filing_refresh", { symbols: symbols.length, ...result, freeTier, forced: Boolean(opts?.force) });
   return result;
+}
+
+export async function refreshFilingBodies(
+  symbols: string[],
+  now: number = Date.now(),
+  maxPerRun?: number,
+  opts?: { force?: boolean }
+): Promise<RefreshFilingBodiesResult> {
+  const result = await withInFlightGuard("rag-reindex", () => _refreshFilingBodies(symbols, now, maxPerRun, opts));
+  if (result && "inFlightConflict" in result && result.inFlightConflict) {
+    return { attempted: 0, ingested: 0, skipped: 0, deferredForBudget: 0, errors: ["rag-reindex lock held"], inFlightConflict: true };
+  }
+  return result as RefreshFilingBodiesResult;
 }

@@ -13,6 +13,7 @@
 
 import { audit, getInternalSetting, setInternalSetting } from "../db";
 import { hasIngestedAccession, insertIngestedAccession } from "../db";
+import { withInFlightGuard } from "../in-flight";
 import { normalizeSymbol } from "../money";
 import { envFlagOn } from "../rag/env-flag";
 import { retryBackoffMs } from "./congress";
@@ -296,7 +297,7 @@ export function buildEightKContext(event: EightKEvent): string {
  * recover after the Voyage-billing 429 left the Pinecone index empty. Returns the embed/upsert
  * outcome so a caller (e.g. the reindex route) can confirm `indexed > 0`.
  */
-export async function reindexEightKDataset(
+async function _reindexEightKDataset(
   userId: string = "local",
   limit: number = Number.POSITIVE_INFINITY
 ): Promise<{ attempted: number; indexed: number; error?: string; skipped?: boolean }> {
@@ -325,104 +326,122 @@ export async function reindexEightKDataset(
   );
 }
 
+export async function reindexEightKDataset(
+  userId: string = "local",
+  limit: number = Number.POSITIVE_INFINITY
+): Promise<{ attempted: number; indexed: number; error?: string; skipped?: boolean; inFlightConflict?: boolean }> {
+  const result = await withInFlightGuard("rag-reindex", () => _reindexEightKDataset(userId, limit));
+  if (result && "inFlightConflict" in result && result.inFlightConflict) {
+    return { attempted: 0, indexed: 0, skipped: true, inFlightConflict: true, error: "rag-reindex lock held" };
+  }
+  return result as { attempted: number; indexed: number; error?: string; skipped?: boolean };
+}
+
 export async function refreshEightK(now: number = Date.now(), force = false): Promise<import("./types").WebSourceRefreshResult> {
-  if (!force && !isEightKRefreshDue(now)) {
-    const ds = getEightKDataset();
-    return { id: "sec8k", ok: true, recordCount: ds?.recordCount ?? 0, sources: ds ? ["sec-edgar"] : [], fetchedAt: ds?.fetchedAt ?? "", skipped: true };
-  }
-  setInternalSetting(ATTEMPT_KEY, new Date(now).toISOString());
+  const result = await withInFlightGuard("rag-reindex", async () => {
+    if (!force && !isEightKRefreshDue(now)) {
+      const ds = getEightKDataset();
+      return { id: "sec8k", ok: true, recordCount: ds?.recordCount ?? 0, sources: ds ? ["sec-edgar"] : [], fetchedAt: ds?.fetchedAt ?? "", skipped: true };
+    }
+    setInternalSetting(ATTEMPT_KEY, new Date(now).toISOString());
 
-  let fresh: EightKEvent[] = [];
-  let warning: string | undefined;
-  try {
-    const cikMap = await loadCikMap(now);
-    const feed = await politeFetchText(
-      `${SEC_BASE}/cgi-bin/browse-edgar?action=getcurrent&type=8-K&count=100&output=atom`,
-      { headers: { "user-agent": secUserAgent(), accept: "application/atom+xml" } }
-    );
-    fresh = parseCurrent8KFeed(feed)
-      .map((row): EightKEvent | undefined => {
-        const symbol = cikMap[row.cik];
-        if (!symbol) return undefined;
-        return { symbol, filedAt: row.filedAt ?? new Date(now).toISOString().slice(0, 10), accession: row.accession, ...(row.filingUrl ? { filingUrl: row.filingUrl } : {}) };
-      })
-      .filter((event): event is EightKEvent => Boolean(event));
-    fresh = await enrichEightKEvents(fresh);
-  } catch (error) {
-    warning = error instanceof Error ? error.message : "sec8k failed";
-  }
+    let fresh: EightKEvent[] = [];
+    let warning: string | undefined;
+    try {
+      const cikMap = await loadCikMap(now);
+      const feed = await politeFetchText(
+        `${SEC_BASE}/cgi-bin/browse-edgar?action=getcurrent&type=8-K&count=100&output=atom`,
+        { headers: { "user-agent": secUserAgent(), accept: "application/atom+xml" } }
+      );
+      fresh = parseCurrent8KFeed(feed)
+        .map((row): EightKEvent | undefined => {
+          const symbol = cikMap[row.cik];
+          if (!symbol) return undefined;
+          return { symbol, filedAt: row.filedAt ?? new Date(now).toISOString().slice(0, 10), accession: row.accession, ...(row.filingUrl ? { filingUrl: row.filingUrl } : {}) };
+        })
+        .filter((event): event is EightKEvent => Boolean(event));
+      fresh = await enrichEightKEvents(fresh);
+    } catch (error) {
+      warning = error instanceof Error ? error.message : "sec8k failed";
+    }
 
-  const prior = getEightKDataset();
-  const merged = mergeEightK(prior?.events ?? [], fresh, now);
-  if (merged.length === 0) {
-    audit("web_source_refresh", { id: "sec8k", ok: false, recordCount: 0, warning });
-    return { id: "sec8k", ok: false, recordCount: 0, sources: [], fetchedAt: prior?.fetchedAt ?? "", warning: warning ?? "no events" };
-  }
-  const fetchedAt = fresh.length > 0 ? new Date(now).toISOString() : (prior?.fetchedAt ?? new Date(now).toISOString());
-  const dataset: EightKDataset = { events: merged, fetchedAt, recordCount: merged.length };
-  setInternalSetting(DATASET_KEY, dataset);
-  const ok = fresh.length > 0;
-  audit("web_source_refresh", { id: "sec8k", ok, recordCount: merged.length, fresh: fresh.length, warning });
+    const prior = getEightKDataset();
+    const merged = mergeEightK(prior?.events ?? [], fresh, now);
+    if (merged.length === 0) {
+      audit("web_source_refresh", { id: "sec8k", ok: false, recordCount: 0, warning });
+      return { id: "sec8k", ok: false, recordCount: 0, sources: [], fetchedAt: prior?.fetchedAt ?? "", warning: warning ?? "no events" };
+    }
+    const fetchedAt = fresh.length > 0 ? new Date(now).toISOString() : (prior?.fetchedAt ?? new Date(now).toISOString());
+    const dataset: EightKDataset = { events: merged, fetchedAt, recordCount: merged.length };
+    setInternalSetting(DATASET_KEY, dataset);
+    const ok = fresh.length > 0;
+    audit("web_source_refresh", { id: "sec8k", ok, recordCount: merged.length, fresh: fresh.length, warning });
 
-  // Event-driven trigger (Phase 2): a fresh 8-K with a MATERIAL item code is a catalyst worth a
-  // strategy run. No-op unless TRIGGER_ENGINE is on (dynamic import breaks the strategy↔web-sources
-  // import cycle). Item allowlist per the expert panel — most 8-Ks (5.07/9.01/5.03/routine 8.01)
-  // are non-tradeable and must not trigger.
-  const materialFresh = fresh.filter(eightKHasMaterialItem);
-  if (materialFresh.length > 0) {
-    import("../triggers")
-      .then(({ broadcastMaterialEvent }) => {
-        for (const ev of materialFresh) {
-          broadcastMaterialEvent({ type: "sec8k", symbol: ev.symbol, sourceId: ev.accession, reason: `8-K ${ev.items?.[0] ?? ""}`.trim() });
-        }
-      })
-      .catch(() => { /* triggers unavailable — refresh durability is unaffected */ });
-  }
+    // Event-driven trigger (Phase 2): a fresh 8-K with a MATERIAL item code is a catalyst worth a
+    // strategy run. No-op unless TRIGGER_ENGINE is on (dynamic import breaks the strategy↔web-sources
+    // import cycle). Item allowlist per the expert panel — most 8-Ks (5.07/9.01/5.03/routine 8.01)
+    // are non-tradeable and must not trigger.
+    const materialFresh = fresh.filter(eightKHasMaterialItem);
+    if (materialFresh.length > 0) {
+      import("../triggers")
+        .then(({ broadcastMaterialEvent }) => {
+          for (const ev of materialFresh) {
+            broadcastMaterialEvent({ type: "sec8k", symbol: ev.symbol, sourceId: ev.accession, reason: `8-K ${ev.items?.[0] ?? ""}`.trim() });
+          }
+        })
+        .catch(() => { /* triggers unavailable — refresh durability is unaffected */ });
+    }
 
-  // Store new filings into vector DB for RAG. This is best-effort and batched so refresh
-  // durability does not depend on Pinecone/Voyage availability.
-  if (fresh.length > 0) {
-    const ragEvents = fresh.slice(0, eightKRagLimit());
-    import("../vector-db")
-      .then(({ storeContexts }) =>
-        storeContexts(
-          ragEvents.map((event) => ({
-            text: buildEightKContext(event),
-            metadata: {
-              symbol: event.symbol,
-              source: "sec-8k",
-              timestamp: event.filedAt,
-              // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
-              acceptance_datetime: event.filedAt,
-              doc_type: "8-k",
-              accession: event.accession,
-              filingUrl: event.filingUrl,
-              items: event.items ?? []
-            }
-          })),
-          "local",
-          // R10: dedup so an unchanged summary isn't re-embedded every refresh cycle.
-          storeContextsDedupEnabled() ? { dedupKeyPrefix: "sec8k-summary" } : undefined
+    // Store new filings into vector DB for RAG. This is best-effort and batched so refresh
+    // durability does not depend on Pinecone/Voyage availability.
+    if (fresh.length > 0) {
+      const ragEvents = fresh.slice(0, eightKRagLimit());
+      import("../vector-db")
+        .then(({ storeContexts }) =>
+          storeContexts(
+            ragEvents.map((event) => ({
+              text: buildEightKContext(event),
+              metadata: {
+                symbol: event.symbol,
+                source: "sec-8k",
+                timestamp: event.filedAt,
+                // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
+                acceptance_datetime: event.filedAt,
+                doc_type: "8-k",
+                accession: event.accession,
+                filingUrl: event.filingUrl,
+                items: event.items ?? []
+              }
+            })),
+            "local",
+            // R10: dedup so an unchanged summary isn't re-embedded every refresh cycle.
+            storeContextsDedupEnabled() ? { dedupKeyPrefix: "sec8k-summary" } : undefined
+          )
         )
-      )
-      .catch((error) => console.warn("[sec8k] vector store failed", error));
-  }
+        .catch((error) => console.warn("[sec8k] vector store failed", error));
+    }
 
-  // 8-K full-body ingest: when enabled, fetch + embed the FULL filing text (not just the
-  // 6-line summary) via the same storeDocument pipeline as 10-K/10-Qs. Gated behind
-  // WEB_SOURCE_SEC8K_FULL_BODY (default OFF) because it multiplies EDGAR fetch + Voyage
-  // cost per filing. Fire-and-forget so refresh durability is unaffected.
-  if (eightKFullBodyEnabled() && fresh.length > 0) {
-    const bodyLimit = Number(process.env.WEB_SOURCE_SEC8K_FULL_BODY_LIMIT ?? 5);
-    const cap = Number.isFinite(bodyLimit) && bodyLimit > 0 ? Math.floor(bodyLimit) : 5;
-    const bodyEvents = fresh.slice(0, cap);
-    // Don't block the refresh — body ingest runs async.
-    ingestEightKBodies(bodyEvents, now).catch((error) =>
-      console.warn("[sec8k] full-body ingest failed:", error)
-    );
-  }
+    // 8-K full-body ingest: when enabled, fetch + embed the FULL filing text (not just the
+    // 6-line summary) via the same storeDocument pipeline as 10-K/10-Qs. Gated behind
+    // WEB_SOURCE_SEC8K_FULL_BODY (default OFF) because it multiplies EDGAR fetch + Voyage
+    // cost per filing. Fire-and-forget so refresh durability is unaffected.
+    if (eightKFullBodyEnabled() && fresh.length > 0) {
+      const bodyLimit = Number(process.env.WEB_SOURCE_SEC8K_FULL_BODY_LIMIT ?? 5);
+      const cap = Number.isFinite(bodyLimit) && bodyLimit > 0 ? Math.floor(bodyLimit) : 5;
+      const bodyEvents = fresh.slice(0, cap);
+      // Don't block the refresh — body ingest runs async.
+      ingestEightKBodies(bodyEvents, now).catch((error) =>
+        console.warn("[sec8k] full-body ingest failed:", error)
+      );
+    }
 
-  return { id: "sec8k", ok, recordCount: merged.length, sources: ["sec-edgar"], fetchedAt, warning };
+    return { id: "sec8k", ok, recordCount: merged.length, sources: ["sec-edgar"], fetchedAt, warning };
+  });
+
+  if (result && "inFlightConflict" in result && result.inFlightConflict) {
+    return { id: "sec8k", ok: false, recordCount: 0, sources: [], fetchedAt: "", skipped: true, inFlightConflict: true, warning: "rag-reindex lock held" };
+  }
+  return result as import("./types").WebSourceRefreshResult;
 }
 
 // ── 8-K full-body ingest (gated behind WEB_SOURCE_SEC8K_FULL_BODY) ───────────

@@ -23,6 +23,7 @@
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting } from "../db";
 import { congressAsCongressSourceEnabled, getCongressTradeClient } from "../api-clients/congress";
 import { normalizeSymbol } from "../money";
+import { withInFlightGuard } from "../in-flight";
 import type { CongressSignal, CongressTrade } from "./types";
 import {
   BROWSER_UA,
@@ -557,55 +558,62 @@ export function isCongressRefreshDue(now: number = Date.now()): boolean {
  * fake/empty mid-trading-day). Returns a result for auditing.
  */
 export async function refreshCongress(now: number = Date.now(), force = false): Promise<import("./types").WebSourceRefreshResult> {
-  if (!force && !isCongressRefreshDue(now)) {
-    const ds = getCongressDataset();
-    return { id: "congress", ok: true, recordCount: ds?.recordCount ?? 0, sources: ds?.sources ?? [], fetchedAt: ds?.fetchedAt ?? "", skipped: true };
-  }
-
-  // Record the attempt up front so a failure backs off (retryBackoffMs) instead of
-  // re-firing every tick; the dataset's fetchedAt still only advances on success.
-  setInternalSetting(ATTEMPT_KEY, new Date(now).toISOString());
-
-  const collected: CongressTrade[] = [];
-  const sources: string[] = [];
-  const warnings: string[] = [];
-
-  // When App A (congress.trade) is the configured source of truth, pull from it and skip the
-  // local scrapers entirely (it IS the authority on congressional disclosures). Otherwise run
-  // App B's own adapter cascade.
-  const adapters = congressAsCongressSourceEnabled()
-    ? [{ id: "congress-trade", run: () => fetchAppACongressTrades(now) }]
-    : [
-        { id: "senate-efd", run: () => scrapeSenateEfd(now) },
-        { id: "apify-congress", run: () => fetchApifyCongress(now) },
-        { id: "capitol-trades", run: fetchCapitolTrades }
-      ];
-
-  for (const adapter of adapters) {
-    try {
-      const trades = await adapter.run();
-      if (trades.length > 0) {
-        collected.push(...trades);
-        sources.push(adapter.id);
-      }
-    } catch (error) {
-      warnings.push(`${adapter.id}: ${error instanceof Error ? error.message : "failed"}`);
+  const result = await withInFlightGuard("refresh-websource", async () => {
+    if (!force && !isCongressRefreshDue(now)) {
+      const ds = getCongressDataset();
+      return { id: "congress", ok: true, recordCount: ds?.recordCount ?? 0, sources: ds?.sources ?? [], fetchedAt: ds?.fetchedAt ?? "", skipped: true };
     }
-  }
 
-  const fetchedAt = new Date(now).toISOString();
-  if (collected.length === 0) {
-    // Don't overwrite a good prior dataset with nothing on a transient outage.
-    const prior = getCongressDataset();
-    audit("web_source_refresh", { id: "congress", ok: false, recordCount: 0, warnings });
-    return { id: "congress", ok: false, recordCount: prior?.recordCount ?? 0, sources: prior?.sources ?? [], fetchedAt: prior?.fetchedAt ?? "", warning: warnings.join("; ") || "no records" };
-  }
+    // Record the attempt up front so a failure backs off (retryBackoffMs) instead of
+    // re-firing every tick; the dataset's fetchedAt still only advances on success.
+    setInternalSetting(ATTEMPT_KEY, new Date(now).toISOString());
 
-  const trades = dedupeTrades(collected);
-  const dataset: CongressDataset = { trades, fetchedAt, sources, recordCount: trades.length };
-  setInternalSetting(DATASET_KEY, dataset);
-  audit("web_source_refresh", { id: "congress", ok: true, recordCount: trades.length, sources, warnings });
-  return { id: "congress", ok: true, recordCount: trades.length, sources, fetchedAt, warning: warnings.join("; ") || undefined };
+    const collected: CongressTrade[] = [];
+    const sources: string[] = [];
+    const warnings: string[] = [];
+
+    // When App A (congress.trade) is the configured source of truth, pull from it and skip the
+    // local scrapers entirely (it IS the authority on congressional disclosures). Otherwise run
+    // App B's own adapter cascade.
+    const adapters = congressAsCongressSourceEnabled()
+      ? [{ id: "congress-trade", run: () => fetchAppACongressTrades(now) }]
+      : [
+          { id: "senate-efd", run: () => scrapeSenateEfd(now) },
+          { id: "apify-congress", run: () => fetchApifyCongress(now) },
+          { id: "capitol-trades", run: fetchCapitolTrades }
+        ];
+
+    for (const adapter of adapters) {
+      try {
+        const trades = await adapter.run();
+        if (trades.length > 0) {
+          collected.push(...trades);
+          sources.push(adapter.id);
+        }
+      } catch (error) {
+        warnings.push(`${adapter.id}: ${error instanceof Error ? error.message : "failed"}`);
+      }
+    }
+
+    const fetchedAt = new Date(now).toISOString();
+    if (collected.length === 0) {
+      // Don't overwrite a good prior dataset with nothing on a transient outage.
+      const prior = getCongressDataset();
+      audit("web_source_refresh", { id: "congress", ok: false, recordCount: 0, warnings });
+      return { id: "congress", ok: false, recordCount: prior?.recordCount ?? 0, sources: prior?.sources ?? [], fetchedAt: prior?.fetchedAt ?? "", warning: warnings.join("; ") || "no records" };
+    }
+
+    const trades = dedupeTrades(collected);
+    const dataset: CongressDataset = { trades, fetchedAt, sources, recordCount: trades.length };
+    setInternalSetting(DATASET_KEY, dataset);
+    audit("web_source_refresh", { id: "congress", ok: true, recordCount: trades.length, sources, warnings });
+    return { id: "congress", ok: true, recordCount: trades.length, sources, fetchedAt, warning: warnings.join("; ") || undefined };
+  });
+
+  if (result && "inFlightConflict" in result && result.inFlightConflict) {
+    return { id: "congress", ok: false, recordCount: 0, sources: [], fetchedAt: "", skipped: true, inFlightConflict: true, warning: "refresh-websource lock held" };
+  }
+  return result as import("./types").WebSourceRefreshResult;
 }
 
 // ── App A (congress.trade) as the congressional source ───────────────────────

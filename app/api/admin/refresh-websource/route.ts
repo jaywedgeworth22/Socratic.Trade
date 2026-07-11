@@ -3,6 +3,7 @@ import { refreshCongress, getCongressDataset } from "@/lib/web-sources/congress"
 import { refreshEightK, getEightKDataset } from "@/lib/web-sources/sec8k";
 import { requireAdmin } from "@/lib/auth/admin";
 import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
+import { operationInFlightResponse } from "@/lib/operation-guard-response";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
   return withAdminOperationGuard(request, "refresh-websource", async () => {
     if (id === "congress") {
       const result = await refreshCongress(Date.now(), true);
+      if ("inFlightConflict" in result && result.inFlightConflict) return operationInFlightResponse("refresh-websource", "refresh-websource");
       const ds = getCongressDataset();
       const byChamber = (ds?.trades ?? []).reduce<Record<string, number>>((acc, t) => {
         acc[t.chamber] = (acc[t.chamber] ?? 0) + 1;
@@ -35,6 +37,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: result.ok, id, result, recordCount: ds?.recordCount ?? 0, byChamber, sources: ds?.sources ?? [] });
     }
     const result = await refreshEightK(Date.now(), true);
+    if ("inFlightConflict" in result && result.inFlightConflict) return operationInFlightResponse("refresh-websource", "refresh-websource");
     return NextResponse.json({ ok: result.ok, id, result, recordCount: getEightKDataset()?.recordCount ?? 0 });
   });
 }

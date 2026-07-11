@@ -37,6 +37,7 @@ import {
 } from "@jaywedgeworth22/congress-trading-shared";
 import { audit, getInternalSetting, getPolicy, listUsers, listWatchlistSymbols, setInternalSetting } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
+import { withInFlightGuard } from "./in-flight";
 import { INDEX_UNIVERSES, symbolsForPolicyUniverse } from "./index-universes";
 import type { OHLCBar } from "./indicators";
 import { fetchGroupedDailyBarsRange } from "./market-signals/massive-s3";
@@ -666,6 +667,7 @@ export interface RunCongressDailyShareOptions {
 export interface CongressDailyShareSummary {
   ok: boolean;
   skipped?: boolean;
+  inFlightConflict?: boolean;
   reason?: string;
   tickers: number;
   priced: number;
@@ -685,11 +687,12 @@ export interface CongressDailyShareSummary {
  * route calls this with force:true.
  */
 export async function runCongressDailyShare(options: RunCongressDailyShareOptions = {}): Promise<CongressDailyShareSummary> {
-  const now = options.now ?? Date.now();
-  const empty = {
-    tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
-    posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
-  };
+  const result = await withInFlightGuard("congress-share", async () => {
+    const now = options.now ?? Date.now();
+    const empty = {
+      tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
+      posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
+    };
   if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
 
   const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
@@ -829,6 +832,20 @@ export async function runCongressDailyShare(options: RunCongressDailyShareOption
     // audit is best-effort
   }
   return summary;
+  });
+
+  if (result && "inFlightConflict" in result && result.inFlightConflict) {
+    return {
+      ok: false,
+      skipped: true,
+      inFlightConflict: true,
+      reason: "in-flight",
+      tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
+      posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
+    };
+  }
+
+  return result as CongressDailyShareSummary;
 }
 
 /**

@@ -108,6 +108,7 @@ export interface WebSourceRefreshResult {
   fetchedAt: string;
   skipped?: boolean; // true when not yet due (no network performed)
   warning?: string;
+  inFlightConflict?: boolean; // true when another instance of the same scrape is in flight
 }
 
 /** A registered backend connector. Each owns its cadence, persistence, and parsing. */

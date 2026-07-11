@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin";
 import { congressTradeToken, isCongressShareAutoEnabled, runCongressDailyShare } from "@/lib/congress-share";
 import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
+import { operationInFlightResponse } from "@/lib/operation-guard-response";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
 
   return withAdminOperationGuard(request, "congress-share", async () => {
     const summary = await runCongressDailyShare({ now: Date.now(), force: true, symbols, fullHistory, flatFile, allIndexes });
+    if (summary.inFlightConflict) return operationInFlightResponse("congress-share", "congress-share");
     return NextResponse.json({ autoEnabled: isCongressShareAutoEnabled(), ...summary });
   });
 }

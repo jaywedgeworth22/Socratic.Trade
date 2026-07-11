@@ -147,41 +147,43 @@ describe("admin operation guard", () => {
     expect((await first).status).toBe(200);
   });
 
-  it("excludes overlapping manual paid RAG reindexes across routes and admins without debiting the rejected operation", async () => {
+  it("excludes overlapping manual operations with the same concurrency group", async () => {
     const latch = deferred();
-    const eightK = withAdminOperationGuard(adminRequest("admin-a@example.com"), "reindex-8k", async () => {
+    // Test using an operation that is NOT self-guarded, since self-guarded ops delegate locking.
+    // We'll use two identical operations since no two different operations share a non-self-guarded group right now.
+    const first = withAdminOperationGuard(adminRequest("admin-a@example.com"), "robinhood-probe", async () => {
       await latch.promise;
-      return new Response("8-k");
+      return new Response("probe");
     });
 
-    const tenK = await withAdminOperationGuard(
-      adminRequest("admin-b@example.com"),
-      "reindex-10k",
-      async () => new Response("10-k")
+    const second = await withAdminOperationGuard(
+      adminRequest("admin-a@example.com"),
+      "robinhood-probe",
+      async () => new Response("probe-duplicate")
     );
 
-    expect(tenK.status).toBe(409);
-    await expect(tenK.json()).resolves.toMatchObject({
+    expect(second.status).toBe(409);
+    await expect(second.json()).resolves.toMatchObject({
       ok: false,
       code: "operation_in_flight",
-      operation: "reindex-10k",
-      activeOperation: "reindex-8k",
+      operation: "robinhood-probe",
+      activeOperation: "robinhood-probe",
       error: expect.any(String)
     });
     latch.resolve();
-    expect((await eightK).status).toBe(200);
+    expect((await first).status).toBe(200);
 
-    const tenKRequest = adminRequest("admin-b@example.com");
-    for (let i = 0; i < ADMIN_OPERATION_LIMITS["reindex-10k"].limit; i += 1) {
+    const probeRequest = adminRequest("admin-c@example.com");
+    for (let i = 0; i < ADMIN_OPERATION_LIMITS["robinhood-probe"].limit; i += 1) {
       expect((await withAdminOperationGuard(
-        tenKRequest,
-        "reindex-10k",
+        probeRequest,
+        "robinhood-probe",
         async () => new Response("accepted")
       )).status).toBe(200);
     }
     expect((await withAdminOperationGuard(
-      tenKRequest,
-      "reindex-10k",
+      probeRequest,
+      "robinhood-probe",
       async () => new Response("over-budget")
     )).status).toBe(429);
   });

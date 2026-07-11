@@ -4,6 +4,7 @@ import { getVectorStoreStats } from "@/lib/vector-db";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { requireAdmin } from "@/lib/auth/admin";
 import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
+import { operationInFlightResponse } from "@/lib/operation-guard-response";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,7 @@ export async function POST(request: Request) {
   return withAdminOperationGuard(request, "reindex-8k", async () => {
     const before = await getVectorStoreStats(userId);
     const result = await reindexEightKDataset(userId, limit);
+    if ("inFlightConflict" in result && result.inFlightConflict) return operationInFlightResponse("reindex-8k", "reindex-8k");
     const after = await getVectorStoreStats(userId);
     return NextResponse.json({
       ok: !result.error,

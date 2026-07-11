@@ -2514,7 +2514,7 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
-- **Unify manual and scheduler single-flight at underlying provider/dataset operation boundaries (CODEX, follow-up after lease-correctness hotfix, 2026-07-11) — PLANNED / RESERVED.** Move owner-token claims below the admin routes so `refreshFilingBodies`, Congress daily share, and Congress/SEC web-source refresh cannot overlap across manual and scheduler/background entrants. Avoid `scheduler.ts`; preserve typed busy outcomes and shared 409 mapping, and add scheduler-versus-manual concurrency coverage. Use a durable DB lease if deploy-overlap/multi-process exclusion is required; the current route guard is same-process/manual-only.
+- **Unify manual and scheduler single-flight at underlying provider/dataset operation boundaries (AG, 2026-07-11) — COMPLETED (merged to main) / DEPLOYED.** Move owner-token claims below the admin routes so `refreshFilingBodies`, Congress daily share, and Congress/SEC web-source refresh cannot overlap across manual and scheduler/background entrants. Avoid `scheduler.ts`; preserve typed busy outcomes and shared 409 mapping, and add scheduler-versus-manual concurrency coverage. Use a durable DB lease if deploy-overlap/multi-process exclusion is required; the current route guard is same-process/manual-only.
 - **Activity-audit P2 backlog (unassigned; from docs/reviews/2026-07-09-activity-feed-audit.md)
   — PLANNED 2026-07-10.** Separable items, each S/M: notification-status recorder honesty
   (§1.5); order_placement_uncertain reclassification (§1.6); stale-exit cancel-pending
