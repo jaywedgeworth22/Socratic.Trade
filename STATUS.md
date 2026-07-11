@@ -41,8 +41,8 @@ environment. Every stale admin-route comment was updated to match this behavior,
 localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Current
 `origin/main@8fca436d` is merged without auth-code overlap. Final Node 24 gate is green: lint 0
 errors/407 warnings, tsc clean, 325 files/3,616 tests, and production build clean; focused security
-coverage is 6 files/60 tests. The current-main merge remains staged for commit; no push or PR has been
-run. See
+coverage is 6 files/60 tests. READY PR #1410 is open at head `98651cc1`; it is not merged/auto-merged
+or deployed. See
 `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)

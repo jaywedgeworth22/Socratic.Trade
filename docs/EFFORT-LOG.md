@@ -1594,7 +1594,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **Admin authorization fail-closed hardening (CODEX, branch `codex/admin-fail-closed`, worktree
+- **Admin authorization fail-closed hardening (CODEX, branch `codex/admin-fail-closed`, READY PR #1410, worktree
   `/Users/jay/.codex/worktrees/socratic-admin-fail-closed`) — IN PROGRESS 2026-07-11.** Make the
   shared `requireAdmin` gate deny by default regardless of `NODE_ENV` or hostname. Middleware now
   forwards identity provenance; only verified Cloudflare Access/Auth.js primary or allowlisted emails
@@ -1602,8 +1602,8 @@ As of 2026-07-08 (assignment-rule update).
   denied. The spoofable localhost opt-in was removed, the timing-safe token path remains, and every
   stale admin-route comment now matches the gate. Focused Node24 security coverage is green (6 files/
   60 tests). Current `origin/main@8fca436d` is merged without auth-code overlap; final gate green:
-  lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build. Merge commit/PR next; no push,
-  production environment, main merge, or deploy mutation.
+  lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build. Head `98651cc1` is pushed; hosted
+  checks pending. No production environment, main merge, auto-merge, or deploy mutation.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch

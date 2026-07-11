@@ -1,5 +1,7 @@
 # 2026-07-11 — Admin authorization fail-closed hardening
 
+PR: <https://github.com/jaywedgeworth22/Socratic.Trade/pull/1410> (ready, not merged)
+
 Branch: `codex/admin-fail-closed`
 
 Worktree: `/Users/jay/.codex/worktrees/socratic-admin-fail-closed`
@@ -92,7 +94,8 @@ separate synthetic-primary-email path without relying on either environment or h
   - `npm test` — 325 files / 3,616 tests passed.
   - `npm run build` — production build passed with existing middleware/Sentry/cache warnings only.
 
-No push or PR has been run; those remain coordinator-gated.
+Head `98651cc1` is pushed in READY PR #1410; hosted checks are pending. No merge, auto-merge, or
+production mutation was requested.
 
 ## Follow-ups / risks
 
@@ -102,4 +105,4 @@ No push or PR has been run; those remain coordinator-gated.
 - Reviewed implementation commit `96b87d89` was created, then current `origin/main@8fca436d` was
   merged in two conflict-free steps. Intersections were additive status/effort docs only; auth code
   did not overlap. The final merge remains staged for commit after the green gate above.
-- Push, PR, main merge, deploy, and production environment mutation were not run.
+- Main merge, deploy, and production environment mutation were not run.
