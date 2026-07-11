@@ -70,16 +70,17 @@ describe("per-account policy isolation (PR 1)", () => {
     const x = `acct-x-${randomUUID()}`;
     const y = `acct-y-${randomUUID()}`;
 
-    expect(db.acquireStrategyLock(u, x)).toBe(true);
-    expect(db.acquireStrategyLock(u, x)).toBe(false); // same account re-lock blocked
-    expect(db.acquireStrategyLock(u, y)).toBe(true);  // different account NOT blocked
+    expect(db.acquireStrategyLock("owner1", u, x)).toBe(true);
+    expect(db.acquireStrategyLock("owner2", u, x)).toBe(false); // same account re-lock blocked
+    expect(db.acquireStrategyLock("owner3", u, y)).toBe(true);  // different account NOT blocked
 
-    db.releaseStrategyLock(u, x);
-    expect(db.acquireStrategyLock(u, x)).toBe(true);
+    db.releaseStrategyLock("owner1", u, x);
+    expect(db.acquireStrategyLock("owner4", u, x)).toBe(true);
 
-    db.releaseStrategyLock(u); // no account → releases ALL of the user's locks
-    expect(db.acquireStrategyLock(u, x)).toBe(true);
-    expect(db.acquireStrategyLock(u, y)).toBe(true);
+    db.releaseStrategyLock("owner4", u, x);
+    db.releaseStrategyLock("owner3", u, y);
+    expect(db.acquireStrategyLock("owner5", u, x)).toBe(true);
+    expect(db.acquireStrategyLock("owner6", u, y)).toBe(true);
   });
 
   it("strategy runs and the cadence clock are per account", async () => {

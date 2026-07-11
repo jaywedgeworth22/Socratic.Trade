@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Refactoring strategy.ts (AG, branch `agent/strategy-split`) — COMPLETED 2026-07-11.** Split the monolithic `strategy.ts` into `strategy-risk.ts` and `strategy-execution.ts`, retaining `strategy.ts` as a coordinator/barrel. Cleaned up dependencies and automated import fixes. All tests (3427) passing. Rollout note: `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — ✅ COMPLETED 2026-07-09: PR #1282 merged to `main` (auto-merge squashed).** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
 - **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
@@ -1591,6 +1592,38 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
+- **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
+- **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch
+  `claude/order-status-reconcile`, order-status-reconcile workflow) — IN PROGRESS 2026-07-10,
+  local gates green (tsc 0, full suite 3408/3408, lint 0-err, build running), PR next.** Root
+  cause: on a THROWN placement both catch paths (autonomous run-loop + approval) fired a
+  permanent, un-clearable "verify with broker" run_failed alert without asking the broker what
+  actually happened, set status `placing_failed` (which the stale sweep — filters `status='placing'`
+  — never reconciles), and nothing acked the alert even after the order later reconciled. Fix:
+  new shared `reconcilePlacementError()` helper (strategy.ts) called from both catches queries the
+  broker via the existing refId->clientOrderId idempotency key and maps to a DEFINITE status —
+  placed/recovered (books the fill, deduped), rejected_by_broker (declined), or new `not_placed`
+  (safe to retry, sweepable); only a truly unreachable broker keeps status `placing` + the
+  (still-protected) uncertain alert. New `resolveBrokerVerificationNotifications()` (db-notifications)
+  acks the uncertain alert on any confirmed placement (inline recover, sweep recover, or a normal
+  fill reaching "filled"); `isBrokerVerificationRunFailed` is now reconcile-marker-driven so
+  not_placed self-clears while uncertain/declined stay protected. Idempotency: status gate + a
+  (proposalId, brokerOrderId) dedupe guard added to BOTH the inline booking and the sweep. Tests:
+  test/placement-reconcile.test.ts (5, e2e through executeProposal), placement-reconcile-sweep.test.ts
+  (4), +5 in notification-lifecycle.test.ts. Money-path: no change to Alpaca/Robinhood placement or
+  the idempotency keys. See docs/rollouts/2026-07-10-order-status-reconcile.md.
+  FIXUPS (2026-07-10, adversarial review, same branch, PR #1382): (1) RH getEquityOrders now THROWS
+  on tool-level isError / malformed / missing-collection instead of coalescing to [] (masked-empty
+  would mark a placed order not_placed -> drop intent -> duplicate); (2) sweep matched-DECLINED branch
+  gained the isRejectedOrCanceledState guard (no phantom fill, no false "placed"); (3) not_placed now
+  only concluded when the broker order list is authoritative for terminal orders (new
+  BrokerGateway.ordersListIncludesTerminal: Alpaca=true status:"all", Robinhood unset/conservative ->
+  absent=uncertain) in BOTH reconcilePlacementError and the sweep; (4) durable double-fill backstop:
+  migration v16 partial UNIQUE index on fill_events(proposal_id, broker_order_id) + insertFillEvent
+  idempotent no-op on conflict. +4 new tests (robinhood-orders-error-throws, fill-events-dedupe-index,
+  +conservative-inline case, +3 sweep cases). Gates green under node26 (tsc clean, 3424 tests, lint
+  0-err, build ok). NOT merged.
 - **Broker-held trailing stops (Alpaca native + RH ratcheted) + Guardrails stop-consolidation UI
   (CLAUDE, cloud session, branch `claude/stop-loss-preset-options-f1jygn`) — IN PROGRESS
   2026-07-10.** Owner-directed: (1) trailing stops now become BROKER-HELD when

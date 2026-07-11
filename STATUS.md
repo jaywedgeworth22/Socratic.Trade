@@ -35,6 +35,36 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-11 — Refactoring strategy.ts: split risk and execution (AG, branch `agent/strategy-split`)
+Extracted risk gates, veto rules, and sizing logic into `strategy-risk.ts` and the main execution loop/reconciliation into `strategy-execution.ts`. `strategy.ts` remains as a re-export hub and coordinator. Automated import updates across 100+ files via a custom `ts-morph` script. Gate green: tsc clean, lint 0 errors, 3427 tests passing, build clean. See `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
+
+## 2026-07-10 — Order-status reconciliation: kill the perpetual "verify with broker" alert (CLAUDE, branch `claude/order-status-reconcile`)
+A thrown broker `placeEquityOrder` used to leave an order "always uncertain": both catch paths
+(autonomous run-loop + approval) fired a permanent, un-clearable "verify with broker" alert without
+asking the broker what happened, set status `placing_failed` (which the stale sweep — filters
+`status='placing'` — never reconciles), and nothing acked the alert even after the order later
+reconciled. Fix: new shared `reconcilePlacementError()` helper (`strategy.ts`, called from both
+catches) queries the broker via the existing `refId→clientOrderId` idempotency key and maps to a
+DEFINITE status — `placed`/recovered (books the fill, deduped), `rejected_by_broker` (declined), or
+new `not_placed` (safe to retry, sweepable); only a truly unreachable broker keeps status `placing`
++ the still-protected uncertain alert. New `resolveBrokerVerificationNotifications()`
+(`db-notifications`) acks the uncertain alert on any confirmed placement (inline recover, sweep
+recover, or a normal fill reaching `filled`); `isBrokerVerificationRunFailed` is now
+reconcile-marker-driven so `not_placed` self-clears while `uncertain`/`declined` stay protected.
+Idempotency: status gate + a `(proposalId, brokerOrderId)` dedupe guard on BOTH the inline booking
+and the sweep. Money-path: NO change to Alpaca/Robinhood placement or the idempotency keys.
+FIXUPS (adversarial review, PR #1382): (1) RH `getEquityOrders` now THROWS on tool-level
+`isError`/malformed/missing-collection instead of masking as `[]`; (2) sweep matched-DECLINED branch
+gained the `isRejectedOrCanceledState` guard (no phantom fill / false "placed"); (3) `not_placed`
+only concluded when the broker order list is authoritative for terminal orders (new
+`BrokerGateway.ordersListIncludesTerminal` — Alpaca `true`, Robinhood unset/conservative ⇒
+absent=`uncertain`) in `reconcilePlacementError` AND the sweep; (4) durable double-fill backstop —
+migration v16 partial UNIQUE index `fill_events(proposal_id, broker_order_id)` + `insertFillEvent`
+idempotent no-op on conflict. +4 new test cases groups. Local gates green: tsc 0, full suite
+3424/3424, lint 0-err, build clean (ran under default node26 — the shared `node_modules`
+`better-sqlite3` is ABI 147/node26; `node@24` hits the reverse ABI mismatch). PR: READY, NOT merged.
+See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — push updates PR #1382,
+await review.
 ## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
 Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
 Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no
