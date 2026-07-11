@@ -834,14 +834,17 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-          Learning proposals across all accounts{pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
+          Learning proposals across all accounts{pendingCount > 0 ? ` · ${pendingCount} shown pending` : ""}
         </span>
+        {/* Not gated on the shown pendingCount: this list is truncated to the 25 most recent
+            (mixed status), but the review route works on the FULL pending backlog server-side —
+            so keep the button live whenever we're not already reviewing. */}
         <button
           type="button"
           className="con-btn con-btn-outline con-btn-sm"
-          disabled={reviewing || pendingCount === 0}
+          disabled={reviewing}
           onClick={() => void runAiReview()}
-          title="Review every pending proposal in a single LLM call and attach an advisory recommendation to each."
+          title="Review every pending proposal (across all accounts) in a single LLM call and attach an advisory recommendation to each."
         >
           <Brain size={14} /> {reviewing ? "Reviewing…" : "AI review pending"}
         </button>

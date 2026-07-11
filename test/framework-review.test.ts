@@ -102,6 +102,39 @@ describe("reviewPendingFrameworkProposals — batched single-call reviewer", () 
     expect(b?.status).toBe("pending");
   });
 
+  it("advances past already-reviewed proposals so repeated runs cover the backlog", async () => {
+    const { createSocraticFrameworkProposal, getSocraticFrameworkProposal, setPolicy, setSocraticFrameworkProposalAiReview } = await import("../src/lib/db");
+    const { reviewPendingFrameworkProposals } = await import("../src/lib/framework-review");
+    const user = "backlog-user";
+    process.env.OPENAI_API_KEY = "test-key";
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "BACKLOG", llmModel: "gpt-4.1", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } }, user);
+
+    const already = createSocraticFrameworkProposal({ userId: user, subsystem: "strategy", title: "already", rationale: "r", proposedChange: "c" });
+    const fresh = createSocraticFrameworkProposal({ userId: user, subsystem: "risk", title: "fresh", rationale: "r", proposedChange: "c" });
+    // Pre-mark one as already AI-reviewed; the run should skip it and only review the fresh one.
+    setSocraticFrameworkProposalAiReview(already, user, { verdict: "accept", rationale: "prior", model: "old", reviewedAt: "2026-07-07T00:00:00.000Z" });
+
+    const reviewedIds: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body ?? "{}"));
+      // Echo back a review for whatever ids were sent (proves only unreviewed rows were sent).
+      const content = typeof parsed.input === "string" ? parsed.input : JSON.stringify(parsed);
+      for (const id of [already, fresh]) if (content.includes(id)) reviewedIds.push(id);
+      return new Response(
+        JSON.stringify({ output_text: JSON.stringify({ reviews: [{ id: fresh, verdict: "reject", rationale: "thin" }] }) }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const result = await reviewPendingFrameworkProposals(user);
+    expect(result.reviewed).toBe(1);
+    // The already-reviewed proposal was NOT sent to the model; only the fresh one was.
+    expect(reviewedIds).toEqual([fresh]);
+    // Prior review preserved; fresh one now has its recommendation.
+    expect(getSocraticFrameworkProposal(already, user)?.aiReview?.rationale).toBe("prior");
+    expect(getSocraticFrameworkProposal(fresh, user)?.aiReview?.verdict).toBe("reject");
+  });
+
   it("fails open with a skip reason when there is no LLM key", async () => {
     const { createSocraticFrameworkProposal } = await import("../src/lib/db");
     const { reviewPendingFrameworkProposals } = await import("../src/lib/framework-review");

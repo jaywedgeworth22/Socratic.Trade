@@ -63,6 +63,27 @@ npx vitest run test/framework-review.test.ts test/socratic-db.test.ts \
 # 31 tests passed
 ```
 
+## Review fixes (PR #1417, Codex)
+
+- **Kept decision cases account-scoped.** Making the shared `socratic.decisions` feed global
+  would have leaked another account's latest decision into the ACTIVE account's Live thesis /
+  Autonomous actions / coach form (`primaryDecision = decisions[0]`). Reverted: decisions stay
+  account-scoped; only framework proposals (a separate panel) are global. Lessons therefore stay
+  on the account's own decisions — a dedicated global lessons view is the follow-up if wanted.
+- **Reviewer resolves through the RED role.** `resolveLlmEndpoint(policy, userId, url, "red")`
+  natively inherits `redTeamLlmModel → primary` AND picks up a cross-family reviewer credential
+  when `redTeamLlmModel` is unset — replaced the hand-rolled model-copy which used the green role.
+- **Backlog advance.** The reviewer now selects pending proposals that are NOT yet AI-reviewed
+  (`!aiReview`), so repeated runs move through the backlog instead of re-reviewing the newest rows
+  (the review is advisory and leaves status = pending). New `all_reviewed` skip reason.
+- **Fail-open on transport errors.** The LLM call is wrapped in try/catch → returns
+  `skippedReason: "llm_error"` instead of 500-ing the route on timeout/DNS/abort/invalid-JSON.
+- **Structured output.** Passes `openAiJsonObject: true` so a model can't wrap the batch in prose
+  and make `parseReviewResponse` drop everything.
+- **UI button not gated on the truncated count.** The dashboard proposal list is capped at 25
+  (mixed status); the review route works the full server-side backlog, so the button is live
+  whenever not already reviewing (was disabled when the shown window happened to be all resolved).
+
 ## Follow-ups
 
 - Surface a **friendly account label** (name, not raw id) as the provenance tag on

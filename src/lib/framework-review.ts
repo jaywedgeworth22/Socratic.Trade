@@ -17,7 +17,7 @@ import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
 import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import type { SocraticFrameworkAiReview, SocraticFrameworkOwnerVerb, TradingPolicy } from "./types";
+import type { SocraticFrameworkAiReview, SocraticFrameworkOwnerVerb } from "./types";
 
 const REVIEW_SYSTEM_PROMPT = `You are the batched Framework-Proposal Reviewer for Socratic Trade, an autonomous equity-reasoning desk.
 You receive a JSON list of PENDING "framework" proposals — small, reviewable improvements to the strategy/risk/sizing/universe/evidence/coaching subsystems, each extracted from a real closed decision. Some come from different connected accounts (see fromAccount); treat them together as one owner's learning.
@@ -31,13 +31,6 @@ Respond with STRICT JSON only (no markdown, no prose outside the JSON), one entr
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-}
-
-/** Resolve the reviewer model the same way the strategy "AI Review" does: the Red Team
- *  model first, then the primary/Green model (both account-scoped policy fields). */
-function reviewerPolicy(policy: TradingPolicy): TradingPolicy {
-  const reviewModel = policy.redTeamLlmModel?.trim() || policy.llmModel?.trim();
-  return reviewModel ? { ...policy, llmModel: reviewModel } : policy;
 }
 
 interface ParsedReview {
@@ -87,15 +80,22 @@ export async function reviewPendingFrameworkProposals(
   opts: { limit?: number } = {}
 ): Promise<FrameworkReviewResult> {
   const limit = Math.max(1, Math.min(40, Math.floor(opts.limit ?? 25)));
-  const pending = listSocraticFrameworkProposals(userId, { status: "pending", limit });
-  if (pending.length === 0) return { reviewed: 0, skippedReason: "no_pending" };
+  // Prefer proposals NOT yet AI-reviewed so repeated runs ADVANCE through the backlog rather
+  // than re-reviewing the same newest rows (the review is advisory and leaves status = pending).
+  const pendingAll = listSocraticFrameworkProposals(userId, { status: "pending", limit: 100 });
+  const pending = pendingAll.filter((p) => !p.aiReview).slice(0, limit);
+  if (pending.length === 0) return { reviewed: 0, skippedReason: pendingAll.length ? "all_reviewed" : "no_pending" };
   if (isOverLlmBudget(userId)) return { reviewed: 0, skippedReason: "over_budget" };
 
-  const policy = reviewerPolicy(getPolicy(userId));
+  // Resolve through the RED (Bear/reviewer) role: it inherits the account's redTeamLlmModel
+  // first, then the primary model, and can pick up a cross-family reviewer credential when
+  // redTeamLlmModel is unset — the same role resolution the rest of AI Review relies on.
+  const policy = getPolicy(userId);
   const { url, key, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
     policy,
     userId,
-    "https://api.openai.com/v1/chat/completions"
+    "https://api.openai.com/v1/chat/completions",
+    "red"
   );
   if (!key) return { reviewed: 0, skippedReason: "no_llm_key" };
 
@@ -119,39 +119,51 @@ export async function reviewPendingFrameworkProposals(
       systemPrompt: REVIEW_SYSTEM_PROMPT,
       userContent,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.frameworkReview,
-      reasoningEffort: policy.llmReasoningEffort
+      reasoningEffort: policy.llmReasoningEffort,
+      // Force JSON-object output where the transport supports it, so a model that would
+      // otherwise wrap the answer in prose can't make parseReviewResponse drop the whole batch.
+      openAiJsonObject: true
     }
   );
 
-  const traced = await withLlmGeneration(
-    {
-      name: "trading.framework-review",
-      model,
-      userId,
-      input: summarizeOpenAiRequest(body),
-      metadata: { endpoint: url, transport },
-      tags: ["framework-review"],
-      output: (result: { text?: string }) => summarizeOpenAiResponseText(result.text)
-    },
-    async () => {
-      const response = await llmFetch(url, {
-        method: "POST",
-        headers: llmAuthHeaders({ provider, key }),
-        body: JSON.stringify(body)
-      });
-      if (!response.ok) {
-        console.warn(
-          "[framework-review] LLM call failed:",
-          humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status })
-        );
-        return { text: undefined };
+  // Fail-open on any upstream/transport failure (timeout, DNS/network, aborted fetch, or a
+  // 200 with invalid JSON): return a skip result instead of letting the exception escape and
+  // turn the advisory reviewer into a 500 that strands the proposal queue.
+  let traced: { text?: string };
+  try {
+    traced = await withLlmGeneration(
+      {
+        name: "trading.framework-review",
+        model,
+        userId,
+        input: summarizeOpenAiRequest(body),
+        metadata: { endpoint: url, transport },
+        tags: ["framework-review"],
+        output: (result: { text?: string }) => summarizeOpenAiResponseText(result.text)
+      },
+      async () => {
+        const response = await llmFetch(url, {
+          method: "POST",
+          headers: llmAuthHeaders({ provider, key }),
+          body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+          console.warn(
+            "[framework-review] LLM call failed:",
+            humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status })
+          );
+          return { text: undefined };
+        }
+        const payload = await response.json();
+        recordLlmUsage({ userId, provider, model, context: "framework-review", keySource, keyRef, ...extractLlmUsage(payload) });
+        const text = extractLlmText(payload);
+        return { text: typeof text === "string" ? text : undefined };
       }
-      const payload = await response.json();
-      recordLlmUsage({ userId, provider, model, context: "framework-review", keySource, keyRef, ...extractLlmUsage(payload) });
-      const text = extractLlmText(payload);
-      return { text: typeof text === "string" ? text : undefined };
-    }
-  );
+    );
+  } catch (error) {
+    console.warn("[framework-review] LLM request threw:", error instanceof Error ? error.message : String(error));
+    return { reviewed: 0, skippedReason: "llm_error", model };
+  }
 
   if (!traced.text) return { reviewed: 0, skippedReason: "llm_empty", model };
   const parsed = parseReviewResponse(traced.text);
