@@ -920,6 +920,15 @@ export function toMcpOrder(input: EquityOrderInput): Record<string, unknown> {
       `Robinhood does not support short selling (side="${input.side}"). Short/cover orders must not reach the broker.`
     );
   }
+  // The Robinhood MCP exposes no verified native trailing-stop parameter. A trailPercent order must
+  // never silently degrade into a plain stop here — the protective-stop reconciler emulates trailing
+  // on Robinhood itself (a stop_market it ratchets upward each tick) and deliberately omits this
+  // field. If Robinhood's MCP adds a trailing peg, translate it here instead of throwing.
+  if (input.trailPercent != null && input.trailPercent > 0) {
+    throw new Error(
+      "Robinhood MCP does not support native trailing stops. Place a stop_market and ratchet it (see broker-protective-stops.ts)."
+    );
+  }
   // FRACTIONAL / NOTIONAL ENTRIES ARE MARKET-ONLY ON ROBINHOOD. A fractional order -- a dollar_amount
   // order OR a sub-whole-share quantity (e.g. 0.5 sh) -- sent as a LIMIT (or in extended hours) is
   // accepted by the API but never fills: it shows "Placed"/working while the cash is never spent (the

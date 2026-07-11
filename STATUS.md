@@ -51,6 +51,256 @@ idempotent no-op on conflict. +4 new test cases groups. Local gates green: tsc 0
 `better-sqlite3` is ABI 147/node26; `node@24` hits the reverse ABI mismatch). PR: READY, NOT merged.
 See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — push updates PR #1382,
 await review.
+## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
+Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
+Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no
+bracket combos; MCP lane bypassed) and, on live Robinhood, a resting GTC stop-market the
+protective-stop reconciler RATCHETS upward each tick (RH MCP has no verified native trailing
+param — `toMcpOrder` fails closed on trailPercent; lane gated on the `robinhoodBrokerStops`
+opt-in, still default OFF pending live verification). New `brokerTrailingStops` flag (default ON,
+inert until a trail % is set); `broker_protective_stops` grew `kind`/`trail_percent`
+(migration 16); placement now coverage-aware vs live exit orders (bracket legs). UI: Essentials'
+lone "Stop-loss" row + the advanced "Protective stops plumbing" group merged into ONE
+"Protective stops" card under a dynamic stop-flow diagram (ATR → beta → flat fallback, trailing
+overlay, broker-held → app-monitor enforcement; pure `stopFlowModel` unit-tested). Per-position
+LLM-chosen stop plans (fixed/ATR/trailing/none at proposal time) deliberately deferred —
+design sketch in `docs/EFFORT-LOG.md` Planned. Rollout:
+`docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`. PR #1331 open; Codex has run
+5 review rounds so far, all fixed on the branch: coverage-unknown handling (`ordersListed`),
+partial-broker-stop preservation, OCO bracket-leg double-counting in `liveExitOrderCoverage`,
+keep-existing-stop-when-replacement-refused, never seeding a broker trail looser than the
+synthetic monitor's own tracked high-water mark (`extremePriceBySymbol`); round 5: OCO pairing now
+also requires a `BRACKET_SIBLING_WINDOW_MS` created-together check (no more conflating two
+independent equal-qty manual orders as one bracket), stale `resting` rows are checked against the
+tracked order's actual broker state (mirrors section 1's fill/terminal recovery), an oversized
+existing stop is now cancelled even when other-order coverage is unknown (position-shrink is
+knowable from `positions` alone), and a pure quantity-shrink mismatch on a trailing stop now
+cancels unconditionally instead of being swallowed by the arm-refusal guard; round 6 (Codex pushed
+back twice on round 5's OCO time-window heuristic): pairing now requires a NEW `EquityOrder.orderClass`
+field (mapped from Alpaca's own `order_class`) on BOTH legs — a real bracket/OCO sibling check, not a
+timing guess — and a partial native-trail placement no longer blanket-skips the synthetic fire path
+(its known quantity now folds into coverage so the uncovered fractional remainder still fires), plus
+an honest short-position caveat added to the stop-flow diagram's broker-held node; round 7: a
+`partially_filled` (actively executing) broker-held stop is no longer cancelled by the quantity-drift
+check, and `confirmedPriorExitDead`'s re-arm confirmation now checks the SPECIFIC tracked order (by
+client_order_id) instead of a symbol-wide sweep, so an unrelated still-live broker stop (covering
+different shares) can no longer permanently block re-arming a partial remainder's own dead exit; plus
+a docs fix clarifying Alpaca REST (native trailing) vs Alpaca MCP (ratcheted) in the Guardrails hint;
+round 8: replaced round 7's `client_order_id`-only re-arm branch (fragile — the field is optional and
+a missing one would falsely read "dead") with `brokerHeldOrderIdBySymbol`, keyed off the account's own
+`broker_protective_stops` row instead of any broker-supplied id; also fixed an ordering bug found while
+verifying it (the re-arm pass runs BEFORE the tick's own reconcile call, so the map must be seeded from
+DB state at declaration, not only refreshed after reconcile), and a filled broker-held stop recognized
+during stale-row cleanup now books a `fill_events` row (`bookBrokerHeldStopFill`) before its row is
+deleted, instead of the exit silently vanishing from P&L/learning/activity; round 9: the DISABLED-
+teardown path (`kind === null`) now recovers a FILLED stop the same way section 1 does instead of
+retrying its cancel forever with the fill unbooked; a NEW `hadExecutedFill` predicate books a fill at
+all three recovery sites on either the literal "filled" state OR a positive `filledQuantity`
+regardless of state, so a PARTIAL fill that terminates as canceled/expired is no longer lost; and a
+native trail's mismatch-driven replacement (trail %/quantity change) now backfills a missing tracked
+high-water mark from the existing stop's own recorded `stopPrice`/`trailPercent` (inverting the ratchet
+math) before deciding whether a reseed would be looser than the broker's own already-moved-up peak;
+round 10 (2026-07-11): the Codex Autofix bot (`.github/workflows/codex-autofix.yml`) had been broken
+since ~2026-07-10T23:00Z — missing `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` — so 6 rounds of Codex
+review comments piled up unaddressed on this PR (35 threads) and its stacked follow-on PR #1371 (27
+threads); PR #1373 (merged to `main`) fixed the workflow to route through DeepSeek's Anthropic-compatible
+endpoint (`DEEPSEEK_API_KEY` secret, `api.deepseek.com/anthropic`, `deepseek-v4-flash`) but that fix
+never reached this feature branch. Cherry-picked it (`45bb477`) so the bot works going forward. Then
+triaged every open Codex thread against the CURRENT code: 32 of 34 non-outdated/outdated threads were
+already fixed by rounds 5-9 (just needed `resolveReviewThread`, never run before because the bot was
+down); 2 were fixed fresh this round (`72ec8d1`) — the DISABLED-teardown path now books a fill found in
+the caller's pre-reconcile order snapshot before clearing a row (both on a successful cancel and on a
+failed-cancel-but-broker-already-terminal recovery), and signals `filledRecoverySymbols` from there so
+the caller skips synthetic registration/fire against a stale pre-fill position, same as the
+enabled-lane recovery paths already did; and the synthetic monitor's auto-registration coverage check
+now folds in `justPlacedPartialBrokerStopQty` (previously only the fire path used it), so a partial
+broker stop placed earlier in the SAME reconcile pass is counted as coverage before deciding whether to
+arm a new synthetic row. One thread left open (posted as a PR comment, not resolved): "Require shared
+OCO identity before pairing legs" — `liveExitOrderCoverage` pairs stop/limit legs on matching
+bracket-family `orderClass` + exact quantity, but `orderClass` is a family string ("bracket"/"oco"),
+not a specific group id, so two DIFFERENT brackets' orphaned same-family same-qty legs could in theory
+still mispair; neither the Alpaca REST nor MCP order shape currently exposes a more precise sibling id,
+so a real fix needs either a broker API change (nested order fetch + parent correlation) or an accepted
+tradeoff — flagged for deliberate follow-up rather than guessed at. Branch is now `mergeable_state:
+dirty` against `main` (main has moved ~20 commits since this PR's base) — needs a merge before it can
+land; not yet done this round.
+Next action: watch for
+further review rounds / merge; then live-verify the RH ratchet lane before flipping
+`robinhoodBrokerStops` on.
+## 2026-07-10 — Effort-log union-merge safety net (fleet-infra) (CLAUDE, branch `claude/union-merge-live-rows`)
+Fix for the reported "live-board union-merge clobber": a claim row added to
+`/Users/jay/apps/TRADING-EFFORT-LOG.md` at 17:35 on 2026-07-09 was gone by 18:22. Investigation
+found NO existing scheduled job actually writes to the live board — `scripts/merge-shepherd.sh`
+(launchd, 30 min) only calls the GitHub API; the only real union-merge is `docs/EFFORT-LOG.md
+merge=union` in `.gitattributes`, which only ever adds lines to the git-tracked mirror. Most
+plausible cause: a manual "take the mirror wholesale" board-conflict resolution (already
+documented in `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`) applied to the live board.
+Added `scripts/effort-log-union-merge.py`: row-level merge (mirror is the base; every live-only
+row — identified by SHA1 of its normalized first line, same scheme as
+`scripts/sync-effort-issues.py`'s `effort-key` — is appended into its matching bucket section)
+with a hard pre/post-write invariant that aborts the write (no partial output) if any live-only
+row would be lost. Verified exclusively against scratch copies — the real live board and mirror
+were only ever read (checksum-verified unchanged): real-data dry-run (13 genuine not-yet-mirrored
+rows correctly identified), sentinel add+recover, idempotency, subset, new-bucket-trailer, and a
+sabotaged-logic invariant-abort test. `npx tsc --noEmit` clean. Rollout:
+`docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`. Follow-up: wire the tool into the
+host-side `~/.claude-merge-shepherd/run.sh` 30-min driver (Mac-only infra, out of scope here).
+
+**Landing-round fix (same day, PR #1354 review):** the codex-connector bot flagged three real P2s
+in `scripts/effort-log-union-merge.py`, all fixed: (1) the `--apply` write used `open(path, "w")`,
+which truncates the live board before the new bytes land — now writes to a same-directory temp
+file, fsyncs it, and `os.replace()`s it into place, so a crash/disk-full mid-write can never leave
+a partial file. (2) Two distinct live-board rows that happen to normalize to the identical first
+line collapsed to one entry (`items.setdefault` = first-occurrence-wins), so a genuine second
+row could be silently dropped exactly like the original clobber bug — reproduced this against the
+PRE-fix script on a scratch fixture (it reported "no live-only rows found" and lost the second
+row entirely); fixed by tracking every occurrence per key and comparing COUNTS, not membership.
+(3) No guard against a concurrent edit to the live board landing between the initial read and the
+final write — added an exclusive `fcntl.flock` held for the whole read-merge-write critical
+section (serializes concurrent runs of this script against each other) plus a non-cooperative-safe
+mtime/size fingerprint recheck immediately before the write that aborts (exit 4, writes nothing)
+if the file changed since it was read. Verified all three against scratch fixtures: atomic write
+(no stray temp files after apply), duplicate-row recovery (proven against the actual pre-fix
+regression), and a simulated race (monkeypatched `os.stat` to tamper with the live file mid-run —
+confirmed exit 4, output file untouched). Re-ran the real-data dry-run against `docs/EFFORT-LOG.md`
+with no regressions (227 items, no false positives/negatives). Landed via `scripts/land.sh`, PR
+#1354, squash-auto-merge armed.
+
+**Landing-round fix (round 2, PR #1354 review — codex-autofix):** three more codex-connector P2s.
+Two fixed: (1) rows under a keyword-bearing `###` subsection (e.g. `### Action - clear
+recommendation (Planned)`) whose parent `## 2026-07-06 ...` heading is unclassified were invisible
+to the parser — `HEADING_RE` only matched `## `, so such a live-only row was dropped from
+`live.items` and neither recovered nor caught by the invariant. Fixed: `HEADING_RE` now matches 2+
+hashes; `parse_board` tracks `section_bucket` (last `## `) so a deeper `###`/`####` heading
+classifies by its own keyword when it has one and otherwise inherits the enclosing `## ` bucket —
+no regression on already-classified subsections, verified against scratch fixtures + real-board
+idempotency. (2) `PLAN.md` was stale for the new host-side tool — added a
+"Fleet-infra tooling (host-side, no product-roadmap change)" section per the handoff protocol.
+One left OPEN as a maintainer question (not guessed): "preserve live edits for mirrored rows" is a
+core merge-semantics tradeoff (mirror-wins vs live-leads for shared rows) whose two suggested fixes
+break opposite use cases — asked the maintainer via a PR comment. Rollout note updated with round-2
+detail.
+
+**Landing-round fix (round 3, PR #1354 review — codex-autofix):** four more codex-connector P2s.
+Two fixed (both silent-drops of real live-only rows): (1) nested classified-ancestor inheritance —
+the round-2 `section_bucket` only tracked the last **level-2** heading, so a live-only row under a
+`#### child` of a keyword-bearing `### ... (Planned)` beneath an **unclassified `##` parent` reset
+to `None` and vanished from `live.items`. Replaced `section_bucket` with a `heading_bucket_by_level`
+map: a heading closes deeper levels then classifies by own keyword or **inherits the nearest
+classified shallower ancestor at any level** (top-level `##` still resets outright — no regression).
+(2) `PLACEHOLDER_RE` matched bare `record the.*` / `see rollout notes.*` (optional parens), so a
+real row like `Record the P&L reconciliation effort (CLAUDE)` was skipped as scaffolding and never
+recovered — split those two into a paren-required `PLACEHOLDER_PARENS_RE`, applied identically to
+both `effort-log-union-merge.py` and `sync-effort-issues.py` (documented "the two tools never
+disagree" invariant). Two left OPEN (same maintainer decision, not guessed): "preserve live edits
+for mirrored rows" (round 2) and its duplicate-ordering variant "preserve duplicate rows without
+order-based pairing" are both the same shared-row conflict whose fix changes the mirror-wins-vs-
+live-leads contract already parked on the owner. Verify trio green (tsc clean, 3395 tests pass,
+build clean — Python-only change). Rollout note updated with round-3 detail.
+
+**Landing-round fix (round 4, PR #1354 review — codex-autofix):** one new codex-connector P2
+(`scripts/effort-log-union-merge.py:251`, "keep bucket insertion points on canonical sections"),
+fixed. A recovered global-Planned row was landing under an unrelated nested `### Action ... (Planned)`
+UI-backlog subsection instead of the canonical `## Planned / Reserved` section, because
+`bucket_insert_at[bucket]` was overwritten by every later same-bucket subsection (placement
+corruption — count invariant still passed). Fix: track a separate `canonical_bucket_insert_at`
+(updated only inside directly-classified level-`<=2` sections or level-2-inherited ones, via a
+parallel `heading_canonical_by_level` map); `recover_missing_items` prefers it and falls back to
+`bucket_insert_at` only for buckets that exist solely as nested subsections (round-3 behavior
+preserved). Reproduced + confirmed fix on scratch fixtures; real-board self-merge 268/268, 0
+recovered, exit 0. The two line-287 threads stay OPEN (same maintainer merge-semantics decision).
+Verify trio green (tsc clean, 3395 tests pass, build clean — Python-only change). Rollout note
+updated with round-4 detail.
+
+**Landing-round fix (round 5, PR #1354 review — codex-autofix):** one new codex-connector P2
+(`scripts/effort-log-union-merge.py:267`, "keep canonical insertions out of nested sections"),
+fixed. A residual hole from the round-4 fix: `current_bucket_canonical` was propagated by
+inheritance to unclassified `###`/`####` subsections under a canonical `## Planned / Reserved`
+parent (via `heading_canonical_by_level`), so every line inside those nested subsections
+overwrote `canonical_bucket_insert_at[planned]`. A live-only top-level Planned row was still
+recovered under the last nested subsection instead of the active bucket section (placement
+corruption, same class as round 4). Fix: when an unclassified heading inherits its bucket from
+an ancestor, do NOT propagate the canonical flag — set `effective_canonical = False` so only
+lines directly under the level-2 canonical section update `canonical_bucket_insert_at`. The
+`heading_canonical_by_level` map at each deeper level still stores `False`, so the behavior is
+consistent regardless of nesting depth. The two line-287 threads stay OPEN (same maintainer
+merge-semantics decision). Verify trio green (tsc clean, 3433 tests pass, build clean — Python-only
+change). Rollout note updated with round-5 detail.
+## 2026-07-10 — Console loading permafix: abort-storm coalescing + dashboard.ts parallelization (CLAUDE, branch `claude/loading-permafix`)
+Production console still took minutes to first-paint after PR #1293 (deadlines + watchdog) landed.
+Two compounding causes: (1) `useConsoleData.tsx`'s `refresh()` aborted the in-flight fetch on every
+SSE event and poll tick, so the slow initial fetch kept getting restarted during active scans; (2)
+`getDashboardSnapshot` ran its 9 `withDeadline`-wrapped upstream sections sequentially (~46s worst
+case). Fixed: background (SSE/interval/tab-visible) refreshes now coalesce instead of abort-and-
+restart (supersedes the still-open AG PR #1285 — commented there crediting the diagnosis); the
+broker chain (accounts -> portfolio/positions/orders -> quotes, genuinely sequential) now runs via
+`Promise.all` against the independent group (Robinhood MCP health + macro/signals/history/news),
+cutting worst case to roughly the chain alone (~24s). Added one `[dashboard] snapshot Xms` summary
+log (only when slow or a section timed out). Gate green: tsc clean, lint 0 errors, 3374 tests (315
+files), build clean. Rollout: docs/rollouts/2026-07-10-loading-permafix.md.
+**Codex-autofix (2026-07-10):** raised the client `FETCH_DEADLINE_MS` 20s -> 35s so it sits *above*
+the server's ~24s worst-case self-bounded response (sequential broker chain 6+8+6=20s + SPY
+benchmark 4s). At 20s the client aborted a slow-but-working degraded fetch right as the server was
+about to respond and retried in a loop; 35s only kills a genuine network hang. See the Codex-autofix
+section in `docs/rollouts/2026-07-10-loading-permafix.md`. Gate re-run green.
+**Codex-autofix #2 (2026-07-10):** surface deadline retries as refresh failures. A deadline-aborted
+attempt (`FETCH_DEADLINE_MS`) used to `continue` the retry loop without ever setting `error`, so a
+request that kept hanging past 35s would retry forever with `error` still null — the freshness strip
+(`deriveFreshnessLabel`) then kept labeling an old snapshot "fresh". `runFetch` now sets a visible
+`error` (`DEADLINE_ERROR_MESSAGE`) on the deadline path before returning; a successful retry clears
+it via the existing `setError(null)`. Gate re-run green (tsc, 3396 tests / 315 files, build).
+**Codex-autofix #3 (2026-07-10):** two remaining P2 threads. (a) `useConsoleData.tsx`: an *awaited
+foreground* `refresh()` that hit `FETCH_DEADLINE_MS` used to `continue` the retry loop, holding that
+promise pending across retries — mutation flows that `await refresh()` before clearing their busy
+state could wedge forever if `/api/dashboard` kept hanging. `runLoop` now takes a `foreground` flag;
+on a foreground deadline it hands the retry to a detached background `runLoop(false)` and resolves,
+so the deadline error surfaces and the awaited promise settles while a background retry continues.
+(b) `mcp-oauth.ts`: the Robinhood refresh singleflight could be poisoned forever by a never-settling
+`exchangeToken` fetch (bare fetch, no abort). Added an `AbortSignal.timeout` bound to the exchange
+fetch (root fix) plus a `REFRESH_SINGLEFLIGHT_TTL_MS` backstop that evicts the shared pending promise
+even if some other await in `refreshMcpAccessToken` hangs, so the account self-heals once the network
+recovers. Gate re-run green (tsc, 3396 tests / 315 files, build).
+## 2026-07-10 — Learning-review orphan hardening: adversarial re-review of PR #1328 found + fixed 2 more orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`)
+PR #1328 (deferred #1278 finding #2, >80-item backlog drain) shipped and merged, but a Workflow-based
+adversarial re-review (4 lenses, each finding independently re-verified by a second agent trying to
+refute it via empirical execution) found the fix had two adjacent, real, empirically-reproduced gaps
+that reproduce the SAME "shown to LLM zero times, silently marked reviewed" failure mode via different
+mechanisms: (1) a tied-timestamp cluster larger than MAX_REVIEW_ITEMS (80) freezes the drain forever
+(same id-ordered 80 re-selected every run); (2) a budget-deferred item can silently age out of the
+7-day pack window before its promised later sweep, on a multi-day drain. Both fixed with one change:
+`buildLearningReviewContextPack`'s learned-row filter now keeps a row if in-window OR un-reviewed
+(mirrors the trigger's own window-free design, 8da047aa) + the truncation cut widens to consume a
+full boundary tie-group. This also closes the previously-"accepted" isolated-old-row self-healing gap
+as a free side effect. Caught and fixed a bug in the fix itself (a stray re-slice) via its own new
+test before landing. 2 tests rewritten (asserted the old, now-wrong behavior), 2 new added, all
+falsified against pre-fix source. node@24: tsc clean, learning-review 38/38, full suite 315
+files/3388 tests, eslint 0-err, build clean. See
+`docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum. This closes finding #2 for
+real — no known open gaps remain in the daily learning-review job's coverage guarantees.
+**Update: PR #1363 merged (`d9dc5d5d`), auto-deployed. Took ~2.5hrs of GitHub mergeStateStatus
+DIRTY re-syncs under a heavy same-day push burst despite being conflict-free the whole time by
+every local check; the reliable tiebreaker turned out to be a direct `gh pr merge <n> --squash`
+(no `--auto`) attempt, which forces a fresh server-side merge check independent of the stale
+cached flag.**
+## 2026-07-10 — Provider-knob sync: API-Usage-Monitor -> Infisical prod (CLAUDE opus subagent, branch `claude/provider-knob-sync`)
+Mac-side script + launchd template making the API-Usage-Monitor the source of truth for market-data
+subscription plans: it syncs each plan's env-knob values into Infisical prod (where the trading app
+reads all provider quotas, seeded 2026-07-10). `scripts/sync-provider-knobs.sh` (ASCII, bash 3.2-safe)
+GETs the monitor's token-authed `/api/subscriptions`, computes desired knobs via the pure, unit-tested
+`scripts/provider-knob-diff.mjs` (active -> `knobEnv`; canceled/paused -> `freeTierKnobEnv`;
+considering/null -> skip), reads current values from Infisical over the proven SSH + universal-auth CLI
+path, and **writes only diffs**. Two guards reject anything else a buggy/compromised payload could send:
+a key allow-list (`PROVIDER_QUOTA_`/`PROVIDER_RATE_LIMIT_`/`MASSIVE_` prefixes + `TIINGO_DROP_NEWS`,
+`FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`) and a safe value charset. Dry-run by default (prints
+diff, exit 0); `--apply` writes + posts one `#agent-sync` line per change. `com.jay.provider-knob-sync.plist`
+(30-min, `--apply`) is a template, **NOT installed**; install command in the rollout note. Monitor
+unreachable = exit 0, no spam. **PR #1370 OPEN (READY), gate green (tsc clean / 3422 tests 316 files /
+build clean) - awaiting owner review. Blocker/next:** the monitor-side endpoint is api-usage-monitor
+PR #83 (GET shape matches this contract: bare array, knobEnv + freeTierKnobEnv, Bearer
+`USAGE_INGEST_TOKEN`), but that repo is merge-frozen on a pre-existing `migrate-safe.mjs` deploy
+blocker - the sync stays DRY-RUN until #83 deploys and one live dry run confirms the real payload.
+NOT run with `--apply` against prod; launchd job not installed. See
+`docs/rollouts/2026-07-10-provider-knob-sync.md`.
 ## 2026-07-10 — Server & infrastructure metrics dashboard page (AG, branch `agent/antigravity-server-metrics`)
 Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
 ## 2026-07-10 — Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud lane, branch `claude/anthropic-spend-spike-e2di8j`)
@@ -607,6 +857,9 @@ both kept), focused tests 132/132 then full gate green, PR opened via `land.sh` 
 auto-merge armed.
 ## 2026-07-09 — Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`)
 Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
+
+## 2026-07-09 — Infinite loading fix for SSE events aborting fetchDashboard (AG)
+Owner reported the app getting stuck on the loading screen. Root cause: frequent server-sent events (`market-data`) triggering `queueRefresh` were constantly aborting `fetchDashboard` requests before they could complete. Modified `useConsoleData` to mark interval and SSE refreshes as `background: true`, preventing them from aborting requests that are already in flight. See `docs/rollouts/2026-07-09-infinite-loading-fix.md`.
 
 ## 2026-07-08 - UI wave 4: scope dropdown + floating Tabs sheet (CLAUDE)
 Branch `claude/ui-polish-wave` (PR pending). ScopeSelector rebuilt Sheet->real anchored dropdown with

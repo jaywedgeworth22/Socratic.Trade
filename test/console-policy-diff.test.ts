@@ -7,7 +7,7 @@ import {
   computeDiff,
   type FieldDef
 } from "../app/console/lib/policy-diff";
-import { ALL_DEFS, PANIC_BRAKE, STOPS_PLUMBING } from "../app/console/guardrails/field-defs";
+import { ALL_DEFS, PANIC_BRAKE, PROTECTIVE_STOPS } from "../app/console/guardrails/field-defs";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { TradingPolicy } from "../src/lib/types";
 
@@ -35,7 +35,7 @@ describe("console guardrails: protective-toggle loosening direction (Codex findi
   });
 
   it("declares DISABLING broker-held brackets as the loosening", () => {
-    const def = STOPS_PLUMBING.find((d) => d.path === "brokerBracketsEnabled")!;
+    const def = PROTECTIVE_STOPS.find((d) => d.path === "brokerBracketsEnabled")!;
     expect(def.looserWhen).toBe("off");
     expect(classify(def, true, false)).toBe("looser");
     expect(classify(def, false, true)).toBe("tighter");
