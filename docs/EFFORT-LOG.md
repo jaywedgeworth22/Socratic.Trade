@@ -501,6 +501,59 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch
+  `monet/privacy-terms-pages`) — IN PROGRESS 2026-07-10, code+tests+full gate done, PR opening
+  next.** Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added
+  `/privacy-policy` + `/terms-and-conditions` (boilerplate, matches the existing
+  `/how-it-works`/`/welcome` page pattern exactly), describing the app's real opt-in Twilio SMS
+  notification channel (`src/lib/notify.ts`) with the specific language Twilio's compliance review
+  looks for: opt-in consent, message frequency varies, rates may apply, STOP/HELP, no sale of phone
+  numbers. Registered in `sitemap.ts`/`robots.ts`. Caught the actual would-be-verification-breaker:
+  `middleware.ts` redirects every unauthenticated path to `/login` by default — added both new
+  paths to `PUBLIC_PREFIXES` so an unauthenticated visitor (e.g. Twilio's reviewer) can actually see
+  them. Verified live via `next dev` (Browser preview tool): both pages render full content
+  unauthenticated, correct title, matching site styling. node@24: tsc clean, eslint 0-err, full
+  suite 315/3395, build clean (both pages static `○`). See
+  `docs/rollouts/2026-07-10-privacy-terms-pages.md`.
+
+- **Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch
+  `claude/learning-review-defer`) — IN PROGRESS 2026-07-10, owner-directed; isolated throwaway
+  worktree off `origin/main` @ `c7a2fa95` (the originally-assigned worktree had unrelated dirty
+  per-team-reasoning follow-up work left in it — untouched).** The daily Learning Review LLM
+  (`src/lib/learning-review.ts`) can now emit a `"defer"` verdict (distinct from
+  keep/reject/expire/needs_more_data) when it genuinely cannot decide, WITH a required non-blank
+  reasoning note (`parseLearningReviewVerdicts` drops blank-note defers as malformed, same as any
+  other invalid entry). For `learned_context_pending` rows this leaves the item exactly pending
+  (no approve/reject) and persists the note to a new `review_note` column
+  (`src/lib/db.ts`/`db-learning.ts`, guarded ALTER for existing DBs +
+  `setPendingLearnedContextReviewNote`), surfaced in the queue UI
+  (`app/console/approvals/learned-context.tsx`, new `ReviewerNote` "Left for you because..." small
+  muted line using the existing `--con-*` token pattern). For durable `learned_context` rows it's a
+  no-op (no queue to leave it in), matching `needs_more_data`. Verified (new test) that a deferred
+  item does NOT force a same-set re-review loop — it rides the EXISTING #1278/#1328
+  marker/fingerprint architecture unchanged (sticks until a human acts or another item's arrival
+  brings the reviewer back to the whole set); no separate re-review scheduler was added. +6 tests in
+  `test/learning-review.test.ts` (52/52 in the 3 learning-review-adjacent suites). Gate green: tsc
+  clean, 3389 tests / 315 files, build clean, lint 0 errors. Rollout:
+  `docs/rollouts/2026-07-10-learning-review-defer.md`. PR #1351 open, auto-merge armed (squash).
+- **Per-team reasoning levels + rotation auto-effort + usage/Learning-Review links (CLAUDE, branch
+  `claude/per-team-reasoning`) — IN PROGRESS 2026-07-10, owner-directed (was QUEUED behind
+  settings-global-only on the live board; includes the 2026-07-10 scope add: usage link + Learning
+  Review "Model settings" links).** New account-scoped `TradingPolicy.redTeamReasoningEffort`
+  (mirrors `redTeamLlmModel` naming); legacy `llmReasoningEffort` = the PROPOSER's; reviewer falls
+  back until explicitly set via the single helper `resolveReviewerReasoningEffort`
+  (src/lib/llm-request.ts), wired at red-team.ts / strategy-tuning.ts / the AI-review panel.
+  `validatePolicy` rejects a gpt-5.5+high combo on EITHER team, naming the team. Framework UI:
+  per-seat reasoning selects (shown only when that model supports it), curated per-model advice from
+  NEW `src/lib/model-reasoning-recommendations.ts` (gpt-5.5 interactive-high rule surfaced BEFORE
+  save; High disabled in-select), reviewer "Same as proposer (…)" inherit option; rotating seats
+  hide the manual control — `resolveModelRotationForRun` now auto-sets each rotated model's curated
+  recommended effort (unknown → medium) on the run-scoped override, audited on
+  `model_rotation_pick`. Plus "LLM usage & cost" link (Models card → /console/usage) and "Model
+  settings" links on both approvals Learning Review blocks → new Settings `#learning-review` anchor.
+  Gate green (tsc / lint 0-err / 3383 tests / build) + live browser smoke of all four items. PR via
+  land.sh (number recorded on the live board once open). Rollout:
+  `docs/rollouts/2026-07-10-per-team-reasoning.md`.
 - **AUTO-DEPLOY ON — merge-to-main auto-deploys prod (MONET, branch `monet/auto-deploy-on`) — DONE +
   PROVEN 2026-07-10, PR pending via land.sh.** Owner-directed: production now auto-deploys on every push
   to `main` (merge == live). Fixes: (1) Coolify native `is_auto_deploy_enabled=true` on
@@ -1546,6 +1599,37 @@ As of 2026-07-08 (assignment-rule update).
   live — the merge deploys; deployer (CLAUDE) owns box verification: litestream version
   0.5.12 in-container, replication continuity (HALT + revert if WAL uploads stop — backups
   outrank the fd leak), fd flatness at 0/10/25 min, /api/health, restore marker untouched.
+- **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
+  claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
+  (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported
+  (screenshot): a failed Red Team review rendered twice on the pending approval card
+  ("Devil's advocate (red team)" panel + a separate "Red Team review unavailable" callout,
+  same text). UI double-render, not two reviewers — the single-adversary consolidation (#1191)
+  is backend-correct. Fix: pure/total redTeamCardState() makes the three card sections mutually
+  exclusive by construction; regression test added. See
+  docs/rollouts/2026-07-10-adversary-review-duplication.md.
+- **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) —
+  CORRECTED IN PLACE 2026-07-10: this row was stuck at "landing" after the PR actually
+  merged. Status is COMPLETED as of commit c2150aae (PR #1368, "docs: canonical market-data
+  provider pricing + tier-trap reference"). Correcting in place per protocol rather than
+  moving/deleting the row.** Owner-directed after two pricing misreads in one day (tiingo
+  annual, AV per-IP): docs/market-data-provider-pricing.md = canonical vendor facts + traps +
+  knob cheat-sheet. Related (paused pending owner): API-Usage-Monitor subscription->knob
+  linkage phase 1.
+- **Pricing doc extension: cover ALL external data sources (CLAUDE subagent, branch
+  claude/pricing-doc-all-sources) — IN PROGRESS 2026-07-10 (sonnet subagent), gates running,
+  PR next.** Owner: "consider all the other data sources we have too, not just those few —
+  marketstack, and any others." Extends docs/market-data-provider-pricing.md (structure kept,
+  new sections added): marketstack/tradier/intrinio/FRED/Fintech-Studios/logo.dev verified live
+  in code + priced live from vendor pages; a "Keyless & broker-bundled sources" section (yahoo,
+  nasdaq screener, webull-unofficial, SEC XBRL/EDGAR, alpaca-news/snapshot,
+  robinhood-quotes/fundamentals, stooq, congress.trade-is-internal callout); a "Usage-billed"
+  pointer to API-Usage-Monitor for LLM/RAG spend; a mid-task owner-added "Cheap alternatives —
+  evaluated, not integrated" section (alphastocks.app + EODHD/marketdata.app/Finazon/Finage/
+  StockData.org/Databento/financialdatasets.ai/Alpaca Algo Trader Plus, IEX Cloud confirmed
+  defunct); and a flagged gap — none of the 6 new keyed providers have a
+  provider-rate-limit.ts HARD_DEFAULTS entry. Docs-only. See
+  docs/rollouts/2026-07-10-pricing-doc-all-sources.md.
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
   branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
   with squash-auto-merge armed (round-3 pickup landing).** #1266 hardened the merge-shepherd job with an `if: github.ref

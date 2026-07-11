@@ -28,6 +28,26 @@ export function redTeamFailureMeta(failureKind: RedTeamVerdict["failureKind"]): 
   }
 }
 
+/** Which ONE of the three mutually-exclusive Red Team sections an approval card renders, given
+ *  whether a structured verdict is present and the legacy `adversaryUnavailable` decision flag.
+ *  Total by construction — exactly one state is returned — so the "review unavailable" note can
+ *  never render alongside the verdict panel again. (Regression guard: a FAILED verdict used to
+ *  satisfy both the verdict panel AND a separate unavailable callout, rendering the same
+ *  provider-error text twice — the adversary-review-duplication bug.)
+ *
+ *  - "verdict-panel":      a structured verdict exists (available OR failed). The panel owns it,
+ *                          including the failure state and its "sole adversary" framing.
+ *  - "legacy-unavailable": no structured verdict, but the legacy flag says the review could not run
+ *                          (proposals persisted before the single-adversary consolidation).
+ *  - "no-review":          no verdict and no unavailable flag — the review simply never triggered. */
+export type RedTeamCardState = "verdict-panel" | "legacy-unavailable" | "no-review";
+
+export function redTeamCardState(hasVerdict: boolean, adversaryUnavailable: boolean): RedTeamCardState {
+  if (hasVerdict) return "verdict-panel";
+  if (adversaryUnavailable) return "legacy-unavailable";
+  return "no-review";
+}
+
 /** The model to attribute a FAILED review to, without fabricating one: the verdict's own
  *  persisted model first; when the failure was "not configured" there IS no model — return
  *  null rather than blaming a configured/default model that never ran. A configured

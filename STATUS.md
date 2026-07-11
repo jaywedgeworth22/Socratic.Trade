@@ -30,6 +30,74 @@ https://github.com/benbjohnson/litestream/issues/1354. Post-deploy box verificat
 (litestream 0.5.12 running, replication continuity, fd flatness at 0/10/25 min, health,
 restore marker untouched) recorded on the effort board + #agent-sync.
 
+## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
+Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval
+card — the "Devil's advocate (red team)" verdict panel AND a separate "Red Team review unavailable
+(provider error)" callout, both printing the same provider-error text. Root cause was a UI
+double-render, not two reviewers: "Devil's Advocate" and "Red Team" are the same single adversary
+(the single-adversary consolidation #1191 was backend-correct). #1076 (Jul 8) gave the verdict panel
+a failure branch; #1191 (Jul 9) then added a second "unavailable" callout whose condition was a
+subset of the panel's, so both fired on failure. Fix: a new pure/total `redTeamCardState()`
+(`app/console/lib/red-team.ts`) returns exactly one of `verdict-panel | legacy-unavailable |
+no-review`; the approval card switches all three sections on it, so they're mutually exclusive by
+construction. The "sole adversary" line was folded into the panel's failure branch; the callout is
+now a legacy-only fallback (no structured verdict + legacy `adversaryUnavailable` flag). Added 5
+regression assertions. Gates green (tsc/lint/3400 tests/build) under node26 — see the rollout note's
+Node ABI caveat. See `docs/rollouts/2026-07-10-adversary-review-duplication.md`.
+## 2026-07-10 — Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch `monet/privacy-terms-pages`)
+Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added `/privacy-policy` +
+`/terms-and-conditions` (boilerplate, matching the existing `/how-it-works`/`/welcome` page
+pattern), describing the app's real opt-in Twilio SMS notification channel with the specific
+language Twilio's compliance review looks for (opt-in consent, message frequency varies, rates may
+apply, STOP/HELP, no sale of phone numbers). Registered in `sitemap.ts`/`robots.ts`. Caught the
+actual thing that would have broken verification: `middleware.ts` redirects every unauthenticated
+path to `/login` by default — added both new paths to `PUBLIC_PREFIXES` so they're reachable
+without signing in. Verified live via `next dev` (Browser preview): both pages render full content
+unauthenticated. node@24: tsc clean, eslint 0-err, full suite 315/3395, build clean (both pages
+static). See `docs/rollouts/2026-07-10-privacy-terms-pages.md`. Follow-up: owner should have
+counsel review if the product scales past sole-operator use.
+
+## 2026-07-10 — Pricing doc: cover ALL external data sources, not just the core seven (CLAUDE subagent, branch `claude/pricing-doc-all-sources`)
+Owner: "consider all the other data sources we have too, not just those few — marketstack, and
+any others." Extended `docs/market-data-provider-pricing.md` (kept its existing table/traps/dials
+structure intact, added new sections) to cover every external data source the app touches, all
+verified live in code first: marketstack + tradier + intrinio + FRED + Fintech Studios/PowerIntell
++ logo.dev (new "Secondary / fallback sources" table, all confirmed live/wired-in, none dead) plus
+6 new numbered traps (marketstack's free tier is HTTPS-included, NOT HTTP-only as commonly
+misremembered; Tradier sandbox tokens are 15-min-delayed with zero index/Greeks data — only a
+production token from a real, even $0/mo, brokerage account is real-time; Intrinio's gate is a
+14-day trial, not a tier; Fintech Studios' published consumer pricing may not apply to the
+`studio.fintechstudios.com/api/v1` endpoint this app actually calls; FRED never publishes a
+numeric rate limit and its docs 403 naive fetchers). Added a "Keyless & broker-bundled sources"
+section (yahoo, nasdaq screener, webull-unofficial, SEC XBRL/EDGAR, alpaca-news/snapshot,
+robinhood-quotes/fundamentals, stooq, plus a congress.trade internal-app callout) and a
+"Usage-billed (not subscription) providers" pointer to API-Usage-Monitor for LLM/RAG spend
+(no price tables duplicated here). Mid-task owner scope addition: a "Cheap alternatives —
+evaluated, not integrated" section researching alphastocks.app (owner-named — turned out to be a
+consumer scoring/screener app with no API surface, not a candidate) plus EODHD, marketdata.app,
+Finazon, Finage, StockData.org, Databento, financialdatasets.ai, and Alpaca's Algo Trader Plus
+($99/mo SIP+OPRA upgrade — the one genuine near-term candidate since it's additive to Alpaca
+infra we already hold, not a new vendor); confirmed IEX Cloud is defunct (Aug 2024) so it stops
+getting re-suggested. Also flagged a real gap in "Where the dials live": none of the six new
+keyed providers have a `provider-rate-limit.ts` `HARD_DEFAULTS` entry (only finnhub/
+alpha-vantage/yahoo-finance/twelvedata do) — nothing paces them today besides generic 429 retry.
+Docs-only change; gates green (see rollout note). See
+`docs/rollouts/2026-07-10-pricing-doc-all-sources.md`.
+
+## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
+Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
+verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —
+requires a non-blank reasoning note (`parseLearningReviewVerdicts` drops blank-note defers as
+malformed). For `learned_context_pending` rows this leaves the item exactly pending and persists the
+note to a new `review_note` column (`src/lib/db.ts`/`db-learning.ts`,
+`setPendingLearnedContextReviewNote`), surfaced in the queue UI
+(`app/console/approvals/learned-context.tsx`, new `ReviewerNote` "Left for you because..." line). For
+durable `learned_context` rows it's a no-op (no queue to leave it in), matching `needs_more_data`.
+Verified (new test) that a deferred item doesn't force a same-set re-review loop — it falls out of
+the existing #1278/#1328 marker/fingerprint architecture unchanged (sticks until a human acts or
+another item's arrival brings the reviewer back to the whole set). +6 tests in
+`test/learning-review.test.ts`. Gate green: tsc clean, 3389 tests / 315 files, build clean, lint 0
+errors. See `docs/rollouts/2026-07-10-learning-review-defer.md`.
 ## 2026-07-10 — merge-shepherd server-side environment branch gate (CLAUDE subagent, branch `claude/shepherd-environment-gate`)
 #1266 follow-up: the merge-shepherd job's `if: github.ref == 'refs/heads/main'` guard is
 YAML — branch-editable, and a `workflow_dispatch` against a non-main branch loads that
@@ -534,6 +602,12 @@ across the full suite. Gate green: lint 0 errors / tsc clean / 306 files 3171 te
 LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's committed work): merged
 `origin/main` clean, full gate re-run green in this worktree, post-`npm test` check confirmed no
 lingering `agentic-vitest-*` dir in the real tmpdir, PR opened via `land.sh` with auto-merge armed.
+
+## 2026-07-10 — Canonical market-data pricing doc (CLAUDE, branch `claude/provider-pricing-doc`)
+New `docs/market-data-provider-pricing.md`: verified vendor pricing/tier facts for all 7 market-data
+providers, the 6 traps already hit once (tiingo news 403s, tiingo hidden $300/yr annual — owner
+correction, AV per-IP cap, FMP annual-billing display, Massive scope, Finnhub cliff), current
+paid/free/considering state, and the Infisical knob cheat-sheet. Update it on every plan change.
 
 ## 2026-07-09 — PRODUCTION MOVED to the 8 GB Hetzner box `135.181.192.190` (CLAUDE, branch `claude/hetzner-server-migration-d59cd1`)
 Owner-directed server migration off the 4 GB `91.98.44.8` box (which OOM-failed its final build
