@@ -393,6 +393,36 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(listSyntheticStops("SYN-JUSTPLACED", "local")).toHaveLength(1);
   });
 
+  it("registration folds a SAME-TICK PARTIAL broker-stop placement into coverage — no needless synthetic row when combined coverage is already full (Codex review, PR #1331)", async () => {
+    // 100-share long already 40-covered by a manual live sell. Reconcile places a broker-held
+    // trailing stop for the true 60-share remainder — a PARTIAL placement (60 < 100). The order list
+    // is fetched BEFORE reconcile runs, so it can only ever show the 40-share order, never the fresh
+    // 60-share stop. Registration coverage therefore sees only 40/100. Before the fix that undercount
+    // armed a needless full-size synthetic row for an already-fully-covered position (40 manual + 60
+    // broker = 100) — a stale row that then over-sells on a later tick where the order fetch fails.
+    // The fix folds the just-placed partial quantity into registration coverage, exactly as the fire
+    // path already does. Mark is held AT entry (no trail breach) so this isolates the REGISTRATION
+    // decision from any firing.
+    broker.positions = [{ symbol: "MU", quantity: 100, averageCost: 100, marketValue: 10000 }]; // mark == entry (100)
+    broker.quotes = { MU: { price: 100 } };
+    broker.orders = [{ id: "manual-sell", symbol: "MU", side: "sell", type: "limit", state: "queued", quantity: 40 }];
+    connectTestAccount("SYN-REG-PARTIAL", "live");
+    const policy: TradingPolicy = {
+      ...policyFor("SYN-REG-PARTIAL"),
+      activeBroker: "robinhood",
+      robinhoodBrokerStops: true,
+      riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5, stopLossPct: 8 }
+    };
+    const result = await runSyntheticStopMonitor("local", policy, true);
+    // Reconcile placed exactly the 60-share partial broker stop (100 position - 40 already covered).
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 60 });
+    // The fix: 40 (manual) + 60 (just-placed partial) == 100 fully covers the position, so NO
+    // synthetic row is registered. Before the fix, registration saw only 40/100 and armed one.
+    expect(listSyntheticStops("SYN-REG-PARTIAL", "local")).toHaveLength(0);
+    expect(result.exited).toBe(0);
+  });
+
   it("a PARTIAL synthetic fire (uncovered remainder) does NOT cancel the still-valid broker stop covering the rest of the position", async () => {
     // A fractional long (10.6 sh) whose whole-share portion is already protected by a native Alpaca
     // trailing stop placed on an earlier tick (floored to 10 sh — Alpaca rejects fractional trailing
