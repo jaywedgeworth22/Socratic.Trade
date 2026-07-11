@@ -231,6 +231,8 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, PR #1398) — COMPLETED 2026-07-11.** Merged externally as `8fca436d` after hosted/local gates passed. Removed the retired second-scheduler deploy workflow and synchronized real GitHub workflow/cron observability. Main auto-deploy was triggered; production revision remains independently unverified. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+- **Public auth/rate-limit hardening (CODEX, PR #1399) — COMPLETED 2026-07-11.** Merged externally as `97152c25`; trusted-IP OAuth limiting, bounded limiter state, explicit CF trust parsing, and paid tuning admission are on `main`. Main auto-deploy was triggered; production revision remains independently unverified.
 - **Refactoring strategy.ts (AG, branch `agent/strategy-split`) — COMPLETED 2026-07-11.** Split the monolithic `strategy.ts` into `strategy-risk.ts` and `strategy-execution.ts`, retaining `strategy.ts` as a coordinator/barrel. Cleaned up dependencies and automated import fixes. All tests (3427) passing. Rollout note: `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — ✅ COMPLETED 2026-07-09: PR #1282 merged to `main` (auto-merge squashed).** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
@@ -1598,12 +1600,10 @@ As of 2026-07-08 (assignment-rule update).
   forwards identity provenance; only verified Cloudflare Access/Auth.js primary or allowlisted emails
   can satisfy email-based admin auth, while the auth-unconfigured primary-email fallback is always
   denied. The spoofable localhost opt-in was removed, the timing-safe token path remains, and every
-  stale admin-route comment now matches the gate. Node 24 verification is green: focused Vitest 6
-  files / 60 tests, touched-file ESLint clean, and `tsc --noEmit` clean. Reviewed implementation
-  commit `96b87d89` is reconciled in the working tree with `origin/main@1c7c2be8`; the merge had no
-  textual conflicts, and the only semantic overlap was this additive effort/status-doc union. The
-  merge remains staged and uncommitted pending the current-main full gate. No push, PR, production
-  environment, main merge, or deploy mutation.
+  stale admin-route comment now matches the gate. Focused Node24 security coverage is green (6 files/
+  60 tests). Current `origin/main@8fca436d` is merged without auth-code overlap; final gate green:
+  lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build. Merge commit/PR next; no push,
+  production environment, main merge, or deploy mutation.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch

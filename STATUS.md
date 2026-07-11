@@ -1,5 +1,21 @@
 # Status
 
+## 2026-07-11 — Retired deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`)
+Removed the disabled Mac/PM2 `.github/workflows/deploy.yml`, whose YAML still declared `push: main`
+and manual-dispatch triggers; Coolify's GitHub-App auto-deploy remains the sole production path.
+Replaced stale deployment and
+runner instructions with the current Coolify runbook. Updated `Sentry CI Report` to observe every
+active workflow and map all six active scheduled lanes (`CI`, cache cleanup, effort sync, Security,
+Playwright, shared-package pin) to their source cron expressions; `merge-shepherd` is observed for
+failures but has no Sentry Cron mapping because its in-repo workflow is manual-only. Added structural
+Vitest coverage that derives independently runnable workflow names and schedules from
+`.github/workflows/` and fails on reporter drift or deploy-workflow resurrection; reusable-only
+`workflow_call` definitions are correctly covered through their caller rather than falsely claimed as
+separate `workflow_run` events. Final Node 24 gate was green:
+lint 0 errors / 408 warnings, tsc clean, 325 Vitest files / 3,604 tests passed, Next build clean;
+focused workflow-parity regression 2/2 passed. PR #1398 merged externally as `8fca436d`; the configured
+main auto-deploy was triggered, but this session has not independently verified the production revision.
+Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
 ## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
 Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
 now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled
@@ -9,8 +25,9 @@ buckets and caps live subjects at 10,000 with deterministic LRU eviction. Middle
 override cannot re-arm header trust while Auth.js remains fail-closed. Paid `/api/strategy/tune`
 now uses a named 10/min per-user limiter plus a one-in-flight-per-user guard before its LLM call.
 Scope deliberately excludes active broker/DB lanes and the `.env.example` file owned by active
-PR #1389. Full verification is green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
-3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge. Exact commands
+PR #1389. Full verification was green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
+3,499 tests, Next build clean). PR #1399 merged externally as `97152c25`; auto-deploy was triggered,
+but this session has not independently verified the production revision. Exact commands
 and the initial Node-ABI mismatch are recorded in
 `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
 ## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
@@ -21,12 +38,11 @@ admin access accepts only Cloudflare Access or Auth.js session provenance; the a
 `PRIMARY_USER_EMAIL` fallback is denied even when it names the primary operator or appears in
 `ADMIN_USER_EMAILS`. The timing-safe `ADMIN_REINDEX_TOKEN` path remains available in every
 environment. Every stale admin-route comment was updated to match this behavior, and the spoofable
-localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Node 24
-verification is green: focused Vitest 6 files / 60 tests, touched-file ESLint clean, and
-`tsc --noEmit` clean. Reviewed implementation commit `96b87d89` is now reconciled in the working
-tree with `origin/main@1c7c2be8`: the merge had no textual conflicts, and the only semantic overlap
-was the additive `STATUS.md` / `docs/EFFORT-LOG.md` union reviewed here. The merge remains staged and
-uncommitted pending the current-main full gate. No push or PR has been run. See
+localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Current
+`origin/main@8fca436d` is merged without auth-code overlap. Final Node 24 gate is green: lint 0
+errors/407 warnings, tsc clean, 325 files/3,616 tests, and production build clean; focused security
+coverage is 6 files/60 tests. The current-main merge remains staged for commit; no push or PR has been
+run. See
 `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)

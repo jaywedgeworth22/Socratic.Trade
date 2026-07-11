@@ -9,7 +9,8 @@ filling the missing pieces.
 > security/correctness only. The shared admin gate now denies by default in every environment unless
 > the caller has a middleware-proven Cloudflare Access/Auth.js admin email or valid admin token. The
 > former broad `NODE_ENV !== "production"` bypass is removed without a hostname-based replacement;
-> the auth-unconfigured primary-email fallback never grants admin access. See
+> the auth-unconfigured primary-email fallback never grants admin access. Current-main Node 24 gate
+> is green (lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build). See
 > `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 > **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
@@ -1166,8 +1167,9 @@ the Infisical runner (`npm run start:secrets`), which injects them at startup, a
 GCP runner was removed — Infisical is the single path.) The box authenticates with the machine
 identity's **Client ID + Client Secret** (universal auth, long-lived; the runner mints a short-lived
 token each launch — a raw `INFISICAL_TOKEN` is only a fallback and the Client Secret is NOT that
-token). Production cutover is scripted (`scripts/infisical-prod-cutover.sh`) and `deploy.yml`
-auto-picks-up the box bootstrap; shared App-A/B secrets are pulled via an app-wins overlay
+token). Current Coolify production injects that identity through `scripts/coolify-prod-start.sh`;
+the retired Mac rollback cutover remains scripted in `scripts/infisical-prod-cutover.sh`. Shared
+App-A/B secrets are pulled via an app-wins overlay
 (`INFISICAL_SHARED_PROJECT_ID` + its own Client ID/Secret). This documents existing behavior; no phase
 scope, timeline, or approach changed.
 
@@ -1252,6 +1254,14 @@ scope, timeline, or approach changed.
   for adjusted-close when CONGRESS_TRADE_READS_ENABLED tier precedes Yahoo.
 
 ## Fleet-infra tooling (host-side, no product-roadmap change)
+
+- **Retired deploy safety + CI Sentry coverage** (2026-07-11,
+  `.github/workflows/sentry-ci-report.yml`, `scripts/sentry-ci-report.py`,
+  `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`): removed the
+  obsolete Mac/PM2 GitHub Actions deploy workflow so Coolify remains the only
+  automatic production path, and synchronized Sentry failure/cron observation
+  with the active workflow fleet. This is CI/operations hardening only; it does
+  not change product scope, phase order, or acceptance criteria.
 
 - **Effort-log union-merge safety net** (2026-07-10,
   `scripts/effort-log-union-merge.py`,

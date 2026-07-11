@@ -86,17 +86,20 @@ separate synthetic-primary-email path without relying on either environment or h
 - `rg -n 'allowNonProd' . --glob '!node_modules/**' --glob '!.git/**'` — no code, test, or live
   callsites remain; matches are limited to historical audit/rollout documents describing the old
   behavior.
+- Final current-main (`8fca436d`) Node 24 gate:
+  - `npm run lint` — 0 errors / 407 grandfathered warnings.
+  - `npx tsc --noEmit` — clean.
+  - `npm test` — 325 files / 3,616 tests passed.
+  - `npm run build` — production build passed with existing middleware/Sentry/cache warnings only.
 
-No full gate, push, or PR has been run; those remain coordinator-gated.
+No push or PR has been run; those remain coordinator-gated.
 
 ## Follow-ups / risks
 
 - Concurrent `codex/admin-rate-limits` also edits several admin routes. The coordinator must review
   the overlapping route-comment-only hunks while reconciling the branches; auth behavior remains
   owned by this lane.
-- Reviewed implementation commit `96b87d89` was created, then `origin/main@1c7c2be8` was merged with
-  `--no-commit --no-ff`. The merge had no textual conflicts; the only file intersection between the
-  two sides was the additive `STATUS.md` / `docs/EFFORT-LOG.md` union, which was inspected and kept.
-  The merge remains staged and uncommitted for coordinator-owned full re-verification.
-- A full lint/test/build gate, push, PR, main merge, deploy, and production environment mutation
-  remain outside this focused-verification handoff and were not run.
+- Reviewed implementation commit `96b87d89` was created, then current `origin/main@8fca436d` was
+  merged in two conflict-free steps. Intersections were additive status/effort docs only; auth code
+  did not overlap. The final merge remains staged for commit after the green gate above.
+- Push, PR, main merge, deploy, and production environment mutation were not run.
