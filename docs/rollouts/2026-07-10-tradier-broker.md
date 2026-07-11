@@ -366,3 +366,20 @@ enable.
    to coverage. **Action:** confirm Tradier's `/orders` ordering (newest- vs
    oldest-first) against a live account; if oldest-first, page from the end or
    raise/remove the cap.
+
+## Fixups round 4 (codex-autofix adversarial review, 2026-07-10)
+
+Adversarial review of the merged `[codex-autofix]` commit (5db91883, 10 money-path changes)
+confirmed 8 sound; fixed the 2 LOW residuals:
+- **#6 OCC-position filter was a no-op** — Tradier `/positions` rows carry no `option_type`
+  field, so `rows.filter(p => !p.option_type)` removed nothing and option positions still
+  polluted the equity book. Now discriminates by OCC symbol format
+  (`/\d{6}[CP]\d{8}$/` on the symbol) — drops option contracts, keeps every equity incl.
+  dotted/hyphenated share classes (BRK-B never matches the OCC suffix). Regression test added.
+- **#5 short-value fallback double-counted** — dropped the `?? optionalNumber(b.short_market_value)`
+  final fallback: `short_market_value` is stock+option short COMBINED, so on a cash/IRA account
+  holding a short option it double-subtracted the option-short value already netted into
+  `optionMarketValue`. Margin/PDT accounts were unaffected (nested `stock_short_value:0`
+  short-circuits). Now uses only the stock-specific top-level + margin/pdt nested fields.
+
+Gate: tsc clean, 46/46 tradier tests, build green (node@24).

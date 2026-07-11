@@ -448,15 +448,16 @@ class TradierBrokerGateway implements BrokerGateway {
       const optionShort = number(b.short_option_value ?? b.option_short_value ?? 0);
       const optionMarketValue = optionLong - optionShort;
       const rawStockLong = optionalNumber(b.stock_long_value);
-      // Tradier documents short stock value under both top-level stock_short_value and
-      // the margin/pdt nested objects, and also exposes a top-level short_market_value.
-      // Try each in turn so a nested-only field is not missed. The value is typically
-      // a positive absolute number; it is subtracted from stock_long_value to compute
-      // net equity from stock positions.
+      // Tradier documents short stock value under the top-level stock_short_value and the
+      // margin/pdt nested objects. Try each in turn so a nested-only field is not missed.
+      // The value is a positive absolute number, subtracted from stock_long_value to compute
+      // net equity from stock positions. Deliberately NOT falling back to top-level
+      // short_market_value — that is stock+option short COMBINED, so using it here would
+      // double-count option-short value already netted into optionMarketValue above (a
+      // cash/IRA account holding a short option would otherwise understate equity).
       const rawStockShort = optionalNumber(b.stock_short_value)
         ?? (margin ? optionalNumber(margin.stock_short_value) : undefined)
-        ?? (pdt ? optionalNumber(pdt.stock_short_value) : undefined)
-        ?? optionalNumber(b.short_market_value);
+        ?? (pdt ? optionalNumber(pdt.stock_short_value) : undefined);
       const equityMarketValue =
         rawStockLong != null && rawStockShort != null
           ? rawStockLong - rawStockShort
@@ -487,11 +488,14 @@ class TradierBrokerGateway implements BrokerGateway {
       const positionsField = typeof body.positions === "object" && body.positions ? (body.positions as Record<string, unknown>).position : undefined;
       const rows = arr<Record<string, unknown>>(positionsField);
       if (rows.length === 0) return [];
-      // Filter out OCC option positions: Tradier's /positions returns open
-      // option contracts alongside equities. Option positions carry an
-      // option_type field; mapping them as EquityPosition pollutes the equity
-      // book/risk checks for mixed stock+options accounts.
-      const equityRows = rows.filter((p) => !p.option_type);
+      // Filter out OCC option positions: Tradier's /positions returns open option contracts
+      // alongside equities, keyed by their 21-char OCC symbol (root + YYMMDD + C/P + 8-digit
+      // strike, e.g. DELL140118C00015000). Tradier position rows carry NO option_type field, so
+      // discriminate by the OCC symbol format; mapping options as EquityPosition would pollute
+      // the equity book/risk checks for mixed stock+options accounts. A plain ticker (incl. a
+      // dotted/hyphenated share class like BRK-B) never matches the OCC suffix, so no real equity
+      // position is dropped.
+      const equityRows = rows.filter((p) => !/\d{6}[CP]\d{8}$/.test(String(p.symbol ?? "").trim().toUpperCase()));
       if (equityRows.length === 0) return [];
       // Canonicalize to the hyphenated form so a share-class position (BRK-B) matches its own resting
       // orders/quotes/proposals AND the quote-map keys getEquityQuotes returns — Tradier speaks dotted

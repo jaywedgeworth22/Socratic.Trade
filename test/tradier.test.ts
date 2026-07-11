@@ -440,6 +440,23 @@ describe("Tradier adapter — positions", () => {
     const pos = await getTradierGateway("local").getEquityPositions(ACCT);
     expect(pos[0]).toMatchObject({ symbol: "AAPL", quantity: 10, averageCost: 150, marketValue: 2000 });
   });
+
+  it("filters OCC option positions out of the equity book by symbol format, keeping equities (incl. dotted share classes)", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u) => u.includes("/positions"), body: { positions: { position: [
+        { symbol: "DELL140118C00015000", quantity: 2, cost_basis: 300 }, // OCC option — must be dropped
+        { symbol: "AAPL", quantity: 10, cost_basis: 1500 },              // equity — kept
+        { symbol: "BRK.B", quantity: 4, cost_basis: 1600 }               // dotted share class — kept (never matches OCC suffix)
+      ] } } },
+      { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: [ { symbol: "AAPL", last: 200 }, { symbol: "BRK.B", last: 400 } ] } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const pos = await getTradierGateway("local").getEquityPositions(ACCT);
+    const syms = pos.map((p) => p.symbol).sort();
+    expect(syms).toEqual(["AAPL", "BRK-B"]); // option excluded; dotted share class canonicalized + kept
+    expect(pos.find((p) => p.symbol === "DELL140118C00015000")).toBeUndefined();
+  });
 });
 
 describe("Tradier adapter — share-class symbol canonicalization (finding #1/#4)", () => {
