@@ -56,6 +56,28 @@ already ledgers their partials); `replaced` stays out (live/superseded). +5 test
 node26: tsc 0, full suite 3434/3434, lint 0-err, build clean. PR: READY, NOT merged.
 See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — push updates PR #1382,
 await review.
+## 2026-07-10 — Learning-review orphan hardening: adversarial re-review of PR #1328 found + fixed 2 more orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`)
+PR #1328 (deferred #1278 finding #2, >80-item backlog drain) shipped and merged, but a Workflow-based
+adversarial re-review (4 lenses, each finding independently re-verified by a second agent trying to
+refute it via empirical execution) found the fix had two adjacent, real, empirically-reproduced gaps
+that reproduce the SAME "shown to LLM zero times, silently marked reviewed" failure mode via different
+mechanisms: (1) a tied-timestamp cluster larger than MAX_REVIEW_ITEMS (80) freezes the drain forever
+(same id-ordered 80 re-selected every run); (2) a budget-deferred item can silently age out of the
+7-day pack window before its promised later sweep, on a multi-day drain. Both fixed with one change:
+`buildLearningReviewContextPack`'s learned-row filter now keeps a row if in-window OR un-reviewed
+(mirrors the trigger's own window-free design, 8da047aa) + the truncation cut widens to consume a
+full boundary tie-group. This also closes the previously-"accepted" isolated-old-row self-healing gap
+as a free side effect. Caught and fixed a bug in the fix itself (a stray re-slice) via its own new
+test before landing. 2 tests rewritten (asserted the old, now-wrong behavior), 2 new added, all
+falsified against pre-fix source. node@24: tsc clean, learning-review 38/38, full suite 315
+files/3388 tests, eslint 0-err, build clean. See
+`docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum. This closes finding #2 for
+real — no known open gaps remain in the daily learning-review job's coverage guarantees.
+**Update: PR #1363 merged (`d9dc5d5d`), auto-deployed. Took ~2.5hrs of GitHub mergeStateStatus
+DIRTY re-syncs under a heavy same-day push burst despite being conflict-free the whole time by
+every local check; the reliable tiebreaker turned out to be a direct `gh pr merge <n> --squash`
+(no `--auto`) attempt, which forces a fresh server-side merge check independent of the stale
+cached flag.**
 ## 2026-07-10 — Provider-knob sync: API-Usage-Monitor -> Infisical prod (CLAUDE opus subagent, branch `claude/provider-knob-sync`)
 Mac-side script + launchd template making the API-Usage-Monitor the source of truth for market-data
 subscription plans: it syncs each plan's env-knob values into Infisical prod (where the trading app
