@@ -2048,8 +2048,8 @@ As of 2026-07-08 (assignment-rule update).
 
 - **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (CLAUDE,
   branch `claude/per-position-stop-plans`, stacked on PR #1331) — IN PROGRESS 2026-07-10, gates
-  green (lint/tsc/3490 tests/build); PR #1371 open, 2 Codex review rounds fixed (13 findings —
-  see the rollout doc's "Review fixes round 1-2" sections).** MOVED from Planned (below) — same
+  green (lint/tsc/3511 tests/build); PR #1371 open, 3 Codex review rounds fixed (21 findings —
+  see the rollout doc's "Review fixes round 1-3" sections).** MOVED from Planned (below) — same
   title, see that entry for the full original design/requirements record.
   **Implemented:** `TradeProposal.stopPlan` (`StopPlanStyle` = default/fixed/atr/trailing/none) in
   the LLM structured-output schema + `sanitizeProposals` coercion; `position_stop_plans` table +

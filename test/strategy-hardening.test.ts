@@ -5,6 +5,7 @@ import {
   allowedProposalSides,
   enrichOpeningProposal,
   deterministicBearFilter,
+  filterStopPlansByLiveBasis,
   generateProactiveRiskProposals,
   sanitizeProposals
 } from "../src/lib/strategy";
@@ -379,6 +380,60 @@ describe("generateProactiveRiskProposals per-position stop plans", () => {
   });
 });
 
+describe("filterStopPlansByLiveBasis (Codex review, PR #1371)", () => {
+  const pos = (symbol: string, averageCost: number, quantity = 10): EquityPosition => ({
+    symbol, quantity, averageCost, marketValue: quantity * averageCost
+  });
+
+  it("keeps a plan whose recorded avgCost matches the live position exactly", () => {
+    const out = filterStopPlansByLiveBasis(
+      { NVDA: { style: "trailing", avgCost: 100 } },
+      [pos("NVDA", 100)]
+    );
+    expect(out).toEqual({ NVDA: "trailing" });
+  });
+
+  it("keeps a plan within the small rounding tolerance", () => {
+    const out = filterStopPlansByLiveBasis(
+      { NVDA: { style: "fixed", avgCost: 100.001 } },
+      [pos("NVDA", 100)]
+    );
+    expect(out).toEqual({ NVDA: "fixed" });
+  });
+
+  it("drops a STALE plan whose recorded avgCost no longer matches the live position (closed + re-bought at a different basis)", () => {
+    const out = filterStopPlansByLiveBasis(
+      { NVDA: { style: "none", avgCost: 100 } },
+      [pos("NVDA", 130)] // re-bought at a materially different cost basis
+    );
+    expect(out).toEqual({});
+  });
+
+  it("drops a plan for a symbol with NO current position at all (no basis to compare — a persisted row only makes sense for a scale-in)", () => {
+    const out = filterStopPlansByLiveBasis(
+      { NVDA: { style: "trailing", avgCost: 100 } },
+      []
+    );
+    expect(out).toEqual({});
+  });
+
+  it("drops a plan for a fully-closed position (quantity ~0)", () => {
+    const out = filterStopPlansByLiveBasis(
+      { NVDA: { style: "trailing", avgCost: 100 } },
+      [pos("NVDA", 100, 0)]
+    );
+    expect(out).toEqual({});
+  });
+
+  it("drops 'default' style plans (the no-op case) regardless of basis", () => {
+    const out = filterStopPlansByLiveBasis(
+      { NVDA: { style: "default", avgCost: 100 } },
+      [pos("NVDA", 100)]
+    );
+    expect(out).toEqual({});
+  });
+});
+
 describe("sanitizeProposals — per-position stop plan coercion (Codex review, PR #1371)", () => {
   it("downgrades a 'none' plan with no rationale to 'default' (an unauditable no-stop choice must never silently apply)", () => {
     const [p] = sanitizeProposals([buy({ stopPlan: { style: "none" } })]);
@@ -424,6 +479,16 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     expect(p.bracketTakeProfit).toBeUndefined();
   });
 
+  it("strips a 'trailing'/'none' plan's bracket legs even on a SUB-SHARE dollar order (canUseWholeShareBracket false) — leaving them would make the Alpaca gateway treat it as a bracket dollar order and reject it for being below one whole share (Codex review, PR #1371)", () => {
+    const p = enrichOpeningProposal(
+      buy({ stopPlan: { style: "trailing" }, dollarAmount: 50, quantity: undefined, bracketStopLoss: 90, bracketTakeProfit: 120 }),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan // TSLA @ $100 — $50 is sub-share
+    );
+    expect(p.bracketStopLoss).toBeUndefined();
+    expect(p.bracketTakeProfit).toBeUndefined();
+  });
+
   it("a 'none' plan on the proposal discards any LLM-proposed bracket stop AND take-profit (no bracket legs at all — the position runs unprotected by design)", () => {
     const p = enrichOpeningProposal(
       buy({ stopPlan: { style: "none", rationale: "high-conviction thesis, no stop desired" }, bracketStopLoss: 90 }),
@@ -453,6 +518,26 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     expect(p.bracketStopLoss).toBe(95); // 100 * (1 - 5/100)
   });
 
+  it("a 'default' (no explicit plan) opening does NOT attach an ATR bracket stop when the account has atrStops on but NO base stop-loss % configured (ATR only SCALES an already-enabled flat stop — Codex review, PR #1371)", () => {
+    const p = enrichOpeningProposal(
+      buy(), // no stopPlan at all — "default" precedence
+      policy({ activeBroker: "alpaca", atrStops: true, riskRules: { stopLossPct: 0 } }),
+      marketScan,
+      { TSLA: 5 } // a positive ATR pct IS available for this symbol
+    );
+    expect(p.bracketStopLoss).toBeUndefined();
+  });
+
+  it("a 'default' opening DOES use the ATR pct when atrStops is on AND the account has a base stop-loss % configured (ATR scales the already-enabled flat stop)", () => {
+    const p = enrichOpeningProposal(
+      buy(),
+      policy({ activeBroker: "alpaca", atrStops: true, riskRules: { stopLossPct: 8 } }),
+      marketScan,
+      { TSLA: 5 }
+    );
+    expect(p.bracketStopLoss).toBe(95); // 100 * (1 - 5/100) — ATR wins over the flat 8%
+  });
+
   it("a 'fixed'/'atr' plan ALWAYS reprices the bracket stop, discarding even a valid LLM-proposed one (the pinned plan distance must never silently diverge from what every other enforcement layer prices for this symbol)", () => {
     const fixed = enrichOpeningProposal(
       buy({ stopPlan: { style: "fixed" }, bracketStopLoss: 90 }), // 90 IS a valid on-the-correct-side LLM stop
@@ -469,7 +554,7 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     expect(atr.bracketStopLoss).toBe(95); // repriced to the pinned ATR 5%, not the LLM's 90
   });
 
-  it("honors a PERSISTED plan (stopPlanBySymbol, e.g. a scale-in add) when the proposal itself carries no fresh stopPlan", () => {
+  it("honors a PERSISTED plan (stopPlanBySymbol, e.g. a scale-in add) when the proposal itself carries no fresh stopPlan, AND stamps it onto the returned proposal so the approval card's disclosure (which reads p.stopPlan directly) shows the inherited choice (Codex review, PR #1371)", () => {
     const p = enrichOpeningProposal(
       buy(),
       policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
@@ -479,6 +564,7 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     );
     expect(p.bracketStopLoss).toBeUndefined();
     expect(p.bracketTakeProfit).toBeUndefined();
+    expect(p.stopPlan).toEqual({ style: "trailing" });
   });
 
   it("the proposal's OWN fresh stopPlan takes precedence over a stale persisted one", () => {

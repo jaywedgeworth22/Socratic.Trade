@@ -211,21 +211,90 @@ with `DEEPSEEK_API_KEY` resolving empty — an Actions-secrets configuration iss
 PR's diff, requiring owner action (not fixed here; all 13 findings above were instead fixed
 manually in this session).
 
+## Review fixes round 3 (Codex on PR #1371, commit `c64bd06`, 8 more findings)
+
+1. **`bracketWholeShareMinimum` didn't know a "fixed"/"atr" plan ALWAYS attaches a stop leg** —
+   even with the account's own `stopLossPct`/`takeProfitPct` both 0, the plan's universal-
+   availability fallback (`STOP_PLAN_FALLBACK_STOP_PCT`/real ATR pct) still guarantees a bracket at
+   `enrichOpeningProposal`. The sizing function's early `if (stopPct <= 0 && takePct <= 0) return
+   undefined` skipped the whole-share bump for these plans, leaving a sub-share order that then had
+   its guaranteed-but-never-actually-attachable bracket stripped by the sub-share branch. Fixed: a
+   `planGuaranteesStopLeg` check (`plan === "fixed" || plan === "atr"`) bypasses that early return.
+2. **A scale-in that omits its OWN `stopPlan` but inherits a persisted one never stamped it onto
+   the returned proposal** — `enrichOpeningProposal` applied the inherited plan (stripping/repricing
+   brackets) but left `next.stopPlan` as whatever it started (usually `undefined`), so
+   `ApprovalCard`'s disclosure (which reads `p.stopPlan` directly) never showed the owner that an
+   inherited "none"/"trailing"/fixed/atr choice governed the order. Fixed: stamps `next.stopPlan =
+   { style: plan }` whenever an inherited (non-"default") plan applies and the proposal didn't
+   already carry its own.
+3. **The "trailing"/"none" bracket-leg-stripping only ran INSIDE the whole-share bracket branch** —
+   a SUB-share Alpaca dollar order with LLM-supplied bracket fields skipped that branch entirely
+   (`canUseWholeShareBracket` false), so the fields survived; the Alpaca gateway's `isBracket =
+   !!(bracketTakeProfit || bracketStopLoss)` then still treated it as a bracket dollar order and
+   REJECTED it for being below one whole share, even though the plan never wanted a bracket at all.
+   Fixed: the strip now runs unconditionally, before the whole-share branching decision.
+4. **`stopPlanBySymbol`'s load only copied `.style`, never comparing the persisted `avgCost` to the
+   live position's `averageCost`** — unlike `planTakeProfitTrims`' own ratchet, which resets on a
+   basis mismatch. A symbol closed and re-bought before any run observed it flat (a fast
+   broker/manual close+reopen the app's own `clearStopPlans` sweep never caught between ticks) could
+   have its stale plan silently govern a completely different lot. Fixed: extracted a new exported
+   `filterStopPlansByLiveBasis` (mirrors the take-profit ratchet's `Math.abs(avgCost - live) < 0.005`
+   pattern) — a symbol with no live position at all, or a basis mismatch, is dropped.
+5. **`evaluateTradeProposal`'s bracket-permission gate didn't recognize an explicit stop plan** — on
+   a bare account (no `"bracket"` in `permittedOrderTypes`, no `stopLossPct`), a "fixed"/"atr" plan's
+   guaranteed fallback bracket would get attached by `enrichOpeningProposal` but then REJECTED in
+   review, making fixed/ATR per-position stops unusable on exactly the accounts universal
+   availability was meant to cover. Fixed: `proposal.stopPlan?.style === "fixed" || "atr"` is now an
+   additional green-light alongside the two existing ones.
+6. **`deriveProtection`'s non-"none" branch reused the account-wide `base.label`/`base.tone`
+   whenever ANY base label existed, regardless of whether it actually described the mechanism the
+   plan pins** — e.g. a "trailing" plan on an account with only a flat stop configured showed "App
+   stop −8%" (describing the FIXED mechanism, not the trail actually protecting the position), and a
+   halted-but-bare account could show a plan as actively protecting (`tone: "pos"`) even though the
+   plan's own enforcement (the same scheduler-tick monitor as the account-wide rules) is paused too.
+   Fixed: the label/tone are now built from `stopPlan.style` and `policy.systemState === "halted"`
+   directly — never inherited from the base label's content. A REAL resting broker stop order still
+   wins outright (accuracy over any plan's intent), same principle as the "none" branch.
+7. **The opening-candidate ATR precompute reused a HELD position's ATR pct for a scale-in with an
+   "atr" plan** — the filter excluded any symbol already present in the (held-position) ATR map, so
+   a fresh entry's bracket got priced off the OLD lot's averageCost-anchored ATR%, which can be
+   materially wrong if the stock moved since the original entry. Fixed: opening candidates now always
+   get their own fresh computation, written to a dedicated `atrStopPctByOpeningSymbol` map (bars are
+   still cache-shared with the held-position pass; only the pct computation re-runs with the fresh
+   entry anchor) — `enrichOpeningProposal` now receives this dedicated map, never the held-position
+   one.
+8. **A "default" (no explicit plan) opening could get an ATR bracket stop attached even with NO
+   base stop-loss % configured** — `policy.atrStops === true` alone (without `stopLossPct > 0`) was
+   enough to use `atrStopPctBySymbol[sym]` in the "default" precedence branch, contradicting the
+   held-position precompute's own gate a few hundred lines above (`atrStops === true && stopLossPct >
+   0`) — ATR only ever SCALES an already-enabled flat stop, it doesn't invent one alone. Fixed: added
+   the same `flatStopPct > 0` requirement to the "default" branch's ATR usage.
+
+New/updated tests: `test/strategy-hardening.test.ts` (new `filterStopPlansByLiveBasis` describe
+block; a stamped-inherited-plan assertion added to the existing scale-in test; a new sub-share
+bracket-leg-stripping test; two new ATR-gating tests for finding 8), `test/antigravity-cheap-wins.test.ts`
+(two new whole-share-bracket-bump tests for finding 1), `test/policy.test.ts` (new bracket-permission
+describe block for finding 5), `test/console-live-data-derive.test.ts` (label/tone rewritten tests for
+finding 6, replacing the now-inapplicable "label unchanged" test). Full gate (lint/tsc/3511 tests/build)
+green. Finding 7 (the ATR-map wiring fix itself) has no dedicated automated test — the fix lives
+entirely in the untested top-level orchestrator function, same as the rest of that function's
+existing wiring; flagged here rather than adding a heavier integration test for one narrow case.
+
 ## Verification
 
 ```bash
 npx tsc --noEmit      # clean
 npm run lint          # 0 errors, 376 pre-existing warnings (grandfathered)
-npx vitest run        # 317 files, 3490 tests, all passing
+npx vitest run        # 317 files, 3511 tests, all passing
 npm run build         # succeeds
 ```
 
 ## Follow-ups
 
 - This branch was stacked on `claude/stop-loss-preset-options-f1jygn` (PR #1331), which received
-  Codex review rounds 5-8 while this feature was being built; each round's fix was landed on the
-  base branch first (isolated worktree), then merged into this branch (4 merge commits: rounds
-  5, 6, 7, 8 — see `git log` on this branch for the exact merge points).
+  Codex review rounds 5-9 while this feature was being built; each round's fix was landed on the
+  base branch first (isolated worktree), then merged into this branch (5 merge commits: rounds
+  5, 6, 7, 8, 9 — see `git log` on this branch for the exact merge points).
 - `evaluateTradeProposal`'s lack of a `stopPlan: "none"` gate is a deliberate design choice (see
   "Decisions made"), not an oversight — flagged here so a future reviewer doesn't assume it's
   missing validation.

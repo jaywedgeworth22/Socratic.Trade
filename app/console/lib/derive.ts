@@ -198,17 +198,29 @@ export function deriveProtection(
       tone: hasRealBrokerStop ? base.tone : "warn"
     };
   }
+  // A REAL, independently-verified resting broker stop order protects regardless of what any plan
+  // says (accuracy over the plan's intent, same principle as the "none" branch above) — keep it
+  // exactly as `deriveBaseProtection` reported it.
+  if (base.label === "Broker stop") {
+    return { ...base, detail: `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice). ${base.detail}` };
+  }
+  // Otherwise, build the label/tone from the PLAN itself, never from the account-wide base label's
+  // CONTENT — that label describes whatever mechanism the ACCOUNT happens to have configured (e.g.
+  // "App stop −8%" for a flat stop), which may be an entirely different mechanism than what this
+  // plan actually pins (e.g. "trailing" on an account with only a flat stop configured, or "atr" on
+  // one with none at all) — reusing it would show a protection lane/price that isn't the one
+  // actually protecting this position. An explicit plan is real, active protection via
+  // STOP_PLAN_FALLBACK_STOP_PCT even on a bare account (universal availability) — but like every
+  // other app-managed enforcement layer, it pauses while the system is Stopped (Codex review, PR
+  // #1371).
+  const halted = policy.systemState === "halted";
   return {
-    ...base,
-    // An explicit "fixed"/"atr"/"trailing" plan is REAL, active protection even when the account
-    // itself has no matching stop configured (it falls back to STOP_PLAN_FALLBACK_STOP_PCT — the
-    // universal-availability guarantee). If the base derivation found nothing to show (`label:
-    // null`, tone "muted" — the honest "no account-wide rule" case), that would otherwise render
-    // this position as unprotected ("—") despite the plan actively covering it (Codex review, PR
-    // #1371) — show the plan's own label instead.
-    label: base.label ?? `${planLabel} (LLM plan)`,
-    tone: base.label ? base.tone : "pos",
-    detail: `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice). ${base.detail}`
+    label: halted ? `${planLabel} plan · paused` : `${planLabel} plan`,
+    detail:
+      `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice)` +
+      (halted ? " — paused while the system is Stopped; resumes when you start or switch to Exit-only." : "") +
+      `. ${base.detail}`,
+    tone: halted ? "warn" : "pos"
   };
 }
 

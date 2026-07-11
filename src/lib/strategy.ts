@@ -125,6 +125,7 @@ import {
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
 import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
+import type { PositionStopPlan } from "./db-api-keys";
 import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
@@ -711,13 +712,10 @@ export async function runStrategyOnce(
     // consistent snapshot for this run. A plan overrides this account's own stop precedence for that
     // one symbol only — "default" (the common case, no row or an explicit default) falls through to the
     // account-wide fixed/ATR/beta chain unchanged.
-    const stopPlanBySymbol: Record<string, StopPlanStyle> = {};
+    let stopPlanBySymbol: Record<string, StopPlanStyle> = {};
     if (policy.accountNumber) {
       try {
-        const plans = getStopPlans(policy.accountNumber, userId);
-        for (const [sym, plan] of Object.entries(plans)) {
-          if (plan.style !== "default") stopPlanBySymbol[normalizeSymbol(sym)] = plan.style;
-        }
+        stopPlanBySymbol = filterStopPlansByLiveBasis(getStopPlans(policy.accountNumber, userId), workingPositions);
       } catch (err) {
         console.warn("[strategy] stop plan lookup failed:", err instanceof Error ? err.message : err);
       }
@@ -1283,6 +1281,14 @@ export async function runStrategyOnce(
     // for an "atr" plan. Uses the decision-time referencePrice (falling back to the proposed limit
     // price) as the entry anchor since the position doesn't exist yet. Best-effort + bounded, same as
     // the held-position variant above.
+    //
+    // A DEDICATED map, never the held-position `atrStopPctBySymbol` — a scale-in add's opening
+    // candidate can share a symbol with an existing held position, and that held-position entry was
+    // computed from the OLD lot's averageCost. Reusing it for the fresh entry would price the new
+    // bracket's ATR distance off a stale, possibly very different anchor if the stock moved
+    // materially since the original entry (Codex review, PR #1371) — so opening candidates always
+    // get their OWN fresh computation here, never skipped just because the symbol is also held.
+    const atrStopPctByOpeningSymbol: Record<string, number> = {};
     const anyOpeningAtrPlan = llmProposals.some(
       (p) => (p.side === "buy" || p.side === "short") && p.stopPlan?.style === "atr"
     );
@@ -1296,20 +1302,20 @@ export async function runStrategyOnce(
       const openingEntryEstimate = (p: TradeProposal): number =>
         p.referencePrice ?? p.limitPrice ?? marketScan.quotesBySymbol[normalizeSymbol(p.symbol)]?.price ?? 0;
       const openingCandidates = llmProposals.filter(
-        (p) =>
-          (p.side === "buy" || p.side === "short") &&
-          !(normalizeSymbol(p.symbol) in atrStopPctBySymbol) &&
-          openingEntryEstimate(p) > 0
+        (p) => (p.side === "buy" || p.side === "short") && openingEntryEstimate(p) > 0
       );
       await Promise.all(
         openingCandidates.map(async (p) => {
           const sym = normalizeSymbol(p.symbol);
           const entryEstimate = openingEntryEstimate(p);
           try {
+            // Daily bars are cached (~30 min) — a symbol that's ALSO a held position reuses the same
+            // fetch the held-position pass above already made; only the pct computation re-runs with
+            // this fresh entry anchor.
             const bars = await fetchDailyOHLC(sym, Date.now(), userId);
             if (!bars) return;
             const pct = atrStopPct(atr(bars, period), entryEstimate, multiple);
-            if (typeof pct === "number") atrStopPctBySymbol[sym] = pct;
+            if (typeof pct === "number") atrStopPctByOpeningSymbol[sym] = pct;
           } catch {
             // best-effort — falls back to the fixed/beta stop for this candidate
           }
@@ -1367,7 +1373,7 @@ export async function runStrategyOnce(
       .map((p) => {
         const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills, stopPlanBySymbol);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
-        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctBySymbol, stopPlanBySymbol);
+        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctByOpeningSymbol, stopPlanBySymbol);
       });
 
     const debatedProposals: TradeProposal[] = [];
@@ -3432,7 +3438,13 @@ function bracketWholeShareMinimum(
     ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
     : (policy.riskRules?.stopLossPct ?? 0);
   const takePct = policy.riskRules?.takeProfitPct ?? 0;
-  if (stopPct <= 0 && takePct <= 0) return undefined;
+  // An explicit "fixed"/"atr" plan ALWAYS attaches a stop leg at enrichOpeningProposal — falling back
+  // to STOP_PLAN_FALLBACK_STOP_PCT (or the real ATR pct) even when the account's own stopPct is
+  // 0/unset (universal availability) — so the whole-share bump must still apply for these plans, or
+  // the order stays sub-share and the fallback stop it's guaranteed to get later gets stripped by the
+  // sub-share branch below instead (Codex review, PR #1371).
+  const planGuaranteesStopLeg = plan === "fixed" || plan === "atr";
+  if (!planGuaranteesStopLeg && stopPct <= 0 && takePct <= 0) return undefined;
   const symbol = normalizeSymbol(proposal.symbol);
   const referencePrice =
     proposal.limitPrice ??
@@ -5274,6 +5286,37 @@ function recordLlmOutcome(
   })();
 }
 
+/**
+ * Filter the account's persisted per-position stop plans down to the ones that actually apply to
+ * the CURRENT lot. Ratchet-style basis check (mirrors planTakeProfitTrims' lastBand-keyed-to-avgCost
+ * pattern): a persisted plan only counts if its recorded avgCost still matches the LIVE position's
+ * averageCost. Without this, a symbol closed and re-bought before any run ever observed it flat
+ * (e.g. a fast broker/manual close+reopen the app's own clearStopPlans sweep never caught between
+ * ticks) could have its stale "none"/"trailing"/fixed plan silently govern a completely different
+ * lot (Codex review, PR #1371). A symbol with no CURRENT position at all has no basis to compare and
+ * is skipped too — a persisted row only ever makes sense for a scale-in add to an already-open
+ * position.
+ */
+export function filterStopPlansByLiveBasis(
+  plans: Record<string, PositionStopPlan>,
+  positions: EquityPosition[]
+): Record<string, StopPlanStyle> {
+  const liveAvgCostBySymbol = new Map(
+    positions
+      .filter((p) => Math.abs(p.quantity) > 0.000001)
+      .map((p) => [normalizeSymbol(p.symbol), p.averageCost])
+  );
+  const out: Record<string, StopPlanStyle> = {};
+  for (const [sym, plan] of Object.entries(plans)) {
+    if (plan.style === "default") continue;
+    const s = normalizeSymbol(sym);
+    const liveAvgCost = liveAvgCostBySymbol.get(s);
+    if (liveAvgCost === undefined || Math.abs(plan.avgCost - liveAvgCost) >= 0.005) continue;
+    out[s] = plan.style;
+  }
+  return out;
+}
+
 export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
     .filter((proposal) => proposal.symbol && proposal.side && proposal.type)
@@ -5520,6 +5563,22 @@ export function enrichOpeningProposal(
   const round2 = (n: number) => Math.round(n * 100) / 100;
   let next: TradeProposal = { ...proposal, referencePrice: refPrice };
   const plan: StopPlanStyle = proposal.stopPlan?.style ?? stopPlanBySymbol[sym] ?? "default";
+  // A scale-in proposal that omits its OWN stopPlan but inherits a persisted one (stopPlanBySymbol)
+  // still has that plan applied below (stripping/repricing brackets) — stamp it onto the returned
+  // proposal too, or the approval card's disclosure (which reads p.stopPlan directly) never shows
+  // the owner an inherited "none"/"trailing"/fixed/atr choice actually governed this order (Codex
+  // review, PR #1371). A fresh, explicit stopPlan from THIS proposal is never overwritten.
+  if (!next.stopPlan && plan !== "default") next = { ...next, stopPlan: { style: plan } };
+  // A "trailing"/"none" plan means NO bracket at all, regardless of whole-share eligibility below —
+  // strip any LLM-supplied bracket legs UNCONDITIONALLY, right here. Stripping them only INSIDE the
+  // whole-share branch left them on a sub-share dollar order (`canUseWholeShareBracket === false`):
+  // the Alpaca gateway's `isBracket = !!(bracketTakeProfit || bracketStopLoss)` check would still see
+  // it as a bracket dollar order and REJECT it for being below one whole share, even though the plan
+  // never wanted a bracket to begin with (Codex review, PR #1371).
+  if (plan === "trailing" || plan === "none") {
+    if (next.bracketStopLoss != null) next = { ...next, bracketStopLoss: undefined };
+    if (next.bracketTakeProfit != null) next = { ...next, bracketTakeProfit: undefined };
+  }
 
   const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
   const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
@@ -5545,26 +5604,25 @@ export function enrichOpeningProposal(
           : (flatStopPct > 0 ? flatStopPct : STOP_PLAN_FALLBACK_STOP_PCT))
         : plan === "trailing" || plan === "none"
           ? 0
-          : (typeof (policy.atrStops === true ? atrStopPctBySymbol[sym] : undefined) === "number" && (atrStopPctBySymbol[sym] ?? 0) > 0
+          // No explicit plan: ATR only SCALES an already-enabled flat stop (mirrors the held-position
+          // precompute's own gate, `atrStops === true && stopLossPct > 0`, a few hundred lines above)
+          // — atrStops alone, with no flat % configured, means "no base stop to scale," not "attach
+          // an 8% stop the account never asked for" (Codex review, PR #1371).
+          : (typeof (policy.atrStops === true && flatStopPct > 0 ? atrStopPctBySymbol[sym] : undefined) === "number" && (atrStopPctBySymbol[sym] ?? 0) > 0
             ? atrStopPctBySymbol[sym]
             : betaScaledStopPct(flatStopPct, beta, policy.betaScaledStops === true));
     const takePct = policy.riskRules?.takeProfitPct ?? 0;
     // Honor a VALID LLM-proposed per-trade stop/take (must sit on the correct side of entry — below
     // for a long, above for a short); a nonsensical one is discarded so the per-symbol fallback fills
-    // it in (a stop on the wrong side is worse than the default). A "trailing"/"none" plan discards
-    // BOTH bracket legs, not just the stop: this position's protection is a trail (or nothing) run
-    // entirely by the synthetic/broker-held trailing lane, not a fixed bracket stop leg — and a
-    // resting take-profit-only leg left in place would itself count as a live exit order under the
-    // coverage-aware placement checks in broker-protective-stops.ts/synthetic-stops.ts, making those
-    // think the position is already fully covered and skip registering the real trailing stop
-    // (Codex review, PR #1371). It also avoids asking Alpaca for a "bracket"-class order with only
-    // one leg present, which the gateway isn't built to send correctly. The laddered take-profit-trim
-    // system (planTakeProfitTrims, above) still manages taking profits over time independently of
-    // this entry-time bracket leg.
-    if (plan === "trailing" || plan === "none") {
-      if (next.bracketStopLoss != null) next = { ...next, bracketStopLoss: undefined };
-      if (next.bracketTakeProfit != null) next = { ...next, bracketTakeProfit: undefined };
-    } else if (plan === "fixed" || plan === "atr") {
+    // it in (a stop on the wrong side is worse than the default). A "trailing"/"none" plan's bracket
+    // legs were already stripped unconditionally above (this position's protection is a trail, or
+    // nothing, run entirely by the synthetic/broker-held trailing lane — never a fixed bracket stop
+    // leg, and a resting take-profit-only leg left in place would itself count as a live exit order
+    // under the coverage-aware placement checks in broker-protective-stops.ts/synthetic-stops.ts,
+    // making those think the position is already fully covered and skip registering the real
+    // trailing stop). The laddered take-profit-trim system (planTakeProfitTrims, above) still manages
+    // taking profits over time independently of this entry-time bracket leg.
+    if (plan === "fixed" || plan === "atr") {
       // An explicit "fixed"/"atr" plan pins an EXACT stop distance (stopPct, computed above) — every
       // other enforcement layer for this symbol (generateProactiveRiskProposals, the synthetic
       // monitor, broker-protective-stops.ts) prices off that SAME distance. Honoring a "valid"

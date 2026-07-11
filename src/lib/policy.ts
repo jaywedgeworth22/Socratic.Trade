@@ -331,12 +331,19 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     reasons.push(`${proposal.type} orders are not permitted.`);
   }
   // Bracket orders: allow when "bracket" is in permittedOrderTypes OR when stop-loss rules are
-  // configured (treating stop-loss rules as an implicit green-light for bracket risk management).
-  // Permissive default — brackets should be encouraged when stop rules are active.
+  // configured (treating stop-loss rules as an implicit green-light for bracket risk management) OR
+  // when this proposal carries an explicit per-position "fixed"/"atr" stop plan — that plan pins a
+  // bracket stop regardless of the account's own stopLossPct (STOP_PLAN_FALLBACK_STOP_PCT on a bare
+  // account, universal availability), so a bare account with no bracket permission and no base stop
+  // configured would otherwise reject the exact proposal the owner/LLM deliberately chose to protect
+  // (Codex review, PR #1371). Permissive default — brackets should be encouraged when stop rules (or
+  // an explicit per-position plan) are active.
   if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
     const bracketPermitted =
       context.policy.permittedOrderTypes.includes("bracket" as any) ||
-      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0);
+      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0) ||
+      proposal.stopPlan?.style === "fixed" ||
+      proposal.stopPlan?.style === "atr";
     if (!bracketPermitted) {
       reasons.push('Bracket orders require "bracket" in permittedOrderTypes or a stopLossPct risk rule.');
     }

@@ -125,6 +125,46 @@ describe("ADV (market-impact) sizing cap", () => {
     expect(enriched.bracketStopLoss).toBeCloseTo(314.07, 2);
     expect(enriched.bracketTakeProfit).toBeCloseTo(394.26, 2);
   });
+
+  it("raises to a whole share for an explicit 'fixed'/'atr' stop plan even when the account's own stopLossPct/takeProfitPct are both 0 (the plan guarantees a bracket via the universal-availability fallback — Codex review, PR #1371)", () => {
+    const policy: TradingPolicy = {
+      ...DEFAULT_POLICY,
+      accountNumber: "BRACKET-MIN-PLAN",
+      activeBroker: "alpaca",
+      maxOrderNotional: 10_000,
+      maxOrderPctOfNav: undefined,
+      maxOrderPctOfAdv: undefined,
+      riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 0, takeProfitPct: 0 } // bare account
+    };
+    const scan = scanWith(quote({ symbol: "V", price: 334.12, volume: 1_000_000 }));
+    const sized = applyDeterministicSizing(
+      buyProposal({ symbol: "V", dollarAmount: 50, stopPlan: { style: "fixed" } }),
+      policy, PORTFOLIO, "paper", "local", [], scan
+    );
+    expect(sized.dollarAmount).toBe(335); // one whole share at $334.12, not left sub-share
+    expect(sized.rationale).toContain("whole-share bracket");
+    const enriched = enrichOpeningProposal(sized, policy, scan);
+    expect(enriched.bracketStopLoss).toBeCloseTo(307.39, 2); // STOP_PLAN_FALLBACK_STOP_PCT (8%) below entry
+  });
+
+  it("does NOT bump a sub-share order for a 'trailing'/'none' plan (no bracket is ever attached for these, so there's nothing to size a whole share for)", () => {
+    const policy: TradingPolicy = {
+      ...DEFAULT_POLICY,
+      accountNumber: "BRACKET-MIN-NOPLAN",
+      activeBroker: "alpaca",
+      maxOrderNotional: 10_000,
+      maxOrderPctOfNav: undefined,
+      maxOrderPctOfAdv: undefined,
+      riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 6, takeProfitPct: 18 }
+    };
+    const scan = scanWith(quote({ symbol: "V", price: 334.12, volume: 1_000_000 }));
+    const sized = applyDeterministicSizing(
+      buyProposal({ symbol: "V", dollarAmount: 50, stopPlan: { style: "trailing" } }),
+      policy, PORTFOLIO, "paper", "local", [], scan
+    );
+    expect(sized.dollarAmount).toBe(50); // left as-is, no whole-share bump
+    expect(sized.rationale).not.toContain("whole-share bracket");
+  });
 });
 
 describe("marketable-limit entry conversion", () => {

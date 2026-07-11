@@ -111,12 +111,32 @@ describe("deriveProtection — per-position stop plan annotation (never a silent
     expect(withoutPlan.label).toMatch(/App stop/);
   });
 
-  it("a 'fixed'/'atr'/'trailing' plan annotates the detail without changing the label/tone", () => {
-    const base = deriveProtection(longPos, noOrders, basePolicy);
+  it("a 'trailing' plan builds its OWN label from the plan, not the account-wide base's label/mechanism (an account configured with only a FLAT stop must not show 'App stop -8%' for a position actually protected by a trail)", () => {
+    const base = deriveProtection(longPos, noOrders, basePolicy); // flat stop only, no trailing configured
+    expect(base.label).toMatch(/App stop/);
     const withPlan = deriveProtection(longPos, noOrders, basePolicy, { style: "trailing", avgCost: 100 });
-    expect(withPlan.label).toBe(base.label);
-    expect(withPlan.tone).toBe(base.tone);
+    expect(withPlan.label).not.toBe(base.label);
+    expect(withPlan.label).toBe("Trailing plan");
+    expect(withPlan.tone).toBe("pos");
     expect(withPlan.detail).toMatch(/Per-position plan: Trailing/);
+  });
+
+  it("a plan's label is 'paused' (tone warn) while the system is Stopped, mirroring the account-wide app-managed pause (the plan's own enforcement is the same scheduler-tick monitor)", () => {
+    const haltedPolicy = { ...basePolicy, systemState: "halted" } as TradingPolicy;
+    const info = deriveProtection(longPos, noOrders, haltedPolicy, { style: "fixed", avgCost: 100 });
+    expect(info.label).toBe("Fixed plan · paused");
+    expect(info.tone).toBe("warn");
+    expect(info.detail).toMatch(/paused while the system is Stopped/);
+  });
+
+  it("a plan on top of a REAL resting broker stop keeps the broker-stop label/tone verbatim (accuracy over the plan's own label)", () => {
+    const brokerStopOrder: EquityOrder[] = [
+      { id: "o1", symbol: "AAPL", side: "sell", type: "stop_market", state: "new", quantity: 10, timeInForce: "gtc", createdAt: new Date().toISOString() }
+    ];
+    const info = deriveProtection(longPos, brokerStopOrder, basePolicy, { style: "atr", avgCost: 100 });
+    expect(info.label).toBe("Broker stop");
+    expect(info.tone).toBe("pos");
+    expect(info.detail).toMatch(/Per-position plan: ATR/);
   });
 
   it("a 'none' plan is surfaced prominently (never blended into the generic no-protection case), with its rationale", () => {
