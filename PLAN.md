@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Admin authorization fail-closed hardening (CODEX).** No roadmap scope change;
+> security/correctness only. The shared admin gate now denies by default in every environment unless
+> the caller has a middleware-proven Cloudflare Access/Auth.js admin email or valid admin token. The
+> former broad `NODE_ENV !== "production"` bypass is removed without a hostname-based replacement;
+> the auth-unconfigured primary-email fallback never grants admin access. See
+> `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
+
 > **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
 > change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/
 > reference/danger) settings; account-scoped config lives on Framework (`/console/strategy`):

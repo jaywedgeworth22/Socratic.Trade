@@ -13,6 +13,20 @@ PR #1389. Full verification is green under Node 24 (lint 0 errors, TypeScript cl
 3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge. Exact commands
 and the initial Node-ABI mismatch are recorded in
 `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
+## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
+
+The shared `requireAdmin` gate no longer treats `NODE_ENV` or a request hostname as authorization.
+Middleware now forwards identity-source provenance alongside the authenticated email. Email-based
+admin access accepts only Cloudflare Access or Auth.js session provenance; the auth-unconfigured
+`PRIMARY_USER_EMAIL` fallback is denied even when it names the primary operator or appears in
+`ADMIN_USER_EMAILS`. The timing-safe `ADMIN_REINDEX_TOKEN` path remains available in every
+environment. Every stale admin-route comment was updated to match this behavior, and the spoofable
+localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Node 24
+verification is green: focused Vitest 6 files / 60 tests, touched-file ESLint clean, and
+`tsc --noEmit` clean. The reviewed implementation is ready to reconcile with current
+`origin/main@1c7c2be8`, which overlaps only shared status/effort docs; the current-main full gate
+remains pending. No push or PR has been run. See
+`docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),

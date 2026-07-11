@@ -239,6 +239,13 @@ Real identity via Auth.js v5 sign-in. Key changes:
   Replaced with: `authConfigured = !!AUTH_SECRET`. This is evaluated at request
   time. The moment `AUTH_SECRET` is set, auth is armed.
 
+- **Admin authorization is independently fail-closed**: middleware forwards an identity-source
+  provenance header together with the authenticated email. `requireAdmin` accepts an allowlisted or
+  primary email only when its source is verified Cloudflare Access or Auth.js; the auth-unconfigured
+  `PRIMARY_USER_EMAIL` fallback never grants admin access. The timing-safe `x-admin-token` remains
+  the explicit non-session operator path. `NODE_ENV` and request hostnames are never authorization
+  signals, and there is no unauthenticated local bypass.
+
 - **Identity sources** (first match wins):
   1. Auth.js v5 session JWT cookie, verified through the shared edge-safe HS256 helper.
   2. `PRIMARY_USER_EMAIL` fallback — only when `authConfigured=false` (local dev/tests).
