@@ -9,8 +9,9 @@ phantom never-used card beside the real quota-exhausted lane. The placeholder no
 An authenticated route regression seeds canonical health history and proves the response contains one
 `alpha-vantage:env` entry and no `alphavantage` entry. This is display/health-inventory correctness
 only: provider dispatch, credentials, quota rotation, and failure classification are unchanged.
-Focused Vitest (1/1), scoped ESLint, and `tsc --noEmit` are green under Node 24; full landing gates and
-production UI confirmation remain with the parent lane. See
+Final Node 24 verification is green: focused Vitest 1/1, lint 0 errors (404 inherited warnings),
+`tsc --noEmit`, full Vitest 332 files / 3,747 tests, and the production build. Production UI
+confirmation remains after merge and auto-deploy. See
 `docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)

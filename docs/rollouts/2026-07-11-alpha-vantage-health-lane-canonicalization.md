@@ -40,15 +40,20 @@ six-key rotation described by the July 9 rollout.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx eslint app/api/admin/connections-health/route.ts test/connections-health-route.test.ts`
   — passed with no findings.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit` — passed.
-- `git diff --check` — passed before the documentation update; rerun at handoff.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` — 332 files / 3,747 tests passed.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build` — passed; only the inherited Next.js
+  middleware deprecation, Sentry Edge-runtime, and webpack cache serialization warnings appeared.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint` — passed with 0 errors / 404 inherited
+  warnings.
+- `git diff --check` — passed before handoff.
 
 The initial focused-test attempt used the shell's default Node 26 before this isolated worktree had a
-`node_modules`; Vitest could not load its config because the package was not installed. This was
-worktree bootstrap state, not a test failure. The locked install and all requested checks then passed
-under Node 24.
+`node_modules`; Vitest could not load its config because the package was not installed. During the
+full gate, two mistakenly unprefixed `npm test` launches also used Node 26 and produced expected
+`better-sqlite3` ABI-load cascades; both were stopped. These were runtime-selection failures, not code
+failures. The locked install and final ordered checks passed under Node 24.
 
 ## Follow-ups
 
-- Run the repository's full ordered landing gate in the parent lane before delivery.
 - After merge and auto-deploy, confirm `/admin/connections` shows one Alpha Vantage env lane and no
   legacy-spelling placeholder.
