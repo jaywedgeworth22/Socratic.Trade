@@ -162,6 +162,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — Global learning reads + batched AI review of proposals (Claude cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+Owner asked to bring learning "out of the individual account" (keeping provenance) and to review pending
+learning proposals with a single LLM call. Done: (1) lessons (on `socratic_decisions`) and framework
+proposals now read GLOBAL across a user's accounts — dropped the active-account filter on the dashboard
+learning panels while still writing `connected_account_id` for provenance (no migration; also fixes the
+dashboard-vs-decision-detail inconsistency). (2) New `src/lib/framework-review.ts`
+`reviewPendingFrameworkProposals` — one LLM call adjudicates all pending proposals across accounts and
+attaches an ADVISORY recommendation (verdict + rationale + optional rewrite) via a new nullable
+`ai_review` column; owner still makes the final accept/reject/rewrite (not auto-apply). Reviewer model =
+account policy `redTeamLlmModel`→`llmModel` (AI-Review inheritance). Wired: `POST
+/api/socratic/framework/review` + an "AI review pending" button and per-proposal recommendation block in
+`app/console/page.tsx`. Gate green (tsc/lint/build); new `test/framework-review.test.ts` (4 tests) +
+socratic/learning suites pass (31). PR pending. See
+`docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
 ## 2026-07-10 — Tradier fixups round 3: buying-power min() asymmetry (CLAUDE, branch `claude/tradier-broker`, PR #1380)
 Closed a LOW-but-real money-path residual from round 2's PDT buying-power fix. The round-2
 `Math.min` over positive candidates of `[margin.stock_buying_power, pdt.stock_buying_power]` was
