@@ -267,6 +267,49 @@ describe("mcp oauth", () => {
     expect(tokenRequest?.get("resource")).toBe("https://agent.robinhood.com/mcp/trading");
   });
 
+  it("coalesces concurrent refreshes for the same user into a single token exchange (dashboard parallelization race)", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    let exchangeCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      exchangeCount += 1;
+      // Simulate real network latency so two concurrent getMcpAccessToken calls genuinely overlap
+      // instead of resolving serially before the second one starts.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return new Response(JSON.stringify({ access_token: `fresh-${exchangeCount}`, token_type: "Bearer" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const { getMcpAccessToken, setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+
+    setMcpOAuthTokens("user-a", {
+      accessToken: "old-token",
+      refreshToken: "refresh-token",
+      tokenType: "Bearer",
+      expiresAt: new Date(Date.now() - 60_000).toISOString()
+    });
+
+    // Two "concurrent" callers — e.g. the dashboard's broker chain and its now-parallel Robinhood
+    // MCP health check both resolving a token for the same expiring row at once.
+    const [tokenA, tokenB] = await Promise.all([getMcpAccessToken("user-a"), getMcpAccessToken("user-a")]);
+
+    expect(exchangeCount).toBe(1); // NOT 2 — a rotating refresh token would invalid_grant the second
+    expect(tokenA).toBe("fresh-1");
+    expect(tokenB).toBe("fresh-1");
+
+    // A later call after the shared refresh has settled starts its own new exchange, not a stuck one.
+    setMcpOAuthTokens("user-a", {
+      accessToken: "fresh-1",
+      refreshToken: "refresh-token-2",
+      tokenType: "Bearer",
+      expiresAt: new Date(Date.now() - 60_000).toISOString()
+    });
+    expect(await getMcpAccessToken("user-a")).toBe("fresh-2");
+    expect(exchangeCount).toBe(2);
+  });
+
   it("stores the state blob under a per-user key", async () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");

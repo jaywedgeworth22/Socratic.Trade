@@ -90,6 +90,40 @@ Synthetic-stop refId kept within the portable `[A-Za-z0-9-]` charset at generati
 users. (6) Access-token field masked (`type="password"`). (7) Cancel normalizes raw `'ok'` ->
 `'pending_cancel'`. No Alpaca/Robinhood/test-broker behavior changed; not merged. Tradier's exact tag
 charset couldn't be re-confirmed from the live SPA docs — the #5 fix is charset-independent.
+## 2026-07-10 — Console loading permafix: abort-storm coalescing + dashboard.ts parallelization (CLAUDE, branch `claude/loading-permafix`)
+Production console still took minutes to first-paint after PR #1293 (deadlines + watchdog) landed.
+Two compounding causes: (1) `useConsoleData.tsx`'s `refresh()` aborted the in-flight fetch on every
+SSE event and poll tick, so the slow initial fetch kept getting restarted during active scans; (2)
+`getDashboardSnapshot` ran its 9 `withDeadline`-wrapped upstream sections sequentially (~46s worst
+case). Fixed: background (SSE/interval/tab-visible) refreshes now coalesce instead of abort-and-
+restart (supersedes the still-open AG PR #1285 — commented there crediting the diagnosis); the
+broker chain (accounts -> portfolio/positions/orders -> quotes, genuinely sequential) now runs via
+`Promise.all` against the independent group (Robinhood MCP health + macro/signals/history/news),
+cutting worst case to roughly the chain alone (~24s). Added one `[dashboard] snapshot Xms` summary
+log (only when slow or a section timed out). Gate green: tsc clean, lint 0 errors, 3374 tests (315
+files), build clean. Rollout: docs/rollouts/2026-07-10-loading-permafix.md.
+**Codex-autofix (2026-07-10):** raised the client `FETCH_DEADLINE_MS` 20s -> 35s so it sits *above*
+the server's ~24s worst-case self-bounded response (sequential broker chain 6+8+6=20s + SPY
+benchmark 4s). At 20s the client aborted a slow-but-working degraded fetch right as the server was
+about to respond and retried in a loop; 35s only kills a genuine network hang. See the Codex-autofix
+section in `docs/rollouts/2026-07-10-loading-permafix.md`. Gate re-run green.
+**Codex-autofix #2 (2026-07-10):** surface deadline retries as refresh failures. A deadline-aborted
+attempt (`FETCH_DEADLINE_MS`) used to `continue` the retry loop without ever setting `error`, so a
+request that kept hanging past 35s would retry forever with `error` still null — the freshness strip
+(`deriveFreshnessLabel`) then kept labeling an old snapshot "fresh". `runFetch` now sets a visible
+`error` (`DEADLINE_ERROR_MESSAGE`) on the deadline path before returning; a successful retry clears
+it via the existing `setError(null)`. Gate re-run green (tsc, 3396 tests / 315 files, build).
+**Codex-autofix #3 (2026-07-10):** two remaining P2 threads. (a) `useConsoleData.tsx`: an *awaited
+foreground* `refresh()` that hit `FETCH_DEADLINE_MS` used to `continue` the retry loop, holding that
+promise pending across retries — mutation flows that `await refresh()` before clearing their busy
+state could wedge forever if `/api/dashboard` kept hanging. `runLoop` now takes a `foreground` flag;
+on a foreground deadline it hands the retry to a detached background `runLoop(false)` and resolves,
+so the deadline error surfaces and the awaited promise settles while a background retry continues.
+(b) `mcp-oauth.ts`: the Robinhood refresh singleflight could be poisoned forever by a never-settling
+`exchangeToken` fetch (bare fetch, no abort). Added an `AbortSignal.timeout` bound to the exchange
+fetch (root fix) plus a `REFRESH_SINGLEFLIGHT_TTL_MS` backstop that evicts the shared pending promise
+even if some other await in `refreshMcpAccessToken` hangs, so the account self-heals once the network
+recovers. Gate re-run green (tsc, 3396 tests / 315 files, build).
 ## 2026-07-10 — Learning-review orphan hardening: adversarial re-review of PR #1328 found + fixed 2 more orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`)
 PR #1328 (deferred #1278 finding #2, >80-item backlog drain) shipped and merged, but a Workflow-based
 adversarial re-review (4 lenses, each finding independently re-verified by a second agent trying to
@@ -687,6 +721,9 @@ both kept), focused tests 132/132 then full gate green, PR opened via `land.sh` 
 auto-merge armed.
 ## 2026-07-09 — Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`)
 Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
+
+## 2026-07-09 — Infinite loading fix for SSE events aborting fetchDashboard (AG)
+Owner reported the app getting stuck on the loading screen. Root cause: frequent server-sent events (`market-data`) triggering `queueRefresh` were constantly aborting `fetchDashboard` requests before they could complete. Modified `useConsoleData` to mark interval and SSE refreshes as `background: true`, preventing them from aborting requests that are already in flight. See `docs/rollouts/2026-07-09-infinite-loading-fix.md`.
 
 ## 2026-07-08 - UI wave 4: scope dropdown + floating Tabs sheet (CLAUDE)
 Branch `claude/ui-polish-wave` (PR pending). ScopeSelector rebuilt Sheet->real anchored dropdown with

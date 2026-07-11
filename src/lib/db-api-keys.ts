@@ -351,19 +351,21 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
 }
 
 /**
- * Resolve Alpha Vantage's key POOL (the one service with operator-level multi-key pooling — see
- * src/lib/alpha-vantage-key-pool.ts). Precedence: a per-user stored key wins first (single-item
- * pool, source "user") -> plural `ALPHAVANTAGE_API_KEYS` env (comma-separated, trimmed, deduped,
- * order-preserving; source "env", envVar "ALPHAVANTAGE_API_KEYS") -> singular
- * `ALPHAVANTAGE_API_KEY` as a one-item pool (source "env", envVar "ALPHAVANTAGE_API_KEY") ->
- * empty pool (source "none"). The singular fallback means the pool works unchanged with today's
- * single Infisical-provisioned key — zero config needed until a second key is added.
+ * Resolve Alpha Vantage's key — SINGLE KEY ONLY. The former multi-key pool (rotate across several
+ * free keys to multiply the 25/day quota — see src/lib/alpha-vantage-key-pool.ts) was retired:
+ * Alpha Vantage's burst limit appears to key off the source IP rather than the presented
+ * `apikey=`, so extra keys never multiplied real throughput — they only added rotation/exhaustion
+ * churn. AV is now bounded purely by the per-provider pacer (withProviderLimit, a serial >=1.1s
+ * lane) plus the one key's daily-cap stop. Precedence: per-user stored key -> singular
+ * `ALPHAVANTAGE_API_KEY` -> first entry of a legacy `ALPHAVANTAGE_API_KEYS` (back-compat only, no
+ * longer pooled) -> none.
  *
+ * The return shape ({ keys: string[] }) is unchanged so the data-providers call site and the
+ * AlphaVantageKeyPool it still constructs are untouched — that pool now simply runs with a
+ * one-key list (currentKey/allExhausted/markExhausted all degenerate to single-key behavior).
  * Deliberately DUPLICATES (rather than generalizes) resolveApiKeyWithSource's per-user-then-env
- * precedence, scoped only to alphavantage, so that widely-shared function's signature (consumed
- * by ~9 other provider constructors) stays untouched. A per-user stored key stays a single-item
- * pool on purpose — multi-key pooling is an operator/env-level concept only; there is no product
- * surface asking an individual user for several personal AV keys.
+ * precedence, scoped only to alphavantage, so that widely-shared function's signature stays
+ * untouched.
  */
 export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; source: ApiKeySource; envVar: string } {
   if (userId) {
@@ -371,14 +373,16 @@ export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; s
     if (userKey?.apiKey) return { keys: [userKey.apiKey], source: "user", envVar: "ALPHAVANTAGE_API_KEY" };
   }
 
-  const pluralRaw = process.env.ALPHAVANTAGE_API_KEYS;
-  if (pluralRaw && pluralRaw.trim()) {
-    const parsed = Array.from(new Set(pluralRaw.split(",").map((k) => k.trim()).filter(Boolean)));
-    if (parsed.length > 0) return { keys: parsed, source: "env", envVar: "ALPHAVANTAGE_API_KEYS" };
-  }
-
   const singular = process.env.ALPHAVANTAGE_API_KEY?.trim();
   if (singular) return { keys: [singular], source: "env", envVar: "ALPHAVANTAGE_API_KEY" };
+
+  // Back-compat: a legacy multi-key ALPHAVANTAGE_API_KEYS still boots, using only its FIRST key
+  // (no pooling). New deployments should use the singular ALPHAVANTAGE_API_KEY.
+  const pluralRaw = process.env.ALPHAVANTAGE_API_KEYS?.trim();
+  if (pluralRaw) {
+    const first = pluralRaw.split(",").map((k) => k.trim()).filter(Boolean)[0];
+    if (first) return { keys: [first], source: "env", envVar: "ALPHAVANTAGE_API_KEYS" };
+  }
 
   return { keys: [], source: "none", envVar: "ALPHAVANTAGE_API_KEY" };
 }
