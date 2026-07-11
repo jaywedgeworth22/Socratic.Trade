@@ -1,5 +1,18 @@
 # Status
 
+## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
+Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
+and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change
+(FINRA Notice 26-10 / SEC Release 34-105226, effective 2026-06-04: PDT designation + 4-in-5 count + $25k
+minimum eliminated; $2,000 margin minimum survives; broker phase-in to 2027 — app already on $2k). Owner
+decisions: shorting LIVE (paper-verify in parallel), options FULL incl. spreads (Alpaca-first, RH data-only),
+PDT = read each broker's own requirements only (no app gate), leverage = NAV caps + opt-in. Phased plan
+(read-first BrokerMargin -> shorting -> options single-leg -> leverage -> Tradier options+writing -> spreads)
+in docs/capability-trading-roadmap.md. Foundation PRs in review: Tradier #1380, order-status-reconcile.
+NOTE: merge=auto-deploy-to-live, so money-path PRs are owner-timed, not auto-merged.
+
+# Status
+
 Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
@@ -61,6 +74,45 @@ Synthetic-stop refId kept within the portable `[A-Za-z0-9-]` charset at generati
 users. (6) Access-token field masked (`type="password"`). (7) Cancel normalizes raw `'ok'` ->
 `'pending_cancel'`. No Alpaca/Robinhood/test-broker behavior changed; not merged. Tradier's exact tag
 charset couldn't be re-confirmed from the live SPA docs — the #5 fix is charset-independent.
+## 2026-07-10 — Server & infrastructure metrics dashboard page (AG, branch `agent/antigravity-server-metrics`)
+Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
+## 2026-07-10 — Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud lane, branch `claude/anthropic-spend-spike-e2di8j`)
+Owner reported Anthropic console spend jumped ~$35 -> ~$50 in 2 hours while `/admin/llm-usage`
+only reflected ~$35. Root cause (codebase-only investigation — no prod DB access this session):
+`scripts/benchmark-llm-models.ts` hits real provider APIs through the app's real credential path
+but is deliberately built with NO writes to the app DB, so its real Anthropic billing never lands
+in `llm_usage`. Fixed: the script now self-reports a total-spend rollup every run, and gained an
+opt-in `--record-usage` flag that logs real calls into the real `llm_usage` table under a pretend
+account (`user_id="benchmark:<user>"`) via a dedicated writable connection, never touching
+migrations or other tables. Owner's follow-up (opus-dominant/haiku-scattered/sonnet-absent call
+pattern) does NOT match a default full-catalog sweep — still open whether this specific spike was
+a scoped benchmark run or organic opus-configured production traffic; needs a real
+`/admin/llm-usage` pull to close out (no `OPS_DIAGNOSTIC_TOKEN` in this session).
+`scripts/eval/run-offline.ts` has the same ledger gap, left as a follow-up. Gate: tsc clean, lint 0
+errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main` in this sandbox
+(pre-existing, confirmed via stash-and-rebuild). See
+`docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`.
+## 2026-07-10 — Deploy pipeline blocker fixed: kernel tcp_mem exhaustion via litestream 0.5.14 (CLAUDE, branch `claude/litestream-tcpmem-pin`)
+All Coolify deploys of `socratic-trade-prod` failed 08:59Z–11:52Z (12 consecutive; "TLS
+unexpected eof" at git clone; prod drifted ~15 commits stale). Root cause was ON-BOX, not
+GitHub/network: litestream 0.5.14 inside the prod container churns ~20 sockets/s to the R2
+endpoint and holds thousands of dead TCP sockets (peak 16,840 fds, ~715MB pinned buffers),
+exhausting kernel `tcp_mem` (max 182670 pages) — the kernel clamped every connection's
+receive window to ~6KB, so GitHub clones trickled at ~20KB/s and got cut mid-transfer.
+Applied on the box (runtime-only, reversible): raised `net.ipv4.tcp_mem` to
+`273945 365343 548010` (orig `91335 121781 182670`; revert via sysctl -w or reboot — keep
+raised until the pin deploys). Triggered sanctioned deploy `jca2c6wsz7ewydl4q2t4whad` →
+FINISHED 12:29Z, prod = `main@ea89b23e`, `/api/health` 200. This branch pins
+`LITESTREAM_VERSION` back to 0.5.12 in `scripts/coolify-prod-start.sh` (+ version-aware
+cached-binary reinstall — BIN_DIR persists across deploys and the old existence-only check
+would keep the stale 0.5.14 forever). Full diagnosis + A/B soak evidence:
+`docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`. Owner green-lit the pin;
+auto-deploy ships it on merge. tcp_mem raise persisted as
+`/etc/sysctl.d/99-socratic-tcpmem.conf` (headroom insurance — delete once the leak class
+is confidently dead). Upstream issue filed (scrubbed):
+https://github.com/benbjohnson/litestream/issues/1354. Post-deploy box verification
+(litestream 0.5.12 running, replication continuity, fd flatness at 0/10/25 min, health,
+restore marker untouched) recorded on the effort board + #agent-sync.
 
 ## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
 Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval
