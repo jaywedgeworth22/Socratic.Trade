@@ -17,6 +17,18 @@ filling the missing pieces.
 > green (focused 130, lint 0 errors, typecheck, full 3,759 tests, build); ready-PR delivery remains. See
 > `docs/rollouts/2026-07-11-provider-operation-leases.md`.
 
+> **2026-07-11 - Truthful notification delivery status (CODEX).** No product-roadmap change;
+> delivery observability and preference correctness only. One gated orchestration path now owns
+> push/webhook/email/SMS delivery for ordinary, price-alert, and provider-health events; callers
+> supply only their richer body text. Status derives from every actual result, unexpected bridge
+> failures cannot masquerade as neutral skips, partial failures remain visible, and the legacy
+> policy-webhook lane emits normal channel telemetry. The operator fallback email remains an extra
+> gated lane. The branch is reconciled through strategy merge `main@0dda52db`; the final Node 24 gate
+> is green: focused 7 files / 96 tests, repository lint, TypeScript, full 342 files / 3,816 tests,
+> production build, and diff-check. Ready replacement PR, #1442 supersession, hosted checks, merge,
+> and production verification remain. See
+> `docs/rollouts/2026-07-11-notification-status-truth.md`.
+
 > **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
 > change; this is an operations-observability slice. `/api/health` gains a public-safe source
 > revision/process identity and hard-deadline, size-capped Litestream daemon status/last-sync
@@ -32,10 +44,11 @@ filling the missing pieces.
 > broker work may exist, and account-scoped auto-tuning runs only after completed strategy runs under its
 > own renewed account lease and LLM reservation. A final independent review additionally fixed the
 > account-bound strategy prompt, propagated account scope into walk-forward evidence, honored a lost
-> proposal-transition race, and computes tuning time only after the strategy run finishes. PR #1429 is
-> reconciled through `main@67e1536d` and is intentionally draft pending its trusted push and hosted
-> checks. The final Node 24 gate is green: focused 11 files / 129 tests, repository lint, TypeScript,
-> full 341 files / 3,801 tests, production build, and diff-check. See
+> proposal-transition race, and computes tuning time only after the strategy run finishes. PR #1429
+> passed local and hosted gates with zero unresolved threads and merged as `0dda52db`; production now
+> reports that exact release with healthy scheduler/Litestream/dependency checks. The final Node 24 gate was green: focused
+> 11 files / 129 tests, repository lint, TypeScript, full 341 files / 3,801 tests, production build,
+> and diff-check. See
 > `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
 > change; operator-observability correctness only. The connections-health expected-lane inventory now
