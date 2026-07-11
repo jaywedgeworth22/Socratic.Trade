@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — ✅ COMPLETED 2026-07-09: PR #1282 merged to `main` (auto-merge squashed).** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
 - **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
   `claude/green-red-labels`) — COMPLETED 2026-07-10.** Owner-directed pure display-copy change.
@@ -1578,6 +1579,26 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
+  lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**
+  Owner reported Anthropic console spend went ~$35 -> ~$50 in 2 hours while
+  `/admin/llm-usage` only reflected ~$35. Root-caused (from codebase only — no prod DB
+  access this session): `scripts/benchmark-llm-models.ts` calls real provider APIs
+  through the app's real credential/request path but was deliberately built with NO
+  writes to the app DB, so a benchmark run's real Anthropic billing never lands in
+  `llm_usage`. Fixed: the script now prints/writes a total-spend rollup (per-provider
+  breakdown) every run, and gained an opt-in `--record-usage` flag that logs real calls
+  into the REAL `llm_usage` table via a dedicated writable connection, tagged under a
+  pretend account (`user_id="benchmark:<user>"`, `context="benchmark:<role>"`) so it's
+  visible in `/admin/llm-usage` without being conflated with a real tenant. Owner's
+  follow-up correction: the reported per-model pattern (opus-dominant, ~4 scattered
+  haiku, sonnet never called) does NOT match a default full-catalog benchmark sweep —
+  still unresolved whether this specific spike was a scoped benchmark run or organic
+  production traffic from an opus-configured account; needs a real prod ledger pull to
+  close out. `scripts/eval/run-offline.ts` has the same ledger gap, left as a follow-up.
+  See `docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`. Gate: tsc clean,
+  lint 0 errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main`
+  in this sandbox (pre-existing, confirmed via stash-and-rebuild, unrelated to this diff).
 - **Prod deploy-pipeline blocker: TCP-mem exhaustion via litestream 0.5.14 socket churn
   (CLAUDE, branch `claude/litestream-tcpmem-pin`, fleet-infra pickup session) — IN PROGRESS
   2026-07-10.** Diagnosed the 12 consecutive Coolify deploy failures 08:59–11:52Z ("TLS
