@@ -309,7 +309,10 @@ export function PolicySaveBar({
   const commit = async () => {
     setBusy(true);
     try {
-      await savePolicy({ ...buildPatch(diff, policy), ...(extraPatch ?? {}) });
+      await savePolicy(
+        { ...buildPatch(diff, policy), ...(extraPatch ?? {}) },
+        policy.connectedAccountId
+      );
       await refresh();
       draft.clear();
       setReviewOpen(false);

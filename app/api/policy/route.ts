@@ -1,5 +1,13 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
-import { getPolicy, setPolicy, setStrategyPrompt, resolveLlmCredential } from "@/lib/db";
+import {
+  getActiveConnectedAccount,
+  getConnectedAccount,
+  getDb,
+  getPolicy,
+  resolveLlmCredential,
+  setPolicy,
+  setStrategyPrompt
+} from "@/lib/db";
 import { llmModelFamily } from "@/lib/llm-provider";
 import { isModelRotationSentinel } from "@/lib/llm-request";
 import { isIndexUniverse, normalizeIncludedIndices } from "@/lib/index-universes";
@@ -34,10 +42,24 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const body = await request.json();
+  const rawBody: unknown = await request.json();
+  if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
+    return new NextResponse("Policy update body must be a JSON object.", { status: 400 });
+  }
+  const body = rawBody as Record<string, unknown>;
   const userId = resolveRequestUserId(request, body);
-  if (typeof body.strategyPrompt === "string") setStrategyPrompt(body.strategyPrompt, userId);
-  const current = getPolicy(userId);
+  const requestedTarget = body.targetConnectedAccountId;
+  if (requestedTarget !== undefined && (typeof requestedTarget !== "string" || requestedTarget.trim().length === 0)) {
+    return new NextResponse("targetConnectedAccountId must be a non-empty string.", { status: 400 });
+  }
+  const explicitTarget = typeof requestedTarget === "string" ? requestedTarget.trim() : undefined;
+  if (explicitTarget && !getConnectedAccount(explicitTarget, userId)) {
+    return new NextResponse("The target connected account was not found.", { status: 404 });
+  }
+  // Snapshot the implicit target once at request entry. Without this, a concurrent account switch
+  // between getPolicy() and setPolicy() can merge Account A's patch and persist it into Account B.
+  const targetConnectedAccountId = explicitTarget ?? getActiveConnectedAccount(userId)?.id;
+  const current = getPolicy(userId, targetConnectedAccountId);
   const additionalSymbols = normalizePolicySymbolList(body.additionalSymbols, current.additionalSymbols ?? []);
   const blocklist = normalizePolicySymbolList(body.blocklist, current.blocklist ?? []);
   const invalidNewSymbols = newlyAddedInvalidSymbols([...additionalSymbols, ...blocklist], [
@@ -49,10 +71,27 @@ export async function PUT(request: Request) {
   }
   const customSymbolError = await validateNewCustomPolicySymbols(additionalSymbols, current.additionalSymbols ?? []);
   if (customSymbolError) return new NextResponse(customSymbolError, { status: 400 });
+  const bodyNotificationSettings =
+    typeof body.notificationSettings === "object" && body.notificationSettings
+      ? (body.notificationSettings as Record<string, unknown>)
+      : undefined;
   const policy: TradingPolicy = {
     ...DEFAULT_POLICY,
     ...current,
-    ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== "strategyPrompt" && key !== "userId")),
+    ...Object.fromEntries(
+      Object.entries(body).filter(
+        ([key]) =>
+          ![
+            "strategyPrompt",
+            "userId",
+            "targetConnectedAccountId",
+            // Derived from the owned connected-account row on every read; never client-writable.
+            "connectedAccountId",
+            "activeBroker",
+            "accountNumber"
+          ].includes(key)
+      )
+    ),
     includedIndices: Array.isArray(body.includedIndices)
       ? normalizeIncludedIndices(Array.from(new Set(body.includedIndices.map(String).filter(isIndexUniverse))) as IndexUniverse[])
       : current.includedIndices,
@@ -72,12 +111,10 @@ export async function PUT(request: Request) {
     notificationSettings: {
       ...DEFAULT_POLICY.notificationSettings,
       ...current.notificationSettings,
-      ...(typeof body.notificationSettings === "object" && body.notificationSettings ? body.notificationSettings : {}),
+      ...(bodyNotificationSettings ?? {}),
       enabledEvents:
-        typeof body.notificationSettings === "object" &&
-        body.notificationSettings &&
-        Array.isArray(body.notificationSettings.enabledEvents)
-          ? body.notificationSettings.enabledEvents.filter(isNotificationEvent)
+        Array.isArray(bodyNotificationSettings?.enabledEvents)
+          ? bodyNotificationSettings.enabledEvents.filter(isNotificationEvent)
           : current.notificationSettings.enabledEvents
     },
     taxSettings: {
@@ -137,8 +174,26 @@ export async function PUT(request: Request) {
     enforceMarketableLimitBufferRule: policy.tuning?.marketableLimitBufferBps !== current.tuning?.marketableLimitBufferBps
   });
   if (validationError) return new NextResponse(validationError, { status: 400 });
-  setPolicy(policy, userId);
-  return NextResponse.json(policy);
+  // Validation above is intentionally side-effect free. Apply the policy and optional prompt in one
+  // SQLite transaction so a rejected companion field can never leave the prompt partially changed.
+  let targetDisappeared = false;
+  getDb().transaction(() => {
+    // Account deletion is a separate request and can complete while custom-symbol validation awaits.
+    // Re-check inside the write transaction; setPolicy intentionally falls back to user-level storage
+    // when an account id does not resolve, which would be the wrong failure mode for a deleted target.
+    if (targetConnectedAccountId && !getConnectedAccount(targetConnectedAccountId, userId)) {
+      targetDisappeared = true;
+      return;
+    }
+    setPolicy(policy, userId, targetConnectedAccountId);
+    if (typeof body.strategyPrompt === "string") {
+      setStrategyPrompt(body.strategyPrompt, userId, targetConnectedAccountId);
+    }
+  })();
+  if (targetDisappeared) {
+    return new NextResponse("The target connected account changed before this update could be saved.", { status: 409 });
+  }
+  return NextResponse.json(getPolicy(userId, targetConnectedAccountId));
 }
 
 async function validatePolicy(

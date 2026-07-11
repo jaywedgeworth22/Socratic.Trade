@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import {
   advanceSyntheticStopGeneration,
   audit,
@@ -6,7 +5,7 @@ import {
   dailyExecutionStats,
   deleteSyntheticStop,
   filterStopPlansByLiveBasis,
-  getActiveConnectedAccount,
+  getConnectedAccount,
   getStopPlans,
   insertFillEvent,
   listBrokerProtectiveStops,
@@ -113,12 +112,31 @@ export interface MonitorResult {
  */
 export async function runSyntheticStopMonitor(userId: string, policy: TradingPolicy, running: boolean): Promise<MonitorResult> {
   const result: MonitorResult = { evaluated: 0, triggered: 0, exited: 0, purged: 0 };
+  // The scheduler monitors every connected account, not just whichever account the UI currently
+  // marks active. Resolve the policy's explicit account target through the ownership-scoped lookup;
+  // never fall back to the mutable UI-active pointer or one account can inherit another account's
+  // live/paper execution mode while its protective exit is being processed.
+  const targetAccount = policy.connectedAccountId
+    ? getConnectedAccount(policy.connectedAccountId, userId)
+    : undefined;
+  // An account is an account: an absent, deleted, or foreign target cannot be protected through a
+  // guessed account. Preserve the existing no-account behavior by returning without broker work.
+  if (!targetAccount) return result;
+
+  // Treat the owned account row as authoritative for every execution-routing field. A stale or
+  // malformed caller policy must not combine Account A credentials with Account B's account number
+  // or broker adapter. Rebinding the local policy also scopes every downstream policy evaluation,
+  // audit receipt, and broker operation consistently without mutating the caller's object.
+  policy = {
+    ...policy,
+    connectedAccountId: targetAccount.id,
+    accountNumber: targetAccount.accountNumber,
+    activeBroker: targetAccount.broker
+  };
   const accountNumber = policy.accountNumber;
   if (!accountNumber) return result;
 
-  const activeAccount = getActiveConnectedAccount(userId);
-  const executionState = deriveExecutionState(policy, activeAccount);
-  // An account is an account: with none connected there is no broker to protect against.
+  const executionState = deriveExecutionState(policy, targetAccount);
   if (!executionState.mode) return result;
   const executionMode: ExecutionMode = executionState.mode;
   const gateway = getBrokerGateway(policy, userId);

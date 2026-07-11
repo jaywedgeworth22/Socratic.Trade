@@ -163,6 +163,12 @@ const EXPOSURE_FIELD_PATHS = new Set(["maxSymbolExposureNotional", "maxSymbolExp
 
 export default function GuardrailsPage() {
   const { snapshot } = useConsoleData();
+  if (!snapshot) return null;
+  return <AccountScopedGuardrailsPage key={snapshot.policy.connectedAccountId ?? "no-account"} />;
+}
+
+function AccountScopedGuardrailsPage() {
+  const { snapshot } = useConsoleData();
   const draft = usePolicyDraft();
   const [universeDraft, setUniverseDraft] = useState<{
     includedIndices?: IndexUniverse[];
@@ -469,7 +475,7 @@ function AutonomyCard() {
   const setAuthority = async (authority: "propose" | "decide") => {
     setBusy(true);
     try {
-      await savePolicy({ strategyAuthority: authority });
+      await savePolicy({ strategyAuthority: authority }, snapshot.policy.connectedAccountId);
       await refresh();
       setArming(false);
       setTyped("");
