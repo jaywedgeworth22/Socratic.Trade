@@ -10,7 +10,8 @@ Production skips the synchronous metadata-file fallback entirely; non-live scann
 Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
 stale when newer DB/WAL activity proves there is work to upload. Node 24 verification is green: lint
 0 errors (378 existing warnings), TypeScript clean, 319 files/3,509 tests, and production build clean.
-No deployment or live replica mutation occurred; the change is ready for a review PR.
+No deployment or live replica mutation occurred. READY PR #1405 is open without merge/auto-merge;
+the branch also reconciles the latest `origin/main` and is being revalidated before its refresh.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
