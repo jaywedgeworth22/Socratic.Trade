@@ -117,6 +117,10 @@ export function estimateReviewNotional(
 }
 
 class AlpacaBrokerGateway implements BrokerGateway {
+  // getEquityOrders pages status:"all" (see below), so the returned list authoritatively includes
+  // recently-terminal orders (filled/canceled/rejected/expired). This lets reconcilePlacementError
+  // conclude not_placed from an absent order for Alpaca (safe: absence really means never placed).
+  readonly ordersListIncludesTerminal = true;
   private alpaca: Alpaca;
   private label: string;
   private isMcp: boolean;

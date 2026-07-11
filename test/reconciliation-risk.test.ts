@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { reconcilePendingFills, generateProactiveRiskProposals, planTakeProfitTrims, takeProfitTrimQuantity, isRiskAddingOpening } from "../src/lib/strategy";
+import { generateProactiveRiskProposals, planTakeProfitTrims, takeProfitTrimQuantity } from "../src/lib/strategy";
 import { insertFillEvent, listFillEvents } from "../src/lib/db";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { BrokerGateway } from "../src/lib/types";
 import type { EquityOrder, TradingPolicy } from "../src/lib/types";
+import { reconcilePendingFills } from "../src/lib/strategy-execution";
+import { isRiskAddingOpening } from "../src/lib/strategy-risk";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],

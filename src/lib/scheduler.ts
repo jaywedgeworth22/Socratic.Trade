@@ -15,7 +15,7 @@ import { markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
-import { reconcilePendingFills, runStrategyOnce } from "./strategy";
+import { runStrategyOnce } from "./strategy";
 import { checkMonthlyLlmSpendCeiling } from "./llm-budget";
 import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
@@ -26,15 +26,16 @@ import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { getTechnicalWatchlist, isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
 import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
+import { reconcilePendingFills } from "./strategy-execution";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 
 /**
  * Returns true iff SCHEDULER_SINGLE_LEADER is set to a truthy value.
- * Truthy: "1", "true", "on", "yes" (case-insensitive, trimmed). Default OFF.
+ * Truthy: "1", "true", "on", "yes" (case-insensitive, trimmed). Default ON.
  */
 function singleLeaderEnabled(): boolean {
-  const v = String(process.env.SCHEDULER_SINGLE_LEADER ?? "").trim().toLowerCase();
+  const v = String(process.env.SCHEDULER_SINGLE_LEADER ?? "true").trim().toLowerCase();
   return ["1", "true", "on", "yes"].includes(v);
 }
 
