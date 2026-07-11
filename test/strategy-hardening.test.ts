@@ -577,4 +577,19 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     );
     expect(p.bracketStopLoss).toBe(92);
   });
+
+  it("carries the inherited plan's ORIGINAL rationale onto the stamped stopPlan (a 'none' plan's required justification must survive a scale-in, not be erased to NULL on the fill upsert) (Codex review, PR #1371)", () => {
+    const p = enrichOpeningProposal(
+      buy(), // scale-in add that omits its own stopPlan — inherits the persisted "none" plan
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan,
+      {},
+      { TSLA: "none" },
+      { TSLA: "high-conviction thesis, riding through the drawdown" }
+    );
+    // Pre-fix the stamp was style-only ({ style: "none" }); the rationale was dropped by
+    // filterStopPlansByLiveBasis and never threaded here, so recordFillFromProposal later nulled the
+    // stored justification on the scale-in fill's upsert.
+    expect(p.stopPlan).toEqual({ style: "none", rationale: "high-conviction thesis, riding through the drawdown" });
+  });
 });

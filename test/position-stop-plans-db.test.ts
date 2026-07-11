@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { TradeProposal } from "../src/lib/types";
+import type { EquityPosition, TradeProposal } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-stop-plans-${randomUUID()}.db`)}`;
@@ -146,5 +146,36 @@ describe("stop plan is committed ON FILL (an opening buy/short with a fresh stop
       execution: { orderId: "o7b", refId: "r7b", state: "filled", averagePrice: 105, filledQuantity: 2, raw: {} }
     });
     expect(getStopPlans("FILLACCT-SP7")).toEqual({});
+  });
+
+  it("stamps a SCALE-IN's plan with the position's post-fill BLENDED avgCost (not this fill's raw price), so filterStopPlansByLiveBasis KEEPS it next run instead of discarding it as stale (Codex review, PR #1371)", async () => {
+    const { getStopPlans, filterStopPlansByLiveBasis } = await import("../src/lib/db");
+    const { recordFillFromProposal } = await import("../src/lib/performance");
+    const acct = "FILLACCT-SP8";
+
+    // Prior open: NVDA 4 shares @ 100, with a persisted "trailing" plan (recorded basis 100).
+    recordFillFromProposal({
+      accountNumber: acct, source: "live", status: "filled",
+      proposal: open({ style: "trailing" }),
+      execution: { orderId: "o8a", refId: "r8a", state: "filled", averagePrice: 100, filledQuantity: 4, raw: {} }
+    });
+    expect(getStopPlans(acct).NVDA).toMatchObject({ style: "trailing", avgCost: 100 });
+
+    // Scale-in add: 4 more shares fill at 110 with a fresh "fixed" plan. The broker's post-fill
+    // blended basis is (4*100 + 4*110) / 8 = 105 — the plan must record 105, NOT this one fill's 110.
+    recordFillFromProposal({
+      accountNumber: acct, source: "live", status: "filled",
+      proposal: open({ style: "fixed" }),
+      execution: { orderId: "o8b", refId: "r8b", state: "filled", averagePrice: 110, filledQuantity: 4, raw: {} },
+      existingPosition: { averageCost: 100, quantity: 4 }
+    });
+    // Pre-fix this recorded avgCost=110 (the raw fill price); post-fix it records the blended 105.
+    expect(getStopPlans(acct).NVDA).toMatchObject({ style: "fixed", avgCost: 105 });
+
+    // Next run: the live position now shows the broker's blended averageCost of 105. The just-recorded
+    // plan must SURVIVE the live-basis filter — pre-fix it recorded 110 and |110 - 105| = 5 >= 0.005
+    // silently discarded the owner/LLM's chosen "fixed" plan, dropping the position to account default.
+    const livePosition: EquityPosition = { symbol: "NVDA", quantity: 8, averageCost: 105, marketValue: 840 };
+    expect(filterStopPlansByLiveBasis(getStopPlans(acct), [livePosition])).toEqual({ NVDA: "fixed" });
   });
 });

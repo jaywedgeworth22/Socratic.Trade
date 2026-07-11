@@ -181,4 +181,19 @@ describe("deriveProtection — per-position stop plan annotation (never a silent
     expect(info.tone).toBe("pos"); // still accurately reflects real resting protection
     expect(info.detail).toMatch(/deliberate LLM\/owner choice/); // but the plan is still surfaced
   });
+
+  it("does NOT show an active 'Fixed/ATR/Trailing plan' badge for a SHORT while short selling is off — every enforcement layer skips the short, so the muted/unprotected base state is preserved (Codex review, PR #1371)", () => {
+    // A short opened while shorting was enabled (persisting a "fixed" plan at fill), then policy toggled
+    // shortSellingEnabled off. generateProactiveRiskProposals, synthetic-stops, and broker-protective-
+    // stops all skip this short entirely, so the plan is NOT actually protecting it. Pre-fix the final
+    // branch returned { label: "Fixed plan", tone: "pos" } — a green "active protection" badge for a
+    // position with zero enforcement backing it.
+    const shortPos = { symbol: "TSLA", quantity: -10, averageCost: 100, marketValue: -1000 };
+    const activePolicy = { riskRules: { stopLossPct: 8 }, shortSellingEnabled: false, systemState: "active" } as TradingPolicy;
+    const info = deriveProtection(shortPos, noOrders, activePolicy, { style: "fixed", avgCost: 100 });
+    expect(info.label).toBeNull(); // muted/unsafe state preserved — renders "—", not a green badge
+    expect(info.tone).toBe("muted");
+    expect(info.detail).toMatch(/never takes effect while short selling is off/); // plan still surfaced in the tooltip
+    expect(info.detail).toMatch(/Short position, but short selling is off/); // base's muted explanation kept
+  });
 });

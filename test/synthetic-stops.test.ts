@@ -899,5 +899,22 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(broker.placed).toHaveLength(0);
       expect(listSyntheticStops("SYN-PLAN-FIXED", "local")).toHaveLength(0);
     });
+
+    it("DROPS a stale 'none' plan whose recorded avgCost no longer matches the live lot (close+rebuy between strategy runs), so the new lot gets the account-wide trailing protection instead of being silently left unprotected (Codex review, PR #1371 — same live-basis filter as the strategy run)", async () => {
+      // The live lot is a DIFFERENT position from the one the 'none' plan was recorded against: the
+      // symbol was closed and re-bought at 130 before any strategy run observed it flat, so the plan's
+      // recorded basis (100) is stale. Pre-fix (raw getStopPlans, no basis check) the stale 'none'
+      // suppressed BOTH the synthetic and broker-held stop for the new lot; post-fix the live-basis
+      // filter drops it and the account-wide 5% trail registers and fires.
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 130, marketValue: 1300 }];
+      broker.quotes = { AAPL: { price: 90 } }; // extreme max(90,130)=130, 5% trail → trigger 123.5; 90 breaches
+      connectTestAccount("SYN-PLAN-STALE-NONE");
+      recordStopPlan("SYN-PLAN-STALE-NONE", "AAPL", "none", "old lot — no stop wanted", 100, "local");
+      const result = await runSyntheticStopMonitor("local", policyFor("SYN-PLAN-STALE-NONE"), true);
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0].side).toBe("sell");
+      expect(broker.placed[0].quantity).toBe(10);
+    });
   });
 });
