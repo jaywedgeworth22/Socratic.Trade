@@ -15,8 +15,8 @@ import {
   upsertConnectedAccount,
   upsertSyntheticStop
 } from "../src/lib/db";
-import { reconcilePendingFills } from "../src/lib/strategy";
 import type { BrokerGateway, EquityOrder, TradingPolicy } from "../src/lib/types";
+import { reconcilePendingFills } from "../src/lib/strategy-execution";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],

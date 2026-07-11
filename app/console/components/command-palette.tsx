@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { CornerDownLeft, Search } from "lucide-react";
 import { DESTINATIONS } from "./nav";
 import { useConsoleTheme } from "../lib/useConsoleTheme";
+import { useNavDirtyGuard } from "../lib/useDirtyGuard";
 import { cx } from "../lib/format";
 
 const CMDK_EVENT = "console:open-command-palette";
@@ -54,6 +55,7 @@ export function CommandPaletteTrigger() {
 
 export function CommandPalette() {
   const router = useRouter();
+  const checkNav = useNavDirtyGuard();
   const { cycle } = useConsoleTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -86,7 +88,11 @@ export function CommandPalette() {
         label: d.label,
         hint: d.desc,
         keywords: `${d.label} ${d.href} ${d.desc}`.toLowerCase(),
-        run: () => router.push(d.href)
+        run: () => {
+          if (checkNav(undefined, d.href)) {
+            router.push(d.href);
+          }
+        }
       })),
       {
         id: "action:theme",
@@ -96,7 +102,7 @@ export function CommandPalette() {
         run: cycle
       }
     ],
-    [router, cycle]
+    [router, cycle, checkNav]
   );
 
   const filtered = useMemo(() => {

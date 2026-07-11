@@ -13,8 +13,26 @@ than fabricated values. Regression coverage uses real provider-shaped fixtures a
 cases. Node 24 verification is green: lint 0 errors / 376 warnings, typecheck clean, 318 files /
 3,491 tests passed, and the production build completed. The local route and unconfigured API both
 returned HTTP 200 with real local host metadata and empty remote datasets; rendered in-app Browser
-QA was unavailable because no Browser backend was installed. Commit and ready PR remain next.
-Rollout: `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
+QA was unavailable because no Browser backend was installed. Commit `145fafe8` is on READY PR
+#1400 without merge or auto-merge. After `main` advanced through
+#1397 and #1399, current `origin/main` merged into the isolated branch without textual conflicts;
+the uncommitted merge preserves both new STATUS/effort-log histories and awaits the serialized
+re-verification slot before commit/push. Rollout:
+`docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
+
+## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
+Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
+now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled
+OAuth `state`, and never per spoofable `X-Forwarded-For`); the in-process limiter evicts expired
+buckets and caps live subjects at 10,000 with deterministic LRU eviction. Middleware now parses
+`CF_ACCESS_TRUST_EMAIL_HEADER` explicitly (`1/true/yes/on` only), so the production-style `0`
+override cannot re-arm header trust while Auth.js remains fail-closed. Paid `/api/strategy/tune`
+now uses a named 10/min per-user limiter plus a one-in-flight-per-user guard before its LLM call.
+Scope deliberately excludes active broker/DB lanes and the `.env.example` file owned by active
+PR #1389. Full verification is green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
+3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge. Exact commands
+and the initial Node-ABI mismatch are recorded in
+`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
@@ -37,6 +55,36 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-11 — Refactoring strategy.ts: split risk and execution (AG, branch `agent/strategy-split`)
+Extracted risk gates, veto rules, and sizing logic into `strategy-risk.ts` and the main execution loop/reconciliation into `strategy-execution.ts`. `strategy.ts` remains as a re-export hub and coordinator. Automated import updates across 100+ files via a custom `ts-morph` script. Gate green: tsc clean, lint 0 errors, 3427 tests passing, build clean. See `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
+
+## 2026-07-10 — Order-status reconciliation: kill the perpetual "verify with broker" alert (CLAUDE, branch `claude/order-status-reconcile`)
+A thrown broker `placeEquityOrder` used to leave an order "always uncertain": both catch paths
+(autonomous run-loop + approval) fired a permanent, un-clearable "verify with broker" alert without
+asking the broker what happened, set status `placing_failed` (which the stale sweep — filters
+`status='placing'` — never reconciles), and nothing acked the alert even after the order later
+reconciled. Fix: new shared `reconcilePlacementError()` helper (`strategy.ts`, called from both
+catches) queries the broker via the existing `refId→clientOrderId` idempotency key and maps to a
+DEFINITE status — `placed`/recovered (books the fill, deduped), `rejected_by_broker` (declined), or
+new `not_placed` (safe to retry, sweepable); only a truly unreachable broker keeps status `placing`
++ the still-protected uncertain alert. New `resolveBrokerVerificationNotifications()`
+(`db-notifications`) acks the uncertain alert on any confirmed placement (inline recover, sweep
+recover, or a normal fill reaching `filled`); `isBrokerVerificationRunFailed` is now
+reconcile-marker-driven so `not_placed` self-clears while `uncertain`/`declined` stay protected.
+Idempotency: status gate + a `(proposalId, brokerOrderId)` dedupe guard on BOTH the inline booking
+and the sweep. Money-path: NO change to Alpaca/Robinhood placement or the idempotency keys.
+FIXUPS (adversarial review, PR #1382): (1) RH `getEquityOrders` now THROWS on tool-level
+`isError`/malformed/missing-collection instead of masking as `[]`; (2) sweep matched-DECLINED branch
+gained the `isRejectedOrCanceledState` guard (no phantom fill / false "placed"); (3) `not_placed`
+only concluded when the broker order list is authoritative for terminal orders (new
+`BrokerGateway.ordersListIncludesTerminal` — Alpaca `true`, Robinhood unset/conservative ⇒
+absent=`uncertain`) in `reconcilePlacementError` AND the sweep; (4) durable double-fill backstop —
+migration v16 partial UNIQUE index `fill_events(proposal_id, broker_order_id)` + `insertFillEvent`
+idempotent no-op on conflict. +4 new test cases groups. Local gates green: tsc 0, full suite
+3424/3424, lint 0-err, build clean (ran under default node26 — the shared `node_modules`
+`better-sqlite3` is ABI 147/node26; `node@24` hits the reverse ABI mismatch). PR: READY, NOT merged.
+See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — push updates PR #1382,
+await review.
 ## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
 Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
 Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no

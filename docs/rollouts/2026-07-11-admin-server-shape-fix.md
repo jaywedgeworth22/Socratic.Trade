@@ -49,6 +49,9 @@ them and production crashed with React minified error #31.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` — passed, 318 files / 3,491 tests.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build` — passed. Next.js emitted the existing
   Sentry Edge Runtime warning for `process.features` and the middleware deprecation warning.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH bash scripts/land.sh` — passed after removing only a
+  corrupt ignored `.next/dev` generated cache left by the stopped dev server: typecheck clean,
+  318 files / 3,491 tests passed, build clean, branch pushed, READY PR #1400 opened.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run dev -- --port 4301`; `curl` checks returned
   HTTP 200 for `/admin/server` and `/api/admin/server-metrics`. The API returned real Darwin host
   metadata plus empty `resources` and empty metric arrays with no provider credentials configured.
@@ -60,9 +63,16 @@ The initial dependency attempt before the serialized gate was killed with exit 1
 lower-memory install omitted `@jaywedgeworth22/congress-trading-shared`. The clean Node 24 lockfile
 install above repaired the isolated worktree, and the complete verification quartet then passed.
 
+Post-PR integration receipt: after `origin/main` advanced through #1397 and #1399, a manual
+`git merge --no-commit --no-ff origin/main` completed without textual conflicts. Both sides had
+changed only `STATUS.md` and `docs/EFFORT-LOG.md` in common; Git retained both independently added
+sections. No source file in this fix overlapped with the incoming source changes. Verification,
+commit, and push were intentionally deferred while another lane held the serialized human-tree gate.
+
 ## Follow-ups
 
-- Land through `scripts/land.sh` and open a ready PR. Do not merge.
+- Re-run the serialized Node 24 gate for the merged `origin/main`, then commit and push the merge to
+  READY PR #1400. Do not merge or enable auto-merge.
 - Render-check `/admin/server` through the in-app Browser when a Browser backend is available.
 - No `PLAN.md` change: this is a production bug fix within the existing admin metrics scope, not
   a roadmap or approach change.
