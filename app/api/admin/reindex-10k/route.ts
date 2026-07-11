@@ -8,13 +8,14 @@ import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 export const dynamic = "force-dynamic";
 
 // Admin/operator route to trigger a full 10-K/10-Q backfill once a paid Voyage key is set.
-// Admin-gated via the centralized requireAdmin identity/token policy. (Previously a local
+// Admin-gated via the shared requireAdmin gate: a middleware-verified primary/allowlisted admin email,
+// or a timing-safe x-admin-token match against ADMIN_REINDEX_TOKEN; there is no environment bypass. (A local
 // `authorized()` helper compared the token with `===`; migrated to the shared, constant-time gate.)
 // Returns { indexed, skipped, errors } so the operator can confirm a successful backfill.
 
 export async function GET(request: Request) {
-  // requireTokenInProd: in production the x-admin-token is mandatory — a synthetic/injected admin
-  // email identity alone must not be able to trigger this paid Voyage backfill.
+  // requireTokenInProd: in production the x-admin-token is mandatory. The local fallback is already
+  // excluded by provenance, and this stronger gate also rejects a genuinely verified email alone.
   const denied = requireAdmin(request, { requireTokenInProd: true });
   if (denied) return denied;
   const recent = listIngestedAccessions(50);
@@ -23,8 +24,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  // requireTokenInProd: in production the x-admin-token is mandatory — a synthetic/injected admin
-  // email identity alone must not be able to trigger this paid Voyage backfill.
+  // requireTokenInProd: in production the x-admin-token is mandatory. The local fallback is already
+  // excluded by provenance, and this stronger gate also rejects a genuinely verified email alone.
   const denied = requireAdmin(request, { requireTokenInProd: true });
   if (denied) return denied;
   let symbols: string[] = [];

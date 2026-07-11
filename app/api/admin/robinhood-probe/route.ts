@@ -8,7 +8,8 @@ export const dynamic = "force-dynamic";
 
 // Dev/diagnostic route: dumps the RAW output of Robinhood MCP data tools for one symbol so the
 // exact field shapes (get_equity_historicals / get_equity_fundamentals) can be confirmed before
-// trusting the parsers/enrichment mapping. Gated by the centralized requireAdmin identity/token policy.
+// trusting the parsers/enrichment mapping. Admin-gated by a middleware-verified primary/allowlisted
+// admin email or a timing-safe x-admin-token; there is no environment bypass.
 export async function GET(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;

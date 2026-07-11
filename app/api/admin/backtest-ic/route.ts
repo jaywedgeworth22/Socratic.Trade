@@ -9,7 +9,8 @@ export const dynamic = "force-dynamic";
 
 // Admin/diagnostic route: validate the scan's factor weights against realized forward returns.
 // READ-ONLY — never applies weights (auto-tuner's 20-closed-lot gate governs that).
-// Gated by the centralized requireAdmin identity/token policy; cost admission runs after authorization.
+// Admin-gated by a middleware-verified primary/allowlisted admin email or a timing-safe
+// ADMIN_REINDEX_TOKEN match; there is no environment bypass. Cost admission runs after authorization.
 //
 // Query params:
 //   horizonDays       Forward-return horizon in business days (default 5)

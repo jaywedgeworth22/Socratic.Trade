@@ -11,7 +11,8 @@ export const dynamic = "force-dynamic";
 // Admin/diagnostic route (item 2): run the congress-score statistical validation (placebo-IC, t-stat,
 // marginal-IC, quantile spread) and CACHE the go/no-go verdict so `policy.tuning.congressGoNoGoGating`
 // can gate the scan on it cheaply. READ-ONLY for the market path — storing a verdict never places trades.
-// Gated by the centralized requireAdmin identity/token policy.
+// Admin-gated by a middleware-verified primary/allowlisted admin email or a timing-safe
+// ADMIN_REINDEX_TOKEN match; there is no environment bypass.
 //
 // GET  → return the currently-cached verdict (or null) without recomputing.
 // POST → recompute from signal_snapshot audit history + SPY benchmark, store the fresh verdict, return it.

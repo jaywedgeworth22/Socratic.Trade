@@ -7,7 +7,8 @@ import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 export const dynamic = "force-dynamic";
 
 // Dev/ops route to force a web-source refresh (bypasses TTL/backoff) and report the result.
-// Gated by the centralized requireAdmin identity/token policy.
+// Admin-gated by a middleware-verified primary/allowlisted admin email or a timing-safe
+// x-admin-token; there is no environment bypass.
 export async function POST(request: Request) {
   const denied = requireAdmin(request);
   if (denied) return denied;

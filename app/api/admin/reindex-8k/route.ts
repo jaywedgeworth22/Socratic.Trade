@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 
 // Admin/diagnostic route to (re)embed the persisted SEC 8-K dataset into Pinecone and report
 // vector-store stats. This backfills the index after the Voyage-billing 429 that left it empty.
-// Admin-gated via the shared requireAdmin policy. In production, requireTokenInProd makes the
-// x-admin-token mandatory so an email identity alone cannot trigger a paid Voyage reindex.
+// Admin-gated via the shared requireAdmin gate. requireTokenInProd makes x-admin-token mandatory in
+// production; the local fallback is excluded by provenance everywhere, and there is no environment bypass.
 export async function GET(request: Request) {
   const denied = requireAdmin(request, { requireTokenInProd: true });
   if (denied) return denied;
