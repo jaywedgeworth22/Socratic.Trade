@@ -124,6 +124,17 @@ request as an Auth.js session, allowlists that test email, and cleans environmen
 
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/admin-operation-guard.test.ts test/admin-operation-route-wiring.test.ts test/admin-operation-route-behavior.test.ts test/public-auth-rate-limit-hardening.test.ts`
   — 4 files / 29 tests passed.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint` — passed with 0 errors / 404 inherited
+  warnings.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit` — passed.
+- First `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` attempt — stopped after the native
+  `better-sqlite3` binary reported ABI 147 (Node 26) versus required ABI 137 (Node 24). Cause: the
+  earlier dependency refresh ran under the shell's default Node 26 and rebuilt the native module.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm rebuild better-sqlite3` plus a Node 24 require/ABI
+  smoke — passed (`v24.18.0`, ABI 137).
+- Repeated `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` — 329 files / 3,684 tests passed.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build` — passed with the existing middleware,
+  Sentry Edge, and webpack-cache warnings only.
 
 Shared v1.5.0 adoption verification before current-main reconciliation:
 

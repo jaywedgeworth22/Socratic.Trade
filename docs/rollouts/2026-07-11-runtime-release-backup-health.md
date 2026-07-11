@@ -143,9 +143,12 @@ tests, and production build clean.
 
 ## Follow-ups
 
-- After merge/auto-deploy, confirm `/api/health` reports the deployed `SOURCE_COMMIT`,
-  `litestreamSource: "ipc"`, `litestreamDegradedReasons: []`, a replicating daemon state, and a
-  recent non-null sync timestamp. Also confirm the socket exists with mode 0600 inside the container.
+- Production verification completed 2026-07-11T16:41Z: `/api/health` reported exact release SHA
+  `d3859025`, process start 16:28:17Z, `litestreamSource: "ipc"`,
+  `litestreamDegradedReasons: []`, state `known`, status `replicating`, sync age 1 second, and a
+  valid last-sync timestamp. The scheduler lease was current/nonexpired. No manual deploy.
+- Socket mode 0600 is configured in the production command; direct in-container mode inspection
+  remains optional because the authenticated IPC health read succeeded live.
 - The operations snapshot still uses its older synchronous file scan; unify it with this helper only
   if that route is converted to an async snapshot builder in a separately coordinated change.
 - `alertStorageWarning()` records its 12-hour cooldown before notification delivery succeeds. This

@@ -16,21 +16,23 @@ hits and deferred symbols spend nothing. Docs: `.env.example` FMP block, `docs/m
 dials table, `docs/rollouts/2026-07-10-fmp-rate-limit.md`. Gate under node@24: tsc clean, lint 0 errors,
 3412/3412 tests, `npm run build` OK. NOTE: merge = auto-deploy to live — this is a data-plane throttle,
 not a money-path change. Blockers: none. Next: land via `scripts/land.sh`, PR ready (do not merge).
-## 2026-07-11 — Runtime release + backup health (CODEX, branch `codex/runtime-release-backup-health`)
+## 2026-07-11 — Runtime release + backup health (CODEX, merged PR #1405; production verified)
 
-In progress in an isolated worktree. Public `/api/health` now reports a sanitized Coolify/source
+Public `/api/health` now reports a sanitized Coolify/source
 commit, process start/uptime, and Litestream 0.5.x daemon status plus last successful sync from the
 local Unix-socket `GET /list` endpoint. Production config now explicitly enables Litestream 0.5.12's
 control socket; the client uses a hard wall-clock deadline, bounded body, and abort/error handling.
 Production skips the synchronous metadata-file fallback entirely; non-live scanning is bounded.
 Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
 stale when newer DB/WAL activity proves there is work to upload. The pre-reconciliation Node 24 gate
-was green. The branch now reconciles `origin/main@432ca6fe`; runtime source/tests were disjoint from
+was green. The branch reconciled `origin/main@432ca6fe`; runtime source/tests were disjoint from
 the incoming stop-plan, CI, and admin-server changes, while union-merged STATUS/PLAN/EFFORT history
 was preserved. Final combined Node 24 verification is green: lint 0 errors / 405 inherited warnings,
 TypeScript clean, 326 files / 3,629 tests, and production build clean. The earlier missing `ts-morph`
-report was confirmed as stale worktree dependency state and is resolved. READY PR #1405 remains the
-delivery target without merge, auto-merge, deployment, or live replica mutation.
+report was confirmed as stale worktree dependency state and is resolved. PR #1405 merged as
+`4def810c`. Production `/api/health` at 2026-07-11T16:41Z reported exact release `d3859025`, process
+start 16:28:17Z, Litestream `known`/`replicating` from `ipc`, sync age 1s, valid timestamp, and zero
+degraded reasons; scheduler lease was current/nonexpired. No manual deploy or replica mutation.
 ## 2026-07-11 — Admin server Hetzner response-shape crash fix (CODEX, branch `codex/admin-server-shape-fix`)
 Production `/admin/server` hit React error #31 because `/api/admin/server-metrics` passed
 Hetzner's nested `server_type` and `public_net.ipv4` objects into JSX text positions. The API
@@ -119,8 +121,12 @@ This follow-up restores every wrapper and preserves #1410's verified-provenance 
 package `v1.5.0` is released and clean-install verified; the follow-up exact-pins it and makes the
 app-local HTTP adapter delegate rejection body/status construction to shared builders while retaining
 `Response`, `Retry-After`, error text, and legacy tuning fields. Representative 429/409 bodies are
-parsed by the shared schema. The refreshed Node 24 route-wiring/full gate and hosted checks are pending.
-The controls are anti-repeat budgets, not hard per-request spend ceilings. See
+parsed by the shared schema. Refreshed Node 24 verification is green: focused 4 files / 29 tests,
+lint 0 errors / 404 inherited warnings, TypeScript clean, 329 files / 3,684 tests, and production
+build clean. The first full-test attempt exposed only a Node ABI mismatch caused by the earlier
+dependency refresh running under Node 26; rebuilding `better-sqlite3` under Node 24 fixed it before
+the passing rerun. Follow-up hosted checks remain pending. The controls are anti-repeat budgets, not
+hard per-request spend ceilings. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 ## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
 
@@ -137,8 +143,9 @@ coverage while adding verified Auth.js provenance to every authorized admin requ
 current-main gate and hosted checks were green. Final combined Node 24 verification is also green:
 focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited warnings,
 TypeScript clean, 325 files / 3,620 tests, and production build clean. The exact 2a52 deployment was
-superseded/cancelled after startup; current `main@d3859025` still contains the change and has a queued
-serialized auto-deploy. Live revision proof remains pending #1405's release-identity surface. See
+superseded/cancelled after startup; current `main@d3859025` contains the change and is verified live.
+At 2026-07-11T16:41Z health reported that exact SHA, process start 16:28:17Z, and a current scheduler
+lease; plain and spoofed unauthenticated admin requests both returned 401 at the edge. See
 `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
