@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — ✅ COMPLETED 2026-07-09: PR #1282 merged to `main` (auto-merge squashed).** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
 - **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
   `claude/green-red-labels`) — COMPLETED 2026-07-10.** Owner-directed pure display-copy change.
@@ -1608,6 +1609,57 @@ As of 2026-07-08 (assignment-rule update).
   idempotent no-op on conflict. +4 new tests (robinhood-orders-error-throws, fill-events-dedupe-index,
   +conservative-inline case, +3 sweep cases). Gates green under node26 (tsc clean, 3424 tests, lint
   0-err, build ok). NOT merged.
+- **Hetzner & Coolify metrics on admin dashboard (AG, branch `agent/antigravity-server-metrics`) — IN PROGRESS 2026-07-10.** Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
+- **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
+  lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**
+  Owner reported Anthropic console spend went ~$35 -> ~$50 in 2 hours while
+  `/admin/llm-usage` only reflected ~$35. Root-caused (from codebase only — no prod DB
+  access this session): `scripts/benchmark-llm-models.ts` calls real provider APIs
+  through the app's real credential/request path but was deliberately built with NO
+  writes to the app DB, so a benchmark run's real Anthropic billing never lands in
+  `llm_usage`. Fixed: the script now prints/writes a total-spend rollup (per-provider
+  breakdown) every run, and gained an opt-in `--record-usage` flag that logs real calls
+  into the REAL `llm_usage` table via a dedicated writable connection, tagged under a
+  pretend account (`user_id="benchmark:<user>"`, `context="benchmark:<role>"`) so it's
+  visible in `/admin/llm-usage` without being conflated with a real tenant. Owner's
+  follow-up correction: the reported per-model pattern (opus-dominant, ~4 scattered
+  haiku, sonnet never called) does NOT match a default full-catalog benchmark sweep —
+  still unresolved whether this specific spike was a scoped benchmark run or organic
+  production traffic from an opus-configured account; needs a real prod ledger pull to
+  close out. `scripts/eval/run-offline.ts` has the same ledger gap, left as a follow-up.
+  See `docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`. Gate: tsc clean,
+  lint 0 errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main`
+  in this sandbox (pre-existing, confirmed via stash-and-rebuild, unrelated to this diff).
+- **Prod deploy-pipeline blocker: TCP-mem exhaustion via litestream 0.5.14 socket churn
+  (CLAUDE, branch `claude/litestream-tcpmem-pin`, fleet-infra pickup session) — IN PROGRESS
+  2026-07-10.** Diagnosed the 12 consecutive Coolify deploy failures 08:59–11:52Z ("TLS
+  unexpected eof" at git clone): NOT a GitHub/network/MTU issue — the box's kernel hit
+  `tcp_mem` max (182670 pages, ~715MB) because litestream 0.5.14 inside `socratic-trade-prod`
+  churns ~20 sockets/s to the R2 endpoint and holds thousands of dead TCP socks (peak 16,840
+  fds on one PID), so every connection's receive window clamped to ~6KB and GitHub cut clones
+  mid-transfer. Applied on the box (runtime-only, reversible): raised `net.ipv4.tcp_mem` to
+  `273945 365343 548010` (orig `91335 121781 182670`). Triggered sanctioned deploy
+  `jca2c6wsz7ewydl4q2t4whad` → FINISHED 12:29Z, prod = `main@ea89b23e` (was ~15 commits
+  stale), `/api/health` 200. This branch (owner green-lit after a brief stand-down for
+  timeline reconciliation with MONET's separate webhook-whitelist fix — different layer):
+  pin `LITESTREAM_VERSION` back to 0.5.12 in `scripts/coolify-prod-start.sh` +
+  version-aware cached-binary reinstall (BIN_DIR persists across deploys; the old
+  existence-only check would keep the stale 0.5.14 forever). tcp_mem raise persisted as
+  `/etc/sysctl.d/99-socratic-tcpmem.conf` (headroom insurance; delete once the leak class
+  is dead). Upstream issue (scrubbed): https://github.com/benbjohnson/litestream/issues/1354.
+  Rollout: `docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`. Auto-deploy is
+  live — the merge deploys; deployer (CLAUDE) owns box verification: litestream version
+  0.5.12 in-container, replication continuity (HALT + revert if WAL uploads stop — backups
+  outrank the fd leak), fd flatness at 0/10/25 min, /api/health, restore marker untouched.
+- **Capability-trading program: margin/shorting/options/PDT (CLAUDE, owner-directed 2026-07-10) —
+  ROADMAP LOCKED, foundations in review.** Owner decisions captured (shorting LIVE + paper-verify;
+  options FULL incl. multi-leg; PDT = read each broker's own requirements, no app gate; leverage =
+  NAV caps + opt-in). Verified $25k PDT rule changed (FINRA Notice 26-10, eff. 2026-06-04; app already
+  on $2k). Plan (docs/capability-trading-roadmap.md): Foundation (Tradier #1380 + order-status-reconcile,
+  owner-timed merge) -> Phase0 BrokerMargin read (covers margin-visibility + broker PDT requirements) ->
+  Phase1 shorting enable+verify -> Phase2 options single-leg (Alpaca) -> Phase3 opt-in leverage sizing ->
+  Phase4 Tradier options+writing -> Phase5 spreads. Sequenced (not parallel) because merge=auto-deploy to
+  the live trading app. Phases not started.
 - **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
   claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
   (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported
