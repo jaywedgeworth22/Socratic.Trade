@@ -394,7 +394,7 @@ const MIGRATIONS: Migration[] = [
         policy.redTeamLlmModel = servedModel;
         update.run(JSON.stringify(policy), row.user_id, row.connected_account_id);
         console.log(
-          `[db] migration 15: seeded redTeamLlmModel="${servedModel}" for account ${row.connected_account_id} (user ${row.user_id}) from the retired RED_TEAM_LLM_PROVIDER env override — review it under Settings → LLM models.`
+          `[db] migration 15: seeded redTeamLlmModel="${servedModel}" for account ${row.connected_account_id} (user ${row.user_id}) from the retired RED_TEAM_LLM_PROVIDER env override — review it under Framework → Models.`
         );
       }
     }
@@ -1023,7 +1023,8 @@ function migrate(database: Database.Database): void {
       classifier_reason TEXT,
       created_at TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
-      resolved_at TEXT
+      resolved_at TEXT,
+      review_note TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
 
@@ -1183,6 +1184,17 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN trade_thesis_tag TEXT");
     database.exec("ALTER TABLE trade_proposals ADD COLUMN entry_market_regime TEXT");
   }
+  // Thesis-tag split-brain backfill (2026-07-10 audit fix): insertProposal historically left
+  // these columns NULL while the same tags were already embedded in the proposal JSON, so the
+  // learning loop's SQL reads saw an empty column even though the data existed. Self-guarding via
+  // the WHERE clause (only touches rows still NULL with a JSON value present) -- safe to re-run
+  // every startup, no separate "already applied" marker needed.
+  database.exec(
+    "UPDATE trade_proposals SET trade_thesis_tag = json_extract(proposal, '$.tradeThesisTag') WHERE trade_thesis_tag IS NULL AND json_extract(proposal, '$.tradeThesisTag') IS NOT NULL"
+  );
+  database.exec(
+    "UPDATE trade_proposals SET entry_market_regime = json_extract(proposal, '$.entryMarketRegime') WHERE entry_market_regime IS NULL AND json_extract(proposal, '$.entryMarketRegime') IS NOT NULL"
+  );
   // Proposal staleness: when a run's LLM re-validation re-checks a still-pending proposal,
   // stamp when and why it still stands so the queue can show "re-checked X ago" rather than
   // implying an old idea is still freshly recommended.
@@ -1356,6 +1368,14 @@ function migrate(database: Database.Database): void {
         CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
       `);
     }
+  }
+
+  // Learning Review "defer" verdict (2026-07-10): the daily reviewer LLM can now leave a pending
+  // risk-tier candidate exactly as pending while explaining why it couldn't confidently decide.
+  // Additive, guarded — existing rows keep review_note NULL until a review actually defers them.
+  const learnedContextPendingColumns = database.prepare("PRAGMA table_info(learned_context_pending)").all() as Array<{ name: string }>;
+  if (!learnedContextPendingColumns.some((c) => c.name === "review_note")) {
+    database.exec("ALTER TABLE learned_context_pending ADD COLUMN review_note TEXT");
   }
 
   const now = new Date().toISOString();

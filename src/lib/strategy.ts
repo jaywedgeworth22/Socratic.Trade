@@ -35,7 +35,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
+import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { resolveModelRotationForRun } from "./model-rotation";
@@ -81,7 +81,7 @@ import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
-import { describeBrokerMinimumOrderBlock, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
+import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
@@ -92,9 +92,9 @@ import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
-import { generateReflectionSummary } from "./post-mortem";
+import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
-import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
+import { getInternalSetting, setInternalSetting } from "./db";
 import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
@@ -272,7 +272,7 @@ function resolveScanScoringWeights(policy: TradingPolicy, source: FillSource, ru
     closedLotCount,
     benchmarkRelative,
     note: nudge.note
-  }, userId);
+  }, userId, policy.connectedAccountId);
   return nudge.weights;
 }
 
@@ -346,7 +346,7 @@ export async function runStrategyOnce(
     if (!manualRun && !isTradingDay()) {
       const reason = "Market is closed (holiday or weekend). Skipping strategy run.";
       console.log(`[Strategy] ${reason}`);
-      audit("run_skipped_market_closed", { runId, userId, reason }, userId);
+      audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
       result = { runId, status: "completed", summary: reason, proposals: [] };
       finishStrategyRun(runId, "completed", reason, userId);
       releaseStrategyLock(userId, connectedAccountId);
@@ -415,10 +415,10 @@ export async function runStrategyOnce(
     }
 
     const gateway = getBrokerGateway(policy, userId);
-    await reconcilePendingFills(gateway, policy.accountNumber, userId);
+    await reconcilePendingFills(gateway, policy.accountNumber, userId, connectedAccountId);
     // Broker-truth reconcile any order-placement intent left "placing" by a prior run that crashed
     // mid-call: match it against the broker by clientOrderId and recover or abandon it.
-    await flagStalePlacingIntents(gateway, policy.accountNumber, userId);
+    await flagStalePlacingIntents(gateway, policy.accountNumber, userId, connectedAccountId);
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
       gateway.getPortfolio(policy.accountNumber),
@@ -442,7 +442,7 @@ export async function runStrategyOnce(
       policy.tuning?.congressGoNoGoGating ?? false
     );
     if (congressMultiplier === 0 && congressVerdict) {
-      audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId);
+      audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId, connectedAccountId);
     }
     const baseMarketScan = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
       candidateLimit: policy.marketScanCandidateLimit,
@@ -505,7 +505,7 @@ export async function runStrategyOnce(
           // Advisory (default): receipt + prompt context, NO state change. The account boundary is the
           // only absolute; the agent decides whether to de-risk, and the deviation is logged/coachable.
           drawdownAdvisory = { reason: breaker.reason ?? "drawdown/daily-loss threshold breached", equity, highWaterMark: breaker.highWaterMark, drawdownPct };
-          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", action: "advisory" }, userId);
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", action: "advisory" }, userId, connectedAccountId);
         } else {
           // Owner opted into hard enforcement: flip systemState. Persist to the SAME account the run
           // targeted (read via getPolicy(userId, targetAccountId)); omitting it would resolve the ACTIVE
@@ -513,7 +513,7 @@ export async function runStrategyOnce(
           const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
           policy.systemState = revertedTo;
           setPolicy(policy, userId, targetAccountId);
-          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId, connectedAccountId);
           await sendNotification(
             {
               type: "kill_switch",
@@ -547,7 +547,8 @@ export async function runStrategyOnce(
         audit(
           "policy_violation_vol_panic",
           { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only", vixAsOf: brakeMacro?.vixAsOf },
-          userId
+          userId,
+          connectedAccountId
         );
         await sendNotification(
           { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason, vixAsOf: brakeMacro?.vixAsOf } },
@@ -666,7 +667,8 @@ export async function runStrategyOnce(
         audit(
           "strategy_run_suppressed_budget_reservation",
           { runId, userId, reason: reservation.reason ?? "reservation_unavailable" },
-          userId
+          userId,
+          connectedAccountId
         );
       }
     }
@@ -674,7 +676,8 @@ export async function runStrategyOnce(
       audit(
         "strategy_run_suppressed_budget",
         { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
-        userId
+        userId,
+        connectedAccountId
       );
     }
 
@@ -1114,7 +1117,7 @@ export async function runStrategyOnce(
         skipLlmDueToScoreThreshold = true;
         const reason = `No candidates met minimum score threshold (${minScore}). ${before} candidates all scored below ${minScore}.`;
         console.log(`[Strategy] ${reason}`);
-        audit("run_skipped_score_threshold", { runId, userId, threshold: minScore, candidateCount: before, reason }, userId);
+        audit("run_skipped_score_threshold", { runId, userId, threshold: minScore, candidateCount: before, reason }, userId, connectedAccountId);
         marketScan.topCandidates = [];
       } else {
         marketScan.topCandidates = surviving;
@@ -1140,7 +1143,8 @@ export async function runStrategyOnce(
         audit(
           "strategy_run_suppressed_budget",
           { runId, userId, reason: budgetNow.reason, tokensToday: budgetNow.tokensToday, costUsdToday: budgetNow.costUsdToday, tokenLimit: budgetNow.tokenLimit, costLimitUsd: budgetNow.costLimitUsd, phase: "pre_generation" },
-          userId
+          userId,
+          connectedAccountId
         );
       }
     }
@@ -1284,7 +1288,7 @@ export async function runStrategyOnce(
         const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId, prefetchedFills);
         if (gate.skip) {
           console.log(`[NegEV] Skipped ${p.symbol} ${p.side}: ${gate.reason}`);
-          audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId);
+          audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId, connectedAccountId);
         }
         return !gate.skip;
       })
@@ -1550,7 +1554,8 @@ export async function runStrategyOnce(
           audit(
             "strategy_rationale_collapse_gated",
             { runId, count: gatedOpenings.length, meanSimilarity: openingDiversity.meanPairwiseSimilarity, threshold: openingDiversity.threshold },
-            userId
+            userId,
+            connectedAccountId
           );
         }
       }
@@ -1733,23 +1738,92 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
 
-      const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+      let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
 
-      // Broker-minimum pre-flight guard: skip an order the broker has already told us (or that basic
-      // sizing math tells us) is a GUARANTEED reject for landing below its minimum dollar/fractional
-      // order size (e.g. Robinhood's $1 floor) — rather than placing it, getting rejected, and
-      // alerting on it every single run forever. The outward alert is cooldown-gated (this condition
-      // is NAV-bound and persistent, not transient) but the audit/proposal receipt is not, so the
-      // run history and Activity feed stay accurate every time.
-      // positionQuantity lets the guard exempt a whole-position dust exit (Robinhood allows
-      // selling an entire fractional position even below its $1 minimum).
+      // Hoisted above the broker-minimum guard: the bump planner bounds opening bumps by the
+      // remaining daily/hourly budget. Values are unchanged for the post-guard consumers (the
+      // skip path `continue`s without placing anything).
+      const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
+      const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
+
+      // Broker-minimum pre-flight guard. Default handling is BUMP (owner ruling 2026-07-09: an
+      // order that lands under the broker's minimum dollar/fractional size — e.g. Robinhood's $1
+      // floor, typically a pct-of-NAV-clamped trim on a small account — is raised TO the floor and
+      // placed, honestly audited, rather than skipped). brokerMinimumHandling = "skip" restores the
+      // old behavior: block it before the broker's guaranteed reject, with a cooldown-gated alert.
+      // Bumps the planner can't make safe/executable (unknown floor, unknown held position on
+      // exits, opening bumps past the policy cap or remaining daily/hourly budget) fall back to
+      // that skip path. positionQuantity lets the guard exempt a whole-position dust exit
+      // (Robinhood allows selling an entire fractional position even below its $1 minimum) and
+      // caps sell-bumps at the full position; dollar-based exits convert to position-bounded
+      // quantity orders. The bumped order is re-reviewed by the broker and then continues into
+      // evaluateTradeProposal like any other — a bump never bypasses policy evaluation.
       const heldForMinimumGuard = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
-      const brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+      let brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+      let attemptedBumpToNotional: number | undefined;
+      if (brokerMinimumBlockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
+        // Max placeable OPENING notional = the policy engine's own per-order cap (incl. its 5%
+        // headroom — evaluateTradeProposal enforces the headroomed value, and deterministic
+        // sizing already declines its floor-raise against the same number) further bounded by
+        // the remaining daily/hourly budget. Anything the planner bumps past this would be
+        // policy-rejected every run — and a cap breach can demote authority via
+        // autoRevertOnCapBreach, which the app must never self-inflict with its own up-sizing.
+        const effectiveMaxDailyNotional = Math.min(
+          policy.maxDailyNotional ?? Infinity,
+          policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * workingPortfolio.totalMarketValue : Infinity
+        );
+        const openingCapNotional = Math.min(
+          applyOpeningOrderHeadroom(openingPolicyNotionalCap(normalizedProposal, policy, workingPortfolio)),
+          effectiveMaxDailyNotional - dailyNow.notional,
+          (policy.maxHourlyNotional ?? Infinity) - hourlyNow.notional,
+          // Mirror policy.ts's buying-power gate (binds when finite && > 0): a bump past available
+          // buying power would be policy-rejected every run instead of falling back to skip.
+          Number.isFinite(workingPortfolio.buyingPower) && workingPortfolio.buyingPower > 0 ? workingPortfolio.buyingPower : Infinity
+        );
+        // Daily ORDER-COUNT budget (not just notional): when the opening-order count is already
+        // spent, no bump can make this order placeable — planning one would only manufacture the
+        // policy rejection (and authority demotion) this block exists to avoid.
+        const openingCountSpent =
+          (normalizedProposal.side === "buy" || normalizedProposal.side === "short") &&
+          policy.maxDailyOrders != null &&
+          dailyNow.openingOrderCount >= policy.maxDailyOrders;
+        const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
+          review,
+          policy.activeBroker,
+          { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
+          { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
+        );
+        if (bumpPlan) {
+          const originalSizing = { quantity: normalizedProposal.quantity, dollarAmount: normalizedProposal.dollarAmount };
+          const originalReview = review;
+          Object.assign(normalizedProposal, bumpPlan.patch);
+          review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+          const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+          if (!stillBlocked) {
+            // Receipt honesty: the rationale narrates the pre-bump size, so annotate the
+            // up-sizing the same way other size-changing steps do.
+            normalizedProposal.rationale = `${normalizedProposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
+            audit(
+              "order_bumped_broker_minimum",
+              { runId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, fromNotional: bumpPlan.fromNotional, toNotional: review.estimatedNotional, reason: brokerMinimumBlockReason },
+              userId,
+              connectedAccountId
+            );
+          } else {
+            // Failed bump: restore the original sizing + review so the skip receipt shows what
+            // the strategy actually proposed, and record that a bump was attempted.
+            Object.assign(normalizedProposal, originalSizing);
+            review = originalReview;
+            attemptedBumpToNotional = bumpPlan.toNotional;
+          }
+          brokerMinimumBlockReason = stillBlocked ? brokerMinimumBlockReason : undefined;
+        }
+      }
       if (brokerMinimumBlockReason) {
         const decision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
         const proposalId = crypto.randomUUID();
@@ -1757,7 +1831,7 @@ export async function runStrategyOnce(
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review });
         audit(
           "order_skipped_broker_minimum",
-          { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason },
+          { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, ...(attemptedBumpToNotional !== undefined ? { attemptedBumpToNotional } : {}) },
           userId,
           connectedAccountId
         );
@@ -1775,8 +1849,6 @@ export async function runStrategyOnce(
         continue;
       }
 
-      const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-      const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
       const isLiveExecution = executionMode === "broker/live";
       let decision = evaluateTradeProposal(normalizedProposal, {
         policy,
@@ -1935,7 +2007,7 @@ export async function runStrategyOnce(
           );
           // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
           // the account back to Ask-first even though the tripping proposal survives as a card.
-          autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
+          autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
           results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           continue;
         }
@@ -1951,7 +2023,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
         // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
         // rejection) so its post-block return matures into missed-opportunity analytics — closing the
         // gap for names the LLM proposed but the policy gate then blocked. Opening sides only (a blocked
@@ -2110,7 +2182,7 @@ export async function runStrategyOnce(
         const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
         insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
-        audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId);
+        audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
         await sendNotification(
           { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
           { policy, userId }
@@ -2151,7 +2223,7 @@ export async function runStrategyOnce(
         // flag it loudly for reconciliation rather than aborting the whole run.
         updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
-        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
+        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId, connectedAccountId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
           { policy, userId }
@@ -2177,7 +2249,7 @@ export async function runStrategyOnce(
           review,
           overrideResolution
         });
-        audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
+        audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, connectedAccountId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order declined by broker (${execution.state})`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state } },
           { policy, userId }
@@ -2705,7 +2777,7 @@ export async function applyCorrelationClusterGate(
     const corr = await avgReturnCorrelation(p.symbol, holdings, userId);
     if (corr != null && corr > cap) {
       console.log(`[Corr] Skipped ${p.symbol} ${p.side}: avg correlation ${corr.toFixed(2)} > cap ${cap}`);
-      audit("proposal_skipped_correlation", { symbol: p.symbol, side: p.side, avgCorrelation: Number(corr.toFixed(4)), cap }, userId);
+      audit("proposal_skipped_correlation", { symbol: p.symbol, side: p.side, avgCorrelation: Number(corr.toFixed(4)), cap }, userId, policy.connectedAccountId);
       continue;
     }
     kept.push(p);
@@ -2764,7 +2836,8 @@ export function applyEarningsBlackoutTag(
         audit(
           "proposal_tagged_earnings_blackout",
           { symbol: proposal.symbol, side: proposal.side, daysToEarnings, window: earningsWindow },
-          userId
+          userId,
+          policy.connectedAccountId
         );
       }
     }
@@ -2845,7 +2918,8 @@ export async function applyRiskReceipts(
         audit(
           "correlation_receipt",
           { symbol: proposal.symbol, maxPairwise: max, avgEwma: profile.avgEwma, consideredCount: profile.consideredCount, truncated: profile.truncated },
-          userId
+          userId,
+          policy.connectedAccountId
         );
       }
     }
@@ -2880,7 +2954,8 @@ export async function applyRiskReceipts(
             withCandidateImpactPctOfEquity: stress.withCandidateImpactPctOfEquity,
             candidateMarginalUsd: stress.candidateMarginalUsd
           },
-          userId
+          userId,
+          policy.connectedAccountId
         );
       }
     }
@@ -3006,7 +3081,8 @@ export function applyDeterministicSizing(
     audit(
       "sizing_vol_target_applied",
       { symbol: normalizeSymbol(proposal.symbol), side: proposal.side, realizedVolPct: realizedVol, targetPortfolioVolPct: targetVol, volScale },
-      userId
+      userId,
+      policy.connectedAccountId
     );
   }
 
@@ -3075,7 +3151,7 @@ export function applyDeterministicSizing(
         suggested: Number(suggestedPctOfCeiling.toFixed(4)),
         previousMultiplier: Number(boundedMultiplier.toFixed(4)),
         applied: Number(finalMultiplier.toFixed(4))
-      }, userId);
+      }, userId, policy.connectedAccountId);
     }
   }
 
@@ -3179,7 +3255,8 @@ export function applyDeterministicSizing(
               taperFactor,
               targetNotional
             },
-            userId
+            userId,
+            policy.connectedAccountId
           );
         } else {
           heatNote =
@@ -3218,6 +3295,11 @@ export function applyDeterministicSizing(
     ? advisedNotional
     : Math.max(0, fallbackBase) * finalMultiplier;
   if (
+    // Honor brokerMinimumHandling here too: under "skip" the owner asked for sub-minimum orders
+    // to be SKIPPED (cooldown-gated), not silently raised — an unconditional raise here would
+    // make skip mode unreachable for autonomous openings because the pre-flight guard downstream
+    // would never see a sub-minimum order.
+    (policy.brokerMinimumHandling ?? "bump") === "bump" &&
     brokerMinDollar > 0 &&
     targetNotional < brokerMinDollar &&
     (targetNotional > 0 || rawSourceNotional > 0) &&
@@ -3432,7 +3514,7 @@ function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPol
   // cap on proposal N would keep queueing decide-style soft-blocked cards for N+1... even though
   // the account was just demoted to Ask-first.
   policy.strategyAuthority = "propose";
-  audit("policy_violation_cap_exceeded", { reasons, from: "decide", revertedTo: "propose" }, userId);
+  audit("policy_violation_cap_exceeded", { reasons, from: "decide", revertedTo: "propose" }, userId, connectedAccountId);
   return true;
 }
 
@@ -3639,7 +3721,7 @@ export async function executeProposal(
       const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
       const tradabilityDecision: PolicyDecision = { approved: false, reasons: [reason] };
       updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId, undefined, undefined, tradabilityDecision);
-      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId);
+      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId, policy.connectedAccountId);
       await sendNotification(
         {
           type: "block",
@@ -3651,20 +3733,81 @@ export async function executeProposal(
       return { status: "blocked", reasons: [reason] };
     }
 
-    const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+    let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
 
     // Same broker-minimum pre-flight guard as the autonomous run loop: NAV/sizing can drift between
     // proposal creation and a human clicking Approve, so re-check here too rather than let a
-    // known-doomed order reach the broker from this path.
-    // Same whole-position dust-exit exemption as the autonomous loop (see the guard).
+    // known-doomed order reach the broker from this path. Same bump-first handling (owner ruling:
+    // bump, not skip) and whole-position dust-exit exemption as the autonomous loop (see the guard);
+    // the bumped order is re-reviewed and still goes through evaluateTradeProposal below.
     const heldForMinimumGuard = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
-    const brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
+    let brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
+    // Hoisted above the guard: the bump planner bounds opening bumps by the remaining
+    // daily/hourly budget (values unchanged for the post-guard consumers — the skip path
+    // returns without placing anything).
+    const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
+    const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
+    let attemptedBumpToNotional: number | undefined;
+    // Typed live confirmations and bumps: the owner's confirmation (validated earlier in this
+    // function) was minted against the STORED pre-bump notional. A bump can raise the placed
+    // notional to the broker floor (+0.5% cushion, so ≤ ~$1.01 on Robinhood) — a bounded,
+    // owner-ruled default (brokerMinimumHandling "bump", 2026-07-09), so we deliberately do NOT
+    // force a re-confirmation ceremony for that sub-dollar delta; the order_bumped_broker_minimum
+    // audit records both sizes and the rationale annotates the up-sizing.
+    if (brokerMinimumBlockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
+      // Same composed cap as the run loop: policy's headroomed per-order cap ∧ remaining
+      // daily/hourly budget ∧ available buying power — a bump past any of these would be
+      // policy-rejected (and a cap breach can demote authority via autoRevertOnCapBreach).
+      const effectiveMaxDailyNotional = Math.min(
+        policy.maxDailyNotional ?? Infinity,
+        policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * account.portfolio.totalMarketValue : Infinity
+      );
+      const openingCapNotional = Math.min(
+        applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, account.portfolio)),
+        effectiveMaxDailyNotional - daily.notional,
+        (policy.maxHourlyNotional ?? Infinity) - hourly.notional,
+        // Mirror policy.ts's buying-power gate (binds when finite && > 0).
+        Number.isFinite(account.portfolio.buyingPower) && account.portfolio.buyingPower > 0 ? account.portfolio.buyingPower : Infinity
+      );
+      // Daily ORDER-COUNT budget (not just notional) — see the run-loop site.
+      const openingCountSpent =
+        (proposal.side === "buy" || proposal.side === "short") &&
+        policy.maxDailyOrders != null &&
+        daily.openingOrderCount >= policy.maxDailyOrders;
+      const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
+        review,
+        policy.activeBroker,
+        { ...proposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
+        { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
+      );
+      if (bumpPlan) {
+        const originalSizing = { quantity: proposal.quantity, dollarAmount: proposal.dollarAmount };
+        const originalReview = review;
+        Object.assign(proposal, bumpPlan.patch);
+        review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+        const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
+        if (!stillBlocked) {
+          proposal.rationale = `${proposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
+          audit(
+            "order_bumped_broker_minimum",
+            { proposalId, symbol: proposal.symbol, side: proposal.side, fromNotional: bumpPlan.fromNotional, toNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval" },
+            userId,
+            policy.connectedAccountId
+          );
+        } else {
+          Object.assign(proposal, originalSizing);
+          review = originalReview;
+          attemptedBumpToNotional = bumpPlan.toNotional;
+        }
+        brokerMinimumBlockReason = stillBlocked ? brokerMinimumBlockReason : undefined;
+      }
+    }
     if (brokerMinimumBlockReason) {
       const blockedDecision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
       updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, blockedDecision);
       audit(
         "order_skipped_broker_minimum",
-        { proposalId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval" },
+        { proposalId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval", ...(attemptedBumpToNotional !== undefined ? { attemptedBumpToNotional } : {}) },
         userId,
         policy.connectedAccountId
       );
@@ -3681,8 +3824,6 @@ export async function executeProposal(
       return { status: "blocked", reasons: [brokerMinimumBlockReason] };
     }
 
-    const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-    const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
     const isLiveExecution = executionState.environment === "live";
     const decision = evaluateTradeProposal(proposal, {
       policy,
@@ -3823,7 +3964,7 @@ export async function executeProposal(
         action: "approval",
         result: "blocked",
         reasons: decision.reasons
-      }, userId);
+      }, userId, policy.connectedAccountId);
       await sendNotification(
         {
           type: "block",
@@ -3832,7 +3973,7 @@ export async function executeProposal(
         },
         { policy, userId }
       );
-      autoRevertOnCapBreach(decision.reasons, policy, userId);
+      autoRevertOnCapBreach(decision.reasons, policy, userId, policy.connectedAccountId);
       return { status: "blocked", reasons: decision.reasons };
     }
 
@@ -3854,7 +3995,8 @@ export async function executeProposal(
       audit(
         "proposal_approved",
         { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
-        userId
+        userId,
+        policy.connectedAccountId
       );
       await sendNotification(
         {
@@ -3882,7 +4024,7 @@ export async function executeProposal(
       // Persist a REJECTED decision (not the earlier approved one) so the ledger reflects the block.
       const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
       updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
-      audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId);
+      audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId, policy.connectedAccountId);
       await sendNotification(
         { type: "block", title: `${proposal.symbol} live order blocked (pre-flight)`, payload: { proposalId, proposal, review, reason: message, decision: blockedDecision } },
         { policy, userId }
@@ -3897,7 +4039,10 @@ export async function executeProposal(
     // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
     // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
     // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode })) {
+    // `proposal` persists execution-time sizing (broker-minimum bump / approval-time reprice) into
+    // the row before placement, so crash-recovery books any fill at the size actually sent and
+    // Recent/Activity show the executed order rather than the stale original ask.
+    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal })) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
@@ -3907,7 +4052,7 @@ export async function executeProposal(
     } catch (placeError) {
       const message = placeError instanceof Error ? placeError.message : String(placeError);
       updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
+      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId, policy.connectedAccountId);
       await sendNotification(
         { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
         { policy, userId }
@@ -3921,7 +4066,7 @@ export async function executeProposal(
     if (isRejectedOrCanceledState(execution.state)) {
       const message = `Broker declined the order (state: ${execution.state}).`;
       updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
+      audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, policy.connectedAccountId);
       await sendNotification(
         { type: "run_failed", title: `${proposal.symbol} order declined by broker (${execution.state})`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state } },
         { policy, userId }
@@ -3953,7 +4098,7 @@ export async function executeProposal(
       orderId: execution.orderId,
       brokerState: execution.state,
       fillStatus
-    }, userId);
+    }, userId, policy.connectedAccountId);
     await sendNotification(
       {
         type: "fill",
@@ -4105,7 +4250,9 @@ async function proposeTrades(input: {
       : undefined;
 
   const currentPrices = currentPricesFromScan(input.marketScan);
-  const reflection = getUserSetting(input.userId, "reflection_summary", "");
+  // Account-scoped (with legacy shared-row fallback): keyed by the same broker accountNumber
+  // the post-mortem writer uses, so a live account never reads a sibling account's reflection.
+  const reflection = getReflectionSummary(input.userId, input.policy.accountNumber);
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   const source = fillSourceForExecutionMode(executionState);
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
@@ -4542,7 +4689,29 @@ async function proposeTrades(input: {
     keySource: llmKeySource
   };
   recordStep({ ...bullStepBase, status: "started" }, { includeInResult: false });
-  let bullResult: { text?: string; proposals: TradeProposal[]; truncated?: boolean };
+  let bullResult: { text?: string; proposals: TradeProposal[]; truncated?: boolean; wireOutputCap?: number; finishReason?: string };
+  // Raw provider finish/stop-reason string for the strategy_bull_truncated audit below — same
+  // transports `detectLlmTruncation` (llm-call.ts) inspects, but that helper only returns a bool;
+  // this surfaces the actual reason value so the audit says WHY the model stopped, not just that it did.
+  const extractBullFinishReason = (payload: unknown): string | undefined => {
+    if (!payload || typeof payload !== "object") return undefined;
+    const p = payload as {
+      stop_reason?: unknown;
+      choices?: Array<{ finish_reason?: unknown }>;
+      incomplete_details?: { reason?: unknown } | null;
+      status?: unknown;
+      output?: Array<{ status?: unknown } | null>;
+    };
+    if (typeof p.stop_reason === "string") return p.stop_reason;
+    const chatReason = p.choices?.[0]?.finish_reason;
+    if (typeof chatReason === "string") return chatReason;
+    if (typeof p.incomplete_details?.reason === "string") return p.incomplete_details.reason;
+    if (typeof p.status === "string") return p.status;
+    // Responses-API shape with only per-item statuses (no top-level status/incomplete_details):
+    // detectLlmTruncation treats any output item with status "incomplete" as truncation.
+    if (Array.isArray(p.output) && p.output.some((o) => o?.status === "incomplete")) return "incomplete";
+    return undefined;
+  };
   try {
     bullResult = await withLlmGeneration(
       {
@@ -4585,7 +4754,7 @@ async function proposeTrades(input: {
               },
               {
                 softTimeoutMs: bullSoftTimeoutMs,
-                onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bull", provider: attempt.provider, model: attempt.model, softTimeoutMs: bullSoftTimeoutMs })
+                onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bull", provider: attempt.provider, model: attempt.model, softTimeoutMs: bullSoftTimeoutMs, connectedAccountId: input.policy.connectedAccountId })
               }
             );
 
@@ -4594,7 +4763,7 @@ async function proposeTrades(input: {
               if (!isLast && isRetryableLlmStatus(response.status)) {
                 lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
                 console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
-                audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId);
+                audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
                 continue;
               }
               throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
@@ -4610,6 +4779,14 @@ async function proposeTrades(input: {
             }
             const text = extractLlmText(payload);
             const truncated = detectLlmTruncation(payload);
+            // The wire cap actually sent for THIS attempt (base cap + provider reasoning headroom —
+            // e.g. Gemini/xAI/Mistral/DeepSeek add up to +16000), not the pre-headroom constant.
+            const wireOutputCap = resolveLlmWireOutputCap(attempt.transport, {
+              maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+              model: attempt.model,
+              reasoningEffort: interactiveStrategyReasoningEffort(attempt.model, input.policy.llmReasoningEffort)
+            });
+            const finishReason = extractBullFinishReason(payload);
 
             if (!text) {
               throw new Error("Empty response returned from LLM API.");
@@ -4619,20 +4796,20 @@ async function proposeTrades(input: {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
               const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-              return { text, proposals: parsed.proposals ?? [], truncated };
+              return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
             } catch (parseError) {
               // A truncated/malformed model response must not crash the whole autonomous
               // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
               // record a DISTINCT truncation reason instead of a silent no-op (see below).
               console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", parseError);
-              return { text, proposals: [] as TradeProposal[], truncated };
+              return { text, proposals: [] as TradeProposal[], truncated, wireOutputCap, finishReason };
             }
           } catch (err) {
             // Transient transport error / timeout → fail over to the next model when one remains.
             if (!isLast && isRetryableLlmError(err)) {
               lastError = err;
               console.warn(`[Bull] ${attempt.model}/${attempt.provider} errored (${(err as { message?: string })?.message ?? String(err)}); failing over to ${next.model}/${next.provider}.`);
-              audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "transport_or_timeout", toModel: next.model, toProvider: next.provider }, input.userId);
+              audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "transport_or_timeout", toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
               continue;
             }
             throw err;
@@ -4658,16 +4835,27 @@ async function proposeTrades(input: {
   }));
   // TRUNCATION-AWARE: if the Bull answer hit the output-token cap, a zero/partial parse is NOT a
   // genuine "do nothing" — record a DISTINCT reason + audit so it's diagnosable and never a silent
-  // no-op. (See Chat A item 5; raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.)
+  // no-op. (See Chat A item 5; raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.) The
+  // reason string and audit payload report the ACTUAL wire cap (post reasoning-headroom), not the
+  // pre-headroom LLM_OUTPUT_TOKEN_CAPS constant, which can understate what was really sent.
   const bullTruncationReason = bullResult.truncated
-    ? `Green Team response hit the ${LLM_OUTPUT_TOKEN_CAPS.strategyProposal}-token output cap (truncated); ${rawBullProposals.length} proposal(s) parsed. Raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.`
+    ? `Green Team response hit the ${bullResult.wireOutputCap ?? LLM_OUTPUT_TOKEN_CAPS.strategyProposal}-token output cap (truncated${bullResult.finishReason ? `, finish_reason=${bullResult.finishReason}` : ""}); ${rawBullProposals.length} proposal(s) parsed. Raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.`
     : undefined;
   if (bullTruncationReason) {
     console.warn(`[Bull] ${bullTruncationReason}`);
     audit(
       "strategy_bull_truncated",
-      { runId: input.runId, cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, parsedProposals: rawBullProposals.length, provider, model },
-      input.userId
+      {
+        runId: input.runId,
+        cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+        wireOutputCap: bullResult.wireOutputCap,
+        finishReason: bullResult.finishReason,
+        parsedProposals: rawBullProposals.length,
+        provider,
+        model
+      },
+      input.userId,
+      input.policy.connectedAccountId
     );
   }
   // Record the served provider/model (may differ from the primary after failover) plus a clear reason
@@ -4937,12 +5125,13 @@ export function coerceProtectiveExitToMarket(proposal: TradeProposal): TradeProp
  */
 function recordLlmOutcome(
   outcome: LlmCallOutcome,
-  ctx: { runId?: string; userId: string; step: "bull" | "bear"; provider: string; model: string; softTimeoutMs: number }
+  ctx: { runId?: string; userId: string; step: "bull" | "bear"; provider: string; model: string; softTimeoutMs: number; connectedAccountId?: string }
 ): void {
   audit(
     "llm_call_latency",
     { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, softTimeoutMs: ctx.softTimeoutMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error },
-    ctx.userId
+    ctx.userId,
+    ctx.connectedAccountId
   );
   // Only the LATE path reads the body: there the tick bailed at the soft timeout and never touched the
   // response, so we alone can drain it. A FAST response (success, or a non-ok like a 429 that fails
@@ -4963,10 +5152,11 @@ function recordLlmOutcome(
       audit(
         "llm_late_response",
         { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error, textSnippet, usage },
-        ctx.userId
+        ctx.userId,
+        ctx.connectedAccountId
       );
     } catch (err) {
-      audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId);
+      audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId, ctx.connectedAccountId);
     }
   })();
 }
@@ -5011,7 +5201,7 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
     .map(coerceProtectiveExitToMarket);
 }
 
-export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local"): Promise<void> {
+export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local", connectedAccountId?: string): Promise<void> {
   const pending = listPendingBrokerReconciliationFills(accountNumber, userId);
   if (pending.length === 0) return;
 
@@ -5036,7 +5226,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           filledAt: matched.updatedAt ?? new Date().toISOString(),
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
-        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId);
+        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId, connectedAccountId);
       };
 
       if (matched.state === "filled") {
@@ -5050,7 +5240,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           filledAt: matched.updatedAt ?? new Date().toISOString(),
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
-        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId);
+        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId, connectedAccountId);
       } else if (matched.state === "partially_filled") {
         // A live order that has executed some-but-not-all shares: book the executed
         // portion now so it enters P&L/exposure instead of being silently dropped.
@@ -5065,7 +5255,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
             status: matched.state,
             raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
           }, userId);
-          audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: matched.state }, userId);
+          audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: matched.state }, userId, connectedAccountId);
         }
       }
     }
@@ -5082,7 +5272,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
  * follow-up), so we surface it loudly in the audit trail and mark it "placing_stale" so it isn't
  * re-flagged every run. An operator (or the future broker-truth sweep) then reconciles it.
  */
-async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: string, userId: string): Promise<void> {
+async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: string, userId: string, connectedAccountId?: string): Promise<void> {
   const STALE_PLACING_MS = 2 * 60_000;
   const cutoff = new Date(Date.now() - STALE_PLACING_MS).toISOString();
   let stale: ReturnType<typeof listStalePlacingProposals>;
@@ -5105,7 +5295,7 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
   } catch (e) {
     console.error("[placing-sweep] broker unreachable for recovery; will retry next run:", e);
     for (const row of stale) {
-      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, note: "Stale placing intent; broker unreachable for recovery — will retry." }, userId);
+      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, note: "Stale placing intent; broker unreachable for recovery — will retry." }, userId, connectedAccountId);
     }
     return;
   }
@@ -5129,10 +5319,10 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
           status: matched.state === "filled" ? "filled" : "pending_reconciliation"
         });
       }
-      audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId);
+      audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId, connectedAccountId);
     } else {
       updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId, undefined, "Order never confirmed — broker record not found during reconciliation.");
-      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId);
+      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId, connectedAccountId);
     }
   }
 }
