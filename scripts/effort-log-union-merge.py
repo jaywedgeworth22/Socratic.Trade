@@ -268,7 +268,16 @@ def parse_board(text: str) -> ParsedBoard:
                 for lvl in sorted(heading_bucket_by_level, reverse=True):
                     if heading_bucket_by_level[lvl] is not None:
                         effective = heading_bucket_by_level[lvl]
-                        effective_canonical = heading_canonical_by_level.get(lvl, False)
+                        # Do NOT inherit the parent's canonical-ness — a subsection
+                        # (level > 2) is never a canonical insertion point even if it
+                        # inherits the same bucket value. Only directly classified
+                        # level-2 headings establish a canonical section. Without this,
+                        # every line inside an unclassified ###/#### subsection under a
+                        # canonical ## section overwrites canonical_bucket_insert_at,
+                        # and recovered top-level rows land under that subsection
+                        # instead of the active bucket section. (PR #1354 review round
+                        # 5 — the canonical-insertion-out-of-nested-sections fix.)
+                        effective_canonical = False
                         break
             heading_bucket_by_level[level] = effective
             heading_canonical_by_level[level] = effective_canonical
