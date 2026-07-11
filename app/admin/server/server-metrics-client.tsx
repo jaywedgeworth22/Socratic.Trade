@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Card, Chip, Dot } from "../../ui/primitives";
 import { Server, Cpu, Database, Activity, RefreshCw, Layers, ArrowDown, ArrowUp, Globe, Shield } from "lucide-react";
+import { asRecord, normalizeCoolifyResources, readText } from "@/lib/server-metrics-shapes";
 
 interface MetricPoint {
   timestamp: number;
@@ -10,30 +11,26 @@ interface MetricPoint {
 }
 
 interface HostInfo {
-  name: string;
-  status: string;
-  os: string;
-  cpus: number;
-  memoryTotalBytes: number;
-  memoryFreeBytes: number;
-  uptimeSeconds: number;
-  loadAvg?: number[];
-  serverType?: string;
-  location?: string;
-  ip?: string;
-}
-
-interface ResourceItem {
-  uuid: string;
-  name: string;
-  type: string;
-  status: string;
+  // JSON is an untrusted runtime boundary. Keep every display field unknown so
+  // a future provider regression renders a diagnostic rather than crashing.
+  name?: unknown;
+  status?: unknown;
+  os?: unknown;
+  cpus?: unknown;
+  memoryTotalBytes?: unknown;
+  memoryFreeBytes?: unknown;
+  uptimeSeconds?: unknown;
+  loadAvg?: unknown;
+  serverType?: unknown;
+  location?: unknown;
+  ip?: unknown;
 }
 
 interface ServerMetricsData {
   isProd: boolean;
+  degraded?: boolean;
   hostInfo: HostInfo;
-  resources: ResourceItem[];
+  resources: unknown;
   metrics: {
     cpu: MetricPoint[];
     diskRead: MetricPoint[];
@@ -43,6 +40,7 @@ interface ServerMetricsData {
   };
   asOf: string;
   error?: string;
+  warnings?: unknown;
 }
 
 // Helper formats
@@ -70,25 +68,49 @@ function formatUptime(seconds: number) {
   return `${h}h ${m}m`;
 }
 
+export function displayProviderText(value: unknown, fallback: string, label: string): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value === undefined || value === null || value === "") return fallback;
+  return `Invalid ${label}`;
+}
+
+function readNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
 export function ServerMetricsClient() {
   const [data, setData] = useState<ServerMetricsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [autoPoll, setAutoPoll] = useState(true);
+  const [requestError, setRequestError] = useState<string | null>(null);
 
-  const fetchMetrics = useCallback(async (isSilent = false) => {
-    if (!isSilent) setRefreshing(true);
+  const fetchMetrics = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/server-metrics");
       if (res.ok) {
         const json = await res.json();
         setData(json);
+        setRequestError(null);
       } else {
-        const json = await res.json().catch(() => ({}));
-        setData((prev) => prev ? { ...prev, error: json.error || "Failed to load metrics" } : null);
+        const json: unknown = await res.json().catch(() => undefined);
+        const envelope = asRecord(json);
+        const error = readText(envelope?.error) || "Failed to load metrics";
+        // The API preserves verified partial provider data in a degraded 502
+        // envelope. Keep that receipt; reject unrelated/malformed error JSON.
+        if (asRecord(envelope?.hostInfo) && asRecord(envelope?.metrics) && Array.isArray(envelope?.resources)) {
+          setData({ ...(envelope as unknown as ServerMetricsData), error });
+          setRequestError(null);
+        } else {
+          setData((prev) => prev ? { ...prev, error } : null);
+          setRequestError(error);
+        }
       }
     } catch (err) {
       console.error(err);
+      setRequestError("Unable to reach the server metrics endpoint.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -96,13 +118,16 @@ export function ServerMetricsClient() {
   }, []);
 
   useEffect(() => {
-    fetchMetrics();
+    const timer = window.setTimeout(() => {
+      void fetchMetrics();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [fetchMetrics]);
 
   useEffect(() => {
     if (!autoPoll) return;
     const timer = setInterval(() => {
-      fetchMetrics(true);
+      void fetchMetrics();
     }, 30000);
     return () => clearInterval(timer);
   }, [autoPoll, fetchMetrics]);
@@ -117,22 +142,43 @@ export function ServerMetricsClient() {
   }
 
   const host = data?.hostInfo;
-  const resources = data?.resources || [];
+  const normalizedResources = normalizeCoolifyResources(data?.resources ?? []);
+  const resources = normalizedResources.resources;
   const metrics = data?.metrics;
-
-  const usedMem = host ? host.memoryTotalBytes - host.memoryFreeBytes : 0;
-  const memPct = host ? Math.round((usedMem / host.memoryTotalBytes) * 100) : 0;
+  const providerWarnings = Array.isArray(data?.warnings)
+    ? data.warnings.filter((warning): warning is string => typeof warning === "string" && Boolean(warning.trim()))
+    : data?.warnings == null
+      ? []
+      : ["The server metrics warnings payload was malformed."];
+  const warnings = [...providerWarnings, ...normalizedResources.warnings];
+  const hostName = displayProviderText(host?.name, data?.isProd ? "Unavailable" : "localhost", "host name");
+  const hostOs = displayProviderText(host?.os, "Unavailable", "operating system");
+  const hostIp = displayProviderText(host?.ip, data?.isProd ? "Unavailable" : "127.0.0.1", "server IP");
+  const hostLocation = displayProviderText(host?.location, data?.isProd ? "Unavailable" : "local", "server location");
+  const serverType = displayProviderText(host?.serverType, data?.isProd ? "Unavailable" : "local runtime", "server type");
+  const cpuCores = typeof host?.cpus === "number" && Number.isFinite(host.cpus) && host.cpus > 0
+    ? `${host.cpus} Cores`
+    : "Unavailable";
+  const memoryTotalBytes = readNonNegativeNumber(host?.memoryTotalBytes);
+  const memoryFreeBytes = readNonNegativeNumber(host?.memoryFreeBytes);
+  const memPct = memoryTotalBytes && memoryFreeBytes !== undefined
+    ? Math.max(0, Math.min(100, Math.round(((memoryTotalBytes - memoryFreeBytes) / memoryTotalBytes) * 100)))
+    : undefined;
+  const uptimeSeconds = readNonNegativeNumber(host?.uptimeSeconds);
+  const loadAverage = Array.isArray(host?.loadAvg)
+    ? readNonNegativeNumber(host.loadAvg[0])
+    : undefined;
 
   // CPU average of last 3 points
   const latestCpuValues = metrics?.cpu?.slice(-3).map(p => p.value) || [];
-  const currentCpu = latestCpuValues.length > 0 
+  const currentCpu = latestCpuValues.length > 0
     ? Math.round(latestCpuValues.reduce((a, b) => a + b, 0) / latestCpuValues.length) 
-    : 0;
+    : undefined;
 
   // Disk/Network average speed of last 3 points
   const getLatestAvg = (points?: MetricPoint[]) => {
     const vals = points?.slice(-3).map(p => p.value) || [];
-    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : undefined;
   };
 
   const currentDiskRead = getLatestAvg(metrics?.diskRead);
@@ -148,9 +194,11 @@ export function ServerMetricsClient() {
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold text-fg">Server & infrastructure</h1>
             {data?.isProd ? (
-              <Chip tone="accent">PRODUCTION</Chip>
+              <Chip tone={data.degraded ? "warn" : "accent"}>
+                {data.degraded ? "PRODUCTION - DEGRADED" : "PRODUCTION"}
+              </Chip>
             ) : (
-              <Chip tone="warn">DEVELOPMENT MOCK</Chip>
+              <Chip tone="warn">LOCAL HOST</Chip>
             )}
           </div>
           <p className="mt-1 text-sm text-muted">
@@ -169,7 +217,10 @@ export function ServerMetricsClient() {
           </label>
           <button
             type="button"
-            onClick={() => fetchMetrics()}
+            onClick={() => {
+              setRefreshing(true);
+              void fetchMetrics();
+            }}
             disabled={refreshing}
             className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-line bg-surface px-4 text-xs font-semibold text-fg transition-colors hover:bg-surface-2 disabled:opacity-50"
           >
@@ -179,9 +230,16 @@ export function ServerMetricsClient() {
         </div>
       </header>
 
-      {data?.error && (
+      {(requestError || data?.error) && (
         <div className="mb-6 rounded-xl border border-neg/20 bg-neg/5 p-4 text-sm text-neg">
-          <span className="font-semibold">Error retrieving full metrics:</span> {data.error}. Reverting to local metrics fallback.
+          <span className="font-semibold">Error retrieving full metrics:</span> {requestError || data?.error}
+          {data ? " Available verified data is shown." : ""}
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="mb-6 rounded-xl border border-warn/20 bg-warn/5 p-4 text-sm text-warn" role="status">
+          <span className="font-semibold">Provider metadata warning:</span> {warnings.join(" ")}
         </div>
       )}
 
@@ -193,9 +251,9 @@ export function ServerMetricsClient() {
           </div>
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Host Server</div>
-            <div className="font-bold text-fg">{host?.name || "localhost"}</div>
+            <div className="font-bold text-fg">{hostName}</div>
             <div className="text-xs text-muted flex items-center gap-1.5 mt-0.5">
-              <Globe size={11} /> {host?.ip || "127.0.0.1"} • {host?.location || "local"}
+              <Globe size={11} /> {hostIp} • {hostLocation}
             </div>
           </div>
         </Card>
@@ -206,9 +264,9 @@ export function ServerMetricsClient() {
           </div>
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">CPU Cores</div>
-            <div className="font-bold text-fg">{host?.cpus || 2} Cores</div>
+            <div className="font-bold text-fg">{cpuCores}</div>
             <div className="text-xs text-muted mt-0.5">
-              {host?.serverType || "vps"} • Load: {host?.loadAvg ? host.loadAvg[0].toFixed(2) : "n/a"}
+              {serverType} • Load: {loadAverage === undefined ? "n/a" : loadAverage.toFixed(2)}
             </div>
           </div>
         </Card>
@@ -219,9 +277,13 @@ export function ServerMetricsClient() {
           </div>
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">System Memory</div>
-            <div className="font-bold text-fg">{formatBytes(host?.memoryTotalBytes || 0)}</div>
+            <div className="font-bold text-fg">
+              {memoryTotalBytes === undefined ? "Unavailable" : formatBytes(memoryTotalBytes)}
+            </div>
             <div className="text-xs text-muted mt-0.5">
-              {memPct}% used • {formatBytes(host ? host.memoryFreeBytes : 0)} free
+              {memPct === undefined || memoryFreeBytes === undefined
+                ? "Utilization unavailable"
+                : `${memPct}% used - ${formatBytes(memoryFreeBytes)} free`}
             </div>
           </div>
         </Card>
@@ -232,9 +294,11 @@ export function ServerMetricsClient() {
           </div>
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Host Uptime</div>
-            <div className="font-bold text-fg">{formatUptime(host?.uptimeSeconds || 0)}</div>
+            <div className="font-bold text-fg">
+              {uptimeSeconds === undefined ? "Unavailable" : formatUptime(uptimeSeconds)}
+            </div>
             <div className="text-xs text-muted mt-0.5 truncate max-w-[180px]">
-              {host?.os || "Ubuntu"}
+              {hostOs}
             </div>
           </div>
         </Card>
@@ -254,12 +318,12 @@ export function ServerMetricsClient() {
               <div>
                 <div className="flex justify-between text-xs font-semibold mb-1">
                   <span className="text-muted">CPU Utilization</span>
-                  <span className="text-fg">{currentCpu}%</span>
+                  <span className="text-fg">{currentCpu === undefined ? "Unavailable" : `${currentCpu}%`}</span>
                 </div>
                 <div className="h-2 w-full rounded-full bg-surface-3 overflow-hidden">
                   <div 
                     className="h-full bg-accent transition-all duration-500" 
-                    style={{ width: `${currentCpu}%` }}
+                    style={{ width: `${currentCpu ?? 0}%` }}
                   />
                 </div>
               </div>
@@ -268,12 +332,12 @@ export function ServerMetricsClient() {
               <div>
                 <div className="flex justify-between text-xs font-semibold mb-1">
                   <span className="text-muted">RAM Utilization</span>
-                  <span className="text-fg">{memPct}%</span>
+                  <span className="text-fg">{memPct === undefined ? "Unavailable" : `${memPct}%`}</span>
                 </div>
                 <div className="h-2 w-full rounded-full bg-surface-3 overflow-hidden">
                   <div 
                     className="h-full bg-info transition-all duration-500" 
-                    style={{ width: `${memPct}%` }}
+                    style={{ width: `${memPct ?? 0}%` }}
                   />
                 </div>
               </div>
@@ -282,19 +346,19 @@ export function ServerMetricsClient() {
             <div className="mt-5 grid grid-cols-2 gap-4 border-t border-line pt-4 text-xs text-muted">
               <div>
                 <div className="flex items-center gap-1"><ArrowDown size={12} className="text-pos" /> Disk Read</div>
-                <div className="font-semibold text-fg mt-0.5">{formatBandwidth(currentDiskRead)}</div>
+                <div className="font-semibold text-fg mt-0.5">{currentDiskRead === undefined ? "Unavailable" : formatBandwidth(currentDiskRead)}</div>
               </div>
               <div>
                 <div className="flex items-center gap-1"><ArrowUp size={12} className="text-accent" /> Disk Write</div>
-                <div className="font-semibold text-fg mt-0.5">{formatBandwidth(currentDiskWrite)}</div>
+                <div className="font-semibold text-fg mt-0.5">{currentDiskWrite === undefined ? "Unavailable" : formatBandwidth(currentDiskWrite)}</div>
               </div>
               <div>
                 <div className="flex items-center gap-1"><ArrowDown size={12} className="text-pos" /> Network In (Rx)</div>
-                <div className="font-semibold text-fg mt-0.5">{formatBandwidth(currentNetRx)}</div>
+                <div className="font-semibold text-fg mt-0.5">{currentNetRx === undefined ? "Unavailable" : formatBandwidth(currentNetRx)}</div>
               </div>
               <div>
                 <div className="flex items-center gap-1"><ArrowUp size={12} className="text-accent" /> Network Out (Tx)</div>
-                <div className="font-semibold text-fg mt-0.5">{formatBandwidth(currentNetTx)}</div>
+                <div className="font-semibold text-fg mt-0.5">{currentNetTx === undefined ? "Unavailable" : formatBandwidth(currentNetTx)}</div>
               </div>
             </div>
           </Card>

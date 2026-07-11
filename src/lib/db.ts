@@ -398,6 +398,80 @@ const MIGRATIONS: Migration[] = [
         );
       }
     }
+  },
+  {
+    // Durable double-fill backstop: a partial UNIQUE index on fill_events (proposal_id,
+    // broker_order_id) so the inline/sweep check-then-insert can't double-book the same physical
+    // broker order even if the single-process invariant is ever violated (concurrent scheduler +
+    // approval, or a crash-retry across processes). Partial (WHERE both non-null) so pre-placement
+    // rows and non-broker fills — which legitimately share NULLs — are never constrained. Existing
+    // duplicate (proposal_id, broker_order_id) rows are collapsed FIRST (keep the earliest by rowid,
+    // delete the rest, logged loudly) so the index can't fail to build on legacy double-books — a
+    // duplicate for the same physical order IS a double-count bug, so collapsing it is the intended
+    // consistency fix, not data loss. insertFillEvent treats the constraint violation as an
+    // idempotent no-op (returns the already-booked fill).
+    version: 16,
+    name: "fill_events_dedupe_unique_index",
+    up: (database) => {
+      const dupGroups = database
+        .prepare(
+          `SELECT proposal_id, broker_order_id, COUNT(*) AS c, MIN(rowid) AS keep_rowid
+           FROM fill_events
+           WHERE proposal_id IS NOT NULL AND broker_order_id IS NOT NULL
+           GROUP BY proposal_id, broker_order_id
+           HAVING c > 1`
+        )
+        .all() as Array<{ proposal_id: string; broker_order_id: string; c: number; keep_rowid: number }>;
+      const deleteExtras = database.prepare(
+        `DELETE FROM fill_events
+         WHERE proposal_id = ? AND broker_order_id = ? AND rowid != ?`
+      );
+      for (const g of dupGroups) {
+        const info = deleteExtras.run(g.proposal_id, g.broker_order_id, g.keep_rowid);
+        console.warn(
+          `[db] migration 16: collapsed ${info.changes} duplicate fill_events row(s) for (proposal_id=${g.proposal_id}, broker_order_id=${g.broker_order_id}) — kept rowid ${g.keep_rowid}. A duplicate for the same physical broker order is a double-count bug; the new UNIQUE index prevents recurrence.`
+        );
+      }
+      database.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_fill_events_proposal_broker_order
+         ON fill_events (proposal_id, broker_order_id)
+         WHERE proposal_id IS NOT NULL AND broker_order_id IS NOT NULL`
+      );
+    }
+  },
+  {
+    // Broker-held TRAILING stops: broker_protective_stops rows grow a `kind` ('fixed' | 'trailing')
+    // and, for trailing rows, the configured `trail_percent`. Pre-existing rows are all the
+    // Robinhood fixed stops — the 'fixed' default is exactly right for them. Idempotent — skips
+    // each column when already present (fresh DBs get both from CREATE TABLE).
+    version: 17,
+    name: "broker_protective_stops_trailing_columns",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(broker_protective_stops)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "kind")) {
+        database.exec("ALTER TABLE broker_protective_stops ADD COLUMN kind TEXT NOT NULL DEFAULT 'fixed'");
+      }
+      if (!cols.some((c) => c.name === "trail_percent")) {
+        database.exec("ALTER TABLE broker_protective_stops ADD COLUMN trail_percent REAL");
+      }
+
+    }
+  },
+  {
+    // position_stop_plans grows a `side` column ('long' | 'short') so filterFullStopPlansByLiveBasis
+    // can distinguish a closed long from a same-symbol short opened later at a similar cost basis —
+    // matching on symbol+avgCost alone let a long's plan leak onto an unrelated short lot (Codex
+    // review, PR #1371). Existing rows default to 'long' (every row written before this field existed
+    // came from an opening buy — "none"/"trailing" plans on shorts came later); idempotent (skips
+    // when already present — fresh DBs get it from CREATE TABLE).
+    version: 18,
+    name: "position_stop_plans_side_column",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(position_stop_plans)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "side")) {
+        database.exec("ALTER TABLE position_stop_plans ADD COLUMN side TEXT NOT NULL DEFAULT 'long'");
+      }
+    }
   }
 ];
 
@@ -754,9 +828,12 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_synthetic_stops_account ON synthetic_trailing_stops (user_id, account_number);
 
-    -- Broker-held protective stops (Robinhood): the resting stop-market order id placed at the broker
-    -- for an open position, so it can be cancelled when the position closes (no orphaned stops). One
-    -- per (user, account, symbol). Distinct from synthetic_trailing_stops, which is the app-side monitor.
+    -- Broker-held protective stops: the resting protective order id placed at the broker for an open
+    -- position, so it can be cancelled when the position closes (no orphaned stops). One per (user,
+    -- account, symbol). Distinct from synthetic_trailing_stops, which is the app-side monitor.
+    -- kind 'fixed' = stop-market at stopLossPct below entry (Robinhood, opt-in);
+    -- kind 'trailing' = native Alpaca trailing_stop (trail_percent) or a Robinhood stop-market the
+    -- reconciler ratchets upward each tick (trail_percent records the configured trail distance).
     CREATE TABLE IF NOT EXISTS broker_protective_stops (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -766,6 +843,8 @@ function migrate(database: Database.Database): void {
       quantity REAL NOT NULL,
       stop_price REAL NOT NULL,
       status TEXT NOT NULL DEFAULT 'resting',
+      kind TEXT NOT NULL DEFAULT 'fixed',
+      trail_percent REAL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       UNIQUE(user_id, account_number, symbol)
@@ -785,6 +864,23 @@ function migrate(database: Database.Database): void {
       -- current position's average cost no longer matches, it's a new lot (close+rebuy) and the band resets.
       avg_cost REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, account_number, symbol)
+    );
+
+    -- Per-position stop plan: the LLM's chosen stop-loss TYPE (StopPlanStyle) for an open position,
+    -- set at opening-fill time and read by every stop-enforcement layer for the position's life.
+    -- Monotonic per (user, account, symbol) like take_profit_trims above; keyed to the lot's cost
+    -- basis so a close+rebuy starts fresh instead of inheriting a stale plan. Cleared when the
+    -- position closes. One row per open position that has an explicit (non-"default") plan.
+    CREATE TABLE IF NOT EXISTS position_stop_plans (
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      style TEXT NOT NULL,
+      rationale TEXT,
+      avg_cost REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      side TEXT NOT NULL DEFAULT 'long',
       PRIMARY KEY (user_id, account_number, symbol)
     );
 

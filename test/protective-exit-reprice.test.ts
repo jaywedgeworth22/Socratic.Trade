@@ -11,9 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { executeProposal, liveApprovalText } from "../src/lib/strategy";
+import { liveApprovalText } from "../src/lib/strategy";
 import { getDb, getProposal, insertProposal, setPolicy, upsertConnectedAccount } from "../src/lib/db";
 import type { MarketQuote, MarketScan, TradeProposal } from "../src/lib/types";
+import { executeProposal } from "../src/lib/strategy-execution";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],

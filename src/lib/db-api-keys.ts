@@ -5,19 +5,23 @@ import crypto from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { getDb, audit } from "./db";
+import { normalizeSymbol } from "./money";
 import type {
   AccountCapabilities,
   ChatTurn,
   ChatTurnRole,
   ConnectedAccount,
+  EquityPosition,
   MemoryItem,
   NotifyChannelId,
   NotifyPrefs,
   PriceAlert,
   PriceAlertOp,
   PriceAlertStatus,
+  StopPlanStyle,
   WatchlistItem
 } from "./types";
+import { STOP_PLAN_STYLES } from "./types";
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
@@ -351,19 +355,21 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
 }
 
 /**
- * Resolve Alpha Vantage's key POOL (the one service with operator-level multi-key pooling — see
- * src/lib/alpha-vantage-key-pool.ts). Precedence: a per-user stored key wins first (single-item
- * pool, source "user") -> plural `ALPHAVANTAGE_API_KEYS` env (comma-separated, trimmed, deduped,
- * order-preserving; source "env", envVar "ALPHAVANTAGE_API_KEYS") -> singular
- * `ALPHAVANTAGE_API_KEY` as a one-item pool (source "env", envVar "ALPHAVANTAGE_API_KEY") ->
- * empty pool (source "none"). The singular fallback means the pool works unchanged with today's
- * single Infisical-provisioned key — zero config needed until a second key is added.
+ * Resolve Alpha Vantage's key — SINGLE KEY ONLY. The former multi-key pool (rotate across several
+ * free keys to multiply the 25/day quota — see src/lib/alpha-vantage-key-pool.ts) was retired:
+ * Alpha Vantage's burst limit appears to key off the source IP rather than the presented
+ * `apikey=`, so extra keys never multiplied real throughput — they only added rotation/exhaustion
+ * churn. AV is now bounded purely by the per-provider pacer (withProviderLimit, a serial >=1.1s
+ * lane) plus the one key's daily-cap stop. Precedence: per-user stored key -> singular
+ * `ALPHAVANTAGE_API_KEY` -> first entry of a legacy `ALPHAVANTAGE_API_KEYS` (back-compat only, no
+ * longer pooled) -> none.
  *
+ * The return shape ({ keys: string[] }) is unchanged so the data-providers call site and the
+ * AlphaVantageKeyPool it still constructs are untouched — that pool now simply runs with a
+ * one-key list (currentKey/allExhausted/markExhausted all degenerate to single-key behavior).
  * Deliberately DUPLICATES (rather than generalizes) resolveApiKeyWithSource's per-user-then-env
- * precedence, scoped only to alphavantage, so that widely-shared function's signature (consumed
- * by ~9 other provider constructors) stays untouched. A per-user stored key stays a single-item
- * pool on purpose — multi-key pooling is an operator/env-level concept only; there is no product
- * surface asking an individual user for several personal AV keys.
+ * precedence, scoped only to alphavantage, so that widely-shared function's signature stays
+ * untouched.
  */
 export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; source: ApiKeySource; envVar: string } {
   if (userId) {
@@ -371,14 +377,16 @@ export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; s
     if (userKey?.apiKey) return { keys: [userKey.apiKey], source: "user", envVar: "ALPHAVANTAGE_API_KEY" };
   }
 
-  const pluralRaw = process.env.ALPHAVANTAGE_API_KEYS;
-  if (pluralRaw && pluralRaw.trim()) {
-    const parsed = Array.from(new Set(pluralRaw.split(",").map((k) => k.trim()).filter(Boolean)));
-    if (parsed.length > 0) return { keys: parsed, source: "env", envVar: "ALPHAVANTAGE_API_KEYS" };
-  }
-
   const singular = process.env.ALPHAVANTAGE_API_KEY?.trim();
   if (singular) return { keys: [singular], source: "env", envVar: "ALPHAVANTAGE_API_KEY" };
+
+  // Back-compat: a legacy multi-key ALPHAVANTAGE_API_KEYS still boots, using only its FIRST key
+  // (no pooling). New deployments should use the singular ALPHAVANTAGE_API_KEY.
+  const pluralRaw = process.env.ALPHAVANTAGE_API_KEYS?.trim();
+  if (pluralRaw) {
+    const first = pluralRaw.split(",").map((k) => k.trim()).filter(Boolean)[0];
+    if (first) return { keys: [first], source: "env", envVar: "ALPHAVANTAGE_API_KEYS" };
+  }
 
   return { keys: [], source: "none", envVar: "ALPHAVANTAGE_API_KEY" };
 }
@@ -750,7 +758,7 @@ export function deleteConnectedAccount(id: string, userId: string = "local"): bo
   const run = database.transaction(() => {
     const result = database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
     if (acct) {
-      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops"]) {
+      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops", "position_stop_plans"]) {
         database.prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`).run(acct, userId);
       }
     }
@@ -941,7 +949,7 @@ export function purgeSyntheticStops(accountNumber: string, liveSymbols: Set<stri
   return purged;
 }
 
-// ── Broker-held protective stops (Robinhood) ──────────────────────────────────
+// ── Broker-held protective stops (Robinhood fixed / Alpaca+Robinhood trailing) ─
 
 export interface BrokerProtectiveStop {
   id: string;
@@ -952,6 +960,11 @@ export interface BrokerProtectiveStop {
   quantity: number;
   stopPrice: number;
   status: string;
+  /** 'fixed' = stop at stopLossPct below entry; 'trailing' = native Alpaca trailing_stop or a
+   *  Robinhood stop-market the reconciler ratchets upward each tick. */
+  kind: "fixed" | "trailing";
+  /** Configured trail distance (% below the high-water mark) — set only on 'trailing' rows. */
+  trailPercent?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -966,27 +979,35 @@ function mapBrokerProtectiveStop(r: Record<string, unknown>): BrokerProtectiveSt
     quantity: Number(r.quantity),
     stopPrice: Number(r.stop_price),
     status: String(r.status),
+    kind: r.kind === "trailing" ? "trailing" : "fixed",
+    trailPercent: r.trail_percent == null ? undefined : Number(r.trail_percent),
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
   };
 }
 
-export function upsertBrokerProtectiveStop(stop: Omit<BrokerProtectiveStop, "createdAt" | "updatedAt"> & { createdAt?: string }): void {
+export function upsertBrokerProtectiveStop(
+  stop: Omit<BrokerProtectiveStop, "createdAt" | "updatedAt" | "kind" | "trailPercent"> &
+    { createdAt?: string; kind?: "fixed" | "trailing"; trailPercent?: number }
+): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO broker_protective_stops (id, user_id, account_number, symbol, broker_order_id, quantity, stop_price, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO broker_protective_stops (id, user_id, account_number, symbol, broker_order_id, quantity, stop_price, status, kind, trail_percent, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
         broker_order_id = excluded.broker_order_id,
         quantity = excluded.quantity,
         stop_price = excluded.stop_price,
         status = excluded.status,
+        kind = excluded.kind,
+        trail_percent = excluded.trail_percent,
         updated_at = excluded.updated_at`
     )
     .run(
       stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.brokerOrderId,
-      stop.quantity, stop.stopPrice, stop.status, stop.createdAt ?? now, now
+      stop.quantity, stop.stopPrice, stop.status, stop.kind ?? "fixed", stop.trailPercent ?? null,
+      stop.createdAt ?? now, now
     );
 }
 
@@ -1403,5 +1424,133 @@ export function clearTakeProfitTrimBands(accountNumber: string, symbols: string[
   const placeholders = symbols.map(() => "?").join(",");
   getDb()
     .prepare(`DELETE FROM take_profit_trims WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
+    .run(userId, accountNumber, ...symbols);
+}
+
+// ── Per-position stop plan ──────────────────────────────────────────────────
+// The LLM's chosen stop-loss TYPE for an open position, set at opening-fill time and read by every
+// stop-enforcement layer for the position's life. Modeled directly on the take-profit trim ratchet
+// above. See position_stop_plans (db.ts migrate()).
+
+export interface PositionStopPlan {
+  style: StopPlanStyle;
+  rationale?: string;
+  /** Position cost basis when the plan was recorded — resets on a close+rebuy (different lot). */
+  avgCost: number;
+  /**
+   * Direction of the lot the plan was recorded against — "long" for an opening buy, "short" for an
+   * opening short. Compared alongside avgCost by filterFullStopPlansByLiveBasis so a long's plan can
+   * never leak onto a short opened later in the same symbol at a coincidentally similar basis (or
+   * vice versa) — closing a long and shorting the same name is a distinct lot, not a continuation
+   * (Codex review, PR #1371). Optional only for backward-compat with rows written before this field
+   * existed; such a row never matches any live position (side is undefined) and simply ages out via
+   * the normal stale-plan cleanup.
+   */
+  side?: "long" | "short";
+}
+
+/** Map of symbol → its recorded per-position stop plan (empty when none set — every position then
+ *  falls back to the account's default stop precedence, unchanged from before this feature). */
+export function getStopPlans(accountNumber: string, userId: string = "local"): Record<string, PositionStopPlan> {
+  const rows = getDb()
+    .prepare("SELECT symbol, style, rationale, avg_cost, side FROM position_stop_plans WHERE user_id = ? AND account_number = ?")
+    .all(userId, accountNumber) as Array<{ symbol: string; style: string; rationale: string | null; avg_cost: number; side: string | null }>;
+  const out: Record<string, PositionStopPlan> = {};
+  for (const r of rows) {
+    const style = (STOP_PLAN_STYLES as readonly string[]).includes(r.style) ? (r.style as StopPlanStyle) : "default";
+    out[r.symbol] = {
+      style,
+      rationale: r.rationale ?? undefined,
+      avgCost: Number(r.avg_cost) || 0,
+      side: r.side === "long" || r.side === "short" ? r.side : undefined
+    };
+  }
+  return out;
+}
+
+/**
+ * Filter the account's persisted per-position stop plans down to the ones that actually apply to
+ * the CURRENT lot. Ratchet-style basis check (mirrors planTakeProfitTrims' lastBand-keyed-to-avgCost
+ * pattern): a persisted plan only counts if its recorded avgCost still matches the LIVE position's
+ * averageCost. Without this, a symbol closed and re-bought before any run ever observed it flat
+ * (e.g. a fast broker/manual close+reopen the app's own clearStopPlans sweep never caught between
+ * ticks) could have its stale "none"/"trailing"/fixed plan silently govern a completely different
+ * lot (Codex review, PR #1371). A symbol with no CURRENT position at all has no basis to compare and
+ * is skipped too — a persisted row only ever makes sense for a scale-in add to an already-open
+ * position. Colocated here (not in strategy.ts, which re-exports it) so both strategy.ts and
+ * synthetic-stops.ts can share it without depending on each other.
+ */
+export function filterStopPlansByLiveBasis(
+  plans: Record<string, PositionStopPlan>,
+  positions: EquityPosition[]
+): Record<string, StopPlanStyle> {
+  const out: Record<string, StopPlanStyle> = {};
+  for (const [sym, plan] of Object.entries(filterFullStopPlansByLiveBasis(plans, positions))) {
+    out[sym] = plan.style;
+  }
+  return out;
+}
+
+/**
+ * Same live-basis filter as `filterStopPlansByLiveBasis`, but preserves the FULL `PositionStopPlan`
+ * (rationale + avgCost included) rather than narrowing to just the style — for a display-only
+ * consumer (the dashboard/Positions table) that needs the rationale text too, not just the
+ * enforcement-relevant style (Codex review, PR #1371: the dashboard read `getStopPlans` directly,
+ * unfiltered, so it could still label a closed-and-rebought symbol's NEW position with the OLD
+ * lot's plan).
+ */
+export function filterFullStopPlansByLiveBasis(
+  plans: Record<string, PositionStopPlan>,
+  positions: EquityPosition[]
+): Record<string, PositionStopPlan> {
+  const liveBySymbol = new Map(
+    positions
+      .filter((p) => Math.abs(p.quantity) > 0.000001)
+      .map((p) => [normalizeSymbol(p.symbol), { avgCost: p.averageCost, side: (p.quantity > 0 ? "long" : "short") as "long" | "short" }])
+  );
+  const out: Record<string, PositionStopPlan> = {};
+  for (const [sym, plan] of Object.entries(plans)) {
+    if (plan.style === "default") continue;
+    const s = normalizeSymbol(sym);
+    const live = liveBySymbol.get(s);
+    if (!live) continue;
+    if (Math.abs(plan.avgCost - live.avgCost) >= 0.005) continue;
+    // A plan recorded before the `side` field existed (undefined) can't be verified against the
+    // live position's direction — treat as a mismatch (skip) rather than assume a match, since a
+    // false "match" is exactly the stale-plan-leak this filter exists to prevent.
+    if (plan.side !== live.side) continue;
+    out[s] = plan;
+  }
+  return out;
+}
+
+/** Record (upsert) the stop plan for a position lot. Invalid/unrecognized styles fall back to "default". */
+export function recordStopPlan(
+  accountNumber: string,
+  symbol: string,
+  style: string,
+  rationale: string | undefined,
+  avgCost: number,
+  userId: string = "local",
+  now: string = new Date().toISOString(),
+  side: "long" | "short" = "long"
+): void {
+  const safeStyle = (STOP_PLAN_STYLES as readonly string[]).includes(style) ? style : "default";
+  getDb()
+    .prepare(
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol)
+       DO UPDATE SET style = excluded.style, rationale = excluded.rationale, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at, side = excluded.side`
+    )
+    .run(userId, accountNumber, symbol, safeStyle, rationale ?? null, Number.isFinite(avgCost) ? avgCost : 0, now, side);
+}
+
+/** Clear stop plans for the given symbols (e.g. positions that have closed). No-op on empty input. */
+export function clearStopPlans(accountNumber: string, symbols: string[], userId: string = "local"): void {
+  if (symbols.length === 0) return;
+  const placeholders = symbols.map(() => "?").join(",");
+  getDb()
+    .prepare(`DELETE FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
     .run(userId, accountNumber, ...symbols);
 }

@@ -5,8 +5,9 @@ import { congressTradeToken, isCongressShareAutoEnabled, runCongressDailyShare }
 export const dynamic = "force-dynamic";
 
 // Admin/ops route to manually push company refs + daily closes + the S&P-500 series to congress.trade
-// (App A). Admin-gated (ADMIN_USER_EMAILS / primary operator, x-admin-token, or non-prod). Requires
-// CONGRESS_TRADE_TOKEN to be configured; bypasses the once-per-day cadence (force) so ops can test.
+// (App A). Admin-gated by a middleware-verified primary/allowlisted admin email or a timing-safe
+// x-admin-token; there is no environment bypass. Requires CONGRESS_TRADE_TOKEN to be configured and
+// bypasses the once-per-day cadence (force) so ops can test.
 //
 // Body (all optional):
 //   { symbols?: string[] }      — share only those tickers (targeted test; does NOT advance the daily marker)

@@ -298,6 +298,7 @@ const FEED_STATUS_LABELS: Record<string, string> = {
   paper: "Paper trade",
   completed: "Completed",
   placing_failed: "Placement failed",
+  not_placed: "Not placed - safe to retry",
   running: "Running"
 };
 
