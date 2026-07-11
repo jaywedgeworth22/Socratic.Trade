@@ -1,5 +1,17 @@
 # Status
 
+## 2026-07-11 — Runtime release + backup health (CODEX, branch `codex/runtime-release-backup-health`)
+
+In progress in an isolated worktree. Public `/api/health` now reports a sanitized Coolify/source
+commit, process start/uptime, and Litestream 0.5.x daemon status plus last successful sync from the
+local Unix-socket `GET /list` endpoint. Production config now explicitly enables Litestream 0.5.12's
+control socket; the client uses a hard wall-clock deadline, bounded body, and abort/error handling.
+Production skips the synchronous metadata-file fallback entirely; non-live scanning is bounded.
+Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
+stale when newer DB/WAL activity proves there is work to upload. Node 24 verification is green: lint
+0 errors (378 existing warnings), TypeScript clean, 319 files/3,509 tests, and production build clean.
+No deployment or live replica mutation occurred; the change is ready for a review PR.
+
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
 and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change

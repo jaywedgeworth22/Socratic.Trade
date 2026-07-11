@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
+> change; this is an operations-observability slice. `/api/health` gains a public-safe source
+> revision/process identity and hard-deadline, size-capped Litestream daemon status/last-sync
+> inspection over its local IPC socket. Production explicitly enables the v0.5.12 socket and skips
+> the non-verifying metadata-file fallback; staleness requires evidence of newer local DB/WAL activity.
+> See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
+
 > **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
 > change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/
 > reference/danger) settings; account-scoped config lives on Framework (`/console/strategy`):

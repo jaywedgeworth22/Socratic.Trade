@@ -1579,6 +1579,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Runtime release identity + Litestream replication health (CODEX, branch `codex/runtime-release-backup-health`, worktree `/Users/jay/.codex/worktrees/socratic-runtime-health`) — IN PROGRESS 2026-07-11.** Public health now exposes sanitized release/process identity and reads Litestream 0.5.12 `GET /list` through an explicitly enabled production Unix socket with a hard deadline, 64 KiB cap, and abort/error handling. Live mode skips the non-verifying synchronous file fallback; non-live scans are bounded. Pure logic degrades unavailable/stopped/invalid-time/never-synced states and only marks an old sync stale when newer DB/WAL activity exists. Node 24 verification is green: focused 26 tests; full lint 0 errors/378 existing warnings; tsc clean; 319 files/3,509 tests; production build clean. Ready to commit/open a review PR. Files: `litestream.coolify.yml`, `app/api/health/route.ts`, `src/lib/runtime-health.ts`, tests/docs; no secrets, replica writes, deployment, or live mutation.
 - **Broker-held trailing stops (Alpaca native + RH ratcheted) + Guardrails stop-consolidation UI
   (CLAUDE, cloud session, branch `claude/stop-loss-preset-options-f1jygn`) — IN PROGRESS
   2026-07-10.** Owner-directed: (1) trailing stops now become BROKER-HELD when
