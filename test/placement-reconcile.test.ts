@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import type { EquityOrder, MarketQuote, MarketScan, ReviewedOrder } from "../src/lib/types";
+import type { BrokerGateway, EquityOrder, MarketQuote, MarketScan, ReviewedOrder } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
@@ -339,5 +339,110 @@ describe("inline placement-error reconciliation via executeProposal", () => {
     const uncertain = notifs.find((n) => n.type === "run_failed" && (n.payload as Record<string, unknown>).reconcile === "uncertain");
     expect(uncertain).toBeTruthy();
     expect(uncertain?.title).toContain("verify with broker");
+  });
+});
+
+// Direct-call coverage for the partial-execution-on-decline regression. Called straight against
+// reconcilePlacementError (not through executeProposal) so a multi-share partial isn't trimmed by the
+// NAV/policy caps that the approval path applies before placement — the point under test is purely
+// the reconcile's booking of the executed partial.
+describe("reconcilePlacementError books an executed partial on a terminally-declined order", () => {
+  const partialProposal = {
+    symbol: "AAPL",
+    side: "buy" as const,
+    type: "market" as const,
+    quantity: 10,
+    timeInForce: "gfd" as const,
+    marketHours: "regular_hours" as const,
+    rationale: "inline partial-fill regression",
+    tradeThesisTag: "Momentum-Breakout",
+    entryMarketRegime: "Neutral (Normal Volatility)",
+    referencePrice: 200
+  };
+
+  function reconcileGateway(orders: EquityOrder[]): BrokerGateway {
+    return { ordersListIncludesTerminal: true, getEquityOrders: async () => orders } as unknown as BrokerGateway;
+  }
+
+  it("(2) order declined (canceled) after filling 3 of 10 → outcome 'declined' + a 3-share settled fill", async () => {
+    const userId = `reco-inline-partial-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    const { reconcilePlacementError } = await import("../src/lib/strategy");
+    const { listFillEventsByProposalId } = await import("../src/lib/db");
+
+    const gateway = reconcileGateway([
+      brokerOrder({ clientOrderId: refId, state: "canceled", filledQuantity: 3, averagePrice: 199.5 })
+    ]);
+    const outcome = await reconcilePlacementError({
+      gateway,
+      accountNumber: ACCOUNT,
+      userId,
+      proposalId,
+      refId,
+      proposal: partialProposal,
+      executionMode: "broker/live",
+      placeErrorMessage: "network timeout during placement"
+    });
+
+    expect(outcome.kind).toBe("declined");
+    if (outcome.kind === "declined") expect(outcome.partialFilledQuantity).toBe(3);
+    const fills = listFillEventsByProposalId(proposalId, userId);
+    expect(fills.length).toBe(1);
+    expect(fills[0].quantity).toBe(3); // the executed partial, NOT the full 10
+    expect(fills[0].price).toBe(199.5);
+    expect(fills[0].status).toBe("filled");
+  });
+
+  it("(3) order declined with ZERO executed shares → outcome 'declined', NO fill (unchanged)", async () => {
+    const userId = `reco-inline-zero-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    const { reconcilePlacementError } = await import("../src/lib/strategy");
+    const { listFillEventsByProposalId } = await import("../src/lib/db");
+
+    const gateway = reconcileGateway([brokerOrder({ clientOrderId: refId, state: "rejected" })]);
+    const outcome = await reconcilePlacementError({
+      gateway,
+      accountNumber: ACCOUNT,
+      userId,
+      proposalId,
+      refId,
+      proposal: partialProposal,
+      executionMode: "broker/live",
+      placeErrorMessage: "network timeout during placement"
+    });
+
+    expect(outcome.kind).toBe("declined");
+    if (outcome.kind === "declined") expect(outcome.partialFilledQuantity).toBeUndefined();
+    expect(listFillEventsByProposalId(proposalId, userId).length).toBe(0);
+  });
+
+  it("(4) idempotency: two reconcile passes over the same declined-partial order book exactly one fill", async () => {
+    const userId = `reco-inline-idem-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    const { reconcilePlacementError } = await import("../src/lib/strategy");
+    const { listFillEventsByProposalId } = await import("../src/lib/db");
+
+    const gateway = reconcileGateway([
+      brokerOrder({ id: "ord-dup-partial", clientOrderId: refId, state: "canceled", filledQuantity: 3, averagePrice: 199.5 })
+    ]);
+    const args = {
+      gateway,
+      accountNumber: ACCOUNT,
+      userId,
+      proposalId,
+      refId,
+      proposal: partialProposal,
+      executionMode: "broker/live" as const,
+      placeErrorMessage: "network timeout during placement"
+    };
+    await reconcilePlacementError(args);
+    await reconcilePlacementError(args);
+
+    const fills = listFillEventsByProposalId(proposalId, userId);
+    expect(fills.length).toBe(1);
+    expect(fills[0].quantity).toBe(3);
   });
 });

@@ -33,7 +33,7 @@ beforeEach(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-reconcile-sweep-${randomUUID()}.db`)}`;
 });
 
-async function seedPlacingProposal(userId: string, id: string, refId: string): Promise<void> {
+async function seedPlacingProposal(userId: string, id: string, refId: string, quantity = 1): Promise<void> {
   const { insertProposal, getDb } = await import("../src/lib/db");
   insertProposal({
     userId,
@@ -44,7 +44,7 @@ async function seedPlacingProposal(userId: string, id: string, refId: string): P
       symbol: "AAPL",
       side: "buy",
       type: "market",
-      quantity: 1,
+      quantity,
       timeInForce: "gfd",
       marketHours: "regular_hours",
       rationale: "sweep test",
@@ -207,6 +207,123 @@ describe("flagStalePlacingIntents terminal-decline + non-authoritative guards", 
     await flagStalePlacingIntents(gateway, ACCOUNT, userId);
 
     expect(getProposal(proposalId, userId)?.status).toBe("placing");
+  });
+});
+
+describe("flagStalePlacingIntents books executed partials on terminally-declined orders (regression)", () => {
+  it("(1) matched order CANCELED after a PARTIAL execution (filled 3 of 10) → books the 3 executed shares, NOT nothing and NOT 10", async () => {
+    const userId = `sweep-partial-cancel-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    await seedPlacingProposal(userId, proposalId, refId, 10);
+
+    const { listFillEventsByProposalId, getProposal } = await import("../src/lib/db");
+    const { flagStalePlacingIntents } = await import("../src/lib/strategy");
+    // The order reached the broker, executed 3 of 10 shares at $199.50, then went terminal (canceled).
+    // Pre-fix the sweep booked NOTHING here → the 3 executed shares became an untracked lot. The fix
+    // books EXACTLY the executed 3 as a settled 'filled' lot.
+    const gateway = createMockGateway({
+      getEquityOrders: async () => [orderWith(refId, { state: "canceled", filledQuantity: 3, averagePrice: 199.5 })]
+    });
+    await flagStalePlacingIntents(gateway, ACCOUNT, userId);
+
+    const fills = listFillEventsByProposalId(proposalId, userId);
+    expect(fills.length).toBe(1);
+    expect(fills[0].quantity).toBe(3);
+    expect(fills[0].price).toBe(199.5);
+    expect(fills[0].status).toBe("filled");
+    // Decline status/alert semantics unchanged — the order as a whole was declined; the executed lot
+    // lives in the fill ledger, not the proposal status.
+    expect(getProposal(proposalId, userId)?.status).toBe("rejected_by_broker");
+  });
+
+  it("(3) matched order declined with ZERO executed shares → NO fill, rejected_by_broker (unchanged)", async () => {
+    const userId = `sweep-partial-zero-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    await seedPlacingProposal(userId, proposalId, refId, 10);
+
+    const { listFillEventsByProposalId, getProposal } = await import("../src/lib/db");
+    const { flagStalePlacingIntents } = await import("../src/lib/strategy");
+    // Canceled with filledQuantity 0 (or absent) ⇒ nothing executed ⇒ book nothing. Never a phantom
+    // full-size fill for a declined order.
+    const gateway = createMockGateway({
+      getEquityOrders: async () => [orderWith(refId, { state: "canceled", filledQuantity: 0 })]
+    });
+    await flagStalePlacingIntents(gateway, ACCOUNT, userId);
+
+    expect(listFillEventsByProposalId(proposalId, userId).length).toBe(0);
+    expect(getProposal(proposalId, userId)?.status).toBe("rejected_by_broker");
+  });
+
+  it("(4) idempotency: an inline reconcile that already booked the partial is NOT double-booked by the sweep", async () => {
+    const userId = `sweep-partial-idem-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    await seedPlacingProposal(userId, proposalId, refId, 10);
+
+    const { listFillEventsByProposalId } = await import("../src/lib/db");
+    const { reconcilePlacementError, flagStalePlacingIntents } = await import("../src/lib/strategy");
+    // Same physical declined-with-partial order returned to BOTH the inline reconcile and the sweep.
+    const declinedPartial = orderWith(refId, { state: "canceled", filledQuantity: 3, averagePrice: 199.5 });
+    const gateway = createMockGateway({ getEquityOrders: async () => [declinedPartial] });
+
+    // Inline path books the executed partial first. The proposal remains 'placing' (reconcilePlacementError
+    // doesn't flip status — its call site does), so the sweep still picks it up on the next pass.
+    const proposal = {
+      symbol: "AAPL",
+      side: "buy" as const,
+      type: "market" as const,
+      quantity: 10,
+      timeInForce: "gfd" as const,
+      marketHours: "regular_hours" as const,
+      rationale: "idempotency test",
+      tradeThesisTag: "Momentum-Breakout",
+      entryMarketRegime: "Neutral (Normal Volatility)",
+      referencePrice: 200
+    };
+    const outcome = await reconcilePlacementError({
+      gateway,
+      accountNumber: ACCOUNT,
+      userId,
+      proposalId,
+      refId,
+      proposal,
+      executionMode: "broker/live",
+      placeErrorMessage: "network timeout during placement"
+    });
+    expect(outcome.kind).toBe("declined");
+    expect(listFillEventsByProposalId(proposalId, userId).length).toBe(1);
+
+    // Sweep runs against the SAME order — the (proposalId, brokerOrderId) dedupe + UNIQUE index must
+    // keep it at exactly one booked partial.
+    await flagStalePlacingIntents(gateway, ACCOUNT, userId);
+    const fills = listFillEventsByProposalId(proposalId, userId);
+    expect(fills.length).toBe(1);
+    expect(fills[0].quantity).toBe(3);
+  });
+
+  it("(ALSO) done_for_day order carrying a partial is still ledgered (working state, not a decline)", async () => {
+    const userId = `sweep-dfd-partial-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    await seedPlacingProposal(userId, proposalId, refId, 10);
+
+    const { listFillEventsByProposalId, getProposal } = await import("../src/lib/db");
+    const { flagStalePlacingIntents } = await import("../src/lib/strategy");
+    // done_for_day is a WORKING state (not a decline) — it routes to the recovery branch, which books
+    // the executed filledQuantity. The executed 4 shares must be ledgered (the "ANY terminal state
+    // carrying filledQuantity>0 is still ledgered" guarantee), not dropped.
+    const gateway = createMockGateway({
+      getEquityOrders: async () => [orderWith(refId, { state: "done_for_day", filledQuantity: 4, averagePrice: 200.25 })]
+    });
+    await flagStalePlacingIntents(gateway, ACCOUNT, userId);
+
+    const fills = listFillEventsByProposalId(proposalId, userId);
+    expect(fills.length).toBe(1);
+    expect(fills[0].quantity).toBe(4);
+    expect(fills[0].price).toBe(200.25);
+    expect(getProposal(proposalId, userId)?.status).toBe("placed");
   });
 });
 

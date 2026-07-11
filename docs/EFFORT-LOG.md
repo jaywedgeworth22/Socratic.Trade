@@ -1609,6 +1609,23 @@ As of 2026-07-08 (assignment-rule update).
   idempotent no-op on conflict. +4 new tests (robinhood-orders-error-throws, fill-events-dedupe-index,
   +conservative-inline case, +3 sweep cases). Gates green under node26 (tsc clean, 3424 tests, lint
   0-err, build ok). NOT merged.
+  FIXUPS ROUND 2 (2026-07-10, partial-fill-on-decline, same branch, PR #1382): round-1's decline guard
+  DROPPED PARTIAL EXECUTIONS — a matched order that filled N-of-M then went terminal (canceled/expired)
+  booked NOTHING regardless of filledQuantity, so real executed shares became an untracked lot (no
+  stop/exit management, mis-attributed P&L). Fix: the terminal-declined branch of BOTH
+  reconcilePlacementError (inline) AND flagStalePlacingIntents (sweep) now checks matched.filledQuantity
+  — if >0 it books EXACTLY the executed shares as a settled 'filled' lot at the broker's average price
+  (mirrors reconcilePendingFills' partial-then-terminated bookExecuted), idempotent via the round-1
+  (proposalId, brokerOrderId) UNIQUE index + a Layer-B app-level dedupe; if 0/absent it keeps round-1
+  behavior (rejected_by_broker, no fill). Never books a FULL phantom fill for a declined order. Decline
+  status/alert semantics unchanged (proposal still resolves rejected_by_broker; executed lot carried by
+  the fill ledger); the declined outcome + notification now surface partialFilledQuantity. ALSO: left
+  TERMINAL_DECLINE_STATES as-is — done_for_day/stopped/calculated are WORKING states elsewhere and route
+  to the recovery branch which already books their filledQuantity (so their partials are ledgered); NOT
+  adding `replaced` (a live/superseded status), documented in broker-side.ts. +5 tests (sweep partial /
+  zero-fill / inline+sweep idempotency / done_for_day-partial; inline partial / zero / two-pass
+  idempotency). Gates green under node26 (tsc clean, full suite 3434 tests, lint 0-err, build ok). NOT
+  merged.
 - **Hetzner & Coolify metrics on admin dashboard (AG, branch `agent/antigravity-server-metrics`) — IN PROGRESS 2026-07-10.** Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
 - **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
   lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**

@@ -2253,12 +2253,15 @@ export async function runStrategyOnce(
           continue;
         }
         if (outcome.kind === "declined") {
-          const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
+          // Decline resolution is unchanged — but a partial executed before the decline was already
+          // booked as a settled lot inside reconcilePlacementError; surface it so it isn't silent.
+          const partialNote = outcome.partialFilledQuantity ? ` A partial execution of ${outcome.partialFilledQuantity} share(s) was booked before the decline.` : "";
+          const declinedMsg = `Broker declined the order (state: ${outcome.state}).${partialNote}`;
           updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
           recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: { ...decision, approved: false, reasons: [...decision.reasons, declinedMsg] }, status: "rejected_by_broker", review, overrideResolution });
-          audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, connectedAccountId);
+          audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile", partialFilledQuantity: outcome.partialFilledQuantity }, userId, connectedAccountId);
           await sendNotification(
-            { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
+            { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined", partialFill: outcome.fill, partialFilledQuantity: outcome.partialFilledQuantity } },
             { policy, userId }
           );
           results.push({ proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
@@ -4139,11 +4142,15 @@ export async function executeProposal(
         return { status: "placed", orderId: outcome.orderId, brokerState: outcome.state, fillStatus };
       }
       if (outcome.kind === "declined") {
-        const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
+        // The proposal resolves as a decline regardless — but if the order executed a partial before
+        // terminating, reconcilePlacementError already booked those real shares as a settled lot; we
+        // surface that in the audit/notification so the executed partial is visible, not silent.
+        const partialNote = outcome.partialFilledQuantity ? ` A partial execution of ${outcome.partialFilledQuantity} share(s) was booked before the decline.` : "";
+        const declinedMsg = `Broker declined the order (state: ${outcome.state}).${partialNote}`;
         updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
-        audit("order_rejected_by_broker", { proposalId, refId, symbol: sym, side: proposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, policy.connectedAccountId);
+        audit("order_rejected_by_broker", { proposalId, refId, symbol: sym, side: proposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile", partialFilledQuantity: outcome.partialFilledQuantity }, userId, policy.connectedAccountId);
         await sendNotification(
-          { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
+          { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined", partialFill: outcome.fill, partialFilledQuantity: outcome.partialFilledQuantity } },
           { policy, userId }
         );
         return { status: "error", reasons: [declinedMsg], orderId: outcome.orderId, brokerState: outcome.state };
@@ -5382,7 +5389,10 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
  */
 export type PlacementReconcileOutcome =
   | { kind: "placed"; orderId: string; state: string; fill?: FillEvent; alreadyBooked: boolean }
-  | { kind: "declined"; orderId: string; state: string }
+  // A terminal decline. `fill`/`partialFilledQuantity` are set ONLY when the order executed some
+  // shares before terminating (filled N of M then canceled/expired): those real executed shares are
+  // booked as a settled lot here, while the proposal still resolves as a decline at the call site.
+  | { kind: "declined"; orderId: string; state: string; fill?: FillEvent; partialFilledQuantity?: number }
   | { kind: "not_placed" }
   | { kind: "uncertain"; error: string };
 
@@ -5441,7 +5451,51 @@ export async function reconcilePlacementError(p: {
       error: `${p.placeErrorMessage} (broker reachable but its order list may omit recently-terminal orders — cannot confirm the order was never placed)`
     };
   }
-  if (isRejectedOrCanceledState(matched.state)) return { kind: "declined", orderId: matched.id, state: matched.state };
+  if (isRejectedOrCanceledState(matched.state)) {
+    // Terminal decline (rejected/canceled/expired/failed). The order as a WHOLE was declined, but a
+    // placement ack that threw can still have reached the broker, PARTIALLY executed, and only then
+    // gone terminal (filled 3 of 10, then canceled). Those 3 shares REALLY traded — book the executed
+    // partial so they enter the fill ledger (stop/exit management + P&L attribution), exactly as
+    // reconcilePendingFills books a partial-then-terminated order (:isRejectedOrCanceledState). Booking
+    // nothing here (the pre-fix behavior) silently drops real executed shares into an untracked lot.
+    // We book ONLY what executed (never the full phantom size); a decline that executed ZERO shares
+    // books nothing (unchanged). The proposal still resolves as a decline at the call site — the
+    // executed lot is carried by the fill ledger, which is the source of truth for positions/exits.
+    const execQty = matched.filledQuantity ?? 0;
+    if (execQty > 0) {
+      try {
+        const existing = listFillEventsByProposalId(p.proposalId, p.userId);
+        const already = existing.find((f) => f.brokerOrderId === matched.id);
+        if (already) return { kind: "declined", orderId: matched.id, state: matched.state, fill: already, partialFilledQuantity: execQty };
+        const source: FillSource = p.executionMode === "broker/live" ? "live" : "paper";
+        const fill = recordFillFromProposal({
+          userId: p.userId,
+          accountNumber: p.accountNumber,
+          proposalId: p.proposalId,
+          runId: p.runId,
+          source,
+          executionMode: p.executionMode,
+          proposal: p.proposal,
+          review: p.review,
+          marketScan: p.marketScan,
+          execution: { orderId: matched.id, refId: p.refId, state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
+          // Terminal order ⇒ the executed portion is FINAL (no further fills), so it settles as
+          // 'filled' — matching reconcilePendingFills' bookExecuted. The (proposalId, brokerOrderId)
+          // UNIQUE index + insertFillEvent no-op make a concurrent sweep booking the SAME partial an
+          // idempotent no-op, so inline+sweep can never double-book it.
+          status: "filled"
+        });
+        return { kind: "declined", orderId: matched.id, state: matched.state, fill, partialFilledQuantity: execQty };
+      } catch (bookError) {
+        // We KNOW the order declined AFTER a partial execution, but booking those shares failed —
+        // degrade to uncertain so the 'placing' intent + alert survive for the sweep to retry booking
+        // the real executed partial, rather than dropping executed shares on the floor.
+        const detail = bookError instanceof Error ? bookError.message : String(bookError);
+        return { kind: "uncertain", error: `${p.placeErrorMessage} (order declined after a partial execution at the broker, but booking the executed partial failed: ${detail})` };
+      }
+    }
+    return { kind: "declined", orderId: matched.id, state: matched.state };
+  }
   // Live / filled / any non-terminal state: the order reached the broker. Book it (deduped).
   try {
     const existing = listFillEventsByProposalId(p.proposalId, p.userId);
@@ -5512,15 +5566,49 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
     const p = row.proposal as TradeProposal | undefined;
     const matched = row.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === row.refId) : undefined;
     if (matched && isRejectedOrCanceledState(matched.state)) {
-      // The order reached the broker but was REJECTED/CANCELED — a terminal decline, NOT a placed
-      // order. Mirror reconcilePlacementError (:declined) and reconcilePendingFills (:isRejectedOr…):
-      // mark the proposal rejected_by_broker and DO NOT book a fill or clear the uncertain alert as
-      // "placed" (booking a phantom fill / silently claiming placement is the money-path hazard the
-      // matched branch below must never do for a declined order).
-      const declinedMsg = `Broker declined the order (state: ${matched.state}).`;
+      // The order reached the broker but TERMINATED in a declined state (rejected/canceled/expired/
+      // failed). Two sub-cases, and getting them right is the money-path invariant:
+      //   (a) it executed some shares BEFORE terminating (filledQuantity > 0) — those shares REALLY
+      //       traded; book the executed partial as a settled 'filled' lot so they enter the ledger
+      //       (stop/exit management + P&L), mirroring reconcilePendingFills' partial-then-terminated
+      //       branch and reconcilePlacementError above. Booking nothing here (the pre-fix behavior)
+      //       silently drops a real, untracked position.
+      //   (b) it executed NOTHING (filledQuantity 0/absent) — no fill (unchanged).
+      // Either way the PROPOSAL resolves as a decline (rejected_by_broker + the standing decline audit,
+      // never cleared as "placed"); the executed lot is carried by the fill ledger, not the proposal
+      // status. We NEVER book the full phantom quantity for a declined order — only what executed.
+      const execQty = matched.filledQuantity ?? 0;
+      if (execQty > 0 && p) {
+        // Layer-B dedupe (same as the recovery branch below): if a prior inline reconcile / sweep pass
+        // already booked this partial (same brokerOrderId), don't book a second lot. The durable
+        // backstop is the (proposalId, brokerOrderId) UNIQUE index, which no-ops a concurrent insert.
+        const already = listFillEventsByProposalId(row.id, userId).some((f) => f.brokerOrderId === matched.id);
+        if (!already) {
+          const recoveredExecutionMode = row.executionMode ?? "broker/live";
+          const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
+          recordFillFromProposal({
+            userId,
+            accountNumber,
+            proposalId: row.id,
+            source: recoveredSource,
+            executionMode: recoveredExecutionMode,
+            proposal: p,
+            execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
+            // Terminal order ⇒ executed portion is FINAL, so it settles as 'filled' (matches
+            // reconcilePendingFills / reconcilePlacementError).
+            status: "filled"
+          });
+        }
+      }
+      const declinedMsg = `Broker declined the order (state: ${matched.state})${execQty > 0 ? ` after a partial execution of ${execQty} share(s), which was booked` : ""}.`;
       updateProposalStatus(row.id, "rejected_by_broker", matched.id, undefined, undefined, userId, undefined, declinedMsg);
-      audit("order_rejected_by_broker", { proposalId: row.id, refId: row.refId, orderId: matched.id, brokerState: matched.state, symbol: p?.symbol, side: p?.side, via: "sweep" }, userId, connectedAccountId);
+      audit("order_rejected_by_broker", { proposalId: row.id, refId: row.refId, orderId: matched.id, brokerState: matched.state, symbol: p?.symbol, side: p?.side, via: "sweep", partialFilledQuantity: execQty > 0 ? execQty : undefined }, userId, connectedAccountId);
     } else if (matched) {
+      // Any other matched state — live/working (accepted/new/partially_filled/…), `filled`, or a
+      // non-decline terminal-ish state (done_for_day/stopped/calculated, which the codebase treats as
+      // WORKING, not declined). recordFillFromProposal books the broker's `filledQuantity` when
+      // present, so a done_for_day/stopped order that PARTIALLY executed is ledgered here — this is
+      // why those states are deliberately NOT in TERMINAL_DECLINE_STATES (see broker-side.ts).
       updateProposalStatus(row.id, "placed", matched.id, undefined, undefined, userId);
       if (p) {
         // Layer-B dedupe (crash window): if a prior inline reconcile / sweep already booked this

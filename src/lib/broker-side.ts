@@ -22,6 +22,21 @@ export function isShortIntent(side: OrderSide): boolean {
 // This is the single broker-agnostic check for "the broker declined/terminated this order without
 // a fill" — used both immediately after placement (so a synchronous broker rejection isn't
 // mislabeled "placed") and by the later reconciliation sweep (so both spellings/brokers match).
+//
+// Deliberate omissions (do NOT add these here):
+//   - `done_for_day` / `stopped` / `calculated` are WORKING/active states elsewhere in the codebase
+//     (order-replacement.ts POST_CANCEL_ACTIVE_STATES, stale-limit-orders.ts EXTRA_WORKING_STATES,
+//     dashboard-feed.ts), NOT declines. In the placement reconcile (strategy.ts) an order in one of
+//     these falls through to the recovery/"placed" branch, which already books its executed
+//     `filledQuantity` — so a done_for_day/stopped order that PARTIALLY filled is still ledgered
+//     without treating it as a decline. `stopped` in particular is Alpaca's "a trade is guaranteed
+//     but has not yet occurred", so declaring it terminal would risk dropping an imminent fill.
+//   - `replaced` is NOT a decline: the order was superseded by a live REPLACEMENT order
+//     (order-replacement.ts), which is what actually rests at the broker. Adding it here would
+//     mislabel a live/superseded order as declined.
+// The money-path invariant "book any executed partial on a matched terminal order" is enforced by
+// the reconcile paths (they book `filledQuantity` on ANY matched order that carries executed shares),
+// not by widening this decline set.
 const TERMINAL_DECLINE_STATES = new Set(["rejected", "canceled", "cancelled", "failed", "expired"]);
 
 export function isRejectedOrCanceledState(state: string | undefined | null): boolean {

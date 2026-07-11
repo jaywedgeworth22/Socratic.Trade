@@ -265,3 +265,123 @@ brokerOrderIds coexist; NULL broker_order_id rows are unconstrained.
   `test/fill-events-dedupe-index.test.ts` (new),
   `test/placement-reconcile.test.ts` (+1 case),
   `test/placement-reconcile-sweep.test.ts` (+3 cases).
+
+## Fixups round 2 (partial-fill-on-decline)
+
+### Summary
+
+Adversarial re-verify of round-1's decline guard found a MEDIUM money-path
+regression it introduced. Round 1 added an `isRejectedOrCanceledState(matched.state)`
+decline guard to both `flagStalePlacingIntents` (sweep, `strategy.ts`) and the inline
+`reconcilePlacementError`: a matched terminal-declined order was booked as
+`rejected_by_broker` with NO fill. That is correct **only when nothing executed**.
+
+If a placement ack throws, the order reaches the broker, PARTIALLY fills (e.g.
+`filled_qty=3` of 10), and only then goes terminal (`canceled`/`expired` — a
+`TERMINAL_DECLINE_STATES` member), the declined branch booked **nothing regardless of
+`matched.filledQuantity`**. The 3 executed shares never entered the fill ledger →
+untracked lot, no stop/exit management, mis-attributed P&L. On `origin/main` the old
+sweep booked a `pending_reconciliation` fill for any matched order and
+`reconcilePendingFills` settled the partial; the round-1 guard regressed that.
+
+### Fix
+
+In the terminal-declined branch of BOTH `reconcilePlacementError` (inline) and
+`flagStalePlacingIntents` (sweep), before concluding "no fill / rejected_by_broker",
+check `matched.filledQuantity`:
+
+- **`filledQuantity > 0`** → book EXACTLY the executed shares as a settled `filled`
+  lot at the broker's average price for the partial qty (correct side), via
+  `recordFillFromProposal` with `execution.filledQuantity = matched.filledQuantity`
+  (so the booked quantity is the executed partial, never the full proposal size).
+  Status is `filled` (terminal order ⇒ executed portion is final — mirrors
+  `reconcilePendingFills`' `bookExecuted` for a `${state}_partial`). This is the
+  money-path invariant: **real executed shares are always ledgered.**
+- **`filledQuantity` 0/absent** → unchanged (`rejected_by_broker`, no fill — nothing
+  executed).
+
+The guard's original intent is preserved: a declined order that never executed still
+books NO fill (no full phantom lot). Decline **status/alert semantics are unchanged** —
+the proposal still resolves `rejected_by_broker` and the decline alert still fires; the
+executed lot is carried by the fill ledger (the source of truth for positions/exits),
+not the proposal status. The `declined` outcome + its notification now additionally
+surface `partialFilledQuantity`/`partialFill` so a booked partial isn't silent.
+
+**Idempotency across inline + sweep:** the booked partial carries
+`brokerOrderId = matched.id`, so round-1's partial UNIQUE index on
+`fill_events(proposal_id, broker_order_id)` + `insertFillEvent`'s no-op-on-conflict
+make a second booking of the same partial (inline→sweep, or double-sweep) an idempotent
+no-op. Both branches also keep the existing Layer-B app-level `(proposalId, brokerOrderId)`
+dedupe check before booking.
+
+### ALSO: `done_for_day` / `stopped` / `replaced` (LOW)
+
+`TERMINAL_DECLINE_STATES` (`broker-side.ts`) omits `done_for_day`/`stopped` (and
+`replaced`). Rather than widen the decline set:
+
+- `done_for_day`/`stopped`/`calculated` are treated as **working/active** states
+  elsewhere (`order-replacement.ts` `POST_CANCEL_ACTIVE_STATES`, `stale-limit-orders.ts`
+  `EXTRA_WORKING_STATES`, `dashboard-feed.ts`). In the sweep/inline they fall to the
+  recovery/"placed" branch, which already books the broker's `filledQuantity` — so a
+  `done_for_day`/`stopped` order carrying a partial **is still ledgered**. `stopped` in
+  particular is Alpaca's "a trade is guaranteed but has not yet occurred," so declaring
+  it a terminal decline would risk dropping an imminent fill. Locked with a
+  `done_for_day`-partial sweep test.
+- `replaced` is deliberately NOT added: it's a live/superseded status (the replacement
+  order is what rests at the broker — `order-replacement.ts`), not a decline. Documented
+  inline in `broker-side.ts`.
+
+The invariant "book any executed partial on a matched terminal order" is therefore
+enforced by the reconcile paths (they book `filledQuantity` on any matched order that
+carries executed shares) — declines via the new branch, working-terminal states via the
+recovery branch — not by broadening the decline vocabulary.
+
+### Files (round 2)
+
+- `src/lib/strategy.ts` — `PlacementReconcileOutcome.declined` gained optional
+  `fill`/`partialFilledQuantity`; `reconcilePlacementError` declined branch books the
+  executed partial (or degrades to `uncertain` if booking throws); `flagStalePlacingIntents`
+  declined branch books the executed partial; both inline-declined call sites (autonomous
+  run-loop + approval) surface the partial in audit/notification; clarifying comment on the
+  sweep recovery branch re working-terminal states.
+- `src/lib/broker-side.ts` — documented why `done_for_day`/`stopped`/`calculated`/`replaced`
+  are deliberately NOT in `TERMINAL_DECLINE_STATES`.
+- `test/placement-reconcile-sweep.test.ts` — `seedPlacingProposal` gained an optional
+  `quantity`; +4 tests (sweep canceled-partial books 3-of-10; declined zero-fill unchanged;
+  inline+sweep idempotency; `done_for_day` partial ledgered).
+- `test/placement-reconcile.test.ts` — +1 direct-call `describe` with 3 tests (inline
+  declined-partial books 3-of-10; declined zero-fill unchanged; two-pass idempotency).
+
+### Verification (round 2)
+
+- `npx tsc --noEmit` — clean.
+- `npm test` (vitest) — 3434 passed / 320 files.
+- `npm run lint` — 0 errors (grandfathered warnings only).
+- `npm run build` — Next.js production build OK.
+- Node: gates run under Node 26 (the shared `node_modules` `better-sqlite3` is built for
+  NODE_MODULE_VERSION 147 = node26; `node@24` on PATH hit the reverse ABI mismatch on the
+  test DB, as expected — tsc passes under either).
+- Slack serialize-gate: `SLACK_BOT_TOKEN` absent in this session ⇒ `scripts/slack-sync.sh`
+  is a no-op; proceeded without posting per protocol.
+
+### Confirmation: partial-booking mirrors `reconcilePendingFills`
+
+Yes. `reconcilePendingFills`' terminal-with-partial path (`isRejectedOrCanceledState`
+branch) books the executed portion via `bookExecuted` at the broker's average price for
+`matched.filledQuantity`, status `filled`. The new decline-branch booking uses the same
+inputs (`execution.filledQuantity = matched.filledQuantity`, `averagePrice`, correct
+`side` from the proposal) and the same settled `filled` status, so a declined-after-partial
+order and a pending-then-terminated order settle identically.
+
+### Follow-ups
+
+- Pre-existing (NOT a round-2 regression, out of scope): a `done_for_day`/`stopped` order
+  reported with `filledQuantity` 0/absent flows through the recovery branch, where
+  `recordFillFromProposal` falls back to `proposal.quantity` and books an optimistic
+  pending_reconciliation lot that `reconcilePendingFills` never settles (it has no
+  `done_for_day`/`stopped` branch). Consistent with treating those as working states;
+  flagged for a future pass if it proves noisy.
+- The synchronous (non-throwing) decline paths (`isRejectedOrCanceledState(execution.state)`
+  at the two placement sites) also book no partial on a 200-with-partial-then-terminal
+  response. This is pre-existing origin/main behavior (not touched by round 1), so left out
+  of this regression fix; note it for a follow-up if IOC/FOK partials show up in practice.

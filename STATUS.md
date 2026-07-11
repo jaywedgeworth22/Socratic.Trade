@@ -43,9 +43,17 @@ only concluded when the broker order list is authoritative for terminal orders (
 `BrokerGateway.ordersListIncludesTerminal` — Alpaca `true`, Robinhood unset/conservative ⇒
 absent=`uncertain`) in `reconcilePlacementError` AND the sweep; (4) durable double-fill backstop —
 migration v16 partial UNIQUE index `fill_events(proposal_id, broker_order_id)` + `insertFillEvent`
-idempotent no-op on conflict. +4 new test cases groups. Local gates green: tsc 0, full suite
-3424/3424, lint 0-err, build clean (ran under default node26 — the shared `node_modules`
-`better-sqlite3` is ABI 147/node26; `node@24` hits the reverse ABI mismatch). PR: READY, NOT merged.
+idempotent no-op on conflict. +4 new test cases groups. FIXUPS ROUND 2 (partial-fill-on-decline,
+PR #1382): round-1's decline guard DROPPED PARTIAL EXECUTIONS — a matched order that filled N-of-M
+then went terminal booked nothing regardless of `filledQuantity`, orphaning the executed shares. Fix:
+the terminal-declined branch of BOTH `reconcilePlacementError` (inline) and `flagStalePlacingIntents`
+(sweep) now books the executed partial (`matched.filledQuantity` shares at the broker's avg price, as
+a settled `filled` lot — mirrors `reconcilePendingFills`) when `filledQuantity > 0`, and keeps
+`rejected_by_broker`/no-fill when 0; never a full phantom fill. Idempotent via the round-1
+`(proposal_id, broker_order_id)` UNIQUE index + Layer-B dedupe (inline+sweep can't double-book).
+`done_for_day`/`stopped` left OUT of `TERMINAL_DECLINE_STATES` (working states — recovery branch
+already ledgers their partials); `replaced` stays out (live/superseded). +5 tests. Gates green under
+node26: tsc 0, full suite 3434/3434, lint 0-err, build clean. PR: READY, NOT merged.
 See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — push updates PR #1382,
 await review.
 ## 2026-07-10 — Server & infrastructure metrics dashboard page (AG, branch `agent/antigravity-server-metrics`)
