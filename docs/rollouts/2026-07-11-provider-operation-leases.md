@@ -115,9 +115,19 @@ The first typecheck attempt preceded dependency installation and invoked npx's p
 it made no code assertion. `npm ci` installed the locked worktree dependencies, after which focused
 tests and the real TypeScript compiler passed.
 
+The first parent full build then caught a Next bundle-edge error: `operation-lease.ts` imported
+`node:crypto` on the scheduler instrumentation graph, which Next also traces for Edge. UUID creation
+now uses `globalThis.crypto.randomUUID()` instead. The failed build was not pushed; the complete
+ordered gate was repeated after this correction:
+
+- focused provider/route gate — 9 files / 130 tests passed;
+- `npm run lint` — 0 errors / 404 inherited warnings;
+- `npx tsc --noEmit` — passed;
+- `npm test` — 334 files / 3,759 tests passed;
+- `npm run build` — passed with only the inherited middleware/Sentry/cache warnings.
+
 ## Follow-ups
 
-- Parent agent review, then run the repository's ordered full lint/type/test/build gate.
 - Mirror the active-row status to `/Users/jay/apps/TRADING-EFFORT-LOG.md` at commit/PR/merge/deploy
   boundaries.
 - Open a ready PR from the owned branch only after the full gate is green.

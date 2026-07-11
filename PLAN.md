@@ -13,8 +13,8 @@ filling the missing pieces.
 > passed opaquely into core boundaries. Ownership loss aborts cooperatively, and non-force cadence is
 > rechecked after acquisition. Background contention is a typed benign skip with no cadence marker
 > advancement; admin contention remains a shared-contract HTTP 409. The intentionally detached 8-K
-> embedding tail remains a documented pending/retry-job follow-up. Focused Node 24 tests and typecheck
-> are green; full gate/PR remain. See
+> embedding tail remains a documented pending/retry-job follow-up. Final current-main Node 24 gate is
+> green (focused 130, lint 0 errors, typecheck, full 3,759 tests, build); ready-PR delivery remains. See
 > `docs/rollouts/2026-07-11-provider-operation-leases.md`.
 
 > **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope

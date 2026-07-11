@@ -5,7 +5,6 @@
 // BEGIN IMMEDIATE: SQLite takes the writer reservation before the read/compare/write sequence,
 // removing the cross-process read-then-write race that an in-memory guard cannot cover.
 
-import { randomUUID } from "node:crypto";
 import { getDb } from "./db";
 
 export const OPERATION_LEASE_GROUPS = {
@@ -139,7 +138,7 @@ function acquireOperationLease(
   ttlMs: number,
   now: Date = new Date()
 ): { claim: OperationLeaseClaim } | { busy: OperationLeaseBusy } {
-  const owner = `${process.pid}:${randomUUID()}`;
+  const owner = `${process.pid}:${globalThis.crypto.randomUUID()}`;
   const nowIso = now.toISOString();
   let active: OperationLeaseRecord | null = null;
   try {

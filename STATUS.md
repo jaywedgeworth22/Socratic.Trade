@@ -14,12 +14,13 @@ through the existing shared-v1.5-backed HTTP 409 response. `scheduler.ts` is unc
 detached 8-K summary/full-body embedding remains intentionally detached and therefore outlives the
 primary SEC 8-K refresh lease exactly as before. An adversarial follow-up added persisted-owner
 revalidation, cooperative cancellation on heartbeat/ownership loss, and a second cadence check after
-lease acquisition so a delayed process cannot repeat a just-completed run. Focused Node 24
-verification is green: 9 files / 130
-tests, `tsc --noEmit`, and touched-file ESLint with 0 errors (4 inherited warnings); parent review and
-the ordered full gate remain before commit/PR. Rollout:
+lease acquisition so a delayed process cannot repeat a just-completed run. The parent gate caught
+and fixed a Next Edge trace of `node:crypto`; lease UUIDs now use Web Crypto. Final Node 24
+verification on `main@7c01f87e` is green: focused 9 files / 130 tests, lint 0 errors / 404 inherited
+warnings, `tsc --noEmit`, full Vitest 334 files / 3,759 tests, and the production build. Ready-PR
+delivery and production verification remain. Rollout:
 `docs/rollouts/2026-07-11-provider-operation-leases.md`.
-## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
+## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, merged PR #1438; production verified)
 
 The admin connections-health route's expected-lane inventory used `alphavantage:env`, while the
 provider and health log use the canonical `alpha-vantage:env` service name. That mismatch injected a
@@ -28,9 +29,10 @@ phantom never-used card beside the real quota-exhausted lane. The placeholder no
 An authenticated route regression seeds canonical health history and proves the response contains one
 `alpha-vantage:env` entry and no `alphavantage` entry. This is display/health-inventory correctness
 only: provider dispatch, credentials, quota rotation, and failure classification are unchanged.
-Ready PR #1438 is reconciled with `main@da9558ac`. Final Node 24 verification is green: focused
+PR #1438 merged as `7c01f87e` and is live. Final Node 24 verification was green: focused
 Vitest 1/1, lint 0 errors (404 inherited warnings), `tsc --noEmit`, full Vitest 332 files / 3,747
-tests, and the production build. Production UI confirmation remains after merge and auto-deploy. See
+tests, and the production build. Authenticated production UI now shows exactly one canonical
+`alpha-vantage:env` lane and no `alphavantage:env` placeholder. See
 `docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
