@@ -169,7 +169,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Connected account",
         aliases: "broker connection robinhood alpaca",
         definition:
-          "A brokerage login this app can read and trade through (Robinhood via OAuth, Alpaca via API keys). Disconnecting removes the connection from this app only — nothing changes at the broker."
+          "A brokerage login this app can read and trade through (Robinhood via OAuth, Alpaca via API keys, Tradier via access token). Disconnecting removes the connection from this app only — nothing changes at the broker."
       },
       {
         term: "Active account",

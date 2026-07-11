@@ -85,6 +85,13 @@ Congress score routes retain their existing behavior.
 
 ## Verification
 
+Current-main reconciliation after Tradier PR #1425 (`e3d04221`) found that merge had restored all
+eight route wrappers dropped by #1409. Each current route still authenticates before guard admission,
+so PR #1426 keeps the main route implementations and narrows to shared `v1.5.0` adoption plus tests.
+The merge also reintroduced a test-only `requireAdmin: () => null` mock; the follow-up removes that
+bypass and retains the verified Auth.js identity-source header plus allowlisted-email setup. The
+current-main full gate is pending below; the earlier receipts remain preserved for audit history.
+
 - `git diff --check` — passed.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH node --version` — `v24.18.0`.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/admin-operation-guard.test.ts test/admin-operation-route-wiring.test.ts test/admin-operation-route-behavior.test.ts test/public-auth-rate-limit-hardening.test.ts` — 4 files, 29 tests passed.

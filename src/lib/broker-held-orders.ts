@@ -14,6 +14,7 @@ export const ACTIVE_BROKER_ORDER_STATES = new Set([
   "new",
   "open",
   "partially_filled",
+  "pending", // Tradier bare resting state
   "pending_cancel",
   "pending_new",
   "pending_replace",

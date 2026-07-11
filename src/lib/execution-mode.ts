@@ -99,5 +99,5 @@ export function fillSourceForExecutionMode(stateOrMode: ExecutionState | Executi
 }
 
 function brokerLabel(broker: ExecutionAccount["broker"]): string {
-  return (broker === "alpaca" || broker === "alpaca-mcp") ? "Alpaca" : broker === "test" ? "Test" : "Robinhood";
+  return (broker === "alpaca" || broker === "alpaca-mcp") ? "Alpaca" : broker === "test" ? "Test" : broker === "tradier" ? "Tradier" : "Robinhood";
 }

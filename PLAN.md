@@ -19,11 +19,13 @@ filling the missing pieces.
 > remain unchanged. Process-wide groups cover manual admin route calls, while
 > scheduler/background convergence at the underlying operation boundaries is explicitly planned rather
 > than claimed complete. These are anti-repeat budgets, not hard per-request spend ceilings. Node 24
-> PR #1409 is merged as `9552b648`. The released, clean-install-verified shared package `v1.5.0`
-> is now exact-pinned in the follow-up; the app-local HTTP adapter delegates stable rejection
-> body/status construction to the shared builders while retaining HTTP headers and legacy fields.
-> Current `main@d3859025` also includes #1410 and #1405. The follow-up gate is green: focused 29/29,
-> lint 0 errors, tsc, 3,684/3,684 tests, and build. Hosted checks remain. See
+> PR #1409 is merged as `9552b648`; the later Tradier merge `e3d04221` restored all eight guarded
+> route wrappers that #1409's merge had dropped. The released, clean-install-verified shared package
+> `v1.5.0` is exact-pinned in follow-up PR #1426, whose app-local HTTP adapter delegates stable
+> rejection body/status construction to the shared builders while retaining HTTP headers and legacy
+> fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The pre-current-main
+> gate is green: focused 29/29, lint 0 errors, tsc, 3,684/3,684 tests, and build; refreshed verification
+> against `main@e3d04221` remains pending. See
 > `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 > **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
 > change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger
