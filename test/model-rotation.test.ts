@@ -319,6 +319,10 @@ describe("recommendedReasoningEffortForModel (curated rotation efforts)", () => 
     // gpt-5.5's advice carries the interactive-high rule the UI surfaces BEFORE save.
     expect(reasoningAdviceForModel("gpt-5.5")).toMatch(/disabled for interactive/i);
     expect(reasoningAdviceForModel("gpt-5.4")).toBeUndefined();
+    // mistral-medium-3-5's advice carries the 2026-07-10 benchmark tradeoff: None is fast/cheap
+    // but proposes nothing, High actually proposes but is far slower/costlier.
+    expect(reasoningAdviceForModel("mistral-medium-3-5")).toMatch(/EMPTY proposal list/);
+    expect(reasoningAdviceForModel("mistral-medium-3-5")).toMatch(/\$0\.07/);
   });
 
   it("every rotation-pool model's recommended effort survives the interactive clamp unchanged", async () => {

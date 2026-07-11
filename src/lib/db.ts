@@ -1045,7 +1045,8 @@ function migrate(database: Database.Database): void {
       classifier_reason TEXT,
       created_at TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
-      resolved_at TEXT
+      resolved_at TEXT,
+      review_note TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
 
@@ -1389,6 +1390,14 @@ function migrate(database: Database.Database): void {
         CREATE INDEX IF NOT EXISTS idx_api_health_error_patterns_service ON api_health_error_patterns (service, last_seen DESC);
       `);
     }
+  }
+
+  // Learning Review "defer" verdict (2026-07-10): the daily reviewer LLM can now leave a pending
+  // risk-tier candidate exactly as pending while explaining why it couldn't confidently decide.
+  // Additive, guarded — existing rows keep review_note NULL until a review actually defers them.
+  const learnedContextPendingColumns = database.prepare("PRAGMA table_info(learned_context_pending)").all() as Array<{ name: string }>;
+  if (!learnedContextPendingColumns.some((c) => c.name === "review_note")) {
+    database.exec("ALTER TABLE learned_context_pending ADD COLUMN review_note TEXT");
   }
 
   const now = new Date().toISOString();

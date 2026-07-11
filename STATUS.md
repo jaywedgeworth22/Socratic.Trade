@@ -1,5 +1,18 @@
 # Status
 
+## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
+Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
+and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change
+(FINRA Notice 26-10 / SEC Release 34-105226, effective 2026-06-04: PDT designation + 4-in-5 count + $25k
+minimum eliminated; $2,000 margin minimum survives; broker phase-in to 2027 — app already on $2k). Owner
+decisions: shorting LIVE (paper-verify in parallel), options FULL incl. spreads (Alpaca-first, RH data-only),
+PDT = read each broker's own requirements only (no app gate), leverage = NAV caps + opt-in. Phased plan
+(read-first BrokerMargin -> shorting -> options single-leg -> leverage -> Tradier options+writing -> spreads)
+in docs/capability-trading-roadmap.md. Foundation PRs in review: Tradier #1380, order-status-reconcile.
+NOTE: merge=auto-deploy-to-live, so money-path PRs are owner-timed, not auto-merged.
+
+# Status
+
 Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
@@ -84,6 +97,246 @@ land; not yet done this round.
 Next action: watch for
 further review rounds / merge; then live-verify the RH ratchet lane before flipping
 `robinhoodBrokerStops` on.
+## 2026-07-10 — Console loading permafix: abort-storm coalescing + dashboard.ts parallelization (CLAUDE, branch `claude/loading-permafix`)
+Production console still took minutes to first-paint after PR #1293 (deadlines + watchdog) landed.
+Two compounding causes: (1) `useConsoleData.tsx`'s `refresh()` aborted the in-flight fetch on every
+SSE event and poll tick, so the slow initial fetch kept getting restarted during active scans; (2)
+`getDashboardSnapshot` ran its 9 `withDeadline`-wrapped upstream sections sequentially (~46s worst
+case). Fixed: background (SSE/interval/tab-visible) refreshes now coalesce instead of abort-and-
+restart (supersedes the still-open AG PR #1285 — commented there crediting the diagnosis); the
+broker chain (accounts -> portfolio/positions/orders -> quotes, genuinely sequential) now runs via
+`Promise.all` against the independent group (Robinhood MCP health + macro/signals/history/news),
+cutting worst case to roughly the chain alone (~24s). Added one `[dashboard] snapshot Xms` summary
+log (only when slow or a section timed out). Gate green: tsc clean, lint 0 errors, 3374 tests (315
+files), build clean. Rollout: docs/rollouts/2026-07-10-loading-permafix.md.
+**Codex-autofix (2026-07-10):** raised the client `FETCH_DEADLINE_MS` 20s -> 35s so it sits *above*
+the server's ~24s worst-case self-bounded response (sequential broker chain 6+8+6=20s + SPY
+benchmark 4s). At 20s the client aborted a slow-but-working degraded fetch right as the server was
+about to respond and retried in a loop; 35s only kills a genuine network hang. See the Codex-autofix
+section in `docs/rollouts/2026-07-10-loading-permafix.md`. Gate re-run green.
+**Codex-autofix #2 (2026-07-10):** surface deadline retries as refresh failures. A deadline-aborted
+attempt (`FETCH_DEADLINE_MS`) used to `continue` the retry loop without ever setting `error`, so a
+request that kept hanging past 35s would retry forever with `error` still null — the freshness strip
+(`deriveFreshnessLabel`) then kept labeling an old snapshot "fresh". `runFetch` now sets a visible
+`error` (`DEADLINE_ERROR_MESSAGE`) on the deadline path before returning; a successful retry clears
+it via the existing `setError(null)`. Gate re-run green (tsc, 3396 tests / 315 files, build).
+**Codex-autofix #3 (2026-07-10):** two remaining P2 threads. (a) `useConsoleData.tsx`: an *awaited
+foreground* `refresh()` that hit `FETCH_DEADLINE_MS` used to `continue` the retry loop, holding that
+promise pending across retries — mutation flows that `await refresh()` before clearing their busy
+state could wedge forever if `/api/dashboard` kept hanging. `runLoop` now takes a `foreground` flag;
+on a foreground deadline it hands the retry to a detached background `runLoop(false)` and resolves,
+so the deadline error surfaces and the awaited promise settles while a background retry continues.
+(b) `mcp-oauth.ts`: the Robinhood refresh singleflight could be poisoned forever by a never-settling
+`exchangeToken` fetch (bare fetch, no abort). Added an `AbortSignal.timeout` bound to the exchange
+fetch (root fix) plus a `REFRESH_SINGLEFLIGHT_TTL_MS` backstop that evicts the shared pending promise
+even if some other await in `refreshMcpAccessToken` hangs, so the account self-heals once the network
+recovers. Gate re-run green (tsc, 3396 tests / 315 files, build).
+## 2026-07-10 — Learning-review orphan hardening: adversarial re-review of PR #1328 found + fixed 2 more orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`)
+PR #1328 (deferred #1278 finding #2, >80-item backlog drain) shipped and merged, but a Workflow-based
+adversarial re-review (4 lenses, each finding independently re-verified by a second agent trying to
+refute it via empirical execution) found the fix had two adjacent, real, empirically-reproduced gaps
+that reproduce the SAME "shown to LLM zero times, silently marked reviewed" failure mode via different
+mechanisms: (1) a tied-timestamp cluster larger than MAX_REVIEW_ITEMS (80) freezes the drain forever
+(same id-ordered 80 re-selected every run); (2) a budget-deferred item can silently age out of the
+7-day pack window before its promised later sweep, on a multi-day drain. Both fixed with one change:
+`buildLearningReviewContextPack`'s learned-row filter now keeps a row if in-window OR un-reviewed
+(mirrors the trigger's own window-free design, 8da047aa) + the truncation cut widens to consume a
+full boundary tie-group. This also closes the previously-"accepted" isolated-old-row self-healing gap
+as a free side effect. Caught and fixed a bug in the fix itself (a stray re-slice) via its own new
+test before landing. 2 tests rewritten (asserted the old, now-wrong behavior), 2 new added, all
+falsified against pre-fix source. node@24: tsc clean, learning-review 38/38, full suite 315
+files/3388 tests, eslint 0-err, build clean. See
+`docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum. This closes finding #2 for
+real — no known open gaps remain in the daily learning-review job's coverage guarantees.
+**Update: PR #1363 merged (`d9dc5d5d`), auto-deployed. Took ~2.5hrs of GitHub mergeStateStatus
+DIRTY re-syncs under a heavy same-day push burst despite being conflict-free the whole time by
+every local check; the reliable tiebreaker turned out to be a direct `gh pr merge <n> --squash`
+(no `--auto`) attempt, which forces a fresh server-side merge check independent of the stale
+cached flag.**
+## 2026-07-10 — Provider-knob sync: API-Usage-Monitor -> Infisical prod (CLAUDE opus subagent, branch `claude/provider-knob-sync`)
+Mac-side script + launchd template making the API-Usage-Monitor the source of truth for market-data
+subscription plans: it syncs each plan's env-knob values into Infisical prod (where the trading app
+reads all provider quotas, seeded 2026-07-10). `scripts/sync-provider-knobs.sh` (ASCII, bash 3.2-safe)
+GETs the monitor's token-authed `/api/subscriptions`, computes desired knobs via the pure, unit-tested
+`scripts/provider-knob-diff.mjs` (active -> `knobEnv`; canceled/paused -> `freeTierKnobEnv`;
+considering/null -> skip), reads current values from Infisical over the proven SSH + universal-auth CLI
+path, and **writes only diffs**. Two guards reject anything else a buggy/compromised payload could send:
+a key allow-list (`PROVIDER_QUOTA_`/`PROVIDER_RATE_LIMIT_`/`MASSIVE_` prefixes + `TIINGO_DROP_NEWS`,
+`FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`) and a safe value charset. Dry-run by default (prints
+diff, exit 0); `--apply` writes + posts one `#agent-sync` line per change. `com.jay.provider-knob-sync.plist`
+(30-min, `--apply`) is a template, **NOT installed**; install command in the rollout note. Monitor
+unreachable = exit 0, no spam. **PR #1370 OPEN (READY), gate green (tsc clean / 3422 tests 316 files /
+build clean) - awaiting owner review. Blocker/next:** the monitor-side endpoint is api-usage-monitor
+PR #83 (GET shape matches this contract: bare array, knobEnv + freeTierKnobEnv, Bearer
+`USAGE_INGEST_TOKEN`), but that repo is merge-frozen on a pre-existing `migrate-safe.mjs` deploy
+blocker - the sync stays DRY-RUN until #83 deploys and one live dry run confirms the real payload.
+NOT run with `--apply` against prod; launchd job not installed. See
+`docs/rollouts/2026-07-10-provider-knob-sync.md`.
+## 2026-07-10 — Server & infrastructure metrics dashboard page (AG, branch `agent/antigravity-server-metrics`)
+Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
+## 2026-07-10 — Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud lane, branch `claude/anthropic-spend-spike-e2di8j`)
+Owner reported Anthropic console spend jumped ~$35 -> ~$50 in 2 hours while `/admin/llm-usage`
+only reflected ~$35. Root cause (codebase-only investigation — no prod DB access this session):
+`scripts/benchmark-llm-models.ts` hits real provider APIs through the app's real credential path
+but is deliberately built with NO writes to the app DB, so its real Anthropic billing never lands
+in `llm_usage`. Fixed: the script now self-reports a total-spend rollup every run, and gained an
+opt-in `--record-usage` flag that logs real calls into the real `llm_usage` table under a pretend
+account (`user_id="benchmark:<user>"`) via a dedicated writable connection, never touching
+migrations or other tables. Owner's follow-up (opus-dominant/haiku-scattered/sonnet-absent call
+pattern) does NOT match a default full-catalog sweep — still open whether this specific spike was
+a scoped benchmark run or organic opus-configured production traffic; needs a real
+`/admin/llm-usage` pull to close out (no `OPS_DIAGNOSTIC_TOKEN` in this session).
+`scripts/eval/run-offline.ts` has the same ledger gap, left as a follow-up. Gate: tsc clean, lint 0
+errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main` in this sandbox
+(pre-existing, confirmed via stash-and-rebuild). See
+`docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`.
+## 2026-07-10 — Deploy pipeline blocker fixed: kernel tcp_mem exhaustion via litestream 0.5.14 (CLAUDE, branch `claude/litestream-tcpmem-pin`)
+All Coolify deploys of `socratic-trade-prod` failed 08:59Z–11:52Z (12 consecutive; "TLS
+unexpected eof" at git clone; prod drifted ~15 commits stale). Root cause was ON-BOX, not
+GitHub/network: litestream 0.5.14 inside the prod container churns ~20 sockets/s to the R2
+endpoint and holds thousands of dead TCP sockets (peak 16,840 fds, ~715MB pinned buffers),
+exhausting kernel `tcp_mem` (max 182670 pages) — the kernel clamped every connection's
+receive window to ~6KB, so GitHub clones trickled at ~20KB/s and got cut mid-transfer.
+Applied on the box (runtime-only, reversible): raised `net.ipv4.tcp_mem` to
+`273945 365343 548010` (orig `91335 121781 182670`; revert via sysctl -w or reboot — keep
+raised until the pin deploys). Triggered sanctioned deploy `jca2c6wsz7ewydl4q2t4whad` →
+FINISHED 12:29Z, prod = `main@ea89b23e`, `/api/health` 200. This branch pins
+`LITESTREAM_VERSION` back to 0.5.12 in `scripts/coolify-prod-start.sh` (+ version-aware
+cached-binary reinstall — BIN_DIR persists across deploys and the old existence-only check
+would keep the stale 0.5.14 forever). Full diagnosis + A/B soak evidence:
+`docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`. Owner green-lit the pin;
+auto-deploy ships it on merge. tcp_mem raise persisted as
+`/etc/sysctl.d/99-socratic-tcpmem.conf` (headroom insurance — delete once the leak class
+is confidently dead). Upstream issue filed (scrubbed):
+https://github.com/benbjohnson/litestream/issues/1354. Post-deploy box verification
+(litestream 0.5.12 running, replication continuity, fd flatness at 0/10/25 min, health,
+restore marker untouched) recorded on the effort board + #agent-sync.
+
+## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
+Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval
+card — the "Devil's advocate (red team)" verdict panel AND a separate "Red Team review unavailable
+(provider error)" callout, both printing the same provider-error text. Root cause was a UI
+double-render, not two reviewers: "Devil's Advocate" and "Red Team" are the same single adversary
+(the single-adversary consolidation #1191 was backend-correct). #1076 (Jul 8) gave the verdict panel
+a failure branch; #1191 (Jul 9) then added a second "unavailable" callout whose condition was a
+subset of the panel's, so both fired on failure. Fix: a new pure/total `redTeamCardState()`
+(`app/console/lib/red-team.ts`) returns exactly one of `verdict-panel | legacy-unavailable |
+no-review`; the approval card switches all three sections on it, so they're mutually exclusive by
+construction. The "sole adversary" line was folded into the panel's failure branch; the callout is
+now a legacy-only fallback (no structured verdict + legacy `adversaryUnavailable` flag). Added 5
+regression assertions. Gates green (tsc/lint/3400 tests/build) under node26 — see the rollout note's
+Node ABI caveat. See `docs/rollouts/2026-07-10-adversary-review-duplication.md`.
+## 2026-07-10 — Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch `monet/privacy-terms-pages`)
+Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added `/privacy-policy` +
+`/terms-and-conditions` (boilerplate, matching the existing `/how-it-works`/`/welcome` page
+pattern), describing the app's real opt-in Twilio SMS notification channel with the specific
+language Twilio's compliance review looks for (opt-in consent, message frequency varies, rates may
+apply, STOP/HELP, no sale of phone numbers). Registered in `sitemap.ts`/`robots.ts`. Caught the
+actual thing that would have broken verification: `middleware.ts` redirects every unauthenticated
+path to `/login` by default — added both new paths to `PUBLIC_PREFIXES` so they're reachable
+without signing in. Verified live via `next dev` (Browser preview): both pages render full content
+unauthenticated. node@24: tsc clean, eslint 0-err, full suite 315/3395, build clean (both pages
+static). See `docs/rollouts/2026-07-10-privacy-terms-pages.md`. Follow-up: owner should have
+counsel review if the product scales past sole-operator use.
+
+## 2026-07-10 — Pricing doc: cover ALL external data sources, not just the core seven (CLAUDE subagent, branch `claude/pricing-doc-all-sources`)
+Owner: "consider all the other data sources we have too, not just those few — marketstack, and
+any others." Extended `docs/market-data-provider-pricing.md` (kept its existing table/traps/dials
+structure intact, added new sections) to cover every external data source the app touches, all
+verified live in code first: marketstack + tradier + intrinio + FRED + Fintech Studios/PowerIntell
++ logo.dev (new "Secondary / fallback sources" table, all confirmed live/wired-in, none dead) plus
+6 new numbered traps (marketstack's free tier is HTTPS-included, NOT HTTP-only as commonly
+misremembered; Tradier sandbox tokens are 15-min-delayed with zero index/Greeks data — only a
+production token from a real, even $0/mo, brokerage account is real-time; Intrinio's gate is a
+14-day trial, not a tier; Fintech Studios' published consumer pricing may not apply to the
+`studio.fintechstudios.com/api/v1` endpoint this app actually calls; FRED never publishes a
+numeric rate limit and its docs 403 naive fetchers). Added a "Keyless & broker-bundled sources"
+section (yahoo, nasdaq screener, webull-unofficial, SEC XBRL/EDGAR, alpaca-news/snapshot,
+robinhood-quotes/fundamentals, stooq, plus a congress.trade internal-app callout) and a
+"Usage-billed (not subscription) providers" pointer to API-Usage-Monitor for LLM/RAG spend
+(no price tables duplicated here). Mid-task owner scope addition: a "Cheap alternatives —
+evaluated, not integrated" section researching alphastocks.app (owner-named — turned out to be a
+consumer scoring/screener app with no API surface, not a candidate) plus EODHD, marketdata.app,
+Finazon, Finage, StockData.org, Databento, financialdatasets.ai, and Alpaca's Algo Trader Plus
+($99/mo SIP+OPRA upgrade — the one genuine near-term candidate since it's additive to Alpaca
+infra we already hold, not a new vendor); confirmed IEX Cloud is defunct (Aug 2024) so it stops
+getting re-suggested. Also flagged a real gap in "Where the dials live": none of the six new
+keyed providers have a `provider-rate-limit.ts` `HARD_DEFAULTS` entry (only finnhub/
+alpha-vantage/yahoo-finance/twelvedata do) — nothing paces them today besides generic 429 retry.
+Docs-only change; gates green (see rollout note). See
+`docs/rollouts/2026-07-10-pricing-doc-all-sources.md`.
+
+## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
+Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
+verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —
+requires a non-blank reasoning note (`parseLearningReviewVerdicts` drops blank-note defers as
+malformed). For `learned_context_pending` rows this leaves the item exactly pending and persists the
+note to a new `review_note` column (`src/lib/db.ts`/`db-learning.ts`,
+`setPendingLearnedContextReviewNote`), surfaced in the queue UI
+(`app/console/approvals/learned-context.tsx`, new `ReviewerNote` "Left for you because..." line). For
+durable `learned_context` rows it's a no-op (no queue to leave it in), matching `needs_more_data`.
+Verified (new test) that a deferred item doesn't force a same-set re-review loop — it falls out of
+the existing #1278/#1328 marker/fingerprint architecture unchanged (sticks until a human acts or
+another item's arrival brings the reviewer back to the whole set). +6 tests in
+`test/learning-review.test.ts`. Gate green: tsc clean, 3389 tests / 315 files, build clean, lint 0
+errors. See `docs/rollouts/2026-07-10-learning-review-defer.md`.
+## 2026-07-10 — merge-shepherd server-side environment branch gate (CLAUDE subagent, branch `claude/shepherd-environment-gate`)
+#1266 follow-up: the merge-shepherd job's `if: github.ref == 'refs/heads/main'` guard is
+YAML — branch-editable, and a `workflow_dispatch` against a non-main branch loads that
+branch's copy of the file before evaluating the `if:`. Created a GitHub **Environment**
+named `merge-shepherd` via the Environments API with `deployment_branch_policy` locked to
+`main` (`custom_branch_policies: true`, branch policy `main` only) — this is enforced
+server-side by GitHub before the job dispatches, not something a branch's workflow file can
+override. Wired `environment: merge-shepherd` into `.github/workflows/merge-shepherd.yml`'s
+`shepherd` job (kept the existing `if:` guard as defense-in-depth, not a replacement), and
+added `deployments: write` to the job's permissions allow-list since referencing an
+environment makes GitHub track a deployment record per run and this workflow already scopes
+`GITHUB_TOKEN` down to an explicit list. `SHEPHERD_TOKEN` does not currently exist as a repo secret — nothing to migrate; if/when
+added it should be an **environment secret** on `merge-shepherd`, which needs an owner
+action (the API can create/gate the environment but cannot read or copy secret values). No
+app code touched — workflow + docs only. See
+`docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
+
+**Landing-round finding, deliberately NOT fixed in this PR (PR #1353 review):** codex-connector
+correctly flagged that the `environment: merge-shepherd` reference is itself still part of the
+branch's own copy of the workflow YAML — a branch can delete that one line from its own copy just
+as easily as it could delete the `if:` guard, and GitHub only evaluates an environment's
+`deployment_branch_policy` for a job that actually references that environment; a job with no
+environment reference at all skips the check entirely. So this PR narrows the bypass (from "delete
+one `if:` line" to "delete one `environment:` line") without structurally closing it. A genuine
+close requires moving the sensitive job into a **reusable workflow pinned to `@main`**
+(`uses: ./.github/workflows/_merge-shepherd-impl.yml@main`): GitHub loads a `uses:`-referenced
+workflow from the pinned ref regardless of which ref dispatched the caller, so a branch cannot
+edit away the `environment:` declaration living inside the pinned file. That's a real CI
+architecture change (new file, `workflow_call` trigger wiring, verifying environment protection
+still applies inside a reusable workflow) that deserves its own dedicated, carefully-tested
+session rather than a rushed addition here — filed as a follow-up (see below).
+
+Practical severity today is bounded: `SHEPHERD_TOKEN` doesn't exist as a repo/environment secret,
+so there's no environment-gated secret currently exposed by this gap — the fallback
+`GITHUB_TOKEN` is already scoped to an explicit low(er)-privilege allow-list regardless of whether
+the environment check runs. Separately, this repo's branch-protection ruleset requires 0 approving
+reviews (only the `verify` CI check gates a merge), so a rogue/buggy agent branch could already
+self-merge through the normal PR flow without needing this side-channel at all — this workflow's
+gap is real but not the weakest link in the current threat model. Landed with the finding
+acknowledged and cross-referenced rather than silently resolved.
+## 2026-07-10 — Mistral benchmark data surfaced in the model-picker UI (MONET, branch `monet/mistral-benchmark-ui`)
+Owner-directed: users had no way to see the 2026-07-10 Mistral re-benchmark numbers when picking a
+model — they only lived in a docs note. Filled two ALREADY-BUILT UI surfaces instead of inventing a
+new one (the custom `ModelPicker` listbox is dead code, zero JSX usages — reviving it would have
+been a much larger rewrite than this data-wiring task warranted): (1) the Model Stats drawer's
+benchmark column, which previously showed a dash for all four Mistral rows (the 2026-07-08 sweep
+recorded 0 successes — the capability-map bug #1279 fixed) — now shows real cost/latency via a safe
+array-concat into the existing `normalizeBenchmarkSummaries` pipeline; (2) the Mistral Medium
+reasoning-effort advice text, extended with the concrete None (fast/cheap, proposes nothing) vs High
+(slow/costly, actually proposes) tradeoff the benchmark revealed. High-effort probe data deliberately
+NOT merged into the drawer (would collide with the default-effort row for the same model+role) —
+feeds the advice prose instead. Verified live end-to-end in-browser (own worktree dev server + a
+throwaway seeded API key, with a fixed `ENCRYPTION_KEY` shared between the seed script and the dev
+server so the app's own decrypt-and-validate save path passes — the default per-process random key
+otherwise makes cross-process seeding silently fail). Gate: lint 0 errors / tsc clean / 315 files
+3387 tests / build. See `docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
+
 ## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)
 Owner-directed: the merged-vs-deployed distinction was pure friction, so production now auto-deploys on
 every push to `main` (merge == live, no manual step). Two fixes made it work: (1) flipped Coolify's
@@ -531,6 +784,12 @@ across the full suite. Gate green: lint 0 errors / tsc clean / 306 files 3171 te
 LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's committed work): merged
 `origin/main` clean, full gate re-run green in this worktree, post-`npm test` check confirmed no
 lingering `agentic-vitest-*` dir in the real tmpdir, PR opened via `land.sh` with auto-merge armed.
+
+## 2026-07-10 — Canonical market-data pricing doc (CLAUDE, branch `claude/provider-pricing-doc`)
+New `docs/market-data-provider-pricing.md`: verified vendor pricing/tier facts for all 7 market-data
+providers, the 6 traps already hit once (tiingo news 403s, tiingo hidden $300/yr annual — owner
+correction, AV per-IP cap, FMP annual-billing display, Massive scope, Finnhub cliff), current
+paid/free/considering state, and the Infisical knob cheat-sheet. Update it on every plan change.
 
 ## 2026-07-09 — PRODUCTION MOVED to the 8 GB Hetzner box `135.181.192.190` (CLAUDE, branch `claude/hetzner-server-migration-d59cd1`)
 Owner-directed server migration off the 4 GB `91.98.44.8` box (which OOM-failed its final build
