@@ -773,6 +773,35 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [responses, setResponses] = useState<Record<string, string>>({});
+  const [reviewing, setReviewing] = useState(false);
+
+  const pendingCount = proposals.filter((p) => p.status === "pending").length;
+
+  const runAiReview = async () => {
+    setReviewing(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/socratic/framework/review", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as { reviewed?: number; skippedReason?: string };
+      await refresh();
+      setMessage(
+        data.reviewed
+          ? `AI reviewed ${data.reviewed} pending proposal${data.reviewed === 1 ? "" : "s"}.`
+          : data.skippedReason === "no_pending"
+            ? "No pending proposals to review."
+            : data.skippedReason === "no_llm_key"
+              ? "AI review needs an LLM key configured."
+              : data.skippedReason === "over_budget"
+                ? "AI review skipped: LLM budget spent."
+                : "AI review produced no recommendations."
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not run AI review.");
+    } finally {
+      setReviewing(false);
+    }
+  };
 
   const update = async (
     proposal: SocraticFrameworkProposal,
@@ -803,6 +832,20 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
 
   return (
     <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          Learning proposals across all accounts{pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
+        </span>
+        <button
+          type="button"
+          className="con-btn con-btn-outline con-btn-sm"
+          disabled={reviewing || pendingCount === 0}
+          onClick={() => void runAiReview()}
+          title="Review every pending proposal in a single LLM call and attach an advisory recommendation to each."
+        >
+          <Brain size={14} /> {reviewing ? "Reviewing…" : "AI review pending"}
+        </button>
+      </div>
       {proposals.slice(0, 5).map((proposal) => (
         <article key={proposal.id} className="con-evidence-card con-evidence-accent">
           <div className="flex items-start justify-between gap-3">
@@ -810,6 +853,27 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <span>{proposal.status}</span>
           </div>
           <p>{proposal.proposedChange}</p>
+          {proposal.aiReview && (
+            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+              <div className="flex items-center gap-2 font-semibold">
+                <Brain size={13} /> AI recommends: {proposal.aiReview.verdict}
+              </div>
+              <p className="mt-1 text-[color:var(--con-muted)]">{proposal.aiReview.rationale}</p>
+              {proposal.aiReview.verdict === "rewrite" && proposal.aiReview.rewrittenChange && (
+                <div className="mt-2">
+                  <p className="text-[color:var(--con-fg)]">{proposal.aiReview.rewrittenChange}</p>
+                  <button
+                    type="button"
+                    className="con-btn con-btn-outline con-btn-sm mt-2"
+                    disabled={proposal.status !== "pending"}
+                    onClick={() => setResponses((current) => ({ ...current, [proposal.id]: proposal.aiReview!.rewrittenChange ?? "" }))}
+                  >
+                    <MessageSquare size={13} /> Use suggested rewrite
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <textarea
             className="con-textarea mt-3"
             rows={3}

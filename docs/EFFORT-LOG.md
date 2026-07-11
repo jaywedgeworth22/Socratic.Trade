@@ -181,6 +181,17 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Global learning reads + batched AI review of proposals (CLAUDE cloud, branch
+  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-07, PR pending.** Lessons (on
+  `socratic_decisions`) + framework proposals now read GLOBAL across a user's accounts (dropped the
+  active-account filter on the dashboard learning panels; still write `connected_account_id` for
+  provenance — no migration; also fixes the dashboard-vs-decision-detail inconsistency). New
+  `src/lib/framework-review.ts` `reviewPendingFrameworkProposals`: one LLM call adjudicates all pending
+  proposals across accounts and attaches an ADVISORY recommendation (verdict + rationale + optional
+  rewrite) via a new nullable `ai_review` column — owner still decides (not auto-apply); reviewer model =
+  `redTeamLlmModel`→`llmModel`. Wired `POST /api/socratic/framework/review` + "AI review pending" UI in
+  `app/console/page.tsx`. Gate green; `test/framework-review.test.ts` (4) + socratic/learning suites (31)
+  pass. See `docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
 - **Console intro: solid backdrop that dissolves on liftoff (CLAUDE cloud, branch
   `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-06, PR open.** Refinement to the merged
   intro splash (#876/#996): the intro opens with a solid theme-matched backdrop (`var(--con-bg)`)

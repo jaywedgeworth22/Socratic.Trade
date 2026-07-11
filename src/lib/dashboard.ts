@@ -387,14 +387,15 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const latestStrategyRun = latestRunAudit
     ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
     : undefined;
-  const socraticDecisions = listSocraticDecisionCases(userId, {
-    limit: 50,
-    ...(policy.connectedAccountId ? { connectedAccountId: policy.connectedAccountId } : {})
-  });
-  const socraticFrameworkProposals = listSocraticFrameworkProposals(userId, {
-    limit: 25,
-    ...(policy.connectedAccountId ? { connectedAccountId: policy.connectedAccountId } : {})
-  });
+  // Learning is GLOBAL across the user's accounts: decision cases (which carry the
+  // extracted `lessons`) and framework/learning proposals are read user-wide, not
+  // filtered to the active account. Each row keeps its `connectedAccountId` /
+  // `accountNumber` for provenance so the UI can still show where it came from. This
+  // also makes the dashboard consistent with the decision-detail page, which already
+  // fetched proposals user-wide. (Per-account trading data — positions, fills,
+  // performance — stays account-scoped above/below.)
+  const socraticDecisions = listSocraticDecisionCases(userId, { limit: 50 });
+  const socraticFrameworkProposals = listSocraticFrameworkProposals(userId, { limit: 25 });
   const audit = policy.connectedAccountId
     ? listAudit(100, userId, policy.connectedAccountId, true)
     : listAudit(100, userId);

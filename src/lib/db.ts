@@ -1184,6 +1184,17 @@ function migrate(database: Database.Database): void {
     addAccountColumn(table);
   }
 
+  // AI-review advisory column: a single-LLM-call reviewer attaches a per-proposal
+  // recommendation (verdict + rationale + optional rewrite) to a pending framework
+  // proposal WITHOUT changing the owner verb/status — the owner still makes the final
+  // accept/reject/rewrite call. Nullable JSON; absent means "not yet AI-reviewed".
+  {
+    const cols = database.prepare("PRAGMA table_info(socratic_framework_proposals)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "ai_review")) {
+      database.exec("ALTER TABLE socratic_framework_proposals ADD COLUMN ai_review TEXT");
+    }
+  }
+
   // Per-account watermarks need (user_id, connected_account_id) as the PK, but the original table
   // was created with user_id as the SOLE primary key — a nullable column alone can't express
   // per-account rows. Rebuild it once: the account-agnostic watermark becomes connected_account_id=''
