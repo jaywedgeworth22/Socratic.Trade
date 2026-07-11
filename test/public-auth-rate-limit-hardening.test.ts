@@ -34,6 +34,10 @@ vi.mock("@/lib/llm-request", () => ({
   ALL_LLM_REASONING_EFFORTS: []
 }));
 
+vi.mock("@/lib/auth/admin", () => ({
+  requireAdmin: () => null
+}));
+
 import { GET as robinhoodCallback } from "../app/api/auth/robinhood/callback/route";
 import { POST as tuneStrategy } from "../app/api/strategy/tune/route";
 import { GET as dryRunTuning } from "../app/api/admin/tuning-dry-run/route";

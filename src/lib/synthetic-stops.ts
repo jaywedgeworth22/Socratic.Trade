@@ -30,6 +30,24 @@ import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, StopPlanSt
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
+// A synthetic-stop refId doubles as the broker client-order-id (tag), and the secondary dedup below
+// matches a resting broker order back to its stop by EXACT client-order-id equality. Some brokers
+// restrict that field's charset — Tradier's order `tag` is letters/numbers/dash only and rewrites an
+// underscore to a dash, so a raw refId carrying the `u_<hash>` non-primary userId would come back
+// mangled and never match its stored refId, defeating the dedup. Keep the refId within the portable
+// lowest-common-denominator charset [A-Za-z0-9-] at generation so it round-trips through ANY broker
+// unchanged. This is collision-safe: userIds are "local" or `u_<24-hex>`, and `_`->`-` can't collide
+// two distinct hashes; Alpaca/Robinhood (which accept underscores) store the same value verbatim.
+export function brokerPortableRefId(refId: string): string {
+  // Cap at 255 chars to match Tradier's sanitizeTag (src/lib/tradier.ts), which truncates the `tag`
+  // field to 255. A (hypothetical) long refId must be truncated IDENTICALLY on both the stored copy
+  // (this value, used as lastAttemptRefId) and the broker tag, or the two would diverge past char 255
+  // and the client-order-id dedup that matches a resting broker order back to its stop by EXACT
+  // equality would never match. Alpaca/Robinhood accept longer tags, so the cap is a harmless no-op
+  // on every refId we actually generate today (all well under 255).
+  return refId.replace(/[^A-Za-z0-9-]/g, "-").slice(0, 255);
+}
+
 // isLiveExitOrder / liveExitOrderCoverage moved to broker-side.ts (2026-07-10) so the broker-held
 // protective-stop reconciler can share the same quantity-aware coverage rules without an import
 // cycle. Semantics unchanged — see their doc comments there.
@@ -583,7 +601,10 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         refId = stop.lastAttemptRefId;
       }
     }
-    refId ??= `sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}${generation > 0 ? `-g${generation}` : ""}`;
+    // Generate within the broker-portable charset so the tag round-trips exactly for the secondary
+    // client-order-id dedup (see brokerPortableRefId). A reused stop.lastAttemptRefId was itself
+    // stored portable, so both branches stay consistent.
+    refId ??= brokerPortableRefId(`sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}${generation > 0 ? `-g${generation}` : ""}`);
     recordSyntheticStopAttempt(stop.id, refId, userId);
     try {
       const exec = await gateway.placeEquityOrder({
