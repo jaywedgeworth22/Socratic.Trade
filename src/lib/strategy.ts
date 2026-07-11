@@ -2673,6 +2673,7 @@ export function brokerMinimumDollarNotional(policy: TradingPolicy): number {
 export function brokerLabel(policy: TradingPolicy): string {
   if (policy.activeBroker === "robinhood") return "Robinhood";
   if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") return "Alpaca";
+  if (policy.activeBroker === "tradier") return "Tradier";
   return policy.activeBroker ?? "broker";
 }
 

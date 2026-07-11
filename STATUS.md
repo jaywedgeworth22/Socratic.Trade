@@ -182,6 +182,89 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — Global learning reads + batched AI review of proposals (Claude cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+Owner asked to bring learning "out of the individual account" (keeping provenance) and to review pending
+learning proposals with a single LLM call. Done: (1) lessons (on `socratic_decisions`) and framework
+proposals now read GLOBAL across a user's accounts — dropped the active-account filter on the dashboard
+learning panels while still writing `connected_account_id` for provenance (no migration; also fixes the
+dashboard-vs-decision-detail inconsistency). (2) New `src/lib/framework-review.ts`
+`reviewPendingFrameworkProposals` — one LLM call adjudicates all pending proposals across accounts and
+attaches an ADVISORY recommendation (verdict + rationale + optional rewrite) via a new nullable
+`ai_review` column; owner still makes the final accept/reject/rewrite (not auto-apply). Reviewer model =
+account policy `redTeamLlmModel`→`llmModel` (AI-Review inheritance). Wired: `POST
+/api/socratic/framework/review` + an "AI review pending" button and per-proposal recommendation block in
+`app/console/page.tsx`. Gate green (tsc/lint/build); new `test/framework-review.test.ts` (4 tests) +
+socratic/learning suites pass (31). PR pending. See
+`docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
+## 2026-07-10 — Tradier fixups round 3: buying-power min() asymmetry (CLAUDE, branch `claude/tradier-broker`, PR #1380)
+Closed a LOW-but-real money-path residual from round 2's PDT buying-power fix. The round-2
+`Math.min` over positive candidates of `[margin.stock_buying_power, pdt.stock_buying_power]` was
+SYMMETRIC: if Tradier omits/zero-fills the Reg-T OVERNIGHT figure while the ~4x INTRADAY PDT figure
+is positive, `min` returned the INTRADAY number as buying power — silently over-levering an overnight
+hold, contradicting the owner's "NAV caps + opt-in leverage, never silently lever up" decision. Fix
+(`getPortfolio`, `src/lib/tradier.ts`): the intraday/PDT figure is now a DOWNWARD-ONLY clamp on the
+overnight Reg-T base; an absent/zero overnight figure reports buying power as UNKNOWN (`0`), never the
+intraday 4x. Both consumers already read a non-positive `buyingPower` as "unknown => don't block, defer
+to broker" (`strategy.ts` openingRiskCapacity gates the BP cap on `> 0`; `policy.ts` affordability
+blocks only on `> 0`), matching how the Alpaca adapter treats a missing `buying_power`. +2 regression
+tests (45 tradier tests). Also appended a "Pre-live-token validation items" section to the rollout note
+for the two v1-status-quo residuals (OTOCO leg `class` shape; 50-page order-cap ordering) that need a
+live Tradier sandbox token to close. Gates green (tsc/test/build, node@24). NOT merged. See
+`docs/rollouts/2026-07-10-tradier-broker.md` "Round 3".
+
+## 2026-07-11 — Tradier fixups round 2: codex-autofix reconciliation (CLAUDE, branch `claude/tradier-broker`, PR #1380)
+A cross-cutting review of the `[codex-autofix]` commit (`9dd5f40c`) found its equity-class order
+filter and PDT buying-power read introduced two REAL-money-path regressions, now fixed with
+regression tests (43 tradier tests, +11). (1) MEDIUM double-sell: `getEquityOrders` pagination broke
+on the post-filter count — an option-only page could stop the loop before a later page's resting
+protective EQUITY exit, hiding it from `liveExitOrderCoverage` and letting the synthetic monitor place
+a duplicate; continuation now decided on the RAW page (any new id of any class), the `class==="equity"`
+filter applied only to returns, 50-page cap + id-dedup kept. (2) LOW: surface EQUITY legs of
+OTOCO/OCO/OTO containers (new `equityRowsFromTradierOrder`) so a user-placed Tradier bracket stop leg
+is visible to coverage — leg field shape NEEDS LIVE-TOKEN CONFIRMATION. (3) LOW: `getPortfolio` no
+longer feeds the ~4x intraday `pdt.stock_buying_power` into sizing — takes the conservative min of the
+POSITIVE Reg-T/PDT figures (literal 0 treated as absent). (4) INFO: `brokerPortableRefId` gains a
+255-char cap matching Tradier's `sanitizeTag`. No Alpaca/Robinhood/test-broker behavior changed. NOT
+merged. See `docs/rollouts/2026-07-10-tradier-broker.md` "Fixups round 2".
+
+## 2026-07-11 — Tradier broker adapter: Codex PR review fixes (CLAUDE autofix, branch `claude/tradier-broker`)
+Responded to 6 P2 Codex PR review findings: (1) resolve account number from token profile during
+connect if not user-provided; (2) read `pdt.stock_buying_power` alongside `margin.stock_buying_power`
+for PDT margin accounts; (3) filter non-equity orders (options/combos) before mapping to
+`EquityOrder`; (4) canonicalize position symbols from Tradier dots (BRK.B) to hyphenated form
+(BRK-B) so they match quote-map keys; (5) use `Math.abs(quantity)` for short position average costs;
+(6) use stock-specific balance fields (`stock_long_value`, `stock_short_value`) for
+`equityMarketValue` to avoid double-counting option value. All 316 files / 3433 tests green.
+
+## 2026-07-10 — Tradier broker adapter, fifth broker (CLAUDE subagent, branch `claude/tradier-broker`)
+Added Tradier as a fifth `BrokerGateway`, mirroring the Alpaca adapter against Tradier's hand-rolled
+REST (single Bearer token, no SDK). New `src/lib/tradier.ts` implements all 9 methods; `"tradier"`
+added to the `ConnectedAccount.broker` + `TradingPolicy.activeBroker` closed unions; factory switch
+in `broker.ts` inherits the `withLivePreflight` live-order choke point for free (no Tradier-specific
+preflight). Connect API + a new single-Access-Token settings sheet with an explicit
+Sandbox/Production selector (no PK/PA inference); base URL is DERIVED from environment
+(sandbox.tradier.com vs api.tradier.com) so the two venues can never cross. Whole-share only
+(`fractional:false`, floor-or-throw, never defaults to 1), DIRECT 4-value side map
+(buy/sell/sell_short/buy_to_cover, not `toBrokerSide`), synthetic stops (no OTOCO — strategy gates
+broker brackets to Alpaca). Added `"error"` (terminal-decline) + `"pending"` (resting) to the
+broker-side state vocab, keeping the superset invariant. No operator env fallback — a non-owner
+with no stored token throws loudly. node@24 gate: eslint 0-err, tsc clean, full suite 316/3428
+green, build clean. See `docs/rollouts/2026-07-10-tradier-broker.md`. Follow-ups: native OTOCO
+brackets, real preview endpoint for `reviewEquityOrder`, IRA agentic-allowed decision, orders
+pagination field confirmation, optional operator env-token tier. No deploy; no live token exercised.
+**Adversarial-review fixups (2026-07-10, second pass on this branch, PR #1380; gates green node24 —
+lint 0-err, tsc, 316/3446 tests, build):** 7 confirmed findings, each with a regression test. (1)
+HIGH symbol canonicalization — positions now hyphenate share-class tickers (BRK-B) like orders/quotes
+via new `fromTradierSymbol`/`toTradierSymbol`, so a share-class position matches its own resting
+orders/proposals. (2) Market dollar orders size from a FRESH quote, not the stale `referencePrice`
+(throw if no live quote — Tradier has no notional cap). (3) `environment` is the base-URL authority:
+gateway ignores a host-mismatched stored baseUrl and the connect route rejects one (400) — a paper
+account can never route to api.tradier.com. (4) Dollar-sizing quote-lookup key aligned to #1. (5)
+Synthetic-stop refId kept within the portable `[A-Za-z0-9-]` charset at generation
+(`synthetic-stops.ts`) so the Tradier `tag` round-trips the client-order-id dedup for `u_<hash>`
+users. (6) Access-token field masked (`type="password"`). (7) Cancel normalizes raw `'ok'` ->
+`'pending_cancel'`. No Alpaca/Robinhood/test-broker behavior changed; not merged. Tradier's exact tag
+charset couldn't be re-confirmed from the live SPA docs — the #5 fix is charset-independent.
 ## 2026-07-10 — Per-position stop PLANS (CLAUDE, branch `claude/per-position-stop-plans`, stacked on PR #1331)
 Owner-directed follow-up to the broker-trailing-stops session below. The LLM can now choose a
 per-position stop TYPE (fixed/ATR/trailing/none — distinct from the existing per-trade stop PRICE)

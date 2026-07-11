@@ -1370,6 +1370,17 @@ function migrate(database: Database.Database): void {
     addAccountColumn(table);
   }
 
+  // AI-review advisory column: a single-LLM-call reviewer attaches a per-proposal
+  // recommendation (verdict + rationale + optional rewrite) to a pending framework
+  // proposal WITHOUT changing the owner verb/status — the owner still makes the final
+  // accept/reject/rewrite call. Nullable JSON; absent means "not yet AI-reviewed".
+  {
+    const cols = database.prepare("PRAGMA table_info(socratic_framework_proposals)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "ai_review")) {
+      database.exec("ALTER TABLE socratic_framework_proposals ADD COLUMN ai_review TEXT");
+    }
+  }
+
   // Alert lifecycle (2026-07-09): acknowledge state on notification_events, so the Alert Center's
   // "Attention" pill can be cleared instead of growing forever (see docs/rollouts for the
   // triage that motivated this). Additive, guarded — existing rows keep acknowledged_at NULL

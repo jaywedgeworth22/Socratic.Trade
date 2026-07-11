@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin";
 import { congressTradeToken, isCongressShareAutoEnabled, runCongressDailyShare } from "@/lib/congress-share";
+import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,6 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-
   if (!congressTradeToken()) {
     return NextResponse.json(
       { ok: false, error: "CONGRESS_TRADE_TOKEN is not configured (server env)." },
@@ -43,9 +43,11 @@ export async function POST(request: Request) {
     flatFile = body?.flatFile === true; // source full history from Massive flat files (bulk) vs per-ticker
     allIndexes = body?.allIndexes === true; // expand the universe to all static index members + monitored
   } catch {
-    // no body → share the monitored universe
+    // no body -> share the monitored universe
   }
 
-  const summary = await runCongressDailyShare({ now: Date.now(), force: true, symbols, fullHistory, flatFile, allIndexes });
-  return NextResponse.json({ autoEnabled: isCongressShareAutoEnabled(), ...summary });
+  return withAdminOperationGuard(request, "congress-share", async () => {
+    const summary = await runCongressDailyShare({ now: Date.now(), force: true, symbols, fullHistory, flatFile, allIndexes });
+    return NextResponse.json({ autoEnabled: isCongressShareAutoEnabled(), ...summary });
+  });
 }

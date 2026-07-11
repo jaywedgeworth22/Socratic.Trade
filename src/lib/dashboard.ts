@@ -139,6 +139,8 @@ function brokerDisplayName(broker: AccountReadiness["broker"] | undefined): stri
       return "Robinhood";
     case "test":
       return "Test";
+    case "tradier":
+      return "Tradier";
     default:
       return "broker";
   }
@@ -575,14 +577,18 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const latestStrategyRun = latestRunAudit
     ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
     : undefined;
+  // Decision cases stay ACCOUNT-SCOPED: they drive the active account's Live thesis,
+  // Autonomous action rows, and coach form (primaryDecision = decisions[0]), which must
+  // reflect the account whose portfolio/capital is shown — not another account's latest trade.
   const socraticDecisions = listSocraticDecisionCases(userId, {
     limit: 50,
     ...(policy.connectedAccountId ? { connectedAccountId: policy.connectedAccountId } : {})
   });
-  const socraticFrameworkProposals = listSocraticFrameworkProposals(userId, {
-    limit: 25,
-    ...(policy.connectedAccountId ? { connectedAccountId: policy.connectedAccountId } : {})
-  });
+  // Framework/"learning" proposals ARE read GLOBAL across the user's accounts: they are
+  // generalizable strategy improvements (and the batched reviewer is cross-account), so the
+  // review panel shows the whole backlog. Provenance is preserved via `connectedAccountId`.
+  // This also matches the decision-detail page, which already fetched proposals user-wide.
+  const socraticFrameworkProposals = listSocraticFrameworkProposals(userId, { limit: 25 });
   const audit = policy.connectedAccountId
     ? listAudit(100, userId, policy.connectedAccountId, true)
     : listAudit(100, userId);
