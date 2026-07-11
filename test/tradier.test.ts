@@ -192,9 +192,12 @@ describe("Tradier adapter — duration mapping", () => {
     expect(await duration({ timeInForce: "gtc", marketHours: "regular_hours" })).toBe("gtc");
   });
 
-  it("extended_hours + limit -> pre or post", async () => {
+  it("extended_hours + limit -> pre/post during Tradier windows, day otherwise", async () => {
     const d = await duration({ timeInForce: "gfd", marketHours: "extended_hours", type: "limit" });
-    expect(["pre", "post"]).toContain(d);
+    // Tradier only accepts extended-hours orders during 07:00-09:24 ET (pre) or 16:00-19:55 ET (post).
+    // Outside those windows the function returns "day" as a fallback so the order is not
+    // rejected by the broker with an invalid session duration.
+    expect(["pre", "post", "day"]).toContain(d);
   });
 
   it("extended_hours on a NON-limit falls back to the TIF session (Tradier fills extended only as limit)", async () => {
