@@ -22,7 +22,6 @@
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
-import { createHash, randomUUID } from "node:crypto";
 import {
   createUsageTelemetryClient,
   type UsageTelemetryEvent,
@@ -91,8 +90,17 @@ interface CallVolumeEntry {
   failures: number;
 }
 
+interface PendingUsageEvent {
+  event: UsageMonitorEvent;
+  kind: string;
+  sourceId: string;
+}
+
 interface PushState {
   version: number;
+  /** New events awaiting edge-safe SHA-256 delivery identity resolution. */
+  pendingQueue: PendingUsageEvent[];
+  /** Fully resolved events retained verbatim across ambiguous delivery retries. */
   queue: UsageMonitorEvent[];
   callVolume: Map<string, CallVolumeEntry>;
   flushTimer: ReturnType<typeof setTimeout> | null;
@@ -102,7 +110,7 @@ interface PushState {
 }
 
 const host = globalThis as unknown as { __usageMonitorPush?: PushState };
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 const priorState = host.__usageMonitorPush;
 const staleState = priorState !== undefined && priorState.version !== STATE_VERSION;
 if (staleState && priorState.flushTimer) {
@@ -115,6 +123,7 @@ const state: PushState =
   priorState ??
   (host.__usageMonitorPush = {
     version: STATE_VERSION,
+    pendingQueue: [],
     queue: [],
     callVolume: new Map(),
     flushTimer: null,
@@ -122,9 +131,13 @@ const state: PushState =
     retryAttempt: 0,
   });
 state.version = STATE_VERSION;
+state.pendingQueue ??= [];
 state.retryAttempt ??= 0;
 
-if (staleState && (state.queue.length > 0 || state.callVolume.size > 0)) {
+if (
+  staleState &&
+  (state.pendingQueue.length > 0 || state.queue.length > 0 || state.callVolume.size > 0)
+) {
   scheduleFlush();
 }
 
@@ -154,8 +167,7 @@ export function pushLlmUsage(entry: {
   if (!usageMonitorEnabled()) return;
   try {
     const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
-    enqueue({
-      idempotencyKey: telemetryIdempotencyKey("llm", entry.sourceEventId),
+    enqueuePending({
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
       provider: entry.provider,
@@ -178,7 +190,7 @@ export function pushLlmUsage(entry: {
         promptTokens: entry.promptTokens ?? null,
         completionTokens: entry.completionTokens ?? null,
       }),
-    });
+    }, "llm", entry.sourceEventId);
   } catch {
     /* telemetry must never break the caller */
   }
@@ -210,8 +222,7 @@ export function pushRagUsage(entry: {
     // Voyage embed/rerank quantities are token estimates. Pinecone query/upsert quantities are
     // Read/Write Units in tokensIn, with records kept separately in metadata.
     const unit: UsageUnit = isPinecone ? "credit" : "token";
-    enqueue({
-      idempotencyKey: telemetryIdempotencyKey("rag", entry.sourceEventId),
+    enqueuePending({
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
       provider: entry.provider,
@@ -233,7 +244,7 @@ export function pushRagUsage(entry: {
         batchCount: entry.batchCount ?? null,
         recordCount: isPinecone ? entry.tokensOut ?? null : null,
       }),
-    });
+    }, "rag", entry.sourceEventId);
   } catch {
     /* telemetry must never break the caller */
   }
@@ -259,11 +270,10 @@ export function pushBrokerBalance(entry: {
   if (!usageMonitorEnabled()) return;
   try {
     const occurredAt = new Date().toISOString();
-    const snapshotId = randomUUID();
+    const snapshotId = randomDeliveryId();
     const maskedAcc = maskAccountNumber(entry.accountNumber);
     if (typeof entry.cash === "number") {
-      enqueue({
-        idempotencyKey: telemetryIdempotencyKey("broker-balance", `${snapshotId}:cash`),
+      enqueuePending({
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
@@ -280,11 +290,10 @@ export function pushBrokerBalance(entry: {
           accountNumber: maskedAcc,
           metric: "cash"
         }),
-      });
+      }, "broker-balance", `${snapshotId}:cash`);
     }
     if (typeof entry.buyingPower === "number") {
-      enqueue({
-        idempotencyKey: telemetryIdempotencyKey("broker-balance", `${snapshotId}:buying-power`),
+      enqueuePending({
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
@@ -301,11 +310,10 @@ export function pushBrokerBalance(entry: {
           accountNumber: maskedAcc,
           metric: "buyingPower"
         }),
-      });
+      }, "broker-balance", `${snapshotId}:buying-power`);
     }
     if (typeof entry.equity === "number") {
-      enqueue({
-        idempotencyKey: telemetryIdempotencyKey("broker-balance", `${snapshotId}:equity`),
+      enqueuePending({
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
@@ -322,7 +330,7 @@ export function pushBrokerBalance(entry: {
           accountNumber: maskedAcc,
           metric: "equity"
         }),
-      });
+      }, "broker-balance", `${snapshotId}:equity`);
     }
   } catch {
     /* telemetry must never break the caller */
@@ -351,7 +359,7 @@ export function recordProviderCall(
     const entry =
       state.callVolume.get(key) ??
       {
-        windowId: randomUUID(),
+        windowId: randomDeliveryId(),
         provider,
         service: opts.service,
         keySource: opts.keySource,
@@ -372,8 +380,16 @@ export function recordProviderCall(
 
 // ── Queue / flush plumbing ─────────────────────────────────────────────────────
 
-function enqueue(event: UsageMonitorEvent): void {
-  state.queue.push(event);
+function enqueuePending(
+  event: UsageMonitorEvent,
+  kind: string,
+  sourceId?: string
+): void {
+  state.pendingQueue.push({
+    event,
+    kind,
+    sourceId: sourceId?.trim() || randomDeliveryId(),
+  });
   scheduleFlush();
 }
 
@@ -388,36 +404,47 @@ function scheduleFlush(delayMs = flushDelayMs()): void {
   state.flushTimer = timer;
 }
 
-function drainCallVolume(now: string): UsageMonitorEvent[] {
-  const events: UsageMonitorEvent[] = [];
+function drainCallVolume(now: string): PendingUsageEvent[] {
+  const events: PendingUsageEvent[] = [];
   for (const entry of state.callVolume.values()) {
     if (entry.requests <= 0) continue;
     events.push({
-      idempotencyKey: telemetryIdempotencyKey(
-        "provider-call-volume",
-        // HMR can preserve a pre-upgrade global map entry without windowId.
-        entry.windowId || randomUUID()
-      ),
-      sourceApp: SOURCE_APP,
-      environment: usageMonitorEnv(),
-      provider: entry.provider,
-      service: entry.service,
-      billingMode: "actual",
-      metricType: "usage",
-      unit: "request",
-      requests: entry.requests,
-      confidence: "actual",
-      occurredAt: now,
-      metadata: cleanMetadata({
-        successes: entry.successes,
-        failures: entry.failures,
-        keySource: entry.keySource ?? null,
-        userId: entry.userId ?? null,
-      }),
+      kind: "provider-call-volume",
+      // HMR can preserve a pre-upgrade global map entry without windowId.
+      sourceId: entry.windowId || randomDeliveryId(),
+      event: {
+        sourceApp: SOURCE_APP,
+        environment: usageMonitorEnv(),
+        provider: entry.provider,
+        service: entry.service,
+        billingMode: "actual",
+        metricType: "usage",
+        unit: "request",
+        requests: entry.requests,
+        confidence: "actual",
+        occurredAt: now,
+        metadata: cleanMetadata({
+          successes: entry.successes,
+          failures: entry.failures,
+          keySource: entry.keySource ?? null,
+          userId: entry.userId ?? null,
+        }),
+      },
     });
   }
   state.callVolume.clear();
   return events;
+}
+
+async function resolvePendingEvents(
+  pending: PendingUsageEvent[]
+): Promise<UsageMonitorEvent[]> {
+  return Promise.all(
+    pending.map(async ({ event, kind, sourceId }) => ({
+      ...event,
+      idempotencyKey: await telemetryIdempotencyKey(kind, sourceId),
+    }))
+  );
 }
 
 /**
@@ -431,13 +458,28 @@ export async function flushUsageMonitor(): Promise<void> {
   }
   if (!usageMonitorEnabled()) {
     // Drop anything buffered while disabled so it can't leak later if the env is toggled mid-process.
+    state.pendingQueue.length = 0;
     state.queue.length = 0;
     state.callVolume.clear();
     return;
   }
 
   const now = new Date().toISOString();
-  const pending = state.queue.splice(0, state.queue.length).concat(drainCallVolume(now));
+  const unresolved = state.pendingQueue
+    .splice(0, state.pendingQueue.length)
+    .concat(drainCallVolume(now));
+  let resolved: UsageMonitorEvent[];
+  try {
+    resolved = await resolvePendingEvents(unresolved);
+  } catch {
+    // Web Crypto is expected in every supported runtime. If it is temporarily
+    // unavailable, retain the original descriptors rather than sending events
+    // without their stable delivery identity.
+    state.pendingQueue.unshift(...unresolved);
+    scheduleFlush();
+    return;
+  }
+  const pending = state.queue.splice(0, state.queue.length).concat(resolved);
   if (pending.length === 0) return;
 
   for (let i = 0; i < pending.length; i += MAX_BATCH) {
@@ -504,15 +546,23 @@ function cleanMetadata(
  * IDs make discrete events stable; a UUID allocated once per aggregate window
  * makes same-flush provider lanes unique even though they share occurredAt.
  */
-function telemetryIdempotencyKey(
+async function telemetryIdempotencyKey(
   kind: string,
-  sourceId: string = randomUUID()
-): string {
-  const normalizedSourceId = sourceId.trim() || randomUUID();
-  const digest = createHash("sha256")
-    .update(`${kind}\0${normalizedSourceId}`)
-    .digest("hex");
+  sourceId: string = randomDeliveryId()
+): Promise<string> {
+  const normalizedSourceId = sourceId.trim() || randomDeliveryId();
+  const encoded = new TextEncoder().encode(`${kind}\0${normalizedSourceId}`);
+  const bytes = new Uint8Array(
+    await globalThis.crypto.subtle.digest("SHA-256", encoded)
+  );
+  const digest = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
   return `${SOURCE_APP}:${kind}:${digest}`;
+}
+
+function randomDeliveryId(): string {
+  return globalThis.crypto.randomUUID();
 }
 
 // ── Test seams ─────────────────────────────────────────────────────────────────
@@ -528,6 +578,7 @@ export function __resetUsageMonitorState(): void {
     clearTimeout(state.flushTimer);
     state.flushTimer = null;
   }
+  state.pendingQueue.length = 0;
   state.queue.length = 0;
   state.callVolume.clear();
   state.fetchImpl = null;
