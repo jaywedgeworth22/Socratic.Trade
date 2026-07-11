@@ -1579,6 +1579,67 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Effort-log union-merge safety net (fleet-infra) (CLAUDE, branch
+  `claude/union-merge-live-rows`) — IN PROGRESS 2026-07-10, gates green, PR #1354 open with
+  squash-auto-merge armed (round-3 pickup landing); owner-directed fix for the reported
+  "live-board union-merge clobber" (a pickup claim row added 17:35 on 2026-07-09 was gone from
+  `/Users/jay/apps/TRADING-EFFORT-LOG.md` by 18:22).** Investigated
+  exhaustively (launchd plists, `~/.claude-merge-shepherd/*`, all `scripts/merge-shepherd.sh`
+  copies across worktrees, every `/Users/jay/apps/*.sh`, shell history, `FLEET-INFRA-EFFORT-LOG.md`)
+  and found no code that actually writes to the live board programmatically — `merge-shepherd.sh`
+  only calls the GitHub API and never touches the Mac filesystem outside its own log dir; the
+  only real union-merge is `docs/EFFORT-LOG.md merge=union` in `.gitattributes`, which only
+  ever adds git-tracked-mirror lines, never deletes. Most plausible cause: a manual "take the
+  mirror wholesale" board-conflict resolution (an already-documented pattern, see
+  `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`) applied to the live board, silently
+  dropping a not-yet-mirrored row. Fix: new `scripts/effort-log-union-merge.py` — row-level
+  merge (mirror is the base; every live-only row, keyed by SHA1 of its normalized first line
+  like `sync-effort-issues.py`'s `effort-key`, is appended into its matching bucket section)
+  with a hard pre- and post-write invariant (every live-only key must survive into the output,
+  or the tool aborts with no write). Tested exclusively against scratch copies (never touched
+  the real board): dry-run against the real 1724-line live board / 2293-line mirror correctly
+  found 13 genuine not-yet-mirrored rows; sentinel add+recover test; idempotency test (mirror
+  merged against itself -> byte-identical); subset test; new-bucket-trailer test; sabotaged-logic
+  invariant-abort test (confirmed no file written on violation). `npx tsc --noEmit` clean
+  (no TS touched). Rollout: `docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`.
+  Follow-up (out of scope here): wire into the host-side `~/.claude-merge-shepherd/run.sh`
+  30-min driver once a session can touch that always-running Mac cron. **Landing-round fix
+  (PR #1354 review):** codex-connector flagged 3 real P2s, all fixed — (1) non-atomic `--apply`
+  write (`open(path,"w")` truncates before writing) -> temp-file-then-`os.replace()`; (2) two
+  live-board rows with an identical normalized first line collapsed to one via
+  `dict.setdefault` (reproduced the actual data loss against the pre-fix script on a scratch
+  fixture) -> `ParsedBoard.items` now tracks every occurrence per key and the invariant compares
+  COUNTS; (3) no guard against the live board changing between read and write -> exclusive
+  `fcntl.flock` held for the whole critical section plus a pre-write mtime/size fingerprint
+  recheck that aborts (exit 4, no write) on a detected change. Verified all three against scratch
+  fixtures (atomic write, duplicate-row regression + fix, simulated race via monkeypatched
+  `os.stat`) plus a clean real-data dry-run re-run against the 227-item `docs/EFFORT-LOG.md`.
+  **Landing-round fix (round 2, codex-autofix):** 2 more P2s fixed — (1) rows under a
+  keyword-bearing `###` subsection under an unclassified `##` parent were invisible to the parser
+  (`HEADING_RE` only matched `## `) -> now matches 2+ hashes and a deeper heading classifies by its
+  own keyword or inherits the enclosing `## ` bucket; (2) `PLAN.md` was stale -> added a fleet-infra
+  host-side-tooling / no-roadmap-change note. One P2 left OPEN as a maintainer question ("preserve
+  live edits for mirrored rows" — a mirror-wins-vs-live-leads merge-semantics tradeoff, not guessed).
+  **Landing-round fix (round 3, codex-autofix):** 2 more silent-drop P2s fixed — (1) the round-2
+  `section_bucket` only tracked the last **level-2** heading, so a live-only row under a `#### child`
+  of a keyword-bearing `### ... (Planned)` beneath an unclassified `##` parent reset to None and
+  vanished -> replaced with a `heading_bucket_by_level` map that inherits the nearest classified
+  ancestor at ANY shallower level (top-level `##` still resets outright); (2) `PLACEHOLDER_RE`
+  matched bare `record the.*`/`see rollout notes.*` (optional parens), skipping real rows like
+  "Record the P&L reconciliation ..." -> split into a paren-required `PLACEHOLDER_PARENS_RE`, applied
+  identically to both `effort-log-union-merge.py` and `sync-effort-issues.py`. Two P2s left OPEN
+  (same maintainer decision): "preserve live edits for mirrored rows" + its duplicate-ordering
+  variant "preserve duplicate rows without order-based pairing" — both change the same shared-row
+  mirror-wins-vs-live-leads contract. Verify trio green (3395 tests). Rollout note round-3 detail.
+  **Round-4 codex-autofix (PR #1354 review):** one new P2 (`:251` "keep bucket insertion points on
+  canonical sections") fixed — recovered global-Planned rows were landing under an unrelated nested
+  `### Action ... (Planned)` subsection because `bucket_insert_at` was overwritten by later
+  same-bucket subsections (placement corruption; count invariant still passed). Added a separate
+  `canonical_bucket_insert_at` (level-`<=2`-derived only, via a parallel `heading_canonical_by_level`
+  map); recovery prefers it, falls back to the nested point only for subsection-only buckets. Two
+  line-287 P2s still OPEN (same maintainer merge-semantics decision). Verify trio green (3395 tests).
+  Rollout note round-4 detail.
+
 - **[P2][Infra][S] Provider-knob sync: API-Usage-Monitor -> Infisical (CLAUDE (opus subagent),
   branch `claude/provider-knob-sync`) — IN PROGRESS 2026-07-10, PR #1370 OPEN (READY, gate green:
   tsc clean / 3422 tests 316 files / build clean), awaiting owner review — NOT merged. Stays

@@ -1244,6 +1244,20 @@ scope, timeline, or approach changed.
   ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap; congress-share bypass
   for adjusted-close when CONGRESS_TRADE_READS_ENABLED tier precedes Yahoo.
 
+## Fleet-infra tooling (host-side, no product-roadmap change)
+
+- **Effort-log union-merge safety net** (2026-07-10,
+  `scripts/effort-log-union-merge.py`,
+  `docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`): a stdlib-only,
+  row-level, invariant-checked reconciler that merges the machine-local live
+  effort board against the repo mirror (`docs/EFFORT-LOG.md`) **without ever
+  dropping a live-only row**. This is host-side coordination tooling only — it
+  changes no product code, ships no user-facing behavior, and does **not** alter
+  the phase roadmap or acceptance checks above. **Follow-up (out of this PR's
+  scope):** wire it into the always-on host-side `~/.claude-merge-shepherd/run.sh`
+  30-minute driver so live/mirror reconciliation runs automatically; that cron
+  lives outside this repo and touching it needs an owner-supervised session.
+
 ## Build Order
 
 1. Phase 1 hardening: scheduler starts once, run lock works, market-hours state is visible.
