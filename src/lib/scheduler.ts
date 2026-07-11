@@ -31,12 +31,12 @@ import { reconcilePendingFills } from "./strategy-execution";
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 
 /**
- * Returns true iff SCHEDULER_SINGLE_LEADER is set to a truthy value.
- * Truthy: "1", "true", "on", "yes" (case-insensitive, trimmed). Default ON.
+ * Single-leader is the fail-safe default. Unset, empty, and whitespace-only values stay ON;
+ * operators must use an explicit non-truthy value (for example false/off/0/no) to disable it.
  */
-function singleLeaderEnabled(): boolean {
-  const v = String(process.env.SCHEDULER_SINGLE_LEADER ?? "true").trim().toLowerCase();
-  return ["1", "true", "on", "yes"].includes(v);
+export function singleLeaderEnabled(rawValue: string | undefined = process.env.SCHEDULER_SINGLE_LEADER): boolean {
+  const v = String(rawValue ?? "").trim().toLowerCase();
+  return !["0", "false", "off", "no"].includes(v);
 }
 
 // ── Health threshold: abdicate leadership after N consecutive heartbeat failures ──
@@ -262,8 +262,8 @@ async function tick(): Promise<void> {
     console.error("[scheduler] stale-run sweep error:", err);
   }
 
-  // Single-leader gate (additive; flag default OFF). When SCHEDULER_SINGLE_LEADER=1 (or
-  // true/on/yes), only the lease holder runs the background updates and per-account tick body
+  // Single-leader gate (default ON, including unset/empty). Only an explicit false/off/0/no-style
+  // value disables it; otherwise only the lease holder runs the background updates and per-account tick body
   // — preventing duplicate API scrapes and broker EXIT orders on multi-process deploys.
   if (singleLeaderEnabled() && !acquireOrRenewLeadership(new Date())) {
     return; // not the leader this tick — no side effects

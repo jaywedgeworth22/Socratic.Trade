@@ -23,6 +23,11 @@ import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { getUserWashSaleLockProvenance } from "./tax";
 import { ExecutionMode, FillEvent, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, FillSource } from "./types";
 import { approvedEscalationsFromDecision, shouldEscalateDecision } from "./strategy-risk";
+import {
+  createExecuteProposalLockOwner,
+  startStrategyLockGuard,
+  StrategyLockOwnershipLostError
+} from "./strategy-lock-guard";
 import { assertLiveApprovalConfirmation, uniqueSymbols, currentPricesFromScan, protectiveExitQuoteFromScan, openingPolicyNotionalCap, autoRevertOnCapBreach, auditWashSaleProceed } from "./strategy";
 
 export interface LiveApprovalConfirmation {
@@ -98,10 +103,13 @@ export async function executeProposal(
   // Approve can each read the same pre-cap totals and both place — jointly
   // exceeding maxDailyNotional / maxHourlyNotional / maxDailyOrders. Acquiring
   // the same lock here serialises approval execution against the strategy loop.
-  const lockOwner = `execute-${proposalId}`;
+  // Every invocation gets its own owner token. Two same-proposal approvals must contend like any
+  // other callers; a loser can never share or release the winner's lease.
+  const lockOwner = createExecuteProposalLockOwner(proposalId);
   if (!acquireStrategyLock(lockOwner, userId, policy.connectedAccountId)) {
     return { status: "busy", reasons: ["A strategy run is in progress; try again in a moment."] };
   }
+  const lockGuard = startStrategyLockGuard({ owner: lockOwner, userId, connectedAccountId: policy.connectedAccountId });
 
   try {
     const gateway = getBrokerGateway(policy, userId);
@@ -510,6 +518,10 @@ export async function executeProposal(
       return { status: "blocked", reasons: [message] };
     }
 
+    // Re-prove ownership at the final safe boundary. A lost/failed lease leaves the proposal
+    // pending instead of writing an intent or calling the broker.
+    lockGuard.assertOwned();
+
     // Atomic, crash-recoverable placement (mirrors the autonomous path): persist the
     // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
     // lost broker response can't leave an untracked real order.
@@ -641,7 +653,13 @@ export async function executeProposal(
     // own response).
     emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
     return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
+  } catch (error) {
+    if (error instanceof StrategyLockOwnershipLostError) {
+      return { status: "busy", reasons: [error.message] };
+    }
+    throw error;
   } finally {
+    lockGuard.stop();
     releaseStrategyLock(lockOwner, userId, policy.connectedAccountId);
   }
 }

@@ -3,7 +3,6 @@ export * from "./strategy-risk";
 
 import {
   acquireStrategyLock,
-  renewStrategyLock,
   audit,
   claimProposalForExecution,
   countDayTradesInLastBusinessDays,
@@ -94,6 +93,7 @@ import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBud
 import { avgReturnCorrelation, correlationProfile } from "./correlation";
 import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
+import { startStrategyLockGuard, StrategyLockOwnershipLostError } from "./strategy-lock-guard";
 import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
@@ -305,13 +305,10 @@ export async function runStrategyOnce(
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
-  // Heartbeat lease every 1 minute
-  const heartbeatTimer = setInterval(() => {
-    renewStrategyLock(runId, userId, connectedAccountId);
-  }, 60_000);
+  const lockGuard = startStrategyLockGuard({ owner: runId, userId, connectedAccountId });
 
-  insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
+  const completedProposalResults: StrategyResult["proposals"] = [];
   let llmSteps: StrategyLlmStep[] = [];
   // Per-USER LLM budget reservation id (set at the budget gate below, released in the finally). Held
   // for the run so a CONCURRENT same-user account run's reserve sees this hold and skips LLM instead of
@@ -323,6 +320,9 @@ export async function runStrategyOnce(
   const manualRun = Boolean(options.manual);
 
   try {
+    // Keep all post-acquire setup inside the protected region. If the run receipt cannot be
+    // inserted, the finally block must still stop the heartbeat and release this owner token.
+    insertStrategyRun(runId, userId, connectedAccountId);
     const savedPolicy = getPolicy(userId, targetAccountId);
     const accountNumber = savedPolicy.accountNumber;
     if (!accountNumber) throw new Error("No account selected.");
@@ -345,8 +345,6 @@ export async function runStrategyOnce(
       audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
       result = { runId, status: "completed", summary: reason, proposals: [] };
       finishStrategyRun(runId, "completed", reason, userId);
-      clearInterval(heartbeatTimer);
-      releaseStrategyLock(runId, userId, connectedAccountId);
       return result;
     }
 
@@ -585,7 +583,6 @@ export async function runStrategyOnce(
       const summary = `Strategy run skipped — over usage budget. ${reason}`;
       result = { runId, status: "completed", summary, proposals: [] };
       finishStrategyRun(runId, "completed", summary, userId);
-      releaseStrategyLock(userId, connectedAccountId);
       return result;
     }
     // Run-scoped model override: carried SEPARATELY from `policy` so nothing that persists (setPolicy,
@@ -1794,7 +1791,7 @@ export async function runStrategyOnce(
     // sell-to-fund planning — so a gated buy can't drive automated funding sells. Only the advisory
     // full-set warning above remains here.)
 
-    const results: StrategyResult["proposals"] = [];
+    const results = completedProposalResults;
     const recordSocraticDecision = (input: {
       proposalId: string;
       proposal: TradeProposal;
@@ -1849,6 +1846,9 @@ export async function runStrategyOnce(
     };
 
     for (const proposal of proposals) {
+      // A failed heartbeat is sticky for this invocation. Stop before doing any more proposal work,
+      // then re-prove ownership again immediately before a broker placement below.
+      lockGuard.assertOwned();
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
       const tradability = await gateway.getEquityTradability(policy.accountNumber, [normalizedProposal.symbol]);
       if (!tradability[normalizedProposal.symbol]?.tradable) {
@@ -2317,6 +2317,10 @@ export async function runStrategyOnce(
         continue;
       }
 
+      // Renew synchronously at the last safe boundary. If another invocation stole the lease (or
+      // the DB cannot prove ownership), do not write a placing intent or call the broker.
+      lockGuard.assertOwned();
+
       // Atomic, crash-recoverable placement. Persist an idempotency-keyed INTENT row BEFORE the
       // broker call. If the process dies — or the broker accepts the order but the response is
       // lost — between the call and the post-write, the order is no longer an invisible orphan:
@@ -2570,20 +2574,30 @@ export async function runStrategyOnce(
       : generateReflectionSummary(policy.accountNumber, userId, runPolicy).catch((e) => console.error("Post-mortem error:", e));
 
   } catch (error) {
-    const summary = error instanceof Error ? error.message : "Strategy failed.";
+    const baseSummary = error instanceof Error ? error.message : "Strategy failed.";
+    const summary = error instanceof StrategyLockOwnershipLostError && completedProposalResults.length > 0
+      ? `${baseSummary} ${completedProposalResults.length} proposal result(s) completed before ownership was lost.`
+      : baseSummary;
     if (error instanceof StrategyLlmStepFailure) {
       llmSteps = error.llmSteps;
     }
     finishStrategyRun(runId, "failed", summary, userId);
     const policy = getPolicy(userId, targetAccountId);
-    result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber, ...(llmSteps.length > 0 ? { llmSteps } : {}) };
+    result = {
+      runId,
+      status: "failed",
+      summary,
+      proposals: completedProposalResults,
+      accountNumber: policy.accountNumber,
+      ...(llmSteps.length > 0 ? { llmSteps } : {})
+    };
     if (summary === "Kill switch is active.") {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });
     } else {
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
-    clearInterval(heartbeatTimer);
+    lockGuard.stop();
     // Release the strategy lock promptly so this account can run again. The LLM reservation is held a bit
     // longer — until the fire-and-forget post-mortem reflection settles — so that background spend stays
     // inside the reserved headroom instead of racing a queued same-user run (the TTL is the crash backstop).

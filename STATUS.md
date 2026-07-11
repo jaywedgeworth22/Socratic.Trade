@@ -1,5 +1,29 @@
 # Status
 
+## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, branch `codex/strategy-lease-correctness`)
+
+In progress in an isolated Codex worktree; no commit, push, PR, merge, deployment, or production
+config mutation. The live effort board records the active lane. Every `executeProposal` invocation
+now mints a UUID-suffixed lock owner, so
+two calls for the same proposal contend normally and the loser cannot release the winner's lease.
+Autonomous and approval paths share a sticky fail-closed heartbeat guard: a refused or thrown renew is
+caught inside the interval, permanently marks ownership lost for that invocation, and a synchronous
+renewal proof immediately before the placing-intent/broker boundary prevents further placement after
+loss. The account-deletion prepare path and usage-budget skip no longer issue obsolete/wrong-signature
+lock releases; their normal `finally`/owner-token lifecycle remains authoritative. Scheduler
+single-leader mode now treats unset, empty, and whitespace values as ON; operators must explicitly use
+`false`/`off`/`0`/`no` to disable it. Adversarial review also caught and fixed a setup failure that
+could start the renewing timer before entering cleanup scope. A forced `insertStrategyRun` failure
+now proves the lock is reacquirable; approval ownership loss returns typed `busy`, keeps the proposal
+pending, and never calls the broker, while autonomous failures preserve already-completed proposal
+results. The branch merged current `origin/main@e395e65a` cleanly. Final Node 24 verification is
+green: focused 7 files / 36 tests, full lint 0 errors / 404 inherited warnings, TypeScript clean,
+full 334 files / 3,764 tests, and production build. The first build exposed a client-import trace
+through `node:crypto`; the UUID owner helper now uses Web Crypto, after which focused 3 files / 11
+tests, TypeScript, scoped lint, the full suite, and build all reran green. See
+`docs/rollouts/2026-07-11-strategy-lease-correctness.md`. Head `f70e9043` is pushed in ready PR
+#1429; hosted checks and production verification remain.
+
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
 Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment
 provider that was still unmetered. `FmpEnrichmentProvider.enrich` fires up to 5 HTTP calls per miss
