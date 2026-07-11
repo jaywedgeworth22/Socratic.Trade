@@ -105,6 +105,21 @@ preserved). Reproduced + confirmed fix on scratch fixtures; real-board self-merg
 recovered, exit 0. The two line-287 threads stay OPEN (same maintainer merge-semantics decision).
 Verify trio green (tsc clean, 3395 tests pass, build clean — Python-only change). Rollout note
 updated with round-4 detail.
+
+**Landing-round fix (round 5, PR #1354 review — codex-autofix):** one new codex-connector P2
+(`scripts/effort-log-union-merge.py:267`, "keep canonical insertions out of nested sections"),
+fixed. A residual hole from the round-4 fix: `current_bucket_canonical` was propagated by
+inheritance to unclassified `###`/`####` subsections under a canonical `## Planned / Reserved`
+parent (via `heading_canonical_by_level`), so every line inside those nested subsections
+overwrote `canonical_bucket_insert_at[planned]`. A live-only top-level Planned row was still
+recovered under the last nested subsection instead of the active bucket section (placement
+corruption, same class as round 4). Fix: when an unclassified heading inherits its bucket from
+an ancestor, do NOT propagate the canonical flag — set `effective_canonical = False` so only
+lines directly under the level-2 canonical section update `canonical_bucket_insert_at`. The
+`heading_canonical_by_level` map at each deeper level still stores `False`, so the behavior is
+consistent regardless of nesting depth. The two line-287 threads stay OPEN (same maintainer
+merge-semantics decision). Verify trio green (tsc clean, 3433 tests pass, build clean — Python-only
+change). Rollout note updated with round-5 detail.
 ## 2026-07-10 — Console loading permafix: abort-storm coalescing + dashboard.ts parallelization (CLAUDE, branch `claude/loading-permafix`)
 Production console still took minutes to first-paint after PR #1293 (deadlines + watchdog) landed.
 Two compounding causes: (1) `useConsoleData.tsx`'s `refresh()` aborted the in-flight fetch on every

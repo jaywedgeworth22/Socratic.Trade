@@ -315,3 +315,39 @@ and unclassified-`###`-under-canonical-`## Planned` still lands under the canoni
 real-board self-merge (`--live`/`--mirror` = `docs/EFFORT-LOG.md`) reports 268/268 items, 0 recovered,
 exit 0 (no drops, parser change safe on real data); `python3 -c "import ast; ast.parse(...)"` clean;
 `npx tsc --noEmit` clean, `npm test` 3395 passed (315 files), `npm run build` clean (Python-only change).
+
+## Codex review round 5 (2026-07-11) — canonical insertion point still leaked into nested subsections
+
+One new Codex thread (`scripts/effort-log-union-merge.py`, "Keep canonical insertions out of nested
+sections"), the last unresolved thread before the PR could merge.
+
+**Bug.** The round-4 fix tracked `current_bucket_canonical` separately from the bucket value, but
+the flag was still *inherited* by unclassified subsections under a canonical parent. When the code
+processed an unclassified `###`/`####` heading under `## Planned / Reserved`, it inherited both the
+`planned` bucket value AND the `canonical=True` flag from level 2 via the inheritance chain
+(`heading_canonical_by_level`). Every line inside that subsection then updated
+`canonical_bucket_insert_at["planned"]`, so a live-only top-level Planned row was still recovered
+under the last nested subsection — the round-4 fix prevented the *keyword-bearing* subsection from
+hijacking the insertion point, but the *unclassified* subsection could still do it because it
+carried the canonical flag via inheritance.
+
+**Fix.** When an unclassified heading inherits its bucket from a shallower ancestor, do NOT
+propagate the canonical flag. Set `effective_canonical = False` in the inheritance branch
+(scripts/effort-log-union-merge.py:271), so the `heading_canonical_by_level` entry for the subsection
+level is `False`. Lines inside that subsection then only update `bucket_insert_at`, not
+`canonical_bucket_insert_at` — the canonical insertion point stays where it was at the end of the
+direct level-2 content, and recovered top-level rows land before any nested subsections.
+
+This does NOT affect directly-classified level-3 headings (e.g. `### Action ... (Planned)` under an
+unclassified `##` parent) — those already set `effective_canonical = level <= 2 = False` in the
+classified branch. It only changes the inheritance path.
+
+**Not touched:** the two line-287 threads ("Preserve live edits for mirrored rows" and its
+duplicate-ordering variant) remain OPEN — still the same mirror-wins-vs-live-leads merge-semantics
+decision parked on the owner. Round 5 does not touch that contract.
+
+Verification (round 5): `python3 -m py_compile scripts/effort-log-union-merge.py` clean; logical
+review confirms the inheritance-only change is correct and has no side-effects on classified
+headings or unclassified top-level headings; the two open maintainer-decision threads untouched;
+`npx tsc --noEmit` clean, `npm test` 3433 passed (317 files), `npm run build` clean (Python-only
+change — no TS/product code touched).
