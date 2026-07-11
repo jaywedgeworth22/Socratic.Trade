@@ -21,6 +21,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Tradier fixups round 3: buying-power min() asymmetry (CLAUDE, branch `claude/tradier-broker`, PR #1380)
+Closed a LOW-but-real money-path residual from round 2's PDT buying-power fix. The round-2
+`Math.min` over positive candidates of `[margin.stock_buying_power, pdt.stock_buying_power]` was
+SYMMETRIC: if Tradier omits/zero-fills the Reg-T OVERNIGHT figure while the ~4x INTRADAY PDT figure
+is positive, `min` returned the INTRADAY number as buying power — silently over-levering an overnight
+hold, contradicting the owner's "NAV caps + opt-in leverage, never silently lever up" decision. Fix
+(`getPortfolio`, `src/lib/tradier.ts`): the intraday/PDT figure is now a DOWNWARD-ONLY clamp on the
+overnight Reg-T base; an absent/zero overnight figure reports buying power as UNKNOWN (`0`), never the
+intraday 4x. Both consumers already read a non-positive `buyingPower` as "unknown => don't block, defer
+to broker" (`strategy.ts` openingRiskCapacity gates the BP cap on `> 0`; `policy.ts` affordability
+blocks only on `> 0`), matching how the Alpaca adapter treats a missing `buying_power`. +2 regression
+tests (45 tradier tests). Also appended a "Pre-live-token validation items" section to the rollout note
+for the two v1-status-quo residuals (OTOCO leg `class` shape; 50-page order-cap ordering) that need a
+live Tradier sandbox token to close. Gates green (tsc/test/build, node@24). NOT merged. See
+`docs/rollouts/2026-07-10-tradier-broker.md` "Round 3".
+
 ## 2026-07-11 — Tradier fixups round 2: codex-autofix reconciliation (CLAUDE, branch `claude/tradier-broker`, PR #1380)
 A cross-cutting review of the `[codex-autofix]` commit (`9dd5f40c`) found its equity-class order
 filter and PDT buying-power read introduced two REAL-money-path regressions, now fixed with

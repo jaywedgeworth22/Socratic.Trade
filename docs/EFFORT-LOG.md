@@ -1618,7 +1618,16 @@ As of 2026-07-08 (assignment-rule update).
   CONFIRMATION. (3) LOW: getPortfolio no longer feeds the ~4x intraday pdt.stock_buying_power into
   sizing — takes the conservative min of the POSITIVE Reg-T/PDT figures (literal 0 treated as absent).
   (4) INFO: brokerPortableRefId gains a 255-char cap matching Tradier's sanitizeTag. No Alpaca/Robinhood/
-  test-broker behavior changed. See `docs/rollouts/2026-07-10-tradier-broker.md` "Fixups round 2".**
+  test-broker behavior changed. See `docs/rollouts/2026-07-10-tradier-broker.md` "Fixups round 2".
+  ROUND 3 (2026-07-10, CLAUDE subagent, updates PR #1380, NOT merged): closed a LOW residual left by
+  round 2's fix (3) — the conservative-min was SYMMETRIC, so an absent/zero Reg-T OVERNIGHT
+  stock_buying_power with a positive ~4x INTRADAY pdt.stock_buying_power made min() return the INTRADAY
+  figure as buying power (silent overnight lever-up, contra owner's NAV-caps+opt-in-leverage decision).
+  Fix: the intraday figure is now a DOWNWARD-ONLY clamp on the overnight base; absent/zero overnight =>
+  buying power UNKNOWN (0, which strategy.ts/policy.ts both read as "don't block, defer to broker" — like
+  Alpaca's missing buying_power). +2 regression tests (45 tradier tests). Rollout note gained a
+  "Pre-live-token validation items" section for the OTOCO leg-`class` shape + 50-page-cap ordering
+  residuals (both need a live sandbox token). See `docs/rollouts/2026-07-10-tradier-broker.md` "Round 3".**
 - **Hetzner & Coolify metrics on admin dashboard (AG, branch `agent/antigravity-server-metrics`) — IN PROGRESS 2026-07-10.** Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
 - **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
   lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**

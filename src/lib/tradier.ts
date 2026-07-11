@@ -381,17 +381,27 @@ class TradierBrokerGateway implements BrokerGateway {
       // Buying power fed to position sizing must be the OVERNIGHT / Reg-T figure
       // (margin.stock_buying_power), NEVER the ~4x INTRADAY pdt.stock_buying_power a pattern-day-trader
       // margin account also reports — sizing off the intraday number would silently lever up an
-      // overnight hold, which the owner's conservative/opt-in-leverage margin decision forbids. Take
-      // the MORE CONSERVATIVE (minimum) of the POSITIVE figures so the PDT number can only pull sizing
-      // DOWN, never inflate it, and a spurious 0 (Tradier omits/zero-fills a field) is treated as
-      // absent (positiveNumber) rather than overriding a real value. Richer PDT/margin figures are
-      // deliberately NOT fed to sizing here. Cash accounts use cash_available; else total cash.
+      // overnight hold, which the owner's conservative/opt-in-leverage margin decision forbids.
+      //
+      // The intraday/PDT figure is a DOWNWARD-ONLY clamp: it may pull the conservative overnight
+      // figure DOWN (via min), but it must never STAND IN as buying power. A symmetric
+      // min-of-positive-candidates was wrong — if Tradier omits/zero-fills the overnight
+      // stock_buying_power while the ~4x intraday pdt.stock_buying_power is positive, the min over the
+      // surviving candidate returned the INTRADAY figure and over-levered an overnight hold. So: only
+      // when the overnight Reg-T figure is present/positive is buying power known; if it is absent/0
+      // we report buying power as UNKNOWN (0), never the intraday 4x. Both consumers read a
+      // non-positive buyingPower as "unknown => don't block, defer to the broker's own margin
+      // rejection" (strategy.ts openingRiskCapacity only adds the buying-power cap when `> 0`;
+      // policy.ts affordability only blocks when `> 0`), matching how the Alpaca adapter treats a
+      // missing buying_power (number(undefined) => 0). A spurious 0 in either field is treated as
+      // absent (positiveNumber). Richer PDT/margin figures are deliberately NOT fed to sizing here.
+      // Cash accounts use cash_available; else total cash.
       const marginBuyingPower = margin
         ? (() => {
-            const candidates = [positiveNumber(margin.stock_buying_power), positiveNumber(pdt?.stock_buying_power)].filter(
-              (v): v is number => v != null
-            );
-            return candidates.length ? Math.min(...candidates) : 0;
+            const overnight = positiveNumber(margin.stock_buying_power);
+            if (overnight == null) return undefined; // unknown Reg-T BP — never fall back to the intraday 4x figure
+            const intraday = positiveNumber(pdt?.stock_buying_power);
+            return intraday != null ? Math.min(overnight, intraday) : overnight;
           })()
         : undefined;
       const buyingPower = margin

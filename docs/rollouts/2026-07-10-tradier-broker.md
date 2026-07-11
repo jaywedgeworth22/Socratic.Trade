@@ -300,3 +300,69 @@ smaller gaps. All in `src/lib/tradier.ts` + `src/lib/synthetic-stops.ts`.
 - Confirm Tradier's live multi-leg (OTOCO/OCO) GET-orders leg shape against a
   real token and adjust `equityRowsFromTradierOrder` field names if they differ.
 - Alpaca/Robinhood/test broker behavior deliberately unchanged.
+
+## Round 3 — buying-power min() asymmetry fix
+
+### Summary
+`getPortfolio` (`src/lib/tradier.ts`) no longer lets the ~4x INTRADAY PDT figure
+become buying power when the OVERNIGHT/Reg-T figure is absent. The round-2 fix
+took `Math.min` over the *surviving* positive candidates of
+`[margin.stock_buying_power, pdt.stock_buying_power]` — a SYMMETRIC treatment.
+That was still wrong: if Tradier omits/zero-fills the overnight
+`margin.stock_buying_power` while the intraday `pdt.stock_buying_power` is
+positive, `candidates` collapses to `[pdt]` and `min` returns the INTRADAY 4x
+number as buying power, over-levering an overnight hold — contradicting the
+owner's "NAV caps + opt-in leverage, never silently lever up" decision.
+
+### Why / fix
+The intraday/PDT figure is now a **downward-only clamp**: it can pull the
+conservative overnight figure DOWN (via `min`), but can never STAND IN as buying
+power. Buying power is known only when the overnight Reg-T figure is
+present/positive; if it is absent/0 we report buying power as UNKNOWN (`0`),
+never the intraday 4x. Both consumers already read a non-positive `buyingPower`
+as "unknown → don't block, defer to the broker's own margin rejection":
+`strategy.ts` `openingRiskCapacity` adds the buying-power cap only when `> 0`
+(line ~3414), and `policy.ts` affordability blocks only when `> 0` (line ~532).
+This matches how the Alpaca adapter treats a missing `buying_power`
+(`number(undefined) => 0`). A spurious `0` in either field is still treated as
+absent via `positiveNumber`.
+
+### Files (round 3)
+- `src/lib/tradier.ts` — `getPortfolio` `marginBuyingPower` derivation: overnight
+  Reg-T figure is the base; intraday PDT figure is a `min` clamp only; absent
+  overnight => `undefined` => `0` (unknown), never the intraday figure.
+- `test/tradier.test.ts` — 2 new regression tests: absent (`margin: {}`) and
+  zero-filled (`stock_buying_power: 0`) overnight figures with a positive
+  `pdt.stock_buying_power` both report `0`, never the intraday 64000 / 96000.
+
+### Verification (round 3)
+- `npx tsc --noEmit` → `npm test` → `npm run build` (see the exact node/commands
+  in the round-3 handoff below).
+
+## Pre-live-token validation items
+
+These two behaviors are v1 status quo (NOT regressions) and cannot be closed
+without a **live Tradier sandbox token**. Neither is worse than v1; both provide
+their intended protection only if the assumed live-response shape holds, so they
+must be confirmed against a real account before relying on the coverage they
+enable.
+
+1. **OTOCO/OCO leg shape** (`equityRowsFromTradierOrder`, `src/lib/tradier.ts`
+   ~line 694). The multi-leg surfacing assumes each equity leg carries its own
+   `class: "equity"`. If a live Tradier multi-leg response instead puts `class`
+   only on the CONTAINER order (and legs omit it), the legs are skipped, and a
+   bracket's resting stop that the user placed in the Tradier UI is invisible to
+   coverage — so the synthetic-stop monitor could place a DUPLICATE protective
+   stop. This is not worse than v1 (which surfaced no legs at all), but it
+   provides zero protection unless the assumed per-leg `class` shape is correct.
+   **Action:** confirm the actual `leg[]` shape against a live multi-leg account
+   before relying on Tradier UI-placed OTOCO/OCO coverage.
+
+2. **50-page order cap** (`getEquityOrders`, `src/lib/tradier.ts` ~line 478).
+   The pagination loop caps at 50 pages. This is safe *iff* Tradier returns
+   orders NEWEST-first (so resting exits land on page 1 and are always within the
+   cap). If Tradier's `/orders` returns oldest-first, an account with >50 pages
+   of history could push a recent resting stop PAST the cap, making it invisible
+   to coverage. **Action:** confirm Tradier's `/orders` ordering (newest- vs
+   oldest-first) against a live account; if oldest-first, page from the end or
+   raise/remove the cap.

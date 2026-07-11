@@ -761,6 +761,43 @@ describe("Tradier adapter — getPortfolio buying power (no intraday-4x lever-up
     const p = await getTradierGateway("local").getPortfolio(ACCT);
     expect(p.buyingPower).toBe(12000); // spurious 0 ignored; the real Reg-T figure stands
   });
+
+  it("an absent overnight stock_buying_power does NOT let the intraday 4x figure become buying power", async () => {
+    // The min()-asymmetry bug: if Tradier omits the Reg-T OVERNIGHT figure but reports the ~4x
+    // INTRADAY pdt figure, the old symmetric min over surviving positive candidates returned the
+    // intraday number as buying power and over-levered an overnight hold. The intraday figure must
+    // only ever pull BP DOWN, never stand in — an unknown overnight BP reports 0 (which both
+    // consumers read as "unknown => don't block, defer to broker"), never 64000.
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u) => u.includes("/balances"),
+        body: { balances: { account_number: ACCT, total_equity: 20000, total_cash: 3000, market_value: 17000,
+          margin: {}, pdt: { stock_buying_power: 64000 } } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const p = await getTradierGateway("local").getPortfolio(ACCT);
+    expect(p.buyingPower).not.toBe(64000); // the intraday 4x number must NEVER be reported as BP
+    expect(p.buyingPower).toBe(0); // unknown Reg-T BP => 0 => "don't block, defer to broker"
+  });
+
+  it("a zero-filled overnight stock_buying_power also does NOT fall through to the intraday 4x figure", async () => {
+    // Same asymmetry, but the overnight field is present as a spurious 0 (positiveNumber => absent)
+    // rather than omitted — must behave identically: 0, never the intraday 96000.
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u) => u.includes("/balances"),
+        body: { balances: { account_number: ACCT, total_equity: 30000, total_cash: 5000, market_value: 25000,
+          margin: { stock_buying_power: 0 }, pdt: { stock_buying_power: 96000 } } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const p = await getTradierGateway("local").getPortfolio(ACCT);
+    expect(p.buyingPower).not.toBe(96000);
+    expect(p.buyingPower).toBe(0);
+  });
 });
 
 describe("Tradier tag / synthetic-stop refId 255-char symmetry (finding #4)", () => {
