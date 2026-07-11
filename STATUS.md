@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Tradier broker adapter, fifth broker (CLAUDE subagent, branch `claude/tradier-broker`)
+Added Tradier as a fifth `BrokerGateway`, mirroring the Alpaca adapter against Tradier's hand-rolled
+REST (single Bearer token, no SDK). New `src/lib/tradier.ts` implements all 9 methods; `"tradier"`
+added to the `ConnectedAccount.broker` + `TradingPolicy.activeBroker` closed unions; factory switch
+in `broker.ts` inherits the `withLivePreflight` live-order choke point for free (no Tradier-specific
+preflight). Connect API + a new single-Access-Token settings sheet with an explicit
+Sandbox/Production selector (no PK/PA inference); base URL is DERIVED from environment
+(sandbox.tradier.com vs api.tradier.com) so the two venues can never cross. Whole-share only
+(`fractional:false`, floor-or-throw, never defaults to 1), DIRECT 4-value side map
+(buy/sell/sell_short/buy_to_cover, not `toBrokerSide`), synthetic stops (no OTOCO — strategy gates
+broker brackets to Alpaca). Added `"error"` (terminal-decline) + `"pending"` (resting) to the
+broker-side state vocab, keeping the superset invariant. No operator env fallback — a non-owner
+with no stored token throws loudly. node@24 gate: eslint 0-err, tsc clean, full suite 316/3428
+green, build clean. See `docs/rollouts/2026-07-10-tradier-broker.md`. Follow-ups: native OTOCO
+brackets, real preview endpoint for `reviewEquityOrder`, IRA agentic-allowed decision, orders
+pagination field confirmation, optional operator env-token tier. No deploy; no live token exercised.
+
 ## 2026-07-10 — Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch `monet/privacy-terms-pages`)
 Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added `/privacy-policy` +
 `/terms-and-conditions` (boilerplate, matching the existing `/how-it-works`/`/welcome` page

@@ -36,9 +36,9 @@ export async function POST(req: Request) {
     const body = await req.json();
     const userId = resolveRequestUserId(req, body);
     const broker =
-      body.broker === "alpaca" || body.broker === "alpaca-mcp" || body.broker === "robinhood" || body.broker === "test" ? body.broker : undefined;
+      body.broker === "alpaca" || body.broker === "alpaca-mcp" || body.broker === "robinhood" || body.broker === "test" || body.broker === "tradier" ? body.broker : undefined;
     if (!broker) {
-      return new NextResponse("broker is required (alpaca | robinhood | test)", { status: 400 });
+      return new NextResponse("broker is required (alpaca | robinhood | test | tradier)", { status: 400 });
     }
     const taxationType =
       body.taxationType === "roth_ira" || body.taxationType === "traditional_ira" || body.taxationType === "taxable"
@@ -93,7 +93,15 @@ export async function POST(req: Request) {
 
     const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
     let environment: "paper" | "live" = "paper";
-    if (broker === "alpaca" || broker === "alpaca-mcp") {
+    if (broker === "tradier") {
+      // Tradier has NO PK/PA-style credential prefix — each token is environment-scoped, so the
+      // environment is an EXPLICIT selector (sandbox=paper / production=live), never inferred. A
+      // single bearer token is required; no apiSecret, no forced accountNumber (probed/user-supplied).
+      if (!apiKey) {
+        return new NextResponse("Tradier access token is required", { status: 400 });
+      }
+      environment = body.environment === "live" ? "live" : "paper";
+    } else if (broker === "alpaca" || broker === "alpaca-mcp") {
       environment = isAlpacaPaperCredential({ accountNumber: body.accountNumber, apiKey }) ? "paper" : "live";
     } else if (broker === "test") {
       environment = "paper";
@@ -104,9 +112,11 @@ export async function POST(req: Request) {
     const defaultLabel =
       broker === "test"
         ? TEST_ACCOUNT_LABEL
-        : broker === "alpaca-mcp"
-          ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
-          : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
+        : broker === "tradier"
+          ? `Tradier ${environment === "paper" ? "Sandbox" : "Brokerage"}`
+          : broker === "alpaca-mcp"
+            ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
+            : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
     const existingTestAccount = broker === "test" ? listConnectedAccounts(userId).find((a) => a.broker === "test") : undefined;
     const accountNumber =
       broker === "test"
@@ -126,11 +136,15 @@ export async function POST(req: Request) {
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
       baseUrl: typeof body.baseUrl === "string" && body.baseUrl.trim()
         ? body.baseUrl.trim()
-        : (broker === "alpaca" || broker === "alpaca-mcp")
+        : broker === "tradier"
           ? environment === "paper"
-            ? "https://paper-api.alpaca.markets/v2"
-            : "https://api.alpaca.markets"
-          : undefined,
+            ? "https://sandbox.tradier.com/v1"
+            : "https://api.tradier.com/v1"
+          : (broker === "alpaca" || broker === "alpaca-mcp")
+            ? environment === "paper"
+              ? "https://paper-api.alpaca.markets/v2"
+              : "https://api.alpaca.markets"
+            : undefined,
       taxationType: taxationType ?? existingTestAccount?.taxationType,
       isActive: body.isActive ?? existingTestAccount?.isActive ?? false
     });

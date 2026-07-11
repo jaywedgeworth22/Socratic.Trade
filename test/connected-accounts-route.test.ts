@@ -58,6 +58,54 @@ describe("connected accounts route", () => {
     });
   });
 
+  it("connects a Tradier SANDBOX account (paper) from an explicit environment selector", async () => {
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const response = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ broker: "tradier", apiKey: "tok-sandbox", environment: "paper", isActive: true })
+    }));
+
+    expect(response.status).toBe(200);
+    const { getActiveConnectedAccount } = await import("../src/lib/db");
+    const account = getActiveConnectedAccount();
+    expect(account).toMatchObject({
+      broker: "tradier",
+      environment: "paper",
+      baseUrl: "https://sandbox.tradier.com/v1"
+    });
+    // Single-token broker: the token is stored (encrypted then decrypted on read) and no secret.
+    expect(account?.apiKey).toBe("tok-sandbox");
+    expect(account?.apiSecret).toBeUndefined();
+  });
+
+  it("connects a Tradier PRODUCTION account (live) and picks api.tradier.com", async () => {
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const response = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ broker: "tradier", apiKey: "tok-live", environment: "live" })
+    }));
+
+    expect(response.status).toBe(200);
+    const { listConnectedAccounts } = await import("../src/lib/db");
+    expect(listConnectedAccounts()[0]).toMatchObject({
+      broker: "tradier",
+      environment: "live",
+      baseUrl: "https://api.tradier.com/v1"
+    });
+  });
+
+  it("rejects a Tradier connect with no access token (400)", async () => {
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const response = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ broker: "tradier", environment: "paper" })
+    }));
+    expect(response.status).toBe(400);
+  });
+
   it("creates an explicit inactive local mock Test Account", async () => {
     const { POST } = await import("../app/api/connected-accounts/route");
     const { getActiveConnectedAccount, listConnectedAccounts } = await import("../src/lib/db");

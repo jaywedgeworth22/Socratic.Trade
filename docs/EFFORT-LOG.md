@@ -1578,6 +1578,23 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Tradier broker adapter — fifth broker (CLAUDE subagent, branch `claude/tradier-broker`) —
+  IN PROGRESS 2026-07-10 (tradier-broker workflow); gates green locally, PR opening.** Adds
+  Tradier as a fifth BrokerGateway by mirroring the Alpaca adapter against Tradier's hand-rolled
+  REST (single Bearer token, no SDK): new `src/lib/tradier.ts` (all 9 methods), `"tradier"` added
+  to the `ConnectedAccount.broker` + `TradingPolicy.activeBroker` closed unions, factory switch in
+  `broker.ts` (inherits the `withLivePreflight` live-order choke point for free), `broker-side.ts`
+  + `broker-held-orders.ts` state-vocab additions (`error` terminal-decline, `pending` resting),
+  connect API + settings UI (single Access-Token sheet, explicit Sandbox/Production selector — no
+  PK/PA inference), and labels across execution-mode/dashboard/chrome/strategy. Whole-share only
+  (`fractional:false`, floor-or-throw), DIRECT 4-value side map (buy/sell/sell_short/buy_to_cover,
+  not `toBrokerSide`), synthetic stops (no OTOCO — strategy gates broker brackets to Alpaca).
+  Environment derives the base URL (sandbox.tradier.com vs api.tradier.com) so the two venues can
+  never cross. New `test/tradier.test.ts` + extended route/execution-mode/broker-side tests. Node24
+  gate: tsc clean, eslint 0-err, full suite green, build clean. See
+  `docs/rollouts/2026-07-10-tradier-broker.md`. Follow-ups (openQuestions): native OTOCO brackets,
+  the real preview endpoint for `reviewEquityOrder`, IRA agentic-allowed decision, orders
+  pagination field confirmation, and an optional operator env-token tier.
 - **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) —
   CORRECTED IN PLACE 2026-07-10: this row was stuck at "landing" after the PR actually
   merged. Status is COMPLETED as of commit c2150aae (PR #1368, "docs: canonical market-data

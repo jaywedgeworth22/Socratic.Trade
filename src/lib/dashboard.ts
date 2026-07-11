@@ -130,6 +130,8 @@ function brokerDisplayName(broker: AccountReadiness["broker"] | undefined): stri
       return "Robinhood";
     case "test":
       return "Test";
+    case "tradier":
+      return "Tradier";
     default:
       return "broker";
   }

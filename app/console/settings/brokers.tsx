@@ -18,6 +18,7 @@ import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primit
 import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle } from "lucide-react";
 import {
   connectAlpacaAccount,
+  connectTradierAccount,
   connectTestAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
@@ -36,6 +37,8 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
       return "Robinhood";
     case "test":
       return "Test Account";
+    case "tradier":
+      return "Tradier";
     default:
       return broker;
   }
@@ -75,6 +78,7 @@ export function BrokerAccountsCard() {
   const [rhHealth, setRhHealth] = useState<RobinhoodMcpHealth | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ConnectedAccount | null>(null);
   const [alpacaOpen, setAlpacaOpen] = useState(false);
+  const [tradierOpen, setTradierOpen] = useState(false);
 
   // Best-effort Robinhood OAuth health — decides whether "Connect Robinhood"
   // starts OAuth or just re-syncs, and flags rows that need a reconnect.
@@ -341,6 +345,15 @@ export function BrokerAccountsCard() {
           <Btn
             size="sm"
             variant="outline"
+            disabled={busy !== null}
+            onClick={() => setTradierOpen(true)}
+            title="Link a Tradier account with an access token. Choose Sandbox (paper) or Production (live)."
+          >
+            Connect Tradier
+          </Btn>
+          <Btn
+            size="sm"
+            variant="outline"
             disabled={busy !== null || hasTestAccount}
             onClick={() => void connectTest()}
             title={
@@ -472,6 +485,15 @@ export function BrokerAccountsCard() {
         onClose={() => setAlpacaOpen(false)}
         onConnected={async () => {
           setAlpacaOpen(false);
+          await refresh();
+        }}
+      />
+
+      <TradierConnectSheet
+        open={tradierOpen}
+        onClose={() => setTradierOpen(false)}
+        onConnected={async () => {
+          setTradierOpen(false);
           await refresh();
         }}
       />
@@ -616,6 +638,157 @@ function AlpacaConnectSheet({
                 Connect <LiveTag />
               </>
             )}
+          </Btn>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+// ── Tradier connect (single access token) ────────────────────────────────────
+
+function TradierConnectSheet({
+  open,
+  onClose,
+  onConnected
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConnected: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [environment, setEnvironment] = useState<"paper" | "live">("paper");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [taxationType, setTaxationType] = useState<"" | TaxationType>("");
+  const [busy, setBusy] = useState(false);
+
+  const isLive = environment === "live";
+
+  const submit = async () => {
+    if (!apiKey.trim()) {
+      toast.push("warn", "Access token is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      await connectTradierAccount({
+        label: label.trim() || undefined,
+        apiKey: apiKey.trim(),
+        environment,
+        accountNumber: accountNumber.trim() || undefined,
+        taxationType: taxationType || undefined
+      });
+      toast.push(
+        "pos",
+        "Tradier account connected",
+        isLive ? "Connected as a Tradier production (live) account." : "Connected as a Tradier sandbox (paper) account."
+      );
+      setLabel("");
+      setApiKey("");
+      setEnvironment("paper");
+      setAccountNumber("");
+      setTaxationType("");
+      await onConnected();
+    } catch (error) {
+      toast.push("neg", "Could not connect", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet open={open} onClose={onClose} title="Connect Tradier">
+      <div className="flex flex-col gap-3">
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Paste the access token from your Tradier dashboard. A sandbox token only authenticates
+          against Tradier&apos;s sandbox and a production token only against the live API, so you
+          choose the environment explicitly — currently reading as{" "}
+          <span className={isLive ? "font-bold text-[color:var(--con-accent)]" : "font-bold text-[color:var(--con-paper)]"}>
+            {isLive ? "Tradier Production (LIVE — Real Money)" : "Tradier Sandbox (Paper — NOT Real Money)"}
+          </span>
+          . The token is stored server-side and never shown again.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Label (optional)" hint="A name you'll recognize in the account switcher." htmlFor="trd-label">
+            <TextInput
+              id="trd-label"
+              value={label}
+              placeholder="Sandbox, Brokerage, etc"
+              onChange={(e) => setLabel(e.target.value)}
+              title="Display name for this connection inside the app."
+            />
+          </Field>
+          <Field label="Environment" hint="Sandbox = paper (no real money); Production = live." htmlFor="trd-env">
+            <Select
+              id="trd-env"
+              value={environment}
+              onChange={(e) => setEnvironment(e.target.value === "live" ? "live" : "paper")}
+              title="Which Tradier venue this token authenticates against."
+            >
+              <option value="paper">Sandbox (paper)</option>
+              <option value="live">Production (live)</option>
+            </Select>
+          </Field>
+          <Field label="Access token" hint="A single Bearer token — no secret." htmlFor="trd-key">
+            <TextInput
+              id="trd-key"
+              value={apiKey}
+              autoComplete="off"
+              placeholder="Tradier access token"
+              onChange={(e) => setApiKey(e.target.value)}
+              title="The access token from Tradier. Sent once to the server, never echoed back."
+            />
+          </Field>
+          <Field label="Account number (optional)" hint="Leave blank to use the token's account." htmlFor="trd-acct">
+            <TextInput
+              id="trd-acct"
+              value={accountNumber}
+              placeholder="e.g. VA12345678"
+              onChange={(e) => setAccountNumber(e.target.value)}
+              title="Your Tradier account number. Optional — the profile is probed on first use."
+            />
+          </Field>
+          <Field
+            label="Tax treatment (optional)"
+            hint="IRAs zero the estimated tax rates and skip the per-account wash-sale guard."
+            htmlFor="trd-tax"
+          >
+            <Select
+              id="trd-tax"
+              value={taxationType}
+              onChange={(e) => setTaxationType(e.target.value as "" | TaxationType)}
+              title="How gains in this account are taxed — drives the tax estimates and wash-sale handling."
+            >
+              <option value="">not set</option>
+              <option value="taxable">taxable brokerage</option>
+              <option value="roth_ira">Roth IRA</option>
+              <option value="traditional_ira">traditional IRA</option>
+            </Select>
+          </Field>
+        </div>
+        {isLive && (
+          <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+            <LiveTag /> A production Tradier token trades <span className="font-semibold">real capital</span>. Orders can
+            reach real money only when policy, approval, and risk gates allow them.
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Btn variant="ghost" onClick={onClose} title="Close without connecting.">
+            Cancel
+          </Btn>
+          <Btn
+            variant="primary"
+            disabled={busy}
+            onClick={() => void submit()}
+            title="Validate and store this connection server-side."
+          >
+            {busy ? "Connecting…" : isLive ? (
+              <>
+                Connect <LiveTag />
+              </>
+            ) : "Connect Sandbox"}
           </Btn>
         </div>
       </div>
