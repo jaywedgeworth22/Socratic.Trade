@@ -15,6 +15,34 @@ inherited warnings, TypeScript clean, and `git diff --check`. Full suite/build, 
 supersession remain intentionally deferred until the strategy-lease branch lands. Rollout:
 `docs/rollouts/2026-07-11-notification-status-truth.md`.
 
+## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, draft PR #1429)
+
+The final adversarial reconciliation is implemented on `codex/strategy-lease-correctness` after
+merging `origin/main@67e1536d`. A run now snapshots one connected-account id before acquiring its
+lease and uses that id for every later policy/account read, breaker write, catch receipt, and tuning
+follow-up even if the active account changes mid-await. Pending-proposal expiry/revalidation,
+ATR/RAG/episodic/Green/Red/risk-receipt phases, and final macro evidence re-prove ownership after
+their long awaits; best-effort catches explicitly rethrow lease loss. Non-placement results are added
+to the run receipt as soon as their DB row is durable, before notification-time ownership checks.
+Once broker placement starts, status/fill/reconciliation and the completed result finish without an
+intervening assertion; ownership is checked only after broker truth is durable. Approval likewise
+returns a durable blocked result instead of a false `busy` result when ownership disappears during
+the block notification.
+
+Scheduler SIGTERM/SIGINT no longer release the leader lease while detached protective-order work may
+still be unresolved; only `beforeExit` releases after the event loop drains, otherwise the 90-second
+TTL fences successors. Auto-tuning now runs only after a completed strategy result, receives the
+scheduled account id, takes and heartbeats that account's strategy lease, reserves LLM budget for the
+same account, reads account-scoped evidence/cadence, and asserts ownership before any policy/ledger
+write. A final independent review caught and fixed four remaining boundaries: strategy prompt lookup
+is account-bound, walk-forward observations receive the account filter, a failed pending-to-blocked
+transition returns the actually persisted status without notifying, and tuning computes its clock
+after the strategy run instead of before it. The combined focused Node 24 rerun is green: **11 files /
+129 tests**; touched ESLint **0 errors / 36 inherited warnings**; repository lint, TypeScript, full
+Vitest **341 files / 3,801 tests**, production build, and `git diff --check` are green. PR #1429 is
+intentionally draft; the root lane owns the trusted push, hosted rerun, readiness, merge, and production
+verification. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
 ## 2026-07-11 — Durable provider/dataset operation leases (CODEX, ready PR #1441)
 
 The route-level admin single-flight work is now extended to the underlying provider/dataset

@@ -33,6 +33,20 @@ filling the missing pieces.
 > inspection over its local IPC socket. Production explicitly enables the v0.5.12 socket and skips
 > the non-verifying metadata-file fallback; staleness requires evidence of newer local DB/WAL activity.
 > See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
+> **2026-07-11 - Strategy lease correctness + default-on scheduler (CODEX).** No roadmap scope
+> change; this closes a money-path concurrency hole in the existing Phase 1 lock design. Approval
+> and autonomous runs heartbeat unique account leases, snapshot one account for every later read/write,
+> and re-prove ownership after each long await before unrelated persistence. Durable non-placement and
+> broker outcomes remain in failed run receipts when ownership disappears; approval cannot report a
+> persisted block as `busy`. Scheduler signal shutdown retains the leader lease until TTL while detached
+> broker work may exist, and account-scoped auto-tuning runs only after completed strategy runs under its
+> own renewed account lease and LLM reservation. A final independent review additionally fixed the
+> account-bound strategy prompt, propagated account scope into walk-forward evidence, honored a lost
+> proposal-transition race, and computes tuning time only after the strategy run finishes. PR #1429 is
+> reconciled through `main@67e1536d` and is intentionally draft pending its trusted push and hosted
+> checks. The final Node 24 gate is green: focused 11 files / 129 tests, repository lint, TypeScript,
+> full 341 files / 3,801 tests, production build, and diff-check. See
+> `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
 > change; operator-observability correctness only. The connections-health expected-lane inventory now
 > uses the provider's canonical `alpha-vantage:env` identity, preventing a synthetic empty
