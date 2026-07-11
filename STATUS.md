@@ -56,7 +56,31 @@ all three recovery sites on either the literal "filled" state OR a positive `fil
 regardless of state, so a PARTIAL fill that terminates as canceled/expired is no longer lost; and a
 native trail's mismatch-driven replacement (trail %/quantity change) now backfills a missing tracked
 high-water mark from the existing stop's own recorded `stopPrice`/`trailPercent` (inverting the ratchet
-math) before deciding whether a reseed would be looser than the broker's own already-moved-up peak.
+math) before deciding whether a reseed would be looser than the broker's own already-moved-up peak;
+round 10 (2026-07-11): the Codex Autofix bot (`.github/workflows/codex-autofix.yml`) had been broken
+since ~2026-07-10T23:00Z — missing `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` — so 6 rounds of Codex
+review comments piled up unaddressed on this PR (35 threads) and its stacked follow-on PR #1371 (27
+threads); PR #1373 (merged to `main`) fixed the workflow to route through DeepSeek's Anthropic-compatible
+endpoint (`DEEPSEEK_API_KEY` secret, `api.deepseek.com/anthropic`, `deepseek-v4-flash`) but that fix
+never reached this feature branch. Cherry-picked it (`45bb477`) so the bot works going forward. Then
+triaged every open Codex thread against the CURRENT code: 32 of 34 non-outdated/outdated threads were
+already fixed by rounds 5-9 (just needed `resolveReviewThread`, never run before because the bot was
+down); 2 were fixed fresh this round (`72ec8d1`) — the DISABLED-teardown path now books a fill found in
+the caller's pre-reconcile order snapshot before clearing a row (both on a successful cancel and on a
+failed-cancel-but-broker-already-terminal recovery), and signals `filledRecoverySymbols` from there so
+the caller skips synthetic registration/fire against a stale pre-fill position, same as the
+enabled-lane recovery paths already did; and the synthetic monitor's auto-registration coverage check
+now folds in `justPlacedPartialBrokerStopQty` (previously only the fire path used it), so a partial
+broker stop placed earlier in the SAME reconcile pass is counted as coverage before deciding whether to
+arm a new synthetic row. One thread left open (posted as a PR comment, not resolved): "Require shared
+OCO identity before pairing legs" — `liveExitOrderCoverage` pairs stop/limit legs on matching
+bracket-family `orderClass` + exact quantity, but `orderClass` is a family string ("bracket"/"oco"),
+not a specific group id, so two DIFFERENT brackets' orphaned same-family same-qty legs could in theory
+still mispair; neither the Alpaca REST nor MCP order shape currently exposes a more precise sibling id,
+so a real fix needs either a broker API change (nested order fetch + parent correlation) or an accepted
+tradeoff — flagged for deliberate follow-up rather than guessed at. Branch is now `mergeable_state:
+dirty` against `main` (main has moved ~20 commits since this PR's base) — needs a merge before it can
+land; not yet done this round.
 Next action: watch for
 further review rounds / merge; then live-verify the RH ratchet lane before flipping
 `robinhoodBrokerStops` on.
