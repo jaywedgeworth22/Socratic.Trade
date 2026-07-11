@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "../app/api/admin/server-metrics/route";
 import { displayProviderText } from "../app/admin/server/server-metrics-client";
+import {
+  AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+  AUTHENTICATED_IDENTITY_SOURCES
+} from "../src/lib/auth/strip-identity";
 import { AUTHENTICATED_EMAIL_HEADER } from "../src/lib/request-user";
 import { normalizeCoolifyResources, normalizeHetznerServerResponse } from "../src/lib/server-metrics-shapes";
 
 function reqWithEmail(email?: string): Request {
   const headers: Record<string, string> = {};
-  if (email) headers[AUTHENTICATED_EMAIL_HEADER] = email;
+  if (email) {
+    headers[AUTHENTICATED_EMAIL_HEADER] = email;
+    headers[AUTHENTICATED_IDENTITY_SOURCE_HEADER] = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+  }
   return new Request("https://socratictrade.com/api/admin/server-metrics", { method: "GET", headers });
 }
 
@@ -95,6 +102,7 @@ describe("server-metrics API route", () => {
 
   it("ALLOWS access and returns real local host metadata with empty remote data when not configured", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ADMIN_USER_EMAILS", "admin@example.com");
     // Leave HETZNER_API_TOKEN etc unset
     vi.stubEnv("HETZNER_API_TOKEN", "");
 
