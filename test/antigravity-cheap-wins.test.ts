@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { applyDeterministicSizing, enrichOpeningProposal } from "../src/lib/strategy";
+import { enrichOpeningProposal } from "../src/lib/strategy";
 import type { MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import { applyDeterministicSizing } from "../src/lib/strategy-risk";
 
 // Covers the functional "cheap wins" distilled from Antigravity's strategy critique:
 //   - ADV (market-impact) order-size cap in deterministic sizing

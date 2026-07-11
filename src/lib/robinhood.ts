@@ -179,6 +179,11 @@ export function portfolioFromRobinhoodRaw(accountNumber: string, raw: Record<str
 }
 
 class HttpMcpRobinhoodGateway implements BrokerGateway {
+  // ordersListIncludesTerminal is DELIBERATELY left unset (⇒ conservative/false): Robinhood's
+  // get_equity_orders terminal-inclusion window can't be verified without a live token, so
+  // reconcilePlacementError must NOT conclude not_placed from an absent order here (a placed order
+  // that already filled and aged out of a live-only list would be wrongly dropped, then duplicated
+  // next run). Absent-from-list ⇒ uncertain (protected). Flip to `true` only once verified live.
   private readonly userId: string;
 
   constructor(userId: string) {
@@ -305,8 +310,8 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
   }
 
   async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
-    const raw = await this.callTool("get_equity_orders", { account_number: accountNumber }) as Record<string, unknown>;
-    const orders = Array.isArray(raw?.orders) ? raw.orders : Array.isArray(raw?.results) ? raw.results : Array.isArray(raw) ? raw : [];
+    const raw = await this.callTool("get_equity_orders", { account_number: accountNumber });
+    const orders = extractRobinhoodOrderCollection(raw);
     return orders.map((item: Record<string, unknown>) => ({
       id: String(item.id ?? item.order_id),
       symbol: normalizeSymbol(String(item.symbol)),
@@ -626,6 +631,21 @@ function parseSseMcpResponse(body: string): { result?: unknown; error?: unknown 
 
 function unpackMcpToolResult(raw: unknown): unknown {
   const rawObj = raw as Record<string, unknown> | undefined;
+  // A tools/call result can report a TOOL-LEVEL failure via `isError: true` on an otherwise-2xx
+  // JSON-RPC success (distinct from a JSON-RPC-level `error`, which callRobinhoodMcpMethod already
+  // throws on). Surface it as a THROW so a broker-side failure (rate limit, auth lapse, upstream
+  // 5xx surfaced by the MCP proxy) can never be silently unwrapped into an error-shaped payload
+  // that a reader (e.g. getEquityOrders) then coalesces to an empty list. Booking a placement
+  // reconcile off a masked error is the phantom-fill / dropped-order money-path hazard this guards.
+  if (rawObj?.isError === true) {
+    const contentText = Array.isArray(rawObj.content)
+      ? (rawObj.content as Array<{ text?: unknown }>)
+          .map((c) => (typeof c?.text === "string" ? c.text : ""))
+          .filter(Boolean)
+          .join("; ")
+      : undefined;
+    throw new Error(`Robinhood MCP tool reported an error${contentText ? `: ${contentText}` : ""}`);
+  }
   const result = rawObj?.structuredContent ?? (rawObj?.content as Array<{ text?: unknown }>)?.[0]?.text ?? raw;
   let parsed: unknown = result;
   if (typeof result === "string") {
@@ -641,6 +661,36 @@ function unpackMcpToolResult(raw: unknown): unknown {
     return (parsed as { data: unknown }).data;
   }
   return parsed;
+}
+
+/**
+ * Pull the order array out of Robinhood's get_equity_orders response, distinguishing an
+ * AUTHORITATIVE empty list (a real "no orders" account state) from a malformed / error-shaped
+ * response. A shape that carries no recognizable orders/results collection must THROW — never
+ * coalesce to `[]` — because a placement reconcile (reconcilePlacementError / flagStalePlacingIntents)
+ * reads `[]` as "the broker has no such order" and would mark a genuinely-placed order not_placed,
+ * drop its durable 'placing' intent, and let the next run DUPLICATE the position. After this guard,
+ * a returned `[]` means Robinhood authoritatively returned an empty order list. Tool-level broker
+ * errors already throw earlier in unpackMcpToolResult (isError), so a well-formed collection here is
+ * a genuine success payload.
+ */
+function extractRobinhoodOrderCollection(raw: unknown): Record<string, unknown>[] {
+  if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.orders)) return obj.orders as Record<string, unknown>[];
+    if (Array.isArray(obj.results)) return obj.results as Record<string, unknown>[];
+  }
+  const preview = (() => {
+    try {
+      return JSON.stringify(raw)?.slice(0, 200) ?? String(raw);
+    } catch {
+      return String(raw);
+    }
+  })();
+  throw new Error(
+    `Robinhood get_equity_orders returned an unrecognized shape (no orders/results array) — treating as an error, not an empty account: ${preview}`
+  );
 }
 
 function mcpErrorMessage(payload: { error?: unknown }): string | undefined {
@@ -681,6 +731,10 @@ const MOCK_PRICES: Record<string, number> = {
 };
 
 class TestBrokerGateway implements BrokerGateway {
+  // The local deterministic sim has full knowledge of its own order history (nothing ages out), so
+  // its order list is authoritative for terminal orders. (Moot in practice — TestBroker fills
+  // synchronously and never throws on placement — but correct, and keeps sim reconciles precise.)
+  readonly ordersListIncludesTerminal = true;
   private readonly userId: string;
 
   constructor(userId: string = "local") {
