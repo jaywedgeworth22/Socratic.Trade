@@ -1,6 +1,6 @@
 # Status
 
-## 2026-07-11 — Durable provider/dataset operation leases (CODEX, branch `codex/provider-operation-leases`)
+## 2026-07-11 — Durable provider/dataset operation leases (CODEX, ready PR #1441)
 
 The route-level admin single-flight work is now extended to the underlying provider/dataset
 boundaries shared by manual requests and scheduler/background calls. Four SQLite `settings`-KV
@@ -18,7 +18,7 @@ lease acquisition so a delayed process cannot repeat a just-completed run. The p
 and fixed a Next Edge trace of `node:crypto`; lease UUIDs now use Web Crypto. Final Node 24
 verification on `main@7c01f87e` is green: focused 9 files / 130 tests, lint 0 errors / 404 inherited
 warnings, `tsc --noEmit`, full Vitest 334 files / 3,759 tests, and the production build. Ready-PR
-delivery and production verification remain. Rollout:
+hosted checks and production verification remain. Rollout:
 `docs/rollouts/2026-07-11-provider-operation-leases.md`.
 ## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, merged PR #1438; production verified)
 

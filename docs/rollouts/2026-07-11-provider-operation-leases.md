@@ -128,6 +128,7 @@ ordered gate was repeated after this correction:
 
 ## Follow-ups
 
+- Ready PR #1441 at head `eb67f521`; wait for hosted verify/smoke/security before merge.
 - Mirror the active-row status to `/Users/jay/apps/TRADING-EFFORT-LOG.md` at commit/PR/merge/deploy
   boundaries.
 - Open a ready PR from the owned branch only after the full gate is green.
