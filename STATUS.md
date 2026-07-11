@@ -9,12 +9,34 @@ control socket; the client uses a hard wall-clock deadline, bounded body, and ab
 Production skips the synchronous metadata-file fallback entirely; non-live scanning is bounded.
 Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
 stale when newer DB/WAL activity proves there is work to upload. The pre-reconciliation Node 24 gate
-was green. The branch now reconciles current `origin/main@8fca436d`; runtime source/tests were
-disjoint from the incoming stop-plan and CI changes, while union-merged STATUS/PLAN/EFFORT history
-was preserved. Final Node 24 verification is green: lint 0 errors / 408 inherited warnings,
-TypeScript clean, 326 files / 3,625 tests, and production build clean. The earlier missing
-`ts-morph` report was confirmed as stale worktree dependency state and is resolved. READY PR #1405
-remains the delivery target without merge, auto-merge, deployment, or live replica mutation.
+was green. The branch now reconciles `origin/main@432ca6fe`; runtime source/tests were disjoint from
+the incoming stop-plan, CI, and admin-server changes, while union-merged STATUS/PLAN/EFFORT history
+was preserved. The complete gate through `8fca436d` was green (lint 0 errors / 408 inherited
+warnings, TypeScript, 326 files / 3,625 tests, build); the final combined gate after the externally
+merged #1400 is running before PR refresh. The earlier missing `ts-morph` report was confirmed as
+stale worktree dependency state and is resolved. READY PR #1405 remains the delivery target without
+merge, auto-merge, deployment, or live replica mutation.
+## 2026-07-11 — Admin server Hetzner response-shape crash fix (CODEX, branch `codex/admin-server-shape-fix`)
+Production `/admin/server` hit React error #31 because `/api/admin/server-metrics` passed
+Hetzner's nested `server_type` and `public_net.ipv4` objects into JSX text positions. The API
+now normalizes the current provider shape (`server_type.name`, `public_net.ipv4.ip`,
+`location.name`) while retaining legacy flattened/datacenter inputs. Coolify resources pass
+through the same string-only boundary. Provider network, HTTP, and JSON failures now produce an
+explicit HTTP 502 degraded receipt; missing remote data remains unavailable instead of being
+replaced by local-process statistics or hardcoded production identity. Malformed metric samples
+are omitted with a warning rather than converted to false zero readings. The client independently
+guards every host display field, visibly marks degraded production data, and shows unavailable
+telemetry honestly. Fabricated local resources and histories are gone; the unconfigured local-only
+path still reports the actual runtime host with empty remote datasets. Current
+The change was externally squash-merged to `main` as `432ca6fe` after hosted verify, smoke, and
+security passed. Its configured auto-deploy was triggered, but the running production revision has
+not been independently verified. Final Node 24 verification before merge was green:
+focused 1 file / 7 tests and touched-file ESLint clean; full lint 0 errors / 405 inherited warnings,
+typecheck clean, 325 files / 3,608 tests, and production build clean. The first post-merge typecheck
+found only a stale install missing current-main's tracked `ts-morph`; `npm ci --no-audit --no-fund`
+installed the locked 767 packages and the complete ordered gate then passed. Rendered in-app Browser
+QA remains unavailable because no Browser backend is installed. Rollout:
+`docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
 
 ## 2026-07-11 — Retired deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`)
 Removed the disabled Mac/PM2 `.github/workflows/deploy.yml`, whose YAML still declared `push: main`

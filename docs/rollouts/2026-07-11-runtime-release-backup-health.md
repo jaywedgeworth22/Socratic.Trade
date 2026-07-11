@@ -135,6 +135,11 @@ npm run build
 # passed (existing middleware-deprecation/cache notices only)
 ```
 
+While `scripts/land.sh` was starting, #1400 externally squash-merged as `432ca6fe`. The landing
+safety check stopped before push because shared status/effort files had advanced. That new main was
+then merged deliberately; its admin-server source is disjoint from runtime health, and the final
+combined gate is being rerun before PR refresh.
+
 ## Follow-ups
 
 - After merge/auto-deploy, confirm `/api/health` reports the deployed `SOURCE_COMMIT`,
