@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserFromEmail } from "../src/lib/request-user";
 import { rateLimit, RATE_LIMITS, resetRateLimiter } from "../src/lib/rate-limit";
+import { ADMIN_OPERATION_LIMITS, resetAdminOperationInFlight } from "../src/lib/admin-operation-guard";
+import { resetTuningSingleFlight } from "../src/lib/tuning-singleflight";
 
 const mocks = vi.hoisted(() => ({
   completeMcpOAuthCallback: vi.fn(),
   proposeStrategyTuning: vi.fn(),
+  dryRunAutonomousWeightTuning: vi.fn(),
   getPolicy: vi.fn()
 }));
 
@@ -15,7 +18,8 @@ vi.mock("@/lib/mcp-oauth", () => ({
 }));
 
 vi.mock("@/lib/strategy-tuning", () => ({
-  proposeStrategyTuning: mocks.proposeStrategyTuning
+  proposeStrategyTuning: mocks.proposeStrategyTuning,
+  dryRunAutonomousWeightTuning: mocks.dryRunAutonomousWeightTuning
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -32,15 +36,23 @@ vi.mock("@/lib/llm-request", () => ({
 
 import { GET as robinhoodCallback } from "../app/api/auth/robinhood/callback/route";
 import { POST as tuneStrategy } from "../app/api/strategy/tune/route";
+import { GET as dryRunTuning } from "../app/api/admin/tuning-dry-run/route";
 
 beforeEach(() => {
   resetRateLimiter();
+  resetAdminOperationInFlight();
+  resetTuningSingleFlight();
   mocks.completeMcpOAuthCallback.mockReset().mockResolvedValue({ accessToken: "unused" });
   mocks.proposeStrategyTuning.mockReset().mockResolvedValue({ cautions: [], summary: "ok" });
+  mocks.dryRunAutonomousWeightTuning.mockReset().mockResolvedValue({ wouldApply: false });
   mocks.getPolicy.mockReset().mockReturnValue({ tuning: {} });
 });
 
-afterEach(() => resetRateLimiter());
+afterEach(() => {
+  resetRateLimiter();
+  resetAdminOperationInFlight();
+  resetTuningSingleFlight();
+});
 
 describe("public Robinhood OAuth callback rate limiting", () => {
   it("shares one pre-auth IP bucket across attacker-controlled state values", async () => {
@@ -90,6 +102,13 @@ describe("paid strategy tuning rate limiting", () => {
       body: "{}"
     }));
     expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({
+      ok: false,
+      code: "rate_limited",
+      operation: "strategy-tune",
+      retryAfterSeconds: expect.any(Number),
+      error: expect.any(String)
+    });
     expect(mocks.proposeStrategyTuning).not.toHaveBeenCalled();
 
     const fresh = await tuneStrategy(new Request("https://socratictrade.com/api/strategy/tune", {
@@ -121,7 +140,14 @@ describe("paid strategy tuning rate limiting", () => {
 
     const overlapping = await tuneStrategy(requestFor("same-user@example.com"));
     expect(overlapping.status).toBe(409);
-    expect(await overlapping.json()).toMatchObject({ error: "strategy_tuning_in_progress" });
+    expect(await overlapping.json()).toMatchObject({
+      ok: false,
+      code: "operation_in_flight",
+      operation: "strategy-tune",
+      activeOperation: "strategy-tune",
+      error: "strategy_tuning_in_progress",
+      message: "A strategy tuning review is already in progress."
+    });
     expect(mocks.proposeStrategyTuning).toHaveBeenCalledTimes(1);
 
     const otherUser = await tuneStrategy(requestFor("other-user@example.com"));
@@ -134,5 +160,78 @@ describe("paid strategy tuning rate limiting", () => {
     const afterRelease = await tuneStrategy(requestFor("same-user@example.com"));
     expect(afterRelease.status).toBe(200);
     expect(mocks.proposeStrategyTuning).toHaveBeenCalledTimes(3);
+  });
+
+  it("mutually excludes public tuning and the admin dry run for the same user", async () => {
+    const email = "cross-route-tuning@example.com";
+    const publicRequest = () => new Request("https://socratictrade.com/api/strategy/tune", {
+      method: "POST",
+      headers: { [AUTHENTICATED_EMAIL_HEADER]: email, "content-type": "application/json" },
+      body: "{}"
+    });
+    const adminRequest = () => new Request("https://socratictrade.com/api/admin/tuning-dry-run", {
+      headers: { [AUTHENTICATED_EMAIL_HEADER]: email }
+    });
+
+    let resolveDryRun!: (value: { wouldApply: boolean }) => void;
+    const dryRunDeferred = new Promise<{ wouldApply: boolean }>((resolve) => {
+      resolveDryRun = resolve;
+    });
+    mocks.dryRunAutonomousWeightTuning.mockImplementationOnce(() => dryRunDeferred);
+
+    const dryRun = dryRunTuning(adminRequest());
+    await vi.waitFor(() => expect(mocks.dryRunAutonomousWeightTuning).toHaveBeenCalledTimes(1));
+
+    for (let i = 0; i < RATE_LIMITS.strategyTuning.limit + 2; i += 1) {
+      const publicBlocked = await tuneStrategy(publicRequest());
+      expect(publicBlocked.status).toBe(409);
+      expect(await publicBlocked.json()).toMatchObject({
+        ok: false,
+        code: "operation_in_flight",
+        operation: "strategy-tune",
+        activeOperation: "tuning-dry-run",
+        error: "strategy_tuning_in_progress",
+        message: "A strategy tuning review is already in progress."
+      });
+    }
+    expect(mocks.proposeStrategyTuning).not.toHaveBeenCalled();
+
+    resolveDryRun({ wouldApply: false });
+    expect((await dryRun).status).toBe(200);
+
+    let resolvePublic!: (value: { cautions: string[]; summary: string }) => void;
+    const publicDeferred = new Promise<{ cautions: string[]; summary: string }>((resolve) => {
+      resolvePublic = resolve;
+    });
+    mocks.proposeStrategyTuning.mockImplementationOnce(() => publicDeferred);
+
+    const publicTune = tuneStrategy(publicRequest());
+    await vi.waitFor(() => expect(mocks.proposeStrategyTuning).toHaveBeenCalledTimes(1));
+
+    const adminBlocked = await dryRunTuning(adminRequest());
+    expect(adminBlocked.status).toBe(409);
+    expect(await adminBlocked.json()).toMatchObject({
+      ok: false,
+      code: "operation_in_flight",
+      operation: "tuning-dry-run",
+      activeOperation: "strategy-tune",
+      error: expect.any(String)
+    });
+    expect(mocks.dryRunAutonomousWeightTuning).toHaveBeenCalledTimes(1);
+
+    resolvePublic({ cautions: [], summary: "public complete" });
+    expect((await publicTune).status).toBe(200);
+
+    // The initial accepted public call spent one hit; neither the many public 409s while the dry
+    // run was active nor the rejected admin call above spent either route's remaining budget.
+    for (let i = 1; i < RATE_LIMITS.strategyTuning.limit; i += 1) {
+      expect((await tuneStrategy(publicRequest())).status).toBe(200);
+    }
+    expect((await tuneStrategy(publicRequest())).status).toBe(429);
+
+    for (let i = 1; i < ADMIN_OPERATION_LIMITS["tuning-dry-run"].limit; i += 1) {
+      expect((await dryRunTuning(adminRequest())).status).toBe(200);
+    }
+    expect((await dryRunTuning(adminRequest())).status).toBe(429);
   });
 });

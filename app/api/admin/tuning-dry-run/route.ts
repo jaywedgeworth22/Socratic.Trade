@@ -12,8 +12,9 @@ export const dynamic = "force-dynamic";
 // `autoApplyWeights` flag so an operator can inspect the decision BEFORE enabling autonomy; any tuning-config
 // invariant violations that WOULD block a real apply are surfaced in the response.
 //
-// Gated: requireAdmin (runs only outside production OR when ADMIN_REINDEX_TOKEN matches the x-admin-token
-// header). This mirrors the backtest-ic "suggestion only" pattern — it never mutates policy.
+// Admin-gated by a middleware-verified primary/allowlisted admin email or a timing-safe
+// ADMIN_REINDEX_TOKEN match; there is no environment bypass. This mirrors the backtest-ic
+// "suggestion only" pattern — it never mutates policy.
 export async function GET(request: Request) {
   const denied = requireAdmin(request);
   if (denied) return denied;

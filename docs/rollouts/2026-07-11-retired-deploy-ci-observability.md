@@ -85,8 +85,8 @@ six schedules currently defined in the repository.
 
 ## Follow-ups
 
-- The branch includes `origin/main@1c7c2be8`; the STATUS/EFFORT union was reviewed and the final
-  serialized Node 24 gate is green. PR #1398 is refreshed, ready, and intentionally unmerged.
+- PR #1398 merged externally to `main` as `8fca436d` after hosted checks passed. The configured main
+  auto-deploy was triggered, but this session has not independently verified the production revision.
 
 - After the PR merges, confirm the next scheduled run of each mapped workflow
   produces the expected Sentry Cron monitor check-in.

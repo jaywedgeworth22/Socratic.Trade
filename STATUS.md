@@ -48,10 +48,25 @@ failures but has no Sentry Cron mapping because its in-repo workflow is manual-o
 Vitest coverage that derives independently runnable workflow names and schedules from
 `.github/workflows/` and fails on reporter drift or deploy-workflow resurrection; reusable-only
 `workflow_call` definitions are correctly covered through their caller rather than falsely claimed as
-separate `workflow_run` events. Current `origin/main@1c7c2be8` is merged. Final Node 24 gate is green:
+separate `workflow_run` events. Final Node 24 gate was green:
 lint 0 errors / 408 warnings, tsc clean, 325 Vitest files / 3,604 tests passed, Next build clean;
-focused workflow-parity regression 2/2 passed. READY PR #1398 is refreshed without merge/auto-merge.
+focused workflow-parity regression 2/2 passed. PR #1398 merged externally as `8fca436d`; the configured
+main auto-deploy was triggered, but this session has not independently verified the production revision.
 Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+## 2026-07-11 — Explicit usage-telemetry delivery IDs (CODEX, branch `codex-usage-telemetry-idempotency`)
+Cross-app API Usage Monitor hardening found that aggregated credential lanes share one flush
+timestamp while the shared fallback idempotency basis intentionally omits lane metadata. Distinct
+lanes could therefore derive one key and one event disappeared. This branch gives every aggregate
+window an explicit UUID-backed key and uses a fixed-length hash of the durable local `llm_usage` /
+`rag_usage` row ID for discrete delivery keys; broker balance snapshots also get one delivery
+identity with metric suffixes. Ledger timestamps now flow to the outbound event, failed/ambiguous
+batches retry in memory with the byte-equivalent original event payload, and HMR cancels stale
+module timers before preserving buffered state. The shared five-field fallback algorithm is
+unchanged. Focused usage-push + RAG verification is 18/18 green (11 producer regressions), and
+TypeScript/scoped ESLint pass under Node 24; full pre-PR gates remain pending. The in-memory queue is
+not a crash-durable outbox. No merge/auto-deploy without an explicit landing decision. See
+`docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+
 ## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
 Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
 now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled
@@ -61,10 +76,54 @@ buckets and caps live subjects at 10,000 with deterministic LRU eviction. Middle
 override cannot re-arm header trust while Auth.js remains fail-closed. Paid `/api/strategy/tune`
 now uses a named 10/min per-user limiter plus a one-in-flight-per-user guard before its LLM call.
 Scope deliberately excludes active broker/DB lanes and the `.env.example` file owned by active
-PR #1389. Full verification is green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
-3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge. Exact commands
+PR #1389. Full verification was green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
+3,499 tests, Next build clean). PR #1399 merged to `main` as `97152c25` on 2026-07-11; the configured
+main-push auto-deploy should follow, but this session has not independently verified the live revision.
+Exact commands and the initial Node-ABI mismatch are recorded in
+`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`. Follow-up branch
+`codex/admin-rate-limits` replaces the route-private tuning lock with a guard shared by public tuning
+and the admin dry run.
+## 2026-07-11 — Expensive admin-operation abuse/cost controls (CODEX, `codex/admin-rate-limits`)
+
+High-cost operator actions now enter a shared, named admission guard after `requireAdmin`: paid SEC
+8-K/10-K reindexes, IC backtests, tuning dry runs, Congress score recomputation/share, forced web-source
+refreshes, and Robinhood MCP probes. Budgets are per trusted admin identity with explicit HTTP 429 +
+`Retry-After`; overlapping manual admin work returns HTTP 409. Paid RAG reindex route calls share a
+process-wide single-flight group, while user-scoped analysis/probes remain isolated per admin. Explicit
+validation/config rejection precedes admission so rejected requests do not spend quota; routes that
+intentionally interpret an absent/malformed body as a default action still enter admission. These route
+claims do not cover scheduler/background entrants; underlying-boundary locking is separately planned.
+Public strategy tuning and the admin tuning dry run share one per-user single-flight guard while the
+public route retains its legacy 409 compatibility fields.
+Implementation is merged forward to current `origin/main@432ca6fe`; the incoming admin-server source
+is disjoint and STATUS/EFFORT histories were union-merged. Adversarial re-review found no code blocker.
+Final combined Node 24 verification is green: focused 4 files/29 tests and touched ESLint clean,
+full lint 0 errors/405 inherited warnings, TypeScript clean, 328 files/3,633 tests, and production
+build clean. Previous hosted checks were green; the refreshed head will rerun them. AG's owner-directed portable rejection contract is green in READY shared PR #144;
+adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request
+spend ceilings. READY PR #1409 is not merged/auto-merged or deployed. See
+`docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+3,499 tests, Next build clean). PR #1399 merged externally as `97152c25`; auto-deploy was triggered,
+but this session has not independently verified the production revision. Exact commands
 and the initial Node-ABI mismatch are recorded in
 `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
+## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
+
+The shared `requireAdmin` gate no longer treats `NODE_ENV` or a request hostname as authorization.
+Middleware now forwards identity-source provenance alongside the authenticated email. Email-based
+admin access accepts only Cloudflare Access or Auth.js session provenance; the auth-unconfigured
+`PRIMARY_USER_EMAIL` fallback is denied even when it names the primary operator or appears in
+`ADMIN_USER_EMAILS`. The timing-safe `ADMIN_REINDEX_TOKEN` path remains available in every
+environment. Every stale admin-route comment was updated to match this behavior, and the spoofable
+localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Current
+`origin/main@432ca6fe` is merged. The only source overlap was
+`test/server-metrics.test.ts`; its resolved union preserves current provider-shape/degraded-response
+coverage while adding verified Auth.js provenance to every authorized admin request. The previous
+current-main gate and hosted checks were green. Final combined Node 24 verification is also green:
+focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited warnings,
+TypeScript clean, 325 files / 3,620 tests, and production build clean. READY PR #1410 remains
+unmerged without auto-merge or deployment. See
+`docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),

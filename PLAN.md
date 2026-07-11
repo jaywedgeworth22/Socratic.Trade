@@ -11,6 +11,33 @@ filling the missing pieces.
 > inspection over its local IPC socket. Production explicitly enables the v0.5.12 socket and skips
 > the non-verifying metadata-file fallback; staleness requires evidence of newer local DB/WAL activity.
 > See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
+> **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
+> scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
+> refresh/share, and broker probes now have named per-admin budgets and single-flight exclusion,
+> returning explicit 429/409 responses before duplicate work reaches providers or long DB scans.
+> Explicit validation/config rejection precedes quota admission; historical default-action body semantics
+> remain unchanged. Process-wide groups cover manual admin route calls, while
+> scheduler/background convergence at the underlying operation boundaries is explicitly planned rather
+> than claimed complete. These are anti-repeat budgets, not hard per-request spend ceilings. Node 24
+> current-main (`432ca6fe`) gate is green (focused 4 files/29 tests, touched ESLint clean, full lint
+> 0 errors/405 inherited warnings, tsc, 328 files/3,633 tests, build).
+> AG's owner-directed
+> portable rejection contract is a separate shared-package follow-up and will be adopted only after a
+> real package release. See
+> `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+> **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
+> change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger
+> events, broker balance snapshots, and each aggregated provider-call window so same-flush credential
+> lanes cannot collide under the shared five-field fallback. Ledger timestamps are reused on replay,
+> and failed/ambiguous batches retain their exact events for bounded in-memory retry. See
+> `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+> **2026-07-11 - Admin authorization fail-closed hardening (CODEX).** No roadmap scope change;
+> security/correctness only. The shared admin gate now denies by default in every environment unless
+> the caller has a middleware-proven Cloudflare Access/Auth.js admin email or valid admin token. The
+> former broad `NODE_ENV !== "production"` bypass is removed without a hostname-based replacement;
+> the auth-unconfigured primary-email fallback never grants admin access. Current-main Node 24 gate
+> is green (lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build). See
+> `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 > **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
 > change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/

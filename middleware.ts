@@ -22,7 +22,12 @@
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { stripClientIdentityHeaders } from "./src/lib/auth/strip-identity";
+import {
+  AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+  AUTHENTICATED_IDENTITY_SOURCES,
+  stripClientIdentityHeaders,
+  type AuthenticatedIdentitySource
+} from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
 import { getSessionEmail } from "./src/lib/auth/session-edge";
 
@@ -194,12 +199,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // (where empty ALLOWED_EMAILS defers to CF's own allowlist) from Auth.js session
   // identities (where empty ALLOWED_EMAILS means "only the primary user").
   let trustedEmail: string | null = null;
+  let identitySource: AuthenticatedIdentitySource | null = null;
   let fromCf = false;
 
   // Source 1: Cloudflare Access header.
   const cfEmail = getCfEmail(req);
   if (cfEmail) {
     trustedEmail = cfEmail;
+    identitySource = AUTHENTICATED_IDENTITY_SOURCES.cloudflareAccess;
     fromCf = true;
   }
 
@@ -207,11 +214,13 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (!trustedEmail && process.env.AUTH_SECRET) {
     const cookieHeader = req.headers.get("cookie");
     trustedEmail = await getSessionEmail(cookieHeader, process.env.AUTH_SECRET);
+    if (trustedEmail) identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
   }
 
   // Source 3: Dev/local fallback — ONLY when auth is NOT configured.
   if (!trustedEmail && !isAuthConfigured()) {
     trustedEmail = PRIMARY_EMAIL;
+    identitySource = AUTHENTICATED_IDENTITY_SOURCES.localFallback;
   }
 
   // --- Authorization ---
@@ -234,9 +243,12 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // Strip any spoofable client-supplied identity hints, then forward the VERIFIED identity.
+  // Strip spoofable client-supplied identity hints, then forward the resolved identity + provenance.
   const headers = stripClientIdentityHeaders(new Headers(req.headers));
   headers.set("x-authenticated-user-email", trustedEmail);
+  // Preserve provenance separately from the email. Node handlers use this trusted middleware-set
+  // marker to distinguish verified identities from the auth-unconfigured local fallback.
+  if (identitySource) headers.set(AUTHENTICATED_IDENTITY_SOURCE_HEADER, identitySource);
   return withSecurityHeaders(NextResponse.next({ request: { headers } }));
 }
 
