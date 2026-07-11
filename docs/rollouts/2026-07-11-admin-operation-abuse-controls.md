@@ -97,6 +97,10 @@ Congress score routes retain their existing behavior.
   externally during that run. Its new main was merged without guard-code overlap and the full ordered
   gate above was repeated before landing.
 
+Current-main reconciliation: `origin/main@432ca6fe` merged without textual conflicts. The incoming
+admin-server source/tests are disjoint from guarded routes; only union-managed STATUS and effort
+histories overlapped. The final combined gate is running before PR #1409 is refreshed.
+
 ## Follow-ups / boundaries
 
 - Owner-directed shared-contract follow-up: AG opened green READY
