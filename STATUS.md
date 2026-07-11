@@ -41,7 +41,8 @@ auto-deploy ships it on merge. tcp_mem raise persisted as
 is confidently dead). Upstream issue filed (scrubbed):
 https://github.com/benbjohnson/litestream/issues/1354. Post-deploy box verification
 (litestream 0.5.12 running, replication continuity, fd flatness at 0/10/25 min, health,
-restore marker untouched) recorded on the effort board + #agent-sync.
+restore marker untouched) outlined on the effort board — pending merge + post-deploy
+verification; CLAUDE to record results on the board and #agent-sync after deploy.
 
 ## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
 Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval

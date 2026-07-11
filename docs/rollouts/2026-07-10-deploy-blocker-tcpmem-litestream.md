@@ -36,8 +36,9 @@ was additionally headed for OOM regardless of tcp_mem.
 
 1. **Immediate relief (runtime-only, reversible)** — raised the tcp_mem
    ceiling 3x on the box (`sysctl -w net.ipv4.tcp_mem="273945 365343 548010"`,
-   original values `91335 121781 182670`). NOT persisted to /etc/sysctl.d; a
-   reboot reverts it, or
+   original values `91335 121781 182670`). Initially NOT persisted to
+   /etc/sysctl.d (see "Trade-offs / follow-ups" below for the later persistence
+   as headroom insurance); a reboot reverts it, or
    `sysctl -w net.ipv4.tcp_mem="91335 121781 182670"` restores originals
    immediately. Keep the raised values until the version pin below is deployed.
 2. **Sanctioned catch-up deploy** — triggered Coolify deployment
@@ -79,7 +80,8 @@ on: (a) 0.5.12 predates both 0.5.14 S3-transport changes (#1305 relentless
 retryer, #1326 ResumableReader reopen); (b) the Mac lane ran 0.5.12-era
 litestream cleanly for ~a month against the same replica; (c) post-deploy
 verification on the box (fd samples at 0/10/25 min + replication continuity)
-is the real A/B — results recorded on the effort board and #agent-sync.
+is the real A/B — checklist recorded on the effort board and #agent-sync; results
+  to be filled in after deploy.
 
 Upstream issue filed (scrubbed — no app/infra identifiers):
 https://github.com/benbjohnson/litestream/issues/1354
