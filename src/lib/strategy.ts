@@ -125,6 +125,7 @@ import {
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
 import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
+import type { PositionStopPlan } from "./db-api-keys";
 import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
@@ -717,12 +718,19 @@ export async function runStrategyOnce(
     // so enrichOpeningProposal can stamp an inherited plan's original rationale onto the returned
     // proposal for the approval card, instead of erasing it (Codex review, PR #1371).
     const stopPlanRationaleBySymbol: Record<string, string | undefined> = {};
+    // The UNFILTERED plan set (hoisted out of the try block below) — the stale-symbol cleanup further
+    // down must compute its candidates from THIS, not from stopPlanBySymbol. filterStopPlansByLiveBasis
+    // already drops any symbol with no live position, so by the time a position actually closes its
+    // row is already absent from stopPlanBySymbol — computing staleStopPlanSymbols from that filtered
+    // map made the cleanup a no-op exactly when a position closes, leaving the DB row behind for a
+    // later re-buy at a similar price to silently inherit (Codex review, PR #1371).
+    let rawStopPlans: Record<string, PositionStopPlan> = {};
     if (policy.accountNumber) {
       try {
-        const rawPlans = getStopPlans(policy.accountNumber, userId);
-        stopPlanBySymbol = filterStopPlansByLiveBasis(rawPlans, workingPositions);
+        rawStopPlans = getStopPlans(policy.accountNumber, userId);
+        stopPlanBySymbol = filterStopPlansByLiveBasis(rawStopPlans, workingPositions);
         for (const sym of Object.keys(stopPlanBySymbol)) {
-          stopPlanRationaleBySymbol[sym] = rawPlans[sym]?.rationale;
+          stopPlanRationaleBySymbol[sym] = rawStopPlans[sym]?.rationale;
         }
       } catch (err) {
         console.warn("[strategy] stop plan lookup failed:", err instanceof Error ? err.message : err);
@@ -778,7 +786,8 @@ export async function runStrategyOnce(
         console.warn("[strategy] take-profit trim planning failed:", err instanceof Error ? err.message : err);
       }
       try {
-        const staleStopPlanSymbols = Object.keys(stopPlanBySymbol).filter((s) => !heldSymbols.has(s));
+        // From rawStopPlans (unfiltered), not stopPlanBySymbol — see rawStopPlans' doc comment above.
+        const staleStopPlanSymbols = Object.keys(rawStopPlans).filter((s) => !heldSymbols.has(normalizeSymbol(s)));
         clearStopPlans(policy.accountNumber, staleStopPlanSymbols, userId);
         // Prune the in-memory snapshot too — enrichOpeningProposal (below, same run) reads this same
         // map by closure, and a symbol closed then re-opened within this run must not inherit its old

@@ -560,25 +560,49 @@ export async function reconcileBrokerProtectiveStops(args: {
     }
   }
 
-  // 2b. Per-symbol "none" plan teardown (still cancel-only — runs regardless of `running` or
+  // 2b. Per-symbol plan-excluded teardown (still cancel-only — runs regardless of `running` or
   // `liveReplaceBlocked`, same as section 2). Sections 3/4 below are gated behind `running` because
-  // they PLACE/replace orders, but a position switched to a "none" plan while the system is Stopped
-  // (or live placement is disabled) must not keep an existing app-managed broker-held stop resting —
-  // that contradicts the per-position no-stop choice regardless of whether the app happens to be
-  // running this tick (Codex review, PR #1371).
+  // they PLACE/replace orders, but a position whose plan now excludes every lane the account has
+  // enabled — via `kindForSymbol` returning null, e.g. "none", or a scale-in switching a resting
+  // Robinhood fixed stop to "trailing"/"atr" — must not keep that old broker-held stop resting while
+  // the system is Stopped or live placement is disabled. That contradicts the newly selected plan
+  // regardless of whether the app happens to be running this tick (Codex review, PR #1371 — this
+  // originally only checked literal "none"; broadened to match section 3's `symKind === null` gate).
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
     if (row.status === "pending_cancel") continue; // already handled
     const sym = normalizeSymbol(row.symbol);
     if (!liveLongs.has(sym)) continue; // already torn down above (position closed)
-    if (stopPlanBySymbol[sym] !== "none") continue;
+    if (kindForSymbol(sym) !== null) continue;
     try {
       await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
       deleteBrokerProtectiveStop(row.id, userId);
       out.cancelled++;
       out.cancelledOrderIds.push(row.brokerOrderId);
+      // A successful cancel doesn't mean nothing filled first — mirror every other cancel path in
+      // this reconciler: check the caller's pre-reconcile order snapshot for an executed fill before
+      // this row disappears (Codex review, PR #1371).
+      const preCancelOrder = orders.find((o) => o.id === row.brokerOrderId);
+      if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
+        filledRecoverySymbols.add(sym);
+        out.filledRecoverySymbols.push(sym);
+        bookBrokerHeldStopFill(row, preCancelOrder);
+      }
     } catch (err) {
-      audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "none_plan_teardown" }, userId);
-      upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
+      // The cancel failed — check whether the broker already terminated the order (most likely it
+      // FILLED before our cancel reached the broker), same recovery as every other cancel path here.
+      const found = orders.find((o) => o.id === row.brokerOrderId);
+      if (found && isDoneRestingState(found.state)) {
+        deleteBrokerProtectiveStop(row.id, userId);
+        if (hadExecutedFill(found)) {
+          filledRecoverySymbols.add(sym);
+          out.filledRecoverySymbols.push(sym);
+          bookBrokerHeldStopFill(row, found);
+        }
+        audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "plan_excluded_teardown" }, userId);
+      } else {
+        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "plan_excluded_teardown" }, userId);
+        upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
+      }
     }
   }
 
