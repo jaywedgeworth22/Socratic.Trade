@@ -61,8 +61,34 @@ opening no longer attaches an ATR bracket stop when the account has no base stop
 (ATR only scales an already-enabled flat stop). Gates green (lint/tsc/3511 tests/build). The repo's
 automated `autofix` GitHub Action failed on this PR's head commit with an empty `DEEPSEEK_API_KEY`
 secret (owner action needed, unrelated to this diff — all findings above were fixed manually instead).
-Rollout: `docs/rollouts/2026-07-10-per-position-stop-plans.md`. Next action: watch for further Codex
-review rounds / merge; PR #1331 (base) still needs its own merge first.
+Rollout: `docs/rollouts/2026-07-10-per-position-stop-plans.md`.
+
+**2026-07-11 update — PR #1331 merged forward + round 4 (32 more Codex findings, all fixed):**
+PR #1331 (base) landed its own round-10 fixes + a merge from `main` (no conflicts) and was merged
+into this branch — see that PR's STATUS.md entry. On top of that, worked through this PR's own
+remaining/fresh Codex threads (27 carried over + 5 from a new round triggered by the merge push, all
+32 now resolved): a scale-in's stop plan now records the resulting BLENDED position basis (weighted
+pre-fill position + this fill), not the single fill price, across all three `recordFillFromProposal`
+call sites plus `reconcilePendingFills`'s crash-recovery path (previously `filterStopPlansByLiveBasis`
+discarded a freshly-recorded scale-in plan as stale on the very next run); `filterStopPlansByLiveBasis`
+moved to `db-api-keys.ts` (colocated with `getStopPlans`) so `synthetic-stops.ts` applies the SAME
+live-basis filter independently, not just the strategy-run side; the synthetic monitor no longer
+re-registers a trailing row for "fixed"/"atr" plans in the same pass its own purge just removed one
+(only "none" was excluded before); `reconcileBrokerProtectiveStops` tears down a "none"-plan's
+resting broker stop even while the system is Stopped (was gated behind `running`), and books any
+fill executed before a per-symbol-plan-driven cancel completes; the portfolio-heat budget calculation
+is now stop-plan-aware ("none" excluded from heat entirely, "fixed"/"atr" guaranteed a fallback
+distance instead of counting as "no basis"); a rationale-less "none" plan is now dropped entirely
+instead of downgraded to "default" (which has RESET semantics and could silently wipe an existing
+override); an inherited scale-in plan's rationale is now stamped onto the returned proposal (was
+losing the audit trail); a short position with short selling disabled now keeps its muted/unsafe
+protection label instead of showing an active plan; the approval card discloses an explicit "default"
+as a reset; the dashboard filters its stop-plan display by live basis too; `trailingStopPct` now has
+`looserWhen: "up"` (live-account typed-CONFIRM friction); Alpaca MCP ratcheted trailing stops now
+floor to whole shares (not just native REST) to avoid a broker rejection on fractional GTC orders.
+One thread left open (PR comment on #1331, not resolved): OCO sibling-identity pairing needs a
+broker API change to fix precisely. Verify: tsc clean, lint 0 errors, 3558 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round4-codex-fixes.md`. Auto-merge enabled once CI is green.
 
 ## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
 Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
