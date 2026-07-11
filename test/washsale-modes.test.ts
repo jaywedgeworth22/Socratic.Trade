@@ -29,7 +29,6 @@ import {
   IRA_WASH_SALE_DISREGARD_NOTE,
   WASH_SALE_AUTO_EDGE_MULTIPLE
 } from "../src/lib/policy";
-import { approvedEscalationsFromDecision, shouldEscalateDecision } from "../src/lib/strategy";
 import type { WashSaleLockMap } from "../src/lib/tax";
 import type {
   AccountCapabilities,
@@ -40,6 +39,7 @@ import type {
   TradeProposal,
   TradingPolicy
 } from "../src/lib/types";
+import { approvedEscalationsFromDecision, shouldEscalateDecision } from "../src/lib/strategy-risk";
 
 // Mock the tax module so the gate tests don't need a DB (the gate's fallback resolver is
 // exercised by policy.test.ts; here every test passes washSaleLocks/washSaleLockedSymbols).

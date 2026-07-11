@@ -1782,6 +1782,18 @@ export interface EquityOrderInput {
 }
 
 export interface BrokerGateway {
+  /**
+   * True when getEquityOrders returns a list that reliably includes recently-TERMINAL orders
+   * (filled/canceled/rejected/expired) for at least the placement-reconcile lookback window — not
+   * just currently-live/open orders. reconcilePlacementError only concludes `not_placed`
+   * (safe-to-retry, self-clearing) when this is true; otherwise an order absent from the list is
+   * treated as `uncertain` (keep 'placing' + the protected alert), because absence can't distinguish
+   * "never placed" from "placed, filled, and already aged out of a live-only list" — and dropping a
+   * possibly-real order is the money-path hazard. Undefined ⇒ conservative (treated as false).
+   * Alpaca sets this true (getEquityOrders pages status:"all"); Robinhood leaves it unset because its
+   * get_equity_orders terminal-inclusion window can't be verified without a live token.
+   */
+  readonly ordersListIncludesTerminal?: boolean;
   getAccounts(): Promise<BrokerageAccount[]>;
   getPortfolio(accountNumber: string): Promise<Portfolio>;
   getEquityPositions(accountNumber: string): Promise<EquityPosition[]>;

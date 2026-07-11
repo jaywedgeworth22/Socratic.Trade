@@ -184,7 +184,7 @@ function strategyLockKey(userId: string, connectedAccountId?: string): string {
   return connectedAccountId ? `strategy_run_lock:${userId}:${connectedAccountId}` : `strategy_run_lock:${userId}`;
 }
 
-export function acquireStrategyLock(userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
+export function acquireStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
   const database = getDb();
   const key = strategyLockKey(userId, connectedAccountId);
   const acquire = database.transaction(() => {
@@ -194,15 +194,19 @@ export function acquireStrategyLock(userId: string = "local", connectedAccountId
 
     if (row) {
       try {
-        const { lockedAt } = JSON.parse(row.value) as { lockedAt: string };
-        const age = now.getTime() - new Date(lockedAt).getTime();
-        if (age < staleMs) return false; // lock is still live
+        const existing = JSON.parse(row.value) as { owner?: string, expiresAt?: string, lockedAt?: string };
+        const expiresAt = existing.expiresAt
+          ? new Date(existing.expiresAt).getTime()
+          : (existing.lockedAt ? new Date(existing.lockedAt).getTime() + staleMs : 0);
+        
+        const canWin = expiresAt <= now.getTime() || existing.owner === owner;
+        if (!canWin) return false;
       } catch {
         // malformed lock value — treat as absent and reclaim
       }
     }
 
-    const value = JSON.stringify({ lockedAt: now.toISOString() });
+    const value = JSON.stringify({ owner, acquiredAt: now.toISOString(), expiresAt: new Date(now.getTime() + staleMs).toISOString() });
     database
       .prepare(
         "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
@@ -214,15 +218,69 @@ export function acquireStrategyLock(userId: string = "local", connectedAccountId
   return acquire.immediate() as boolean;
 }
 
-export function releaseStrategyLock(userId: string = "local", connectedAccountId?: string): void {
-  if (connectedAccountId) {
-    getDb().prepare("DELETE FROM settings WHERE key = ?").run(strategyLockKey(userId, connectedAccountId));
-    return;
-  }
-  // No account given: release the user's base lock AND any per-account locks (teardown/back-compat).
-  getDb()
-    .prepare("DELETE FROM settings WHERE key = ? OR key LIKE ?")
-    .run(`strategy_run_lock:${userId}`, `strategy_run_lock:${userId}:%`);
+export function renewStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
+  const database = getDb();
+  const key = strategyLockKey(userId, connectedAccountId);
+  const renew = database.transaction(() => {
+    const row = database
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+
+    if (!row) return false;
+
+    try {
+      const existing = JSON.parse(row.value) as { owner?: string };
+      if (existing.owner !== owner) return false;
+    } catch {
+      return false; // malformed lock value, can't renew
+    }
+
+    const value = JSON.stringify({ owner, acquiredAt: now.toISOString(), expiresAt: new Date(now.getTime() + staleMs).toISOString() });
+    database
+      .prepare("UPDATE settings SET value = ?, updated_at = ? WHERE key = ?")
+      .run(value, now.toISOString(), key);
+    return true;
+  });
+
+  return renew.immediate() as boolean;
+}
+
+export function releaseStrategyLock(owner: string, userId: string = "local", connectedAccountId?: string): void {
+  const database = getDb();
+  const key = strategyLockKey(userId, connectedAccountId);
+  
+  database.transaction(() => {
+    if (connectedAccountId) {
+      const row = database.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+      if (row) {
+        try {
+          const existing = JSON.parse(row.value) as { owner?: string };
+          if (existing.owner === owner) {
+            database.prepare("DELETE FROM settings WHERE key = ?").run(key);
+          }
+        } catch {
+          database.prepare("DELETE FROM settings WHERE key = ?").run(key);
+        }
+      }
+      return;
+    }
+
+    // No account given: release the user's base lock AND any per-account locks (teardown/back-compat).
+    const rows = database
+      .prepare("SELECT key, value FROM settings WHERE key = ? OR key LIKE ?")
+      .all(`strategy_run_lock:${userId}`, `strategy_run_lock:${userId}:%`) as Array<{ key: string, value: string }>;
+      
+    for (const r of rows) {
+      try {
+        const existing = JSON.parse(r.value) as { owner?: string };
+        if (existing.owner === owner) {
+          database.prepare("DELETE FROM settings WHERE key = ?").run(r.key);
+        }
+      } catch {
+        database.prepare("DELETE FROM settings WHERE key = ?").run(r.key);
+      }
+    }
+  }).immediate();
 }
 
 export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string): void {

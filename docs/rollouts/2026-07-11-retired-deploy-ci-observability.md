@@ -1,5 +1,7 @@
 # 2026-07-11 — retired deploy CI safety and observability
 
+PR: <https://github.com/jaywedgeworth22/Socratic.Trade/pull/1398> (ready, not merged)
+
 ## Summary
 
 - Deleted `.github/workflows/deploy.yml`. Although the Mac/PM2 production lane
@@ -73,6 +75,9 @@ six schedules currently defined in the repository.
 - `git diff --check` — clean before commit.
 
 ## Follow-ups
+
+- The branch now includes current `origin/main` with the STATUS/EFFORT union reviewed; rerun the
+  serialized Node 24 gate before refreshing PR #1398.
 
 - After the PR merges, confirm the next scheduled run of each mapped workflow
   produces the expected Sentry Cron monitor check-in.

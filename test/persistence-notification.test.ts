@@ -59,11 +59,11 @@ describe("persistence and notifications", () => {
 
   it("rejects overlapping strategy run locks", async () => {
     const { acquireStrategyLock, releaseStrategyLock } = await import("../src/lib/db");
-    expect(acquireStrategyLock()).toBe(true);
-    expect(acquireStrategyLock()).toBe(false);
-    releaseStrategyLock();
-    expect(acquireStrategyLock()).toBe(true);
-    releaseStrategyLock();
+    expect(acquireStrategyLock("owner1")).toBe(true);
+    expect(acquireStrategyLock("owner2")).toBe(false);
+    releaseStrategyLock("owner1");
+    expect(acquireStrategyLock("owner3")).toBe(true);
+    releaseStrategyLock("owner3");
   });
 
   it("keeps strategy run locks isolated per user", async () => {
@@ -71,12 +71,12 @@ describe("persistence and notifications", () => {
     const userA = `lock-a-${randomUUID()}`;
     const userB = `lock-b-${randomUUID()}`;
 
-    expect(acquireStrategyLock(userA)).toBe(true);
-    expect(acquireStrategyLock(userB)).toBe(true);
-    expect(acquireStrategyLock(userA)).toBe(false);
+    expect(acquireStrategyLock("owner-a", userA)).toBe(true);
+    expect(acquireStrategyLock("owner-b", userB)).toBe(true);
+    expect(acquireStrategyLock("owner-a2", userA)).toBe(false);
 
-    releaseStrategyLock(userA);
-    releaseStrategyLock(userB);
+    releaseStrategyLock("owner-a", userA);
+    releaseStrategyLock("owner-b", userB);
   });
 
   it("strips legacy dryRun/paperMode keys from old stored policy JSON instead of leaking them", async () => {
