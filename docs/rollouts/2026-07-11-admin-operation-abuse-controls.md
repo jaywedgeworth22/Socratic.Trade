@@ -86,7 +86,14 @@ Congress score routes retain their existing behavior.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/admin-operation-guard.test.ts test/admin-operation-route-wiring.test.ts test/admin-operation-route-behavior.test.ts test/public-auth-rate-limit-hardening.test.ts` — 4 files, 29 tests passed.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx eslint src/lib/admin-operation-guard.ts src/lib/operation-guard-response.ts src/lib/tuning-singleflight.ts app/api/admin/reindex-8k/route.ts app/api/admin/reindex-10k/route.ts app/api/admin/backtest-ic/route.ts app/api/admin/tuning-dry-run/route.ts app/api/admin/congress-score-eval/route.ts app/api/admin/congress-share/route.ts app/api/admin/refresh-websource/route.ts app/api/admin/robinhood-probe/route.ts app/api/strategy/tune/route.ts test/admin-operation-guard.test.ts test/admin-operation-route-wiring.test.ts test/admin-operation-route-behavior.test.ts test/public-auth-rate-limit-hardening.test.ts` — passed with no output (0 errors/warnings).
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit` — passed.
-- Full Node 24 gate is intentionally not started without parent/coordinator approval.
+- Final current-main (`8fca436d`) Node 24 gate:
+  - `npm run lint` — 0 errors / 408 grandfathered warnings.
+  - `npx tsc --noEmit` — clean.
+  - `npm test` — 328 files / 3,629 tests passed.
+  - `npm run build` — production build passed with existing middleware/Sentry/cache warnings only.
+- The first full gate was also green at prior main (327 files / 3,627 tests), but PR #1398 merged
+  externally during that run. Its new main was merged without guard-code overlap and the full ordered
+  gate above was repeated before landing.
 
 ## Follow-ups / boundaries
 

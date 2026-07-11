@@ -1,5 +1,21 @@
 # Status
 
+## 2026-07-11 — Retired deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`)
+Removed the disabled Mac/PM2 `.github/workflows/deploy.yml`, whose YAML still declared `push: main`
+and manual-dispatch triggers; Coolify's GitHub-App auto-deploy remains the sole production path.
+Replaced stale deployment and
+runner instructions with the current Coolify runbook. Updated `Sentry CI Report` to observe every
+active workflow and map all six active scheduled lanes (`CI`, cache cleanup, effort sync, Security,
+Playwright, shared-package pin) to their source cron expressions; `merge-shepherd` is observed for
+failures but has no Sentry Cron mapping because its in-repo workflow is manual-only. Added structural
+Vitest coverage that derives independently runnable workflow names and schedules from
+`.github/workflows/` and fails on reporter drift or deploy-workflow resurrection; reusable-only
+`workflow_call` definitions are correctly covered through their caller rather than falsely claimed as
+separate `workflow_run` events. Final Node 24 gate was green:
+lint 0 errors / 408 warnings, tsc clean, 325 Vitest files / 3,604 tests passed, Next build clean;
+focused workflow-parity regression 2/2 passed. PR #1398 merged externally as `8fca436d`; the configured
+main auto-deploy was triggered, but this session has not independently verified the production revision.
+Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
 ## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
 Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
 now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled
@@ -28,9 +44,9 @@ intentionally interpret an absent/malformed body as a default action still enter
 claims do not cover scheduler/background entrants; underlying-boundary locking is separately planned.
 Public strategy tuning and the admin tuning dry run share one per-user single-flight guard while the
 public route retains its legacy 409 compatibility fields.
-Implementation is merged forward to `origin/main@97152c25`; adversarial re-review found no code blocker,
-and focused Node 24 coverage is green (4 files/29 tests, touched lint, tsc). The full suite/build has not
-run in this lane yet. AG's owner-directed portable rejection contract is green in READY shared PR #144;
+Implementation is merged forward to current `origin/main@8fca436d`; adversarial re-review found no code
+blocker. Final Node 24 gate is green: lint 0 errors/408 warnings, tsc clean, 328 files/3,629 tests, build
+clean; focused invoked-route/guard coverage is 4 files/29 tests. AG's owner-directed portable rejection contract is green in READY shared PR #144;
 adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request spend ceilings. Not committed, pushed,
 merged to main, or deployed. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
