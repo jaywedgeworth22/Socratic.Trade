@@ -255,8 +255,8 @@ describe("enrichment cache consent gate", () => {
     const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
     __resetTwelveDataWindowForTests();
-    const prevBudget = process.env.TWELVEDATA_CREDITS_PER_MIN;
-    process.env.TWELVEDATA_CREDITS_PER_MIN = "8";
+    const prevBudget = process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
+    process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "8";
 
     const queriedSymbolCounts: number[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
@@ -280,14 +280,16 @@ describe("enrichment cache consent gate", () => {
     for (const s of symbols) expect(res[s]).toBeDefined();
     expect(res.SYM0?.price).toBe(100); // a queried (highest-priority) symbol got real data
 
-    if (prevBudget === undefined) delete process.env.TWELVEDATA_CREDITS_PER_MIN;
-    else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
+    if (prevBudget === undefined) delete process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
+    else process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = prevBudget;
   });
 
-  it("TwelveData window-gate SKIPS (does not queue) a second SAME-credential scan inside the window", async () => {
+  it("TwelveData quota is SHARED per-credential across scans in the same window (2nd scan gets the remainder)", async () => {
     const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
     __resetTwelveDataWindowForTests();
+    const prev = process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
+    process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "2"; // exactly 2 credits/min
 
     let fetchCalls = 0;
     vi.stubGlobal("fetch", async (url: string) => {
@@ -299,18 +301,22 @@ describe("enrichment cache consent gate", () => {
       return new Response(JSON.stringify(body));
     });
 
-    // Two accounts sharing the SAME operator key scan inside the same minute: only the FIRST spends
-    // the budget; the second returns best-effort immediately (no second network call, no stall/queue).
+    // Two accounts sharing the SAME operator key scan inside the same minute. The FIRST spends the
+    // whole 2-credit budget; the SECOND gets 0 and returns best-effort immediately (no network call,
+    // no stall/queue) — the per-minute limit is respected across concurrent-account scans.
     const sharedKey = `env-key-${randomUUID()}`;
     const a = new TwelveDataEnrichmentProvider(sharedKey, "env", `u-${randomUUID()}`);
     const b = new TwelveDataEnrichmentProvider(sharedKey, "env", `u-${randomUUID()}`);
     const resA = await a.enrich(["AAA", "BBB"]);
     const resB = await b.enrich(["CCC", "DDD"]);
 
-    expect(fetchCalls).toBe(1); // second scan skipped the network entirely
+    expect(fetchCalls).toBe(1); // second scan had no budget left → skipped the network entirely
     expect(resA.AAA?.price).toBe(50); // first scan got real data
     expect(resB.CCC).toEqual({}); // second scan deferred (best-effort empty), not a hang
     expect(resB.DDD).toEqual({});
+
+    if (prev === undefined) delete process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
+    else process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = prev;
   });
 
   it("TwelveData window is PER-CREDENTIAL: a different key is not gated by another key's window", async () => {
@@ -358,8 +364,8 @@ describe("enrichment cache consent gate", () => {
 
     const key = `env-key-${randomUUID()}`;
     // Budget of 1 symbol/call so NODATA (front of misses) would otherwise be queried every scan.
-    const prevBudget = process.env.TWELVEDATA_CREDITS_PER_MIN;
-    process.env.TWELVEDATA_CREDITS_PER_MIN = "1";
+    const prevBudget = process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
+    process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "1";
 
     const p1 = new TwelveDataEnrichmentProvider(key, "env");
     await p1.enrich(["NODATA", "GOOD"]); // scan 1 queries NODATA (front), gets error → negative-cached
@@ -370,8 +376,8 @@ describe("enrichment cache consent gate", () => {
     expect(queried[0]).toEqual(["NODATA"]); // scan 1 spent its 1-symbol budget on the front symbol
     expect(queried[1]).toEqual(["GOOD"]);   // scan 2 rotated past the negative-cached NODATA to GOOD
 
-    if (prevBudget === undefined) delete process.env.TWELVEDATA_CREDITS_PER_MIN;
-    else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
+    if (prevBudget === undefined) delete process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
+    else process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = prevBudget;
   });
 
   it("TwelveData does NOT negative-cache a transient per-symbol error (429), only a permanent one (404)", async () => {
@@ -395,8 +401,8 @@ describe("enrichment cache consent gate", () => {
 
     const key = `env-key-${randomUUID()}`;
     // Budget of 1 symbol/call isolates each symbol's own scan so re-query behavior is unambiguous.
-    const prevBudget = process.env.TWELVEDATA_CREDITS_PER_MIN;
-    process.env.TWELVEDATA_CREDITS_PER_MIN = "1";
+    const prevBudget = process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
+    process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "1";
 
     // RATELIMITED (transient 429): must NOT be negative-cached, so it's still a miss — and gets
     // re-queried — on the very next scan once the credit window elapses.
@@ -419,8 +425,8 @@ describe("enrichment cache consent gate", () => {
     await p4.enrich(["NOTFOUND", "GOOD"]);
     expect(queried).toEqual(["GOOD"]); // scan 4 rotated past the negative-cached NOTFOUND to GOOD
 
-    if (prevBudget === undefined) delete process.env.TWELVEDATA_CREDITS_PER_MIN;
-    else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
+    if (prevBudget === undefined) delete process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN;
+    else process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = prevBudget;
   });
 
   it("TwelveData logs an ok:false health row when a batch is ALL embedded-transient errors (no usable data)", async () => {
@@ -491,6 +497,127 @@ describe("enrichment cache consent gate", () => {
     const rows = getServiceHealthLog("twelvedata", 10);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0].ok).toBe(1);
+  });
+
+  it("Tiingo budgets a scan to its hourly cap (3 requests/symbol) regardless of scan size", async () => {
+    const { TiingoEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+    const prev = process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR;
+    // 6 requests/hour ÷ 3 calls/symbol = 2 symbols may be queried this scan, whatever the scan size.
+    process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR = "6";
+
+    const queriedTickers = new Set<string>();
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      const iex = u.match(/\/iex\/([a-z0-9.-]+)/i);
+      if (iex) {
+        queriedTickers.add(iex[1].toLowerCase());
+        return new Response(JSON.stringify([{ tngoLast: 100, prevClose: 99, volume: 1000 }]));
+      }
+      if (u.includes("/tiingo/daily/")) return new Response(JSON.stringify({ name: "Test Co" }));
+      return new Response(JSON.stringify([])); // news
+    });
+
+    const symbols = Array.from({ length: 10 }, (_, i) => `TSYM${i}`);
+    const provider = new TiingoEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    const res = await provider.enrich(symbols);
+
+    // Only 2 symbols (6 requests) hit the network; the hourly cap held despite 10 candidates.
+    expect(queriedTickers.size).toBe(2);
+    expect(queriedTickers.has("tsym0")).toBe(true); // best-first: the top-ranked symbols get the budget
+    // Every candidate is still represented — queried ones enriched, deferred ones best-effort {}.
+    for (const s of symbols) expect(res[s]).toBeDefined();
+    expect(res.TSYM0?.price).toBe(100);
+
+    if (prev === undefined) delete process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR;
+    else process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR = prev;
+  });
+
+  it("TIINGO_DROP_NEWS shrinks the per-symbol cost to 2, letting more symbols fit the hourly cap", async () => {
+    const { TiingoEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+    const prevQuota = process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR;
+    const prevDrop = process.env.TIINGO_DROP_NEWS;
+    process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR = "6";
+    process.env.TIINGO_DROP_NEWS = "1"; // 2 calls/symbol → 6 ÷ 2 = 3 symbols fit
+
+    const queriedTickers = new Set<string>();
+    let newsCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("/tiingo/news")) { newsCalls++; return new Response(JSON.stringify([])); }
+      const iex = u.match(/\/iex\/([a-z0-9.-]+)/i);
+      if (iex) { queriedTickers.add(iex[1].toLowerCase()); return new Response(JSON.stringify([{ tngoLast: 100, prevClose: 99 }])); }
+      return new Response(JSON.stringify({ name: "Test Co" })); // daily
+    });
+
+    const symbols = Array.from({ length: 10 }, (_, i) => `NSYM${i}`);
+    const provider = new TiingoEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    await provider.enrich(symbols);
+
+    expect(queriedTickers.size).toBe(3); // dropping news freed budget for a 3rd symbol
+    expect(newsCalls).toBe(0);           // the news sub-call is never issued when dropped
+
+    if (prevQuota === undefined) delete process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR;
+    else process.env.PROVIDER_QUOTA_TIINGO_PER_HOUR = prevQuota;
+    if (prevDrop === undefined) delete process.env.TIINGO_DROP_NEWS;
+    else process.env.TIINGO_DROP_NEWS = prevDrop;
+  });
+
+  it("Tiingo does NOT negative-cache a symbol whose sub-calls ALL failed (403 cred/plan), so it re-queries", async () => {
+    const { TiingoEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    let attempts = 0;
+    vi.stubGlobal("fetch", async () => { attempts++; return new Response("Forbidden", { status: 403 }); });
+
+    const key = `env-key-${randomUUID()}`;
+    const p1 = new TiingoEnrichmentProvider(key, "env");
+    const r1 = await p1.enrich(["AAA"]);
+    expect(r1.AAA).toEqual({});          // all sub-calls 403'd → best-effort empty
+    const attemptsAfterFirst = attempts;
+    expect(attemptsAfterFirst).toBeGreaterThan(0);
+
+    __resetTwelveDataWindowForTests(); // window elapses; the credential/plan issue is unrelated to the cache
+    const p2 = new TiingoEnrichmentProvider(key, "env");
+    await p2.enrich(["AAA"]);
+    // A negative cache would have suppressed AAA for the TTL; instead scan 2 re-queries it (attempts grew).
+    expect(attempts).toBeGreaterThan(attemptsAfterFirst);
+  });
+
+  it("Tiingo namespaces its cache by TIINGO_DROP_NEWS so toggling the flag doesn't serve a no-news row", async () => {
+    const { TiingoEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+    const prevDrop = process.env.TIINGO_DROP_NEWS;
+
+    let newsCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("/tiingo/news")) { newsCalls++; return new Response(JSON.stringify([{ title: "Big news for AAA" }])); }
+      if (u.match(/\/iex\//i)) return new Response(JSON.stringify([{ tngoLast: 100, prevClose: 99 }]));
+      return new Response(JSON.stringify({ name: "Alpha Co" })); // daily
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    // Scan 1 with news DROPPED → caches a row with no headlines under the "tiingo-nonews" namespace.
+    process.env.TIINGO_DROP_NEWS = "1";
+    const withoutNews = await new TiingoEnrichmentProvider(key, "env").enrich(["AAA"]);
+    expect(withoutNews.AAA?.headlines).toBeUndefined();
+    expect(newsCalls).toBe(0);
+
+    // Scan 2 with news ENABLED must NOT be served the cached no-news row — it re-queries and gets headlines.
+    __resetTwelveDataWindowForTests();
+    delete process.env.TIINGO_DROP_NEWS;
+    const withNews = await new TiingoEnrichmentProvider(key, "env").enrich(["AAA"]);
+    expect(newsCalls).toBe(1);                       // the news endpoint WAS hit (not a stale cache hit)
+    expect(withNews.AAA?.headlines).toEqual(["Big news for AAA"]);
+
+    if (prevDrop === undefined) delete process.env.TIINGO_DROP_NEWS;
+    else process.env.TIINGO_DROP_NEWS = prevDrop;
   });
 
   it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
@@ -1944,5 +2071,92 @@ describe("short-interest second source (Massive) — cross-check + disagreement 
     const provider = new MassiveEnrichmentProvider("massive-key", "env");
     const res = await provider.enrich(["NONE"]);
     expect(res.NONE).toEqual({});
+  });
+});
+
+describe("enrichment symbol budget covers the full scan candidate set (starvation regression)", () => {
+  // Prod 2026-07-09T19:41Z: scanMarket enriched top-30 ranked + 8 event outliers + 4 held
+  // names (42 symbols), but every provider sliced its list to a fixed 30 — the force-included
+  // extras (systematically the owner's HELD positions) got zero fields from every provider.
+  // The budget must cover candidateLimit + outlier reserve + a held-position allowance.
+  const ranked = Array.from({ length: 30 }, (_, i) => `RNK${i}`);
+  const outliers = Array.from({ length: 8 }, (_, i) => `EVT${i}`);
+  const held = ["AAPL", "GOOG", "V", "KO"];
+  // Held + outliers first, mirroring scanMarket's enrichment priority order.
+  const candidates = [...held, ...outliers, ...ranked];
+
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    delete process.env.FMP_MAX_SYMBOLS;
+    delete process.env.MARKET_SCAN_LIMIT;
+    delete process.env.MARKET_SCAN_EVENT_RESERVE;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.FMP_MAX_SYMBOLS;
+    delete process.env.MARKET_SCAN_LIMIT;
+    delete process.env.MARKET_SCAN_EVENT_RESERVE;
+  });
+
+  function stubSymbolRecordingFetch(): Set<string> {
+    const fetched = new Set<string>();
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const symbol = new URL(String(url)).searchParams.get("symbol");
+      if (symbol) fetched.add(symbol);
+      return new Response(JSON.stringify({}));
+    });
+    return fetched;
+  }
+
+  it("enriches every candidate: candidateLimit + outlier reserve + held extras (the 42-symbol prod shape)", async () => {
+    const { FinnhubEnrichmentProvider } = await import("../src/lib/data-providers");
+    const fetched = stubSymbolRecordingFetch();
+    const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    const result = await provider.enrich(candidates);
+    for (const symbol of candidates) {
+      expect(fetched.has(symbol), `${symbol} was starved of enrichment`).toBe(true);
+    }
+    expect(Object.keys(result).length).toBe(candidates.length);
+  });
+
+  it("still covers the force-included extras when MARKET_SCAN_LIMIT pins the scan size", async () => {
+    // MARKET_SCAN_LIMIT used to be consumed as the enrichment budget itself, re-creating
+    // the starvation for any operator with it set; it is the candidate limit, so the
+    // budget must sit ABOVE it (reserve + held allowance on top).
+    process.env.MARKET_SCAN_LIMIT = "30";
+    const { FinnhubEnrichmentProvider } = await import("../src/lib/data-providers");
+    const fetched = stubSymbolRecordingFetch();
+    const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    await provider.enrich(candidates);
+    for (const symbol of candidates) {
+      expect(fetched.has(symbol), `${symbol} was starved of enrichment`).toBe(true);
+    }
+  });
+
+  it("keeps FMP_MAX_SYMBOLS as an explicit operator throttle — unclamped, with NO default cap", async () => {
+    process.env.FMP_MAX_SYMBOLS = "10";
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    let fetched = stubSymbolRecordingFetch();
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(candidates);
+    expect(fetched.size).toBe(10);
+
+    // The override is not silently clamped: an operator asking for 60 gets 60 (the old
+    // MAX_SYMBOLS_CAP=50 would have quietly cut this — owner ruling 2026-07-09: no hard cap).
+    process.env.FMP_MAX_SYMBOLS = "60";
+    clearEnrichmentCache();
+    fetched = stubSymbolRecordingFetch();
+    const seventy = Array.from({ length: 70 }, (_, i) => `OVR${i}`);
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(seventy);
+    expect(fetched.size).toBe(60);
+
+    // No env set: the full requested list is enriched, however large. An account with more
+    // than 50 positions must never see its held names starved by a provider-side ceiling.
+    delete process.env.FMP_MAX_SYMBOLS;
+    clearEnrichmentCache();
+    fetched = stubSymbolRecordingFetch();
+    const bigBook = Array.from({ length: 120 }, (_, i) => `POS${i}`);
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(bigBook);
+    expect(fetched.size).toBe(120);
   });
 });

@@ -12,6 +12,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound } from "lucide-react";
 import type { ConnectedAccount } from "@/lib/types";
+// llm-required is PURE (no node/server imports — see its header), so its message constants are
+// safe to import here: classifyRunFailure matches the server's own 412 summary strings.
+import { LLM_MODEL_REQUIRED_STRATEGY_MESSAGE } from "@/lib/llm-required";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
   activeConnectedAccount,
@@ -580,7 +583,20 @@ function deriveRunBlock(snapshot: DashboardSnapshot): RunBlock | null {
  *  summary strings (src/lib/strategy.ts / llm-required.ts). */
 function classifyRunFailure(message: string, status?: number): RunBlock {
   const m = message.toLowerCase();
-  if (status === 412 || m.includes("llm provider") || m.includes("llm key")) {
+  // A 412 fires for two DIFFERENT reasons the sheet must not conflate: the team-model CHOICE is
+  // missing (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE — fix under the model pickers), or a provider KEY
+  // is missing (everything else — fix under API keys). Titling a model-choice refusal "No LLM key
+  // is configured" sent the owner hunting through API keys that were fine — match the choice
+  // message FIRST, on the server's own string.
+  if (m.includes(LLM_MODEL_REQUIRED_STRATEGY_MESSAGE.toLowerCase())) {
+    return {
+      title: "Choose your team models",
+      detail: message,
+      fixHref: "/console/strategy#models",
+      fixLabel: "Open Framework → Models"
+    };
+  }
+  if (status === 412 || m.includes("llm provider") || m.includes("llm key") || m.includes("provider key")) {
     return {
       title: "No LLM key is configured",
       detail: message,

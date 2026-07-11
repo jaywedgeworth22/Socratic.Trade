@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redTeamFailureMeta, redTeamFailureModel, type RedTeamVerdict } from "../app/console/lib/red-team";
+import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, type RedTeamVerdict } from "../app/console/lib/red-team";
 
 function verdict(overrides: Partial<RedTeamVerdict>): RedTeamVerdict {
   return { rejected: false, available: false, reason: "Red Team evaluation failed.", ...overrides };
@@ -22,6 +22,40 @@ describe("redTeamFailureMeta", () => {
   });
 });
 
+describe("redTeamCardState (exactly one Red Team section — no double-render)", () => {
+  it("a FAILED verdict is owned solely by the verdict panel (regression: adversary-review-duplication)", () => {
+    // The bug: a failed review satisfied BOTH the verdict panel AND a separate "unavailable"
+    // callout, printing the same provider-error text twice. The panel must be the only owner —
+    // even when the legacy adversaryUnavailable flag is ALSO set on the same decision.
+    expect(redTeamCardState(true, false)).toBe("verdict-panel");
+    expect(redTeamCardState(true, true)).toBe("verdict-panel");
+  });
+
+  it("an available verdict renders the panel", () => {
+    expect(redTeamCardState(true, false)).toBe("verdict-panel");
+  });
+
+  it("only shows the legacy 'unavailable' callout when there is NO structured verdict", () => {
+    expect(redTeamCardState(false, true)).toBe("legacy-unavailable");
+  });
+
+  it("shows the 'no review triggered' note when nothing ran and no unavailable flag is set", () => {
+    expect(redTeamCardState(false, false)).toBe("no-review");
+  });
+
+  it("is total and mutually exclusive across all four input combinations", () => {
+    const states = [
+      redTeamCardState(true, true),
+      redTeamCardState(true, false),
+      redTeamCardState(false, true),
+      redTeamCardState(false, false),
+    ];
+    // Every input yields exactly one defined state; the verdict panel wins whenever a verdict exists.
+    expect(states.every((s) => s === "verdict-panel" || s === "legacy-unavailable" || s === "no-review")).toBe(true);
+    expect(states.filter((s) => s === "legacy-unavailable")).toHaveLength(1);
+  });
+});
+
 describe("redTeamFailureModel (never blame a model that provably never ran)", () => {
   it("prefers the persisted verdict model", () => {
     expect(redTeamFailureModel(verdict({ model: "deepseek-reasoner", failureKind: "timeout" }), "gpt-5.4-mini")).toBe("deepseek-reasoner");
@@ -38,5 +72,12 @@ describe("redTeamFailureModel (never blame a model that provably never ran)", ()
   it("returns null when nothing is known", () => {
     expect(redTeamFailureModel(verdict({ failureKind: "provider_error" }), undefined)).toBeNull();
     expect(redTeamFailureModel(verdict({ failureKind: "provider_error" }), "   ")).toBeNull();
+  });
+
+  it("never displays the '__rotate__' rotation sentinel as the failed reviewer", () => {
+    // A rotating policy's configured value is a rotation marker, not a model that ran — the
+    // fallback must skip it (a persisted concrete pick on the verdict still wins as usual).
+    expect(redTeamFailureModel(verdict({ failureKind: "provider_error" }), "__rotate__")).toBeNull();
+    expect(redTeamFailureModel(verdict({ model: "gpt-5.4-mini", failureKind: "timeout" }), "__rotate__")).toBe("gpt-5.4-mini");
   });
 });

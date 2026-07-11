@@ -1,12 +1,13 @@
 "use client";
 
 /** Model stats drawer — the info affordance next to the Proposer/Reviewer model
- *  pickers (settings/models + strategy page). One small button per select opens
+ *  pickers on the Framework (strategy) page. One small button per select opens
  *  a sheet listing every catalog model with cost per call and latency (live
- *  figures when this user has enough real traffic, otherwise the 2026-07-08
- *  benchmark, always labeled which is which) plus a performance column whose
- *  meaning is role-specific. Neither performance measure is shown unlabeled
- *  below its sample-size thresholds.
+ *  figures when this user has enough real traffic, otherwise the standardized
+ *  offline benchmark — the 2026-07-08 full sweep, topped up 2026-07-10 for
+ *  Mistral once its capability-map bug was fixed — always labeled which is
+ *  which) plus a performance column whose meaning is role-specific. Neither
+ *  performance measure is shown unlabeled below its sample-size thresholds.
  *  - Proposer (Green): realized performance = closed trades whose ENTRY this
  *    model proposed. Hidden below 20 closed trades ("needs >= 20 closed trades
  *    (n=X)"); 20-49 shows numbers WITH a small-sample caveat; 50+ plain.
@@ -106,7 +107,7 @@ function CostCell({ s }: { s: ModelRoleStats | undefined }) {
     return (
       <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
         <span className="con-num">{fmtCost(s.benchmarkCostUsd)}</span>
-        <Chip title="Estimated cost per call from the 2026-07-08 standardized benchmark run — not your live traffic.">benchmark</Chip>
+        <Chip title="Estimated cost per call from a standardized offline benchmark run — not your live traffic.">benchmark</Chip>
       </span>
     );
   }
@@ -128,7 +129,7 @@ function LatencyCell({ s }: { s: ModelRoleStats | undefined }) {
     return (
       <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
         <span className="con-num">{fmtLatency(s.benchmarkColdP50Ms)}</span>
-        <Chip title="Cold-start p50 from the 2026-07-08 standardized benchmark run — not your live traffic.">benchmark</Chip>
+        <Chip title="Cold-start p50 from a standardized offline benchmark run — not your live traffic.">benchmark</Chip>
       </span>
     );
   }
@@ -218,7 +219,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
 
   const statsRole = role === "proposer" ? "green" : "red";
   const byModel = new Map((data?.stats ?? []).filter((s) => s.role === statsRole).map((s) => [s.model, s]));
-  const roleLabel = role === "proposer" ? "Proposer (Green Team)" : "Reviewer (Red Team)";
+  const roleLabel = role === "proposer" ? "Proposer (Green)" : "Reviewer (Red)";
 
   return (
     <>
@@ -229,7 +230,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Cost and latency per call for every model in this picker. Figures marked <strong>live</strong> come from your own
           recent calls in this role{data ? ` (last ${data.sinceDays} days)` : ""}; models without enough live traffic fall
-          back to the standardized <strong>benchmark</strong> run{data ? ` of ${new Date(data.benchmark.runAt).toLocaleDateString()}` : ""}.
+          back to a standardized offline <strong>benchmark</strong> run{data ? ` (most recently updated ${new Date(data.benchmark.runAt).toLocaleDateString()})` : ""}.
         </p>
         {loading && <p className="py-4 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading model stats…</p>}
         {error && !loading && (

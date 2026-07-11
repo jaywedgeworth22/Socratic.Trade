@@ -170,12 +170,24 @@ describe("buildLlmRequestBody", () => {
     ) as Record<string, any>;
     expect(xai.reasoning_effort).toBe("high");
 
+    // Only mistral-medium-3-5 carries a Mistral reasoning capability (provider enforces
+    // reasoning_effort high|none); an explicit xhigh request normalizes to "high", sent WITHOUT
+    // prompt_mode (2026-07-10 keyed probe: medium-3-5 rejects prompt_mode:"reasoning" too).
     const mistral = buildLlmRequestBody(
       { provider: "mistral", transport: "chat-completions" },
-      { model: "mistral-large-2512", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
+      { model: "mistral-medium-3-5", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
     ) as Record<string, any>;
-    expect(mistral.reasoning_effort).toBe("xhigh");
-    expect(mistral.prompt_mode).toBe("reasoning");
+    expect(mistral.reasoning_effort).toBe("high");
+    expect(mistral.prompt_mode).toBeUndefined();
+
+    // The rest of the Mistral family (small-2603 rejects the reasoning prompt mode outright;
+    // benchmark 2026-07-08) sends a plain body with no reasoning params at all.
+    const mistralPlain = buildLlmRequestBody(
+      { provider: "mistral", transport: "chat-completions" },
+      { model: "mistral-small-2603", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
+    ) as Record<string, any>;
+    expect(mistralPlain.reasoning_effort).toBeUndefined();
+    expect(mistralPlain.prompt_mode).toBeUndefined();
   });
 
   it("Anthropic auth headers include the prompt-caching beta; OpenAI-compatible unchanged (item 3)", () => {
@@ -451,6 +463,27 @@ describe("extractLlmText", () => {
 
   it("OpenAI responses output_text", () => {
     expect(extractLlmText({ output_text: "hello" })).toBe("hello");
+  });
+
+  it("Mistral high-reasoning chat-completions content is a chunk array, not a string", () => {
+    const payload = {
+      choices: [
+        {
+          message: {
+            content: [
+              { type: "thinking", thinking: [{ type: "text", text: "reasoning trace, not the answer" }] },
+              { type: "text", text: "{\"ok\":true}" }
+            ]
+          }
+        }
+      ]
+    };
+    expect(extractLlmText(payload)).toBe("{\"ok\":true}");
+  });
+
+  it("Mistral chunk array with multiple text chunks concatenates them", () => {
+    const payload = { choices: [{ message: { content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] } }] };
+    expect(extractLlmText(payload)).toBe("ab");
   });
 
   it("Anthropic tool_use input is re-serialized to JSON", () => {

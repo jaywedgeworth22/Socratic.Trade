@@ -8,6 +8,7 @@
 
 import { useMemo, useState } from "react";
 import { Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
+import { isModelRotationSentinel } from "@/lib/llm-request";
 import type { PendingProposal, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
@@ -20,7 +21,7 @@ import {
 import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
-import { redTeamFailureMeta, redTeamFailureModel } from "../lib/red-team";
+import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel } from "../lib/red-team";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
@@ -85,8 +86,13 @@ function matchedDecision(snapshot: DashboardSnapshot | null, pending: PendingPro
 function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
   const configured = policy?.llmModel?.trim();
   const served = p.proposedByModel?.trim();
+  // A rotating policy EXPECTS a different served model each run — say so plainly instead of
+  // leaking the raw "__rotate__" sentinel and framing the rotation pick as an anomaly.
+  const rotating = isModelRotationSentinel(configured);
+  if (served && rotating) return `configured to rotate; served ${served} (this run's rotation pick)`;
   if (served && configured && served !== configured) return `served ${served}; configured primary was ${configured}`;
   if (served) return `served ${served}`;
+  if (rotating) return "policy rotates models each run; the concrete pick was not persisted on this legacy proposal";
   if (configured) return `configured primary ${configured}; served model not persisted on this legacy proposal`;
   return "served model not exposed on this proposal";
 }
@@ -94,6 +100,9 @@ function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): s
 function fallbackProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
   const fallbackModels = policy?.llmFallbackModels?.filter(Boolean) ?? [];
   if (p.proposedByModel && fallbackModels.includes(p.proposedByModel)) return `served by configured fallback ${p.proposedByModel}`;
+  if (p.proposedByModel && isModelRotationSentinel(policy?.llmModel)) {
+    return "policy rotates models — the served model is this run's rotation pick, not a failover";
+  }
   if (p.proposedByModel && policy?.llmModel && p.proposedByModel !== policy.llmModel) return "served model differs from configured primary";
   if (fallbackModels.length > 0) return `fallback chain configured (${fallbackModels.length}); no per-hop history on this card`;
   return "no fallback chain configured";
@@ -145,17 +154,25 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   // to the snapshot policy's configured models only for legacy proposals that predate them
   // (the policy-derived value can be stale if the owner swapped models since proposing).
   const greenModelPersisted = p.proposedByModel?.trim() || null;
-  const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
+  // The "__rotate__" sentinel is a rotation marker, never a servable model — a ModelBadge for the
+  // literal sentinel would be a lie (and providerForModel would even give it an OpenAI logo).
+  const greenPolicyRotates = isModelRotationSentinel(snapshot?.policy.llmModel);
+  const greenModelConfigured = greenPolicyRotates ? null : (snapshot?.policy.llmModel?.trim() || null);
   // No-defaults directive: never display a made-up default model as if it served this proposal.
   const greenModel = greenModelPersisted ?? greenModelConfigured ?? "unknown";
   // NO fallback to the green model here (no-defaults directive): Red never silently reuses Green,
   // so displaying Green would misattribute the critique. "unknown" only for legacy verdicts that
-  // predate per-proposal model stamping on a policy whose Red model was since cleared.
-  const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || "unknown";
+  // predate per-proposal model stamping on a policy whose Red model was since cleared (or rotates).
+  const redConfigured = isModelRotationSentinel(snapshot?.policy.redTeamLlmModel) ? null : (snapshot?.policy.redTeamLlmModel?.trim() || null);
+  const redModel = p.redTeamVerdict?.model?.trim() || redConfigured || "unknown";
   // FAILED review: attribute honestly — never blame a fallback model that provably never ran.
   const redFailure = redTeamFailureMeta(p.redTeamVerdict?.failureKind);
   const redFailureModel =
     p.redTeamVerdict && !p.redTeamVerdict.available ? redTeamFailureModel(p.redTeamVerdict, snapshot?.policy.redTeamLlmModel) : null;
+  // Exactly one Red Team section renders — the verdict panel (success OR failure), the legacy
+  // "unavailable" callout, or the "no review triggered" note. A total function keeps them mutually
+  // exclusive so a failed review can never render as both the panel and the callout (dedup).
+  const redCard = redTeamCardState(Boolean(p.redTeamVerdict), pending.decision.adversaryUnavailable === true);
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -243,9 +260,13 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 {!greenModelPersisted && !greenModelConfigured && (
                   <span
                     className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                    title="No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."
+                    title={
+                      greenPolicyRotates
+                        ? "The policy rotates models each run; this legacy proposal predates per-proposal model stamping, so the concrete rotation pick was not recorded."
+                        : "No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."
+                    }
                   >
-                    (policy default)
+                    ({greenPolicyRotates ? "policy rotates models" : "policy default"})
                   </span>
                 )}
               </div>
@@ -283,7 +304,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
 
         {/* Red team: the single adversarial reviewer + its verdict — including the FAILURE state,
             so a review that could not run is never visually identical to one that never triggered. */}
-        {p.redTeamVerdict && (
+        {redCard === "verdict-panel" && p.redTeamVerdict && (
           <div className="con-team con-team-red">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <div
@@ -302,7 +323,10 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 </span>
               )}
             </div>
-            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">{p.redTeamVerdict.reason}</p>
+            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">
+              {p.redTeamVerdict.reason}
+              {!p.redTeamVerdict.available && " No model critiqued this trade — review it as the sole adversary."}
+            </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
               {p.redTeamVerdict.available ? (
                 <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
@@ -325,7 +349,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             </div>
           </div>
         )}
-        {!p.redTeamVerdict && (
+        {redCard === "no-review" && (
           <p
             className="cursor-default text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
             title="None of the dissent triggers (confidence, notional, live opening, override request, risk regime) applied, so no adversarial reviewer was asked. The empty state is information, not an omission."
@@ -334,20 +358,22 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           </p>
         )}
 
-        {/* §5.1 / R19 — the review could NOT run: a pending card that exists BECAUSE the Red Team was
-            unavailable must be distinguishable from a routine manual approval. Reads the persisted
-            per-proposal verdict first, with the stored decision flag as the legacy/defensive fallback. */}
-        {((p.redTeamVerdict && !p.redTeamVerdict.available) || pending.decision.adversaryUnavailable === true) && (
+        {/* §5.1 / R19 — LEGACY fallback ONLY: a pending card with NO structured red-team verdict but the
+            stored `adversaryUnavailable` decision flag set (old proposals persisted before the
+            single-adversary consolidation). The structured-verdict failure state — including the
+            "sole adversary" framing — is owned by the Red Team panel above; gating this on the ABSENCE
+            of `redTeamVerdict` keeps the two mutually exclusive so an unavailable review never renders
+            twice (was: this block also fired on `!available`, duplicating the panel above). */}
+        {redCard === "legacy-unavailable" && (
           <div
             className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3"
             title="The adversarial (red team) review was required but could not run, so this trade was routed to you unreviewed — you are the only reviewer it will get."
           >
             <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
               <Swords size={12} /> Red Team review unavailable
-              {p.redTeamVerdict?.failureKind ? ` (${p.redTeamVerdict.failureKind.replace(/_/g, " ")})` : ""}
             </div>
             <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">
-              {p.redTeamVerdict?.reason ?? pending.decision.adversaryUnavailableReason ?? "The adversarial review could not run for this proposal."}
+              {pending.decision.adversaryUnavailableReason ?? "The adversarial review could not run for this proposal."}
               {" "}No model critiqued this trade — review it as the sole adversary.
             </p>
           </div>

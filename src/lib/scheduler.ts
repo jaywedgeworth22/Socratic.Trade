@@ -23,7 +23,7 @@ import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import type { TradingPolicy } from "./types";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
-import { isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
+import { getTechnicalWatchlist, isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
 import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
 
@@ -284,7 +284,7 @@ async function tick(): Promise<void> {
   // free-safe 5/min so the raised paid default can't 429-storm. No-op until due; fully self-guarded.
   void runProviderTierCheckIfDue().catch((err) => console.error("[scheduler] provider-tier check error:", err));
 
-  // 10-K/10-Q body ingest (weekly cadence, gated on paid Voyage key signal).
+  // 10-K/10-Q body ingest (TTL cadence, gated on paid Voyage key signal).
   // Collects the union of all user watchlists + policy universes so the shared
   // corpus covers every symbol any active user is monitoring. Fire-and-forget;
   // errors are captured inside refreshFilingBodies and audited there.
@@ -292,12 +292,24 @@ async function tick(): Promise<void> {
   // LLM_SPEND_CEILING, and this refresh runs BEFORE the strategy-run ceiling check below, so without
   // this guard a breached ceiling would still let the weekly filing-body ingest spend.
   if (isFilingIngestDue() && checkMonthlyLlmSpendCeiling().ok) {
+    // DEMAND-FIRST ordering: ingestion is capped per run, so queue order decides which
+    // symbols' filings the strategy can actually retrieve against. Watchlist names and the
+    // last scan's candidate set (which force-includes held positions) go first; the broad
+    // index universe fills the tail. Until 2026-07-09 this was one alphabetical Set union,
+    // so the corpus warmed from "A" while the names decisions cite waited years.
     const symbolSet = new Set<string>();
+    for (const userId of listUsers()) {
+      try {
+        for (const item of listWatchlistSymbols(userId)) symbolSet.add(item.symbol);
+      } catch {
+        // don't let a single user's DB error block the others
+      }
+    }
+    for (const s of getTechnicalWatchlist()) symbolSet.add(s);
     for (const userId of listUsers()) {
       try {
         const policy = getPolicy(userId);
         for (const s of symbolsForPolicyUniverse(policy)) symbolSet.add(s);
-        for (const item of listWatchlistSymbols(userId)) symbolSet.add(item.symbol);
       } catch {
         // don't let a single user's DB error block the others
       }
@@ -444,7 +456,7 @@ async function tick(): Promise<void> {
         // pending_reconciliation until the next strategy run. Applies to broker/paper and broker/live;
         // Test/local has no broker order lifecycle.
         if (brokerGateway) {
-          void reconcilePendingFills(brokerGateway, policy.accountNumber, userId)
+          void reconcilePendingFills(brokerGateway, policy.accountNumber, userId, policy.connectedAccountId)
             .catch((err) => console.error("[scheduler] pending-fill reconcile error:", err));
         }
 

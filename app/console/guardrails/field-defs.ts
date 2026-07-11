@@ -105,7 +105,24 @@ export const HYGIENE: FieldDef[] = [
   { path: "maxHourlyNotional", label: "Max spend per hour", kind: "money", optional: true, looserWhen: "up", hint: "Rolling 60-minute ceiling. Breaching it auto-demotes the account back to Ask-first." },
   { path: "proposalExpiryMinutes", label: "Proposal expiry", kind: "minutes", optional: true, hint: "Pending proposals older than this auto-expire. 0/blank = no hard expiry." },
   { path: "proposalRevalidateCadenceHours", label: "Re-validate pending ideas every (hours)", kind: "int", optional: true, hint: "0 = every run." },
-  { path: "staleLimitOrderMinutes", label: "Stale limit-order alert (minutes)", kind: "int", optional: true }
+  { path: "staleLimitOrderMinutes", label: "Stale limit-order alert (minutes)", kind: "int", optional: true },
+  {
+    path: "brokerMinimumHandling",
+    label: "Sub-minimum orders",
+    kind: "select",
+    options: [
+      { value: "bump", label: "Bump to broker minimum — default" },
+      { value: "skip", label: "Skip (block pre-flight)" }
+    ],
+    // skip -> bump is looser: bump places MORE notional than the strategy sized (raised to the
+    // broker floor); skip places nothing.
+    looseRank: { skip: 0, bump: 1 },
+    hint:
+      "What happens when a fractional/dollar order lands below the broker's minimum order size (e.g. Robinhood's $1 floor) — " +
+      "typically a %-of-NAV-clamped trim on a small account. " +
+      "Bump (default): the order is raised to the floor and placed, audited with its before/after size; sells never exceed the held position, " +
+      "and the bumped order still goes through every policy check. Skip: it is blocked before the broker's guaranteed reject (one alert per day per symbol)."
+  }
 ];
 
 export const TAX_RULES: FieldDef[] = [
