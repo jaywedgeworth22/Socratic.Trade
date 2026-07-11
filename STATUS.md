@@ -40,21 +40,23 @@ hits and deferred symbols spend nothing. Docs: `.env.example` FMP block, `docs/m
 dials table, `docs/rollouts/2026-07-10-fmp-rate-limit.md`. Gate under node@24: tsc clean, lint 0 errors,
 3412/3412 tests, `npm run build` OK. NOTE: merge = auto-deploy to live — this is a data-plane throttle,
 not a money-path change. Blockers: none. Next: land via `scripts/land.sh`, PR ready (do not merge).
-## 2026-07-11 — Runtime release + backup health (CODEX, branch `codex/runtime-release-backup-health`)
+## 2026-07-11 — Runtime release + backup health (CODEX, merged PR #1405; production verified)
 
-In progress in an isolated worktree. Public `/api/health` now reports a sanitized Coolify/source
+Public `/api/health` now reports a sanitized Coolify/source
 commit, process start/uptime, and Litestream 0.5.x daemon status plus last successful sync from the
 local Unix-socket `GET /list` endpoint. Production config now explicitly enables Litestream 0.5.12's
 control socket; the client uses a hard wall-clock deadline, bounded body, and abort/error handling.
 Production skips the synchronous metadata-file fallback entirely; non-live scanning is bounded.
 Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
 stale when newer DB/WAL activity proves there is work to upload. The pre-reconciliation Node 24 gate
-was green. The branch now reconciles `origin/main@432ca6fe`; runtime source/tests were disjoint from
+was green. The branch reconciled `origin/main@432ca6fe`; runtime source/tests were disjoint from
 the incoming stop-plan, CI, and admin-server changes, while union-merged STATUS/PLAN/EFFORT history
 was preserved. Final combined Node 24 verification is green: lint 0 errors / 405 inherited warnings,
 TypeScript clean, 326 files / 3,629 tests, and production build clean. The earlier missing `ts-morph`
-report was confirmed as stale worktree dependency state and is resolved. READY PR #1405 remains the
-delivery target without merge, auto-merge, deployment, or live replica mutation.
+report was confirmed as stale worktree dependency state and is resolved. PR #1405 merged as
+`4def810c`. Production `/api/health` at 2026-07-11T16:41Z reported exact release `d3859025`, process
+start 16:28:17Z, Litestream `known`/`replicating` from `ipc`, sync age 1s, valid timestamp, and zero
+degraded reasons; scheduler lease was current/nonexpired. No manual deploy or replica mutation.
 ## 2026-07-11 — Admin server Hetzner response-shape crash fix (CODEX, branch `codex/admin-server-shape-fix`)
 Production `/admin/server` hit React error #31 because `/api/admin/server-metrics` passed
 Hetzner's nested `server_type` and `public_net.ipv4` objects into JSX text positions. The API
@@ -135,18 +137,24 @@ intentionally interpret an absent/malformed body as a default action still enter
 claims do not cover scheduler/background entrants; underlying-boundary locking is separately planned.
 Public strategy tuning and the admin tuning dry run share one per-user single-flight guard while the
 public route retains its legacy 409 compatibility fields.
-Implementation is merged forward to current `origin/main@432ca6fe`; the incoming admin-server source
-is disjoint and STATUS/EFFORT histories were union-merged. Adversarial re-review found no code blocker.
-Final combined Node 24 verification is green: focused 4 files/29 tests and touched ESLint clean,
-full lint 0 errors/405 inherited warnings, TypeScript clean, 328 files/3,633 tests, and production
-build clean. Previous hosted checks were green; the refreshed head will rerun them. AG's owner-directed portable rejection contract is green in READY shared PR #144;
-adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request
-spend ceilings. READY PR #1409 is not merged/auto-merged or deployed. See
+PR #1409 merged to `main` as `9552b648` on 2026-07-11. Its merge commit dropped all eight route
+wrappers while retaining the guard library/tests, but the later Tradier merge `e3d04221` restored all
+eight wrappers. Current-main reconciliation verified every route still runs `requireAdmin` before the
+operation guard, so follow-up PR #1426 no longer carries redundant route rewrites. It exact-pins the
+released and clean-install-verified shared `v1.5.0`, delegates rejection body/status construction from
+the app-local HTTP adapter to shared builders while retaining `Response`, `Retry-After`, error text,
+and legacy tuning fields, and preserves real Auth.js provenance coverage instead of the bypass mock
+introduced by the Tradier merge. Representative 429/409 bodies are parsed by the shared schema. The
+final current-main Node 24 gate is green against `origin/main@e395e65a`: focused 4 files / 29 tests,
+lint 0 errors / 404 inherited warnings, TypeScript clean, 331 files / 3,746 tests, and production
+build clean. The first full-test
+attempt exposed only a Node ABI mismatch caused by the earlier dependency refresh running under Node
+26; rebuilding `better-sqlite3` under Node 24 fixed it before the passing rerun. Antigravity's ready
+Congress.Trade PR #296 exact-pins the same tag/commit and has 940 tests green; its peer check is
+expected red until #1426 lands first, while Congress merge/deploy remains owner-gated. Refreshed
+hosted checks remain pending. The controls are anti-repeat budgets, not hard
+per-request spend ceilings. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
-3,499 tests, Next build clean). PR #1399 merged externally as `97152c25`; auto-deploy was triggered,
-but this session has not independently verified the production revision. Exact commands
-and the initial Node-ABI mismatch are recorded in
-`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
 ## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
 
 The shared `requireAdmin` gate no longer treats `NODE_ENV` or a request hostname as authorization.
@@ -156,13 +164,15 @@ admin access accepts only Cloudflare Access or Auth.js session provenance; the a
 `ADMIN_USER_EMAILS`. The timing-safe `ADMIN_REINDEX_TOKEN` path remains available in every
 environment. Every stale admin-route comment was updated to match this behavior, and the spoofable
 localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Current
-`origin/main@432ca6fe` is merged. The only source overlap was
+PR #1410 merged to `main` as `2a52e2ac` at 2026-07-11T15:59:32Z. Its only pre-merge source overlap was
 `test/server-metrics.test.ts`; its resolved union preserves current provider-shape/degraded-response
 coverage while adding verified Auth.js provenance to every authorized admin request. The previous
 current-main gate and hosted checks were green. Final combined Node 24 verification is also green:
 focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited warnings,
-TypeScript clean, 325 files / 3,620 tests, and production build clean. READY PR #1410 remains
-unmerged without auto-merge or deployment. See
+TypeScript clean, 325 files / 3,620 tests, and production build clean. The exact 2a52 deployment was
+superseded/cancelled after startup; current `main@d3859025` contains the change and is verified live.
+At 2026-07-11T16:41Z health reported that exact SHA, process start 16:28:17Z, and a current scheduler
+lease; plain and spoofed unauthenticated admin requests both returned 401 at the edge. See
 `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)

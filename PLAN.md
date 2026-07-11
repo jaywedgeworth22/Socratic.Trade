@@ -30,11 +30,14 @@ filling the missing pieces.
 > remain unchanged. Process-wide groups cover manual admin route calls, while
 > scheduler/background convergence at the underlying operation boundaries is explicitly planned rather
 > than claimed complete. These are anti-repeat budgets, not hard per-request spend ceilings. Node 24
-> current-main (`432ca6fe`) gate is green (focused 4 files/29 tests, touched ESLint clean, full lint
-> 0 errors/405 inherited warnings, tsc, 328 files/3,633 tests, build).
-> AG's owner-directed
-> portable rejection contract is a separate shared-package follow-up and will be adopted only after a
-> real package release. See
+> PR #1409 is merged as `9552b648`; the later Tradier merge `e3d04221` restored all eight guarded
+> route wrappers that #1409's merge had dropped. The released, clean-install-verified shared package
+> `v1.5.0` is exact-pinned in follow-up PR #1426, whose app-local HTTP adapter delegates stable
+> rejection body/status construction to the shared builders while retaining HTTP headers and legacy
+> fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The final
+> `main@e395e65a` Node 24 gate is green: focused 29/29, lint 0 errors, tsc, 3,746/3,746 tests, and
+> build. Antigravity's ready Congress.Trade PR #296 carries the exact matched pin with 940 tests
+> green; its peer check becomes green after #1426 lands first. See
 > `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 > **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
 > change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger

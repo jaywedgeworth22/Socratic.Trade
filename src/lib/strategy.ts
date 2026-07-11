@@ -40,6 +40,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
+import { checkBrokerHealth } from "./broker-health";
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
@@ -331,7 +332,24 @@ export async function runStrategyOnce(
       ? { ...savedPolicy, accountNumber, systemState: "active" as const, strategyAuthority: "propose" as const }
       : { ...savedPolicy, accountNumber };
     const activeAccount = targetAccountId ? getConnectedAccount(targetAccountId, userId) : getActiveConnectedAccount(userId);
-    const executionState = deriveExecutionState(policy, activeAccount);
+    
+    // Check broker health before determining execution state (and before making LLM calls).
+    // The gateway is required for live broker checks; if missing, checkBrokerHealth safely returns healthy=true.
+    const brokerGateway = activeAccount ? getBrokerGateway(policy, userId) : undefined;
+    const healthSignals = activeAccount ? await checkBrokerHealth(userId, activeAccount, brokerGateway) : undefined;
+    
+    if (healthSignals && !healthSignals.isHealthy) {
+      const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
+      console.warn(`[Strategy] ${reason}`);
+      audit("run_skipped_broker_unhealthy", { runId, userId, reason }, userId, connectedAccountId);
+      result = { runId, status: "completed", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "completed", reason, userId);
+      clearInterval(heartbeatTimer);
+      releaseStrategyLock(runId, userId, connectedAccountId);
+      return result;
+    }
+
+    const executionState = deriveExecutionState(policy, activeAccount, healthSignals);
     // An account is an account: with none connected there is no broker to trade through, and there
     // is no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
     if (!executionState.mode) throw new Error("No connected account. Connect a broker account before running the strategy.");
