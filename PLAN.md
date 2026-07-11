@@ -21,7 +21,7 @@ filling the missing pieces.
 > returns typed busy without broker placement, and autonomous loss preserves any proposal results
 > completed before the stop. Review follow-up now also re-proves ownership immediately after broker
 > health, tradability, order-review, and bump-review awaits before writing non-placement state. PR
-> #1429 is reconciled through current `main@da9558ac`; focused tests, touched lint, and TypeScript are
+> #1429 is reconciled through current `main@7c01f87e`; focused tests, touched lint, and TypeScript are
 > green. The serialized final full test/build gate and hosted rerun remain. See
 > `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope

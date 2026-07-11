@@ -103,8 +103,9 @@ default-on posture.
   the production build all reran green.
 - Review autofix `9d2ba1fb` was pushed by `github-actions[bot]`; gitleaks, hosted verify, and smoke
   correctly refused that untrusted actor. No CI trust policy was changed. A human-authored follow-up
-  merged current `origin/main@da9558ac`; trusted runtime/test reconciliation commit `b19650ac` owns
-  the corrected tip.
+  merged current `origin/main`; trusted runtime/test reconciliation commit `b19650ac` owns the
+  corrected code. A later human merge brought the branch through `main@7c01f87e` (Alpha health lane)
+  without runtime conflicts.
 - The first scoped rerun used the shell's Node 26 and failed only on the expected native SQLite ABI
   mismatch (`NODE_MODULE_VERSION 147` vs the worktree's 137 build). The committed source was not
   implicated. `npm ci --no-audit --no-fund` under Node 24 refreshed the exact locked shared-v1.5
@@ -118,7 +119,7 @@ default-on posture.
 
 ## Follow-ups and boundaries
 
-- Ready PR #1429 remains open. The serialized final full test/build gate, trusted push, hosted checks,
+- Ready PR #1429 remains open. The serialized final full test/build gate, final push, hosted checks,
   merge, and production verification remain; the prior full gate predates the review changes.
 - No scheduler provider-boundary locking, production environment/configuration, PR, merge,
   deployment, or live runtime mutation is part of this change. The branch-neutral live effort board
