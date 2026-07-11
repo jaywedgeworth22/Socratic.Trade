@@ -220,10 +220,16 @@ export async function getMcpAccessToken(userId: string): Promise<string | undefi
   // exchange fetch), free the singleflight slot after the TTL so the next caller starts fresh.
   const evictTimer = setTimeout(evict, REFRESH_SINGLEFLIGHT_TTL_MS);
   if (typeof evictTimer.unref === "function") evictTimer.unref();
-  promise.finally(() => {
+  // Use then(cleanup, cleanup) rather than finally(): finally() returns a NEW promise that mirrors a
+  // rejection of `promise` (invalid/expired refresh token, a 5xx, or the exchange AbortSignal.timeout),
+  // and it is unawaited here — Node can report that as an unhandled rejection and terminate the Next
+  // process even though the caller already handles the failure via `promise` (returned below). Handling
+  // the rejection in the onRejected branch keeps this detached cleanup chain from ever going unhandled.
+  const cleanup = () => {
     clearTimeout(evictTimer);
     evict();
-  });
+  };
+  promise.then(cleanup, cleanup);
   inFlightRefreshes.set(userId, promise);
   return promise;
 }
