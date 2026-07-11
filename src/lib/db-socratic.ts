@@ -543,7 +543,7 @@ export function createSocraticFrameworkProposal(input: {
 
 export function listSocraticFrameworkProposals(
   userId: string = "local",
-  opts: { limit?: number; status?: SocraticFrameworkProposalStatus; connectedAccountId?: string } = {}
+  opts: { limit?: number; status?: SocraticFrameworkProposalStatus; connectedAccountId?: string; unreviewedOnly?: boolean } = {}
 ): SocraticFrameworkProposal[] {
   const limit = Math.max(1, Math.min(100, Math.floor(opts.limit ?? 25)));
   const clauses = ["user_id = ?"];
@@ -555,6 +555,11 @@ export function listSocraticFrameworkProposals(
   if (opts.connectedAccountId) {
     clauses.push("connected_account_id = ?");
     args.push(opts.connectedAccountId);
+  }
+  // Only rows the batched reviewer hasn't touched yet — lets it page through a backlog
+  // larger than any single fetch window instead of re-loading the newest already-reviewed rows.
+  if (opts.unreviewedOnly) {
+    clauses.push("ai_review IS NULL");
   }
   args.push(limit);
   const rows = getDb()

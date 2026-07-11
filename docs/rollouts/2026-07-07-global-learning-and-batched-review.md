@@ -84,6 +84,18 @@ npx vitest run test/framework-review.test.ts test/socratic-db.test.ts \
   (mixed status); the review route works the full server-side backlog, so the button is live
   whenever not already reviewing (was disabled when the shown window happened to be all resolved).
 
+## Review fixes round 2 (PR #1417, Codex re-review of d0b80da)
+
+- **Backlog beyond one window.** `listSocraticFrameworkProposals` gained `unreviewedOnly`
+  (`ai_review IS NULL`); the reviewer queries un-reviewed pending rows DIRECTLY, so it pages
+  through a backlog of any size instead of capping the candidate window at 100.
+- **Batch-scaled output cap.** `maxOutputTokens = clamp(2000, pending·300, 16000)` so a large
+  batch of rewrites can't overflow a fixed cap and truncate the JSON (which would drop the whole
+  batch). Removed the now-unused `LLM_OUTPUT_TOKEN_CAPS.frameworkReview`.
+- **Structured output for BOTH transports.** Replaced the OpenAI-only `openAiJsonObject` flag with
+  a JSON `schema` on the request — it drives OpenAI json_schema AND Anthropic forced tool-use, so
+  the cross-family Bear (Anthropic) path also returns schema-shaped JSON instead of free text.
+
 ## Follow-ups
 
 - Surface a **friendly account label** (name, not raw id) as the provenance tag on

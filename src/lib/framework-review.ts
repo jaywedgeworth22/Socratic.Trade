@@ -13,7 +13,7 @@ import { isOverLlmBudget } from "./llm-budget";
 import { buildLlmRequestBody, extractLlmText, llmAuthHeaders } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { llmFetch } from "./llm-request";
 import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
@@ -31,6 +31,33 @@ Respond with STRICT JSON only (no markdown, no prose outside the JSON), one entr
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+/** JSON schema for the batched reviewer output — drives OpenAI json_schema and Anthropic
+ *  forced tool-use. `rewrittenChange` is nullable (present only for "rewrite") so strict
+ *  OpenAI schemas can still list it in `required`. */
+function reviewSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["reviews"],
+    properties: {
+      reviews: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "verdict", "rationale", "rewrittenChange"],
+          properties: {
+            id: { type: "string" },
+            verdict: { type: "string", enum: ["accept", "reject", "rewrite"] },
+            rationale: { type: "string" },
+            rewrittenChange: { type: ["string", "null"] }
+          }
+        }
+      }
+    }
+  };
 }
 
 interface ParsedReview {
@@ -80,11 +107,14 @@ export async function reviewPendingFrameworkProposals(
   opts: { limit?: number } = {}
 ): Promise<FrameworkReviewResult> {
   const limit = Math.max(1, Math.min(40, Math.floor(opts.limit ?? 25)));
-  // Prefer proposals NOT yet AI-reviewed so repeated runs ADVANCE through the backlog rather
-  // than re-reviewing the same newest rows (the review is advisory and leaves status = pending).
-  const pendingAll = listSocraticFrameworkProposals(userId, { status: "pending", limit: 100 });
-  const pending = pendingAll.filter((p) => !p.aiReview).slice(0, limit);
-  if (pending.length === 0) return { reviewed: 0, skippedReason: pendingAll.length ? "all_reviewed" : "no_pending" };
+  // Query un-reviewed pending rows DIRECTLY (ai_review IS NULL) so repeated runs page through a
+  // backlog of ANY size, not just the newest window — the review is advisory and leaves status
+  // = pending, so without this a >window backlog would never reach its older rows.
+  const pending = listSocraticFrameworkProposals(userId, { status: "pending", unreviewedOnly: true, limit });
+  if (pending.length === 0) {
+    const anyPending = listSocraticFrameworkProposals(userId, { status: "pending", limit: 1 }).length > 0;
+    return { reviewed: 0, skippedReason: anyPending ? "all_reviewed" : "no_pending" };
+  }
   if (isOverLlmBudget(userId)) return { reviewed: 0, skippedReason: "over_budget" };
 
   // Resolve through the RED (Bear/reviewer) role: it inherits the account's redTeamLlmModel
@@ -112,17 +142,22 @@ export async function reviewPendingFrameworkProposals(
     }))
   });
 
+  // Scale the output budget with the batch: each entry repeats an id + verdict + rationale
+  // (+ sometimes a rewrite), so a fixed small cap would truncate the JSON on large batches and
+  // make parseReviewResponse discard the whole thing.
+  const maxOutputTokens = Math.min(16000, Math.max(2000, pending.length * 300));
   const body = buildLlmRequestBody(
     { provider, transport },
     {
       model,
       systemPrompt: REVIEW_SYSTEM_PROMPT,
       userContent,
-      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.frameworkReview,
+      maxOutputTokens,
       reasoningEffort: policy.llmReasoningEffort,
-      // Force JSON-object output where the transport supports it, so a model that would
-      // otherwise wrap the answer in prose can't make parseReviewResponse drop the whole batch.
-      openAiJsonObject: true
+      // Structured output for BOTH transports: a JSON schema drives OpenAI's json_schema AND
+      // Anthropic's forced tool-use, so the reviewer can't return prose that parseReviewResponse
+      // would drop (openAiJsonObject alone is ignored by the Anthropic Messages path).
+      schema: { name: "framework_review", schema: reviewSchema(), description: "Per-proposal advisory verdicts keyed by proposal id." }
     }
   );
 

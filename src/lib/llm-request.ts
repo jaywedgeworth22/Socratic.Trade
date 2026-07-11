@@ -510,9 +510,6 @@ export const LLM_OUTPUT_TOKEN_CAPS = {
   adversaryReview: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   postMortemReflection: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   proposalRevalidation: LLM_REQUEST_DEFAULTS.maxOutputTokens,
-  // Batched framework-proposal reviewer: one call adjudicates all pending proposals and
-  // emits an array of per-proposal recommendations (id + verdict + rationale + optional rewrite).
-  frameworkReview: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   // Small — a structured-output extraction of a handful of {kind,subject,value,symbol} candidates
   // from one chat message, not a proposal/critique. Kept well below the shared default so a
   // pathological reply can't run up cost; the extractor also has an offline regex fallback.
