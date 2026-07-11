@@ -516,8 +516,9 @@ As of 2026-07-08 (assignment-rule update).
   proposals across accounts and attaches an ADVISORY recommendation (verdict + rationale + optional
   rewrite) via a new nullable `ai_review` column — owner still decides (not auto-apply); reviewer model =
   `redTeamLlmModel`→`llmModel`. Wired `POST /api/socratic/framework/review` + "AI review pending" UI in
-  `app/console/page.tsx`. Gate green; `test/framework-review.test.ts` (4) + socratic/learning suites (31)
-  pass. See `docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
+  `app/console/page.tsx`. Merged latest `origin/main` (incl. Tradier broker #1425) clean 2026-07-11;
+  full gate green (tsc 0, lint 0 errors, **3745 tests pass**, build exit 0). All 11 Codex review threads
+  resolved. Awaiting CI + owner merge. See `docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
 - **Public auth + paid-route rate-limit hardening (CODEX, branch
   `codex/public-auth-rate-limit-hardening`) — MERGED TO `main` 2026-07-11 at `97152c25`; live deploy not independently verified.** Bounded security batch from
   the whole-app reliability audit: key the public Robinhood OAuth callback limiter by client IP
