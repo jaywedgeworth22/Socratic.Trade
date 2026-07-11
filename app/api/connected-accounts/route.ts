@@ -188,6 +188,7 @@ export async function POST(req: Request) {
             accountNumber,
             label: connectedAccountLabel,
             apiKey: apiKey || undefined,
+            capabilities: brokerAccounts[0].capabilities,
             baseUrl: broker === "tradier"
               ? environment === "paper"
                 ? "https://sandbox.tradier.com/v1"

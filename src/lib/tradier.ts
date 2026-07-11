@@ -78,13 +78,27 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalIso(value: unknown): string | undefined {
   if (value === null || value === undefined || value === "") return undefined;
-  const time = Date.parse(String(value));
+  // Tradier quote payloads use millisecond epoch numbers for fields like trade_date and
+  // bid_date; Date.parse(String(1757948508561)) returns NaN, so handle numeric values
+  // as direct epoch milliseconds.
+  let time: number;
+  if (typeof value === "number") {
+    time = value;
+  } else if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    time = Number(value.trim());
+  } else {
+    time = Date.parse(String(value));
+  }
   return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
 }
 
-// Whether the current US/Eastern clock is before the 09:30 open (pre-market) vs after (after-hours).
-// Used to pick Tradier's extended session duration ("pre" vs "post") for an extended-hours order.
-function etHourBefore0930(): boolean {
+// Tradier's valid extended-hours windows (https://docs.tradier.com/docs/orders):
+//  - Pre-market:  07:00 – 09:24 ET
+//  - Post-market: 16:00 – 19:55 ET
+// Orders with extended-hours duration submitted outside these windows are REJECTED
+// by the broker, so we fall back to regular-hours "day" when outside the window.
+// Returns "pre", "post", or undefined (regular hours) as the duration value.
+function tradierExtendedHoursDuration(): string | undefined {
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone: "America/New_York",
@@ -94,9 +108,16 @@ function etHourBefore0930(): boolean {
     }).formatToParts(new Date());
     const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
     const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
-    return hour * 60 + minute < 9 * 60 + 30;
+    const totalMinutes = hour * 60 + minute;
+    const preStart = 7 * 60;      // 07:00
+    const preEnd = 9 * 60 + 24;   // 09:24
+    const postStart = 16 * 60;    // 16:00
+    const postEnd = 19 * 60 + 55; // 19:55
+    if (totalMinutes >= preStart && totalMinutes < preEnd) return "pre";
+    if (totalMinutes >= postStart && totalMinutes < postEnd) return "post";
+    return undefined; // Outside Tradier's extended-hours — fall back to regular session
   } catch {
-    return false; // default to after-hours ("post") if the clock lookup fails
+    return undefined; // Clock lookup failed — fall back to regular session
   }
 }
 
@@ -158,7 +179,7 @@ function mapTradierTypeRead(raw: unknown): OrderType {
 // only a limit order gets the pre/post session — anything else falls back to the regular-session TIF.
 function durationFor(input: { marketHours?: EquityOrderInput["marketHours"]; type?: OrderType; timeInForce?: EquityOrderInput["timeInForce"] }): string {
   if (input.marketHours === "extended_hours" && input.type === "limit") {
-    return etHourBefore0930() ? "pre" : "post";
+    return tradierExtendedHoursDuration() ?? "day";
   }
   return input.timeInForce === "gfd" ? "day" : "gtc";
 }
@@ -200,9 +221,12 @@ function capsFromProfile(account: Record<string, unknown>): AccountCapabilities 
   else if (classification.includes("ira") || classification.includes("traditional") || classification.includes("rollover")) {
     accountType = "traditional_ira";
   }
+  // Tradier IRAs report type "margin" even though they cannot short.
+  // Short selling is only valid for non-IRA margin accounts.
+  const isIra = accountType === "traditional_ira" || accountType === "roth_ira";
   return {
     equityTrading: true,
-    shortSelling: isMargin,
+    shortSelling: isMargin && !isIra,
     optionsTrading: optionsLevel !== undefined ? optionsLevel > 0 : false,
     optionsLevel,
     futuresTrading: false,
@@ -350,10 +374,13 @@ class TradierBrokerGateway implements BrokerGateway {
       return accounts.map((account) => {
         const accountNumber = String(account.account_number ?? "");
         const type = account.type ? String(account.type) : "";
+        const status = String(account.status ?? "").toLowerCase();
         return {
           accountNumber,
           label: this.label || `Tradier ${type || "account"}`.trim(),
-          agenticAllowed: true,
+          // A closed account is not usable — strategy.ts checks agenticAllowed
+          // before proceeding with any trading operations.
+          agenticAllowed: status !== "closed",
           capabilities: capsFromProfile(account)
         } satisfies BrokerageAccount;
       });
@@ -413,9 +440,23 @@ class TradierBrokerGateway implements BrokerGateway {
       // value: Tradier's balance.market_value includes option value, and storing it as
       // equityMarketValue while also storing optionMarketValue makes accountEquity() add
       // option value twice for mixed stock/options accounts.
-      const optionMarketValue = number(b.long_option_value ?? b.option_long_value ?? 0);
+      // Net option value: Tradier exposes both option_long_value and option_short_value
+      // in the balances payload. Storing only the long value overstates equity for
+      // accounts with short option positions, since accountEquity() composes
+      // cash + equityMarketValue + optionMarketValue.
+      const optionLong = number(b.long_option_value ?? b.option_long_value ?? 0);
+      const optionShort = number(b.short_option_value ?? b.option_short_value ?? 0);
+      const optionMarketValue = optionLong - optionShort;
       const rawStockLong = optionalNumber(b.stock_long_value);
-      const rawStockShort = optionalNumber(b.stock_short_value);
+      // Tradier documents short stock value under both top-level stock_short_value and
+      // the margin/pdt nested objects, and also exposes a top-level short_market_value.
+      // Try each in turn so a nested-only field is not missed. The value is typically
+      // a positive absolute number; it is subtracted from stock_long_value to compute
+      // net equity from stock positions.
+      const rawStockShort = optionalNumber(b.stock_short_value)
+        ?? (margin ? optionalNumber(margin.stock_short_value) : undefined)
+        ?? (pdt ? optionalNumber(pdt.stock_short_value) : undefined)
+        ?? optionalNumber(b.short_market_value);
       const equityMarketValue =
         rawStockLong != null && rawStockShort != null
           ? rawStockLong - rawStockShort
@@ -446,14 +487,20 @@ class TradierBrokerGateway implements BrokerGateway {
       const positionsField = typeof body.positions === "object" && body.positions ? (body.positions as Record<string, unknown>).position : undefined;
       const rows = arr<Record<string, unknown>>(positionsField);
       if (rows.length === 0) return [];
+      // Filter out OCC option positions: Tradier's /positions returns open
+      // option contracts alongside equities. Option positions carry an
+      // option_type field; mapping them as EquityPosition pollutes the equity
+      // book/risk checks for mixed stock+options accounts.
+      const equityRows = rows.filter((p) => !p.option_type);
+      if (equityRows.length === 0) return [];
       // Canonicalize to the hyphenated form so a share-class position (BRK-B) matches its own resting
       // orders/quotes/proposals AND the quote-map keys getEquityQuotes returns — Tradier speaks dotted
       // (BRK.B), which would otherwise never match (mispriced or treated as absent).
-      const symbols = rows.map((p) => fromTradierSymbol(String(p.symbol)));
+      const symbols = equityRows.map((p) => fromTradierSymbol(String(p.symbol)));
       // Tradier position rows carry TOTAL cost_basis and no live market_value — price them via a
       // single batched quote call (fall back to cost basis when a quote is missing).
       const quotes = await this.getEquityQuotes(accountNumber, symbols).catch(() => ({} as Record<string, BrokerQuote>));
-      return rows.map((p) => {
+      return equityRows.map((p) => {
         const symbol = fromTradierSymbol(String(p.symbol));
         const quantity = number(p.quantity);
         const totalCost = number(p.cost_basis);
@@ -649,12 +696,18 @@ class TradierBrokerGateway implements BrokerGateway {
     // synchronous decline.
     const raw = String(o.status ?? "");
     const state = raw && raw.toLowerCase() !== "ok" ? raw : "pending";
+    // Tradier may fill immediately on submission (e.g. a market order for a liquid
+    // stock); preserve the broker's fill data rather than silently discarding it.
+    // Without this, a filled dollar order is booked with the proposal notional/scan
+    // price instead of the broker's whole-share fill, corrupting positions and P&L.
+    const filledQuantity = optionalNumber(o.exec_quantity);
+    const averagePrice = optionalNumber(o.avg_fill_price);
     return {
       orderId: String(id),
       refId: input.refId,
       state,
-      filledQuantity: undefined,
-      averagePrice: undefined,
+      filledQuantity,
+      averagePrice,
       raw: body
     };
   }
