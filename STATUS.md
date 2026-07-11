@@ -19,6 +19,19 @@ Trusted human follow-up `b19650ac` contains the runtime/test reconciliation. The
 3,764-test/build gate predates these review changes; the serialized final full gate, push, hosted
 checks, merge, and production verification remain. See
 `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
+
+The admin connections-health route's expected-lane inventory used `alphavantage:env`, while the
+provider and health log use the canonical `alpha-vantage:env` service name. That mismatch injected a
+phantom never-used card beside the real quota-exhausted lane. The placeholder now uses
+`alpha-vantage`, so the existing `(service,keySource)` dedupe preserves exactly one real env lane.
+An authenticated route regression seeds canonical health history and proves the response contains one
+`alpha-vantage:env` entry and no `alphavantage` entry. This is display/health-inventory correctness
+only: provider dispatch, credentials, quota rotation, and failure classification are unchanged.
+Ready PR #1438 is reconciled with `main@da9558ac`. Final Node 24 verification is green: focused
+Vitest 1/1, lint 0 errors (404 inherited warnings), `tsc --noEmit`, full Vitest 332 files / 3,747
+tests, and the production build. Production UI confirmation remains after merge and auto-deploy. See
+`docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
 Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment

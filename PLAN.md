@@ -24,6 +24,12 @@ filling the missing pieces.
 > #1429 is reconciled through current `main@da9558ac`; focused tests, touched lint, and TypeScript are
 > green. The serialized final full test/build gate and hosted rerun remain. See
 > `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+> **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
+> change; operator-observability correctness only. The connections-health expected-lane inventory now
+> uses the provider's canonical `alpha-vantage:env` identity, preventing a synthetic empty
+> `alphavantage:env` card beside the real lane. Authenticated route coverage locks the one-lane
+> invariant. No provider, secret, pacing, rotation, or quota semantics changed. See
+> `docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
 > **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
 > scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
 > refresh/share, and broker probes now have named per-admin budgets and single-flight exclusion,
