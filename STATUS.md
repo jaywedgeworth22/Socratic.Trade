@@ -27,6 +27,20 @@ gates green: tsc 0, full suite 3408/3408, lint 0-err, build clean (ran under def
 worktree's node_modules is ABI 147). PR: READY, not merged. See
 `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — open PR, await review.
 
+## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
+Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval
+card — the "Devil's advocate (red team)" verdict panel AND a separate "Red Team review unavailable
+(provider error)" callout, both printing the same provider-error text. Root cause was a UI
+double-render, not two reviewers: "Devil's Advocate" and "Red Team" are the same single adversary
+(the single-adversary consolidation #1191 was backend-correct). #1076 (Jul 8) gave the verdict panel
+a failure branch; #1191 (Jul 9) then added a second "unavailable" callout whose condition was a
+subset of the panel's, so both fired on failure. Fix: a new pure/total `redTeamCardState()`
+(`app/console/lib/red-team.ts`) returns exactly one of `verdict-panel | legacy-unavailable |
+no-review`; the approval card switches all three sections on it, so they're mutually exclusive by
+construction. The "sole adversary" line was folded into the panel's failure branch; the callout is
+now a legacy-only fallback (no structured verdict + legacy `adversaryUnavailable` flag). Added 5
+regression assertions. Gates green (tsc/lint/3400 tests/build) under node26 — see the rollout note's
+Node ABI caveat. See `docs/rollouts/2026-07-10-adversary-review-duplication.md`.
 ## 2026-07-10 — Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch `monet/privacy-terms-pages`)
 Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added `/privacy-policy` +
 `/terms-and-conditions` (boilerplate, matching the existing `/how-it-works`/`/welcome` page
