@@ -231,9 +231,28 @@ export function startScheduler(): void {
 }
 
 async function tick(): Promise<void> {
-  // Liveness heartbeat for /api/health: a persisted timestamp each tick lets an external
-  // supervisor (PM2/uptime monitor) detect a dead/hung scheduler — i.e. autonomy and the
-  // synthetic-stop monitor silently not running. Self-guarded so it can never break a tick.
+  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill.
+  // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
+  // UPDATE has a `WHERE status = 'running'` guard, so even two concurrent sweeps won't double-count).
+  try {
+    const repaired = markStaleRunningRuns(Date.now());
+    if (repaired > 0) console.log(`[scheduler] marked ${repaired} stale running run(s) as failed`);
+  } catch (err) {
+    console.error("[scheduler] stale-run sweep error:", err);
+  }
+
+  // Single-leader gate (default ON, including unset/empty). Only an explicit false/off/0/no-style
+  // value disables it; otherwise only the lease holder runs the background updates and per-account tick body
+  // — preventing duplicate API scrapes and broker EXIT orders on multi-process deploys.
+  if (singleLeaderEnabled() && !acquireOrRenewLeadership(new Date())) {
+    return; // not the leader this tick — no side effects
+  }
+
+  // Liveness heartbeat — AFTER the leader gate, so a follower that never runs the tick body cannot
+  // keep /api/health fresh while the leader is wedged (which would let synthetic stops and strategy
+  // runs grow stale without tripping the stale-scheduler check). Also self-guards the health-failure
+  // threshold: only the leader tracks heartbeat failures — a follower with a dead DB won't abdicate
+  // (it never got past the gate anyway), and the leader does.
   let heartbeatOk = false;
   try {
     setInternalSetting("scheduler:lastTick", new Date().toISOString());
@@ -250,23 +269,6 @@ async function tick(): Promise<void> {
       try { releaseLease(LEASE_OWNER); } catch { /* never throw on shutdown */ }
       return; // stop this tick — we can't prove leadership anyway with a dead DB
     }
-  }
-
-  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill.
-  // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
-  // UPDATE has a `WHERE status = 'running'` guard, so even two concurrent sweeps won't double-count).
-  try {
-    const repaired = markStaleRunningRuns(Date.now());
-    if (repaired > 0) console.log(`[scheduler] marked ${repaired} stale running run(s) as failed`);
-  } catch (err) {
-    console.error("[scheduler] stale-run sweep error:", err);
-  }
-
-  // Single-leader gate (default ON, including unset/empty). Only an explicit false/off/0/no-style
-  // value disables it; otherwise only the lease holder runs the background updates and per-account tick body
-  // — preventing duplicate API scrapes and broker EXIT orders on multi-process deploys.
-  if (singleLeaderEnabled() && !acquireOrRenewLeadership(new Date())) {
-    return; // not the leader this tick — no side effects
   }
 
   // Sentry Crons check-in (opt-in, see sendSentrySchedulerCheckIn above). Deliberately AFTER the

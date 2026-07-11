@@ -1865,6 +1865,7 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
+        lockGuard.assertOwned();
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
@@ -1972,6 +1973,7 @@ export async function runStrategyOnce(
           );
         }
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
+        lockGuard.assertOwned();
         continue;
       }
 
@@ -2134,11 +2136,13 @@ export async function runStrategyOnce(
           // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
           // the account back to Ask-first even though the tripping proposal survives as a card.
           autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
+          lockGuard.assertOwned();
           results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           continue;
         }
 
         const proposalId = crypto.randomUUID();
+        lockGuard.assertOwned();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
         await sendNotification(
@@ -2170,6 +2174,7 @@ export async function runStrategyOnce(
           }
         }
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
+        lockGuard.assertOwned();
         continue;
       }
 
@@ -2207,6 +2212,7 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
+        lockGuard.assertOwned();
         continue;
       }
 
@@ -2222,6 +2228,7 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
+        lockGuard.assertOwned();
         continue;
       }
 
@@ -2255,6 +2262,7 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: [] });
+        lockGuard.assertOwned();
         continue;
       }
 
@@ -2286,6 +2294,7 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
+        lockGuard.assertOwned();
         continue;
       }
 
@@ -2314,6 +2323,7 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
+        lockGuard.assertOwned();
         continue;
       }
 
