@@ -47,8 +47,8 @@ public route retains its legacy 409 compatibility fields.
 Implementation is merged forward to current `origin/main@8fca436d`; adversarial re-review found no code
 blocker. Final Node 24 gate is green: lint 0 errors/408 warnings, tsc clean, 328 files/3,629 tests, build
 clean; focused invoked-route/guard coverage is 4 files/29 tests. AG's owner-directed portable rejection contract is green in READY shared PR #144;
-adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request spend ceilings. Not committed, pushed,
-merged to main, or deployed. See
+adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request
+spend ceilings. READY PR #1409 is open at head `df773e05`; it is not merged/auto-merged or deployed. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)

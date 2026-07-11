@@ -1,5 +1,7 @@
 # 2026-07-11 — Expensive admin-operation abuse/cost controls
 
+PR: <https://github.com/jaywedgeworth22/Socratic.Trade/pull/1409> (ready, not merged)
+
 ## Summary
 
 Added one shared admission layer for eight expensive operator actions:
