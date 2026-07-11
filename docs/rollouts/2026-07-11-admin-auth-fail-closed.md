@@ -97,6 +97,12 @@ separate synthetic-primary-email path without relying on either environment or h
 Head `98651cc1` is pushed in READY PR #1410; hosted checks are pending. No merge, auto-merge, or
 production mutation was requested.
 
+Current-main reconciliation: `origin/main@432ca6fe` merged after #1400 landed. The only source
+conflict was `test/server-metrics.test.ts`; the resolved file keeps all current Hetzner/Coolify,
+malformed-sample, and degraded-provider assertions while attaching verified Auth.js provenance to
+authorized admin requests. STATUS and effort histories were union-merged. The final combined gate is
+running before the PR is refreshed.
+
 ## Follow-ups / risks
 
 - Concurrent `codex/admin-rate-limits` also edits several admin routes. The coordinator must review

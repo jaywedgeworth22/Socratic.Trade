@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Admin server metrics provider-shape and degraded-response hardening (CODEX, PR #1400) — COMPLETED 2026-07-11.** Externally squash-merged to `main` as `432ca6fe` after local and hosted verify/smoke/security passed. Current Hetzner shapes are normalized, provider failures return explicit degraded receipts, fabricated fallback telemetry is removed, and malformed samples are omitted. Main auto-deploy was triggered; production revision remains independently unverified.
 - **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, PR #1398) — COMPLETED 2026-07-11.** Merged externally as `8fca436d` after hosted/local gates passed. Removed the retired second-scheduler deploy workflow and synchronized real GitHub workflow/cron observability. Main auto-deploy was triggered; production revision remains independently unverified. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
 - **Public auth/rate-limit hardening (CODEX, PR #1399) — COMPLETED 2026-07-11.** Merged externally as `97152c25`; trusted-IP OAuth limiting, bounded limiter state, explicit CF trust parsing, and paid tuning admission are on `main`. Main auto-deploy was triggered; production revision remains independently unverified.
 - **Refactoring strategy.ts (AG, branch `agent/strategy-split`) — COMPLETED 2026-07-11.** Split the monolithic `strategy.ts` into `strategy-risk.ts` and `strategy-execution.ts`, retaining `strategy.ts` as a coordinator/barrel. Cleaned up dependencies and automated import fixes. All tests (3427) passing. Rollout note: `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
@@ -1601,9 +1602,12 @@ As of 2026-07-08 (assignment-rule update).
   can satisfy email-based admin auth, while the auth-unconfigured primary-email fallback is always
   denied. The spoofable localhost opt-in was removed, the timing-safe token path remains, and every
   stale admin-route comment now matches the gate. Focused Node24 security coverage is green (6 files/
-  60 tests). Current `origin/main@8fca436d` is merged without auth-code overlap; final gate green:
-  lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build. Head `98651cc1` is pushed; hosted
-  checks pending. No production environment, main merge, auto-merge, or deploy mutation.
+  60 tests). Current `origin/main@432ca6fe` is merged. The only source conflict was
+  `test/server-metrics.test.ts`; its resolved union preserves current provider/degraded-response
+  coverage and adds verified Auth.js provenance to authorized route calls. The previous Node24 gate
+  (lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build) and hosted checks were green; final
+  combined verification is running before PR refresh. No production environment, main merge,
+  auto-merge, or deploy mutation.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch
