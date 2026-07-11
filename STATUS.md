@@ -1,6 +1,26 @@
 # Status
 
-## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
+## 2026-07-11 — Durable provider/dataset operation leases (CODEX, ready PR #1441)
+
+The route-level admin single-flight work is now extended to the underlying provider/dataset
+boundaries shared by manual requests and scheduler/background calls. Four SQLite `settings`-KV
+owner-token groups cover RAG reindex/filing ingest, Congress daily sharing, Congress web-source
+refresh, and SEC 8-K web-source refresh. Acquisition is serialized with `BEGIN IMMEDIATE`, live
+owners heartbeat a TTL, and release deletes only a matching owner token. The admin guard acquires
+the durable group before rate-budget debit and passes an opaque claim into the core function, so
+the core reuses the claim rather than self-conflicting. A competing core caller returns a typed,
+benign busy result without network work or cadence-marker advancement; admin routes map that result
+through the existing shared-v1.5-backed HTTP 409 response. `scheduler.ts` is unchanged. The existing
+detached 8-K summary/full-body embedding remains intentionally detached and therefore outlives the
+primary SEC 8-K refresh lease exactly as before. An adversarial follow-up added persisted-owner
+revalidation, cooperative cancellation on heartbeat/ownership loss, and a second cadence check after
+lease acquisition so a delayed process cannot repeat a just-completed run. The parent gate caught
+and fixed a Next Edge trace of `node:crypto`; lease UUIDs now use Web Crypto. Final Node 24
+verification on `main@7c01f87e` is green: focused 9 files / 130 tests, lint 0 errors / 404 inherited
+warnings, `tsc --noEmit`, full Vitest 334 files / 3,759 tests, and the production build. Ready-PR
+hosted checks and production verification remain. Rollout:
+`docs/rollouts/2026-07-11-provider-operation-leases.md`.
+## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, merged PR #1438; production verified)
 
 The admin connections-health route's expected-lane inventory used `alphavantage:env`, while the
 provider and health log use the canonical `alpha-vantage:env` service name. That mismatch injected a
@@ -9,9 +29,10 @@ phantom never-used card beside the real quota-exhausted lane. The placeholder no
 An authenticated route regression seeds canonical health history and proves the response contains one
 `alpha-vantage:env` entry and no `alphavantage` entry. This is display/health-inventory correctness
 only: provider dispatch, credentials, quota rotation, and failure classification are unchanged.
-Ready PR #1438 is reconciled with `main@da9558ac`. Final Node 24 verification is green: focused
+PR #1438 merged as `7c01f87e` and is live. Final Node 24 verification was green: focused
 Vitest 1/1, lint 0 errors (404 inherited warnings), `tsc --noEmit`, full Vitest 332 files / 3,747
-tests, and the production build. Production UI confirmation remains after merge and auto-deploy. See
+tests, and the production build. Authenticated production UI now shows exactly one canonical
+`alpha-vantage:env` lane and no `alphavantage:env` placeholder. See
 `docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
@@ -135,6 +156,11 @@ released and clean-install-verified shared `v1.5.0`, delegates rejection body/st
 the app-local HTTP adapter to shared builders while retaining `Response`, `Retry-After`, error text,
 and legacy tuning fields, and preserves real Auth.js provenance coverage instead of the bypass mock
 introduced by the Tradier merge. Representative 429/409 bodies are parsed by the shared schema. The
+current-main Node 24 gate is green: focused 4 files / 29 tests, lint 0 errors, TypeScript clean,
+330 files / 3,740 tests, and production build clean. The first full-test
+attempt exposed only a Node ABI mismatch caused by the earlier dependency refresh running under Node
+26; rebuilding `better-sqlite3` under Node 24 fixed it before the passing rerun. Refreshed hosted
+checks and the matched Congress.Trade peer pin remain pending. The controls are anti-repeat budgets, not hard
 final current-main Node 24 gate is green against `origin/main@e395e65a`: focused 4 files / 29 tests,
 lint 0 errors / 404 inherited warnings, TypeScript clean, 331 files / 3,746 tests, and production
 build clean. The first full-test

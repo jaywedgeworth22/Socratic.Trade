@@ -5,6 +5,18 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Durable provider/dataset operation leases (CODEX).** No product-roadmap or
+> scheduler-loop change; reliability/cost correctness only. The manual admin guards and background
+> entrants now converge on four durable SQLite owner-token lease groups below the route layer:
+> RAG reindex/filing ingest, Congress daily share, Congress refresh, and SEC 8-K refresh. Claims are
+> acquired before admin rate debit, heartbeated for long operations, owner-checked on release, and
+> passed opaquely into core boundaries. Ownership loss aborts cooperatively, and non-force cadence is
+> rechecked after acquisition. Background contention is a typed benign skip with no cadence marker
+> advancement; admin contention remains a shared-contract HTTP 409. The intentionally detached 8-K
+> embedding tail remains a documented pending/retry-job follow-up. Final current-main Node 24 gate is
+> green (focused 130, lint 0 errors, typecheck, full 3,759 tests, build); ready-PR delivery remains. See
+> `docs/rollouts/2026-07-11-provider-operation-leases.md`.
+
 > **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
 > change; this is an operations-observability slice. `/api/health` gains a public-safe source
 > revision/process identity and hard-deadline, size-capped Litestream daemon status/last-sync
@@ -29,6 +41,9 @@ filling the missing pieces.
 > route wrappers that #1409's merge had dropped. The released, clean-install-verified shared package
 > `v1.5.0` is exact-pinned in follow-up PR #1426, whose app-local HTTP adapter delegates stable
 > rejection body/status construction to the shared builders while retaining HTTP headers and legacy
+> fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The current-main
+> Node 24 gate is green: focused 29/29, lint 0 errors, tsc, 3,740/3,740 tests, and build. Refreshed
+> hosted checks and the matched Congress.Trade peer pin remain pending. See
 > fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The final
 > `main@e395e65a` Node 24 gate is green: focused 29/29, lint 0 errors, tsc, 3,746/3,746 tests, and
 > build. Antigravity's ready Congress.Trade PR #296 carries the exact matched pin with 940 tests
