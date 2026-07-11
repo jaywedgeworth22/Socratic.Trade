@@ -21,6 +21,28 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Deploy pipeline blocker fixed: kernel tcp_mem exhaustion via litestream 0.5.14 (CLAUDE, branch `claude/litestream-tcpmem-pin`)
+All Coolify deploys of `socratic-trade-prod` failed 08:59Z–11:52Z (12 consecutive; "TLS
+unexpected eof" at git clone; prod drifted ~15 commits stale). Root cause was ON-BOX, not
+GitHub/network: litestream 0.5.14 inside the prod container churns ~20 sockets/s to the R2
+endpoint and holds thousands of dead TCP sockets (peak 16,840 fds, ~715MB pinned buffers),
+exhausting kernel `tcp_mem` (max 182670 pages) — the kernel clamped every connection's
+receive window to ~6KB, so GitHub clones trickled at ~20KB/s and got cut mid-transfer.
+Applied on the box (runtime-only, reversible): raised `net.ipv4.tcp_mem` to
+`273945 365343 548010` (orig `91335 121781 182670`; revert via sysctl -w or reboot — keep
+raised until the pin deploys). Triggered sanctioned deploy `jca2c6wsz7ewydl4q2t4whad` →
+FINISHED 12:29Z, prod = `main@ea89b23e`, `/api/health` 200. This branch pins
+`LITESTREAM_VERSION` back to 0.5.12 in `scripts/coolify-prod-start.sh` (+ version-aware
+cached-binary reinstall — BIN_DIR persists across deploys and the old existence-only check
+would keep the stale 0.5.14 forever). Full diagnosis + A/B soak evidence:
+`docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`. Owner green-lit the pin;
+auto-deploy ships it on merge. tcp_mem raise persisted as
+`/etc/sysctl.d/99-socratic-tcpmem.conf` (headroom insurance — delete once the leak class
+is confidently dead). Upstream issue filed (scrubbed):
+https://github.com/benbjohnson/litestream/issues/1354. Post-deploy box verification
+(litestream 0.5.12 running, replication continuity, fd flatness at 0/10/25 min, health,
+restore marker untouched) recorded on the effort board + #agent-sync.
+
 ## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
 Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval
 card — the "Devil's advocate (red team)" verdict panel AND a separate "Red Team review unavailable
