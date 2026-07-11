@@ -488,6 +488,14 @@ export async function runStrategyOnce(
     const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     await notifyStaleLimitOrders({ userId, policy, orders });
 
+    // Re-prove ownership before recording snapshots, breakers, or any other state mutation in the
+    // protected region. The awaited setup above (reconciliation, stale-intent recovery, portfolio/
+    // positions/orders, market scan) takes real wall time — the lease heartbeat can have failed
+    // during those calls, and a lost lease means another process may own the account. Every write
+    // from here down must happen only while this invocation still holds the lease; otherwise
+    // snapshot records, systemState changes, and notifications would execute under a stolen lease.
+    lockGuard.assertOwned();
+
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
     // post-mortem / reconciliation always has a pre-execution baseline even if the run
     // crashes mid-loop. The post-run snapshot (below) remains for the final state.

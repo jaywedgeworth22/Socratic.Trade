@@ -202,6 +202,12 @@ export async function executeProposal(
       audit("protective_exit_repriced", repriceChange, userId, policy.connectedAccountId);
     }
 
+    // Re-prove ownership before any non-placement writes. The async work above (scans, reprice, broker
+    // review) can take long enough for the lease heartbeat to fail — without this re-check, a lost lease
+    // could let this approval mutate proposal status, send notifications, or trigger cap-demotions under
+    // a stolen lease. Fail-closed parity with the placement path below.
+    lockGuard.assertOwned();
+
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
     if (!tradability[proposal.symbol]?.tradable) {
       const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
