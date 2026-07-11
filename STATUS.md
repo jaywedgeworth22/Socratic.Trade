@@ -105,6 +105,47 @@ preserved). Reproduced + confirmed fix on scratch fixtures; real-board self-merg
 recovered, exit 0. The two line-287 threads stay OPEN (same maintainer merge-semantics decision).
 Verify trio green (tsc clean, 3395 tests pass, build clean — Python-only change). Rollout note
 updated with round-4 detail.
+## 2026-07-10 — Learning-review orphan hardening: adversarial re-review of PR #1328 found + fixed 2 more orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`)
+PR #1328 (deferred #1278 finding #2, >80-item backlog drain) shipped and merged, but a Workflow-based
+adversarial re-review (4 lenses, each finding independently re-verified by a second agent trying to
+refute it via empirical execution) found the fix had two adjacent, real, empirically-reproduced gaps
+that reproduce the SAME "shown to LLM zero times, silently marked reviewed" failure mode via different
+mechanisms: (1) a tied-timestamp cluster larger than MAX_REVIEW_ITEMS (80) freezes the drain forever
+(same id-ordered 80 re-selected every run); (2) a budget-deferred item can silently age out of the
+7-day pack window before its promised later sweep, on a multi-day drain. Both fixed with one change:
+`buildLearningReviewContextPack`'s learned-row filter now keeps a row if in-window OR un-reviewed
+(mirrors the trigger's own window-free design, 8da047aa) + the truncation cut widens to consume a
+full boundary tie-group. This also closes the previously-"accepted" isolated-old-row self-healing gap
+as a free side effect. Caught and fixed a bug in the fix itself (a stray re-slice) via its own new
+test before landing. 2 tests rewritten (asserted the old, now-wrong behavior), 2 new added, all
+falsified against pre-fix source. node@24: tsc clean, learning-review 38/38, full suite 315
+files/3388 tests, eslint 0-err, build clean. See
+`docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum. This closes finding #2 for
+real — no known open gaps remain in the daily learning-review job's coverage guarantees.
+**Update: PR #1363 merged (`d9dc5d5d`), auto-deployed. Took ~2.5hrs of GitHub mergeStateStatus
+DIRTY re-syncs under a heavy same-day push burst despite being conflict-free the whole time by
+every local check; the reliable tiebreaker turned out to be a direct `gh pr merge <n> --squash`
+(no `--auto`) attempt, which forces a fresh server-side merge check independent of the stale
+cached flag.**
+## 2026-07-10 — Provider-knob sync: API-Usage-Monitor -> Infisical prod (CLAUDE opus subagent, branch `claude/provider-knob-sync`)
+Mac-side script + launchd template making the API-Usage-Monitor the source of truth for market-data
+subscription plans: it syncs each plan's env-knob values into Infisical prod (where the trading app
+reads all provider quotas, seeded 2026-07-10). `scripts/sync-provider-knobs.sh` (ASCII, bash 3.2-safe)
+GETs the monitor's token-authed `/api/subscriptions`, computes desired knobs via the pure, unit-tested
+`scripts/provider-knob-diff.mjs` (active -> `knobEnv`; canceled/paused -> `freeTierKnobEnv`;
+considering/null -> skip), reads current values from Infisical over the proven SSH + universal-auth CLI
+path, and **writes only diffs**. Two guards reject anything else a buggy/compromised payload could send:
+a key allow-list (`PROVIDER_QUOTA_`/`PROVIDER_RATE_LIMIT_`/`MASSIVE_` prefixes + `TIINGO_DROP_NEWS`,
+`FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`) and a safe value charset. Dry-run by default (prints
+diff, exit 0); `--apply` writes + posts one `#agent-sync` line per change. `com.jay.provider-knob-sync.plist`
+(30-min, `--apply`) is a template, **NOT installed**; install command in the rollout note. Monitor
+unreachable = exit 0, no spam. **PR #1370 OPEN (READY), gate green (tsc clean / 3422 tests 316 files /
+build clean) - awaiting owner review. Blocker/next:** the monitor-side endpoint is api-usage-monitor
+PR #83 (GET shape matches this contract: bare array, knobEnv + freeTierKnobEnv, Bearer
+`USAGE_INGEST_TOKEN`), but that repo is merge-frozen on a pre-existing `migrate-safe.mjs` deploy
+blocker - the sync stays DRY-RUN until #83 deploys and one live dry run confirms the real payload.
+NOT run with `--apply` against prod; launchd job not installed. See
+`docs/rollouts/2026-07-10-provider-knob-sync.md`.
 ## 2026-07-10 — Server & infrastructure metrics dashboard page (AG, branch `agent/antigravity-server-metrics`)
 Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
 ## 2026-07-10 — Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud lane, branch `claude/anthropic-spend-spike-e2di8j`)
