@@ -1,10 +1,11 @@
 import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 import type { AccountReadiness } from "@/lib/dashboard";
+import type { PositionStopPlan } from "@/lib/db";
 import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
 import type { MarketNewsItem } from "@/lib/market-signals/massive";
-import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import type { RedTeamEfficacy, RegimeStat, ThesisStat } from "@/lib/performance";
 import type { TaxSummary } from "@/lib/tax";
 import type {
     BrokerageAccount,
@@ -64,6 +65,9 @@ export interface DashboardSnapshot {
   portfolio?: Portfolio;
   positions: EquityPosition[];
   symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;
+  /** Per-position stop PLAN (LLM-chosen stop TYPE, persisted at fill time), keyed by symbol — see
+   *  StopPlanStyle/position_stop_plans. Absent entry = "default" (account's own precedence). */
+  stopPlanBySymbol?: Record<string, PositionStopPlan>;
   livePortfolio?: Portfolio;
   livePositions?: EquityPosition[];
   paperPortfolio?: Portfolio;
@@ -88,6 +92,10 @@ export interface DashboardSnapshot {
   smartMoney?: {
     congress: Array<{ symbol: string; member: string; chamber: string; side: "buy" | "sell"; amountLow?: number; amountHigh?: number; tradedAt: string; disclosedAt?: string }>;
     insider: Array<{ symbol: string; owner: string; buyTx: number; sellTx: number; filedAt: string }>;
+    /** Cached congress-score go/no-go verdict (pass/fail + stats); null when never evaluated.
+     *  Nested here alongside the other smart-money congress data to match the server payload
+     *  (src/lib/dashboard.ts). */
+    congressScoreVerdict?: import("@/lib/congress-score-gate").CongressScoreVerdictRead | null;
   };
   marketSession?: string;
   /** Backend macro/market-regime board (FRED macro + derived metrics + free market-wide signals). */
@@ -102,6 +110,16 @@ export interface DashboardSnapshot {
     news?: MarketNewsItem[];
   };
   performance?: PerformanceSummary;
+  redTeamEfficacy?: RedTeamEfficacy & {
+    /** Opening Bear vetoes routed to the Socratic override path. */
+    overrideVetoes: number;
+    /** Opening Bear vetoes whose Socratic override actually applied. */
+    appliedOverrideVetoes: number;
+    /** Blocking vetoes + override-path vetoes; survived Red Team reviews are not persisted here. */
+    vetoDecisions: number;
+    /** appliedOverrideVetoes / vetoDecisions (%), 0 when no veto decisions exist. */
+    overrideSharePct: number;
+  };
   thesisScorecard?: ThesisStat[];
   regimeScorecard?: RegimeStat[];
   tax?: TaxSummary;

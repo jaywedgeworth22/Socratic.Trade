@@ -70,6 +70,49 @@ describe("humanizeLlmError", () => {
     expect(msg).not.toContain("\n");
   });
 
+  // ── Structured provider-error capture (2026-07-09 Roth Bull 400 forensics) ────────────────────
+  // Gemini 400s arrive as an ARRAY-wrapped google.rpc error, sometimes with a `details` array that
+  // is the ONLY actionable content. The old fallback sliced everything to 240 chars, so the details
+  // never reached the persisted run summary — these lock in full capture.
+
+  it("surfaces a Gemini array-wrapped error's code/status/message (the INVALID_ARGUMENT shape)", () => {
+    const raw = '[{ "error": { "code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT" } } ]';
+    const msg = humanizeLlmError(raw, { provider: "gemini", status: 400 });
+    expect(msg).toBe("Google (Gemini) error 400 INVALID_ARGUMENT: Request contains an invalid argument.");
+  });
+
+  it("captures the FULL google.rpc details array (not truncated at 240 chars)", () => {
+    const details = [
+      {
+        "@type": "type.googleapis.com/google.rpc.BadRequest",
+        fieldViolations: Array.from({ length: 6 }, (_, i) => ({
+          field: `generation_config.response_schema.properties.proposals.items.property_${i}`,
+          description: `Schema field violation number ${i} with a reasonably long explanation string attached to it.`
+        }))
+      }
+    ];
+    const raw = JSON.stringify([{ error: { code: 400, message: "Request contains an invalid argument.", status: "INVALID_ARGUMENT", details } }]);
+    const msg = humanizeLlmError(raw, { provider: "gemini", status: 400 });
+    expect(msg).toContain("details:");
+    expect(msg).toContain("property_5"); // the LAST violation survives — nothing was sliced at 240
+    expect(msg.length).toBeGreaterThan(240);
+  });
+
+  it("surfaces an OpenAI-style structured error's own message instead of a truncated JSON dump", () => {
+    const raw = '{"error":{"message":"Invalid schema for response_format: maxItems is not permitted.","type":"invalid_request_error","code":null}}';
+    const msg = humanizeLlmError(raw, { provider: "openai", status: 400 });
+    expect(msg).toBe("OpenAI error invalid_request_error: Invalid schema for response_format: maxItems is not permitted.");
+  });
+
+  it("is idempotent on already-humanized text (no 'Gemini error: Gemini error:' stutter)", () => {
+    const once = humanizeLlmError('[{ "error": { "code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT" } } ]', {
+      provider: "gemini",
+      status: 400
+    });
+    const twice = humanizeLlmError(once, { provider: "gemini", status: 400 });
+    expect(twice).toBe(once);
+  });
+
   it("handles empty input gracefully", () => {
     expect(humanizeLlmError("")).toContain("the LLM");
     expect(humanizeLlmError(null)).toContain("the LLM");

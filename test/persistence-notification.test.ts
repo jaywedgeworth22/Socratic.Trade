@@ -59,11 +59,11 @@ describe("persistence and notifications", () => {
 
   it("rejects overlapping strategy run locks", async () => {
     const { acquireStrategyLock, releaseStrategyLock } = await import("../src/lib/db");
-    expect(acquireStrategyLock()).toBe(true);
-    expect(acquireStrategyLock()).toBe(false);
-    releaseStrategyLock();
-    expect(acquireStrategyLock()).toBe(true);
-    releaseStrategyLock();
+    expect(acquireStrategyLock("owner1")).toBe(true);
+    expect(acquireStrategyLock("owner2")).toBe(false);
+    releaseStrategyLock("owner1");
+    expect(acquireStrategyLock("owner3")).toBe(true);
+    releaseStrategyLock("owner3");
   });
 
   it("keeps strategy run locks isolated per user", async () => {
@@ -71,12 +71,12 @@ describe("persistence and notifications", () => {
     const userA = `lock-a-${randomUUID()}`;
     const userB = `lock-b-${randomUUID()}`;
 
-    expect(acquireStrategyLock(userA)).toBe(true);
-    expect(acquireStrategyLock(userB)).toBe(true);
-    expect(acquireStrategyLock(userA)).toBe(false);
+    expect(acquireStrategyLock("owner-a", userA)).toBe(true);
+    expect(acquireStrategyLock("owner-b", userB)).toBe(true);
+    expect(acquireStrategyLock("owner-a2", userA)).toBe(false);
 
-    releaseStrategyLock(userA);
-    releaseStrategyLock(userB);
+    releaseStrategyLock("owner-a", userA);
+    releaseStrategyLock("owner-b", userB);
   });
 
   it("strips legacy dryRun/paperMode keys from old stored policy JSON instead of leaking them", async () => {
@@ -336,7 +336,9 @@ describe("persistence and notifications", () => {
 
       const result = await runStrategyOnce();
       expect(result.status).toBe("failed");
-      expect(result.summary).toContain("Green Team proposal timed out after 60s using OpenAI gpt-5.5");
+      // gpt-5.5 is a reasoning model, so the strategy call gets the reasoning-class-aware timeout
+      // (150s) rather than the base 60s — the message reports the actual bound that elapsed.
+      expect(result.summary).toContain("Green Team proposal timed out after 150s using OpenAI gpt-5.5");
       expect(result.llmSteps).toMatchObject([
         {
           step: "bull",
@@ -522,15 +524,13 @@ describe("persistence and notifications", () => {
 
       await runStrategyOnce();
 
-      expect(openAiBodies).toHaveLength(2);
-      expect(openAiBodies.map((body) => body.max_output_tokens)).toEqual([
-        LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-        LLM_OUTPUT_TOKEN_CAPS.strategyCritique
-      ]);
-      // Per-role sampling (composite review B/medium/S): the Bull (proposer, index 0) stays
-      // deterministic; the Bear (adversary/reviewer, index 1) now samples at a non-zero temperature.
+      // Single-adversary consolidation: the in-flow Bear was DELETED, so a zero-proposal run makes
+      // exactly ONE LLM call (the Bull). The Red Team review only runs per risk-adding opening —
+      // its request bounds are covered by test/red-team.test.ts.
+      expect(openAiBodies).toHaveLength(1);
+      expect(openAiBodies[0].max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
+      // The Bull (proposer) stays deterministic, greedy temp-0.
       expect(openAiBodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
-      expect(openAiBodies[1].temperature).toBe(LLM_REQUEST_DEFAULTS.adversaryTemperature);
       expect(openAiBodies.every((body) => body.max_completion_tokens === undefined)).toBe(true);
 
       const bullBody = openAiBodies[0];
@@ -538,7 +538,7 @@ describe("persistence and notifications", () => {
       const userContent = JSON.parse(bullBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
       expect(systemContent).toContain('Current executionMode is "broker/paper"');
       expect(userContent.executionMode).toBe("broker/paper");
-      expect(userContent.executionModeClarification).toContain("local simulated fills");
+      expect(userContent.executionModeClarification).toContain("simulated fills");
       expect(systemContent).toContain("`retrievedFinancialContext`");
       expect(systemContent).not.toContain("Item 2.02 Results of Operations");
       expect(userContent.retrievedFinancialContext).toContain("Item 2.02 Results of Operations");

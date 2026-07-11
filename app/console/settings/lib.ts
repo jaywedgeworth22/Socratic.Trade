@@ -123,6 +123,8 @@ export interface ApiKeyEntry {
   /** Set only when YOU have a stored key. */
   updatedAt?: string;
   savedLabel?: string;
+  /** UI text override (default is "key", e.g., "contact" for SEC) */
+  credentialName?: string;
 }
 
 export function listApiKeys(): Promise<{ keys: ApiKeyEntry[] }> {
@@ -142,14 +144,6 @@ export function deleteApiKey(service: string): Promise<{ success: boolean; delet
   return request<{ success: boolean; deleted: boolean }>(`/api/keys?service=${encodeURIComponent(service)}`, {
     method: "DELETE"
   });
-}
-
-// ── LLM provider availability ────────────────────────────────────────────────
-
-/** GET /api/chat/providers — per-provider "a key resolves for this user"
- *  booleans (never the keys). Same check the server makes before a real call. */
-export function fetchChatProviders(): Promise<{ providers: Record<string, boolean> }> {
-  return request<{ providers: Record<string, boolean> }>("/api/chat/providers");
 }
 
 // ── Delivery channels (out-of-app alert delivery) ────────────────────────────

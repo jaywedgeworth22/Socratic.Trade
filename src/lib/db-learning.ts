@@ -99,6 +99,31 @@ export function listAuditByKind(
   }));
 }
 
+/**
+ * Recent audit rows of ANY of `kinds` created at/after `sinceIso`, newest first. One IN-query
+ * (not N listAuditByKind calls) so the daily learning review's system-history digest — the set of
+ * execution-failure kinds it checks lesson evidence against — is a single cheap read.
+ */
+export function listAuditByKindsSince(
+  kinds: string[],
+  sinceIso: string,
+  userId: string = "local",
+  limit = 200
+): Array<{ id: string; createdAt: string; kind: string; payload: unknown }> {
+  if (kinds.length === 0) return [];
+  const placeholders = kinds.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT id, created_at, kind, payload
+       FROM audit_events
+       WHERE user_id = ? AND kind IN (${placeholders}) AND created_at >= ?
+       ORDER BY created_at DESC
+       LIMIT ?`
+    )
+    .all(userId, ...kinds, sinceIso, limit) as Array<{ id: string; created_at: string; kind: string; payload: string }>;
+  return rows.map((row) => ({ id: row.id, createdAt: row.created_at, kind: row.kind, payload: JSON.parse(row.payload) }));
+}
+
 export interface SignalSnapshotAuditRow {
   rowid: number;
   id: string;
@@ -812,6 +837,19 @@ export function supersedeLearnedContext(oldId: string, newId: string): void {
 }
 
 /**
+ * Set an expiry on a live learned_context row (the daily learning review's 'expire' verdict:
+ * "was true, no longer is"). Expired rows stop informing decisions via the existing
+ * `expiresAt` filter in listLearnedContextForDecision but remain in the table for provenance —
+ * softer than deleteLearnedContext. Ownership-scoped; returns false on a no-op.
+ */
+export function expireLearnedContext(id: string, userId: string, expiresAtIso: string = new Date().toISOString()): boolean {
+  const result = getDb()
+    .prepare("UPDATE learned_context SET expires_at = ? WHERE id = ? AND user_id = ?")
+    .run(expiresAtIso, id, userId);
+  return result.changes > 0;
+}
+
+/**
  * Erase a learned-context row the user no longer wants remembered. Scoped to `user_id` — the
  * ORIGINAL contributor, never a reader — so this also serves as the erasure path for a user's own
  * shared-scope contributions (a shared row's `user_id` stays its author; another user who merely
@@ -984,6 +1022,7 @@ interface RawLearnedContextPendingRow {
   created_at: string;
   status: string;
   resolved_at: string | null;
+  review_note: string | null;
 }
 
 function mapLearnedContextPending(row: RawLearnedContextPendingRow): LearnedContextPendingRow {
@@ -1001,7 +1040,8 @@ function mapLearnedContextPending(row: RawLearnedContextPendingRow): LearnedCont
     classifierReason: row.classifier_reason,
     createdAt: row.created_at,
     status: row.status as LearnedContextPendingRow["status"],
-    resolvedAt: row.resolved_at
+    resolvedAt: row.resolved_at,
+    reviewNote: row.review_note
   };
 }
 
@@ -1009,8 +1049,8 @@ export function insertPendingLearnedContext(row: LearnedContextPendingRow): Lear
   getDb()
     .prepare(
       `INSERT INTO learned_context_pending
-        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, classifier_reason, created_at, status, resolved_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, classifier_reason, created_at, status, resolved_at, review_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       row.id,
@@ -1026,7 +1066,8 @@ export function insertPendingLearnedContext(row: LearnedContextPendingRow): Lear
       row.classifierReason,
       row.createdAt,
       row.status,
-      row.resolvedAt
+      row.resolvedAt,
+      row.reviewNote ?? null
     );
   return row;
 }
@@ -1065,5 +1106,18 @@ export function setPendingLearnedContextStatus(
   const result = getDb()
     .prepare("UPDATE learned_context_pending SET status = ?, resolved_at = ? WHERE id = ? AND user_id = ?")
     .run(status, resolvedAt, id, userId);
+  return result.changes > 0;
+}
+
+/**
+ * Ownership-scoped write of the daily Learning Review's "defer" explanation. Deliberately does NOT
+ * touch `status`/`resolved_at` — a defer verdict leaves the item exactly as pending (the human queue
+ * is unchanged); this only attaches the reviewer's note so the queue UI can show it. Returns true
+ * only when a row owned by `userId` was actually updated.
+ */
+export function setPendingLearnedContextReviewNote(id: string, userId: string, note: string): boolean {
+  const result = getDb()
+    .prepare("UPDATE learned_context_pending SET review_note = ? WHERE id = ? AND user_id = ?")
+    .run(note, id, userId);
   return result.changes > 0;
 }

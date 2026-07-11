@@ -1,29 +1,35 @@
 "use client";
 
-/** Settings — scope-split and visibly tagged: what belongs to THIS ACCOUNT
- *  (tax treatment, LLM models) vs ALL YOUR ACCOUNTS (broker connections, API
- *  keys, event notifications, delivery channels, scan shape, boot behavior),
- *  plus a REFERENCE glossary. The tag is the perception device — you never
- *  have to remember the storage tier. Sub-sections live in sibling modules
- *  (brokers/api-keys/models/delivery/help) with their fetch helpers in ./lib. */
+/** Settings — GLOBAL-ONLY since the 2026-07-10 IA restructure: everything here
+ *  is either ALL YOUR ACCOUNTS (broker connections, API keys, event
+ *  notifications, delivery channels, scan shape, learning review, typed
+ *  confirmation, boot behavior — user-level, overlaid on every account),
+ *  THIS BROWSER (appearance), OPERATOR (admin links), REFERENCE (glossary),
+ *  or DANGER (deletion). Nothing account-scoped lives here anymore:
+ *  per-account config (models, tax treatment, prompt, weights, guardrails)
+ *  belongs to Framework (/console/strategy) and Mandates. Sub-sections live
+ *  in sibling modules (brokers/api-keys/delivery/help) with their fetch
+ *  helpers in ./lib. */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ExternalLink } from "lucide-react";
-import type { IraWashSaleHandling, NotificationEventType, TaxationType } from "@/lib/types";
+import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
-import { activeConnectedAccount, deriveReality } from "../lib/derive";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
+import { useAutoSave } from "../lib/useAutoSave";
 import { useConsoleData } from "../lib/useConsoleData";
+import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
-import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Chip, Field, RawNumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { Card, Chip, Field, RawNumInput, TextInput, Toggle } from "../ui/primitives";
+import { SaveStatus } from "../ui/save-status";
 import { ApiKeysCard } from "./api-keys";
 import { BrokerAccountsCard } from "./brokers";
 import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
-import { ModelsCard } from "./models";
+import { LearningReviewCard } from "./learning-review";
 import { DataSharingCard } from "./sharing";
 
 const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
@@ -36,13 +42,13 @@ const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   proposal_withdrawn: "the strategist took an idea back",
   limit_order_stale: "a limit order has been working too long",
   provider_degraded: "a data provider is failing",
-  budget_alert: "a usage budget threshold was crossed"
+  budget_alert: "a usage budget threshold was crossed",
+  learning_review: "the daily learning review posted its findings"
 };
 
 export default function SettingsPage() {
   const { snapshot } = useConsoleData();
-  const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
-  const ready = snapshot !== null && reality !== null;
+  const ready = snapshot !== null;
 
   // Deep links (e.g. the Run-once blocked sheet routes to /console/settings#api-keys):
   // the page renders only after the snapshot arrives, so the native anchor jump
@@ -55,31 +61,14 @@ export default function SettingsPage() {
     return () => clearTimeout(timer);
   }, [ready]);
 
-  if (!snapshot || !reality) return null;
+  if (!snapshot) return null;
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
       <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
 
-      {/* ── THIS ACCOUNT ── */}
-      <section className="flex flex-col gap-4">
-        <div className="flex items-center gap-2">
-          <Chip
-            tone={reality.tone}
-            title="Settings tagged THIS ACCOUNT are stored on the account itself — switch scope and you'll see that account's values instead."
-          >
-            THIS ACCOUNT — {reality.account?.label ?? "No connected account"} · {reality.word}
-          </Chip>
-          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-            changes here follow the account, not you
-          </span>
-        </div>
-        <TaxSettingsCard />
-        {/* llmModel / redTeamLlmModel live on the account's policy — same
-            save path (PUT /api/policy) as everything else account-scoped. */}
-        <ModelsCard />
-        <AdvancedActionConfirmationCard />
-      </section>
+      {/* Account-scoped config (models, tax treatment, prompt, weights) lives on
+          Framework (/console/strategy) and Mandates — Settings is global-only. */}
 
       {/* ── ALL ACCOUNTS ── */}
       <section className="flex flex-col gap-4">
@@ -111,6 +100,22 @@ export default function SettingsPage() {
           <DataSharingCard />
         </div>
         <ScanShapeCard />
+        {/* learningReviewEnabled/Mode/Model are USER-level policy fields
+            (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per
+            user per day over user-level learned context, so its config overlays
+            every account — it belongs under ALL YOUR ACCOUNTS, not THIS ACCOUNT.
+            The anchor id is a deep-link target (the Learning Review blocks on
+            /console/approvals link here as "Model settings"). */}
+        <div id="learning-review" className="scroll-mt-28">
+          <LearningReviewCard />
+        </div>
+        {/* requireTypedConfirmation is a USER-level policy field
+            (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
+            phrase ceremony is an owner preference, not a per-account guardrail,
+            so one switch applies across every account. */}
+        <div id="confirmation" className="scroll-mt-28">
+          <AdvancedActionConfirmationCard />
+        </div>
         <BootBehaviorCard />
         <YouCard />
       </section>
@@ -166,7 +171,7 @@ export default function SettingsPage() {
   );
 }
 
-// ── This account: typed confirmation for high-impact live actions ────────────
+// ── All accounts: typed confirmation for high-impact live actions ────────────
 
 function AdvancedActionConfirmationCard() {
   const { snapshot, refresh } = useConsoleData();
@@ -197,7 +202,7 @@ function AdvancedActionConfirmationCard() {
     <Card title="Advanced action confirmation">
       <Field
         label="Type a phrase to confirm high-impact live actions"
-        hint="On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click. Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless."
+        hint="One switch for your whole login — it applies across every account you connect. On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click. Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless."
       >
         <div className="flex items-center gap-3">
           <Toggle
@@ -217,42 +222,64 @@ function AdvancedActionConfirmationCard() {
 
 // ── This browser: local appearance preferences ──────────────────────────────
 
+/** Shared button-grid for the two font pickers below — same idiom, different
+ *  option list/selection/setter. */
+function FontOptionGrid<F extends string>({
+  options,
+  selected,
+  onSelect
+}: {
+  options: Array<{ value: F; label: string; description: string; fontFamily: string }>;
+  selected: F;
+  onSelect: (next: F) => void;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {options.map((option) => {
+        const isSelected = selected === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={isSelected}
+            title={option.description}
+            onClick={() => onSelect(option.value)}
+            className={`min-h-[88px] rounded-lg border px-3 py-2 text-left transition-colors ${
+              isSelected
+                ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
+                : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-accent-border)]"
+            }`}
+          >
+            <span className="flex items-center justify-between gap-2 text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-fg)]">
+              {option.label}
+              {isSelected && <Check size={14} className="text-[color:var(--con-accent)]" aria-hidden />}
+            </span>
+            <span
+              className="mt-1 block max-h-[44px] overflow-hidden text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]"
+              style={{ fontFamily: option.fontFamily }}
+            >
+              Objective: compound returns by rotating capital toward the strongest risk-adjusted opportunities.
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function AppearanceCard() {
   const { textBoxFont, setTextBoxFont } = useConsoleTextBoxFont();
+  const { consoleFont, setConsoleFont } = useConsoleFont();
   return (
     <Card title="Appearance">
-      <Field label="Text Box Font" hint="Editable text boxes use this font in this browser.">
-        <div className="grid gap-2 sm:grid-cols-2">
-          {CONSOLE_TEXT_BOX_FONT_OPTIONS.map((option) => {
-            const selected = textBoxFont === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={selected}
-                title={option.description}
-                onClick={() => setTextBoxFont(option.value)}
-                className={`min-h-[88px] rounded-lg border px-3 py-2 text-left transition-colors ${
-                  selected
-                    ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
-                    : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-accent-border)]"
-                }`}
-              >
-                <span className="flex items-center justify-between gap-2 text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-fg)]">
-                  {option.label}
-                  {selected && <Check size={14} className="text-[color:var(--con-accent)]" aria-hidden />}
-                </span>
-                <span
-                  className="mt-1 block max-h-[44px] overflow-hidden text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]"
-                  style={{ fontFamily: option.fontFamily }}
-                >
-                  Objective: compound returns by rotating capital toward the strongest risk-adjusted opportunities.
-                </span>
-              </button>
-            );
-          })}
-        </div>
+      <Field label="Console Font" hint="The whole console (nav, cards, copy) uses this font in this browser.">
+        <FontOptionGrid options={CONSOLE_FONT_OPTIONS} selected={consoleFont} onSelect={setConsoleFont} />
       </Field>
+      <div className="mt-4">
+        <Field label="Text Box Font" hint="Editable text boxes use this font in this browser.">
+          <FontOptionGrid options={CONSOLE_TEXT_BOX_FONT_OPTIONS} selected={textBoxFont} onSelect={setTextBoxFont} />
+        </Field>
+      </div>
     </Card>
   );
 }
@@ -296,58 +323,40 @@ function AdminLinksCard() {
 
 function EventNotificationsCard() {
   const { snapshot, refresh } = useConsoleData();
-  const toast = useToast();
-  const [draftEvents, setDraftEvents] = useState<NotificationEventType[] | null>(null);
-  const [draftWebhook, setDraftWebhook] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const dirty =
-    draftEvents !== null ||
-    (draftWebhook !== null && draftWebhook !== (snapshot?.policy.notificationSettings.webhookUrl ?? ""));
-  useUnsavedChanges(dirty);
+  const autoSave = useAutoSave();
+  // Sticky optimistic local state: seeded lazily from the snapshot, updated on
+  // change for instant feedback, reverted by useAutoSave's onError if the write
+  // fails. refresh() keeps the shared snapshot current for the rest of the app.
+  const [localEvents, setLocalEvents] = useState<NotificationEventType[] | null>(null);
+  const [localWebhook, setLocalWebhook] = useState<string | null>(null);
   if (!snapshot) return null;
 
   const current = snapshot.policy.notificationSettings;
-  const events = draftEvents ?? current.enabledEvents;
-  const webhook = draftWebhook ?? current.webhookUrl ?? "";
+  const events = localEvents ?? current.enabledEvents;
+  const webhook = localWebhook ?? current.webhookUrl ?? "";
 
-  const save = async () => {
-    setBusy(true);
-    try {
-      // Minimal patch: only the fields the user actually touched. The server
-      // deep-merges notificationSettings, so untouched fields stay as they are.
-      await savePolicy({
-        notificationSettings: {
-          ...(draftEvents !== null ? { enabledEvents: events } : {}),
-          ...(draftWebhook !== null && draftWebhook !== (current.webhookUrl ?? "") ? { webhookUrl: webhook } : {})
-        }
-      });
-      await refresh();
-      setDraftEvents(null);
-      setDraftWebhook(null);
-      toast.push("pos", "Event notifications saved");
-    } catch (error) {
-      toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  const toggleEvent = (type: NotificationEventType, on: boolean) => {
+    const prev = events;
+    const next = on ? events.filter((e) => e !== type) : [...events, type];
+    setLocalEvents(next);
+    autoSave.save(() => savePolicy({ notificationSettings: { enabledEvents: next } }).then(() => refresh()), {
+      onError: () => setLocalEvents(prev)
+    });
+  };
+
+  const commitWebhook = () => {
+    const next = webhook.trim();
+    if (next === (current.webhookUrl ?? "")) return; // unchanged → no write
+    const prev = webhook;
+    // Server validates (400 on a non-URL); revert the field on failure.
+    autoSave.save(() => savePolicy({ notificationSettings: { webhookUrl: next } }).then(() => refresh()), {
+      onError: () => setLocalWebhook(prev),
+      errorTitle: "Webhook not saved"
+    });
   };
 
   return (
-    <Card
-      title="Event notifications"
-      action={
-        dirty ? (
-          <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" title="Throw away the unsaved event/webhook edits." onClick={() => { setDraftEvents(null); setDraftWebhook(null); }}>
-              Discard
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} title="Save the event list and webhook for your whole login." onClick={() => void save()}>
-              {busy ? "Saving…" : "Save"}
-            </Btn>
-          </div>
-        ) : undefined
-      }
-    >
+    <Card title="Event notifications" action={<SaveStatus status={autoSave.status} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         Which events send notifications, and the webhook they go to. One list for your whole login — it applies across
         every account, not just the one you&apos;re viewing. Delivery channels (push/email/SMS) are configured once per
@@ -365,7 +374,8 @@ function EventNotificationsCard() {
               <input
                 type="checkbox"
                 checked={on}
-                onChange={() => setDraftEvents(on ? events.filter((e) => e !== type) : [...events, type])}
+                disabled={autoSave.saving}
+                onChange={() => toggleEvent(type, on)}
               />
               <span className="font-semibold">{type}</span>
               <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{EVENT_HINT[type]}</span>
@@ -379,194 +389,11 @@ function EventNotificationsCard() {
             id="webhook"
             value={webhook}
             placeholder="https://…"
-            title="Every enabled event is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON."
-            onChange={(e) => setDraftWebhook(e.target.value)}
+            title="Every enabled event is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON. Saves when you click away."
+            onChange={(e) => setLocalWebhook(e.target.value)}
+            onBlur={commitWebhook}
           />
         </Field>
-      </div>
-    </Card>
-  );
-}
-
-// ── This account: tax settings ───────────────────────────────────────────────
-
-const TAXATION_LABEL: Record<TaxationType, string> = {
-  taxable: "taxable brokerage",
-  roth_ira: "Roth IRA",
-  traditional_ira: "traditional IRA"
-};
-
-function TaxSettingsCard() {
-  const { snapshot, refresh } = useConsoleData();
-  const toast = useToast();
-  const [draft, setDraft] = useState<Partial<{
-    taxationType: TaxationType;
-    washSaleGuard: boolean;
-    iraWashSaleHandling: IraWashSaleHandling;
-    shortTermRatePct: number;
-    longTermRatePct: number;
-    subtractFromResults: boolean;
-  }> | null>(null);
-  const [busy, setBusy] = useState(false);
-  useUnsavedChanges(draft !== null);
-  if (!snapshot) return null;
-
-  const current = snapshot.policy.taxSettings;
-  // The connected account's own taxationType (set when it was linked) WINS over
-  // policy.taxSettings server-side (dashboard tax summary reads
-  // activeAccount.taxationType ?? policy.taxSettings.taxationType), and no API
-  // exists to edit it here — so when the account defines it, show it read-only
-  // instead of a select whose "saved" value would be silently overridden.
-  const accountTaxationType = activeConnectedAccount(snapshot)?.taxationType;
-  const taxation: TaxationType = accountTaxationType ?? draft?.taxationType ?? current?.taxationType ?? "taxable";
-  const isIra = taxation === "roth_ira" || taxation === "traditional_ira";
-  const washSaleGuard: boolean = draft?.washSaleGuard ?? current?.washSaleGuard ?? true;
-  const iraWashSaleHandling: IraWashSaleHandling = draft?.iraWashSaleHandling ?? current?.iraWashSaleHandling ?? "disregard";
-  const subtractFromResults: boolean = draft?.subtractFromResults ?? current?.subtractFromResults ?? false;
-  const shortTermRatePct: number = draft?.shortTermRatePct ?? current?.shortTermRatePct ?? 24;
-  const longTermRatePct: number = draft?.longTermRatePct ?? current?.longTermRatePct ?? 15;
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      await savePolicy({ taxSettings: draft ?? {} });
-      await refresh();
-      setDraft(null);
-      toast.push("pos", "Tax settings saved");
-    } catch (error) {
-      toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Card
-      title="Tax treatment"
-      action={
-        draft ? (
-          <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" title="Throw away the unsaved tax edits." onClick={() => setDraft(null)}>
-              Discard
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} title="Save tax treatment for this account." onClick={() => void save()}>
-              {busy ? "Saving…" : "Save"}
-            </Btn>
-          </div>
-        ) : undefined
-      }
-    >
-      <div className="grid gap-4 sm:grid-cols-2">
-        {accountTaxationType ? (
-          <Field
-            label="Account type"
-            hint="Set on the connected account when it was linked — that value always wins over anything saved here, and this console can't change it yet."
-          >
-            <div className="con-input flex items-center bg-[color:var(--con-surface-2)] text-[color:var(--con-muted)]">
-              {TAXATION_LABEL[accountTaxationType] ?? accountTaxationType}
-            </div>
-          </Field>
-        ) : (
-          <Field label="Account type" hint="IRAs zero the rates and skip the per-account wash-sale guard automatically." htmlFor="taxtype">
-            <Select
-              id="taxtype"
-              value={taxation}
-              title="How gains in this account are taxed. Drives the tax estimates and the wash-sale handling."
-              onChange={(e) => setDraft((d) => ({ ...(d ?? {}), taxationType: e.target.value as TaxationType }))}
-            >
-              <option value="taxable">taxable brokerage</option>
-              <option value="roth_ira">Roth IRA</option>
-              <option value="traditional_ira">traditional IRA</option>
-            </Select>
-          </Field>
-        )}
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Short-term rate %" htmlFor="st-rate">
-            <RawNumInput
-              id="st-rate"
-              value={String(shortTermRatePct)}
-              emptyValue={0}
-              title="Your estimated tax rate on gains from positions held one year or less. Used only for the tax estimates — not advice."
-              onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), shortTermRatePct: parsed }))}
-            />
-          </Field>
-          <Field label="Long-term rate %" htmlFor="lt-rate">
-            <RawNumInput
-              id="lt-rate"
-              value={String(longTermRatePct)}
-              emptyValue={0}
-              title="Your estimated tax rate on gains from positions held more than one year. Used only for the tax estimates — not advice."
-              onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), longTermRatePct: parsed }))}
-            />
-          </Field>
-        </div>
-      </div>
-      <div className="mt-3 flex flex-col gap-2.5">
-        {isIra ? (
-          <div className="rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-[length:var(--con-fs-sm)] font-semibold">Same-IRA wash sales</div>
-                <p className="mt-0.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-                  Ignored automatically. This account has no taxable loss deduction inside the IRA, so Block / Ask /
-                  Auto is not the relevant control.
-                </p>
-              </div>
-              <Chip tone="pos">not applicable</Chip>
-            </div>
-            <div className="mt-3 max-w-md">
-              <Field
-                label="Taxable-loss rebuy inside this IRA"
-                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Ignore/disregard is the default for IRA accounts and lets the buy proceed with the audit note; Block is the stricter optional setting."
-                htmlFor="ira-wash-sale"
-              >
-                <Select
-                  id="ira-wash-sale"
-                  value={iraWashSaleHandling}
-                  title="Controls cross-account IRA replacement buys after a taxable loss. Same-IRA wash sales are already ignored. Default: ignore/disregard and annotate."
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...(d ?? {}), iraWashSaleHandling: e.target.value as IraWashSaleHandling }))
-                  }
-                >
-                  <option value="disregard">Ignore / disregard and annotate (default)</option>
-                  <option value="block">Block cross-account IRA replacement buys</option>
-                </Select>
-              </Field>
-            </div>
-          </div>
-        ) : (
-          <div
-            className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
-            title="On: buying back a symbol you sold at a loss in the last 30 days is blocked, so the loss stays deductible."
-          >
-            <div>
-              <div className="text-[length:var(--con-fs-sm)] font-semibold">Taxable-account wash-sale guard</div>
-              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                Blocks rebuying a symbol this taxable account closed at a loss within 30 days. A taxable-account loss
-                can also lock replacement buys across your other accounts, including IRAs.
-              </p>
-            </div>
-            <Toggle
-              checked={washSaleGuard}
-              onChange={(next) => setDraft((d) => ({ ...(d ?? {}), washSaleGuard: next }))}
-              label="Wash-sale guard"
-            />
-          </div>
-        )}
-        <div
-          className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
-          title="On: P&L on the Results screen is shown after subtracting estimated taxes at the rates above."
-        >
-          <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Show results net of estimated tax</div>
-            <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Estimates only — not tax advice.</p>
-          </div>
-          <Toggle
-            checked={subtractFromResults}
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), subtractFromResults: next }))}
-            label="Subtract tax from results"
-          />
-        </div>
       </div>
     </Card>
   );
@@ -576,65 +403,48 @@ function TaxSettingsCard() {
 
 function ScanShapeCard() {
   const { snapshot, refresh } = useConsoleData();
-  const toast = useToast();
-  const [draft, setDraft] = useState<{ marketScanCandidateLimit?: number; marketScanOutlierReserve?: number } | null>(null);
-  const [busy, setBusy] = useState(false);
-  useUnsavedChanges(draft !== null);
+  const autoSave = useAutoSave();
+  const [draft, setDraft] = useState<{ marketScanCandidateLimit?: number; marketScanOutlierReserve?: number }>({});
   if (!snapshot) return null;
 
   const policy = snapshot.policy;
+  const candidateLimit = draft.marketScanCandidateLimit ?? policy.marketScanCandidateLimit;
+  const outlierReserve = draft.marketScanOutlierReserve ?? policy.marketScanOutlierReserve;
 
-  const save = async () => {
-    setBusy(true);
-    try {
-      await savePolicy(draft ?? {});
-      await refresh();
-      setDraft(null);
-      toast.push("pos", "Scan shape saved", "Applies to every account's runs.");
-    } catch (error) {
-      toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  // Numeric fields: local text while typing, persist on blur. `key` is a top-level
+  // policy field (whole-replace), not a nested object.
+  const commitNumber = (key: "marketScanCandidateLimit" | "marketScanOutlierReserve", next: number | undefined, saved: number | undefined) => {
+    if (next === saved) return; // unchanged → no write
+    autoSave.save(() => savePolicy({ [key]: next }).then(() => refresh()), {
+      onError: () => setDraft((d) => ({ ...d, [key]: saved }))
+    });
   };
 
   return (
-    <Card
-      title="Market-scan shape"
-      action={
-        draft ? (
-          <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" title="Throw away the unsaved scan-shape edits." onClick={() => setDraft(null)}>
-              Discard
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} title="Save the scan shape — applies to every account's runs." onClick={() => void save()}>
-              {busy ? "Saving…" : "Save"}
-            </Btn>
-          </div>
-        ) : undefined
-      }
-    >
+    <Card title="Market-scan shape" action={<SaveStatus status={autoSave.status} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        How wide every account&apos;s market scan looks. These two are user-level: they overlay all your accounts — the
-        one deliberate exception to account scoping, labeled rather than hidden.
+        How wide every account&apos;s market scan looks. These two are user-level, like everything on this page: they
+        overlay all your accounts.
       </p>
       <div className="grid max-w-md grid-cols-2 gap-3">
         <Field label="Enriched candidates" hint="Ranked names that get full enrichment per run." htmlFor="scan-limit">
           <RawNumInput
             id="scan-limit"
-            value={String(draft?.marketScanCandidateLimit ?? policy.marketScanCandidateLimit ?? "")}
+            value={String(candidateLimit ?? "")}
             emptyValue={0}
-            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs."
-            onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), marketScanCandidateLimit: parsed }))}
+            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs. Saves when you click away."
+            onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanCandidateLimit: parsed }))}
+            onBlur={() => commitNumber("marketScanCandidateLimit", candidateLimit, policy.marketScanCandidateLimit)}
           />
         </Field>
         <Field label="Outlier reserve" hint="Below-cutoff slots reserved for notable web signals." htmlFor="scan-reserve">
           <RawNumInput
             id="scan-reserve"
-            value={String(draft?.marketScanOutlierReserve ?? policy.marketScanOutlierReserve ?? "")}
+            value={String(outlierReserve ?? "")}
             emptyValue={0}
-            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity)."
-            onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), marketScanOutlierReserve: parsed }))}
+            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity). Saves when you click away."
+            onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanOutlierReserve: parsed }))}
+            onBlur={() => commitNumber("marketScanOutlierReserve", outlierReserve, policy.marketScanOutlierReserve)}
           />
         </Field>
       </div>

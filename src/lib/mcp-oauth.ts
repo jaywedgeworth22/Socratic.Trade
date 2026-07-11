@@ -189,12 +189,49 @@ export async function completeMcpOAuthCallback(input: {
  * migrated into the `local` operator's stored token at boot (migrateLocalRobinhoodToken), so the
  * primary user resolves it like any other user and a non-`local` tenant can never reach it.
  */
+// Per-user in-flight refresh, so two concurrent callers of getMcpAccessToken for the SAME user
+// (e.g. the dashboard snapshot's broker chain and its now-parallel Robinhood MCP health check)
+// share one token exchange instead of each independently POSTing the same refresh_token. Some
+// OAuth servers rotate (single-use) refresh tokens, in which case the second concurrent exchange
+// would fail with invalid_grant even though the first succeeded — surfacing a false
+// reconnect/account-readiness error despite the account being fine.
+const inFlightRefreshes = new Map<string, Promise<string>>();
+
+// Hard ceiling for a single token refresh (network round-trips: discovery + registration + the
+// token exchange POST). The exchange fetch below is bounded by AbortSignal.timeout, but this also
+// evicts the shared singleflight entry if ANY await in refreshMcpAccessToken hangs — otherwise a
+// never-settling refresh would pin the pending promise in the map forever, so every later caller
+// for the same user would await the same hung promise and the account could never self-heal once
+// the network recovered (short of a reconnect/restart).
+const REFRESH_SINGLEFLIGHT_TTL_MS = 20_000;
+
 export async function getMcpAccessToken(userId: string): Promise<string | undefined> {
   const tokens = getStoredMcpOAuthTokens(userId);
   if (!tokens) return undefined;
   if (!isExpiring(tokens)) return tokens.accessToken;
   if (!tokens.refreshToken) return tokens.accessToken;
-  return refreshMcpAccessToken(userId, tokens);
+  const pending = inFlightRefreshes.get(userId);
+  if (pending) return pending;
+  const promise = refreshMcpAccessToken(userId, tokens);
+  const evict = () => {
+    if (inFlightRefreshes.get(userId) === promise) inFlightRefreshes.delete(userId);
+  };
+  // Backstop eviction: even if `promise` never settles (a hung await upstream of the bounded
+  // exchange fetch), free the singleflight slot after the TTL so the next caller starts fresh.
+  const evictTimer = setTimeout(evict, REFRESH_SINGLEFLIGHT_TTL_MS);
+  if (typeof evictTimer.unref === "function") evictTimer.unref();
+  // Use then(cleanup, cleanup) rather than finally(): finally() returns a NEW promise that mirrors a
+  // rejection of `promise` (invalid/expired refresh token, a 5xx, or the exchange AbortSignal.timeout),
+  // and it is unawaited here — Node can report that as an unhandled rejection and terminate the Next
+  // process even though the caller already handles the failure via `promise` (returned below). Handling
+  // the rejection in the onRejected branch keeps this detached cleanup chain from ever going unhandled.
+  const cleanup = () => {
+    clearTimeout(evictTimer);
+    evict();
+  };
+  promise.then(cleanup, cleanup);
+  inFlightRefreshes.set(userId, promise);
+  return promise;
 }
 
 /**
@@ -353,7 +390,12 @@ async function exchangeToken(tokenUrl: string, body: URLSearchParams, existing?:
   const response = await fetch(tokenUrl, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body
+    body,
+    // Bound the token exchange so a hung OAuth endpoint rejects (freeing the refresh singleflight)
+    // instead of leaving a pending promise the whole account gets stuck behind.
+    signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(REFRESH_SINGLEFLIGHT_TTL_MS)
+      : undefined
   });
   if (!response.ok) throw new Error(`Robinhood MCP OAuth token exchange failed with HTTP ${response.status}.`);
   return tokenResponseToTokens((await response.json()) as Record<string, unknown>, existing);

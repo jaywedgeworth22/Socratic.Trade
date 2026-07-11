@@ -37,6 +37,11 @@ describe("policy notification event settings", () => {
 
   it("rejects gpt-5.5 high reasoning for interactive strategy runs", async () => {
     const { PUT } = await import("../app/api/policy/route");
+    // Keyed-provider backstop (owner directive 2026-07-07): a chosen model's provider must have a
+    // resolvable key or the PUT 400s on THAT first — seed one so this test reaches the reasoning rule.
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+    upsertUserApiKey(DEFAULT_REQUEST_USER_ID, "openai", "sk-test", "test fixture");
 
     const response = await PUT(
       new Request("http://localhost/api/policy", {
@@ -52,8 +57,13 @@ describe("policy notification event settings", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await response.text()).toContain("gpt-5.5 with high reasoning is disabled");
+    const proposerMessage = await response.text();
+    expect(proposerMessage).toContain("gpt-5.5 with high reasoning is disabled");
+    // Per-team split (2026-07-10): the rejection names WHICH team's combo violated.
+    expect(proposerMessage).toContain("Proposer (green team)");
 
+    // Reviewer violation via the FALLBACK: no explicit redTeamReasoningEffort, so the reviewer
+    // inherits the proposer's high — and the reviewer model is the gpt-5.5.
     const redTeamResponse = await PUT(
       new Request("http://localhost/api/policy", {
         method: "PUT",
@@ -69,7 +79,55 @@ describe("policy notification event settings", () => {
     );
 
     expect(redTeamResponse.status).toBe(400);
-    expect(await redTeamResponse.text()).toContain("gpt-5.5 with high reasoning is disabled");
+    const reviewerMessage = await redTeamResponse.text();
+    expect(reviewerMessage).toContain("gpt-5.5 with high reasoning is disabled");
+    expect(reviewerMessage).toContain("Reviewer (red team)");
+
+    // Reviewer violation via its EXPLICIT per-team effort (proposer effort is innocent).
+    const explicitReviewerResponse = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          llmModel: "gpt-5.4-mini",
+          redTeamLlmModel: "gpt-5.5",
+          llmReasoningEffort: "medium",
+          redTeamReasoningEffort: "high"
+        })
+      })
+    );
+    expect(explicitReviewerResponse.status).toBe(400);
+    expect(await explicitReviewerResponse.text()).toContain("Reviewer (red team)");
+
+    // An explicit reviewer medium RESCUES the fallback: the proposer's high no longer reaches the
+    // gpt-5.5 reviewer, and the gpt-5.4-mini proposer may run at high — nothing violates.
+    const rescuedResponse = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          llmModel: "gpt-5.4-mini",
+          redTeamLlmModel: "gpt-5.5",
+          llmReasoningEffort: "high",
+          redTeamReasoningEffort: "medium"
+        })
+      })
+    );
+    expect(rescuedResponse.status).toBe(200);
+    const rescued = await rescuedResponse.json();
+    expect(rescued.llmReasoningEffort).toBe("high");
+    expect(rescued.redTeamReasoningEffort).toBe("medium");
+
+    // The per-team field gets the same enum validation as the legacy one.
+    const badValueResponse = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ redTeamReasoningEffort: "extreme" })
+      })
+    );
+    expect(badValueResponse.status).toBe(400);
+    expect(await badValueResponse.text()).toContain("redTeamReasoningEffort must be");
   });
 
   it("does NOT block unrelated saves when the STORED policy already has gpt-5.5 + high reasoning", async () => {
@@ -109,6 +167,10 @@ describe("policy notification event settings", () => {
     expect(getPolicy(DEFAULT_REQUEST_USER_ID).llmReasoningEffort).toBe("high");
 
     // But a write that CHANGES the model/effort combo to the disallowed one is still rejected.
+    // (Seed a key so the model-changing write passes the keyed-provider backstop and reaches the
+    // reasoning rule.)
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey(DEFAULT_REQUEST_USER_ID, "openai", "sk-test", "test fixture");
     const stillRejected = await PUT(
       new Request("http://localhost/api/policy", {
         method: "PUT",
@@ -117,6 +179,9 @@ describe("policy notification event settings", () => {
       })
     );
     expect(stillRejected.status).toBe(400);
-    expect(await stillRejected.text()).toContain("gpt-5.5 with high reasoning is disabled");
+    const stillRejectedMessage = await stillRejected.text();
+    expect(stillRejectedMessage).toContain("gpt-5.5 with high reasoning is disabled");
+    // The gpt-5.5 seat here is the reviewer (inheriting the proposer's high via the fallback).
+    expect(stillRejectedMessage).toContain("Reviewer (red team)");
   });
 });
