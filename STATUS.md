@@ -90,6 +90,25 @@ One thread left open (PR comment on #1331, not resolved): OCO sibling-identity p
 broker API change to fix precisely. Verify: tsc clean, lint 0 errors, 3558 tests passed, build clean.
 Rollout: `docs/rollouts/2026-07-11-pr1371-round4-codex-fixes.md`. Auto-merge enabled once CI is green.
 
+**2026-07-11 update 2 — PR #1331 squash-merged to `main`; round 5 (4 more findings) + 3 merge
+reconciliations:** #1331 merged (an owner/Opus adversarial-triage session resolved its last 3
+threads and merged — see that PR's own disposition comment); GitHub auto-retargeted this PR's base
+from the now-gone `claude/stop-loss-preset-options-f1jygn` branch straight to `main`. Fixed 4 fresh
+Codex findings triggered by the merge push: broker-protective-stops.ts's section-2b "none"-plan
+teardown (added round-4) broadened to cover ANY plan-excluded broker-held stop
+(`kindForSymbol === null`, not just literal "none") and now books fills before deleting, mirroring
+every other cancel path; strategy.ts's `staleStopPlanSymbols` cleanup — a regression MY OWN round-4
+fix introduced — was computing candidates from the already-live-basis-filtered `stopPlanBySymbol`
+map, which never contains a closed symbol in the first place, making the cleanup a silent no-op
+exactly when a position closes (fixed by hoisting the raw unfiltered `getStopPlans` result and
+computing stale symbols from that instead); `deleteConnectedAccount` now purges `position_stop_plans`
+too, with a new regression test. Then reconciled with #1331's squash-merge (7 file conflicts — kept
+this branch's per-position stop-plan additions throughout, since main's squash tip predates them) and
+a concurrent owner+Opus push (2 file conflicts — reinstating two round-2 #1331 fixes that push had
+independently kept despite my having deferred them per the "not blocking this merge" disposition
+language; the owner's own follow-up PR comment then confirmed all 4 round-5 fixes were independently
+verified correct). Verify: tsc clean, lint 0 errors, 319 files/3566 tests passed, build clean.
+
 ## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
 Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
 Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no
