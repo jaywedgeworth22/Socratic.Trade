@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { toBrokerSide, isShortIntent, isRejectedOrCanceledState, isLiveOrderState } from "../src/lib/broker-side";
+import { toBrokerSide, isShortIntent, isRejectedOrCanceledState, isLiveOrderState, liveExitOrderCoverage } from "../src/lib/broker-side";
 import { ACTIVE_BROKER_ORDER_STATES } from "../src/lib/broker-held-orders";
 import { toMcpOrder } from "../src/lib/robinhood";
-import type { EquityOrderInput, OrderSide } from "../src/lib/types";
+import type { EquityOrder, EquityOrderInput, OrderSide } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-broker-side-${randomUUID()}.db`)}`;
@@ -141,6 +141,10 @@ describe("Robinhood toMcpOrder — fail closed on short/cover", () => {
     expect(toMcpOrder(order("buy")).side).toBe("buy");
     expect(toMcpOrder(order("sell")).side).toBe("sell");
   });
+
+  it("throws on trailPercent — the RH MCP has no verified native trailing param; the reconciler ratchets instead", () => {
+    expect(() => toMcpOrder({ ...order("sell"), trailPercent: 5 })).toThrow(/trailing/i);
+  });
 });
 
 // The Alpaca SDK is mocked so we can capture exactly what side reaches createOrder. With no active
@@ -175,5 +179,106 @@ describe("Alpaca placeEquityOrder — translates short/cover before the network 
     createOrder.mockClear();
     await gateway.placeEquityOrder({ ...order("buy"), refId: "r3" });
     expect(createOrder.mock.calls[0][0].side).toBe("buy");
+  });
+});
+
+describe("liveExitOrderCoverage — OCO bracket legs must not double-count", () => {
+  // Defaults to orderClass "bracket" — these tests exercise the pairing MATH (quantity, unpaired
+  // legs, mismatched sizes) against orders that ARE genuine bracket siblings; the orderClass-gating
+  // itself (real vs. simulated independent orders) is covered by the tests below.
+  const sellOrder = (id: string, type: EquityOrder["type"], quantity: number, orderClass: string | undefined = "bracket"): EquityOrder => ({
+    id, symbol: "AAPL", side: "sell", type, state: "new", quantity, timeInForce: "gtc",
+    createdAt: new Date().toISOString(), placedAgent: "alpaca", orderClass
+  });
+
+  it("counts a matched stop+limit OCO pair ONCE, not summed (a full 100-sh bracket covers 100, not 200)", () => {
+    const orders = [sellOrder("stop-1", "stop_market", 100), sellOrder("tp-1", "limit", 100)];
+    const cov = liveExitOrderCoverage(orders, "AAPL", "long");
+    expect(cov.coveredQty).toBe(100);
+    expect(cov.unknownQty).toBe(false);
+  });
+
+  it("counts TWO independent OCO pairs correctly (100 total from a 50+50 scale-in, not 200)", () => {
+    const orders = [
+      sellOrder("stop-1", "stop_market", 50), sellOrder("tp-1", "limit", 50),
+      sellOrder("stop-2", "stop_market", 50), sellOrder("tp-2", "limit", 50)
+    ];
+    const cov = liveExitOrderCoverage(orders, "AAPL", "long");
+    expect(cov.coveredQty).toBe(100);
+  });
+
+  it("a HALF-bracketed position (one OCO pair for 50 of 100 real shares) reports 50 covered, not 100 — the other 50 are genuinely naked", () => {
+    const orders = [sellOrder("stop-1", "stop_market", 50), sellOrder("tp-1", "limit", 50)];
+    const cov = liveExitOrderCoverage(orders, "AAPL", "long");
+    expect(cov.coveredQty).toBe(50); // NOT 100 — summing the two legs would hide the uncovered half
+  });
+
+  it("an UNPAIRED lone resting stop (no matching limit leg) still counts on its own", () => {
+    const orders = [sellOrder("stop-1", "stop_market", 30)];
+    const cov = liveExitOrderCoverage(orders, "AAPL", "long");
+    expect(cov.coveredQty).toBe(30);
+  });
+
+  it("an UNPAIRED lone take-profit limit (no bracket, manual take-profit-only sell) still counts on its own", () => {
+    const orders = [sellOrder("tp-1", "limit", 20)];
+    const cov = liveExitOrderCoverage(orders, "AAPL", "long");
+    expect(cov.coveredQty).toBe(20);
+  });
+
+  it("does not pair legs of DIFFERENT quantities — each counts independently", () => {
+    // A 40-share stop and a 25-share limit sell are not siblings of the same bracket (mismatched
+    // quantity), so both count on their own: 40 + 25 = 65.
+    const orders = [sellOrder("stop-1", "stop_market", 40), sellOrder("tp-1", "limit", 25)];
+    const cov = liveExitOrderCoverage(orders, "AAPL", "long");
+    expect(cov.coveredQty).toBe(65);
+  });
+
+  it("a stop-limit type leg pairs the same as a plain stop-market", () => {
+    const orders = [sellOrder("stop-1", "stop_limit", 75), sellOrder("tp-1", "limit", 75)];
+    const cov = liveExitOrderCoverage(orders, "AAPL", "long");
+    expect(cov.coveredQty).toBe(75);
+  });
+
+  it("does NOT pair two INDEPENDENT equal-quantity 'simple' orders (no orderClass) — each counts on its own (Codex review, PR #1331)", () => {
+    // An owner manually places a 50-share stop and, separately, a 50-share take-profit limit against
+    // a 100-share position — neither carries a bracket-family orderClass (Alpaca reports "simple" or
+    // omits it for a plain order; Robinhood has no order-class concept at all). Both can genuinely
+    // fill — pairing them as if they were one OCO bracket would undercount coverage (report 50
+    // instead of 100) and let a NEW exit stack on top of shares that are already fully covered.
+    const manualStop = sellOrder("stop-1", "stop_market", 50, "simple");
+    const manualLimit = sellOrder("tp-1", "limit", 50, "simple");
+    const cov = liveExitOrderCoverage([manualStop, manualLimit], "AAPL", "long");
+    expect(cov.coveredQty).toBe(100); // NOT 50 — these are not verified bracket siblings
+  });
+
+  it("does NOT pair two INDEPENDENT equal-quantity orders EVEN WHEN placed within the same few seconds — timing alone is not sibling proof (Codex review, PR #1331, round 2)", () => {
+    // Regression for a prior (rejected) fix that paired same-quantity legs merely because they were
+    // created close together in time — Codex correctly flagged that an owner can coincidentally
+    // submit an independent same-size stop and limit within seconds of each other, and both can
+    // still fill. Only a verified bracket-family orderClass may ever pair two legs.
+    const now = new Date().toISOString();
+    const manualStop: EquityOrder = {
+      id: "stop-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "new", quantity: 50,
+      timeInForce: "gtc", createdAt: now, placedAgent: "alpaca", orderClass: "simple"
+    };
+    const manualLimit: EquityOrder = {
+      id: "tp-1", symbol: "AAPL", side: "sell", type: "limit", quantity: 50, state: "new",
+      timeInForce: "gtc", createdAt: now, placedAgent: "alpaca", orderClass: "simple"
+    };
+    const cov = liveExitOrderCoverage([manualStop, manualLimit], "AAPL", "long");
+    expect(cov.coveredQty).toBe(100); // NOT 50
+  });
+
+  it("does NOT pair when only ONE leg carries a bracket orderClass — both must agree", () => {
+    const bracketStop = sellOrder("stop-1", "stop_market", 50, "bracket");
+    const simpleLimit = sellOrder("tp-1", "limit", 50, "simple");
+    const cov = liveExitOrderCoverage([bracketStop, simpleLimit], "AAPL", "long");
+    expect(cov.coveredQty).toBe(100); // NOT 50
+  });
+
+  it("pairs when orderClass is 'oco' (not just 'bracket') — Alpaca's other multi-leg family", () => {
+    const orders = [sellOrder("stop-1", "stop_market", 50, "oco"), sellOrder("tp-1", "limit", 50, "oco")];
+    const cov = liveExitOrderCoverage(orders, "AAPL", "long");
+    expect(cov.coveredQty).toBe(50);
   });
 });

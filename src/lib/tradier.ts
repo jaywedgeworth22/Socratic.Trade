@@ -652,7 +652,10 @@ class TradierBrokerGateway implements BrokerGateway {
       let anchorPrice = input.limitPrice != null && input.limitPrice > 0 ? input.limitPrice : undefined;
       if (anchorPrice == null) {
         const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
-        anchorPrice = quotes[fromTradierSymbol(input.symbol)]?.price;
+        const quote = quotes[fromTradierSymbol(input.symbol)];
+        if (quote && quote.provider === "tradier") {
+          anchorPrice = quote.price;
+        }
       }
       if (!(anchorPrice != null && anchorPrice > 0)) {
         throw new Error("Tradier: cannot size a dollar order without a live quote.");

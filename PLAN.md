@@ -5,6 +5,40 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
+> change; this is an operations-observability slice. `/api/health` gains a public-safe source
+> revision/process identity and hard-deadline, size-capped Litestream daemon status/last-sync
+> inspection over its local IPC socket. Production explicitly enables the v0.5.12 socket and skips
+> the non-verifying metadata-file fallback; staleness requires evidence of newer local DB/WAL activity.
+> See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
+> **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
+> scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
+> refresh/share, and broker probes now have named per-admin budgets and single-flight exclusion,
+> returning explicit 429/409 responses before duplicate work reaches providers or long DB scans.
+> Explicit validation/config rejection precedes quota admission; historical default-action body semantics
+> remain unchanged. Process-wide groups cover manual admin route calls, while
+> scheduler/background convergence at the underlying operation boundaries is explicitly planned rather
+> than claimed complete. These are anti-repeat budgets, not hard per-request spend ceilings. Node 24
+> current-main (`432ca6fe`) gate is green (focused 4 files/29 tests, touched ESLint clean, full lint
+> 0 errors/405 inherited warnings, tsc, 328 files/3,633 tests, build).
+> AG's owner-directed
+> portable rejection contract is a separate shared-package follow-up and will be adopted only after a
+> real package release. See
+> `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+> **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
+> change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger
+> events, broker balance snapshots, and each aggregated provider-call window so same-flush credential
+> lanes cannot collide under the shared five-field fallback. Ledger timestamps are reused on replay,
+> and failed/ambiguous batches retain their exact events for bounded in-memory retry. See
+> `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+> **2026-07-11 - Admin authorization fail-closed hardening (CODEX).** No roadmap scope change;
+> security/correctness only. The shared admin gate now denies by default in every environment unless
+> the caller has a middleware-proven Cloudflare Access/Auth.js admin email or valid admin token. The
+> former broad `NODE_ENV !== "production"` bypass is removed without a hostname-based replacement;
+> the auth-unconfigured primary-email fallback never grants admin access. Current-main Node 24 gate
+> is green (lint 0 errors/407 warnings, tsc, 325 files/3,616 tests, build). See
+> `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
+
 > **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
 > change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/
 > reference/danger) settings; account-scoped config lives on Framework (`/console/strategy`):
@@ -1159,8 +1193,9 @@ the Infisical runner (`npm run start:secrets`), which injects them at startup, a
 GCP runner was removed — Infisical is the single path.) The box authenticates with the machine
 identity's **Client ID + Client Secret** (universal auth, long-lived; the runner mints a short-lived
 token each launch — a raw `INFISICAL_TOKEN` is only a fallback and the Client Secret is NOT that
-token). Production cutover is scripted (`scripts/infisical-prod-cutover.sh`) and `deploy.yml`
-auto-picks-up the box bootstrap; shared App-A/B secrets are pulled via an app-wins overlay
+token). Current Coolify production injects that identity through `scripts/coolify-prod-start.sh`;
+the retired Mac rollback cutover remains scripted in `scripts/infisical-prod-cutover.sh`. Shared
+App-A/B secrets are pulled via an app-wins overlay
 (`INFISICAL_SHARED_PROJECT_ID` + its own Client ID/Secret). This documents existing behavior; no phase
 scope, timeline, or approach changed.
 
@@ -1243,6 +1278,28 @@ scope, timeline, or approach changed.
   and adds a `convictionBoost` so conviction-only tickers reach the scan candidate set. **Deferred:**
   ticker-change/delisting map (App A priority #3); bulk-snapshot bootstrap; congress-share bypass
   for adjusted-close when CONGRESS_TRADE_READS_ENABLED tier precedes Yahoo.
+
+## Fleet-infra tooling (host-side, no product-roadmap change)
+
+- **Retired deploy safety + CI Sentry coverage** (2026-07-11,
+  `.github/workflows/sentry-ci-report.yml`, `scripts/sentry-ci-report.py`,
+  `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`): removed the
+  obsolete Mac/PM2 GitHub Actions deploy workflow so Coolify remains the only
+  automatic production path, and synchronized Sentry failure/cron observation
+  with the active workflow fleet. This is CI/operations hardening only; it does
+  not change product scope, phase order, or acceptance criteria.
+
+- **Effort-log union-merge safety net** (2026-07-10,
+  `scripts/effort-log-union-merge.py`,
+  `docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`): a stdlib-only,
+  row-level, invariant-checked reconciler that merges the machine-local live
+  effort board against the repo mirror (`docs/EFFORT-LOG.md`) **without ever
+  dropping a live-only row**. This is host-side coordination tooling only — it
+  changes no product code, ships no user-facing behavior, and does **not** alter
+  the phase roadmap or acceptance checks above. **Follow-up (out of this PR's
+  scope):** wire it into the always-on host-side `~/.claude-merge-shepherd/run.sh`
+  30-minute driver so live/mirror reconciliation runs automatically; that cron
+  lives outside this repo and touching it needs an owner-supervised session.
 
 ## Build Order
 

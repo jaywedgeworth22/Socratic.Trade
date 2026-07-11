@@ -4,6 +4,7 @@
  *  every helper returns null/undefined when the snapshot can't answer. */
 
 import type { DashboardSnapshot } from "../../dashboard-types";
+import type { PositionStopPlan } from "@/lib/db";
 import type {
   ConnectedAccount,
   EquityCurvePoint,
@@ -158,14 +159,80 @@ function hasWorkingClosingStop(orders: EquityOrder[], symbol: string, isShort: b
   });
 }
 
+const STOP_PLAN_LABEL: Record<string, string> = { fixed: "Fixed", atr: "ATR", trailing: "Trailing", none: "None" };
+
 /** Honest protection derivation from what the snapshot actually carries:
  *  a resting broker stop order that closes the position, else the app-managed
  *  stop rules (which pause while Stopped), else nothing. Shorts mirror the
  *  server's rules: the stop distance is riskRules.shortStopLossPct, falling
  *  back to stopLossPct (generateProactiveRiskProposals), and the app skips
  *  shorts entirely while shortSellingEnabled is off (synthetic-stops monitor
- *  and proactive exits both do). */
+ *  and proactive exits both do). An optional per-position stopPlan (the LLM's
+ *  own choice at buy time, from position_stop_plans) is layered on top —
+ *  NEVER a silent override: it always annotates the detail text, and a "none"
+ *  plan is called out prominently (never rendered as if nothing was ever
+ *  configured) rather than blending into the generic no-protection case. */
 export function deriveProtection(
+  position: EquityPosition,
+  orders: EquityOrder[],
+  policy: TradingPolicy,
+  stopPlan?: PositionStopPlan
+): ProtectionInfo {
+  const base = deriveBaseProtection(position, orders, policy);
+  if (!stopPlan || stopPlan.style === "default") return base;
+  const planLabel = STOP_PLAN_LABEL[stopPlan.style] ?? stopPlan.style;
+  if (stopPlan.style === "none") {
+    // Only a REAL, independently-verified resting broker stop order ("Broker stop") survives a
+    // "none" plan — every enforcement layer (synthetic monitor, broker-protective-stops.ts)
+    // deliberately suppresses ITS OWN stop for this symbol once "none" is set, so an "App stop..."
+    // label here would just be reflecting account-wide CONFIG that no longer actually applies to
+    // this position — showing it as protected would be misleading for a position the owner/LLM
+    // chose to run bare (Codex review, PR #1371).
+    const hasRealBrokerStop = base.label === "Broker stop";
+    return {
+      label: hasRealBrokerStop ? base.label : "No stop (LLM choice)",
+      detail:
+        `Per-position plan: NO stop-loss — a deliberate LLM/owner choice for this position` +
+        (stopPlan.rationale ? ` ("${stopPlan.rationale}")` : "") +
+        `. ${base.detail}`,
+      tone: hasRealBrokerStop ? base.tone : "warn"
+    };
+  }
+  // A REAL, independently-verified resting broker stop order protects regardless of what any plan
+  // says (accuracy over the plan's intent, same principle as the "none" branch above) — keep it
+  // exactly as `deriveBaseProtection` reported it.
+  if (base.label === "Broker stop") {
+    return { ...base, detail: `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice). ${base.detail}` };
+  }
+  // A short position with short selling turned off: every enforcement layer (synthetic monitor,
+  // proactive risk exits, broker-protective-stops) skips shorts entirely while shortSellingEnabled is
+  // off, regardless of any per-position plan — a "Fixed"/"ATR"/"Trailing plan" label here would show
+  // active protection for a short the app has deliberately stopped managing (Codex review, PR #1371).
+  // Preserve deriveBaseProtection's muted/unsafe state instead of building an active plan label.
+  if (position.quantity < 0 && !policy.shortSellingEnabled) {
+    return { ...base, detail: `Per-position plan: ${planLabel} (would pin this position's stop, but it never takes effect while short selling is off). ${base.detail}` };
+  }
+  // Otherwise, build the label/tone from the PLAN itself, never from the account-wide base label's
+  // CONTENT — that label describes whatever mechanism the ACCOUNT happens to have configured (e.g.
+  // "App stop −8%" for a flat stop), which may be an entirely different mechanism than what this
+  // plan actually pins (e.g. "trailing" on an account with only a flat stop configured, or "atr" on
+  // one with none at all) — reusing it would show a protection lane/price that isn't the one
+  // actually protecting this position. An explicit plan is real, active protection via
+  // STOP_PLAN_FALLBACK_STOP_PCT even on a bare account (universal availability) — but like every
+  // other app-managed enforcement layer, it pauses while the system is Stopped (Codex review, PR
+  // #1371).
+  const halted = policy.systemState === "halted";
+  return {
+    label: halted ? `${planLabel} plan · paused` : `${planLabel} plan`,
+    detail:
+      `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice)` +
+      (halted ? " — paused while the system is Stopped; resumes when you start or switch to Exit-only." : "") +
+      `. ${base.detail}`,
+    tone: halted ? "warn" : "pos"
+  };
+}
+
+function deriveBaseProtection(
   position: EquityPosition,
   orders: EquityOrder[],
   policy: TradingPolicy

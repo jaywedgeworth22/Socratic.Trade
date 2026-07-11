@@ -448,6 +448,9 @@ const QUOTA_ENV_KEYS = [
   "PROVIDER_QUOTA_TIINGO_PER_HOUR",
   "PROVIDER_QUOTA_TESTPROV_PER_MIN",
   "PROVIDER_QUOTA_TESTPROV_PER_DAY",
+  "PROVIDER_QUOTA_FMP_PER_MIN",
+  "PROVIDER_QUOTA_FMP_PER_HOUR",
+  "PROVIDER_QUOTA_FMP_PER_DAY",
   "TWELVEDATA_CREDITS_PER_MIN",
 ];
 
@@ -468,6 +471,33 @@ describe("resolveProviderQuota", () => {
       { maxRequests: 50, windowMs: 3_600_000 },
       { maxRequests: 1000, windowMs: 86_400_000 },
     ]);
+  });
+
+  it("returns the built-in fmp window (290/min, no day cap by default)", () => {
+    expect(resolveProviderQuota("fmp")).toEqual([
+      { maxRequests: 290, windowMs: 60_000 },
+    ]);
+  });
+
+  it("lets PROVIDER_QUOTA_FMP_PER_MIN REPLACE the minute cap and =0 REMOVE it", () => {
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "100";
+    expect(resolveProviderQuota("fmp")).toEqual([{ maxRequests: 100, windowMs: 60_000 }]);
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "0";
+    // Removing the only window leaves an empty list → unlimited (undefined).
+    expect(resolveProviderQuota("fmp")).toBeUndefined();
+  });
+
+  it("lets PROVIDER_QUOTA_FMP_PER_DAY ADD a day window alongside the 290/min", () => {
+    process.env.PROVIDER_QUOTA_FMP_PER_DAY = "240";
+    expect(resolveProviderQuota("fmp")).toEqual([
+      { maxRequests: 290, windowMs: 60_000 },
+      { maxRequests: 240, windowMs: 86_400_000 },
+    ]);
+  });
+
+  it("PROVIDER_QUOTA_FMP_PER_DAY=0 is a no-op (no day window in the base)", () => {
+    process.env.PROVIDER_QUOTA_FMP_PER_DAY = "0";
+    expect(resolveProviderQuota("fmp")).toEqual([{ maxRequests: 290, windowMs: 60_000 }]);
   });
 
   it("is undefined for an unconfigured provider (unlimited)", () => {
@@ -540,6 +570,27 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     expect(quota.admit("twelvedata", "keyA", 8)).toBe(8);
     expect(quota.admit("twelvedata", "keyA", 8)).toBe(0);
     expect(quota.admit("twelvedata", "keyB", 8)).toBe(8); // keyB untouched by keyA's spend
+  });
+
+  it("admits up to the fmp 290/min cap, reopens after 60s, and refund/per-cred lanes work", async () => {
+    const clock = new FakeClock();
+    const quota = new RequestQuota(clock);
+    expect(quota.admit("fmp", "credA", 300)).toBe(290); // 290/min ceiling
+    expect(quota.admit("fmp", "credA", 300)).toBe(0);   // minute spent
+    expect(quota.admit("fmp", "credB", 300)).toBe(290); // credB is an independent lane
+    quota.refund("fmp", "credA", 10);                   // hand back 10 (partial remainder / breaker skip)
+    expect(quota.admit("fmp", "credA", 300)).toBe(10);  // exactly the refunded 10
+    await clock.advance(60_000);
+    expect(quota.admit("fmp", "credA", 300)).toBe(290); // window reopened
+  });
+
+  it("enforces an opt-in PROVIDER_QUOTA_FMP_PER_DAY cap alongside the minute window", async () => {
+    process.env.PROVIDER_QUOTA_FMP_PER_DAY = "240"; // free-tier 250/day, 240 headroom
+    const clock = new FakeClock();
+    const quota = new RequestQuota(clock);
+    expect(quota.admit("fmp", "k", 1000)).toBe(240); // day cap (240) binds under the 290/min
+    await clock.advance(60_000);
+    expect(quota.admit("fmp", "k", 1000)).toBe(0);   // minute refreshed but the day budget is spent
   });
 
   it("refills as older hits slide out of the window", async () => {

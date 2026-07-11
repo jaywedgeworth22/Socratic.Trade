@@ -1,4 +1,4 @@
-import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
+import { clearStopPlans, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
@@ -164,6 +164,24 @@ export function recordFillFromProposal(input: {
   execution?: ExecutedOrder;
   marketScan?: MarketScan;
   status?: string;
+  /**
+   * The position's PRE-fill state (average cost + quantity), when the caller has it, for blending a
+   * stop plan's recorded basis on a SCALE-IN. Without this, an opening fill's `price` (this ONE
+   * fill's execution price) gets recorded as the plan's `avgCost` even when the position already had
+   * shares — the very next run's `filterStopPlansByLiveBasis` then compares that single-fill price
+   * against the position's true BLENDED averageCost, sees a mismatch beyond tolerance, and discards
+   * the just-recorded plan as stale (Codex review, PR #1371). Omit for a fresh open (no prior
+   * position) — blended cost then correctly reduces to the fill price itself.
+   */
+  existingPosition?: { averageCost: number; quantity: number };
+  /**
+   * Explicit, already-known stop-plan basis that bypasses the pre-fill blend math entirely — for a
+   * caller that already looked up the LIVE (post-fill) position average cost directly (e.g. a
+   * crash-recovery sweep reconciling an order that already executed at the broker, where the broker's
+   * own current averageCost IS the correct blended basis with no arithmetic needed). Takes precedence
+   * over `existingPosition` when both are supplied.
+   */
+  stopPlanBasisOverride?: number;
 }): FillEvent {
   const symbol = normalizeSymbol(input.proposal.symbol);
   const marketPrice = input.marketScan?.quotesBySymbol[symbol]?.price;
@@ -265,6 +283,58 @@ export function recordFillFromProposal(input: {
       recordTakeProfitTrimBand(input.accountNumber, symbol, input.proposal.takeProfitBand, input.proposal.takeProfitBasis ?? 0, input.userId);
     } catch {
       // ratchet bookkeeping must never break fill recording
+    }
+  }
+
+  // Persist the LLM's chosen stop plan for this position, set ONLY on an OPENING (buy/short) fill —
+  // an exit fill closing (or trimming) the position has nothing to set a forward-looking plan for.
+  // No stopPlan at all is a true no-op (the LLM never touched this field this run — whatever's
+  // already on record, if anything, keeps governing). An EXPLICIT "default" is different: it CLEARS
+  // any existing override, since that's the only way a scale-in can ever deliberately reset a
+  // position back to the account's own precedence after an earlier "none"/"trailing"/"fixed"/"atr"
+  // choice (Codex review, PR #1371) — collapsing "default" to a no-op here would make an existing
+  // override permanent for the life of the position, impossible to ever undo.
+  if (
+    input.proposal.stopPlan &&
+    (input.proposal.side === "buy" || input.proposal.side === "short") &&
+    // Only an ACTUALLY EXECUTED fill commits the plan — a live broker order still
+    // `pending_reconciliation` may yet cancel/expire without ever opening the position, and a plan
+    // recorded (or cleared) now would then govern a lot that never existed (Codex review, PR #1371).
+    fill.status === "filled"
+  ) {
+    try {
+      if (input.proposal.stopPlan.style === "default") {
+        clearStopPlans(input.accountNumber, [symbol], input.userId ?? "local");
+      } else {
+        // On a scale-in, `basePrice` is THIS fill's execution price — the plan must record the
+        // resulting BLENDED position basis (what the next run's `position.averageCost` will actually
+        // be), or `filterStopPlansByLiveBasis` discards the plan as stale on the very next run
+        // (Codex review, PR #1371). No prior position (fresh open) reduces to `basePrice` unchanged.
+        // Deliberately `basePrice`, NOT `price` — `price` is net of the paper execution-cost model
+        // (source: "paper" gets ~1bp of synthetic slippage deducted for learning/P&L purposes), but
+        // the BROKER's own reported `position.averageCost` reflects the raw fill, not our synthetic
+        // cost deduction. Using the cost-adjusted `price` here made a paper fill's plan basis drift a
+        // fraction of a cent from what the live-basis filter compares against next run, tripping its
+        // 0.5-cent tolerance and dropping the just-recorded plan as stale (Codex review, PR #1371).
+        const existing = input.existingPosition;
+        const blendedAvgCost =
+          input.stopPlanBasisOverride ??
+          (existing && Math.abs(existing.quantity) > 0.000001
+            ? (existing.averageCost * Math.abs(existing.quantity) + basePrice * quantity) / (Math.abs(existing.quantity) + quantity)
+            : basePrice);
+        recordStopPlan(
+          input.accountNumber,
+          symbol,
+          input.proposal.stopPlan.style,
+          input.proposal.stopPlan.rationale,
+          blendedAvgCost,
+          input.userId,
+          undefined,
+          input.proposal.side === "short" ? "short" : "long"
+        );
+      }
+    } catch {
+      // plan bookkeeping must never break fill recording
     }
   }
 

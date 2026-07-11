@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin";
+import {
+  asRecord,
+  normalizeCoolifyResources,
+  normalizeHetznerServerResponse,
+  readPositiveNumber,
+  readText,
+} from "@/lib/server-metrics-shapes";
 import os from "os";
 
 export const dynamic = "force-dynamic";
@@ -37,13 +44,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       isProd: false,
       hostInfo: localHostInfo,
-      resources: [
-        { uuid: "mock-socratic-trade", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
-        { uuid: "mock-runner-1", name: "socratic-deploy-runner", type: "service", status: "running" },
-        { uuid: "mock-runner-2", name: "congress-deploy-runner", type: "service", status: "running" },
-        { uuid: "mock-sentinel", name: "coolify-sentinel", type: "service", status: "running:healthy" },
-      ],
-      metrics: generateMockMetrics(),
+      resources: [],
+      metrics: emptyMetrics(),
       asOf: new Date().toISOString(),
     });
   }
@@ -59,9 +61,9 @@ export async function GET(request: Request) {
     const serverUrl = `https://host.jays.services/api/v1/servers/${coolifyServerUuid}`;
     const resourcesUrl = `${serverUrl}/resources`;
 
-    const [serverRes, resourcesRes] = await Promise.all([
-      fetch(serverUrl, { headers: coolifyHeaders }).then((r) => r.json()).catch(() => null),
-      fetch(resourcesUrl, { headers: coolifyHeaders }).then((r) => r.json()).catch(() => []),
+    const [coolifyServerFetch, coolifyResourcesFetch] = await Promise.all([
+      fetchProviderJson("Coolify server metadata", serverUrl, coolifyHeaders),
+      fetchProviderJson("Coolify resources", resourcesUrl, coolifyHeaders),
     ]);
 
     // 2. Fetch server details and metrics from Hetzner Cloud API
@@ -78,52 +80,78 @@ export async function GET(request: Request) {
     const hetznerUrl = `https://api.hetzner.cloud/v1/servers/${hetznerServerId}`;
     const hetznerMetricsUrl = `${hetznerUrl}/metrics?type=cpu&type=disk&type=network&start=${startStr}&end=${endStr}`;
 
-    const [hetznerServerRes, hetznerMetricsRes] = await Promise.all([
-      fetch(hetznerUrl, { headers: hetznerHeaders }).then((r) => r.json()).catch(() => null),
-      fetch(hetznerMetricsUrl, { headers: hetznerHeaders }).then((r) => r.json()).catch(() => null),
+    const [hetznerServerFetch, hetznerMetricsFetch] = await Promise.all([
+      fetchProviderJson("Hetzner server metadata", hetznerUrl, hetznerHeaders),
+      fetchProviderJson("Hetzner metrics", hetznerMetricsUrl, hetznerHeaders),
     ]);
 
-    // Parse metrics
-    const rawTimeSeries = hetznerMetricsRes?.metrics?.time_series || {};
+    // Parse provider responses at the API boundary. Never forward nested
+    // provider objects to the client as display strings.
+    const hetznerMetrics = asRecord(asRecord(hetznerMetricsFetch.payload)?.metrics);
+    const rawTimeSeries = hetznerMetrics?.time_series;
     const parsedMetrics = parseHetznerTimeSeries(rawTimeSeries);
 
     // Merge metadata
-    const coolifyMeta = serverRes?.server_metadata || {};
-    const hcloudMeta = hetznerServerRes?.server || {};
+    const coolifyServer = asRecord(coolifyServerFetch.payload);
+    const coolifyMeta = asRecord(coolifyServer?.server_metadata);
+    const normalizedHetzner = normalizeHetznerServerResponse(hetznerServerFetch.payload);
+    const normalizedResources = normalizeCoolifyResources(coolifyResourcesFetch.payload);
+    const hcloudMeta = normalizedHetzner.server;
+    const providerErrors = [
+      coolifyServerFetch.error,
+      coolifyResourcesFetch.error,
+      hetznerServerFetch.error,
+      hetznerMetricsFetch.error,
+    ].filter((error): error is string => Boolean(error));
+    const warnings = [
+      ...providerErrors,
+      ...normalizedHetzner.warnings,
+      ...normalizedResources.warnings,
+      ...parsedMetrics.warnings,
+    ];
 
     const hostInfo = {
-      name: hcloudMeta.name || serverRes?.name || localHostInfo.name,
-      status: hcloudMeta.status || "running",
-      os: coolifyMeta.os || localHostInfo.os,
-      cpus: coolifyMeta.cpus || localHostInfo.cpus,
-      memoryTotalBytes: coolifyMeta.memory_bytes || localHostInfo.memoryTotalBytes,
-      memoryFreeBytes: localHostInfo.memoryFreeBytes,
-      uptimeSeconds: localHostInfo.uptimeSeconds, // fall back to local uptime check
-      serverType: hcloudMeta.server_type || "vps",
-      location: hcloudMeta.datacenter?.name || "hel1",
-      ip: hcloudMeta.public_net?.ipv4 || "135.181.192.190",
+      name: hcloudMeta.name || readText(coolifyServer?.name),
+      status: hcloudMeta.status || "unknown",
+      os: readText(coolifyMeta?.os),
+      cpus: readPositiveNumber(coolifyMeta?.cpus),
+      memoryTotalBytes: readPositiveNumber(coolifyMeta?.memory_bytes),
+      serverType: hcloudMeta.serverType,
+      location: hcloudMeta.location,
+      ip: hcloudMeta.ip,
     };
 
     return NextResponse.json({
       isProd: true,
+      degraded: warnings.length > 0,
+      ...(providerErrors.length > 0
+        ? { error: "One or more infrastructure providers could not be queried." }
+        : {}),
       hostInfo,
-      resources: Array.isArray(resourcesRes) ? resourcesRes : [],
-      metrics: parsedMetrics,
+      resources: normalizedResources.resources,
+      metrics: parsedMetrics.metrics,
       asOf: new Date().toISOString(),
-    });
-  } catch (err: any) {
+      ...(warnings.length > 0 ? { warnings } : {}),
+    }, { status: providerErrors.length > 0 ? 502 : 200 });
+  } catch (err: unknown) {
     return NextResponse.json({
       isProd: true,
-      error: err.message || "Failed to fetch remote server metrics",
-      hostInfo: localHostInfo,
+      degraded: true,
+      error: err instanceof Error ? err.message : "Failed to fetch remote server metrics",
+      hostInfo: { status: "unknown" },
       resources: [],
-      metrics: generateMockMetrics(),
+      metrics: emptyMetrics(),
       asOf: new Date().toISOString(),
     }, { status: 500 });
   }
 }
 
-function parseHetznerTimeSeries(timeSeries: any) {
+function parseHetznerTimeSeries(timeSeries: unknown): {
+  metrics: Record<string, MetricValue[]>;
+  warnings: string[];
+} {
+  const series = asRecord(timeSeries) ?? {};
+  let omittedSamples = 0;
   const result: Record<string, MetricValue[]> = {
     cpu: [],
     diskRead: [],
@@ -133,19 +161,29 @@ function parseHetznerTimeSeries(timeSeries: any) {
   };
 
   const getValues = (key: string): MetricValue[] => {
-    const raw = timeSeries[key]?.values || [];
-    return raw.map((item: [number, string]) => ({
-      timestamp: item[0],
-      value: parseFloat(item[1]) || 0,
-    }));
+    const raw = asRecord(series[key])?.values;
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((item) => {
+      if (!Array.isArray(item) || item.length < 2) {
+        omittedSamples += 1;
+        return [];
+      }
+      const timestamp = toFiniteMetricNumber(item[0]);
+      const value = toFiniteMetricNumber(item[1]);
+      if (timestamp === undefined || value === undefined) {
+        omittedSamples += 1;
+        return [];
+      }
+      return [{ timestamp, value }];
+    });
   };
 
   // Find actual keys in the returned map (e.g. disk.0.bandwidth.read, network.0.bandwidth.rx)
-  const cpuKey = Object.keys(timeSeries).find((k) => k.startsWith("cpu")) || "cpu";
-  const diskReadKey = Object.keys(timeSeries).find((k) => k.includes("bandwidth.read")) || "disk.0.bandwidth.read";
-  const diskWriteKey = Object.keys(timeSeries).find((k) => k.includes("bandwidth.write")) || "disk.0.bandwidth.write";
-  const netRxKey = Object.keys(timeSeries).find((k) => k.includes("bandwidth.rx")) || "network.0.bandwidth.rx";
-  const netTxKey = Object.keys(timeSeries).find((k) => k.includes("bandwidth.tx")) || "network.0.bandwidth.tx";
+  const cpuKey = Object.keys(series).find((k) => k.startsWith("cpu")) || "cpu";
+  const diskReadKey = Object.keys(series).find((k) => k.includes("bandwidth.read")) || "disk.0.bandwidth.read";
+  const diskWriteKey = Object.keys(series).find((k) => k.includes("bandwidth.write")) || "disk.0.bandwidth.write";
+  const netRxKey = Object.keys(series).find((k) => k.includes("bandwidth.rx")) || "network.0.bandwidth.rx";
+  const netTxKey = Object.keys(series).find((k) => k.includes("bandwidth.tx")) || "network.0.bandwidth.tx";
 
   result.cpu = getValues(cpuKey);
   result.diskRead = getValues(diskReadKey);
@@ -153,27 +191,50 @@ function parseHetznerTimeSeries(timeSeries: any) {
   result.networkRx = getValues(netRxKey);
   result.networkTx = getValues(netTxKey);
 
-  return result;
+  return {
+    metrics: result,
+    warnings: omittedSamples > 0
+      ? [`Hetzner metrics contained ${omittedSamples} malformed samples that were omitted.`]
+      : [],
+  };
 }
 
-function generateMockMetrics() {
-  const now = Math.floor(Date.now() / 1000);
-  const cpu: MetricValue[] = [];
-  const diskRead: MetricValue[] = [];
-  const diskWrite: MetricValue[] = [];
-  const networkRx: MetricValue[] = [];
-  const networkTx: MetricValue[] = [];
-
-  for (let i = 60; i >= 0; i -= 2) {
-    const ts = now - i * 60;
-    // Generate organic-looking mock values
-    const seed = Math.sin(ts / 1000);
-    cpu.push({ timestamp: ts, value: Math.abs(15 + seed * 10 + Math.random() * 5) });
-    diskRead.push({ timestamp: ts, value: Math.abs(1024 * 50 + seed * 20000 + Math.random() * 10000) });
-    diskWrite.push({ timestamp: ts, value: Math.abs(1024 * 10 + seed * 5000 + Math.random() * 3000) });
-    networkRx.push({ timestamp: ts, value: Math.abs(1024 * 150 + seed * 80000 + Math.random() * 30000) });
-    networkTx.push({ timestamp: ts, value: Math.abs(1024 * 30 + seed * 10000 + Math.random() * 5000) });
+async function fetchProviderJson(
+  label: string,
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ payload?: unknown; error?: string }> {
+  try {
+    const response = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      return { error: `${label} returned HTTP ${response.status}.` };
+    }
+    try {
+      return { payload: await response.json() };
+    } catch {
+      return { error: `${label} returned invalid JSON.` };
+    }
+  } catch {
+    return { error: `${label} was unavailable.` };
   }
+}
 
-  return { cpu, diskRead, diskWrite, networkRx, networkTx };
+function toFiniteMetricNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" && typeof value !== "string") return undefined;
+  if (typeof value === "string" && !value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function emptyMetrics(): Record<string, MetricValue[]> {
+  return {
+    cpu: [],
+    diskRead: [],
+    diskWrite: [],
+    networkRx: [],
+    networkTx: [],
+  };
 }

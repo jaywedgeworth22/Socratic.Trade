@@ -1,5 +1,146 @@
 # Status
 
+## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
+Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment
+provider that was still unmetered. `FmpEnrichmentProvider.enrich` fires up to 5 HTTP calls per miss
+symbol (insider + senate always; ratios-ttm / grades-consensus / price-target-consensus when not
+skipped) under one `fmp` circuit-breaker service, previously bounded only by `FMP_MAX_SYMBOLS` — a
+cold-cache scan could burst past FMP Starter's 300/min. Changes: `RATE_QUOTAS.fmp = [{290, MINUTE}]`
+(290 = 300 minus headroom; no day window unless `PROVIDER_QUOTA_FMP_PER_DAY` is set — opt-in for the
+free 250/day tier); `callsPerSymbol("fmp", …)` = `2 + !skipPe + !skipConsensus + wantTargets` (range
+2..5) mirroring the fetch conditions one-for-one; admit / greedy best-first defer / partial-remainder
+refund + breaker-skip refund wired into `enrich`, per-credential via `apiKeyFingerprint` (exactly the
+tiingo shape); `retries: 0` on FMP `getJson` so a 429 retry can't emit an uncounted call past the
+10-request headroom. Reservation == dispatch (both read the same `skipFlagsFor` + `wantTargets`); cache
+hits and deferred symbols spend nothing. Docs: `.env.example` FMP block, `docs/market-data-provider-pricing.md`
+dials table, `docs/rollouts/2026-07-10-fmp-rate-limit.md`. Gate under node@24: tsc clean, lint 0 errors,
+3412/3412 tests, `npm run build` OK. NOTE: merge = auto-deploy to live — this is a data-plane throttle,
+not a money-path change. Blockers: none. Next: land via `scripts/land.sh`, PR ready (do not merge).
+## 2026-07-11 — Runtime release + backup health (CODEX, branch `codex/runtime-release-backup-health`)
+
+In progress in an isolated worktree. Public `/api/health` now reports a sanitized Coolify/source
+commit, process start/uptime, and Litestream 0.5.x daemon status plus last successful sync from the
+local Unix-socket `GET /list` endpoint. Production config now explicitly enables Litestream 0.5.12's
+control socket; the client uses a hard wall-clock deadline, bounded body, and abort/error handling.
+Production skips the synchronous metadata-file fallback entirely; non-live scanning is bounded.
+Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
+stale when newer DB/WAL activity proves there is work to upload. The pre-reconciliation Node 24 gate
+was green. The branch now reconciles `origin/main@432ca6fe`; runtime source/tests were disjoint from
+the incoming stop-plan, CI, and admin-server changes, while union-merged STATUS/PLAN/EFFORT history
+was preserved. Final combined Node 24 verification is green: lint 0 errors / 405 inherited warnings,
+TypeScript clean, 326 files / 3,629 tests, and production build clean. The earlier missing `ts-morph`
+report was confirmed as stale worktree dependency state and is resolved. READY PR #1405 remains the
+delivery target without merge, auto-merge, deployment, or live replica mutation.
+## 2026-07-11 — Admin server Hetzner response-shape crash fix (CODEX, branch `codex/admin-server-shape-fix`)
+Production `/admin/server` hit React error #31 because `/api/admin/server-metrics` passed
+Hetzner's nested `server_type` and `public_net.ipv4` objects into JSX text positions. The API
+now normalizes the current provider shape (`server_type.name`, `public_net.ipv4.ip`,
+`location.name`) while retaining legacy flattened/datacenter inputs. Coolify resources pass
+through the same string-only boundary. Provider network, HTTP, and JSON failures now produce an
+explicit HTTP 502 degraded receipt; missing remote data remains unavailable instead of being
+replaced by local-process statistics or hardcoded production identity. Malformed metric samples
+are omitted with a warning rather than converted to false zero readings. The client independently
+guards every host display field, visibly marks degraded production data, and shows unavailable
+telemetry honestly. Fabricated local resources and histories are gone; the unconfigured local-only
+path still reports the actual runtime host with empty remote datasets. Current
+The change was externally squash-merged to `main` as `432ca6fe` after hosted verify, smoke, and
+security passed. Its configured auto-deploy was triggered, but the running production revision has
+not been independently verified. Final Node 24 verification before merge was green:
+focused 1 file / 7 tests and touched-file ESLint clean; full lint 0 errors / 405 inherited warnings,
+typecheck clean, 325 files / 3,608 tests, and production build clean. The first post-merge typecheck
+found only a stale install missing current-main's tracked `ts-morph`; `npm ci --no-audit --no-fund`
+installed the locked 767 packages and the complete ordered gate then passed. Rendered in-app Browser
+QA remains unavailable because no Browser backend is installed. Rollout:
+`docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
+
+## 2026-07-11 — Retired deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`)
+Removed the disabled Mac/PM2 `.github/workflows/deploy.yml`, whose YAML still declared `push: main`
+and manual-dispatch triggers; Coolify's GitHub-App auto-deploy remains the sole production path.
+Replaced stale deployment and
+runner instructions with the current Coolify runbook. Updated `Sentry CI Report` to observe every
+active workflow and map all six active scheduled lanes (`CI`, cache cleanup, effort sync, Security,
+Playwright, shared-package pin) to their source cron expressions; `merge-shepherd` is observed for
+failures but has no Sentry Cron mapping because its in-repo workflow is manual-only. Added structural
+Vitest coverage that derives independently runnable workflow names and schedules from
+`.github/workflows/` and fails on reporter drift or deploy-workflow resurrection; reusable-only
+`workflow_call` definitions are correctly covered through their caller rather than falsely claimed as
+separate `workflow_run` events. Final Node 24 gate was green:
+lint 0 errors / 408 warnings, tsc clean, 325 Vitest files / 3,604 tests passed, Next build clean;
+focused workflow-parity regression 2/2 passed. PR #1398 merged externally as `8fca436d`; the configured
+main auto-deploy was triggered, but this session has not independently verified the production revision.
+Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+## 2026-07-11 — Explicit usage-telemetry delivery IDs (CODEX, branch `codex-usage-telemetry-idempotency`)
+Cross-app API Usage Monitor hardening found that aggregated credential lanes share one flush
+timestamp while the shared fallback idempotency basis intentionally omits lane metadata. Distinct
+lanes could therefore derive one key and one event disappeared. This branch gives every aggregate
+window an explicit UUID-backed key and uses a fixed-length hash of the durable local `llm_usage` /
+`rag_usage` row ID for discrete delivery keys; broker balance snapshots also get one delivery
+identity with metric suffixes. Ledger timestamps now flow to the outbound event, failed/ambiguous
+batches retry in memory with the byte-equivalent original event payload, and HMR cancels stale
+module timers before preserving buffered state. The shared five-field fallback algorithm is
+unchanged. Focused usage-push + RAG verification is 18/18 green (11 producer regressions), and
+TypeScript/scoped ESLint pass under Node 24; full pre-PR gates remain pending. The in-memory queue is
+not a crash-durable outbox. No merge/auto-deploy without an explicit landing decision. See
+`docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+
+## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
+Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
+now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled
+OAuth `state`, and never per spoofable `X-Forwarded-For`); the in-process limiter evicts expired
+buckets and caps live subjects at 10,000 with deterministic LRU eviction. Middleware now parses
+`CF_ACCESS_TRUST_EMAIL_HEADER` explicitly (`1/true/yes/on` only), so the production-style `0`
+override cannot re-arm header trust while Auth.js remains fail-closed. Paid `/api/strategy/tune`
+now uses a named 10/min per-user limiter plus a one-in-flight-per-user guard before its LLM call.
+Scope deliberately excludes active broker/DB lanes and the `.env.example` file owned by active
+PR #1389. Full verification was green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
+3,499 tests, Next build clean). PR #1399 merged to `main` as `97152c25` on 2026-07-11; the configured
+main-push auto-deploy should follow, but this session has not independently verified the live revision.
+Exact commands and the initial Node-ABI mismatch are recorded in
+`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`. Follow-up branch
+`codex/admin-rate-limits` replaces the route-private tuning lock with a guard shared by public tuning
+and the admin dry run.
+## 2026-07-11 — Expensive admin-operation abuse/cost controls (CODEX, `codex/admin-rate-limits`)
+
+High-cost operator actions now enter a shared, named admission guard after `requireAdmin`: paid SEC
+8-K/10-K reindexes, IC backtests, tuning dry runs, Congress score recomputation/share, forced web-source
+refreshes, and Robinhood MCP probes. Budgets are per trusted admin identity with explicit HTTP 429 +
+`Retry-After`; overlapping manual admin work returns HTTP 409. Paid RAG reindex route calls share a
+process-wide single-flight group, while user-scoped analysis/probes remain isolated per admin. Explicit
+validation/config rejection precedes admission so rejected requests do not spend quota; routes that
+intentionally interpret an absent/malformed body as a default action still enter admission. These route
+claims do not cover scheduler/background entrants; underlying-boundary locking is separately planned.
+Public strategy tuning and the admin tuning dry run share one per-user single-flight guard while the
+public route retains its legacy 409 compatibility fields.
+Implementation is merged forward to current `origin/main@432ca6fe`; the incoming admin-server source
+is disjoint and STATUS/EFFORT histories were union-merged. Adversarial re-review found no code blocker.
+Final combined Node 24 verification is green: focused 4 files/29 tests and touched ESLint clean,
+full lint 0 errors/405 inherited warnings, TypeScript clean, 328 files/3,633 tests, and production
+build clean. Previous hosted checks were green; the refreshed head will rerun them. AG's owner-directed portable rejection contract is green in READY shared PR #144;
+adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request
+spend ceilings. READY PR #1409 is not merged/auto-merged or deployed. See
+`docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+3,499 tests, Next build clean). PR #1399 merged externally as `97152c25`; auto-deploy was triggered,
+but this session has not independently verified the production revision. Exact commands
+and the initial Node-ABI mismatch are recorded in
+`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
+## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
+
+The shared `requireAdmin` gate no longer treats `NODE_ENV` or a request hostname as authorization.
+Middleware now forwards identity-source provenance alongside the authenticated email. Email-based
+admin access accepts only Cloudflare Access or Auth.js session provenance; the auth-unconfigured
+`PRIMARY_USER_EMAIL` fallback is denied even when it names the primary operator or appears in
+`ADMIN_USER_EMAILS`. The timing-safe `ADMIN_REINDEX_TOKEN` path remains available in every
+environment. Every stale admin-route comment was updated to match this behavior, and the spoofable
+localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Current
+`origin/main@432ca6fe` is merged. The only source overlap was
+`test/server-metrics.test.ts`; its resolved union preserves current provider-shape/degraded-response
+coverage while adding verified Auth.js provenance to every authorized admin request. The previous
+current-main gate and hosted checks were green. Final combined Node 24 verification is also green:
+focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited warnings,
+TypeScript clean, 325 files / 3,620 tests, and production build clean. READY PR #1410 remains
+unmerged without auto-merge or deployment. See
+`docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
+
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
 and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change
@@ -90,6 +231,351 @@ Synthetic-stop refId kept within the portable `[A-Za-z0-9-]` charset at generati
 users. (6) Access-token field masked (`type="password"`). (7) Cancel normalizes raw `'ok'` ->
 `'pending_cancel'`. No Alpaca/Robinhood/test-broker behavior changed; not merged. Tradier's exact tag
 charset couldn't be re-confirmed from the live SPA docs — the #5 fix is charset-independent.
+## 2026-07-10 — Per-position stop PLANS (CLAUDE, branch `claude/per-position-stop-plans`, stacked on PR #1331)
+Owner-directed follow-up to the broker-trailing-stops session below. The LLM can now choose a
+per-position stop TYPE (fixed/ATR/trailing/none — distinct from the existing per-trade stop PRICE)
+at open time, persisted for the position's life (`position_stop_plans`, committed on fill like the
+take-profit band ratchet) and honored by all four stop-enforcement layers: `generateProactiveRiskProposals`/
+`enrichOpeningProposal` (per-symbol distance pin, `STOP_PLAN_FALLBACK_STOP_PCT`=8% when the account
+has none configured), `runSyntheticStopMonitor` (self-loads plans; "trailing" registers even with
+`trailingStopPct`=0; "none" purges any existing registration, even one made before the plan was
+set), `reconcileBrokerProtectiveStops` (per-symbol `kindForSymbol` narrows the account's own enabled
+lane, never invents a new broker capability; "none" tears down any existing broker-held stop).
+ATR precompute extended to opening candidates (not just held positions) for universal availability.
+UI extends (not duplicates) the existing stop-flow diagram with a 4th "Per-position override" lane;
+Positions table and approval cards surface an active plan honestly (a "none" plan is never blended
+into the generic "nothing configured" case). `stopPlan: "none"` is deliberately NOT hard-blocked in
+policy.ts, per product philosophy. **PR #1371 open, 3 Codex review rounds fixed (21 findings total)**
+— see the rollout doc's "Review fixes round 1-3" sections: opening-candidate ATR precompute quote
+fallback; in-memory `stopPlanBySymbol` pruning; stop-plan persistence gated on an actually-executed
+fill (not `pending_reconciliation`) plus a matching commit-on-confirm path in `reconcilePendingFills`;
+an "atr" plan never prices a broker-held stop off the flat % (mispriced vs. the pinned distance);
+purge-on-plan-change now covers "fixed"/"atr" transitions too, not just "none"; a "trailing"/"none"
+plan strips BOTH bracket legs, unconditionally (not just inside the whole-share bracket branch — a
+sub-share order with LLM-supplied bracket fields was still getting rejected by the Alpaca gateway);
+"fixed"/"atr" plans always reprice the bracket stop, never keep a "valid" LLM one; `deriveProtection`
+now builds its label/tone from `stopPlan.style` + halted state directly, never inherited from the
+account-wide base label's content (which can describe an entirely different mechanism than what the
+plan pins); a "none" plan with no rationale downgrades to "default" (auditability); an EXPLICIT
+"default" now CLEARS a persisted override (previously impossible to ever reset once overridden);
+`bracketWholeShareMinimum` now correctly bumps sub-share orders for "fixed"/"atr" plans (which
+guarantee a bracket via the fallback even on a bare account) and skips the bump for "trailing"/"none";
+a "fixed" plan on an account with BOTH lanes configured now uses the independently-enabled fixed lane;
+a scale-in's INHERITED persisted plan is now stamped onto the returned proposal (was invisible to the
+approval card before); a new exported `filterStopPlansByLiveBasis` drops a plan whose recorded avgCost
+no longer matches the live position (a stale plan from a close+reopen the app's own sweep never
+caught); `evaluateTradeProposal`'s bracket-permission gate now recognizes an explicit "fixed"/"atr"
+plan as a green light on a bare account; the opening-candidate ATR precompute now always recomputes
+fresh for a scale-in instead of reusing the held-position lot's (possibly stale) ATR%; a "default"
+opening no longer attaches an ATR bracket stop when the account has no base stop-loss % configured
+(ATR only scales an already-enabled flat stop). Gates green (lint/tsc/3511 tests/build). The repo's
+automated `autofix` GitHub Action failed on this PR's head commit with an empty `DEEPSEEK_API_KEY`
+secret (owner action needed, unrelated to this diff — all findings above were fixed manually instead).
+Rollout: `docs/rollouts/2026-07-10-per-position-stop-plans.md`.
+
+**2026-07-11 update — PR #1331 merged forward + round 4 (32 more Codex findings, all fixed):**
+PR #1331 (base) landed its own round-10 fixes + a merge from `main` (no conflicts) and was merged
+into this branch — see that PR's STATUS.md entry. On top of that, worked through this PR's own
+remaining/fresh Codex threads (27 carried over + 5 from a new round triggered by the merge push, all
+32 now resolved): a scale-in's stop plan now records the resulting BLENDED position basis (weighted
+pre-fill position + this fill), not the single fill price, across all three `recordFillFromProposal`
+call sites plus `reconcilePendingFills`'s crash-recovery path (previously `filterStopPlansByLiveBasis`
+discarded a freshly-recorded scale-in plan as stale on the very next run); `filterStopPlansByLiveBasis`
+moved to `db-api-keys.ts` (colocated with `getStopPlans`) so `synthetic-stops.ts` applies the SAME
+live-basis filter independently, not just the strategy-run side; the synthetic monitor no longer
+re-registers a trailing row for "fixed"/"atr" plans in the same pass its own purge just removed one
+(only "none" was excluded before); `reconcileBrokerProtectiveStops` tears down a "none"-plan's
+resting broker stop even while the system is Stopped (was gated behind `running`), and books any
+fill executed before a per-symbol-plan-driven cancel completes; the portfolio-heat budget calculation
+is now stop-plan-aware ("none" excluded from heat entirely, "fixed"/"atr" guaranteed a fallback
+distance instead of counting as "no basis"); a rationale-less "none" plan is now dropped entirely
+instead of downgraded to "default" (which has RESET semantics and could silently wipe an existing
+override); an inherited scale-in plan's rationale is now stamped onto the returned proposal (was
+losing the audit trail); a short position with short selling disabled now keeps its muted/unsafe
+protection label instead of showing an active plan; the approval card discloses an explicit "default"
+as a reset; the dashboard filters its stop-plan display by live basis too; `trailingStopPct` now has
+`looserWhen: "up"` (live-account typed-CONFIRM friction); Alpaca MCP ratcheted trailing stops now
+floor to whole shares (not just native REST) to avoid a broker rejection on fractional GTC orders.
+One thread left open (PR comment on #1331, not resolved): OCO sibling-identity pairing needs a
+broker API change to fix precisely. Verify: tsc clean, lint 0 errors, 3558 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round4-codex-fixes.md`. Auto-merge enabled once CI is green.
+
+**2026-07-11 update 2 — PR #1331 squash-merged to `main`; round 5 (4 more findings) + 3 merge
+reconciliations:** #1331 merged (an owner/Opus adversarial-triage session resolved its last 3
+threads and merged — see that PR's own disposition comment); GitHub auto-retargeted this PR's base
+from the now-gone `claude/stop-loss-preset-options-f1jygn` branch straight to `main`. Fixed 4 fresh
+Codex findings triggered by the merge push: broker-protective-stops.ts's section-2b "none"-plan
+teardown (added round-4) broadened to cover ANY plan-excluded broker-held stop
+(`kindForSymbol === null`, not just literal "none") and now books fills before deleting, mirroring
+every other cancel path; strategy.ts's `staleStopPlanSymbols` cleanup — a regression MY OWN round-4
+fix introduced — was computing candidates from the already-live-basis-filtered `stopPlanBySymbol`
+map, which never contains a closed symbol in the first place, making the cleanup a silent no-op
+exactly when a position closes (fixed by hoisting the raw unfiltered `getStopPlans` result and
+computing stale symbols from that instead); `deleteConnectedAccount` now purges `position_stop_plans`
+too, with a new regression test. Then reconciled with #1331's squash-merge (7 file conflicts — kept
+this branch's per-position stop-plan additions throughout, since main's squash tip predates them) and
+a concurrent owner+Opus push (2 file conflicts — reinstating two round-2 #1331 fixes that push had
+independently kept despite my having deferred them per the "not blocking this merge" disposition
+language; the owner's own follow-up PR comment then confirmed all 4 round-5 fixes were independently
+verified correct). Verify: tsc clean, lint 0 errors, 319 files/3566 tests passed, build clean.
+
+**2026-07-11 update 3 — round 6 (4 more findings, all fixed):** broker-protective-stops.ts's
+section-1 `pending_cancel` retry guard was blocking a retry for a plan-excluded row
+(`kindForSymbol === null`) whenever `liveReplaceBlocked` was set, even though that row was never
+going to be replaced anyway — narrowed the guard to skip retry only for rows the account still
+actively manages; performance.ts's `recordFillFromProposal` blended-avgCost calc switched from
+`price` (paper mode's synthetic-slippage-adjusted execution price) to `basePrice` (raw execution
+price) in both branches of the blend ternary, so a persisted stop-plan basis matches what the
+broker itself reports as `position.averageCost` instead of drifting by the ~1bp paper-mode
+adjustment; dashboard.ts's `stopPlanBySymbol` block was filtering by `policy.accountNumber`
+instead of the already-resolved `accountNumber` (destructured from `brokerChain`, the same one
+used for `liveFills`/`paperFills`/`dailyStats`) — could show/hide plans against the wrong account
+when they differ; strategy.ts's `anyOpeningAtrPlan` predicate only checked `p.stopPlan?.style`
+(an explicit LLM-set plan), missing an INHERITED "atr" plan carried via `stopPlanBySymbol` — now
+checks both, so the opening ATR precompute runs whenever either is set. A CI "autofix" run failed
+with `error_max_turns` on an earlier (now-superseded) commit — confirmed non-blocking (same known
+pattern as prior rounds; `verify` is the only required check). Verify: tsc clean, lint 0
+errors/379 pre-existing warnings, 319 files/3566 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round6-codex-fixes.md`.
+
+**2026-07-11 update 4 — merged main's strategy.ts split refactor:** owner enabled auto-merge on
+#1371; `main` had meanwhile landed #1397 (order-reconcile fix bundled with an unrelated AG/Fable
+refactor splitting `strategy.ts` into `strategy-execution.ts` + `strategy-risk.ts`, see the entry
+just below), producing real merge conflicts since this branch's stop-plan edits sit in functions
+that physically moved. Reconciled by identifying exactly which functions moved
+(`executeProposal`, `reconcilePendingFills`, `flagStalePlacingIntents` →
+`strategy-execution.ts`; `applyDeterministicSizing` → `strategy-risk.ts`) and porting this
+branch's stop-plan logic into each new location, merged alongside main's own new logic there
+(declined-order handling, already-booked dedup, `resolveBrokerVerificationNotifications`) rather
+than overwriting it; `bracketWholeShareMinimum` stayed in `strategy.ts` (now exported, since
+`strategy-risk.ts` imports it) with its stop-plan-aware signature intact. Two test files got
+import-list conflicts from the same relocations, resolved to match main's new module layout.
+Verify: tsc clean, lint 0 errors/408 pre-existing warnings, 323 files/3590 tests passed, build
+clean. Rollout: `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`.
+
+**2026-07-11 update 5 — round 7 (3 fixed, 1 partially fixed + deferred to owner):** stopPlan
+schema's `"default"` description now makes explicit that it RESETS (clears any persisted
+override) rather than being a safe no-op recommendation, and directs the LLM to leave the field
+null/omitted for a genuine no-change scale-in instead; `PositionStopPlan` grew a `side`
+("long"/"short") field, threaded through `recordStopPlan`'s two call sites (derived from the
+opening proposal's buy/short) and a new `position_stop_plans.side` column (migration 18,
+default 'long' for pre-existing rows), so `filterFullStopPlansByLiveBasis` now matches on
+symbol+avgCost+side — closing a long and shorting the same symbol at a coincidentally similar
+basis no longer inherits the long's plan; the short-stop mandatory-stop-loss gate in policy.ts
+now also accepts an explicit `fixed`/`atr`/`trailing` stopPlan as satisfying the requirement
+(parity with the existing bracket-permission gate), letting those plans work on a bare short
+account. Left open: whether an explicit `none` plan should also bypass that gate — that's a
+pre-existing, short-specific safety invariant (unbounded loss direction) distinct from the
+general "none is never hard-blocked" rule, so posted a PR reply asking the owner rather than
+deciding unilaterally; thread left unresolved pending that call. Verify: tsc clean, lint 0
+errors/408 pre-existing warnings, 323 files/3591 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round7-codex-fixes.md`.
+
+## 2026-07-11 — Refactoring strategy.ts: split risk and execution (AG, branch `agent/strategy-split`)
+Extracted risk gates, veto rules, and sizing logic into `strategy-risk.ts` and the main execution loop/reconciliation into `strategy-execution.ts`. `strategy.ts` remains as a re-export hub and coordinator. Automated import updates across 100+ files via a custom `ts-morph` script. Gate green: tsc clean, lint 0 errors, 3427 tests passing, build clean. See `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
+
+## 2026-07-10 — Order-status reconciliation: kill the perpetual "verify with broker" alert (CLAUDE, branch `claude/order-status-reconcile`)
+A thrown broker `placeEquityOrder` used to leave an order "always uncertain": both catch paths
+(autonomous run-loop + approval) fired a permanent, un-clearable "verify with broker" alert without
+asking the broker what happened, set status `placing_failed` (which the stale sweep — filters
+`status='placing'` — never reconciles), and nothing acked the alert even after the order later
+reconciled. Fix: new shared `reconcilePlacementError()` helper (`strategy.ts`, called from both
+catches) queries the broker via the existing `refId→clientOrderId` idempotency key and maps to a
+DEFINITE status — `placed`/recovered (books the fill, deduped), `rejected_by_broker` (declined), or
+new `not_placed` (safe to retry, sweepable); only a truly unreachable broker keeps status `placing`
++ the still-protected uncertain alert. New `resolveBrokerVerificationNotifications()`
+(`db-notifications`) acks the uncertain alert on any confirmed placement (inline recover, sweep
+recover, or a normal fill reaching `filled`); `isBrokerVerificationRunFailed` is now
+reconcile-marker-driven so `not_placed` self-clears while `uncertain`/`declined` stay protected.
+Idempotency: status gate + a `(proposalId, brokerOrderId)` dedupe guard on BOTH the inline booking
+and the sweep. Money-path: NO change to Alpaca/Robinhood placement or the idempotency keys.
+FIXUPS (adversarial review, PR #1382): (1) RH `getEquityOrders` now THROWS on tool-level
+`isError`/malformed/missing-collection instead of masking as `[]`; (2) sweep matched-DECLINED branch
+gained the `isRejectedOrCanceledState` guard (no phantom fill / false "placed"); (3) `not_placed`
+only concluded when the broker order list is authoritative for terminal orders (new
+`BrokerGateway.ordersListIncludesTerminal` — Alpaca `true`, Robinhood unset/conservative ⇒
+absent=`uncertain`) in `reconcilePlacementError` AND the sweep; (4) durable double-fill backstop —
+migration v16 partial UNIQUE index `fill_events(proposal_id, broker_order_id)` + `insertFillEvent`
+idempotent no-op on conflict. +4 new test cases groups. Local gates green: tsc 0, full suite
+3424/3424, lint 0-err, build clean (ran under default node26 — the shared `node_modules`
+`better-sqlite3` is ABI 147/node26; `node@24` hits the reverse ABI mismatch). PR: READY, NOT merged.
+See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — push updates PR #1382,
+await review.
+## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
+Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
+Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no
+bracket combos; MCP lane bypassed) and, on live Robinhood, a resting GTC stop-market the
+protective-stop reconciler RATCHETS upward each tick (RH MCP has no verified native trailing
+param — `toMcpOrder` fails closed on trailPercent; lane gated on the `robinhoodBrokerStops`
+opt-in, still default OFF pending live verification). New `brokerTrailingStops` flag (default ON,
+inert until a trail % is set); `broker_protective_stops` grew `kind`/`trail_percent`
+(migration 16); placement now coverage-aware vs live exit orders (bracket legs). UI: Essentials'
+lone "Stop-loss" row + the advanced "Protective stops plumbing" group merged into ONE
+"Protective stops" card under a dynamic stop-flow diagram (ATR → beta → flat fallback, trailing
+overlay, broker-held → app-monitor enforcement; pure `stopFlowModel` unit-tested). Per-position
+LLM-chosen stop plans (fixed/ATR/trailing/none at proposal time) deliberately deferred —
+design sketch in `docs/EFFORT-LOG.md` Planned. Rollout:
+`docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`. PR #1331 open; Codex has run
+5 review rounds so far, all fixed on the branch: coverage-unknown handling (`ordersListed`),
+partial-broker-stop preservation, OCO bracket-leg double-counting in `liveExitOrderCoverage`,
+keep-existing-stop-when-replacement-refused, never seeding a broker trail looser than the
+synthetic monitor's own tracked high-water mark (`extremePriceBySymbol`); round 5: OCO pairing now
+also requires a `BRACKET_SIBLING_WINDOW_MS` created-together check (no more conflating two
+independent equal-qty manual orders as one bracket), stale `resting` rows are checked against the
+tracked order's actual broker state (mirrors section 1's fill/terminal recovery), an oversized
+existing stop is now cancelled even when other-order coverage is unknown (position-shrink is
+knowable from `positions` alone), and a pure quantity-shrink mismatch on a trailing stop now
+cancels unconditionally instead of being swallowed by the arm-refusal guard; round 6 (Codex pushed
+back twice on round 5's OCO time-window heuristic): pairing now requires a NEW `EquityOrder.orderClass`
+field (mapped from Alpaca's own `order_class`) on BOTH legs — a real bracket/OCO sibling check, not a
+timing guess — and a partial native-trail placement no longer blanket-skips the synthetic fire path
+(its known quantity now folds into coverage so the uncovered fractional remainder still fires), plus
+an honest short-position caveat added to the stop-flow diagram's broker-held node; round 7: a
+`partially_filled` (actively executing) broker-held stop is no longer cancelled by the quantity-drift
+check, and `confirmedPriorExitDead`'s re-arm confirmation now checks the SPECIFIC tracked order (by
+client_order_id) instead of a symbol-wide sweep, so an unrelated still-live broker stop (covering
+different shares) can no longer permanently block re-arming a partial remainder's own dead exit; plus
+a docs fix clarifying Alpaca REST (native trailing) vs Alpaca MCP (ratcheted) in the Guardrails hint;
+round 8: replaced round 7's `client_order_id`-only re-arm branch (fragile — the field is optional and
+a missing one would falsely read "dead") with `brokerHeldOrderIdBySymbol`, keyed off the account's own
+`broker_protective_stops` row instead of any broker-supplied id; also fixed an ordering bug found while
+verifying it (the re-arm pass runs BEFORE the tick's own reconcile call, so the map must be seeded from
+DB state at declaration, not only refreshed after reconcile), and a filled broker-held stop recognized
+during stale-row cleanup now books a `fill_events` row (`bookBrokerHeldStopFill`) before its row is
+deleted, instead of the exit silently vanishing from P&L/learning/activity; round 9: the DISABLED-
+teardown path (`kind === null`) now recovers a FILLED stop the same way section 1 does instead of
+retrying its cancel forever with the fill unbooked; a NEW `hadExecutedFill` predicate books a fill at
+all three recovery sites on either the literal "filled" state OR a positive `filledQuantity`
+regardless of state, so a PARTIAL fill that terminates as canceled/expired is no longer lost; and a
+native trail's mismatch-driven replacement (trail %/quantity change) now backfills a missing tracked
+high-water mark from the existing stop's own recorded `stopPrice`/`trailPercent` (inverting the ratchet
+math) before deciding whether a reseed would be looser than the broker's own already-moved-up peak;
+round 10 (2026-07-11): the Codex Autofix bot (`.github/workflows/codex-autofix.yml`) had been broken
+since ~2026-07-10T23:00Z — missing `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` — so 6 rounds of Codex
+review comments piled up unaddressed on this PR (35 threads) and its stacked follow-on PR #1371 (27
+threads); PR #1373 (merged to `main`) fixed the workflow to route through DeepSeek's Anthropic-compatible
+endpoint (`DEEPSEEK_API_KEY` secret, `api.deepseek.com/anthropic`, `deepseek-v4-flash`) but that fix
+never reached this feature branch. Cherry-picked it (`45bb477`) so the bot works going forward. Then
+triaged every open Codex thread against the CURRENT code: 32 of 34 non-outdated/outdated threads were
+already fixed by rounds 5-9 (just needed `resolveReviewThread`, never run before because the bot was
+down); 2 were fixed fresh this round (`72ec8d1`) — the DISABLED-teardown path now books a fill found in
+the caller's pre-reconcile order snapshot before clearing a row (both on a successful cancel and on a
+failed-cancel-but-broker-already-terminal recovery), and signals `filledRecoverySymbols` from there so
+the caller skips synthetic registration/fire against a stale pre-fill position, same as the
+enabled-lane recovery paths already did; and the synthetic monitor's auto-registration coverage check
+now folds in `justPlacedPartialBrokerStopQty` (previously only the fire path used it), so a partial
+broker stop placed earlier in the SAME reconcile pass is counted as coverage before deciding whether to
+arm a new synthetic row. One thread left open (posted as a PR comment, not resolved): "Require shared
+OCO identity before pairing legs" — `liveExitOrderCoverage` pairs stop/limit legs on matching
+bracket-family `orderClass` + exact quantity, but `orderClass` is a family string ("bracket"/"oco"),
+not a specific group id, so two DIFFERENT brackets' orphaned same-family same-qty legs could in theory
+still mispair; neither the Alpaca REST nor MCP order shape currently exposes a more precise sibling id,
+so a real fix needs either a broker API change (nested order fetch + parent correlation) or an accepted
+tradeoff — flagged for deliberate follow-up rather than guessed at. Branch is now `mergeable_state:
+dirty` against `main` (main has moved ~20 commits since this PR's base) — needs a merge before it can
+land; not yet done this round.
+Next action: watch for
+further review rounds / merge; then live-verify the RH ratchet lane before flipping
+`robinhoodBrokerStops` on.
+## 2026-07-10 — Effort-log union-merge safety net (fleet-infra) (CLAUDE, branch `claude/union-merge-live-rows`)
+Fix for the reported "live-board union-merge clobber": a claim row added to
+`/Users/jay/apps/TRADING-EFFORT-LOG.md` at 17:35 on 2026-07-09 was gone by 18:22. Investigation
+found NO existing scheduled job actually writes to the live board — `scripts/merge-shepherd.sh`
+(launchd, 30 min) only calls the GitHub API; the only real union-merge is `docs/EFFORT-LOG.md
+merge=union` in `.gitattributes`, which only ever adds lines to the git-tracked mirror. Most
+plausible cause: a manual "take the mirror wholesale" board-conflict resolution (already
+documented in `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`) applied to the live board.
+Added `scripts/effort-log-union-merge.py`: row-level merge (mirror is the base; every live-only
+row — identified by SHA1 of its normalized first line, same scheme as
+`scripts/sync-effort-issues.py`'s `effort-key` — is appended into its matching bucket section)
+with a hard pre/post-write invariant that aborts the write (no partial output) if any live-only
+row would be lost. Verified exclusively against scratch copies — the real live board and mirror
+were only ever read (checksum-verified unchanged): real-data dry-run (13 genuine not-yet-mirrored
+rows correctly identified), sentinel add+recover, idempotency, subset, new-bucket-trailer, and a
+sabotaged-logic invariant-abort test. `npx tsc --noEmit` clean. Rollout:
+`docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`. Follow-up: wire the tool into the
+host-side `~/.claude-merge-shepherd/run.sh` 30-min driver (Mac-only infra, out of scope here).
+
+**Landing-round fix (same day, PR #1354 review):** the codex-connector bot flagged three real P2s
+in `scripts/effort-log-union-merge.py`, all fixed: (1) the `--apply` write used `open(path, "w")`,
+which truncates the live board before the new bytes land — now writes to a same-directory temp
+file, fsyncs it, and `os.replace()`s it into place, so a crash/disk-full mid-write can never leave
+a partial file. (2) Two distinct live-board rows that happen to normalize to the identical first
+line collapsed to one entry (`items.setdefault` = first-occurrence-wins), so a genuine second
+row could be silently dropped exactly like the original clobber bug — reproduced this against the
+PRE-fix script on a scratch fixture (it reported "no live-only rows found" and lost the second
+row entirely); fixed by tracking every occurrence per key and comparing COUNTS, not membership.
+(3) No guard against a concurrent edit to the live board landing between the initial read and the
+final write — added an exclusive `fcntl.flock` held for the whole read-merge-write critical
+section (serializes concurrent runs of this script against each other) plus a non-cooperative-safe
+mtime/size fingerprint recheck immediately before the write that aborts (exit 4, writes nothing)
+if the file changed since it was read. Verified all three against scratch fixtures: atomic write
+(no stray temp files after apply), duplicate-row recovery (proven against the actual pre-fix
+regression), and a simulated race (monkeypatched `os.stat` to tamper with the live file mid-run —
+confirmed exit 4, output file untouched). Re-ran the real-data dry-run against `docs/EFFORT-LOG.md`
+with no regressions (227 items, no false positives/negatives). Landed via `scripts/land.sh`, PR
+#1354, squash-auto-merge armed.
+
+**Landing-round fix (round 2, PR #1354 review — codex-autofix):** three more codex-connector P2s.
+Two fixed: (1) rows under a keyword-bearing `###` subsection (e.g. `### Action - clear
+recommendation (Planned)`) whose parent `## 2026-07-06 ...` heading is unclassified were invisible
+to the parser — `HEADING_RE` only matched `## `, so such a live-only row was dropped from
+`live.items` and neither recovered nor caught by the invariant. Fixed: `HEADING_RE` now matches 2+
+hashes; `parse_board` tracks `section_bucket` (last `## `) so a deeper `###`/`####` heading
+classifies by its own keyword when it has one and otherwise inherits the enclosing `## ` bucket —
+no regression on already-classified subsections, verified against scratch fixtures + real-board
+idempotency. (2) `PLAN.md` was stale for the new host-side tool — added a
+"Fleet-infra tooling (host-side, no product-roadmap change)" section per the handoff protocol.
+One left OPEN as a maintainer question (not guessed): "preserve live edits for mirrored rows" is a
+core merge-semantics tradeoff (mirror-wins vs live-leads for shared rows) whose two suggested fixes
+break opposite use cases — asked the maintainer via a PR comment. Rollout note updated with round-2
+detail.
+
+**Landing-round fix (round 3, PR #1354 review — codex-autofix):** four more codex-connector P2s.
+Two fixed (both silent-drops of real live-only rows): (1) nested classified-ancestor inheritance —
+the round-2 `section_bucket` only tracked the last **level-2** heading, so a live-only row under a
+`#### child` of a keyword-bearing `### ... (Planned)` beneath an **unclassified `##` parent` reset
+to `None` and vanished from `live.items`. Replaced `section_bucket` with a `heading_bucket_by_level`
+map: a heading closes deeper levels then classifies by own keyword or **inherits the nearest
+classified shallower ancestor at any level** (top-level `##` still resets outright — no regression).
+(2) `PLACEHOLDER_RE` matched bare `record the.*` / `see rollout notes.*` (optional parens), so a
+real row like `Record the P&L reconciliation effort (CLAUDE)` was skipped as scaffolding and never
+recovered — split those two into a paren-required `PLACEHOLDER_PARENS_RE`, applied identically to
+both `effort-log-union-merge.py` and `sync-effort-issues.py` (documented "the two tools never
+disagree" invariant). Two left OPEN (same maintainer decision, not guessed): "preserve live edits
+for mirrored rows" (round 2) and its duplicate-ordering variant "preserve duplicate rows without
+order-based pairing" are both the same shared-row conflict whose fix changes the mirror-wins-vs-
+live-leads contract already parked on the owner. Verify trio green (tsc clean, 3395 tests pass,
+build clean — Python-only change). Rollout note updated with round-3 detail.
+
+**Landing-round fix (round 4, PR #1354 review — codex-autofix):** one new codex-connector P2
+(`scripts/effort-log-union-merge.py:251`, "keep bucket insertion points on canonical sections"),
+fixed. A recovered global-Planned row was landing under an unrelated nested `### Action ... (Planned)`
+UI-backlog subsection instead of the canonical `## Planned / Reserved` section, because
+`bucket_insert_at[bucket]` was overwritten by every later same-bucket subsection (placement
+corruption — count invariant still passed). Fix: track a separate `canonical_bucket_insert_at`
+(updated only inside directly-classified level-`<=2` sections or level-2-inherited ones, via a
+parallel `heading_canonical_by_level` map); `recover_missing_items` prefers it and falls back to
+`bucket_insert_at` only for buckets that exist solely as nested subsections (round-3 behavior
+preserved). Reproduced + confirmed fix on scratch fixtures; real-board self-merge 268/268, 0
+recovered, exit 0. The two line-287 threads stay OPEN (same maintainer merge-semantics decision).
+Verify trio green (tsc clean, 3395 tests pass, build clean — Python-only change). Rollout note
+updated with round-4 detail.
+
+**Landing-round fix (round 5, PR #1354 review — codex-autofix):** one new codex-connector P2
+(`scripts/effort-log-union-merge.py:267`, "keep canonical insertions out of nested sections"),
+fixed. A residual hole from the round-4 fix: `current_bucket_canonical` was propagated by
+inheritance to unclassified `###`/`####` subsections under a canonical `## Planned / Reserved`
+parent (via `heading_canonical_by_level`), so every line inside those nested subsections
+overwrote `canonical_bucket_insert_at[planned]`. A live-only top-level Planned row was still
+recovered under the last nested subsection instead of the active bucket section (placement
+corruption, same class as round 4). Fix: when an unclassified heading inherits its bucket from
+an ancestor, do NOT propagate the canonical flag — set `effective_canonical = False` so only
+lines directly under the level-2 canonical section update `canonical_bucket_insert_at`. The
+`heading_canonical_by_level` map at each deeper level still stores `False`, so the behavior is
+consistent regardless of nesting depth. The two line-287 threads stay OPEN (same maintainer
+merge-semantics decision). Verify trio green (tsc clean, 3433 tests pass, build clean — Python-only
+change). Rollout note updated with round-5 detail.
 ## 2026-07-10 — Console loading permafix: abort-storm coalescing + dashboard.ts parallelization (CLAUDE, branch `claude/loading-permafix`)
 Production console still took minutes to first-paint after PR #1293 (deadlines + watchdog) landed.
 Two compounding causes: (1) `useConsoleData.tsx`'s `refresh()` aborted the in-flight fetch on every

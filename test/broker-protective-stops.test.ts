@@ -5,17 +5,19 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import {
   brokerProtectiveStopsEnabled,
+  brokerTrailingStopsEnabled,
   cancelBrokerProtectiveStop,
+  desiredBrokerStopKind,
   reconcileBrokerProtectiveStops
 } from "../src/lib/broker-protective-stops";
-import { getDb, listBrokerProtectiveStops } from "../src/lib/db";
+import { getDb, listBrokerProtectiveStops, listFillEvents } from "../src/lib/db";
 import type { BrokerGateway, EquityOrder, EquityPosition, TradingPolicy } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-protstops-${randomUUID()}.db`)}`;
 });
 
-interface PlacedOrder { symbol: string; side: string; type: string; quantity?: number; stopPrice?: number; timeInForce: string }
+interface PlacedOrder { symbol: string; side: string; type: string; quantity?: number; stopPrice?: number; trailPercent?: number; timeInForce: string }
 
 function fakeGateway(): BrokerGateway & { placed: PlacedOrder[]; cancelled: string[]; nextOrderId: string; placeState: string; failCancel: boolean } {
   const g = {
@@ -25,7 +27,7 @@ function fakeGateway(): BrokerGateway & { placed: PlacedOrder[]; cancelled: stri
     placeState: "submitted", // set to "rejected" to simulate a non-throwing synchronous broker decline
     failCancel: false, // flip to simulate a broker cancel that fails (drives the pending_cancel retry)
     async placeEquityOrder(order: any) {
-      g.placed.push({ symbol: order.symbol, side: order.side, type: order.type, quantity: order.quantity, stopPrice: order.stopPrice, timeInForce: order.timeInForce });
+      g.placed.push({ symbol: order.symbol, side: order.side, type: order.type, quantity: order.quantity, stopPrice: order.stopPrice, trailPercent: order.trailPercent, timeInForce: order.timeInForce });
       return { orderId: g.nextOrderId, refId: order.refId, state: g.placeState, raw: {} };
     },
     async cancelEquityOrder(_accountNumber: string, orderId: string) {
@@ -109,7 +111,7 @@ describe("reconcileBrokerProtectiveStops", () => {
 
   it("no-ops entirely when disabled (paper mode / flag off / wrong broker)", async () => {
     const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-5"), accountNumber: "PS-5", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true });
-    expect(r).toEqual({ placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [] });
+    expect(r).toEqual({ placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [], partiallyPlacedStopQuantities: {}, filledRecoverySymbols: [] });
     expect(gw.placed).toHaveLength(0);
   });
 
@@ -313,5 +315,776 @@ describe("reconcileBrokerProtectiveStops", () => {
     gw.nextOrderId = "ord-2";
     const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-6"), accountNumber: "PS-6", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
     expect(r.placed).toBe(1);
+  });
+});
+
+// ── Broker-held TRAILING stops ────────────────────────────────────────────────
+
+function alpacaTrailPolicy(account: string, over: Partial<TradingPolicy> = {}): TradingPolicy {
+  return {
+    ...DEFAULT_POLICY,
+    accountNumber: account,
+    activeBroker: "alpaca",
+    riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5 },
+    ...over
+  };
+}
+
+function rhTrailPolicy(account: string, over: Partial<TradingPolicy> = {}): TradingPolicy {
+  return rhPolicy(account, {
+    riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 8, trailingStopPct: 5 },
+    ...over
+  });
+}
+
+/** A position whose current mark can differ from entry (marketValue = qty × mark). */
+const markedPos = (symbol: string, quantity: number, averageCost: number, mark: number): EquityPosition => ({
+  symbol, quantity, averageCost, marketValue: quantity * mark
+});
+
+const liveSellOrder = (symbol: string, quantity: number): EquityOrder => ({
+  id: `cov-${symbol}`, symbol, side: "sell", type: "stop_market", state: "new",
+  quantity, timeInForce: "gtc", createdAt: new Date().toISOString(), placedAgent: "alpaca"
+});
+
+describe("brokerTrailingStopsEnabled / desiredBrokerStopKind", () => {
+  it("requires a trailing %, honors the off-switch, and knows each broker's lane", () => {
+    // Alpaca: native trailing in both environments.
+    expect(brokerTrailingStopsEnabled(alpacaTrailPolicy("A"), "broker/paper")).toBe(true);
+    expect(brokerTrailingStopsEnabled(alpacaTrailPolicy("A"), "broker/live")).toBe(true);
+    // No trailing % configured → inert (the DEFAULT_POLICY case).
+    expect(brokerTrailingStopsEnabled(alpacaTrailPolicy("A", { riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 0 } }), "broker/paper")).toBe(false);
+    // The owner's off-switch.
+    expect(brokerTrailingStopsEnabled(alpacaTrailPolicy("A", { brokerTrailingStops: false }), "broker/paper")).toBe(false);
+    // Robinhood: live only, and only under the robinhoodBrokerStops opt-in.
+    expect(brokerTrailingStopsEnabled(rhTrailPolicy("A"), "broker/live")).toBe(true);
+    expect(brokerTrailingStopsEnabled(rhTrailPolicy("A"), "broker/paper")).toBe(false);
+    expect(brokerTrailingStopsEnabled(rhTrailPolicy("A", { robinhoodBrokerStops: false }), "broker/live")).toBe(false);
+  });
+
+  it("trailing takes precedence over the RH fixed lane; neither → null", () => {
+    expect(desiredBrokerStopKind(rhTrailPolicy("A"), "broker/live")).toBe("trailing");
+    expect(desiredBrokerStopKind(rhPolicy("A"), "broker/live")).toBe("fixed");
+    expect(desiredBrokerStopKind(rhPolicy("A", { robinhoodBrokerStops: false }), "broker/live")).toBe(null);
+    expect(desiredBrokerStopKind(DEFAULT_POLICY, "broker/paper")).toBe(null);
+  });
+});
+
+describe("reconcileBrokerProtectiveStops — trailing lane", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("places a NATIVE trailing stop on Alpaca (trailPercent, no stopPrice) and records a trailing row", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-1"), accountNumber: "TR-1", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 10, trailPercent: 5, timeInForce: "gtc" });
+    expect(gw.placed[0].stopPrice).toBeUndefined(); // the broker computes/moves the trigger itself
+    const rows = listBrokerProtectiveStops("TR-1", "local");
+    expect(rows[0]).toMatchObject({ kind: "trailing", trailPercent: 5, quantity: 10 });
+  });
+
+  it("floors Alpaca native trailing stops to whole shares and skips sub-share positions", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-2"), accountNumber: "TR-2", gateway: gw,
+      positions: [longPos("MSFT", 10.6, 100), longPos("NVDA", 0.4, 500)], executionMode: "broker/paper", running: true
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "MSFT", quantity: 10 }); // 10.6 → 10; the synthetic monitor covers the 0.6
+    // A floored (partial) placement must NOT suppress synthetic REGISTRATION — the 0.6-share
+    // remainder still needs app-side protection this tick. It is advertised separately so the
+    // caller only defers the FIRE path. NVDA (0.4 sh) is left entirely to the synthetic monitor.
+    expect(r.placedStopSymbols).toEqual([]);
+    expect(r.partiallyPlacedStopSymbols).toEqual(["MSFT"]);
+  });
+
+  it("does NOT reprice a native Alpaca trailing stop as the mark moves (the broker trails it)", async () => {
+    const args = (mark: number) => ({
+      userId: "local", policy: alpacaTrailPolicy("TR-3"), accountNumber: "TR-3", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, mark)], executionMode: "broker/paper" as const, running: true
+    });
+    await reconcileBrokerProtectiveStops(args(100));
+    const r = await reconcileBrokerProtectiveStops(args(140)); // big rally — still no cancel-replace
+    expect(r.cancelled).toBe(0);
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(1);
+  });
+
+  it("places a RATCHETED stop-market on live Robinhood at trail% below max(mark, entry)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("TR-4"), accountNumber: "TR-4", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 120)], executionMode: "broker/live", running: true
+    });
+    expect(r.placed).toBe(1);
+    // 5% below the 120 mark (the observable high-water), NOT 8% below the 100 entry.
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", side: "sell", type: "stop_market", quantity: 10, stopPrice: 114, timeInForce: "gtc" });
+    expect(gw.placed[0].trailPercent).toBeUndefined(); // RH MCP has no verified native trailing param
+    expect(listBrokerProtectiveStops("TR-4", "local")[0]).toMatchObject({ kind: "trailing", trailPercent: 5, stopPrice: 114 });
+  });
+
+  it("ratchets the Robinhood trailing stop UP as the mark rises, and never back down", async () => {
+    const args = (mark: number) => ({
+      userId: "local", policy: rhTrailPolicy("TR-5"), accountNumber: "TR-5", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, mark)], executionMode: "broker/live" as const, running: true
+    });
+    await reconcileBrokerProtectiveStops(args(100)); // initial: trigger 95
+    expect(listBrokerProtectiveStops("TR-5", "local")[0].stopPrice).toBe(95);
+    // Mark rises to 120 → cancel-replace at 114.
+    gw.nextOrderId = "ord-2";
+    const up = await reconcileBrokerProtectiveStops(args(120));
+    expect(up.cancelled).toBe(1);
+    expect(up.placed).toBe(1);
+    expect(listBrokerProtectiveStops("TR-5", "local")[0]).toMatchObject({ brokerOrderId: "ord-2", stopPrice: 114 });
+    // Mark falls back to 105 → the 114 trigger HOLDS (ratchet, not a re-anchor).
+    const down = await reconcileBrokerProtectiveStops(args(105));
+    expect(down.cancelled).toBe(0);
+    expect(down.placed).toBe(0);
+    expect(listBrokerProtectiveStops("TR-5", "local")[0].stopPrice).toBe(114);
+  });
+
+  it("replaces a FIXED row with a TRAILING one when the trailing lane turns on (kind mismatch)", async () => {
+    // Fixed stop first (trailing % not yet configured).
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("TR-6"), accountNumber: "TR-6", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(listBrokerProtectiveStops("TR-6", "local")[0]).toMatchObject({ kind: "fixed", stopPrice: 92 });
+    // Owner sets a trailing % → same tick: cancel the fixed stop, place the trailing one.
+    gw.nextOrderId = "ord-2";
+    const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhTrailPolicy("TR-6"), accountNumber: "TR-6", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(r.cancelled).toBe(1);
+    expect(r.placed).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("TR-6", "local")[0]).toMatchObject({ kind: "trailing", brokerOrderId: "ord-2", stopPrice: 95 });
+  });
+
+  it("skips placement when another live exit order already covers the position (bracket leg / manual sell)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-7"), accountNumber: "TR-7", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+      orders: [liveSellOrder("AAPL", 10)]
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    // A PARTIAL cover: the broker stop is sized to the UNCOVERED remainder only (never stacking
+    // more exit quantity than the account holds), and advertised as a partial placement.
+    const partial = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-7"), accountNumber: "TR-7", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+      orders: [liveSellOrder("AAPL", 3)]
+    });
+    expect(partial.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", quantity: 7 });
+    expect(partial.placedStopSymbols).toEqual([]);
+    expect(partial.partiallyPlacedStopSymbols).toEqual(["AAPL"]);
+  });
+
+  it("does NOT arm a broker trail that is already breached — the synthetic monitor owns the exit", async () => {
+    // avg 100, mark 90, trail 5% → entry-seeded trigger 95 is already breached. A native trailing
+    // order would restart the trail from 90 (deferring the exit by another 5%), and a ratcheted
+    // stop would rest with its trigger above the market — so placement is skipped and the symbol
+    // is NOT advertised, letting the synthetic monitor register and fire the app-defined exit.
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-9"), accountNumber: "TR-9", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 90)], executionMode: "broker/paper", running: true
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(r.placedStopSymbols).toEqual([]);
+    expect(r.partiallyPlacedStopSymbols).toEqual([]);
+  });
+
+  it("does NOT arm a NATIVE trail while the mark sits below entry (looser-than-app trigger), but the ratcheted lane still rests at the entry-seeded trigger", async () => {
+    // avg 100, mark 96, trail 5%: the app's entry-seeded trigger is 95 (not yet breached), but a
+    // native Alpaca trail would seed from 96 → trigger ~91.2, LOOSER than the app's. Skip native
+    // placement (synthetic keeps the 95 trail) until the mark recovers to entry.
+    const native = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-11"), accountNumber: "TR-11", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 96)], executionMode: "broker/paper", running: true
+    });
+    expect(native.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    // The ratcheted lane (live Robinhood) has no such looseness — its explicit trigger IS the
+    // entry-seeded 95, still below the 96 mark, so it rests normally.
+    const ratcheted = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("TR-12"), accountNumber: "TR-12", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 96)], executionMode: "broker/live", running: true
+    });
+    expect(ratcheted.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", type: "stop_market", stopPrice: 95 });
+  });
+
+  it("alpaca-mcp accounts take the RATCHETED lane (stop_market via their MCP transport), not REST-native trailing", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-10", { activeBroker: "alpaca-mcp" }), accountNumber: "TR-10", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 120)], executionMode: "broker/paper", running: true
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", type: "stop_market", quantity: 10, stopPrice: 114 });
+    expect(gw.placed[0].trailPercent).toBeUndefined(); // never sends the REST-only native param
+  });
+
+  it("tears trailing stops down when the owner opts out (brokerTrailingStops: false, no trailing %→fixed either)", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: alpacaTrailPolicy("TR-8"), accountNumber: "TR-8", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true });
+    expect(gw.placed).toHaveLength(1);
+    const off = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-8", { brokerTrailingStops: false }), accountNumber: "TR-8",
+      gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true
+    });
+    expect(off.cancelled).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("TR-8", "local")).toHaveLength(0);
+  });
+
+  describe("ordersListed: false — a failed order-list fetch must never be mistaken for confirmed-empty coverage", () => {
+    it("skips NEW placement entirely (never assumes coverage-free) when the caller's fetch failed", async () => {
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-13"), accountNumber: "TR-13", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+        orders: [], ordersListed: false
+      });
+      expect(r.placed).toBe(0);
+      expect(gw.placed).toHaveLength(0);
+      expect(r.placedStopSymbols).toEqual([]);
+      expect(r.partiallyPlacedStopSymbols).toEqual([]);
+      // Recovery: the NEXT tick's successful fetch (even an honestly-empty one) places normally.
+      const recovered = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-13"), accountNumber: "TR-13", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+        orders: [], ordersListed: true
+      });
+      expect(recovered.placed).toBe(1);
+    });
+
+    it("leaves an EXISTING resting stop untouched (no spurious mismatch-cancel) when the caller's fetch failed", async () => {
+      // Place normally first (a genuinely successful, empty fetch).
+      await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-14"), accountNumber: "TR-14", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+        orders: [], ordersListed: true
+      });
+      expect(gw.placed).toHaveLength(1);
+      // Next tick: the fetch THROWS (caller passes ordersListed: false). Without the fix, an
+      // unknown-coverage read collapses to "fully uncovered", the existing 10-sh stop looks
+      // undersized against a phantom "other order" story, and section 3 cancels it — then section 4
+      // ALSO can't verify coverage and skips replacing it, leaving the position with NO broker-held
+      // stop at all this tick.
+      const failed = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-14"), accountNumber: "TR-14", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+        orders: [], ordersListed: false
+      });
+      expect(failed.cancelled).toBe(0);
+      expect(gw.cancelled).toEqual([]);
+      const stops = listBrokerProtectiveStops("TR-14", "local");
+      expect(stops).toHaveLength(1);
+      expect(stops[0]).toMatchObject({ brokerOrderId: "ord-1", status: "resting", quantity: 10 });
+    });
+
+    it("omitting ordersListed (default true) preserves the original protection-over-dedup behavior", async () => {
+      // No `orders` param at all, matching every pre-existing caller/test — must place at full size
+      // exactly as before this fix (ordersListed defaults to true, so an empty `orders` still reads
+      // as "confirmed no coverage", never as "unknown").
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: rhPolicy("TR-15"), accountNumber: "TR-15", gateway: gw,
+        positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+      });
+      expect(r.placed).toBe(1);
+      expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", quantity: 10 });
+    });
+  });
+
+  describe("extremePriceBySymbol — never arm a broker trail looser than the app's own already-tracked high-water mark", () => {
+    it("uses the synthetic monitor's tracked extreme (not just current mark) to seed the ratcheted trigger", async () => {
+      // avg 100, synthetic-tracked extreme 130, mark 125 (pulled back from the peak but still above
+      // the real trigger — not yet breached), trail 5%: the app's real trigger is 130*0.95=123.50.
+      // Recomputing from max(mark=125, entry=100) alone would produce 118.75 — looser.
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: rhTrailPolicy("TR-16"), accountNumber: "TR-16", gateway: gw,
+        positions: [markedPos("AAPL", 10, 100, 125)], executionMode: "broker/live", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(r.placed).toBe(1);
+      expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 123.5 });
+    });
+
+    it("refuses a NATIVE trail while the mark sits below the tracked extreme, even if mark is above entry", async () => {
+      // avg 100, tracked extreme 130, mark 120 (above entry, but a pullback from the real high). A
+      // native Alpaca trail seeded from the current 120 mark would trail from 120, not 130 — looser
+      // than the app's own trail. Must be refused; the synthetic monitor keeps covering.
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-17"), accountNumber: "TR-17", gateway: gw,
+        positions: [markedPos("AAPL", 10, 100, 120)], executionMode: "broker/paper", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(r.placed).toBe(0);
+      expect(gw.placed).toHaveLength(0);
+    });
+
+    it("places a native trail once the mark recovers to at/above the tracked extreme", async () => {
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-17b"), accountNumber: "TR-17b", gateway: gw,
+        positions: [markedPos("AAPL", 10, 100, 130)], executionMode: "broker/paper", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(r.placed).toBe(1);
+    });
+
+    it("does NOT cancel an existing mismatched trail if the replacement would be refused (mark below the tracked extreme) — keeps the old stop rather than stranding the position", async () => {
+      // Seed a resting trailing stop at the CORRECT (tracked-extreme-based) trigger 123.5 for a 10%
+      // trail config that's about to change to 5% (forcing a "trail %" mismatch)... simpler: seed a
+      // resting stop with a stale trail% so section 3 detects a mismatch, while the mark has pulled
+      // back below the tracked extreme so a replacement would be refused.
+      const gw2 = fakeGateway();
+      const policy = rhTrailPolicy("TR-18");
+      // Establish the resting stop while mark == tracked extreme (recovers, places fine).
+      await reconcileBrokerProtectiveStops({
+        userId: "local", policy, accountNumber: "TR-18", gateway: gw2,
+        positions: [markedPos("AAPL", 10, 100, 130)], executionMode: "broker/live", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(gw2.placed).toHaveLength(1);
+      expect(gw2.placed[0].stopPrice).toBeCloseTo(123.5);
+      // Now the trail % changes (10% instead of 5%) — a genuine mismatch — but the mark has since
+      // pulled back to 115, below the tracked extreme of 130. A replacement seeded from 130 at 10%
+      // would be FINE (130*0.9=117, still below tracked extreme check just cares about mark vs
+      // extreme for NATIVE; this is the ratcheted RH lane, whose guard is "already breached", i.e.
+      // stopPrice >= mark). New trigger at 10% off 130 = 117, mark = 115 -> 117 >= 115: breached,
+      // so the replacement WOULD be refused. The old (123.5) stop must be kept, not cancelled.
+      const changedPolicy = rhTrailPolicy("TR-18", { riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 8, trailingStopPct: 10 } });
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: changedPolicy, accountNumber: "TR-18", gateway: gw2,
+        positions: [markedPos("AAPL", 10, 100, 115)], executionMode: "broker/live", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(r.cancelled).toBe(0);
+      expect(gw2.cancelled).toEqual([]);
+      const stops = listBrokerProtectiveStops("TR-18", "local");
+      expect(stops).toHaveLength(1);
+      expect(stops[0]).toMatchObject({ stopPrice: 123.5, trailPercent: 5 }); // unchanged — old stop kept
+    });
+  });
+});
+
+// ── Round-5 Codex findings: stale rows, oversized-unknown-coverage, and quantity-shrink cancels ──
+
+describe("reconcileBrokerProtectiveStops — round-5 mismatch/staleness fixes (Codex review, PR #1331)", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("clears a stale 'resting' row whose tracked order already went FILLED without going through cancel-recovery, deferring re-placement to the next call", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-1"), accountNumber: "R5-1", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    // The resting stop filled naturally (no app-issued cancel ever ran) — the DB row is still
+    // "resting", but the caller's freshly fetched order list shows ord-1 already FILLED. Without
+    // checking the tracked order's terminal state, section 3 would only look for a numeric
+    // mismatch (which may not exist) and never notice the row is a ghost.
+    const orders: EquityOrder[] = [{ id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled", createdAt: new Date().toISOString() }];
+    gw.nextOrderId = "ord-2";
+    const recovered = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-1"), accountNumber: "R5-1", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true, orders });
+    expect(recovered.cancelled).toBe(0); // no cancel call — the order already finished on its own
+    expect(recovered.placed).toBe(0); // deferred: `positions` may still be the stale pre-fill snapshot
+    expect(listBrokerProtectiveStops("R5-1", "local")).toHaveLength(0); // stale row is gone, not left resting
+    // Next call resumes placement normally once a fresh position read is in hand.
+    const resumed = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-1"), accountNumber: "R5-1", gateway: gw, positions: [longPos("AAPL", 6, 100)], executionMode: "broker/live", running: true });
+    expect(resumed.placed).toBe(1);
+    expect(listBrokerProtectiveStops("R5-1", "local")[0]).toMatchObject({ brokerOrderId: "ord-2", quantity: 6 });
+  });
+
+  it("resizes (cancels) an oversized existing stop when the position has shrunk, even though other-order coverage is unknown this tick", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-2"), accountNumber: "R5-2", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    expect(listBrokerProtectiveStops("R5-2", "local")[0]).toMatchObject({ quantity: 10 });
+    // The position has shrunk to 4 shares (some other exit filled elsewhere), but THIS tick's order
+    // list fetch failed (`ordersListed: false`) — other-order coverage is unknown. The existing
+    // 10-share stop now exceeds the 4-share position: if it ever fires it could sell more shares
+    // than the account holds. That is knowable from `positions` alone and must not wait for a
+    // successful order-list fetch to be corrected.
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R5-2"), accountNumber: "R5-2", gateway: gw,
+      positions: [longPos("AAPL", 4, 100)], executionMode: "broker/live", running: true,
+      orders: [], ordersListed: false
+    });
+    expect(r.cancelled).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("R5-2", "local")).toHaveLength(0);
+    expect(r.placed).toBe(0); // still no same-tick replacement — other coverage stays unknown
+    // Next tick, once the order list can be read again, a correctly-sized stop is placed.
+    gw.nextOrderId = "ord-2";
+    const resumed = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-2"), accountNumber: "R5-2", gateway: gw, positions: [longPos("AAPL", 4, 100)], executionMode: "broker/live", running: true });
+    expect(resumed.placed).toBe(1);
+    expect(listBrokerProtectiveStops("R5-2", "local")[0]).toMatchObject({ brokerOrderId: "ord-2", quantity: 4 });
+  });
+
+  it("leaves an existing stop untouched on unknown coverage when it is NOT oversized for the current position", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("R5-3"), accountNumber: "R5-3", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    // Position UNCHANGED, order-list fetch failed — the row is not oversized, so it must be left
+    // exactly as-is (the pre-existing "unknown coverage" behavior for the common case).
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R5-3"), accountNumber: "R5-3", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      orders: [], ordersListed: false
+    });
+    expect(r.cancelled).toBe(0);
+    expect(gw.cancelled).toEqual([]);
+    expect(listBrokerProtectiveStops("R5-3", "local")[0]).toMatchObject({ brokerOrderId: "ord-1", quantity: 10 });
+  });
+
+  it("cancels a trailing stop on a KNOWN quantity SHRINK even though a replacement would be refused this tick (does not leave it stacked on top of other known coverage)", async () => {
+    // Ratcheted (Robinhood) trailing lane: avg 100, mark 100 → trigger 95, arms fine at 10 shares.
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("R5-4"), accountNumber: "R5-4", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(gw.placed).toHaveLength(1);
+    expect(gw.placed[0]).toMatchObject({ stopPrice: 95, quantity: 10 });
+    // Next tick: another live exit order (a separate manual 4-share limit sell, unrelated to our
+    // resting stop) now covers part of the position, so only 6 shares are actually uncovered — a
+    // genuine quantity-drift mismatch. The mark has also fallen to 90, below the 95 trigger, so a
+    // replacement trail would be REFUSED (already breached) — but the old 10-share stop still stacks
+    // on top of the other 4-share order if both can fill, so it must be cancelled regardless.
+    const otherOrder: EquityOrder = {
+      id: "manual-tp-1", symbol: "AAPL", side: "sell", type: "limit", quantity: 4,
+      state: "new", createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("R5-4"), accountNumber: "R5-4", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 90)], executionMode: "broker/live", running: true,
+      orders: [otherOrder]
+    });
+    expect(r.cancelled).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("R5-4", "local")).toHaveLength(0);
+    expect(r.placed).toBe(0); // a fresh replacement is STILL refused this tick (already breached) — the
+    // synthetic monitor covers the gap until the mark recovers or the next tick re-evaluates
+  });
+});
+
+describe("reconcileBrokerProtectiveStops — per-position stop plans (never invent, only narrow)", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("a 'none' plan never places a broker-held stop for that symbol, even with a lane enabled account-wide", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-1"), accountNumber: "SP-1", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "none" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(listBrokerProtectiveStops("SP-1", "local")).toHaveLength(0);
+  });
+
+  it("a 'none' plan set AFTER a stop was already placed tears it down (never silently contradicts the owner/LLM choice)", async () => {
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-2"), accountNumber: "SP-2", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(gw.placed).toHaveLength(1);
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-2"), accountNumber: "SP-2", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "none" }
+    });
+    expect(r.cancelled).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("SP-2", "local")).toHaveLength(0);
+  });
+
+  it("a 'trailing' plan on an account whose only enabled lane is the RH fixed stop excludes that symbol entirely (never force-substitutes fixed)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-3"), accountNumber: "SP-3", gateway: gw, // fixed lane only — no trailing % configured
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "trailing" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(listBrokerProtectiveStops("SP-3", "local")).toHaveLength(0);
+  });
+
+  it("a 'fixed' plan on an account whose only TRULY enabled lane is trailing (no stop-loss % configured at all) excludes that symbol entirely (never force-substitutes trailing)", async () => {
+    const trailOnly = rhPolicy("SP-4", { riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 0, trailingStopPct: 5 } });
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: trailOnly, accountNumber: "SP-4", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "fixed" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(listBrokerProtectiveStops("SP-4", "local")).toHaveLength(0);
+  });
+
+  it("a 'fixed' plan uses the fixed lane even on an account where trailing WINS the account-wide precedence, as long as the fixed lane is independently enabled too (kind===\"trailing\" must not be read as \"fixed is unavailable\" — Codex review, PR #1371)", async () => {
+    // rhTrailPolicy has BOTH stopLossPct and trailingStopPct configured — desiredBrokerStopKind
+    // resolves the ACCOUNT-WIDE kind to "trailing" (trailing wins precedence), but the fixed lane
+    // (robinhoodBrokerStops + live + RH + stopLossPct>0) is independently, genuinely enabled.
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("SP-4B"), accountNumber: "SP-4B", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "fixed" }
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 92, type: "stop_market" }); // 100 * (1 - 8/100), the flat lane's own pricing
+    expect(listBrokerProtectiveStops("SP-4B", "local")).toHaveLength(1);
+  });
+
+  it("an 'atr' plan on an account whose only enabled lane is trailing also excludes that symbol (same narrowing as 'fixed')", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("SP-5"), accountNumber: "SP-5", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "atr" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+  });
+
+  it("an 'atr' plan NEVER places a broker-held stop, even on an account whose own lane is fixed (this reconciler only knows the flat stopLossPct, not the pinned ATR distance — mispricing it would silently contradict the plan; the synthetic monitor prices it correctly instead)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-8"), accountNumber: "SP-8", gateway: gw, // fixed lane only
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "atr" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(listBrokerProtectiveStops("SP-8", "local")).toHaveLength(0);
+  });
+
+  it("a 'trailing' plan on an account where trailing is ALREADY the enabled lane is a pure no-op (matches the account's own kind)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("SP-6"), accountNumber: "SP-6", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "trailing" }
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 95 });
+  });
+
+  it("a plan on a DIFFERENT symbol does not affect this one, and 'default'/absent keeps the account's own precedence", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-7"), accountNumber: "SP-7", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { TSLA: "none" }
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 92 });
+  });
+});
+
+describe("reconcileBrokerProtectiveStops — round-7: never cancel an ACTIVELY EXECUTING order (Codex review, PR #1331)", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("leaves a 'partially_filled' tracked stop resting untouched even when the recomputed quantity would otherwise look like drift", async () => {
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R7-1"), accountNumber: "R7-1", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(gw.placed).toHaveLength(1);
+    // The resting stop is actively executing (partial fill in progress) — the position hasn't yet
+    // reflected the full effect, so the naive recompute below would look like a quantity mismatch,
+    // but cancelling an order mid-execution risks aborting the rest of a working exit.
+    const partiallyFilledOrder: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "partially_filled",
+      quantity: 10, filledQuantity: 4, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R7-1"), accountNumber: "R7-1", gateway: gw,
+      positions: [longPos("AAPL", 6, 100)], executionMode: "broker/live", running: true,
+      orders: [partiallyFilledOrder]
+    });
+    expect(r.cancelled).toBe(0);
+    expect(gw.cancelled).toEqual([]);
+    expect(listBrokerProtectiveStops("R7-1", "local")[0]).toMatchObject({ brokerOrderId: "ord-1", quantity: 10 });
+  });
+});
+
+describe("reconcileBrokerProtectiveStops — round-9 (Codex review, PR #1331)", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("recovers a FILLED broker-held stop during disabled teardown (kind === null) instead of retrying its cancel forever with the fill never booked", async () => {
+    // Place while the fixed lane is enabled...
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R9-TEARDOWN"), accountNumber: "R9-TEARDOWN", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("R9-TEARDOWN", "local")).toHaveLength(1);
+
+    // ...then the feature is turned off (kind resolves to null) WHILE the stop already filled at the
+    // broker. The cancel attempt fails (a filled order can't be cancelled), and the caller's order
+    // list shows it as terminal-filled.
+    gw.failCancel = true;
+    const filledOrder: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled",
+      filledQuantity: 10, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R9-TEARDOWN", { robinhoodBrokerStops: false }), accountNumber: "R9-TEARDOWN", gateway: gw,
+      positions: [], executionMode: "broker/live", running: true, orders: [filledOrder]
+    });
+    expect(r.cancelled).toBe(0); // the cancel call itself still failed
+    expect(listBrokerProtectiveStops("R9-TEARDOWN", "local")).toHaveLength(0); // but recovered, not left pending_cancel
+    expect(listFillEvents("R9-TEARDOWN", "live")).toHaveLength(1); // the fill IS booked, not lost
+    expect(listFillEvents("R9-TEARDOWN", "live")[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 10, status: "filled" });
+  });
+
+  it("books a PARTIAL fill during stale-row cleanup even when the tracked order's overall terminal state is canceled/expired, not literally 'filled'", async () => {
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R9-PARTIAL"), accountNumber: "R9-PARTIAL", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("R9-PARTIAL", "local")).toHaveLength(1);
+
+    // The resting stop partially executed (3 of 10 shares) before the remainder was canceled —
+    // overall state is "canceled", not "filled", but real shares DID trade.
+    const partiallyExecutedThenCanceled: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "canceled",
+      filledQuantity: 3, averagePrice: 92, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R9-PARTIAL"), accountNumber: "R9-PARTIAL", gateway: gw,
+      positions: [longPos("AAPL", 7, 100)], executionMode: "broker/live", running: true,
+      orders: [partiallyExecutedThenCanceled]
+    });
+    expect(listBrokerProtectiveStops("R9-PARTIAL", "local")).toHaveLength(0);
+    expect(r.filledRecoverySymbols).toEqual(["AAPL"]); // deferred like a full fill — position moved
+    const fills = listFillEvents("R9-PARTIAL", "live");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 3, price: 92, status: "filled" });
+  });
+
+  it("never reseeds a native trail's mismatch-driven REPLACEMENT looser than the broker's own (never independently registered) high-water mark", async () => {
+    // Entry 100, rally to 130 — the native trail seeds at 130 * 0.95 = 123.50. Full native coverage
+    // means the synthetic monitor never registers its own row for this symbol, so
+    // extremePriceBySymbol has no entry for it at all.
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("R9-HWM"), accountNumber: "R9-HWM", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 130)], executionMode: "broker/paper", running: true
+    });
+    expect(listBrokerProtectiveStops("R9-HWM", "local")[0]).toMatchObject({ stopPrice: 123.5, trailPercent: 5 });
+
+    // Price pulls back to 126 (still above entry, but below the true 130 peak) and the trail %
+    // changes 5% -> 6%, forcing a mismatch check. A naive trackedExtreme=0 would compute
+    // 126 * (1 - 0.06) = 118.44 and wrongly permit replacing the existing (tighter) 123.50 stop with
+    // this looser one — reducing real protection on a live position.
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local",
+      policy: alpacaTrailPolicy("R9-HWM", { riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 6 } }),
+      accountNumber: "R9-HWM", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 126)], executionMode: "broker/paper", running: true
+    });
+    expect(r.cancelled).toBe(0); // refused — the backfilled 130 peak means 126 is still a pullback
+    expect(gw.cancelled).toEqual([]);
+    expect(listBrokerProtectiveStops("R9-HWM", "local")[0]).toMatchObject({ stopPrice: 123.5, trailPercent: 5 }); // unchanged
+  });
+
+  it("still allows the mismatch-driven replacement once the mark genuinely reaches/exceeds the backfilled peak", async () => {
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("R9-HWM-2"), accountNumber: "R9-HWM-2", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 130)], executionMode: "broker/paper", running: true
+    });
+    expect(listBrokerProtectiveStops("R9-HWM-2", "local")[0]).toMatchObject({ stopPrice: 123.5, trailPercent: 5 });
+
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local",
+      policy: alpacaTrailPolicy("R9-HWM-2", { riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 6 } }),
+      accountNumber: "R9-HWM-2", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 135)], executionMode: "broker/paper", running: true // above the 130 peak
+    });
+    expect(r.cancelled).toBe(1);
+    expect(listBrokerProtectiveStops("R9-HWM-2", "local")[0]).toMatchObject({ trailPercent: 6, stopPrice: 126.9 }); // 135 * 0.94
+  });
+
+  it("backfills the broker's TRUE ratcheted peak from the LIVE order's reported stopPrice — a native trail placed at entry then rallied is not reseeded looser on a later mismatch", async () => {
+    // Unlike the two tests above (which place the position ALREADY at its peak, so inverting the DB
+    // row happens to recover the true peak), this places AT ENTRY (mark == avgCost == 100). The
+    // native trail's DB row records stopPrice = 100 * 0.95 = 95 and is NEVER repriced as the position
+    // rallies (the broker moves its own trigger; only a trail%/qty mismatch forces a replace). So
+    // inverting ONLY the DB row reconstructs a peak of just 95 / 0.95 = 100 (≈ entry) — missing the
+    // broker's true, silently-ratcheted high-water mark entirely.
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("R13-HWM"), accountNumber: "R13-HWM", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 100)], executionMode: "broker/paper", running: true
+    });
+    expect(listBrokerProtectiveStops("R13-HWM", "local")[0]).toMatchObject({ stopPrice: 95, trailPercent: 5 });
+
+    // The position rallied to a peak of 150 — the broker's native trail silently ratcheted its
+    // trigger to 150 * 0.95 = 142.5, reported on the still-resting order as `stopPrice` — then pulled
+    // back to 140. A trail% change 5% -> 6% forces a mismatch check. Backfilling ONLY from the stale
+    // DB row (95 -> peak 100) would let canArmTrailingNow see mark 140 >= max(100, 100) and PERMIT
+    // replacing the broker's 142.5-equivalent trail with one seeded from 140 (real trigger 131.6) —
+    // measurably LOOSER. The fix also inverts the live order's broker-reported 142.5 (-> peak 150),
+    // takes the max, and thus refuses: 140 is a pullback from the true 150 peak.
+    const restingNativeTrail: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "new",
+      quantity: 10, stopPrice: 142.5, timeInForce: "gtc", createdAt: new Date().toISOString(), placedAgent: "alpaca"
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local",
+      policy: alpacaTrailPolicy("R13-HWM", { riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 6 } }),
+      accountNumber: "R13-HWM", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 140)], executionMode: "broker/paper", running: true,
+      orders: [restingNativeTrail]
+    });
+    expect(r.cancelled).toBe(0); // refused — the live order's 142.5 trigger implies a 150 peak, and 140 is a pullback
+    expect(gw.cancelled).toEqual([]);
+    expect(listBrokerProtectiveStops("R13-HWM", "local")[0]).toMatchObject({ stopPrice: 95, trailPercent: 5 }); // unchanged
+  });
+
+  it("disabled-teardown FILLED recovery via the CATCH branch also reports filledRecoverySymbols so the caller defers off the stale position", async () => {
+    // Place a fixed broker stop while enabled...
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R14-CATCH"), accountNumber: "R14-CATCH", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("R14-CATCH", "local")).toHaveLength(1);
+
+    // ...then the feature is turned off (kind === null) while the stop already FILLED. The cancel
+    // call fails (a filled order can't be cancelled), so recovery comes from the order list. The
+    // fix: besides booking the fill, the catch branch must PUSH filledRecoverySymbols so the caller
+    // skips synthetic registration/fire off the stale (pre-fill) position snapshot this tick.
+    gw.failCancel = true;
+    const filledOrder: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled",
+      filledQuantity: 10, averagePrice: 92, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R14-CATCH", { robinhoodBrokerStops: false }), accountNumber: "R14-CATCH", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true, orders: [filledOrder]
+    });
+    expect(r.cancelled).toBe(0); // the cancel call itself failed
+    expect(r.filledRecoverySymbols).toEqual(["AAPL"]); // recovered AND reported to the caller
+    expect(listBrokerProtectiveStops("R14-CATCH", "local")).toHaveLength(0); // recovered, not left pending_cancel
+    expect(listFillEvents("R14-CATCH", "live")).toHaveLength(1); // the fill IS booked
+  });
+
+  it("disabled-teardown SUCCESS path books a PARTIAL fill and reports filledRecoverySymbols instead of silently dropping the executed shares", async () => {
+    // Place a fixed broker stop while enabled...
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R17-SUCCESS"), accountNumber: "R17-SUCCESS", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("R17-SUCCESS", "local")).toHaveLength(1);
+
+    // ...then the feature is turned off (kind === null). The resting stop PARTIALLY executed (3 of 10
+    // shares) and the broker accepts the cancel of the open remainder — so the cancel SUCCEEDS (this
+    // is the realistic path for a partial, distinct from the catch branch which fires when a fully
+    // filled order's cancel is rejected). The fix: the success path must consult the pre-fetched
+    // order list, book the 3-share fill, and report the symbol — before the fix it deleted the row
+    // with no lookup, dropping the real broker sell from fill_events / P&L / learning.
+    const partiallyFilledThenCancelable: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "partially_filled",
+      filledQuantity: 3, averagePrice: 92, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R17-SUCCESS", { robinhoodBrokerStops: false }), accountNumber: "R17-SUCCESS", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true, orders: [partiallyFilledThenCancelable]
+    });
+    expect(r.cancelled).toBe(1); // the cancel of the open remainder succeeded
+    expect(r.filledRecoverySymbols).toEqual(["AAPL"]); // caller told the position moved
+    expect(listBrokerProtectiveStops("R17-SUCCESS", "local")).toHaveLength(0);
+    const fills = listFillEvents("R17-SUCCESS", "live");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 3, price: 92, status: "filled" }); // the partial, not the full row qty
   });
 });

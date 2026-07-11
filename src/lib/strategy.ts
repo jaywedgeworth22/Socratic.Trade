@@ -1,5 +1,9 @@
+export * from "./strategy-execution";
+export * from "./strategy-risk";
+
 import {
   acquireStrategyLock,
+  renewStrategyLock,
   audit,
   claimProposalForExecution,
   countDayTradesInLastBusinessDays,
@@ -16,6 +20,8 @@ import {
   listPendingBrokerReconciliationFills,
   listStalePlacingProposals,
   listFillEvents,
+  listFillEventsByProposalId,
+  resolveBrokerVerificationNotifications,
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
@@ -95,7 +101,7 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
-import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
+import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
@@ -124,10 +130,14 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
+import type { PositionStopPlan } from "./db-api-keys";
+import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
+import { reconcilePendingFills, flagStalePlacingIntents, reconcilePlacementError, LiveApprovalConfirmation, LiveApprovalConfirmationError, coerceProtectiveExitToMarket } from "./strategy-execution";
+import { shouldSkipNegativeExpectancy, applyDeterministicSizing, isRiskAddingOpening, applyRedTeamHalfSize, applyEarningsBlackoutTag, applyCorrelationClusterGate, applyRiskReceipts, shouldEscalateDecision, allowedProposalSides, deterministicBearFilter, mapWithConcurrency } from "./strategy-risk";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
@@ -195,26 +205,6 @@ export interface StrategyResult {
   llmSteps?: StrategyLlmStep[];
   /** Advisory only — rationale-diversity check result (improvement-program item #8). Never affects proposal generation or selection. */
   rationaleDiversity?: RationaleDiversity;
-}
-
-export interface LiveApprovalConfirmation {
-  proposalId?: string;
-  accountNumber?: string | null;
-  executionMode?: ExecutionMode | string;
-  estimatedNotional?: number | null;
-  typedText?: string | null;
-}
-
-export class LiveApprovalConfirmationError extends Error {
-  code = "LIVE_CONFIRMATION_REQUIRED";
-  reasons: string[];
-  expectedText: string;
-
-  constructor(reasons: string[], expectedText: string) {
-    super(reasons.join(" "));
-    this.reasons = reasons;
-    this.expectedText = expectedText;
-  }
 }
 
 class StrategyLlmStepFailure extends Error {
@@ -309,11 +299,17 @@ export async function runStrategyOnce(
   // Per-account run lock: prevent overlapping runs from double-counting daily limits,
   // scoped to the target account so a different account isn't blocked.
   const connectedAccountId = targetAccountId ?? getPolicy(userId).connectedAccountId;
-  if (!acquireStrategyLock(userId, connectedAccountId)) {
+  
+  const runId = crypto.randomUUID();
+  if (!acquireStrategyLock(runId, userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
-  const runId = crypto.randomUUID();
+  // Heartbeat lease every 1 minute
+  const heartbeatTimer = setInterval(() => {
+    renewStrategyLock(runId, userId, connectedAccountId);
+  }, 60_000);
+
   insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
   let llmSteps: StrategyLlmStep[] = [];
@@ -349,7 +345,8 @@ export async function runStrategyOnce(
       audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
       result = { runId, status: "completed", summary: reason, proposals: [] };
       finishStrategyRun(runId, "completed", reason, userId);
-      releaseStrategyLock(userId, connectedAccountId);
+      clearInterval(heartbeatTimer);
+      releaseStrategyLock(runId, userId, connectedAccountId);
       return result;
     }
 
@@ -705,11 +702,44 @@ export async function runStrategyOnce(
     for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
       if (typeof q.beta === "number" && Number.isFinite(q.beta)) betaBySymbol[normalizeSymbol(sym)] = q.beta;
     }
-    // ATR-based stops (opt-in, default off): precompute a per-symbol stop DISTANCE (% of entry) from each
-    // open position's recent daily range so the sync proactive generator can use it (mirrors betaBySymbol).
-    // Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the fixed/beta stop.
+    // Per-position stop PLANS (LLM-chosen stop TYPE, persisted at fill time): read the account's plans
+    // once here so both the proactive-risk generator and the opening-proposal enricher below see a
+    // consistent snapshot for this run. A plan overrides this account's own stop precedence for that
+    // one symbol only — "default" (the common case, no row or an explicit default) falls through to the
+    // account-wide fixed/ATR/beta chain unchanged.
+    let stopPlanBySymbol: Record<string, StopPlanStyle> = {};
+    // Rationale-only side map for the SAME live-basis-filtered plans, keyed alongside stopPlanBySymbol
+    // — kept separate (rather than widening stopPlanBySymbol's value type everywhere it's threaded)
+    // so enrichOpeningProposal can stamp an inherited plan's original rationale onto the returned
+    // proposal for the approval card, instead of erasing it (Codex review, PR #1371).
+    const stopPlanRationaleBySymbol: Record<string, string | undefined> = {};
+    // The UNFILTERED plan set (hoisted out of the try block below) — the stale-symbol cleanup further
+    // down must compute its candidates from THIS, not from stopPlanBySymbol. filterStopPlansByLiveBasis
+    // already drops any symbol with no live position, so by the time a position actually closes its
+    // row is already absent from stopPlanBySymbol — computing staleStopPlanSymbols from that filtered
+    // map made the cleanup a no-op exactly when a position closes, leaving the DB row behind for a
+    // later re-buy at a similar price to silently inherit (Codex review, PR #1371).
+    let rawStopPlans: Record<string, PositionStopPlan> = {};
+    if (policy.accountNumber) {
+      try {
+        rawStopPlans = getStopPlans(policy.accountNumber, userId);
+        stopPlanBySymbol = filterStopPlansByLiveBasis(rawStopPlans, workingPositions);
+        for (const sym of Object.keys(stopPlanBySymbol)) {
+          stopPlanRationaleBySymbol[sym] = rawStopPlans[sym]?.rationale;
+        }
+      } catch (err) {
+        console.warn("[strategy] stop plan lookup failed:", err instanceof Error ? err.message : err);
+      }
+    }
+    // ATR-based stops: precompute a per-symbol stop DISTANCE (% of entry) from each open position's
+    // recent daily range so the sync proactive generator can use it (mirrors betaBySymbol). Runs when
+    // the account has ATR stops on globally, OR when any held position carries an explicit per-position
+    // "atr" stop plan (universal availability — an "atr" plan must work even with atrStops off account-
+    // wide). Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the
+    // fixed/beta stop (or the per-position fallback flat %, resolved downstream).
     const atrStopPctBySymbol: Record<string, number> = {};
-    if (policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) {
+    const anyHeldAtrPlan = workingPositions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "atr");
+    if ((policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) || anyHeldAtrPlan) {
       const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
       const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
       await Promise.all(
@@ -737,7 +767,7 @@ export async function runStrategyOnce(
       const ref = protectiveExitQuoteFromScan(q);
       if (ref && (ref.bid !== undefined || ref.ask !== undefined)) exitQuotesBySymbol[normalizeSymbol(sym)] = ref;
     }
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy), exitQuotesBySymbol);
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy), exitQuotesBySymbol, stopPlanBySymbol);
     // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
     // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
     // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
@@ -749,6 +779,20 @@ export async function runStrategyOnce(
         proactiveProposals.push(...tpPlan.proposals);
       } catch (err) {
         console.warn("[strategy] take-profit trim planning failed:", err instanceof Error ? err.message : err);
+      }
+      try {
+        // From rawStopPlans (unfiltered), not stopPlanBySymbol — see rawStopPlans' doc comment above.
+        const staleStopPlanSymbols = Object.keys(rawStopPlans).filter((s) => !heldSymbols.has(normalizeSymbol(s)));
+        clearStopPlans(policy.accountNumber, staleStopPlanSymbols, userId);
+        // Prune the in-memory snapshot too — enrichOpeningProposal (below, same run) reads this same
+        // map by closure, and a symbol closed then re-opened within this run must not inherit its old
+        // plan from before the DB clear (Codex review, PR #1371).
+        for (const s of staleStopPlanSymbols) {
+          delete stopPlanBySymbol[s];
+          delete stopPlanRationaleBySymbol[s];
+        }
+      } catch (err) {
+        console.warn("[strategy] stop plan cleanup failed:", err instanceof Error ? err.message : err);
       }
     }
 
@@ -1245,6 +1289,62 @@ export async function runStrategyOnce(
       );
     }
 
+    // Extend the ATR stop-DISTANCE precompute to OPENING candidates too (not just held positions),
+    // so an "atr" per-position stop plan is genuinely available at time-of-purchase, not only once a
+    // position already exists (universal-availability requirement). Gated the same way as the held-
+    // position precompute above: account-wide atrStops on, OR any opening candidate explicitly asked
+    // for an "atr" plan. Uses the decision-time referencePrice (falling back to the proposed limit
+    // price) as the entry anchor since the position doesn't exist yet. Best-effort + bounded, same as
+    // the held-position variant above.
+    //
+    // A DEDICATED map, never the held-position `atrStopPctBySymbol` — a scale-in add's opening
+    // candidate can share a symbol with an existing held position, and that held-position entry was
+    // computed from the OLD lot's averageCost. Reusing it for the fresh entry would price the new
+    // bracket's ATR distance off a stale, possibly very different anchor if the stock moved
+    // materially since the original entry (Codex review, PR #1371) — so opening candidates always
+    // get their OWN fresh computation here, never skipped just because the symbol is also held.
+    const atrStopPctByOpeningSymbol: Record<string, number> = {};
+    // Checks BOTH an explicit stopPlan on the proposal AND an INHERITED one from stopPlanBySymbol —
+    // a scale-in that omits stopPlan (inheriting the symbol's persisted "atr" plan) still gets that
+    // plan applied by enrichOpeningProposal below, so the opening ATR precompute must gate the same
+    // way or the inherited plan prices off the flat/8% fallback instead of a fresh ATR distance
+    // (Codex review, PR #1371).
+    const anyOpeningAtrPlan = llmProposals.some(
+      (p) =>
+        (p.side === "buy" || p.side === "short") &&
+        (p.stopPlan?.style === "atr" || (!p.stopPlan && stopPlanBySymbol[normalizeSymbol(p.symbol)] === "atr"))
+    );
+    if (policy.atrStops === true || anyOpeningAtrPlan) {
+      const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
+      const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
+      // Anchor to the proposal's own referencePrice/limitPrice first, falling back to this run's
+      // market-scan quote — a market or stop-entry proposal often has neither price stamped yet, but
+      // the scan quote is the same anchor enrichOpeningProposal itself falls back to for these
+      // (Codex review, PR #1371).
+      const openingEntryEstimate = (p: TradeProposal): number =>
+        p.referencePrice ?? p.limitPrice ?? marketScan.quotesBySymbol[normalizeSymbol(p.symbol)]?.price ?? 0;
+      const openingCandidates = llmProposals.filter(
+        (p) => (p.side === "buy" || p.side === "short") && openingEntryEstimate(p) > 0
+      );
+      await Promise.all(
+        openingCandidates.map(async (p) => {
+          const sym = normalizeSymbol(p.symbol);
+          const entryEstimate = openingEntryEstimate(p);
+          try {
+            // Daily bars are cached (~30 min) — a symbol that's ALSO a held position reuses the same
+            // fetch the held-position pass above already made; only the pct computation re-runs with
+            // this fresh entry anchor.
+            const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+            if (!bars) return;
+            const pct = atrStopPct(atr(bars, period), entryEstimate, multiple);
+            if (typeof pct === "number") atrStopPctByOpeningSymbol[sym] = pct;
+          } catch {
+            // best-effort — falls back to the fixed/beta stop for this candidate
+          }
+        })
+      );
+    }
+
     // Portfolio-heat budget (opt-in, default off): compute the CURRENT book's heat ONCE per run (not
     // per-proposal) from existing positions, reusing the SAME stop-basis precedence as
     // generateProactiveRiskProposals' effectiveStopPct (ATR > beta-scaled > flat) so heat reflects the
@@ -1259,6 +1359,32 @@ export async function runStrategyOnce(
         if (Math.abs(p.quantity) <= 0.000001) continue;
         const sym = normalizeSymbol(p.symbol);
         const baseStop = p.quantity < 0 ? (policy.riskRules.shortStopLossPct ?? flatStopPct) : flatStopPct;
+        // A per-position stop PLAN overrides the account-wide distance chain for heat purposes too —
+        // without this, a "none" plan (genuinely no stop basis) got counted as if a flat/ATR/beta
+        // stop still limited its risk (UNDERSTATING true book risk and letting the heat taper admit
+        // more size than it should), while "fixed"/"atr" plans on a bare account (no flatStopPct
+        // configured) were excluded as "no stop basis" even though they're GUARANTEED a distance via
+        // STOP_PLAN_FALLBACK_STOP_PCT (Codex review, PR #1371).
+        const plan: StopPlanStyle = stopPlanBySymbol[sym] ?? "default";
+        if (plan === "none") continue; // no stop basis at all — excluded from heat, never estimated
+        if (plan === "trailing") {
+          // The trail distance IS this position's effective worst-case distance for heat purposes.
+          const trailPct = policy.riskRules?.trailingStopPct ?? 0;
+          stopPctBySymbol[sym] = trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT;
+          continue;
+        }
+        if (plan === "fixed") {
+          stopPctBySymbol[sym] = baseStop > 0 ? baseStop : STOP_PLAN_FALLBACK_STOP_PCT;
+          continue;
+        }
+        if (plan === "atr") {
+          const atrPct = atrStopPctBySymbol[sym];
+          stopPctBySymbol[sym] =
+            typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0
+              ? atrPct
+              : baseStop > 0 ? baseStop : STOP_PLAN_FALLBACK_STOP_PCT;
+          continue;
+        }
         if (baseStop <= 0) continue;
         const atrPct = atrStopPctBySymbol[sym];
         const resolved =
@@ -1293,9 +1419,9 @@ export async function runStrategyOnce(
         return !gate.skip;
       })
       .map((p) => {
-        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills);
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills, stopPlanBySymbol);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
-        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctBySymbol);
+        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctByOpeningSymbol, stopPlanBySymbol, stopPlanRationaleBySymbol);
       });
 
     const debatedProposals: TradeProposal[] = [];
@@ -2219,16 +2345,72 @@ export async function runStrategyOnce(
         execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal, refId });
       } catch (placeError) {
         const message = placeError instanceof Error ? placeError.message : String(placeError);
-        // The broker may or may not have accepted the order. Keep the durable intent row and
-        // flag it loudly for reconciliation rather than aborting the whole run.
-        updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
+        const sym = normalizedProposal.symbol;
+        // The broker may or may not have accepted the order. Ask the broker what actually happened
+        // (via the refId idempotency key) instead of immediately firing a perpetual "verify with
+        // broker" alert. Only a truly unreachable broker leaves the durable 'placing' intent behind.
+        const outcome = await reconcilePlacementError({
+          gateway,
+          accountNumber: policy.accountNumber,
+          userId,
+          proposalId,
+          refId,
+          proposal: normalizedProposal,
+          review,
+          marketScan,
+          executionMode,
+          placeErrorMessage: message,
+          runId
+        });
+        if (outcome.kind === "placed") {
+          updateProposalStatus(proposalId, "placed", outcome.orderId, review, review.estimatedNotional, userId);
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
+          auditWashSaleProceed(decision, { runId, proposalId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
+          audit("order_placement_recovered_inline", { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: normalizedProposal.side }, userId, connectedAccountId);
+          resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
+          await sendNotification(
+            { type: "fill", title: `${sym} live order ${outcome.state} (recovered after placement error)`, payload: { runId, proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
+            { policy, userId }
+          );
+          emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { runId, proposalId, symbol: sym, orderId: outcome.orderId } });
+          results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: outcome.orderId });
+          continue;
+        }
+        if (outcome.kind === "declined") {
+          const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
+          updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: { ...decision, approved: false, reasons: [...decision.reasons, declinedMsg] }, status: "rejected_by_broker", review, overrideResolution });
+          audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, connectedAccountId);
+          await sendNotification(
+            { type: "run_failed", title: `${sym} order declined by broker (${outcome.state})`, payload: { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, reconcile: "declined" } },
+            { policy, userId }
+          );
+          results.push({ proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
+          continue;
+        }
+        if (outcome.kind === "not_placed") {
+          const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
+          updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
+          audit("order_confirmed_not_placed", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
+          await sendNotification(
+            { type: "run_failed", title: `${sym} order was NOT placed — safe to retry`, payload: { runId, proposalId, refId, error: message, reconcile: "not_placed" } },
+            { policy, userId }
+          );
+          results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
+          continue;
+        }
+        // uncertain: broker unreachable — KEEP status 'placing' (not 'placing_failed') so the sweep
+        // retries next run, and emit the (protected) "verify with broker" alert. This is the ONLY
+        // path that still produces a perpetual-until-confirmed alert.
+        updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
-        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId, connectedAccountId);
+        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, connectedAccountId);
         await sendNotification(
-          { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
+          { type: "run_failed", title: `${sym} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: outcome.error, reconcile: "uncertain" } },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${message}`] });
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
         continue;
       }
 
@@ -2262,6 +2444,7 @@ export async function runStrategyOnce(
       recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
       auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
+      const preFillPosition = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
       const fill = recordFillFromProposal({
         userId,
         accountNumber: policy.accountNumber,
@@ -2273,7 +2456,8 @@ export async function runStrategyOnce(
         review,
         execution,
         marketScan,
-        status: execution.state === "filled" ? "filled" : "pending_reconciliation"
+        status: execution.state === "filled" ? "filled" : "pending_reconciliation",
+        existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
       });
       await sendNotification(
         { type: "fill", title: `${normalizedProposal.symbol} live order ${execution.state}`, payload: { runId, proposalId, fill } },
@@ -2399,11 +2583,12 @@ export async function runStrategyOnce(
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
+    clearInterval(heartbeatTimer);
     // Release the strategy lock promptly so this account can run again. The LLM reservation is held a bit
     // longer — until the fire-and-forget post-mortem reflection settles — so that background spend stays
     // inside the reserved headroom instead of racing a queued same-user run (the TTL is the crash backstop).
     // We do NOT await here, so runStrategyOnce's return isn't delayed by the reflection.
-    releaseStrategyLock(userId, connectedAccountId);
+    releaseStrategyLock(runId, userId, connectedAccountId);
     if (llmReservationId) {
       const rid = llmReservationId;
       void Promise.resolve(reflectionPromise).finally(() => releaseLlmReservation(userId, rid));
@@ -2418,933 +2603,38 @@ export async function runStrategyOnce(
   return result;
 }
 
-/**
- * Escalation framework — decide whether a policy-refused proposal may become a PENDING-APPROVAL
- * card (with its block reasons on it) instead of dying as a blocked entry.
- *
- * Rules (owner-locked spec):
- * - "wash_sale_ask" failures escalate under BOTH authorities (propose and decide) — that is the
- *   entire point of taxSettings.washSaleHandling = "ask".
- * - Time-context failures (daily/hourly notional caps, daily opening-order cap, quote staleness)
- *   escalate ONLY under "decide" authority: in propose mode every idea already waits for a human,
- *   so a time-gated one stays a visible blocked entry rather than a card implying it can be
- *   approved right now.
- * - EVERY reason must be covered by an escalatable entry. Anything else — red-team veto,
- *   negative-EV skip, and below-threshold conviction happen upstream and never reach this path;
- *   per-order notional caps, shorting disabled, blocklisted/universe symbols, the IRA wash-sale
- *   hard block, margin minimum, etc. produce NO escalation entry — keeps the proposal blocked.
- */
-export function shouldEscalateDecision(decision: PolicyDecision, policy: TradingPolicy): boolean {
-  if (decision.approved || decision.reasons.length === 0) return false;
-  const escalations = decision.escalations ?? [];
-  if (escalations.length === 0) return false;
-  return decision.reasons.every((reason) => {
-    const entry = escalations.find((candidate) => candidate.reason === reason);
-    if (!entry) return false;
-    if (entry.kind === "wash_sale_ask") return true;
-    return policy.strategyAuthority === "decide";
-  });
-}
-
-/**
- * Approval-path override extraction: the ask-mode wash-sale override handles stored on an
- * escalated proposal row. Reads ONLY the server-written decision JSON (tokens were minted by the
- * run loop at escalation time) — no client input flows in, so this can never be a client-settable
- * bypass. Only "wash_sale_ask" entries yield a handle: time-context escalations carry tokens for
- * audit but are deliberately NOT overridable — their gates simply re-run against current state.
- */
-export function approvedEscalationsFromDecision(decision: PolicyDecision | undefined): ApprovedEscalation[] {
-  return (decision?.escalations ?? [])
-    .filter((entry) => entry.kind === "wash_sale_ask" && typeof entry.token === "string" && entry.token.length > 0)
-    .map((entry) => ({
-      kind: entry.kind,
-      symbol: entry.symbol,
-      token: entry.token as string,
-      // The cost PRICED ON THE CARD the user approved. The gate honors the token only while the
-      // freshly recomputed cost stays within washSaleOverrideCostTolerance of this (stale-price
-      // guard) — otherwise it re-escalates at the current price instead of executing.
-      ...(entry.washSale?.estimatedTaxCostUsd != null ? { approvedCostUsd: entry.washSale.estimatedTaxCostUsd } : {})
-    }));
-}
-
 // `shouldRunRedTeamDebate`, `redTeamDebateTrigger`, and the conviction/%-of-NAV threshold helpers
 // were REMOVED 2026-07-07 (single-adversary consolidation, decision O2): the Red Team review now
 // runs on EVERY risk-adding opening — universal, structural coverage instead of conviction- or
 // stakes-gated triggering. The only remaining routing question is §3.5's net-risk-direction gate:
 
-/**
- * §3.5 / R5 — net-risk-direction gate for the single Red Team review. TRUE only for a trade that
- * INCREASES |net exposure| in its symbol: a `buy` that opens or adds to a long (net position ≥ 0),
- * or a `short` that opens or adds to a short (net position ≤ 0). FALSE — structurally EXEMPT from
- * review, so the adversary can never block or shrink a risk-reducing trade — for:
- *   - every exit (`sell`/`cover`), and
- *   - the position-flip edge cases raw-side gating gets wrong: a `buy` against an existing net
- *     short (it covers), and a `short` against an existing net long (it trims).
- * Classification is by the SIGN of the existing net position (the same book `applyDeterministicSizing`
- * reads); an oversized opposite-side order that would flip through zero still counts as risk-adding
- * only in the rare sign-boundary case, which errs toward MORE review, never less.
- */
-export function isRiskAddingOpening(proposal: TradeProposal, positions: EquityPosition[]): boolean {
-  if (proposal.side !== "buy" && proposal.side !== "short") return false;
-  const sym = normalizeSymbol(proposal.symbol);
-  const netQty = positions
-    .filter((p) => normalizeSymbol(p.symbol) === sym)
-    .reduce((sum, p) => sum + p.quantity, 0);
-  return proposal.side === "buy" ? netQty >= 0 : netQty <= 0;
-}
-
-/**
- * §3.3 / R1 / R2 — apply the Red Team's `approve-at-half` haircut to a FINALIZED opening, mutating
- * the proposal IN PLACE (reference identity must survive: `requiresHumanReview` and the placement
- * loop key off the object reference). Down-only and placeability-aware:
- *   - quantity-routed (marketable-limit conversion cleared `dollarAmount` and set a whole-share
- *     `quantity`): halve the share count, floored; below 1 share → NOT placeable.
- *   - dollar-routed: halve the notional, floored to a whole dollar. If the order carries a native
- *     broker bracket (bracketStopLoss/bracketTakeProfit priced for the FULL size) and the halved
- *     notional drops below one whole share at the reference price, the bracket the sizer attached
- *     would be invalid at the broker → NOT placeable (never silently strip protective legs).
- * Returns `applied: false` when 0.5× is not placeable — the caller must then HOLD the proposal for
- * human review at full size (R1: never proceed at a size larger than the reviewer approved, never
- * up-size a haircut).
- */
-export function applyRedTeamHalfSize(proposal: TradeProposal): { applied: boolean; note: string } {
-  const quantityRouted =
-    typeof proposal.quantity === "number" &&
-    proposal.quantity > 0 &&
-    (proposal.dollarAmount == null || proposal.dollarAmount <= 0);
-  if (quantityRouted) {
-    const halvedQty = Math.floor((proposal.quantity as number) / 2);
-    if (halvedQty < 1) {
-      return { applied: false, note: "half of this whole-share limit order is below one share" };
-    }
-    const fromQty = proposal.quantity;
-    proposal.quantity = halvedQty;
-    return { applied: true, note: `size halved: ${fromQty} → ${halvedQty} shares` };
-  }
-  if (typeof proposal.dollarAmount === "number" && proposal.dollarAmount > 0) {
-    const halved = Math.floor(proposal.dollarAmount / 2);
-    if (halved < 1) {
-      return { applied: false, note: "half of this notional rounds to $0" };
-    }
-    const hasNativeBracket = proposal.bracketStopLoss != null || proposal.bracketTakeProfit != null;
-    const entryPrice = proposal.referencePrice;
-    if (hasNativeBracket && typeof entryPrice === "number" && entryPrice > 0 && halved < entryPrice) {
-      return {
-        applied: false,
-        note: "half notional drops below one whole share at the reference price, which would invalidate the attached broker bracket"
-      };
-    }
-    const fromNotional = proposal.dollarAmount;
-    proposal.dollarAmount = halved;
-    return { applied: true, note: `size halved: $${fromNotional} → $${halved}` };
-  }
-  return { applied: false, note: "order has neither a positive notional nor a positive quantity" };
-}
-
-/** Small bounded-concurrency worker pool (R4) — `Promise.all` would burst every Red Team request
- *  at once and re-trigger the scheduler-lock / rate-limit starvation the cap exists to avoid. */
-async function mapWithConcurrency<T>(items: readonly T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
-  const queue = [...items];
-  const runners = Array.from({ length: Math.max(1, Math.min(limit, queue.length)) }, async () => {
-    for (;;) {
-      const item = queue.shift();
-      if (item === undefined) return;
-      await worker(item);
-    }
-  });
-  await Promise.all(runners);
-}
-
-/**
- * Synchronous, model-free pre-filter applied to Bull proposals before the Bear LLM runs.
- * This is the genuinely independent critique layer: no API call, no model, no chance of
- * the same LLM arguing with itself. Three concrete rules:
- *
- *   1. No-position-to-exit: sell/cover with no matching existing position → hard veto.
- *      The Bear LLM cannot catch phantom exits because it doesn't know the live book.
- *
- *   2. Momentum overextension: buy with momentum subscore > 92 AND value subscore < 20
- *      → prepend a flag to the rationale so the Bear LLM sees the specific concern.
- *      Not a hard veto — momentum breakouts can be real — but forces explicit review.
- *
- *   3. Regime contradiction: buy in Crisis or Risk-Off regime AND name's score is below
- *      the median of the current scan → hard veto. A below-average name in an elevated-
- *      VIX regime is the weakest possible risk-on entry and the Bear LLM is not reliably
- *      calibrated to reject it (same model as Bull, trained to be helpful).
- */
-/**
- * SHORT_SELLING two-layer gate, expressed as the set of order sides the proposal generator may emit.
- * short/cover are allowed only when policy.shortSellingEnabled is true AND the connected account
- * reports shortSelling capability. Otherwise long-only. Mirrors the policy.ts execution-time gate so
- * the schema can never surface a side the gate would reject.
- */
-export function allowedProposalSides(policy: TradingPolicy, account?: ExecutionAccount): OrderSide[] {
-  const shortAllowed = policy.shortSellingEnabled === true && account?.capabilities?.shortSelling === true;
-  return shortAllowed ? ["buy", "sell", "short", "cover"] : ["buy", "sell"];
-}
-
-export function deterministicBearFilter(
-  proposals: TradeProposal[],
-  positions: EquityPosition[],
-  topCandidates: MarketQuote[],
-  regime: string,
-  vetoThresholds?: { fcfYieldFloorPct?: number; debtToEquityCeiling?: number }
-): { kept: TradeProposal[]; vetoed: Array<{ symbol: string; side: string; reason: string }> } {
-  // All EquityPosition entries are long positions (the app is equity-only; short positions
-  // are not represented in the live book yet). Cover proposals would require short positions,
-  // which we can't verify here — skip Rule 1 for cover to avoid false positives.
-  const heldLong = new Set(positions.map((p) => normalizeSymbol(p.symbol)));
-  const quoteBySymbol = new Map(topCandidates.map((q) => [normalizeSymbol(q.symbol), q]));
-
-  // Pre-compute median score for Rule 3 (only meaningful with ≥2 candidates)
-  const sortedScores = topCandidates.map((q) => q.score).sort((a, b) => a - b);
-  const medianScore = sortedScores.length > 1
-    ? sortedScores[Math.floor(sortedScores.length / 2)]
-    : -Infinity;
-  // Typed-enum adoption (risk lane): classify the persisted regime label via the shared
-  // ./market-regime source of truth instead of an ad-hoc startsWith, so a regime relabel can't
-  // silently desync this risk-off veto from the crisis cap / escalation gates. Canonical-label
-  // behavior is unchanged (pinned by test/market-regime.test.ts and test/deterministic-bear.test.ts)
-  // and the veto reason below still quotes the original `regime` label. "Cautious (Inverted Curve)"
-  // deliberately does NOT trip this risk-off veto (it trips only the crisis cap) — the exact
-  // asymmetry the typed matrix documents. Imported from ./market-regime (not ./macro) so a
-  // macro-module test mock can't intercept the classifier.
-  const riskOffRegime = isRiskOffFilterRegime(regimeFromLabel(regime));
-
-  const kept: TradeProposal[] = [];
-  const vetoed: Array<{ symbol: string; side: string; reason: string }> = [];
-
-  for (const p of proposals) {
-    const sym = normalizeSymbol(p.symbol);
-    const quote = quoteBySymbol.get(sym);
-
-    // Rule 1: can't sell a long position that doesn't exist in the live book.
-    // DELIBERATELY a hard `continue` DROP and NOT tagged as an overridable pre-veto: it is an
-    // accounting impossibility (a phantom sell/cover), not a risk preference, and it fires only on
-    // NON-opening sides which resolveSocraticOverride refuses anyway — so there is nothing to override.
-    // Do not "fix" this into a preVetoReasons tag; that would surface a non-openable, non-overridable
-    // reason on a card as if it could be overridden.
-    if (p.side === "sell" && !heldLong.has(sym)) {
-      vetoed.push({ symbol: sym, side: "sell", reason: "No existing long position to sell" });
-      continue;
-    }
-
-    // Rule 2: momentum overextension flag on buys (non-blocking — prepends to rationale)
-    if (p.side === "buy" && quote?.factorBreakdown) {
-      const momentum = (quote.factorBreakdown as MarketFactorBreakdown).momentum ?? null;
-      const value    = (quote.factorBreakdown as MarketFactorBreakdown).value    ?? null;
-      if (momentum !== null && value !== null && momentum > 92 && value < 20) {
-        p.rationale =
-          `[Deterministic flag: momentum overextension (momentum=${Math.round(momentum)}, value=${Math.round(value)}). ` +
-          `Verify this is a breakout, not a chase.]\n\n${p.rationale}`;
-      }
-    }
-
-    // Rule 4: model-free fundamentals veto on buys (independent of the Bull/Bear LLMs, which
-    // share one model and can rationalize a weak long). Catches cash-burning / over-levered names
-    // regardless of what the LLMs agree on. Skipped when the threshold is unset OR the field is
-    // unavailable, so a missing fundamental never false-vetoes a legitimate name.
-    //
-    // ⚠️ OWNER-RATIFICATION FLAG (2026-07-05): Rule 4 was DELIBERATELY model-INDEPENDENT — it exists
-    // precisely because the Bull and Bear share one model and can jointly rationalize a weak long, so
-    // it vetoed cash-burning / over-levered names no matter what the LLMs agreed on. This change makes
-    // it OVERRIDABLE by an autonomyOverride thesis authored BY THAT SAME MODEL (per owner philosophy
-    // "nothing is hard but the account boundary"). That re-couples the exact failure mode Rule 4 was
-    // built to be independent of. It is now tag-not-drop (kept + preVetoReasons) rather than a hard
-    // `continue`. TO REVERT to a non-overridable hard veto, change the two lines below back to
-    // `vetoed.push({...}); continue;` (drop the preVetoReasons tag + kept.push). Flagged for explicit
-    // owner ratification — see the rollout note.
-    if (p.side === "buy" && quote) {
-      const fcfFloor = vetoThresholds?.fcfYieldFloorPct;
-      const deCeil = vetoThresholds?.debtToEquityCeiling;
-      if (fcfFloor != null && typeof quote.fcfYield === "number" && Number.isFinite(quote.fcfYield) && quote.fcfYield < fcfFloor) {
-        const reason = `Fundamentals veto: FCF yield ${quote.fcfYield.toFixed(2)}% below floor ${fcfFloor}% (cash-burning)`;
-        vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
-        p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
-        kept.push(p);
-        continue;
-      }
-      if (deCeil != null && typeof quote.debtToEquity === "number" && Number.isFinite(quote.debtToEquity) && quote.debtToEquity > deCeil) {
-        const reason = `Fundamentals veto: debt/equity ${quote.debtToEquity.toFixed(2)} exceeds ceiling ${deCeil} (over-levered)`;
-        vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
-        p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
-        kept.push(p);
-        continue;
-      }
-    }
-
-    // Rule 3: below-median buy in a risk-off/crisis regime → advisory pre-veto (tag-not-drop). Was a
-    // hard `continue` drop; now tagged as an OVERRIDABLE `deterministic_bear_veto:` reason and KEPT, so
-    // an autonomyOverride thesis can pass it on the opening at the single resolveSocraticOverride call.
-    // With no thesis (or socraticOverrideMode "off") the tag keeps it blocked exactly as the old drop.
-    if (p.side === "buy" && riskOffRegime && quote && quote.score < medianScore) {
-      const reason = `${regime} regime with below-median scan score (${quote.score.toFixed(1)} < median ${medianScore.toFixed(1)}); risk-on entry too weak`;
-      vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
-      p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
-      kept.push(p);
-      continue;
-    }
-
-    kept.push(p);
-  }
-
-  return { kept, vetoed };
-}
-
-/**
- * Pick the most-specific sufficiently-sampled realized scorecard bucket for a proposal's thesis:
- * the thesis×regime bucket once it has ≥5 trades, else the thesis bucket. Pure. Shared by the
- * deterministic sizer and the negative-expectancy gate so both always read the SAME realized edge.
- */
-export function selectThesisStat(
-  regimeScorecard: ThesisRegimeStat[],
-  thesisScorecard: ThesisStat[],
-  proposal: TradeProposal
-): ThesisStat | ThesisRegimeStat | undefined {
-  // Exact-string join against `entryMarketRegime`, which is stamped from one of the
-  // MARKET_REGIME_LABELS values (src/lib/macro.ts) at proposal-creation time. Both sides
-  // are typed as plain `string` (older rows may carry a retired label), but the values in
-  // practice are the persisted-contract labels — see that const's doc comment before
-  // touching either side of this comparison.
-  const comboStat = regimeScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
-  const thesisStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
-  return comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;
-}
-
-/**
- * OPTIONAL negative-expectancy skip gate (policy.tuning.skipNegativeExpectancy, default OFF). Returns
- * skip=true for an OPENING proposal whose thesis is PROVEN (≥ minClosedLotsForWeightShift closed
- * lots) and whose shrunk realized avg edge — already net of the paper cost model — is ≤
- * skipNegativeExpectancyEdgePct. Exits and unproven theses are never skipped (the sizer's
- * exploratory floor on unproven theses is intentional). Pure aside from the realized-scorecard read.
- */
-export function shouldSkipNegativeExpectancy(
+export function bracketWholeShareMinimum(
   proposal: TradeProposal,
   policy: TradingPolicy,
-  source: FillSource,
-  userId: string = "local",
-  prefetched?: PrefetchedFills
-): { skip: boolean; reason?: string } {
-  if (!policy.tuning?.skipNegativeExpectancy) return { skip: false };
-  if (proposal.side === "sell" || proposal.side === "cover") return { skip: false }; // exits unaffected
-  const account = policy.accountNumber;
-  if (!account) return { skip: false };
-
-  const thesisScorecard = getThesisScorecard(account, source, {}, userId, prefetched);
-  const parentStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
-  const parentTrades = parentStat?.trades ?? 0;
-  const minLots = policy.tuning?.minClosedLotsForWeightShift ?? 20;
-  if (parentTrades < minLots) return { skip: false }; // parent thesis is unproven
-
-  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId, prefetched);
-  const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
-  const sampleTrades = stat?.trades ?? 0;
-  const avgReturn = stat?.shrunkAvgReturnPct ?? 0;
-  const threshold = policy.tuning?.skipNegativeExpectancyEdgePct ?? 0;
-  if (avgReturn <= threshold) {
-    return {
-      skip: true,
-      reason: `Negative-expectancy skip: thesis "${proposal.tradeThesisTag ?? "—"}" has a proven negative post-cost edge (shrunk avg ${avgReturn}% over ${sampleTrades} closed lots ≤ ${threshold}%).`
-    };
-  }
-  return { skip: false };
-}
-
-/**
- * OPTIONAL correlation cluster gate (policy.maxAvgCorrelation, default off). Returns the proposals to
- * proceed with, DROPPING any OPENING buy/short whose average daily-return correlation to the current
- * holdings exceeds the cap — the precise version of what maxPortfolioBeta approximates. Exits and
- * reductions (sell/cover) always pass; a candidate with too little overlapping bar data is never
- * rejected (avgReturnCorrelation returns undefined). Async because correlation needs historical bars,
- * which the synchronous policy gate (evaluateTradeProposal) cannot fetch. Skips are logged + audited.
- */
-export async function applyCorrelationClusterGate(
-  proposals: TradeProposal[],
-  policy: TradingPolicy,
-  positions: EquityPosition[],
-  userId: string = "local"
-): Promise<TradeProposal[]> {
-  const cap = policy.maxAvgCorrelation;
-  if (cap == null || !(cap > 0) || positions.length === 0) return proposals;
-  const holdings = positions.map((p) => p.symbol);
-  const kept: TradeProposal[] = [];
-  for (const p of proposals) {
-    const isOpening = p.side === "buy" || p.side === "short";
-    if (!isOpening) {
-      kept.push(p);
-      continue;
-    }
-    const corr = await avgReturnCorrelation(p.symbol, holdings, userId);
-    if (corr != null && corr > cap) {
-      console.log(`[Corr] Skipped ${p.symbol} ${p.side}: avg correlation ${corr.toFixed(2)} > cap ${cap}`);
-      audit("proposal_skipped_correlation", { symbol: p.symbol, side: p.side, avgCorrelation: Number(corr.toFixed(4)), cap }, userId, policy.connectedAccountId);
-      continue;
-    }
-    kept.push(p);
-  }
-  return kept;
-}
-
-/**
- * Part 3 — earnings-proximity advisory, split out of `applyRiskReceipts` so it can run EARLY in
- * `runStrategyOnce` (right after the debate loop, before the FIX#3 propose-mode pre-routing and the
- * sell-to-fund intended-notional computation both read `preVetoReasons`). Those two steps decide
- * whether an opening will auto-execute (and therefore whether it should count as intended buy
- * notional / drive automated funding sells) based on `preVetoReasons`; if this tag were applied AFTER
- * them (as it was when it lived only inside `applyRiskReceipts`, called at the `gatedProposals` stage
- * near the end of the pipeline), an earnings-blackout-tagged opening would slip through both checks
- * un-excluded for one run — exactly the hazard `preVetoTaggedOpeningWillPlace`'s doc comment warns
- * about, just for this lane's own new tag.
- *
- * The INFORMATIONAL note is unconditional whenever `daysToEarnings` is known (per spec: "Receipt
- * (always when daysToEarnings known and <= 7)"); only the preVetoReasons TAG depends on
- * `earningsBlackout` being on. Unknown daysToEarnings (Yahoo returned no future earnings date) is
- * skipped silently — never fabricated. Mutates proposals IN PLACE (same reference) for the same
- * reason `applyRiskReceipts` does: `requiresHumanReview` Set membership and `preVetoReasons` array
- * identity must survive downstream reference-keyed checks. Idempotent per proposal (checked via the
- * `[Risk] Earnings` marker) so `applyRiskReceipts` can safely call this again at its later stage
- * without double-appending the note or double-tagging preVetoReasons for the same run.
- */
-export function applyEarningsBlackoutTag(
-  proposals: TradeProposal[],
-  policy: TradingPolicy,
-  marketScan: MarketScan,
-  userId: string = "local"
-): TradeProposal[] {
-  const earningsBlackoutOn = policy.tuning?.earningsBlackout === true;
-  const earningsWindow = policy.tuning?.earningsBlackoutDays != null && policy.tuning.earningsBlackoutDays > 0
-    ? policy.tuning.earningsBlackoutDays
-    : 3;
-
-  for (const proposal of proposals) {
-    const isOpening = proposal.side === "buy" || proposal.side === "short";
-    if (!isOpening) continue;
-    if (proposal.rationale.includes("\n\n[Risk] Earnings in ")) continue; // already tagged this run (match the exact prefix this fn appends, not a bare substring that LLM rationale could contain)
-
-    const quote = marketScan.quotesBySymbol[normalizeSymbol(proposal.symbol)] ?? marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
-    const daysToEarnings = quote?.daysToEarnings;
-    if (typeof daysToEarnings === "number" && Number.isFinite(daysToEarnings) && daysToEarnings <= 7) {
-      const insideWindow = earningsBlackoutOn && daysToEarnings <= earningsWindow;
-      const windowSuffix = insideWindow ? " — inside advisory blackout window" : "";
-      const earningsNote = `\n\n[Risk] Earnings in ${daysToEarnings} trading day(s)${windowSuffix}`;
-      proposal.rationale += earningsNote;
-      if (insideWindow) {
-        proposal.preVetoReasons = [
-          ...(proposal.preVetoReasons ?? []),
-          `earnings_blackout: opening within ${daysToEarnings} day(s) of earnings (window ${earningsWindow})`
-        ];
-        audit(
-          "proposal_tagged_earnings_blackout",
-          { symbol: proposal.symbol, side: proposal.side, daysToEarnings, window: earningsWindow },
-          userId,
-          policy.connectedAccountId
-        );
-      }
-    }
-  }
-  return proposals;
-}
-
-/**
- * Advisory-only per-candidate risk receipts for OPENING (buy/short) proposals: a correlation profile
- * (pearson/EWMA/downside vs current holdings) + a pre-trade parametric stress scenario, both appended
- * to `proposal.rationale` as `\n\n[Risk] …` notes with a matching `audit(...)` event — plus the
- * earnings-proximity advisory (`applyEarningsBlackoutTag`, see its doc comment for why it's a
- * separate, idempotent function called EARLY in `runStrategyOnce` and again here for callers, such as
- * this function's own unit tests, that invoke `applyRiskReceipts` standalone).
- *
- * Correlation + stress receipts are gated behind `policy.tuning.riskReceipts` (default off/undefined):
- * when off and the earnings tag has already run, this function returns `proposals` UNCHANGED and
- * performs zero extra bar fetches — the rationale/prompt/audit trail stays byte-identical to today.
- * The earnings note/tag is independent (per the board row: earnings blackout is its own opt-in via
- * `policy.tuning.earningsBlackout`) and runs regardless of `riskReceipts`, but only ever touches
- * proposals whose `daysToEarnings` is known (never fabricated) — most runs with neither flag on see NO
- * change at all.
- *
- * Never blocks, drops, or resizes a proposal: `preVetoReasons` tagging follows the exact "tag, fold
- * into the sized PolicyDecision, remain overridable" pattern PR #814 established (see the fold-in at
- * the `preVetoReasons?.length` check before `resolveSocraticOverride`) — it is not a new blocking gate.
- */
-export async function applyRiskReceipts(
-  proposals: TradeProposal[],
-  policy: TradingPolicy,
-  positions: EquityPosition[],
-  portfolio: Portfolio,
-  marketScan: MarketScan,
-  userId: string = "local"
-): Promise<TradeProposal[]> {
-  const riskReceiptsOn = policy.tuning?.riskReceipts === true;
-
-  const equity = accountEquity(portfolio);
-  const holdingsForCorrelation = positions.map((p) => ({ symbol: p.symbol, marketValue: p.marketValue }));
-  const stressPositions: StressPositionInput[] = positions.map((p) => ({
-    symbol: p.symbol,
-    marketValue: p.marketValue,
-    beta: marketScan.quotesBySymbol[normalizeSymbol(p.symbol)]?.beta
-  }));
-
-  const out: TradeProposal[] = [];
-  for (const p of proposals) {
-    const isOpening = p.side === "buy" || p.side === "short";
-    if (!isOpening) {
-      out.push(p);
-      continue;
-    }
-
-    // Mutate the SAME object reference throughout (never rebuild via spread): every other stage in
-    // this pipeline (Bear-unavailable, rationale-collapse gate, FIX#3 pre-routing) adds this exact
-    // object to `requiresHumanReview` (a Set<TradeProposal> keyed by reference), and the placement
-    // loop's `requiresHumanReview.has(proposal)` check depends on that reference surviving unchanged
-    // through this function. Rebuilding the object here would silently break Set membership for any
-    // proposal that was routed to human review by an earlier gate and also picks up a risk-receipt
-    // note — defeating the Fail-CLOSED safety net in "decide" (auto-execute) mode.
-    const proposal = p;
-    const quote = marketScan.quotesBySymbol[normalizeSymbol(p.symbol)] ?? marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(p.symbol));
-
-    // Part 2 — correlation receipt (gated on riskReceipts; costs extra fetchDailyOHLC calls).
-    if (riskReceiptsOn && equity > 0) {
-      const profile = await correlationProfile(proposal.symbol, holdingsForCorrelation, equity, userId);
-      if (profile) {
-        const max = profile.maxPairwise;
-        const maxIsDownsideDriven = profile.holdings.some(
-          (h) => h.symbol === max.symbol && h.downside != null && h.pearson != null && h.downside > h.pearson
-        );
-        const downsideNote = maxIsDownsideDriven
-          ? `; downside corr ${(profile.holdings.find((h) => h.symbol === max.symbol)!.downside! * 100).toFixed(0)}% — diversification weakens in drawdowns`
-          : "";
-        const avgEwmaText = profile.avgEwma != null ? `${(profile.avgEwma * 100).toFixed(0)}%` : "n/a";
-        const correlationNote = `\n\n[Risk] Correlation: max ${(max.corr * 100).toFixed(0)}% w/ ${max.symbol} (${max.weightPct.toFixed(1)}% of book), avg EWMA ${avgEwmaText} across ${profile.holdings.length} holdings${downsideNote}`;
-        proposal.rationale += correlationNote;
-        audit(
-          "correlation_receipt",
-          { symbol: proposal.symbol, maxPairwise: max, avgEwma: profile.avgEwma, consideredCount: profile.consideredCount, truncated: profile.truncated },
-          userId,
-          policy.connectedAccountId
-        );
-      }
-    }
-
-    // Part 4 — pre-trade stress scenario receipt (gated on riskReceipts; free — betas come from the scan).
-    if (riskReceiptsOn && equity > 0) {
-      const candidateBeta = quote?.beta;
-      // No run-level VIX is plumbed into MarketScan today (see macro.ts's separate MacroData for the
-      // live VIX read) — omitting `vix` here falls back to stressScenario's own default (20, long-run
-      // average), which is the documented, tested behavior when a live level isn't available.
-      const stress = stressScenario({
-        positions: stressPositions,
-        candidate: { symbol: proposal.symbol, notional: estimateNotional(proposal), side: proposal.side, beta: candidateBeta },
-        equity
-      });
-      if (stress) {
-        const estimatedNote = stress.betasEstimated
-          ? ` (betas estimated for ${stress.betaEstimatedCount} of ${stress.betaTotalCount} positions)`
-          : "";
-        const topText = stress.topContributors.map((c) => `${c.symbol} ${formatWholeDollars(c.impactUsd)}`).join(", ");
-        // Omit the "; top: …" clause entirely for an empty/new book (no contributors) rather than
-        // rendering a blank "top: " in the user-visible rationale.
-        const topClause = topText ? `; top: ${topText}` : "";
-        const stressNote = `\n\n[Risk] Stress ${stress.shockPct.toFixed(1)}% (mkt): book ${stress.bookImpactPctOfEquity.toFixed(1)}% of equity; with this order ${stress.withCandidateImpactPctOfEquity.toFixed(1)}%${topClause}${estimatedNote}`;
-        proposal.rationale += stressNote;
-        audit(
-          "stress_receipt",
-          {
-            symbol: proposal.symbol,
-            shockPct: stress.shockPct,
-            bookImpactPctOfEquity: stress.bookImpactPctOfEquity,
-            withCandidateImpactPctOfEquity: stress.withCandidateImpactPctOfEquity,
-            candidateMarginalUsd: stress.candidateMarginalUsd
-          },
-          userId,
-          policy.connectedAccountId
-        );
-      }
-    }
-
-    out.push(proposal);
-  }
-
-  // Part 3 — earnings-proximity advisory. Idempotent: a no-op for any proposal already tagged by an
-  // earlier `applyEarningsBlackoutTag` call in this run (see that function's doc comment for why
-  // `runStrategyOnce` calls it early, before this function runs).
-  applyEarningsBlackoutTag(out, policy, marketScan, userId);
-
-  return out;
-}
-
-export function applyDeterministicSizing(
-  proposal: TradeProposal,
-  policy: TradingPolicy,
-  portfolio: Portfolio,
-  source: FillSource,
-  userId: string = "local",
-  positions: EquityPosition[] = [],
   marketScan?: MarketScan,
-  precomputedCalibration?: ConfidenceCalibrationStat[],
-  // Precomputed annualized realized-vol (%) per OPENING candidate symbol — mirrors
-  // precomputedCalibration's "compute once per run, pass in" pattern. Undefined/missing symbol →
-  // the vol-target note/taper is simply skipped (never fabricated).
-  realizedVolPctBySymbol?: Record<string, number>,
-  // Precomputed CURRENT book heat (existing positions only, computed once per run) — undefined when
-  // the heat budget isn't configured or volTargeting is off. This proposal's own incremental risk is
-  // computed fresh below and added to bookHeat.totalRiskUsd for the remaining-budget taper.
-  bookHeat?: PortfolioHeatResult,
-  prefetched?: PrefetchedFills
-): TradeProposal {
-  if (proposal.side === "sell" || proposal.side === "cover") {
-    // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
-    // dollarAmount) must be resolved to the FULL position. Otherwise it books a 0-quantity
-    // phantom fill the dashboard reports as a successful close while the position stays open —
-    // a silent no-op stop/take-profit in live mode. (policy.ts also hard-rejects size-less
-    // exits as a backstop for any path that doesn't pass through here.)
-    if (proposal.quantity == null && proposal.dollarAmount == null) {
-      const pos = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
-      const fullQty = pos ? Math.abs(pos.quantity) : 0;
-      if (fullQty > 0) {
-        return {
-          ...proposal,
-          quantity: fullQty,
-          rationale: proposal.rationale + `\n\n[Sizing] Exit size resolved to the full ${normalizeSymbol(proposal.symbol)} position (${fullQty} sh) — the proposal carried no quantity.`
-        };
-      }
-    }
-    return proposal; // Preserve explicit exit sizes
-  }
-  const account = policy.accountNumber;
-  if (!account) return proposal;
-
-  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId, prefetched);
-  const thesisScorecard = getThesisScorecard(account, source, {}, userId, prefetched);
-  
-  // Prefer the thesis×regime bucket once it has enough samples; otherwise the thesis bucket.
-  const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
-  const sampleTrades = stat?.trades ?? 0;
-  const winRate = stat?.shrunkWinRate ?? 50;
-  const avgReturn = stat?.shrunkAvgReturnPct ?? 0; // shrunk realized edge (%)
-  // Item 6 (opt-in, panel-hardened): remap confidenceScore through the account's realized confidence-
-  // calibration curve BEFORE it becomes the conviction multiplier — a poorly-calibrated high-confidence
-  // band is sized DOWN toward its (isotonic, shrunk) realized win rate, never inflated. Composes as a
-  // reduction fed into the existing conviction-cap MIN below. Default OFF → raw confidenceScore/100 as
-  // today. Only applies to BUYS (getConfidenceCalibration is long-only; shorts fall back to raw). The
-  // per-band sample gate uses minClosedLotsForWeightShift. Calibration is computed once per run and passed
-  // in (precomputedCalibration); falls back to an internal read when a direct caller doesn't supply it.
-  const rawScore = proposal.confidenceScore ?? 50;
-  let rawConviction = rawScore / 100;
-  if (policy.tuning?.calibrationSizing && proposal.side === "buy") {
-    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId, prefetched);
-    const minLots = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
-    rawConviction = calibratedConviction(rawScore, calibration, minLots);
-  }
-
-  // Conviction-cap on PROVEN theses (panel finding): the LLM's confidenceScore is a direct linear
-  // multiplier on size, and a learned "fact" can inflate it — so AI confidence alone could size up
-  // a proven-but-mediocre thesis past the 20-lot evidence floor (which only protects UNPROVEN ones).
-  // Mitigation: cap confidence's UPSIDE contribution UNLESS the thesis's own realized edge
-  // independently corroborates high conviction. Low confidence still shrinks size fully (only the
-  // upside above the cap is removed). This reads ONLY the realized scorecard stats already in scope
-  // (winRate/avgReturn) + the proposal's own confidenceScore — it must NEVER read learned_context
-  // (Phase-0 byte-identical invariant). Knobs are policy.tuning, conservative defaults ON by default.
-  const convictionCap = policy.tuning?.convictionCapUncorroborated ?? 0.6;
-  const corrobWinRate = policy.tuning?.corroborationWinRatePct ?? 58;
-  const corrobEdge = policy.tuning?.corroborationEdgePct ?? 0;
-  const corroborated = winRate >= corrobWinRate && avgReturn > corrobEdge;
-  const conviction = corroborated ? rawConviction : Math.min(rawConviction, convictionCap);
-  const convictionCapBinds = !corroborated && rawConviction > convictionCap;
-
-  // Edge-aware Kelly-lite: scale by win rate AND conviction AND the realized EDGE.
-  // A thesis that wins often but with no/negative expectancy shouldn't get full size;
-  // one with a proven positive edge earns more. This uses the learned shrunk avg return
-  // so a handful of lucky trades can't inflate sizing.
-  const edgeFactor = avgReturn > 1 ? 1 : avgReturn >= 0 ? 0.7 : avgReturn > -1 ? 0.5 : 0.3;
-  const rawMultiplier = (winRate / 100) * conviction * edgeFactor;
-
-  // Volatility-targeting sizing (opt-in, default off): taper the Kelly-lite multiplier by
-  // targetVol/realizedVol (never up, floored at 0.25) BEFORE the floor/ceiling clamp below, so it
-  // composes with (and stays bounded by) the existing sizingFloorPct/sizingCeilingPct clamps exactly
-  // like every other input to `multiplier`. The realized-vol number itself is surfaced in the
-  // rationale whenever cheaply available, independent of whether the taper is actually applied —
-  // an honest receipt even when the feature is off or no target is configured.
-  const realizedVol = realizedVolPctBySymbol?.[normalizeSymbol(proposal.symbol)];
-  const targetVol = policy.tuning?.targetPortfolioVolPct;
-  const volScaleApplies = policy.tuning?.volTargeting === true && typeof targetVol === "number" && targetVol > 0;
-  const volScale =
-    volScaleApplies && typeof realizedVol === "number"
-      ? volTargetScale(realizedVol, targetVol as number)
-      : 1;
-  const multiplier = rawMultiplier * volScale;
-  const volTargetNote =
-    typeof realizedVol === "number"
-      ? `\n\n[Sizing] Realized vol ${realizedVol.toFixed(1)}%${typeof targetVol === "number" && targetVol > 0
-          ? ` vs target ${targetVol}% → vol-target scale ${volScale.toFixed(2)}x (${volScaleApplies ? "applied" : "advisory-only"})`
-          : " (no vol target configured — advisory-only)"}.`
-      : "";
-  if (volScaleApplies && volScale < 1) {
-    audit(
-      "sizing_vol_target_applied",
-      { symbol: normalizeSymbol(proposal.symbol), side: proposal.side, realizedVolPct: realizedVol, targetPortfolioVolPct: targetVol, volScale },
-      userId,
-      policy.connectedAccountId
-    );
-  }
-
-  // Bounds are configurable (policy.tuning.sizingFloorPct / sizingCeilingPct); default 10–100%.
-  const floor = (policy.tuning?.sizingFloorPct ?? 10) / 100;
-  const ceiling = (policy.tuning?.sizingCeilingPct ?? 100) / 100;
-
-  const minLotsForSizing = policy.tuning?.minClosedLotsForWeightShift ?? 20;
-  const unproven = sampleTrades < minLotsForSizing;
-  const boundedMultiplier = unproven
-    ? floor
-    : avgReturn < 0
-      ? 0
-      : Math.max(floor, Math.min(ceiling, multiplier));
-
-  // Fractional-Kelly sizing on realized payoff (downside-dispersion-aware, advisory). Runs BESIDE
-  // the Kelly-lite heuristic above (never replaces it): computes a suggested multiplier from the
-  // bucket's realized win/loss payoff split (avgWinPct/avgLossPct) and downside-dispersion
-  // penalty (downsideDeviationPct), added to performance.ts's aggregateClosedLots alongside this
-  // feature. A receipt is appended whenever the bucket clears the sample gate AND the payoff ratio
-  // is computable (informational only) — the size itself only changes when
-  // policy.tuning.fractionalKellySizing is explicitly on, and even then Kelly may only REDUCE size
-  // vs today (min of the existing multiplier and the Kelly suggestion), never increase it.
-  // Validate/clamp to a finite [0,1] fraction: a non-finite or out-of-range policy value must not
-  // leak into the sizing math or print a misleading "NaN-Kelly" receipt. Falls back to 0.5 when unset
-  // or non-finite; clamps stray >1 / <0 values into range.
-  const kellyFractionRaw = policy.tuning?.kellyFraction ?? 0.5;
-  const kellyFractionSetting = Number.isFinite(kellyFractionRaw) ? Math.max(0, Math.min(1, kellyFractionRaw)) : 0.5;
-  const kellySuggestion = fractionalKellySuggestion(
-    {
-      winRate,
-      avgWinPct: stat?.avgWinPct,
-      avgLossPct: stat?.avgLossPct,
-      downsideDeviationPct: stat?.downsideDeviationPct,
-      avgReturnPct: avgReturn,
-      trades: sampleTrades
-    },
-    { fraction: kellyFractionSetting, minTrades: minLotsForSizing }
-  );
-  // Calibration (and by extension this Kelly payoff split) is long-only — getConfidenceCalibration
-  // filters side==='long'. Shorts have no calibration curve to lean on, so the receipt says so
-  // rather than silently presenting the raw split as if it were calibrated the same way.
-  const kellyUncalibratedShort = proposal.side === "short";
-  let kellyNote = "";
-  let kellyApplied = false;
-  let finalMultiplier = boundedMultiplier;
-  if (kellySuggestion && !("insufficient" in kellySuggestion)) {
-    const { suggestedPctOfCeiling, p, b, penalty } = kellySuggestion;
-    const applyKelly = policy.tuning?.fractionalKellySizing === true && suggestedPctOfCeiling < boundedMultiplier;
-    if (applyKelly) {
-      // Kelly is allowed to cut BELOW the normal sizingFloorPct — that is the entire point of the
-      // "reduce, never increase" guardrail (a poor risk-adjusted edge should be able to shrink size
-      // past the ordinary exploratory floor). Only clamp to sane absolute bounds: never negative,
-      // never above the ceiling, and never above the multiplier Kelly is replacing.
-      finalMultiplier = Math.max(0, Math.min(ceiling, Math.min(boundedMultiplier, suggestedPctOfCeiling)));
-      kellyApplied = true;
-    }
-    kellyNote = `\n\n[Sizing] Fractional-Kelly (p=${p.toFixed(2)}, b=${b.toFixed(2)}, σ_down=${(stat?.downsideDeviationPct ?? 0).toFixed(2)}%, penalty=${penalty.toFixed(2)}): suggests ${Math.round(suggestedPctOfCeiling * 100)}% of max (${kellyFractionSetting}-Kelly)${kellyApplied ? " — applied" : " — informational only, not applied"}${kellyUncalibratedShort ? " (short: uncalibrated)" : ""}`;
-    if (kellyApplied) {
-      audit("sizing_fractional_kelly_applied", {
-        symbol: proposal.symbol,
-        thesisTag: proposal.tradeThesisTag,
-        p: Number(p.toFixed(4)),
-        b: Number(b.toFixed(4)),
-        penalty: Number(penalty.toFixed(4)),
-        suggested: Number(suggestedPctOfCeiling.toFixed(4)),
-        previousMultiplier: Number(boundedMultiplier.toFixed(4)),
-        applied: Number(finalMultiplier.toFixed(4))
-      }, userId, policy.connectedAccountId);
-    }
-  }
-
-  const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
-  const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, portfolio));
-  const rawOpeningCap = Math.min(openingCapacity.cap, policyHeadroomCap);
-  // When marketable-limit entries are enabled, this deterministic dollar market order is later
-  // converted to a whole-share LIMIT priced through the quote (ask×(1+bufferBps)); that conversion can
-  // push the realized notional slightly above a dollar-routed size. Reserve that buffer in the cap now
-  // so deterministic sizing never produces an order the later policy review rejects for exceeding the
-  // per-order headroom. Only shrinks the cap when the flag is on, so dollar-routed sizing is
-  // unchanged otherwise. (Review: PR #278.)
-  const marketableLimitBufferFactor =
-    policy.marketableLimitEntries === true && (policy.permittedOrderTypes?.includes("limit") ?? true)
-      ? 1 + (policy.tuning?.marketableLimitBufferBps ?? 15) / 10_000
-      : 1;
-  const openingSizingCap = marketableLimitBufferFactor > 1 ? Math.floor(rawOpeningCap / marketableLimitBufferFactor) : rawOpeningCap;
-  const openingSizingReason = Number.isFinite(policyHeadroomCap) && policyHeadroomCap < openingCapacity.cap
-    ? `${proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0 ? "max short order limit" : "per-order cap"}, with 5% execution buffer`
-    : openingCapacity.reason;
-  // The bracket-minimum raise below must respect the SAME buffered/per-order cap, not the raw risk
-  // capacity — otherwise a one-share bracket raise can lift the order above the headroom cap and the
-  // later policy review rejects it instead of skipping the broker bracket. (Review: PR #278.)
-  let effectiveOpeningCap = openingSizingCap;
-  const fallbackBase = Number.isFinite(openingCapacity.cap) ? openingCapacity.cap : (policy.maxOrderNotional ?? 0);
-  const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * finalMultiplier);
-  const advisedNotional = estimateOpeningProposalNotional(proposal, marketScan);
-  let targetNotional = advisedNotional && advisedNotional > 0
-    ? Math.min(Math.floor(advisedNotional), openingSizingCap)
-    : Math.min(fallbackNotional, openingSizingCap);
-
-  // Market-impact (ADV) cap: keep the order from sizing into a name far past what the tape can
-  // absorb. ADV is approximated by the latest scan daily $-volume (price × volume) since the app
-  // ingests no historical bars. Skipped when the gauge is unavailable so it never false-shrinks.
-  let advCapNote = "";
-  if (policy.maxOrderPctOfAdv != null && policy.maxOrderPctOfAdv > 0 && marketScan) {
-    const nSym = normalizeSymbol(proposal.symbol);
-    const full = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === nSym);
-    const dollarVol = full && full.price > 0 && full.volume > 0 ? full.price * full.volume : undefined;
-    if (dollarVol != null) {
-      const advCap = Math.floor((policy.maxOrderPctOfAdv / 100) * dollarVol);
-      if (advCap > 0 && advCap < targetNotional) {
-        advCapNote = `\n\n[Sizing] ADV cap: trimmed ${formatWholeDollars(targetNotional)} → ${formatWholeDollars(advCap)} (${policy.maxOrderPctOfAdv}% of ~$${Math.round(dollarVol).toLocaleString("en-US")} daily $-volume) to bound market impact.`;
-        targetNotional = advCap;
-      }
-      if (advCap > 0) effectiveOpeningCap = Math.min(effectiveOpeningCap, advCap);
-    }
-  }
-
-  // Portfolio-heat budget (opt-in, default off, continuous taper — never a hard block): if the
-  // CURRENT book's heat (bookHeat, precomputed once per run from existing positions) plus this
-  // order's OWN incremental risk would exceed portfolioHeatBudgetPct of equity, taper this order's
-  // notional to fit whatever budget remains. Never sizes below zero; when no budget remains at all,
-  // floors at the existing exploratory-floor notional and tags an OVERRIDABLE advisory reason —
-  // it still places unless another gate says otherwise. Uses the FLAT stop % (no ATR/beta history
-  // exists yet for a name that isn't already a position) for this order's own risk basis; honest
-  // "no stop basis" skip when no flat stop is configured either.
-  let heatNote = "";
-  const heatBudgetPct = policy.tuning?.portfolioHeatBudgetPct;
-  if (policy.tuning?.volTargeting === true && bookHeat && typeof heatBudgetPct === "number" && heatBudgetPct > 0) {
-    const ownStopPct = proposal.side === "short"
-      ? (policy.riskRules.shortStopLossPct ?? policy.riskRules.stopLossPct ?? 0)
-      : (policy.riskRules.stopLossPct ?? 0);
-    if (ownStopPct > 0) {
-      const equity = accountEquity(portfolio);
-      if (equity > 0) {
-        const budgetUsd = (heatBudgetPct / 100) * equity;
-        const orderRiskUsd = positionRiskUsd(targetNotional, ownStopPct);
-        const currentHeatUsd = bookHeat.totalRiskUsd;
-        const noStopBasisCount = bookHeat.perPosition.filter((p) => p.estimated).length;
-        const totalPositionsCount = bookHeat.perPosition.length;
-        const currentHeatPct = bookHeat.heatPct ?? 0;
-        if (orderRiskUsd > 0 && currentHeatUsd + orderRiskUsd > budgetUsd) {
-          const remainingUsd = Math.max(0, budgetUsd - currentHeatUsd);
-          const taperFactor = orderRiskUsd > 0 ? Math.min(1, remainingUsd / orderRiskUsd) : 1;
-          const taperedNotional = Math.floor(targetNotional * taperFactor);
-          if (remainingUsd <= 0) {
-            // No budget left at all: hold at the existing floor rather than a hard cage, and tag an
-            // OVERRIDABLE advisory reason (not a policy block) — the order still places.
-            targetNotional = Math.min(targetNotional, Math.max(fallbackNotional, taperedNotional));
-            heatNote =
-              `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); ` +
-              `no remaining budget — held to exploratory floor (overridable advisory, not a block).`;
-          } else if (taperedNotional < targetNotional) {
-            targetNotional = Math.max(0, taperedNotional);
-            heatNote =
-              `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); ` +
-              `this order tapered to add ${(Math.max(0, (budgetUsd - currentHeatUsd) / equity * 100)).toFixed(2)}% (fit remaining budget).`;
-          }
-          // Distinct audit kind from the vol-target scale above: this is the heat-budget taper, a
-          // separate mechanism, and conflating the two in telemetry would hide which brake fired.
-          audit(
-            "sizing_heat_budget_applied",
-            {
-              symbol: normalizeSymbol(proposal.symbol),
-              side: proposal.side,
-              currentHeatPct,
-              budgetPct: heatBudgetPct,
-              orderRiskUsd,
-              remainingUsd,
-              taperFactor,
-              targetNotional
-            },
-            userId,
-            policy.connectedAccountId
-          );
-        } else {
-          heatNote =
-            `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); this order adds ${((orderRiskUsd / equity) * 100).toFixed(2)}%.`;
-        }
-      }
-    }
-  }
-
-  const bracketMinimum = bracketWholeShareMinimum(proposal, policy, marketScan);
-  let bracketMinNote = "";
-  if (bracketMinimum != null && targetNotional > 0 && targetNotional < bracketMinimum) {
-    const minNotional = Math.ceil(bracketMinimum);
-    if (minNotional <= effectiveOpeningCap) {
-      bracketMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(minNotional)} so Alpaca can place a native whole-share bracket at the reference price.`;
-      targetNotional = minNotional;
-    } else {
-      bracketMinNote = `\n\n[Sizing] Native Alpaca bracket requires about ${formatWholeDollars(minNotional)} for one whole share at the reference price, but available opening capacity is ${formatWholeDollars(effectiveOpeningCap)}; broker bracket will be skipped for this sub-share order.`;
-    }
-  }
-
-  // Broker-dollar-minimum floor: Robinhood (and potentially other brokers) reject
-  // dollar-based/fractional orders below a hard minimum notional (Robinhood: $1).
-  // Raise the sized notional to at least that floor when capacity allows, so
-  // proposals never reach the broker with notional values that are certain to be
-  // rejected. When capacity does NOT allow even the minimum, the order is too small
-  // to place — the policy review will block it on per-order-cap grounds.
-  const brokerMinDollar = brokerMinimumDollarNotional(policy);
-  let brokerMinNote = "";
-  // Guard on the PRE-rounding source intent, not the post-rounding `targetNotional`. A positive
-  // source size — the LLM-advised notional or the fallback size — that rounded DOWN below the floor
-  // (e.g. an advised $0.22, or any positive fallback under $1) otherwise collapses to $0 and skips
-  // this raise, reaching the broker as a guaranteed reject — the exact zero-notional path this floor
-  // exists to eliminate. Only raise when capacity can actually cover the minimum.
-  const rawSourceNotional = advisedNotional && advisedNotional > 0
-    ? advisedNotional
-    : Math.max(0, fallbackBase) * finalMultiplier;
-  if (
-    // Honor brokerMinimumHandling here too: under "skip" the owner asked for sub-minimum orders
-    // to be SKIPPED (cooldown-gated), not silently raised — an unconditional raise here would
-    // make skip mode unreachable for autonomous openings because the pre-flight guard downstream
-    // would never see a sub-minimum order.
-    (policy.brokerMinimumHandling ?? "bump") === "bump" &&
-    brokerMinDollar > 0 &&
-    targetNotional < brokerMinDollar &&
-    (targetNotional > 0 || rawSourceNotional > 0) &&
-    brokerMinDollar <= effectiveOpeningCap
-  ) {
-    brokerMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(brokerMinDollar)} to meet ${brokerLabel(policy)}'s minimum dollar-based order size.`;
-    targetNotional = brokerMinDollar;
-  }
-
-  // Visibility: when the conviction cap actually BINDS (uncorroborated thesis whose raw AI
-  // conviction exceeded the cap), surface that the size could not ride confidence alone. Suppressed
-  // for unproven theses, which already report the exploratory-floor reason below.
-  const capNote = convictionCapBinds && !unproven
-    ? `\n\n[Sizing] Conviction capped to ${convictionCap} — thesis not yet corroborated by realized edge (winRate ${winRate}%, avgReturn ${avgReturn}%); AI confidence alone cannot drive size up.`
-    : "";
-  const advisedSizeNote = advisedNotional && advisedNotional > 0
-    ? targetNotional < Math.floor(advisedNotional)
-      ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; risk controls limited it to ${formatWholeDollars(targetNotional)}${openingSizingReason ? ` (${openingSizingReason})` : ""}.`
-      : targetNotional > Math.ceil(advisedNotional)
-        ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; raised to ${formatWholeDollars(targetNotional)} for broker/order constraints.`
-        : `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; preserved within risk limits.`
-    : "";
-  const fallbackSizeNote = advisedNotional && advisedNotional > 0
-    ? ""
-    : `\n\n[Sizing] No explicit opening size from the LLM; fallback sized to ${formatWholeDollars(targetNotional)} (${Math.round(finalMultiplier * 100)}% of max)`;
-
-  return {
-    ...proposal,
-    dollarAmount: targetNotional,
-    quantity: undefined, // Override any LLM-guessed quantity to force notional routing
-    rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + brokerMinNote + (unproven
-      ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
-      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote + kellyNote
-  };
-}
-
-function bracketWholeShareMinimum(proposal: TradeProposal, policy: TradingPolicy, marketScan?: MarketScan): number | undefined {
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
+): number | undefined {
   if (proposal.side !== "buy" && proposal.side !== "short") return undefined;
   if (policy.brokerBracketsEnabled === false) return undefined;
   if (policy.activeBroker !== "alpaca" && policy.activeBroker !== "alpaca-mcp") return undefined;
+  // A "trailing"/"none" plan strips BOTH bracket legs entirely at enrichOpeningProposal (protection
+  // is the trailing lane instead of a fixed bracket stop; a resting take-profit-only leg would itself
+  // look like broker-held exit coverage and suppress the trailing stop — see enrichOpeningProposal's
+  // doc comment) — bumping the size here to support a bracket that will never be sent would needlessly
+  // oversize a sub-share entry (Codex review, PR #1371).
+  const plan: StopPlanStyle = proposal.stopPlan?.style ?? stopPlanBySymbol[normalizeSymbol(proposal.symbol)] ?? "default";
+  if (plan === "trailing" || plan === "none") return undefined;
   const stopPct = proposal.side === "short"
     ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
     : (policy.riskRules?.stopLossPct ?? 0);
   const takePct = policy.riskRules?.takeProfitPct ?? 0;
-  if (stopPct <= 0 && takePct <= 0) return undefined;
+  // An explicit "fixed"/"atr" plan ALWAYS attaches a stop leg at enrichOpeningProposal — falling back
+  // to STOP_PLAN_FALLBACK_STOP_PCT (or the real ATR pct) even when the account's own stopPct is
+  // 0/unset (universal availability) — so the whole-share bump must still apply for these plans, or
+  // the order stays sub-share and the fallback stop it's guaranteed to get later gets stripped by the
+  // sub-share branch below instead (Codex review, PR #1371).
+  const planGuaranteesStopLeg = plan === "fixed" || plan === "atr";
+  if (!planGuaranteesStopLeg && stopPct <= 0 && takePct <= 0) return undefined;
   const symbol = normalizeSymbol(proposal.symbol);
   const referencePrice =
     proposal.limitPrice ??
@@ -3359,21 +2649,21 @@ function bracketWholeShareMinimum(proposal: TradeProposal, policy: TradingPolicy
 
 /** Hard minimum dollar notional a broker requires for dollar-based/fractional orders.
  *  Returns 0 when the broker has no known minimum (whole-share orders bypass this floor). */
-function brokerMinimumDollarNotional(policy: TradingPolicy): number {
+export function brokerMinimumDollarNotional(policy: TradingPolicy): number {
   // Robinhood rejects dollar-based orders below $1 ("must be at least $1").
   if (policy.activeBroker === "robinhood") return 1;
   return 0;
 }
 
 /** Human-readable broker name for sizing notes. */
-function brokerLabel(policy: TradingPolicy): string {
+export function brokerLabel(policy: TradingPolicy): string {
   if (policy.activeBroker === "robinhood") return "Robinhood";
   if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") return "Alpaca";
   if (policy.activeBroker === "tradier") return "Tradier";
   return policy.activeBroker ?? "broker";
 }
 
-function estimateOpeningProposalNotional(proposal: TradeProposal, marketScan?: MarketScan): number | undefined {
+export function estimateOpeningProposalNotional(proposal: TradeProposal, marketScan?: MarketScan): number | undefined {
   if (typeof proposal.dollarAmount === "number" && Number.isFinite(proposal.dollarAmount) && proposal.dollarAmount > 0) {
     return proposal.dollarAmount;
   }
@@ -3389,7 +2679,7 @@ function estimateOpeningProposalNotional(proposal: TradeProposal, marketScan?: M
     : undefined;
 }
 
-function openingRiskCapacity(
+export function openingRiskCapacity(
   proposal: TradeProposal,
   policy: TradingPolicy,
   portfolio: Portfolio,
@@ -3439,7 +2729,7 @@ function openingRiskCapacity(
   return { cap: limitingCap.value, reason: limitingCap.reason };
 }
 
-function openingPolicyNotionalCap(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio): number {
+export function openingPolicyNotionalCap(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio): number {
   return Math.min(
     policy.maxOrderNotional ?? Infinity,
     proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0
@@ -3466,7 +2756,7 @@ function sectorCapPctForSizing(policy: TradingPolicy, sector: string): number | 
   return match?.[1];
 }
 
-function formatWholeDollars(value: number): string {
+export function formatWholeDollars(value: number): string {
   if (Math.abs(value) < 100 && !Number.isInteger(value)) return `$${value.toFixed(2)}`;
   return `$${Math.round(value).toLocaleString("en-US")}`;
 }
@@ -3480,7 +2770,7 @@ const CAP_BREACH_REASONS = ["Daily notional limit", "Hourly notional limit", "Da
  * card. No-op unless the decision carries an auto_proceeded / ira_disregarded outcome, so it is safe
  * to call on every executed proposal. Keeps the run loop's two execution paths from drifting.
  */
-function auditWashSaleProceed(
+export function auditWashSaleProceed(
   decision: PolicyDecision,
   meta: { runId?: string; proposalId?: string; symbol: string; side: OrderSide; estimatedNotional?: number; userId?: string; connectedAccountId?: string }
 ): void {
@@ -3501,7 +2791,7 @@ function auditWashSaleProceed(
   );
 }
 
-function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string, connectedAccountId?: string): boolean {
+export function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string, connectedAccountId?: string): boolean {
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
   // Scope the demotion save to the run's target account. Omitting it resolves the ACTIVE account, so a
@@ -3519,7 +2809,7 @@ function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPol
   return true;
 }
 
-function assertLiveApprovalConfirmation(input: {
+export function assertLiveApprovalConfirmation(input: {
   executionMode: ExecutionMode;
   confirmation?: LiveApprovalConfirmation;
   proposalId: string;
@@ -3552,569 +2842,6 @@ function assertLiveApprovalConfirmation(input: {
   }
 
   if (reasons.length > 0) throw new LiveApprovalConfirmationError(reasons, expectedText);
-}
-
-export async function executeProposal(proposalId: string, userId?: string): Promise<{
-  status: string;
-  orderId?: string;
-  brokerState?: string;
-  fillStatus?: string;
-  reasons?: string[];
-}>;
-export async function executeProposal(
-  proposalId: string,
-  userId: string,
-  options: { liveConfirmation?: LiveApprovalConfirmation }
-): Promise<{
-  status: string;
-  orderId?: string;
-  brokerState?: string;
-  fillStatus?: string;
-  reasons?: string[];
-}>;
-export async function executeProposal(
-  proposalId: string,
-  userId: string = "local",
-  options: { liveConfirmation?: LiveApprovalConfirmation } = {}
-): Promise<{
-  status: string;
-  orderId?: string;
-  brokerState?: string;
-  fillStatus?: string;
-  reasons?: string[];
-}> {
-  const policy = getPolicy(userId);
-  const activeAccount = getActiveConnectedAccount(userId);
-  const executionState = deriveExecutionState(policy, activeAccount);
-  if (!policy.accountNumber) throw new Error("No account selected.");
-  // An account is an account: with none connected there is no broker to trade through, and there is
-  // no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
-  if (!executionState.mode) throw new Error("No connected account. Connect a broker account before approving trades.");
-  const executionMode: ExecutionMode = executionState.mode;
-  const executionSource = fillSourceForExecutionMode(executionMode);
-  if (policy.systemState === "halted") throw new Error("System is halted.");
-
-  const row = getProposal(proposalId, userId);
-  if (!row) throw new Error("Proposal not found.");
-  if (row.status !== "proposed") throw new Error(`Proposal is already ${row.status}.`);
-  if (row.accountNumber !== policy.accountNumber) {
-    throw new Error("Proposal account no longer matches the selected account. Re-run the strategy before approving.");
-  }
-  if (row.executionMode && row.executionMode !== executionMode) {
-    throw new Error("Proposal execution mode no longer matches the selected mode. Re-run the strategy before approving.");
-  }
-
-  // `let`: an approval-held protective exit is repriced against the fresh approval-time quote below.
-  let proposal = row.proposal;
-  assertLiveApprovalConfirmation({
-    executionMode,
-    confirmation: options.liveConfirmation,
-    proposalId,
-    accountNumber: row.accountNumber,
-    proposal,
-    estimatedNotional: row.estimatedNotional ?? row.review?.estimatedNotional,
-    requireTypedConfirmation: policy.requireTypedConfirmation !== false
-  });
-
-  // TOCTOU guard on notional/order caps: the daily/hourly cap check reads the
-  // trade_proposals table BEFORE inserting the new row. Without this lock, a
-  // concurrent autonomous run (which holds acquireStrategyLock) and a manual
-  // Approve can each read the same pre-cap totals and both place — jointly
-  // exceeding maxDailyNotional / maxHourlyNotional / maxDailyOrders. Acquiring
-  // the same lock here serialises approval execution against the strategy loop.
-  if (!acquireStrategyLock(userId, policy.connectedAccountId)) {
-    return { status: "busy", reasons: ["A strategy run is in progress; try again in a moment."] };
-  }
-
-  try {
-    const gateway = getBrokerGateway(policy, userId);
-
-    const [portfolio, positions, orders] = await Promise.all([
-      gateway.getPortfolio(policy.accountNumber),
-      gateway.getEquityPositions(policy.accountNumber),
-      gateway.getEquityOrders(policy.accountNumber)
-    ]);
-    const allowedSymbols = allowedSymbolsForPolicy(policy);
-    const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
-      candidateLimit: policy.marketScanCandidateLimit,
-      outlierReserve: policy.marketScanOutlierReserve,
-      universeFloor: policy.universeFloor
-    });
-    const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
-    const approvalScan = mergeQuoteData(
-      approvalScanBase,
-      await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
-    );
-
-    // An account is an account: the approval is always evaluated against the real broker-reported
-    // portfolio and positions for the active account — there is no local-simulation alternative.
-    const currentPrices = currentPricesFromScan(approvalScan);
-    const account = { portfolio, positions };
-    await notifyStaleLimitOrders({ userId, policy, orders });
-
-    // Approval-held protective exits: an extended-hours marketable-limit stored on the card was
-    // priced off the generation-time quote and goes stale while it waits for a human — a quote that
-    // moved through the stored limit would leave the once-marketable order resting unfilled where
-    // the queue-to-open market exit still gets out. Re-resolve the routing off the fresh quote and
-    // wall clock (degrading to market/regular_hours when the extended session no longer applies) and
-    // review/evaluate/place the repriced order. Everything else passes through untouched.
-    const storedProposal = proposal;
-    const approvalExitQuote = protectiveExitQuoteFromScan(
-      approvalScan.quotesBySymbol[proposal.symbol] ?? approvalScan.quotesBySymbol[normalizeSymbol(proposal.symbol)]
-    );
-    proposal = repriceStoredProtectiveExit(proposal, policy, approvalExitQuote);
-    if (proposal !== storedProposal) {
-      const confirmedNotional = row.estimatedNotional ?? row.review?.estimatedNotional;
-      const drift = assessProtectiveExitRepriceDrift(storedProposal, proposal, policy, approvalExitQuote, confirmedNotional);
-      // Fresh estimate for the persisted card; a degrade to market has no limit price to estimate
-      // from (estimateNotional returns 0), so keep the stored estimate rather than write a zero.
-      const repricedEstimate = estimateNotional(proposal);
-      const repricedNotional = Number.isFinite(repricedEstimate) && repricedEstimate > 0 ? repricedEstimate : undefined;
-      const repriceChange = {
-        proposalId,
-        symbol: proposal.symbol,
-        side: proposal.side,
-        from: { type: storedProposal.type, limitPrice: storedProposal.limitPrice, marketHours: storedProposal.marketHours },
-        to: { type: proposal.type, limitPrice: proposal.limitPrice, marketHours: proposal.marketHours },
-        drift
-      };
-      // LIVE typed-confirmation invariant (repo precedent: autoRemediateStaleExitOrders defers
-      // live+typed-confirm remediation to the human rather than silently substituting): the phrase
-      // the user typed confirmed the STORED order, so a MATERIAL reprice — price or notional beyond
-      // the marketable-limit buffer tolerance — must go back to approval, not to the broker. The
-      // card stays pending with the repriced order persisted so the next Approve confirms the
-      // numbers that will actually be placed. Immaterial drift places normally below (also audited,
-      // via the drift payload on protective_exit_repriced).
-      const typedConfirmGatesLive = executionMode === "broker/live" && policy.requireTypedConfirmation !== false;
-      if (typedConfirmGatesLive && drift.material) {
-        const reason = `Protective exit repriced materially while awaiting approval (price drift ${
-          drift.priceDriftBps !== undefined ? Math.round(drift.priceDriftBps) : "unverifiable"
-        } bps vs ${drift.toleranceBps} bps tolerance) — a live typed confirmation covered the prior order, so approve the repriced order again.`;
-        const persisted = updatePendingProposalReprice(proposalId, { proposal, estimatedNotional: repricedNotional }, userId);
-        audit("protective_exit_reprice_reapproval", { ...repriceChange, reason, persisted }, userId, policy.connectedAccountId);
-        if (!persisted) {
-          const current = getProposal(proposalId, userId)?.status ?? "removed";
-          return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-        }
-        await sendNotification(
-          {
-            type: "pending_approval",
-            title: `${proposal.symbol} protective exit repriced — approval needed again`,
-            payload: { proposalId, proposal, previous: storedProposal, drift, reason }
-          },
-          { policy, userId }
-        );
-        return { status: "proposed", reasons: [reason] };
-      }
-      // Persist the repriced order BEFORE claiming/placing so trade_proposals.proposal (Recent,
-      // Activity, getProposal) shows the order the broker actually received, never the stale
-      // generation-time price. CAS on status='proposed': if the card expired or was rejected while
-      // this approval was in flight, stop here like the other pending guards.
-      if (!updatePendingProposalReprice(proposalId, { proposal, estimatedNotional: repricedNotional }, userId)) {
-        const current = getProposal(proposalId, userId)?.status ?? "removed";
-        return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-      }
-      audit("protective_exit_repriced", repriceChange, userId, policy.connectedAccountId);
-    }
-
-    const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
-    if (!tradability[proposal.symbol]?.tradable) {
-      const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
-      const tradabilityDecision: PolicyDecision = { approved: false, reasons: [reason] };
-      updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId, undefined, undefined, tradabilityDecision);
-      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId, policy.connectedAccountId);
-      await sendNotification(
-        {
-          type: "block",
-          title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
-          payload: { proposalId, reason, proposal }
-        },
-        { policy, userId }
-      );
-      return { status: "blocked", reasons: [reason] };
-    }
-
-    let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
-
-    // Same broker-minimum pre-flight guard as the autonomous run loop: NAV/sizing can drift between
-    // proposal creation and a human clicking Approve, so re-check here too rather than let a
-    // known-doomed order reach the broker from this path. Same bump-first handling (owner ruling:
-    // bump, not skip) and whole-position dust-exit exemption as the autonomous loop (see the guard);
-    // the bumped order is re-reviewed and still goes through evaluateTradeProposal below.
-    const heldForMinimumGuard = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
-    let brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
-    // Hoisted above the guard: the bump planner bounds opening bumps by the remaining
-    // daily/hourly budget (values unchanged for the post-guard consumers — the skip path
-    // returns without placing anything).
-    const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-    const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
-    let attemptedBumpToNotional: number | undefined;
-    // Typed live confirmations and bumps: the owner's confirmation (validated earlier in this
-    // function) was minted against the STORED pre-bump notional. A bump can raise the placed
-    // notional to the broker floor (+0.5% cushion, so ≤ ~$1.01 on Robinhood) — a bounded,
-    // owner-ruled default (brokerMinimumHandling "bump", 2026-07-09), so we deliberately do NOT
-    // force a re-confirmation ceremony for that sub-dollar delta; the order_bumped_broker_minimum
-    // audit records both sizes and the rationale annotates the up-sizing.
-    if (brokerMinimumBlockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
-      // Same composed cap as the run loop: policy's headroomed per-order cap ∧ remaining
-      // daily/hourly budget ∧ available buying power — a bump past any of these would be
-      // policy-rejected (and a cap breach can demote authority via autoRevertOnCapBreach).
-      const effectiveMaxDailyNotional = Math.min(
-        policy.maxDailyNotional ?? Infinity,
-        policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * account.portfolio.totalMarketValue : Infinity
-      );
-      const openingCapNotional = Math.min(
-        applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, account.portfolio)),
-        effectiveMaxDailyNotional - daily.notional,
-        (policy.maxHourlyNotional ?? Infinity) - hourly.notional,
-        // Mirror policy.ts's buying-power gate (binds when finite && > 0).
-        Number.isFinite(account.portfolio.buyingPower) && account.portfolio.buyingPower > 0 ? account.portfolio.buyingPower : Infinity
-      );
-      // Daily ORDER-COUNT budget (not just notional) — see the run-loop site.
-      const openingCountSpent =
-        (proposal.side === "buy" || proposal.side === "short") &&
-        policy.maxDailyOrders != null &&
-        daily.openingOrderCount >= policy.maxDailyOrders;
-      const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
-        review,
-        policy.activeBroker,
-        { ...proposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
-        { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
-      );
-      if (bumpPlan) {
-        const originalSizing = { quantity: proposal.quantity, dollarAmount: proposal.dollarAmount };
-        const originalReview = review;
-        Object.assign(proposal, bumpPlan.patch);
-        review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
-        const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
-        if (!stillBlocked) {
-          proposal.rationale = `${proposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
-          audit(
-            "order_bumped_broker_minimum",
-            { proposalId, symbol: proposal.symbol, side: proposal.side, fromNotional: bumpPlan.fromNotional, toNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval" },
-            userId,
-            policy.connectedAccountId
-          );
-        } else {
-          Object.assign(proposal, originalSizing);
-          review = originalReview;
-          attemptedBumpToNotional = bumpPlan.toNotional;
-        }
-        brokerMinimumBlockReason = stillBlocked ? brokerMinimumBlockReason : undefined;
-      }
-    }
-    if (brokerMinimumBlockReason) {
-      const blockedDecision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
-      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, blockedDecision);
-      audit(
-        "order_skipped_broker_minimum",
-        { proposalId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval", ...(attemptedBumpToNotional !== undefined ? { attemptedBumpToNotional } : {}) },
-        userId,
-        policy.connectedAccountId
-      );
-      if (shouldAlertBrokerMinimumOrderBlock(policy.accountNumber, proposal.symbol)) {
-        await sendNotification(
-          {
-            type: "block",
-            title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} skipped (below broker minimum)`,
-            payload: { proposalId, decision: blockedDecision, review, proposal }
-          },
-          { policy, userId }
-        );
-      }
-      return { status: "blocked", reasons: [brokerMinimumBlockReason] };
-    }
-
-    const isLiveExecution = executionState.environment === "live";
-    const decision = evaluateTradeProposal(proposal, {
-      policy,
-      portfolio: account.portfolio,
-      positions: account.positions,
-      dailyNotionalUsed: daily.notional,
-      hourlyNotionalUsed: hourly.notional,
-      dailyOrderCount: daily.openingOrderCount,
-      estimatedNotional: review.estimatedNotional,
-      marketScan: approvalScan,
-      washSaleLocks: getUserWashSaleLockProvenance(userId, new Date()),
-      // Escalated-card override handles from the STORED row (server-minted at escalation time).
-      // Empty for ordinary proposals. Only the wash-sale gate consults these, and only while
-      // taxSettings.washSaleHandling is ask/auto; every other gate re-runs at full strength.
-      approvedEscalations: approvedEscalationsFromDecision(row.decision),
-      // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime (wins
-      // over policy taxSettings; capabilities can be absent/"brokerage" on legacy IRA rows) —
-      // required so the IRA-replacement hard block (Rev. Rul. 2008-5) can never miss an IRA.
-      accountTaxationType: activeAccount?.taxationType,
-      accountCapabilities: activeAccount?.capabilities,
-      isLiveExecution,
-      // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
-      priorDayTradeCount: isLiveExecution
-        ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
-        : 0
-    });
-
-    // Auditable wash-sale trail on the approval path — never silent. For honored overrides the
-    // token ties this execution back to the exact escalated card the owner approved; for IRA
-    // disregards the record carries the verbatim note + priced provenance.
-    //
-    // Gated on decision.approved: a re-evaluation at approval time can return approved:false while
-    // still carrying an ira_disregarded / auto_proceeded / approved_via_override outcome (the
-    // wash-sale gate itself didn't block, but a later gate — daily cap, buying power, staleness —
-    // did). Logging the proceed-trail then would tell Activity the wash sale was disregarded and the
-    // deduction forfeited even though the order is blocked below and no purchase happens. When
-    // approved, this function proceeds to place/fill the order, so the trail is accurate.
-    if (
-      decision.approved &&
-      decision.washSale &&
-      (decision.washSale.outcome === "approved_via_override" ||
-        decision.washSale.outcome === "auto_proceeded" ||
-        decision.washSale.outcome === "ira_disregarded")
-    ) {
-      audit(
-        decision.washSale.outcome === "ira_disregarded" ? "wash_sale_ira_disregarded" : "wash_sale_override_applied",
-        {
-          proposalId,
-          symbol: proposal.symbol,
-          side: proposal.side,
-          estimatedNotional: review.estimatedNotional,
-          washSale: decision.washSale
-        },
-        userId,
-        policy.connectedAccountId
-      );
-    }
-
-    if (!decision.approved) {
-      // Wash-sale re-escalation instead of death: when the ONLY thing standing between this
-      // approval and execution is an ask-mode wash-sale failure (fresh lock discovered at
-      // approval time, or a stale override refused because the priced cost moved past
-      // washSaleOverrideCostTolerance — outcome "reescalated_cost_changed"), keep the card
-      // PENDING with the freshly priced reason and newly minted server-side tokens so the owner
-      // can approve again at the current cost. Every other refusal (still-binding caps, IRA
-      // hard block, universe, ...) retires the card as blocked exactly as before.
-      const washReescalation =
-        (decision.escalations ?? []).some((entry) => entry.kind === "wash_sale_ask") &&
-        shouldEscalateDecision(decision, policy);
-      if (washReescalation) {
-        const reescalated: PolicyDecision = {
-          ...decision,
-          escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
-        };
-        // Guarded re-queue: only while the row is STILL pending. The scan/review above is async,
-        // so the scheduler can expire this proposal — or another tab can reject it — while this
-        // approval was in flight; an unconditional 'proposed' write here would resurrect that
-        // withdrawn card with fresh override tokens. If the row left the pending state, honor
-        // that outcome instead of re-queuing.
-        if (!transitionProposalIfPending(proposalId, "proposed", userId, { review, estimatedNotional: review.estimatedNotional, decision: reescalated })) {
-          const current = getProposal(proposalId, userId);
-          audit(
-            "proposal_reescalation_skipped",
-            {
-              proposalId,
-              symbol: proposal.symbol,
-              side: proposal.side,
-              reasons: decision.reasons,
-              currentStatus: current?.status ?? "missing"
-            },
-            userId,
-            policy.connectedAccountId
-          );
-          return {
-            status: current?.status ?? "unknown",
-            reasons: [
-              `Proposal is no longer pending (now ${current?.status ?? "missing"}); the wash-sale re-escalation was not re-queued.`,
-              ...decision.reasons
-            ]
-          };
-        }
-        audit(
-          "proposal_reescalated",
-          {
-            proposalId,
-            symbol: proposal.symbol,
-            side: proposal.side,
-            action: "approval",
-            result: "reescalated",
-            reasons: decision.reasons,
-            escalations: reescalated.escalations,
-            ...(decision.washSale ? { washSale: decision.washSale } : {})
-          },
-          userId,
-          policy.connectedAccountId
-        );
-        await sendNotification(
-          {
-            type: "pending_approval",
-            title:
-              decision.washSale?.outcome === "reescalated_cost_changed"
-                ? `${proposal.symbol} rebuy needs a fresh call (wash-sale cost changed)`
-                : `${proposal.symbol} rebuy needs your call (wash sale)`,
-            payload: { proposalId, proposal, review, decision: reescalated, escalated: true }
-          },
-          { policy, userId }
-        );
-        return { status: "proposed", reasons: decision.reasons };
-      }
-
-      // Same in-flight window as the re-escalation above: retire the card as blocked only if it
-      // is still pending — never overwrite a rejection/expiry that landed during the async review.
-      transitionProposalIfPending(proposalId, "blocked", userId, { review, estimatedNotional: review.estimatedNotional, decision });
-      audit("proposal_approved", {
-        proposalId,
-        symbol: proposal.symbol,
-        side: proposal.side,
-        action: "approval",
-        result: "blocked",
-        reasons: decision.reasons
-      }, userId, policy.connectedAccountId);
-      await sendNotification(
-        {
-          type: "block",
-          title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
-          payload: { proposalId, decision, review, proposal }
-        },
-        { policy, userId }
-      );
-      autoRevertOnCapBreach(decision.reasons, policy, userId, policy.connectedAccountId);
-      return { status: "blocked", reasons: decision.reasons };
-    }
-
-    // Re-assert the proposal is still pending immediately before we act on it. The awaits above
-    // (scan, broker review) take time, during which deterministic expiry (scheduler tick) or a
-    // concurrent run's LLM re-validation could have retired this proposal to expired/withdrawn —
-    // we must not place an order for an idea the system already pulled from the queue.
-    const stillPending = getProposal(proposalId, userId);
-    if (!stillPending || stillPending.status !== "proposed") {
-      const current = stillPending?.status ?? "removed";
-      return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-    }
-
-    const heldExit = evaluateBrokerHeldExitAvailability(proposal, account.positions, orders);
-    if (heldExit) {
-      const heldReason = brokerHeldExitBlockReason(heldExit);
-      const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
-      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, heldDecision);
-      audit(
-        "proposal_approved",
-        { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
-        userId,
-        policy.connectedAccountId
-      );
-      await sendNotification(
-        {
-          type: "block",
-          title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
-          payload: { proposalId, decision: heldDecision, review, proposal }
-        },
-        { policy, userId }
-      );
-      return { status: "blocked", reasons: heldDecision.reasons };
-    }
-
-    // Pre-flight live-order guard on the human-approval path too (parity with the autonomous run
-    // loop). No-op on broker/paper; on broker/live it ALLOWS by default and refuses ONLY when live
-    // trading has been explicitly disabled via the ALLOW_LIVE_TRADING=false escape hatch. It NEVER
-    // places or enables a trade — a human-approved pending proposal clears the same live invariant.
-    try {
-      assertLivePreflight({
-        mode: executionMode,
-        symbol: proposal.symbol,
-        side: proposal.side
-      });
-    } catch (guardError) {
-      const message = guardError instanceof Error ? guardError.message : String(guardError);
-      // Persist a REJECTED decision (not the earlier approved one) so the ledger reflects the block.
-      const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
-      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
-      audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId, policy.connectedAccountId);
-      await sendNotification(
-        { type: "block", title: `${proposal.symbol} live order blocked (pre-flight)`, payload: { proposalId, proposal, review, reason: message, decision: blockedDecision } },
-        { policy, userId }
-      );
-      return { status: "blocked", reasons: [message] };
-    }
-
-    // Atomic, crash-recoverable placement (mirrors the autonomous path): persist the
-    // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
-    // lost broker response can't leave an untracked real order.
-    const refId = crypto.randomUUID();
-    // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
-    // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
-    // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
-    // `proposal` persists execution-time sizing (broker-minimum bump / approval-time reprice) into
-    // the row before placement, so crash-recovery books any fill at the size actually sent and
-    // Recent/Activity show the executed order rather than the stale original ask.
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal })) {
-      const current = getProposal(proposalId, userId)?.status ?? "removed";
-      return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-    }
-    let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
-    try {
-      execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
-    } catch (placeError) {
-      const message = placeError instanceof Error ? placeError.message : String(placeError);
-      updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId, policy.connectedAccountId);
-      await sendNotification(
-        { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
-        { policy, userId }
-      );
-      return { status: "error", reasons: [`Order placement failed/uncertain: ${message}`] };
-    }
-
-    // See the matching comment in the autonomous run-loop placement path above: a non-throwing
-    // broker response can still be a synchronous rejection/cancellation, and that must not be
-    // recorded as "placed".
-    if (isRejectedOrCanceledState(execution.state)) {
-      const message = `Broker declined the order (state: ${execution.state}).`;
-      updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, policy.connectedAccountId);
-      await sendNotification(
-        { type: "run_failed", title: `${proposal.symbol} order declined by broker (${execution.state})`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state } },
-        { policy, userId }
-      );
-      return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
-    }
-
-    updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
-    const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
-    const fill = recordFillFromProposal({
-      userId,
-      accountNumber: row.accountNumber,
-      proposalId,
-      runId: row.runId,
-      source: executionSource,
-      executionMode,
-      proposal,
-      review,
-      execution,
-      marketScan: approvalScan,
-      status: fillStatus
-    });
-    audit("proposal_approved", {
-      proposalId,
-      symbol: proposal.symbol,
-      side: proposal.side,
-      action: "approval",
-      result: "placed",
-      orderId: execution.orderId,
-      brokerState: execution.state,
-      fillStatus
-    }, userId, policy.connectedAccountId);
-    await sendNotification(
-      {
-        type: "fill",
-        title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
-        payload: { proposalId, fill }
-      },
-      { policy, userId }
-    );
-    // Push so other open dashboards refresh immediately (the approving client refreshes via its
-    // own response).
-    emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
-    return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
-  } finally {
-    releaseStrategyLock(userId, policy.connectedAccountId);
-  }
 }
 
 export function rejectProposal(proposalId: string, userId: string = "local"): void {
@@ -4576,6 +3303,29 @@ async function proposeTrades(input: {
     ]
   };
 
+  // Per-position stop-loss TYPE (distinct from bracketStopLoss, a per-trade stop PRICE). Only
+  // meaningful on an OPENING (buy/short) proposal — set for a sell/cover, it is dropped by
+  // sanitizeProposals. Persisted for the position's life once the opening order fills, so this
+  // choice (including "none") governs every stop-enforcement layer until the position closes, not
+  // just the entry order.
+  const stopPlanSchema = {
+    anyOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["style", "rationale"],
+        properties: {
+          style: {
+            enum: ["default", "fixed", "atr", "trailing", "none"],
+            description: "'default' = RESET this position to the account's own stop precedence, clearing any existing fixed/atr/trailing/none override on file for it — a deliberate choice, not a no-op. If you have no reason to change this position's existing stop handling (including on a scale-in add to a position with a prior override), leave the whole stopPlan field null/omitted instead of setting 'default' — that inherits whatever is already on file unchanged. 'fixed' = pin this position to the account's flat base stop %, skipping ATR/beta adjustment. 'atr' = pin to the name's own realized-volatility stop distance (falls back to the flat % if bars are unavailable). 'trailing' = protect this position with a high-water-mark trail instead of a fixed stop. 'none' = carry NO stop-loss on this position — a real, risk-increasing choice; use only with a strong justification in `rationale`."
+          },
+          rationale: { type: ["string", "null"], description: "Why this style (required, in plain language, when style is 'none' — optional otherwise)." }
+        }
+      },
+      { type: "null" }
+    ]
+  };
+
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -4602,7 +3352,8 @@ async function proposeTrades(input: {
             "confidenceScore",
             "autonomyOverride",
             "bracketStopLoss",
-            "bracketTakeProfit"
+            "bracketTakeProfit",
+            "stopPlan"
           ],
           properties: {
             symbol: { type: "string" },
@@ -4621,7 +3372,8 @@ async function proposeTrades(input: {
             confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" },
             autonomyOverride: autonomyOverrideSchema,
             bracketStopLoss: { type: ["number", "null"], description: "Per-trade protective stop PRICE (absolute price, not a percent) for this position. For a buy set it BELOW the entry, for a short ABOVE it. Derive it from the setup's own structure — a support/resistance level, a multiple of ATR, or the price that invalidates the thesis — sized to conviction, not a fixed one-size percentage. Leave null to fall back to the account's default per-symbol stop." },
-            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null to use the account default." }
+            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null to use the account default." },
+            stopPlan: stopPlanSchema
           }
         }
       }
@@ -4947,7 +3699,7 @@ async function proposeTrades(input: {
   };
 }
 
-function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
+export function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
   if (!scan) return {};
   return Object.fromEntries(
     Object.values(scan.quotesBySymbol)
@@ -4961,7 +3713,7 @@ function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
  * marketable limit, with the composite price as the fallback anchor. A synthesized (price-derived)
  * spread side never anchors — same guard the entry marketable-limit applies, judged per side.
  */
-function protectiveExitQuoteFromScan(quote: MarketQuoteSummary | undefined): ProtectiveExitQuote | undefined {
+export function protectiveExitQuoteFromScan(quote: MarketQuoteSummary | undefined): ProtectiveExitQuote | undefined {
   if (!quote) return undefined;
   return {
     price: quote.price > 0 ? quote.price : undefined,
@@ -4970,7 +3722,7 @@ function protectiveExitQuoteFromScan(quote: MarketQuoteSummary | undefined): Pro
   };
 }
 
-function uniqueSymbols(symbols: string[]): string[] {
+export function uniqueSymbols(symbols: string[]): string[] {
   return Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
 }
 
@@ -5098,26 +3850,6 @@ function clampConfidence(score: number | undefined): number | undefined {
 }
 
 /**
- * A protective / stop-loss exit (a Risk-Exit sell or cover) must actually GET OUT, so it executes as a
- * MARKET order rather than a resting limit. A non-marketable limit can miss the fill entirely in
- * exactly the falling tape a stop is meant for — the MU incident: a Risk-Exit limit @ $991 never
- * filled as MU slid to -8%, and the stale unfilled order then blocked every re-exit for a day. Other
- * exits (profit-taking trims, rebalances) keep whatever order type the model chose.
- */
-export function coerceProtectiveExitToMarket(proposal: TradeProposal): TradeProposal {
-  const isProtectiveExit = (proposal.side === "sell" || proposal.side === "cover") && proposal.tradeThesisTag === "Risk-Exit";
-  if (!isProtectiveExit) return proposal;
-  if (proposal.type !== "limit" && proposal.type !== "stop_limit") return proposal;
-  return {
-    ...proposal,
-    type: "market",
-    limitPrice: undefined,
-    stopPrice: undefined,
-    rationale: (proposal.rationale ?? "") + "\n\n[Risk] Protective Risk-Exit routed as a MARKET order so it actually fills — a resting limit can miss the exit in a fast/falling tape, and a stale unfilled exit then blocks every retry."
-  };
-}
-
-/**
  * Record the outcome of a strategy Green/Bear LLM call for observability. Fires for EVERY call (fast
  * or late): an `llm_call_latency` audit captures the real duration so the timeout can be tuned from
  * data instead of a guess. When the call was slow (the tick already moved on) or errored, it ALSO
@@ -5162,7 +3894,13 @@ function recordLlmOutcome(
   })();
 }
 
-function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
+// filterStopPlansByLiveBasis lives in db-api-keys.ts (alongside getStopPlans/PositionStopPlan) so
+// synthetic-stops.ts can import it too without depending on this module — re-exported here (as the
+// same binding imported above) so existing consumers (tests included) keep importing it from
+// "./strategy" unchanged.
+export { filterStopPlansByLiveBasis };
+
+export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
     .filter((proposal) => proposal.symbol && proposal.side && proposal.type)
     .slice(0, max)
@@ -5196,136 +3934,38 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
                 ? { cashDeploymentPct: Math.max(0, Math.min(100, proposal.autonomyOverride.cashDeploymentPct)) }
                 : {})
             }
-          : undefined
+          : undefined,
+      // Per-position stop TYPE the LLM may choose (schema-exposed) — only meaningful on an OPENING
+      // side; a sell/cover proposal has nothing to set a forward-looking stop plan for. An
+      // unrecognized style is dropped entirely (equivalent to "no plan set" — falls through to
+      // whatever's persisted for this symbol, unchanged from before this field existed). Unlike an
+      // unrecognized style, an explicit "default" IS preserved (not dropped) rather than collapsed to
+      // `undefined` — collapsing it would be indistinguishable from "the LLM never touched this
+      // field," which falls through to a STALE persisted override instead of the owner/LLM's actual,
+      // deliberate choice to reset a scale-in back to the account's own precedence (Codex review, PR
+      // #1371). Downstream, both `enrichOpeningProposal`'s and `recordFillFromProposal`'s precedence
+      // treat this same non-nullish "default" string exactly like the fallback default already did.
+      stopPlan: ((): TradeProposal["stopPlan"] => {
+        if (!(proposal.side === "buy" || proposal.side === "short")) return undefined;
+        if (!proposal.stopPlan || !STOP_PLAN_STYLES.includes(proposal.stopPlan.style)) return undefined;
+        const rationale =
+          typeof proposal.stopPlan.rationale === "string" && proposal.stopPlan.rationale.trim()
+            ? proposal.stopPlan.rationale.slice(0, 2000)
+            : undefined;
+        // "none" is a real, risk-increasing choice — the schema asks for a rationale, but the LLM
+        // isn't guaranteed to supply one. Without it, "none" is indistinguishable from an oversight,
+        // so it must never persist unexplained. Treat it as ABSENT (undefined), not as an explicit
+        // "default" — "default" has RESET semantics downstream (enrichOpeningProposal ignores any
+        // persisted plan for the symbol, and the fill path CLEARS the row), so manufacturing one from
+        // a malformed "none" could silently wipe out an existing fixed/ATR/trailing/none override the
+        // owner deliberately set earlier. Absent falls through to whatever's on file, unchanged —
+        // the same as any other unrecognized/missing plan (Codex review, PR #1371).
+        if (proposal.stopPlan.style === "none" && !rationale) return undefined;
+        return { style: proposal.stopPlan.style, ...(rationale ? { rationale } : {}) };
+      })()
     }))
     // Protective Risk-Exits execute as market orders so they cannot rest unfilled (see helper above).
     .map(coerceProtectiveExitToMarket);
-}
-
-export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local", connectedAccountId?: string): Promise<void> {
-  const pending = listPendingBrokerReconciliationFills(accountNumber, userId);
-  if (pending.length === 0) return;
-
-  try {
-    const brokerOrders = await gateway.getEquityOrders(accountNumber);
-    for (const fill of pending) {
-      const matched = brokerOrders.find((bo) => bo.id === fill.brokerOrderId);
-      if (!matched) continue;
-
-      const execQty = matched.filledQuantity ?? 0;
-      const execPrice = matched.averagePrice ?? fill.price;
-      // Book the executed portion of an order. Idempotent: reconcile UPDATES the
-      // existing fill record (by fill.id), so a later poll overwriting with a larger
-      // executed quantity never double counts; the realtime trade_updates stream funnels
-      // into the same record too.
-      const bookExecuted = (auditStatus: string) => {
-        updateFillEvent(fill.id, {
-          status: "filled",
-          price: execPrice,
-          quantity: execQty,
-          notional: execPrice * execQty,
-          filledAt: matched.updatedAt ?? new Date().toISOString(),
-          raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
-        }, userId);
-        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId, connectedAccountId);
-      };
-
-      if (matched.state === "filled") {
-        const price = matched.averagePrice ?? fill.price;
-        const qty = matched.filledQuantity ?? fill.quantity;
-        updateFillEvent(fill.id, {
-          status: "filled",
-          price,
-          quantity: qty,
-          notional: price * qty,
-          filledAt: matched.updatedAt ?? new Date().toISOString(),
-          raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
-        }, userId);
-        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId, connectedAccountId);
-      } else if (matched.state === "partially_filled") {
-        // A live order that has executed some-but-not-all shares: book the executed
-        // portion now so it enters P&L/exposure instead of being silently dropped.
-        if (execQty > 0) bookExecuted("partially_filled");
-      } else if (isRejectedOrCanceledState(matched.state)) {
-        if (execQty > 0) {
-          // Order terminated AFTER a partial execution — book the executed shares
-          // rather than marking the whole fill cancelled and losing them.
-          bookExecuted(`${matched.state}_partial`);
-        } else {
-          updateFillEvent(fill.id, {
-            status: matched.state,
-            raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
-          }, userId);
-          audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: matched.state }, userId, connectedAccountId);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("[reconciliation] failed to reconcile pending fills:", error);
-  }
-}
-
-/**
- * Crash-recovery sweep (companion to the atomic placement path). A "placing" row is an order
- * intent persisted just before the broker call; it flips to "placed"/"placing_failed"
- * synchronously, so one older than the cutoff means a prior run died mid-placement. We can't yet
- * auto-match it to a broker order (that needs client_order_id plumbing into EquityOrder — a
- * follow-up), so we surface it loudly in the audit trail and mark it "placing_stale" so it isn't
- * re-flagged every run. An operator (or the future broker-truth sweep) then reconciles it.
- */
-async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: string, userId: string, connectedAccountId?: string): Promise<void> {
-  const STALE_PLACING_MS = 2 * 60_000;
-  const cutoff = new Date(Date.now() - STALE_PLACING_MS).toISOString();
-  let stale: ReturnType<typeof listStalePlacingProposals>;
-  try {
-    stale = listStalePlacingProposals(accountNumber, cutoff, userId);
-  } catch (e) {
-    console.error("[placing-sweep] failed to list stale placing intents:", e);
-    return;
-  }
-  if (stale.length === 0) return;
-
-  // Broker-truth-first reconcile: a stale "placing" intent means a prior run died between the
-  // broker call and the post-write. Ask the broker for the order carrying our idempotency key
-  // (refId → clientOrderId). If it exists, the order DID reach the broker — recover it into P&L/
-  // accounting at the broker's real fill price. If no order carries our key, it never executed and
-  // is safe to abandon. If the broker is unreachable, leave the row 'placing' for a later retry.
-  let brokerOrders: EquityOrder[];
-  try {
-    brokerOrders = await gateway.getEquityOrders(accountNumber);
-  } catch (e) {
-    console.error("[placing-sweep] broker unreachable for recovery; will retry next run:", e);
-    for (const row of stale) {
-      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, note: "Stale placing intent; broker unreachable for recovery — will retry." }, userId, connectedAccountId);
-    }
-    return;
-  }
-
-  for (const row of stale) {
-    const p = row.proposal as TradeProposal | undefined;
-    const matched = row.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === row.refId) : undefined;
-    if (matched) {
-      updateProposalStatus(row.id, "placed", matched.id, undefined, undefined, userId);
-      if (p) {
-        const recoveredExecutionMode = row.executionMode ?? "broker/live";
-        const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
-        recordFillFromProposal({
-          userId,
-          accountNumber,
-          proposalId: row.id,
-          source: recoveredSource,
-          executionMode: recoveredExecutionMode,
-          proposal: p,
-          execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
-          status: matched.state === "filled" ? "filled" : "pending_reconciliation"
-        });
-      }
-      audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId, connectedAccountId);
-    } else {
-      updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId, undefined, "Order never confirmed — broker record not found during reconciliation.");
-      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId, connectedAccountId);
-    }
-  }
 }
 
 /**
@@ -5337,7 +3977,21 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
  * and for brokers without native brackets (the synthetic scheduler-tick monitor remains the fallback
  * there). Pre-existing bracket fields on the proposal are never overwritten.
  */
-export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPolicy, marketScan: MarketScan, atrStopPctBySymbol: Record<string, number> = {}): TradeProposal {
+export function enrichOpeningProposal(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  marketScan: MarketScan,
+  atrStopPctBySymbol: Record<string, number> = {},
+  // Persisted per-position stop plans (position_stop_plans), keyed by symbol — the EXISTING plan on
+  // record for a scale-in add to an already-open position. The proposal's OWN `stopPlan` (freshly
+  // chosen by the LLM this run, if any) always takes precedence over a stale persisted one — a new
+  // opening decision reconsidering the position's protection wins over whatever was on file.
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {},
+  // The SAME persisted plans' original rationale, keyed alongside stopPlanBySymbol — carried onto an
+  // inherited plan stamp below so a "none" plan's required explanation survives a scale-in instead of
+  // being erased (Codex review, PR #1371).
+  stopPlanRationaleBySymbol: Record<string, string | undefined> = {}
+): TradeProposal {
   if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
   const sym = normalizeSymbol(proposal.symbol);
   const marketPrice = marketScan.quotesBySymbol[sym]?.price;
@@ -5346,6 +4000,26 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
   const entryPrice = proposal.limitPrice ?? proposal.stopPrice ?? refPrice;
   const round2 = (n: number) => Math.round(n * 100) / 100;
   let next: TradeProposal = { ...proposal, referencePrice: refPrice };
+  const plan: StopPlanStyle = proposal.stopPlan?.style ?? stopPlanBySymbol[sym] ?? "default";
+  // A scale-in proposal that omits its OWN stopPlan but inherits a persisted one (stopPlanBySymbol)
+  // still has that plan applied below (stripping/repricing brackets) — stamp it onto the returned
+  // proposal too, or the approval card's disclosure (which reads p.stopPlan directly) never shows
+  // the owner an inherited "none"/"trailing"/fixed/atr choice actually governed this order (Codex
+  // review, PR #1371). A fresh, explicit stopPlan from THIS proposal is never overwritten.
+  if (!next.stopPlan && plan !== "default") {
+    const inheritedRationale = stopPlanRationaleBySymbol[sym];
+    next = { ...next, stopPlan: { style: plan, ...(inheritedRationale ? { rationale: inheritedRationale } : {}) } };
+  }
+  // A "trailing"/"none" plan means NO bracket at all, regardless of whole-share eligibility below —
+  // strip any LLM-supplied bracket legs UNCONDITIONALLY, right here. Stripping them only INSIDE the
+  // whole-share branch left them on a sub-share dollar order (`canUseWholeShareBracket === false`):
+  // the Alpaca gateway's `isBracket = !!(bracketTakeProfit || bracketStopLoss)` check would still see
+  // it as a bracket dollar order and REJECT it for being below one whole share, even though the plan
+  // never wanted a bracket to begin with (Codex review, PR #1371).
+  if (plan === "trailing" || plan === "none") {
+    if (next.bracketStopLoss != null) next = { ...next, bracketStopLoss: undefined };
+    if (next.bracketTakeProfit != null) next = { ...next, bracketTakeProfit: undefined };
+  }
 
   const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
   const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
@@ -5356,34 +4030,65 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
       ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
       : (policy.riskRules?.stopLossPct ?? 0);
     // Per-symbol FALLBACK stop distance (used only when the LLM did not propose a valid per-trade
-    // stop): ATR-scaled when available, else beta-scaled, else the flat policy stop — mirroring
-    // generateProactiveRiskProposals' effectiveStopPct precedence (ATR > beta > flat) so a name gets
-    // the SAME intelligent stop on the opening bracket as on its proactive exit, never a flat 8% here
-    // and an ATR stop there.
+    // stop): an explicit plan PINS to that one rule (fixed/atr — using the fallback % when the
+    // account has none configured, same as generateProactiveRiskProposals; "trailing"/"none" skip
+    // the stop leg entirely, below); absent a plan, ATR-scaled when available, else beta-scaled,
+    // else the flat policy stop — mirroring generateProactiveRiskProposals' effectiveStopPct
+    // precedence (ATR > beta > flat) so a name gets the SAME intelligent stop on the opening
+    // bracket as on its proactive exit, never a flat 8% here and an ATR stop there.
     const beta = marketScan.quotesBySymbol[sym]?.beta;
-    const atrPct = policy.atrStops === true ? atrStopPctBySymbol[sym] : undefined;
-    const stopPct = (typeof atrPct === "number" && atrPct > 0)
-      ? atrPct
-      : betaScaledStopPct(flatStopPct, beta, policy.betaScaledStops === true);
+    const stopPct = plan === "fixed"
+      ? (flatStopPct > 0 ? flatStopPct : STOP_PLAN_FALLBACK_STOP_PCT)
+      : plan === "atr"
+        ? (typeof atrStopPctBySymbol[sym] === "number" && atrStopPctBySymbol[sym] > 0
+          ? atrStopPctBySymbol[sym]
+          : (flatStopPct > 0 ? flatStopPct : STOP_PLAN_FALLBACK_STOP_PCT))
+        : plan === "trailing" || plan === "none"
+          ? 0
+          // No explicit plan: ATR only SCALES an already-enabled flat stop (mirrors the held-position
+          // precompute's own gate, `atrStops === true && stopLossPct > 0`, a few hundred lines above)
+          // — atrStops alone, with no flat % configured, means "no base stop to scale," not "attach
+          // an 8% stop the account never asked for" (Codex review, PR #1371).
+          : (typeof (policy.atrStops === true && flatStopPct > 0 ? atrStopPctBySymbol[sym] : undefined) === "number" && (atrStopPctBySymbol[sym] ?? 0) > 0
+            ? atrStopPctBySymbol[sym]
+            : betaScaledStopPct(flatStopPct, beta, policy.betaScaledStops === true));
     const takePct = policy.riskRules?.takeProfitPct ?? 0;
     // Honor a VALID LLM-proposed per-trade stop/take (must sit on the correct side of entry — below
     // for a long, above for a short); a nonsensical one is discarded so the per-symbol fallback fills
-    // it in (a stop on the wrong side is worse than the default).
-    const llmStop = next.bracketStopLoss;
-    const llmStopValid = typeof llmStop === "number" && Number.isFinite(llmStop) && llmStop > 0 &&
-      (proposal.side === "buy" ? llmStop < entryPrice : llmStop > entryPrice);
-    if (next.bracketStopLoss != null && !llmStopValid) next = { ...next, bracketStopLoss: undefined };
-    const llmTake = next.bracketTakeProfit;
-    const llmTakeValid = typeof llmTake === "number" && Number.isFinite(llmTake) && llmTake > 0 &&
-      (proposal.side === "buy" ? llmTake > entryPrice : llmTake < entryPrice);
-    if (next.bracketTakeProfit != null && !llmTakeValid) next = { ...next, bracketTakeProfit: undefined };
+    // it in (a stop on the wrong side is worse than the default). A "trailing"/"none" plan's bracket
+    // legs were already stripped unconditionally above (this position's protection is a trail, or
+    // nothing, run entirely by the synthetic/broker-held trailing lane — never a fixed bracket stop
+    // leg, and a resting take-profit-only leg left in place would itself count as a live exit order
+    // under the coverage-aware placement checks in broker-protective-stops.ts/synthetic-stops.ts,
+    // making those think the position is already fully covered and skip registering the real
+    // trailing stop). The laddered take-profit-trim system (planTakeProfitTrims, above) still manages
+    // taking profits over time independently of this entry-time bracket leg.
+    if (plan === "fixed" || plan === "atr") {
+      // An explicit "fixed"/"atr" plan pins an EXACT stop distance (stopPct, computed above) — every
+      // other enforcement layer for this symbol (generateProactiveRiskProposals, the synthetic
+      // monitor, broker-protective-stops.ts) prices off that SAME distance. Honoring a "valid"
+      // LLM-proposed stop here instead would let this one bracket leg silently diverge from the
+      // pinned plan (Codex review, PR #1371) — always reprice from the plan, never keep the LLM's.
+      next = { ...next, bracketStopLoss: undefined };
+    } else {
+      const llmStop = next.bracketStopLoss;
+      const llmStopValid = typeof llmStop === "number" && Number.isFinite(llmStop) && llmStop > 0 &&
+        (proposal.side === "buy" ? llmStop < entryPrice : llmStop > entryPrice);
+      if (next.bracketStopLoss != null && !llmStopValid) next = { ...next, bracketStopLoss: undefined };
+    }
+    if (plan !== "trailing" && plan !== "none") {
+      const llmTake = next.bracketTakeProfit;
+      const llmTakeValid = typeof llmTake === "number" && Number.isFinite(llmTake) && llmTake > 0 &&
+        (proposal.side === "buy" ? llmTake > entryPrice : llmTake < entryPrice);
+      if (next.bracketTakeProfit != null && !llmTakeValid) next = { ...next, bracketTakeProfit: undefined };
+    }
     // Long: stop below / take above entry. Short: stop above / take below (price up = loss).
     if (proposal.side === "buy") {
       if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 - stopPct / 100)) };
-      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 + takePct / 100)) };
+      if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 + takePct / 100)) };
     } else {
       if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 + stopPct / 100)) };
-      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 - takePct / 100)) };
+      if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 - takePct / 100)) };
     }
   } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
     next = {
@@ -5456,7 +4161,14 @@ export function generateProactiveRiskProposals(
   extHoursBufferBps?: number,
   // Real bid/ask anchors per symbol for the extended-hours marketable-limit (see the caller's
   // protectiveExitQuoteFromScan filter). Missing entries fall back to currentPrice as the anchor.
-  exitQuotesBySymbol: Record<string, ProtectiveExitQuote> = {}
+  exitQuotesBySymbol: Record<string, ProtectiveExitQuote> = {},
+  // The LLM's per-position stop-loss TYPE choice, persisted at fill time (position_stop_plans) and
+  // keyed by symbol. A "fixed"/"atr" plan PINS this position to that one distance rule regardless of
+  // the account's own atrStops/betaScaledStops toggles; "trailing" hands this position's protection
+  // to the trailing-stop lane instead (skipped here — see runSyntheticStopMonitor); "none" is a
+  // genuine, owner-accepted no-stop choice. Absent/"default" → the account's own precedence,
+  // unchanged from before this parameter existed.
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
@@ -5465,13 +4177,27 @@ export function generateProactiveRiskProposals(
   const atrStops = policy.atrStops === true;
 
   // Take-profit trims are handled by planTakeProfitTrims (a stateful, laddered band ratchet); this
-  // generator emits only stateless FULL-position stop-loss / short-stop exits.
-  if (stopLossPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
+  // generator emits only stateless FULL-position stop-loss / short-stop exits. An account with BOTH
+  // base %'s off still needs to run the loop when any position carries an explicit fixed/atr plan —
+  // only skip entirely when nothing anywhere could possibly want a stop.
+  const anyExplicitDistancePlan = Object.values(stopPlanBySymbol).some((s) => s === "fixed" || s === "atr");
+  if (stopLossPct <= 0 && shortStopLossPct <= 0 && !anyExplicitDistancePlan) return proactiveProposals;
 
-  // Resolve the effective stop DISTANCE for a base stop %: ATR-based when enabled and available
-  // (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes precedence
-  // over beta-scaling when both are on — it's the more direct, per-name volatility measure.
+  // Resolve the effective stop DISTANCE for a base stop %: an explicit per-position plan wins
+  // outright (fixed/atr pin to that one rule, using the fallback % when the account has none
+  // configured; trailing/none return 0 — this function's fixed/ATR exit does not apply to them).
+  // Absent a plan (or "default"), the existing precedence applies: ATR-based when enabled and
+  // available (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes
+  // precedence over beta-scaling when both are on — it's the more direct, per-name volatility measure.
   const effectiveStopPct = (sym: string, baseStopPct: number, beta: number | undefined): number => {
+    const plan = stopPlanBySymbol[sym];
+    if (plan === "none" || plan === "trailing") return 0;
+    if (plan === "fixed") return baseStopPct > 0 ? baseStopPct : STOP_PLAN_FALLBACK_STOP_PCT;
+    if (plan === "atr") {
+      const atrPct = atrStopPctBySymbol[sym];
+      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) return atrPct;
+      return baseStopPct > 0 ? baseStopPct : STOP_PLAN_FALLBACK_STOP_PCT;
+    }
     if (baseStopPct <= 0) return baseStopPct;
     if (atrStops) {
       const atrPct = atrStopPctBySymbol[sym];

@@ -174,11 +174,14 @@ export async function POST(req: Request) {
     // This avoids the "No account selected" rejection in strategy.ts when the policy copies a
     // missing accountNumber from the connected-account row.
     if (broker === "tradier" && !accountNumber) {
+      let ambiguousError: Error | undefined;
       try {
         const { getTradierGateway } = await import("@/lib/tradier");
         const gw = getTradierGateway(userId, connectedAccountId);
         const brokerAccounts = await gw.getAccounts();
-        if (brokerAccounts.length > 0 && brokerAccounts[0].accountNumber) {
+        if (brokerAccounts.length > 1) {
+          ambiguousError = new Error("Multiple Tradier accounts found in profile. You must explicitly provide the Account Number to connect.");
+        } else if (brokerAccounts.length === 1 && brokerAccounts[0].accountNumber) {
           accountNumber = brokerAccounts[0].accountNumber;
           upsertConnectedAccount({
             id: connectedAccountId,
@@ -201,6 +204,7 @@ export async function POST(req: Request) {
         // Best-effort — the profile probe may fail (e.g. network blip) and the
         // account number stays undefined; the user can provide it on re-connect.
       }
+      if (ambiguousError) throw ambiguousError;
     }
 
     return NextResponse.json({ ok: true, accountNumber, label: connectedAccountLabel });

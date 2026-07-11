@@ -35,6 +35,9 @@ describe("Connection Health & Failure Routing", () => {
     delete process.env.PRIMARY_USER_EMAIL;
     delete process.env.RESEND_API_KEY;
     delete process.env.NOTIFY_EMAIL_FROM;
+    delete process.env.DB_BOOTSTRAP;
+    delete process.env.LITESTREAM_SOCKET_PATH;
+    delete process.env.LITESTREAM_STATE_PATH;
   });
 
   it("routes a global connection failure to admin email fallback & Sentry", async () => {
@@ -164,5 +167,25 @@ describe("Connection Health & Failure Routing", () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.checks.dependencies.apify.ok).toBe(false);
+  });
+
+  it("/api/health reports the live recovery path degraded when Litestream cannot be observed", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    process.env.DB_BOOTSTRAP = "live";
+    process.env.LITESTREAM_SOCKET_PATH = join(tmpdir(), `missing-litestream-${randomUUID()}.sock`);
+    process.env.LITESTREAM_STATE_PATH = join(tmpdir(), `missing-litestream-${randomUUID()}`);
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body.checks.storage).toMatchObject({
+      litestreamState: "unknown",
+      litestreamSource: "none",
+      litestreamDegradedReasons: ["unavailable"]
+    });
+    expect(body.checks.storageDegraded).toBe(true);
   });
 });

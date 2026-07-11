@@ -100,6 +100,10 @@ export const DEFAULT_POLICY: TradingPolicy = {
   volPanicSkewThreshold: 160,
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   robinhoodBrokerStops: false, // opt-in: true broker-held resting stop on live Robinhood (verify RH MCP stop semantics first)
+  // Broker-held trailing stops (inert until riskRules.trailingStopPct > 0): native Alpaca
+  // trailing_stop orders; on live Robinhood a tick-ratcheted stop-market, additionally gated on the
+  // robinhoodBrokerStops opt-in above. The synthetic monitor stays the always-on fallback.
+  brokerTrailingStops: true,
   // Per-symbol stop intelligence ON by default (owner decision 2026-07-07 — no more one-size-fits-all
   // stops). ATR stops scale the protective stop DISTANCE to each name's realized volatility
   // (atrStopMultiple × ATR as a % of entry); beta-scaling widens the stop for high-beta names and
