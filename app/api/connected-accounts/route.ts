@@ -137,20 +137,22 @@ export async function POST(req: Request) {
             ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
             : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
     const existingTestAccount = broker === "test" ? listConnectedAccounts(userId).find((a) => a.broker === "test") : undefined;
-    const accountNumber =
+    let accountNumber =
       broker === "test"
         ? TEST_ACCOUNT_NUMBER
         : typeof body.accountNumber === "string"
           ? body.accountNumber.trim() || undefined
           : undefined;
 
+    const connectedAccountId = existingTestAccount?.id ?? body.id ?? crypto.randomUUID();
+    const connectedAccountLabel = typeof body.label === "string" ? body.label.trim() || existingTestAccount?.label || defaultLabel : existingTestAccount?.label || defaultLabel;
     upsertConnectedAccount({
-      id: existingTestAccount?.id ?? body.id ?? crypto.randomUUID(),
+      id: connectedAccountId,
       userId,
       broker,
       environment,
       accountNumber,
-      label: typeof body.label === "string" ? body.label.trim() || existingTestAccount?.label || defaultLabel : existingTestAccount?.label || defaultLabel,
+      label: connectedAccountLabel,
       apiKey: apiKey || undefined,
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
       baseUrl: typeof body.baseUrl === "string" && body.baseUrl.trim()
@@ -168,7 +170,39 @@ export async function POST(req: Request) {
       isActive: body.isActive ?? existingTestAccount?.isActive ?? false
     });
 
-    return NextResponse.json({ ok: true, accountNumber, label: typeof body.label === "string" ? body.label.trim() || defaultLabel : defaultLabel });
+    // Tradier: resolve the account number from the token's profile if not provided by the user.
+    // This avoids the "No account selected" rejection in strategy.ts when the policy copies a
+    // missing accountNumber from the connected-account row.
+    if (broker === "tradier" && !accountNumber) {
+      try {
+        const { getTradierGateway } = await import("@/lib/tradier");
+        const gw = getTradierGateway(userId, connectedAccountId);
+        const brokerAccounts = await gw.getAccounts();
+        if (brokerAccounts.length > 0 && brokerAccounts[0].accountNumber) {
+          accountNumber = brokerAccounts[0].accountNumber;
+          upsertConnectedAccount({
+            id: connectedAccountId,
+            userId,
+            broker,
+            environment,
+            accountNumber,
+            label: connectedAccountLabel,
+            apiKey: apiKey || undefined,
+            baseUrl: broker === "tradier"
+              ? environment === "paper"
+                ? "https://sandbox.tradier.com/v1"
+                : "https://api.tradier.com/v1"
+              : undefined,
+            isActive: body.isActive ?? existingTestAccount?.isActive ?? false
+          });
+        }
+      } catch {
+        // Best-effort — the profile probe may fail (e.g. network blip) and the
+        // account number stays undefined; the user can provide it on re-connect.
+      }
+    }
+
+    return NextResponse.json({ ok: true, accountNumber, label: connectedAccountLabel });
   } catch (err) {
     return new NextResponse(err instanceof Error ? err.message : "Error", { status: 400 });
   }

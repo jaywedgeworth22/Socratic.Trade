@@ -159,8 +159,8 @@ describe("Tradier adapter — read-back mapping", () => {
       {
         match: (u) => u.includes(`/accounts/${ACCT}/orders`),
         body: { orders: { order: [
-          { id: 1, symbol: "AAPL", side: "sell_short", type: "stop", status: "open", quantity: 5, duration: "gtc", create_date: "2026-07-10", stop_price: 90, tag: "abc" },
-          { id: 2, symbol: "MSFT", side: "buy_to_cover", type: "limit", status: "pending", quantity: 5, duration: "day", create_date: "2026-07-10", price: 300 }
+          { id: 1, symbol: "AAPL", side: "sell_short", type: "stop", status: "open", quantity: 5, duration: "gtc", create_date: "2026-07-10", stop_price: 90, tag: "abc", class: "equity" },
+          { id: 2, symbol: "MSFT", side: "buy_to_cover", type: "limit", status: "pending", quantity: 5, duration: "day", create_date: "2026-07-10", price: 300, class: "equity" }
         ] } }
       }
     ]);
@@ -343,7 +343,7 @@ describe("Tradier adapter — envelope normalization", () => {
     await seedTradier();
     // Single object
     installFetchMock([
-      { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 1, symbol: "AAPL", side: "buy", type: "market", status: "filled", create_date: "2026-07-10" } } } }
+      { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 1, symbol: "AAPL", side: "buy", type: "market", status: "filled", create_date: "2026-07-10", class: "equity" } } } }
     ]);
     const mod1 = await import("../src/lib/tradier");
     const one = await mod1.getTradierGateway("local").getEquityOrders(ACCT);
@@ -448,7 +448,7 @@ describe("Tradier adapter — share-class symbol canonicalization (finding #1/#4
     await seedTradier();
     installFetchMock([
       { match: (u) => u.includes("/positions"), body: { positions: { position: { symbol: "BRK.B", quantity: 4, cost_basis: 1600 } } } },
-      { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 7, symbol: "BRK.B", side: "sell", type: "stop", status: "open", quantity: 4, create_date: "2026-07-10", stop_price: 380, tag: "abc" } } } },
+      { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 7, symbol: "BRK.B", side: "sell", type: "stop", status: "open", quantity: 4, create_date: "2026-07-10", stop_price: 380, tag: "abc", class: "equity" } } } },
       { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: { symbol: "BRK.B", last: 400 } } } }
     ]);
     const { getTradierGateway } = await import("../src/lib/tradier");
@@ -607,7 +607,7 @@ describe("Tradier tag round-trips a synthetic-stop refId for the client-order-id
       { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: { symbol: "BRK.B", last: 400 } } } },
       { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 200, status: "ok" } } },
       // The broker echoes back whatever tag it stored — model Tradier's charset by sanitizing here.
-      { match: (u, m) => m === "GET" && u.includes("/orders"), body: { orders: { order: { id: 200, symbol: "BRK.B", side: "sell", type: "stop", status: "open", quantity: 1, create_date: "2026-07-10", stop_price: 400, tag: rawRefId.replace(/[^a-zA-Z0-9-]/g, "-") } } } }
+      { match: (u, m) => m === "GET" && u.includes("/orders"), body: { orders: { order: { id: 200, symbol: "BRK.B", side: "sell", type: "stop", status: "open", quantity: 1, create_date: "2026-07-10", stop_price: 400, tag: rawRefId.replace(/[^a-zA-Z0-9-]/g, "-"), class: "equity" } } } }
     ]);
     const { getTradierGateway } = await import("../src/lib/tradier");
 

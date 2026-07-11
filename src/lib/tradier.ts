@@ -367,19 +367,34 @@ class TradierBrokerGateway implements BrokerGateway {
       }
       const margin = b.margin as Record<string, unknown> | undefined;
       const cashAcct = b.cash as Record<string, unknown> | undefined;
+      const pdt = b.pdt as Record<string, unknown> | undefined;
       const totalCash = number(b.total_cash);
       const totalMarketValue = optionalNumber(b.total_equity) ?? number(b.market_value) + totalCash;
+      // For margin accounts, check PDT buying power too — Tradier returns a separate
+      // pdt.stock_buying_power for pattern-day-trader accounts that may differ from the
+      // standard margin.stock_buying_power.
       const buyingPower = margin
-        ? number(margin.stock_buying_power)
+        ? number(pdt?.stock_buying_power ?? margin.stock_buying_power)
         : cashAcct
           ? number(cashAcct.cash_available)
           : totalCash;
+      // Use stock-specific fields for equityMarketValue to avoid double-counting option
+      // value: Tradier's balance.market_value includes option value, and storing it as
+      // equityMarketValue while also storing optionMarketValue makes accountEquity() add
+      // option value twice for mixed stock/options accounts.
+      const optionMarketValue = number(b.long_option_value ?? b.option_long_value ?? 0);
+      const rawStockLong = optionalNumber(b.stock_long_value);
+      const rawStockShort = optionalNumber(b.stock_short_value);
+      const equityMarketValue =
+        rawStockLong != null && rawStockShort != null
+          ? rawStockLong - rawStockShort
+          : number(b.market_value) - optionMarketValue;
       const result: Portfolio = {
         accountNumber,
         totalMarketValue,
         buyingPower,
-        equityMarketValue: number(b.market_value),
-        optionMarketValue: number(b.long_option_value ?? b.option_long_value ?? 0),
+        equityMarketValue,
+        optionMarketValue,
         cash: totalCash
       };
       pushBrokerBalance({
@@ -401,7 +416,8 @@ class TradierBrokerGateway implements BrokerGateway {
       const rows = arr<Record<string, unknown>>(positionsField);
       if (rows.length === 0) return [];
       // Canonicalize to the hyphenated form so a share-class position (BRK-B) matches its own resting
-      // orders/quotes/proposals — Tradier returns dotted (BRK.B), which would otherwise never match.
+      // orders/quotes/proposals AND the quote-map keys getEquityQuotes returns — Tradier speaks dotted
+      // (BRK.B), which would otherwise never match (mispriced or treated as absent).
       const symbols = rows.map((p) => fromTradierSymbol(String(p.symbol)));
       // Tradier position rows carry TOTAL cost_basis and no live market_value — price them via a
       // single batched quote call (fall back to cost basis when a quote is missing).
@@ -410,7 +426,10 @@ class TradierBrokerGateway implements BrokerGateway {
         const symbol = fromTradierSymbol(String(p.symbol));
         const quantity = number(p.quantity);
         const totalCost = number(p.cost_basis);
-        const averageCost = quantity !== 0 ? totalCost / quantity : 0;
+        // Tradier reports negative quantity for short positions; use Math.abs so that
+        // averageCost stays positive — risk paths treat averageCost <= 0 as unusable and
+        // would skip short add/cover checks for Tradier short holdings.
+        const averageCost = quantity !== 0 ? totalCost / Math.abs(quantity) : 0;
         const price = quotes[symbol]?.price;
         const marketValue = price && price > 0 ? quantity * price : quantity * averageCost;
         return {
@@ -438,6 +457,11 @@ class TradierBrokerGateway implements BrokerGateway {
         if (rows.length === 0) break;
         let added = 0;
         for (const o of rows) {
+          // Skip non-equity orders (options, combos, multileg) — mapping them as
+          // EquityOrder coerces option sides/types like buy_to_open or debit into
+          // equity-looking orders on the underlying, polluting dashboard state for
+          // mixed equity+options accounts.
+          if (String(o.class ?? "").toLowerCase() !== "equity") continue;
           const id = String(o.id);
           if (seen.has(id)) continue;
           seen.add(id);
