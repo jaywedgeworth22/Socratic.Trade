@@ -1578,6 +1578,36 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Prod deploy-pipeline blocker: TCP-mem exhaustion via litestream 0.5.14 socket churn
+  (CLAUDE, branch `claude/litestream-tcpmem-pin`, fleet-infra pickup session) — IN PROGRESS
+  2026-07-10.** Diagnosed the 12 consecutive Coolify deploy failures 08:59–11:52Z ("TLS
+  unexpected eof" at git clone): NOT a GitHub/network/MTU issue — the box's kernel hit
+  `tcp_mem` max (182670 pages, ~715MB) because litestream 0.5.14 inside `socratic-trade-prod`
+  churns ~20 sockets/s to the R2 endpoint and holds thousands of dead TCP socks (peak 16,840
+  fds on one PID), so every connection's receive window clamped to ~6KB and GitHub cut clones
+  mid-transfer. Applied on the box (runtime-only, reversible): raised `net.ipv4.tcp_mem` to
+  `273945 365343 548010` (orig `91335 121781 182670`). Triggered sanctioned deploy
+  `jca2c6wsz7ewydl4q2t4whad` → FINISHED 12:29Z, prod = `main@ea89b23e` (was ~15 commits
+  stale), `/api/health` 200. This branch (owner green-lit after a brief stand-down for
+  timeline reconciliation with MONET's separate webhook-whitelist fix — different layer):
+  pin `LITESTREAM_VERSION` back to 0.5.12 in `scripts/coolify-prod-start.sh` +
+  version-aware cached-binary reinstall (BIN_DIR persists across deploys; the old
+  existence-only check would keep the stale 0.5.14 forever). tcp_mem raise persisted as
+  `/etc/sysctl.d/99-socratic-tcpmem.conf` (headroom insurance; delete once the leak class
+  is dead). Upstream issue (scrubbed): https://github.com/benbjohnson/litestream/issues/1354.
+  Rollout: `docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`. Auto-deploy is
+  live — the merge deploys; deployer (CLAUDE) owns box verification: litestream version
+  0.5.12 in-container, replication continuity (HALT + revert if WAL uploads stop — backups
+  outrank the fd leak), fd flatness at 0/10/25 min, /api/health, restore marker untouched.
+- **Capability-trading program: margin/shorting/options/PDT (CLAUDE, owner-directed 2026-07-10) —
+  ROADMAP LOCKED, foundations in review.** Owner decisions captured (shorting LIVE + paper-verify;
+  options FULL incl. multi-leg; PDT = read each broker's own requirements, no app gate; leverage =
+  NAV caps + opt-in). Verified $25k PDT rule changed (FINRA Notice 26-10, eff. 2026-06-04; app already
+  on $2k). Plan (docs/capability-trading-roadmap.md): Foundation (Tradier #1380 + order-status-reconcile,
+  owner-timed merge) -> Phase0 BrokerMargin read (covers margin-visibility + broker PDT requirements) ->
+  Phase1 shorting enable+verify -> Phase2 options single-leg (Alpaca) -> Phase3 opt-in leverage sizing ->
+  Phase4 Tradier options+writing -> Phase5 spreads. Sequenced (not parallel) because merge=auto-deploy to
+  the live trading app. Phases not started.
 - **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
   claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
   (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported
