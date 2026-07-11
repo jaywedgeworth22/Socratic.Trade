@@ -501,6 +501,21 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch
+  `monet/privacy-terms-pages`) — IN PROGRESS 2026-07-10, code+tests+full gate done, PR opening
+  next.** Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added
+  `/privacy-policy` + `/terms-and-conditions` (boilerplate, matches the existing
+  `/how-it-works`/`/welcome` page pattern exactly), describing the app's real opt-in Twilio SMS
+  notification channel (`src/lib/notify.ts`) with the specific language Twilio's compliance review
+  looks for: opt-in consent, message frequency varies, rates may apply, STOP/HELP, no sale of phone
+  numbers. Registered in `sitemap.ts`/`robots.ts`. Caught the actual would-be-verification-breaker:
+  `middleware.ts` redirects every unauthenticated path to `/login` by default — added both new
+  paths to `PUBLIC_PREFIXES` so an unauthenticated visitor (e.g. Twilio's reviewer) can actually see
+  them. Verified live via `next dev` (Browser preview tool): both pages render full content
+  unauthenticated, correct title, matching site styling. node@24: tsc clean, eslint 0-err, full
+  suite 315/3395, build clean (both pages static `○`). See
+  `docs/rollouts/2026-07-10-privacy-terms-pages.md`.
+
 - **Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch
   `claude/learning-review-defer`) — IN PROGRESS 2026-07-10, owner-directed; isolated throwaway
   worktree off `origin/main` @ `c7a2fa95` (the originally-assigned worktree had unrelated dirty
@@ -1583,6 +1598,67 @@ As of 2026-07-08 (assignment-rule update).
   See `docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`. Gate: tsc clean,
   lint 0 errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main`
   in this sandbox (pre-existing, confirmed via stash-and-rebuild, unrelated to this diff).
+- **Prod deploy-pipeline blocker: TCP-mem exhaustion via litestream 0.5.14 socket churn
+  (CLAUDE, branch `claude/litestream-tcpmem-pin`, fleet-infra pickup session) — IN PROGRESS
+  2026-07-10.** Diagnosed the 12 consecutive Coolify deploy failures 08:59–11:52Z ("TLS
+  unexpected eof" at git clone): NOT a GitHub/network/MTU issue — the box's kernel hit
+  `tcp_mem` max (182670 pages, ~715MB) because litestream 0.5.14 inside `socratic-trade-prod`
+  churns ~20 sockets/s to the R2 endpoint and holds thousands of dead TCP socks (peak 16,840
+  fds on one PID), so every connection's receive window clamped to ~6KB and GitHub cut clones
+  mid-transfer. Applied on the box (runtime-only, reversible): raised `net.ipv4.tcp_mem` to
+  `273945 365343 548010` (orig `91335 121781 182670`). Triggered sanctioned deploy
+  `jca2c6wsz7ewydl4q2t4whad` → FINISHED 12:29Z, prod = `main@ea89b23e` (was ~15 commits
+  stale), `/api/health` 200. This branch (owner green-lit after a brief stand-down for
+  timeline reconciliation with MONET's separate webhook-whitelist fix — different layer):
+  pin `LITESTREAM_VERSION` back to 0.5.12 in `scripts/coolify-prod-start.sh` +
+  version-aware cached-binary reinstall (BIN_DIR persists across deploys; the old
+  existence-only check would keep the stale 0.5.14 forever). tcp_mem raise persisted as
+  `/etc/sysctl.d/99-socratic-tcpmem.conf` (headroom insurance; delete once the leak class
+  is dead). Upstream issue (scrubbed): https://github.com/benbjohnson/litestream/issues/1354.
+  Rollout: `docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`. Auto-deploy is
+  live — the merge deploys; deployer (CLAUDE) owns box verification: litestream version
+  0.5.12 in-container, replication continuity (HALT + revert if WAL uploads stop — backups
+  outrank the fd leak), fd flatness at 0/10/25 min, /api/health, restore marker untouched.
+- **Capability-trading program: margin/shorting/options/PDT (CLAUDE, owner-directed 2026-07-10) —
+  ROADMAP LOCKED, foundations in review.** Owner decisions captured (shorting LIVE + paper-verify;
+  options FULL incl. multi-leg; PDT = read each broker's own requirements, no app gate; leverage =
+  NAV caps + opt-in). Verified $25k PDT rule changed (FINRA Notice 26-10, eff. 2026-06-04; app already
+  on $2k). Plan (docs/capability-trading-roadmap.md): Foundation (Tradier #1380 + order-status-reconcile,
+  owner-timed merge) -> Phase0 BrokerMargin read (covers margin-visibility + broker PDT requirements) ->
+  Phase1 shorting enable+verify -> Phase2 options single-leg (Alpaca) -> Phase3 opt-in leverage sizing ->
+  Phase4 Tradier options+writing -> Phase5 spreads. Sequenced (not parallel) because merge=auto-deploy to
+  the live trading app. Phases not started.
+- **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
+  claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
+  (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported
+  (screenshot): a failed Red Team review rendered twice on the pending approval card
+  ("Devil's advocate (red team)" panel + a separate "Red Team review unavailable" callout,
+  same text). UI double-render, not two reviewers — the single-adversary consolidation (#1191)
+  is backend-correct. Fix: pure/total redTeamCardState() makes the three card sections mutually
+  exclusive by construction; regression test added. See
+  docs/rollouts/2026-07-10-adversary-review-duplication.md.
+- **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) —
+  CORRECTED IN PLACE 2026-07-10: this row was stuck at "landing" after the PR actually
+  merged. Status is COMPLETED as of commit c2150aae (PR #1368, "docs: canonical market-data
+  provider pricing + tier-trap reference"). Correcting in place per protocol rather than
+  moving/deleting the row.** Owner-directed after two pricing misreads in one day (tiingo
+  annual, AV per-IP): docs/market-data-provider-pricing.md = canonical vendor facts + traps +
+  knob cheat-sheet. Related (paused pending owner): API-Usage-Monitor subscription->knob
+  linkage phase 1.
+- **Pricing doc extension: cover ALL external data sources (CLAUDE subagent, branch
+  claude/pricing-doc-all-sources) — IN PROGRESS 2026-07-10 (sonnet subagent), gates running,
+  PR next.** Owner: "consider all the other data sources we have too, not just those few —
+  marketstack, and any others." Extends docs/market-data-provider-pricing.md (structure kept,
+  new sections added): marketstack/tradier/intrinio/FRED/Fintech-Studios/logo.dev verified live
+  in code + priced live from vendor pages; a "Keyless & broker-bundled sources" section (yahoo,
+  nasdaq screener, webull-unofficial, SEC XBRL/EDGAR, alpaca-news/snapshot,
+  robinhood-quotes/fundamentals, stooq, congress.trade-is-internal callout); a "Usage-billed"
+  pointer to API-Usage-Monitor for LLM/RAG spend; a mid-task owner-added "Cheap alternatives —
+  evaluated, not integrated" section (alphastocks.app + EODHD/marketdata.app/Finazon/Finage/
+  StockData.org/Databento/financialdatasets.ai/Alpaca Algo Trader Plus, IEX Cloud confirmed
+  defunct); and a flagged gap — none of the 6 new keyed providers have a
+  provider-rate-limit.ts HARD_DEFAULTS entry. Docs-only. See
+  docs/rollouts/2026-07-10-pricing-doc-all-sources.md.
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
   branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
   with squash-auto-merge armed (round-3 pickup landing).** #1266 hardened the merge-shepherd job with an `if: github.ref

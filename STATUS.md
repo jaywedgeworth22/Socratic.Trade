@@ -1,5 +1,18 @@
 # Status
 
+## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
+Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
+and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change
+(FINRA Notice 26-10 / SEC Release 34-105226, effective 2026-06-04: PDT designation + 4-in-5 count + $25k
+minimum eliminated; $2,000 margin minimum survives; broker phase-in to 2027 — app already on $2k). Owner
+decisions: shorting LIVE (paper-verify in parallel), options FULL incl. spreads (Alpaca-first, RH data-only),
+PDT = read each broker's own requirements only (no app gate), leverage = NAV caps + opt-in. Phased plan
+(read-first BrokerMargin -> shorting -> options single-leg -> leverage -> Tradier options+writing -> spreads)
+in docs/capability-trading-roadmap.md. Foundation PRs in review: Tradier #1380, order-status-reconcile.
+NOTE: merge=auto-deploy-to-live, so money-path PRs are owner-timed, not auto-merged.
+
+# Status
+
 Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
@@ -24,6 +37,81 @@ a scoped benchmark run or organic opus-configured production traffic; needs a re
 errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main` in this sandbox
 (pre-existing, confirmed via stash-and-rebuild). See
 `docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`.
+## 2026-07-10 — Deploy pipeline blocker fixed: kernel tcp_mem exhaustion via litestream 0.5.14 (CLAUDE, branch `claude/litestream-tcpmem-pin`)
+All Coolify deploys of `socratic-trade-prod` failed 08:59Z–11:52Z (12 consecutive; "TLS
+unexpected eof" at git clone; prod drifted ~15 commits stale). Root cause was ON-BOX, not
+GitHub/network: litestream 0.5.14 inside the prod container churns ~20 sockets/s to the R2
+endpoint and holds thousands of dead TCP sockets (peak 16,840 fds, ~715MB pinned buffers),
+exhausting kernel `tcp_mem` (max 182670 pages) — the kernel clamped every connection's
+receive window to ~6KB, so GitHub clones trickled at ~20KB/s and got cut mid-transfer.
+Applied on the box (runtime-only, reversible): raised `net.ipv4.tcp_mem` to
+`273945 365343 548010` (orig `91335 121781 182670`; revert via sysctl -w or reboot — keep
+raised until the pin deploys). Triggered sanctioned deploy `jca2c6wsz7ewydl4q2t4whad` →
+FINISHED 12:29Z, prod = `main@ea89b23e`, `/api/health` 200. This branch pins
+`LITESTREAM_VERSION` back to 0.5.12 in `scripts/coolify-prod-start.sh` (+ version-aware
+cached-binary reinstall — BIN_DIR persists across deploys and the old existence-only check
+would keep the stale 0.5.14 forever). Full diagnosis + A/B soak evidence:
+`docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`. Owner green-lit the pin;
+auto-deploy ships it on merge. tcp_mem raise persisted as
+`/etc/sysctl.d/99-socratic-tcpmem.conf` (headroom insurance — delete once the leak class
+is confidently dead). Upstream issue filed (scrubbed):
+https://github.com/benbjohnson/litestream/issues/1354. Post-deploy box verification
+(litestream 0.5.12 running, replication continuity, fd flatness at 0/10/25 min, health,
+restore marker untouched) recorded on the effort board + #agent-sync.
+
+## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
+Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval
+card — the "Devil's advocate (red team)" verdict panel AND a separate "Red Team review unavailable
+(provider error)" callout, both printing the same provider-error text. Root cause was a UI
+double-render, not two reviewers: "Devil's Advocate" and "Red Team" are the same single adversary
+(the single-adversary consolidation #1191 was backend-correct). #1076 (Jul 8) gave the verdict panel
+a failure branch; #1191 (Jul 9) then added a second "unavailable" callout whose condition was a
+subset of the panel's, so both fired on failure. Fix: a new pure/total `redTeamCardState()`
+(`app/console/lib/red-team.ts`) returns exactly one of `verdict-panel | legacy-unavailable |
+no-review`; the approval card switches all three sections on it, so they're mutually exclusive by
+construction. The "sole adversary" line was folded into the panel's failure branch; the callout is
+now a legacy-only fallback (no structured verdict + legacy `adversaryUnavailable` flag). Added 5
+regression assertions. Gates green (tsc/lint/3400 tests/build) under node26 — see the rollout note's
+Node ABI caveat. See `docs/rollouts/2026-07-10-adversary-review-duplication.md`.
+## 2026-07-10 — Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch `monet/privacy-terms-pages`)
+Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added `/privacy-policy` +
+`/terms-and-conditions` (boilerplate, matching the existing `/how-it-works`/`/welcome` page
+pattern), describing the app's real opt-in Twilio SMS notification channel with the specific
+language Twilio's compliance review looks for (opt-in consent, message frequency varies, rates may
+apply, STOP/HELP, no sale of phone numbers). Registered in `sitemap.ts`/`robots.ts`. Caught the
+actual thing that would have broken verification: `middleware.ts` redirects every unauthenticated
+path to `/login` by default — added both new paths to `PUBLIC_PREFIXES` so they're reachable
+without signing in. Verified live via `next dev` (Browser preview): both pages render full content
+unauthenticated. node@24: tsc clean, eslint 0-err, full suite 315/3395, build clean (both pages
+static). See `docs/rollouts/2026-07-10-privacy-terms-pages.md`. Follow-up: owner should have
+counsel review if the product scales past sole-operator use.
+
+## 2026-07-10 — Pricing doc: cover ALL external data sources, not just the core seven (CLAUDE subagent, branch `claude/pricing-doc-all-sources`)
+Owner: "consider all the other data sources we have too, not just those few — marketstack, and
+any others." Extended `docs/market-data-provider-pricing.md` (kept its existing table/traps/dials
+structure intact, added new sections) to cover every external data source the app touches, all
+verified live in code first: marketstack + tradier + intrinio + FRED + Fintech Studios/PowerIntell
++ logo.dev (new "Secondary / fallback sources" table, all confirmed live/wired-in, none dead) plus
+6 new numbered traps (marketstack's free tier is HTTPS-included, NOT HTTP-only as commonly
+misremembered; Tradier sandbox tokens are 15-min-delayed with zero index/Greeks data — only a
+production token from a real, even $0/mo, brokerage account is real-time; Intrinio's gate is a
+14-day trial, not a tier; Fintech Studios' published consumer pricing may not apply to the
+`studio.fintechstudios.com/api/v1` endpoint this app actually calls; FRED never publishes a
+numeric rate limit and its docs 403 naive fetchers). Added a "Keyless & broker-bundled sources"
+section (yahoo, nasdaq screener, webull-unofficial, SEC XBRL/EDGAR, alpaca-news/snapshot,
+robinhood-quotes/fundamentals, stooq, plus a congress.trade internal-app callout) and a
+"Usage-billed (not subscription) providers" pointer to API-Usage-Monitor for LLM/RAG spend
+(no price tables duplicated here). Mid-task owner scope addition: a "Cheap alternatives —
+evaluated, not integrated" section researching alphastocks.app (owner-named — turned out to be a
+consumer scoring/screener app with no API surface, not a candidate) plus EODHD, marketdata.app,
+Finazon, Finage, StockData.org, Databento, financialdatasets.ai, and Alpaca's Algo Trader Plus
+($99/mo SIP+OPRA upgrade — the one genuine near-term candidate since it's additive to Alpaca
+infra we already hold, not a new vendor); confirmed IEX Cloud is defunct (Aug 2024) so it stops
+getting re-suggested. Also flagged a real gap in "Where the dials live": none of the six new
+keyed providers have a `provider-rate-limit.ts` `HARD_DEFAULTS` entry (only finnhub/
+alpha-vantage/yahoo-finance/twelvedata do) — nothing paces them today besides generic 429 retry.
+Docs-only change; gates green (see rollout note). See
+`docs/rollouts/2026-07-10-pricing-doc-all-sources.md`.
 
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
@@ -543,6 +631,12 @@ across the full suite. Gate green: lint 0 errors / tsc clean / 306 files 3171 te
 LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's committed work): merged
 `origin/main` clean, full gate re-run green in this worktree, post-`npm test` check confirmed no
 lingering `agentic-vitest-*` dir in the real tmpdir, PR opened via `land.sh` with auto-merge armed.
+
+## 2026-07-10 — Canonical market-data pricing doc (CLAUDE, branch `claude/provider-pricing-doc`)
+New `docs/market-data-provider-pricing.md`: verified vendor pricing/tier facts for all 7 market-data
+providers, the 6 traps already hit once (tiingo news 403s, tiingo hidden $300/yr annual — owner
+correction, AV per-IP cap, FMP annual-billing display, Massive scope, Finnhub cliff), current
+paid/free/considering state, and the Infisical knob cheat-sheet. Update it on every plan change.
 
 ## 2026-07-09 — PRODUCTION MOVED to the 8 GB Hetzner box `135.181.192.190` (CLAUDE, branch `claude/hetzner-server-migration-d59cd1`)
 Owner-directed server migration off the 4 GB `91.98.44.8` box (which OOM-failed its final build

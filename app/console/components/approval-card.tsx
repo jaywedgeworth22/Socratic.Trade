@@ -21,7 +21,7 @@ import {
 import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
-import { redTeamFailureMeta, redTeamFailureModel } from "../lib/red-team";
+import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel } from "../lib/red-team";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
@@ -169,6 +169,10 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const redFailure = redTeamFailureMeta(p.redTeamVerdict?.failureKind);
   const redFailureModel =
     p.redTeamVerdict && !p.redTeamVerdict.available ? redTeamFailureModel(p.redTeamVerdict, snapshot?.policy.redTeamLlmModel) : null;
+  // Exactly one Red Team section renders — the verdict panel (success OR failure), the legacy
+  // "unavailable" callout, or the "no review triggered" note. A total function keeps them mutually
+  // exclusive so a failed review can never render as both the panel and the callout (dedup).
+  const redCard = redTeamCardState(Boolean(p.redTeamVerdict), pending.decision.adversaryUnavailable === true);
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -300,7 +304,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
 
         {/* Red team: the single adversarial reviewer + its verdict — including the FAILURE state,
             so a review that could not run is never visually identical to one that never triggered. */}
-        {p.redTeamVerdict && (
+        {redCard === "verdict-panel" && p.redTeamVerdict && (
           <div className="con-team con-team-red">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <div
@@ -319,7 +323,10 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 </span>
               )}
             </div>
-            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">{p.redTeamVerdict.reason}</p>
+            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">
+              {p.redTeamVerdict.reason}
+              {!p.redTeamVerdict.available && " No model critiqued this trade — review it as the sole adversary."}
+            </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
               {p.redTeamVerdict.available ? (
                 <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
@@ -342,7 +349,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             </div>
           </div>
         )}
-        {!p.redTeamVerdict && (
+        {redCard === "no-review" && (
           <p
             className="cursor-default text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
             title="None of the dissent triggers (confidence, notional, live opening, override request, risk regime) applied, so no adversarial reviewer was asked. The empty state is information, not an omission."
@@ -351,20 +358,22 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           </p>
         )}
 
-        {/* §5.1 / R19 — the review could NOT run: a pending card that exists BECAUSE the Red Team was
-            unavailable must be distinguishable from a routine manual approval. Reads the persisted
-            per-proposal verdict first, with the stored decision flag as the legacy/defensive fallback. */}
-        {((p.redTeamVerdict && !p.redTeamVerdict.available) || pending.decision.adversaryUnavailable === true) && (
+        {/* §5.1 / R19 — LEGACY fallback ONLY: a pending card with NO structured red-team verdict but the
+            stored `adversaryUnavailable` decision flag set (old proposals persisted before the
+            single-adversary consolidation). The structured-verdict failure state — including the
+            "sole adversary" framing — is owned by the Red Team panel above; gating this on the ABSENCE
+            of `redTeamVerdict` keeps the two mutually exclusive so an unavailable review never renders
+            twice (was: this block also fired on `!available`, duplicating the panel above). */}
+        {redCard === "legacy-unavailable" && (
           <div
             className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3"
             title="The adversarial (red team) review was required but could not run, so this trade was routed to you unreviewed — you are the only reviewer it will get."
           >
             <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
               <Swords size={12} /> Red Team review unavailable
-              {p.redTeamVerdict?.failureKind ? ` (${p.redTeamVerdict.failureKind.replace(/_/g, " ")})` : ""}
             </div>
             <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">
-              {p.redTeamVerdict?.reason ?? pending.decision.adversaryUnavailableReason ?? "The adversarial review could not run for this proposal."}
+              {pending.decision.adversaryUnavailableReason ?? "The adversarial review could not run for this proposal."}
               {" "}No model critiqued this trade — review it as the sole adversary.
             </p>
           </div>
