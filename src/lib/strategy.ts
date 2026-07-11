@@ -337,6 +337,9 @@ export async function runStrategyOnce(
     // The gateway is required for live broker checks; if missing, checkBrokerHealth safely returns healthy=true.
     const brokerGateway = activeAccount ? getBrokerGateway(policy, userId) : undefined;
     const healthSignals = activeAccount ? await checkBrokerHealth(userId, activeAccount, brokerGateway) : undefined;
+    // Broker health performs network reads. Re-prove this invocation still owns the account lease
+    // before it records a skip or proceeds into any more run work.
+    lockGuard.assertOwned();
     
     if (healthSignals && !healthSignals.isHealthy) {
       const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
@@ -344,8 +347,6 @@ export async function runStrategyOnce(
       audit("run_skipped_broker_unhealthy", { runId, userId, reason }, userId, connectedAccountId);
       result = { runId, status: "completed", summary: reason, proposals: [] };
       finishStrategyRun(runId, "completed", reason, userId);
-      clearInterval(heartbeatTimer);
-      releaseStrategyLock(runId, userId, connectedAccountId);
       return result;
     }
 
@@ -1869,6 +1870,7 @@ export async function runStrategyOnce(
       lockGuard.assertOwned();
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
       const tradability = await gateway.getEquityTradability(policy.accountNumber, [normalizedProposal.symbol]);
+      lockGuard.assertOwned();
       if (!tradability[normalizedProposal.symbol]?.tradable) {
         const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
         const proposalId = crypto.randomUUID();
@@ -1882,13 +1884,14 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
         lockGuard.assertOwned();
+        autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
 
       let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+      lockGuard.assertOwned();
 
       // Hoisted above the broker-minimum guard: the bump planner bounds opening bumps by the
       // remaining daily/hourly budget. Values are unchanged for the post-guard consumers (the
@@ -1948,6 +1951,7 @@ export async function runStrategyOnce(
           const originalReview = review;
           Object.assign(normalizedProposal, bumpPlan.patch);
           review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+          lockGuard.assertOwned();
           const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
           if (!stillBlocked) {
             // Receipt honesty: the rationale narrates the pre-bump size, so annotate the
@@ -1989,9 +1993,9 @@ export async function runStrategyOnce(
             },
             { policy, userId }
           );
+          lockGuard.assertOwned();
         }
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
-        lockGuard.assertOwned();
         continue;
       }
 
@@ -2151,10 +2155,10 @@ export async function runStrategyOnce(
             },
             { policy, userId }
           );
+          lockGuard.assertOwned();
           // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
           // the account back to Ask-first even though the tripping proposal survives as a card.
           autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
-          lockGuard.assertOwned();
           results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           continue;
         }
@@ -2171,6 +2175,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
+        lockGuard.assertOwned();
         autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
         // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
         // rejection) so its post-block return matures into missed-opportunity analytics — closing the
@@ -2192,7 +2197,6 @@ export async function runStrategyOnce(
           }
         }
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
-        lockGuard.assertOwned();
         continue;
       }
 
@@ -2229,8 +2233,8 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
         lockGuard.assertOwned();
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
         continue;
       }
 
@@ -2245,8 +2249,8 @@ export async function runStrategyOnce(
           { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         lockGuard.assertOwned();
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         continue;
       }
 
@@ -2279,8 +2283,8 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [] });
         lockGuard.assertOwned();
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [] });
         continue;
       }
 
@@ -2311,8 +2315,8 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
         lockGuard.assertOwned();
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
         continue;
       }
 
@@ -2340,8 +2344,8 @@ export async function runStrategyOnce(
           { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
         lockGuard.assertOwned();
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
         continue;
       }
 

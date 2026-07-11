@@ -254,10 +254,8 @@ async function tick(): Promise<void> {
   // runs grow stale without tripping the stale-scheduler check). Also self-guards the health-failure
   // threshold: only the leader tracks heartbeat failures — a follower with a dead DB won't abdicate
   // (it never got past the gate anyway), and the leader does.
-  let heartbeatOk = false;
   try {
     setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    heartbeatOk = true;
     if (getHealthFailures() > 0) resetHealthFailures();
   } catch (err) {
     console.error("[scheduler] heartbeat write error:", err);
@@ -565,4 +563,9 @@ async function tick(): Promise<void> {
     // Never let a thrown error kill the timer
     console.error("[scheduler] tick error:", err);
   }
+}
+
+/** Test-only entry point for asserting leader-gate ordering without starting the interval. */
+export async function _runSchedulerTickForTest(): Promise<void> {
+  await tick();
 }

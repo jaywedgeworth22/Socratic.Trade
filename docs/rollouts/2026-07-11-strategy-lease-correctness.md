@@ -12,8 +12,10 @@ Branch: `codex/strategy-lease-correctness`
   loss, and never escapes as an uncaught interval error.
 - Both the autonomous run loop and approval execution synchronously re-prove ownership at the final
   safe boundary before writing a `placing` intent and calling `placeEquityOrder`. The autonomous
-  loop also checks at the start of each proposal. Once ownership is lost, the invocation cannot
-  continue into another broker placement.
+  loop also checks at the start of each proposal and immediately after broker health, tradability,
+  initial review, and bump re-review awaits. Non-placement blocked/proposed state is therefore not
+  written by an invocation that lost ownership during broker I/O. Once ownership is lost, the
+  invocation cannot continue into another broker placement.
 - All post-acquire setup is inside the cleanup scope. If the strategy-run receipt insert throws,
   the heartbeat stops and the owner token is released instead of being renewed indefinitely.
 - Approval ownership loss returns a typed `busy` result, leaves the proposal pending, and never calls
@@ -25,6 +27,10 @@ Branch: `codex/strategy-lease-correctness`
 - `SCHEDULER_SINGLE_LEADER` is default-on for unset, empty, and whitespace-only values. Explicit
   `false`, `off`, `0`, or `no` values still disable it for diagnostics; unrecognized values fail
   safe to enabled.
+- The scheduler liveness heartbeat now runs only after a successful leader claim. A direct follower
+  regression proves an idle process cannot keep `scheduler:lastTick` fresh while the leader is dead.
+- Current-main reconciliation removed the obsolete `heartbeatTimer` cleanup accidentally carried by
+  the newly merged broker-health early return; the guard's `finally` is the single stop/release owner.
 
 ## Why
 
@@ -47,6 +53,7 @@ default-on posture.
 - `test/strategy-lock-guard.test.ts`
 - `test/strategy-lock-loss-integration.test.ts`
 - `test/scheduler-single-leader-default.test.ts`
+- `test/scheduler-leader-heartbeat.test.ts`
 - `.env.example`
 - `STATUS.md`
 - `PLAN.md`
@@ -94,10 +101,24 @@ default-on posture.
   helper now uses `globalThis.crypto.randomUUID()` and adds no client bundle dependency. After that
   fix, focused **3 files / 11 tests**, TypeScript, scoped ESLint, the full **3,764-test** suite, and
   the production build all reran green.
+- Review autofix `9d2ba1fb` was pushed by `github-actions[bot]`; gitleaks, hosted verify, and smoke
+  correctly refused that untrusted actor. No CI trust policy was changed. A human-authored follow-up
+  merged current `origin/main@da9558ac` and owns the reconciled tip.
+- The first scoped rerun used the shell's Node 26 and failed only on the expected native SQLite ABI
+  mismatch (`NODE_MODULE_VERSION 147` vs the worktree's 137 build). The committed source was not
+  implicated. `npm ci --no-audit --no-fund` under Node 24 refreshed the exact locked shared-v1.5
+  dependency after current-main reconciliation.
+- Before that refresh, `npx tsc --noEmit` found only the stale installed shared-v1.4 exports; after
+  the locked install, TypeScript completed cleanly.
+- `PATH=/opt/homebrew/Cellar/node@24/24.18.0/bin:$PATH npx vitest run test/strategy-lock-guard.test.ts test/strategy-lock-loss-integration.test.ts test/scheduler-single-leader-default.test.ts test/scheduler-leader-heartbeat.test.ts`
+  — **4 files / 21 tests passed**.
+- Touched ESLint on `strategy.ts`, `scheduler.ts`, and the four lease/scheduler regression files —
+  **0 errors / 33 inherited warnings**. `npx tsc --noEmit` — **clean**. `git diff --check` — **clean**.
 
 ## Follow-ups and boundaries
 
-- Head `f70e9043` is pushed in ready PR #1429; hosted checks/review and production verification remain.
+- Ready PR #1429 remains open. The serialized final full test/build gate, trusted push, hosted checks,
+  merge, and production verification remain; the prior full gate predates the review changes.
 - No scheduler provider-boundary locking, production environment/configuration, PR, merge,
   deployment, or live runtime mutation is part of this change. The branch-neutral live effort board
   was updated with implementation and review receipts.

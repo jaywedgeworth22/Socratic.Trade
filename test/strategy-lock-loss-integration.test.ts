@@ -8,6 +8,8 @@ const lockGuardMocks = vi.hoisted(() => ({
   stop: vi.fn()
 }));
 const brokerMocks = vi.hoisted(() => ({
+  getEquityTradability: vi.fn(),
+  reviewEquityOrder: vi.fn(),
   placeEquityOrder: vi.fn()
 }));
 
@@ -30,6 +32,12 @@ vi.mock("../src/lib/broker", async (importOriginal) => {
       const gateway = actual.getBrokerGateway(...args);
       return new Proxy(gateway, {
         get(target, property, receiver) {
+          if (property === "getEquityTradability" && brokerMocks.getEquityTradability.getMockImplementation()) {
+            return brokerMocks.getEquityTradability;
+          }
+          if (property === "reviewEquityOrder" && brokerMocks.reviewEquityOrder.getMockImplementation()) {
+            return brokerMocks.reviewEquityOrder;
+          }
           if (property === "placeEquityOrder") return brokerMocks.placeEquityOrder;
           const value = Reflect.get(target, property, receiver);
           return typeof value === "function" ? value.bind(target) : value;
@@ -101,8 +109,12 @@ beforeAll(() => {
 afterEach(() => {
   lockGuardMocks.assertOwned.mockReset();
   lockGuardMocks.stop.mockReset();
+  brokerMocks.getEquityTradability.mockReset();
+  brokerMocks.reviewEquityOrder.mockReset();
   brokerMocks.placeEquityOrder.mockReset();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 function arrangeProposedOrder(userId: string): { accountId: string; proposalId: string } {
@@ -162,4 +174,114 @@ describe("approval execution ownership loss", () => {
     expect(acquireStrategyLock("replacement-owner", userId, accountId)).toBe(true);
     releaseStrategyLock("replacement-owner", userId, accountId);
   }, 20_000);
+});
+
+const STRATEGY_ACCOUNT = "TEST";
+const STRATEGY_PROPOSAL = {
+  symbol: "AAPL",
+  side: "buy",
+  type: "market",
+  dollarAmount: 100,
+  timeInForce: "gfd",
+  marketHours: "regular_hours",
+  rationale: "lease ownership non-placement test",
+  tradeThesisTag: "Momentum-Breakout",
+  entryMarketRegime: "Neutral (Normal Volatility)",
+  confidenceScore: 90
+};
+
+async function arrangeStrategyRun(userId: string): Promise<string> {
+  const db = await import("../src/lib/db");
+  const accountId = randomUUID();
+  db.upsertConnectedAccount({
+    id: accountId,
+    userId,
+    broker: "test",
+    environment: "paper",
+    accountNumber: STRATEGY_ACCOUNT,
+    label: "Strategy lease-loss test account",
+    isActive: true
+  });
+  db.setActiveConnectedAccount(accountId, userId);
+  db.upsertUserApiKey(userId, "openai", "test-openai-key", "lease-loss fixture");
+  db.setPolicy({
+    ...DEFAULT_POLICY,
+    connectedAccountId: accountId,
+    accountNumber: STRATEGY_ACCOUNT,
+    activeBroker: "test",
+    systemState: "active",
+    strategyAuthority: "propose",
+    includedIndices: [],
+    additionalSymbols: ["AAPL"],
+    llmModel: "gpt-4.1-mini",
+    redTeamLlmModel: "gpt-4.1-mini"
+  }, userId);
+  return accountId;
+}
+
+function stubStrategyLlm(): void {
+  vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    if (!String(url).includes("api.openai.com")) return new Response("not found", { status: 404 });
+    const body = init?.body ? String(init.body) : "";
+    if (body.includes("Red Team Risk Agent")) {
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: "approve", reason: "No fatal flaw." }) } }] }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
+    return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [STRATEGY_PROPOSAL] }) }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  });
+}
+
+describe("strategy-run ownership loss across broker awaits", () => {
+  it("does not persist a blocked proposal when ownership is lost during tradability", async () => {
+    const userId = `tradability-loss-${randomUUID()}`;
+    const accountId = await arrangeStrategyRun(userId);
+    stubStrategyLlm();
+    let ownershipLost = false;
+    lockGuardMocks.assertOwned.mockImplementation(() => {
+      if (ownershipLost) throw new StrategyLockOwnershipLostError();
+    });
+    brokerMocks.getEquityTradability.mockImplementation(async () => {
+      ownershipLost = true;
+      return { AAPL: { tradable: false, reason: "fixture block" } };
+    });
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const result = await runStrategyOnce(userId, { manual: true, connectedAccountId: accountId });
+    const db = await import("../src/lib/db");
+
+    expect(result).toMatchObject({ status: "failed", proposals: [] });
+    expect(result.summary).toMatch(/ownership was lost/i);
+    expect(db.listRecentProposals(STRATEGY_ACCOUNT, 100, userId)).toEqual([]);
+    expect(brokerMocks.reviewEquityOrder).not.toHaveBeenCalled();
+    expect(brokerMocks.placeEquityOrder).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("does not persist a proposed card when ownership is lost during broker review", async () => {
+    const userId = `review-loss-${randomUUID()}`;
+    const accountId = await arrangeStrategyRun(userId);
+    stubStrategyLlm();
+    let ownershipLost = false;
+    lockGuardMocks.assertOwned.mockImplementation(() => {
+      if (ownershipLost) throw new StrategyLockOwnershipLostError();
+    });
+    brokerMocks.getEquityTradability.mockResolvedValue({ AAPL: { tradable: true, fractional: true } });
+    brokerMocks.reviewEquityOrder.mockImplementation(async () => {
+      ownershipLost = true;
+      return { estimatedNotional: 100, alerts: [], raw: {} };
+    });
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const result = await runStrategyOnce(userId, { manual: true, connectedAccountId: accountId });
+    const db = await import("../src/lib/db");
+
+    expect(result).toMatchObject({ status: "failed", proposals: [] });
+    expect(result.summary).toMatch(/ownership was lost/i);
+    expect(db.listRecentProposals(STRATEGY_ACCOUNT, 100, userId)).toEqual([]);
+    expect(brokerMocks.placeEquityOrder).not.toHaveBeenCalled();
+  }, 30_000);
 });
