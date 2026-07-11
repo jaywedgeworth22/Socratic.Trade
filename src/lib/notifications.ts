@@ -1,6 +1,6 @@
 import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent } from "./db";
 import { notify } from "./notify";
-import type { NotificationEvent, NotificationEventType, TradingPolicy } from "./types";
+import type { NotificationEvent, NotificationEventType, NotifyChannelResult, TradingPolicy } from "./types";
 
 type Fetcher = typeof fetch;
 const DIRECT_NOTIFY_ALREADY_SENT = new Set<NotificationEventType>(["price_alert", "provider_degraded"]);
@@ -56,41 +56,54 @@ export async function sendNotification(
     return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, policy.connectedAccountId);
   }
 
-  await sendDirectNotification(input, userId, { skipWebhook: !!webhookUrl });
+  const directResults = await sendDirectNotification(input, userId, { skipWebhook: !!webhookUrl });
+  const results: NotifyChannelResult[] = [...directResults];
 
-  if (!webhookUrl) {
-    return record(input, "skipped", undefined, "Notifications Webhook Not Configured", userId, policy.connectedAccountId);
+  if (webhookUrl) {
+    const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 5000);
+
+    try {
+      const payloadBody = isDiscord
+        ? formatDiscordPayload(input)
+        : {
+            type: input.type,
+            title: input.title,
+            payload: input.payload,
+            createdAt: new Date().toISOString()
+          };
+
+      const response = await (options.fetcher ?? fetch)(webhookUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payloadBody),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!response.ok) {
+        results.push({ channel: "webhook", ok: false, error: `Webhook returned HTTP ${response.status}.` });
+      } else {
+        results.push({ channel: "webhook", ok: true });
+      }
+    } catch (error) {
+      clearTimeout(timeout);
+      results.push({ channel: "webhook", ok: false, error: error instanceof Error ? error.message : "Webhook request failed." });
+    }
   }
 
-  const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
+  const anySent = results.some((r) => r.ok);
+  const allSkipped = results.length > 0 && results.every((r) => r.skipped);
+  const errors = results.filter((r) => !r.ok && !r.skipped).map((r) => r.error).filter(Boolean);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 5000);
-
-  try {
-    const payloadBody = isDiscord
-      ? formatDiscordPayload(input)
-      : {
-          type: input.type,
-          title: input.title,
-          payload: input.payload,
-          createdAt: new Date().toISOString()
-        };
-
-    const response = await (options.fetcher ?? fetch)(webhookUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payloadBody),
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (!response.ok) {
-      return record(input, "failed", webhookUrl, `Webhook returned HTTP ${response.status}.`, userId, policy.connectedAccountId);
-    }
+  if (anySent) {
     return record(input, "sent", webhookUrl, undefined, userId, policy.connectedAccountId);
-  } catch (error) {
-    clearTimeout(timeout);
-    return record(input, "failed", webhookUrl, error instanceof Error ? error.message : "Webhook request failed.", userId, policy.connectedAccountId);
+  } else if (results.length === 0 || allSkipped) {
+    const reasons = results.map((r) => r.skipped).filter(Boolean);
+    const reasonStr = reasons.length > 0 ? reasons.join(", ") : "Notifications Webhook Not Configured";
+    return record(input, "skipped", webhookUrl, reasonStr, userId, policy.connectedAccountId);
+  } else {
+    return record(input, "failed", webhookUrl, errors.join(" | ") || "Delivery failed", userId, policy.connectedAccountId);
   }
 }
 
@@ -98,8 +111,8 @@ async function sendDirectNotification(
   input: { type: NotificationEventType; title: string; payload: unknown },
   userId: string,
   options: { skipWebhook?: boolean } = {}
-): Promise<void> {
-  if (DIRECT_NOTIFY_ALREADY_SENT.has(input.type)) return;
+): Promise<NotifyChannelResult[]> {
+  if (DIRECT_NOTIFY_ALREADY_SENT.has(input.type)) return [];
   try {
     const prefs = options.skipWebhook
       ? (() => {
@@ -107,7 +120,7 @@ async function sendDirectNotification(
           return { ...current, channels: current.channels.filter((channel) => channel !== "webhook") };
         })()
       : undefined;
-    await notify(
+    return await notify(
       userId,
       {
         title: input.title,
@@ -127,6 +140,7 @@ async function sendDirectNotification(
       },
       userId
     );
+    return [];
   }
 }
 

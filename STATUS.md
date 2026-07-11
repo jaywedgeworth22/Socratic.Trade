@@ -1,5 +1,8 @@
 # Status
 
+## 2026-07-11 — Notification status recorder lies (AG)
+
+Fixed the `sendNotification` implementation to accurately report delivery statuses ("sent", "skipped", "failed") by aggregating the results of all configured notification channels (e.g., webhook, ntfy push, email). Previously, the system incorrectly reported "skipped: Notifications Webhook Not Configured" and ignored successful direct notification channel deliveries if no webhook was configured. This fixes Activity-audit P2.5. Tests and lint pass.
 ## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
 
 The admin connections-health route's expected-lane inventory used `alphavantage:env`, while the
