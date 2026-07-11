@@ -11,6 +11,15 @@ filling the missing pieces.
 > inspection over its local IPC socket. Production explicitly enables the v0.5.12 socket and skips
 > the non-verifying metadata-file fallback; staleness requires evidence of newer local DB/WAL activity.
 > See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
+> **2026-07-11 - Strategy lease correctness + default-on scheduler (CODEX).** No roadmap scope
+> change; this closes a money-path concurrency hole in the existing Phase 1 lock design. Approval
+> invocations use unique owner tokens, heartbeat renewal failures become sticky fail-closed state,
+> and both autonomous and approval paths re-prove ownership immediately before broker placement.
+> Scheduler single-leader remains ON for unset/empty env values and requires an explicit false value
+> to disable. Obsolete teardown calls that could not name the real owner are removed. Setup failure
+> cannot leak the renewing timer/lease; approval loss returns typed busy without broker placement,
+> and autonomous loss preserves any proposal results completed before the stop. See
+> `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
 > scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
 > refresh/share, and broker probes now have named per-admin budgets and single-flight exclusion,
