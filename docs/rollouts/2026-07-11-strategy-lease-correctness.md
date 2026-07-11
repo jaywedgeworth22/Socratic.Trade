@@ -143,3 +143,6 @@ default-on posture.
 - Current-main reconciliation is complete. The final full ordered gate and hosted rerun remain after
   the second review reconciliation; production verification remains contingent on the ready PR
   landing through the normal auto-deploy path.
+- The bot's docs-only follow-up `3f4c53fc` incorrectly claimed one pre-tradability assertion covered
+  all later awaits and that auto-merge should remain enabled. Human reconciliation corrected the
+  code/docs, disabled auto-merge, and keeps the PR open pending the serialized final gate.
