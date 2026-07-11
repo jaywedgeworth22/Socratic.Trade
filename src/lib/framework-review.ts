@@ -117,9 +117,10 @@ export async function reviewPendingFrameworkProposals(
   }
   if (isOverLlmBudget(userId)) return { reviewed: 0, skippedReason: "over_budget" };
 
-  // Resolve through the RED (Bear/reviewer) role: it inherits the account's redTeamLlmModel
-  // first, then the primary model, and can pick up a cross-family reviewer credential when
-  // redTeamLlmModel is unset — the same role resolution the rest of AI Review relies on.
+  // Resolve through the RED (Bear/reviewer) role: it uses the account's explicit `redTeamLlmModel`
+  // and does NOT fall back to the primary/Green model (owner directive: no model is ever a default).
+  // An unchosen reviewer seat therefore resolves to model = "" — the same role resolution the rest
+  // of AI Review relies on, and the same fail-closed contract (see red-team.ts).
   const policy = getPolicy(userId);
   const { url, key, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
     policy,
@@ -127,6 +128,11 @@ export async function reviewPendingFrameworkProposals(
     "https://api.openai.com/v1/chat/completions",
     "red"
   );
+  // NO MODEL DEFAULTS: an unchosen Red model resolves to "". A key can still exist (e.g. an OpenAI
+  // key with no reviewer model chosen), so guard on the MODEL before the key — otherwise we'd send an
+  // empty-model request that the provider rejects, leaving the queue silently unreviewed. Fail open
+  // with a clear "not configured" skip, mirroring the primary red-team reviewer's handling.
+  if (!model) return { reviewed: 0, skippedReason: "reviewer_not_configured" };
   // The rotation sentinel ("__rotate__") is a valid PERSISTED reviewer-seat value that only a
   // strategy RUN substitutes with a concrete model. This standalone advisory reviewer has no run
   // to do that, so fail open rather than send the literal sentinel to a provider.

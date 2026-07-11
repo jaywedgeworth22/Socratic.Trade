@@ -28,8 +28,10 @@ Two related changes to the Socratic learning system, both requested by the owner
   the owner decides. (Efficiency note that drove the batching: post-mortem lesson
   *generation* stays one-call-per-decision because its per-item context/schema is
   load-bearing; the *proposal review* is a small, deduped queue that batches cleanly.)
-- Reviewer model reuses the existing "AI Review" inheritance: account policy's
-  `redTeamLlmModel` → `llmModel` (`reviewerPolicy` in `framework-review.ts`).
+- Reviewer model resolves through the RED role (`resolveLlmEndpoint(policy, userId, url, "red")`) —
+  the account's explicit `redTeamLlmModel`. Per the owner's "no model default" directive it does NOT
+  fall back to the primary/Green model; an unchosen reviewer seat resolves to `model = ""` and the
+  reviewer fails closed (`reviewer_not_configured`), mirroring the primary red-team reviewer.
 
 ## Files
 
@@ -95,6 +97,17 @@ npx vitest run test/framework-review.test.ts test/socratic-db.test.ts \
 - **Structured output for BOTH transports.** Replaced the OpenAI-only `openAiJsonObject` flag with
   a JSON `schema` on the request — it drives OpenAI json_schema AND Anthropic forced tool-use, so
   the cross-family Bear (Anthropic) path also returns schema-shaped JSON instead of free text.
+
+## Review fixes round 3 (PR #1417, Codex re-review of c8184f6)
+
+- **Fail open when the reviewer model is unset (P2).** The RED role does NOT fall back to the
+  primary model, so an account with an OpenAI key but no `redTeamLlmModel` resolved to `model = ""`.
+  The old guard only checked `!key`, so it would have sent an empty-model request that the provider
+  rejects — leaving the queue silently unreviewed. Added a `!model` guard BEFORE the key check that
+  returns `skippedReason: "reviewer_not_configured"`, mirroring `red-team.ts`'s not-configured
+  handling. Corrected the code comment + this note's earlier "→ `llmModel`" claim (the red role never
+  inherits the Green model). New test asserts key-present-but-no-model skips without hitting the
+  provider; the existing no-key test now sets a reviewer model so it genuinely exercises the key path.
 
 ## Follow-ups
 

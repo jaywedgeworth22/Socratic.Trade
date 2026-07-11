@@ -107,7 +107,7 @@ describe("reviewPendingFrameworkProposals — batched single-call reviewer", () 
     const { reviewPendingFrameworkProposals } = await import("../src/lib/framework-review");
     const user = "backlog-user";
     process.env.OPENAI_API_KEY = "test-key";
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "BACKLOG", llmModel: "gpt-4.1", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } }, user);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "BACKLOG", llmModel: "gpt-4.1", redTeamLlmModel: "gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } }, user);
 
     const already = createSocraticFrameworkProposal({ userId: user, subsystem: "strategy", title: "already", rationale: "r", proposedChange: "c" });
     const fresh = createSocraticFrameworkProposal({ userId: user, subsystem: "risk", title: "fresh", rationale: "r", proposedChange: "c" });
@@ -136,13 +136,34 @@ describe("reviewPendingFrameworkProposals — batched single-call reviewer", () 
   });
 
   it("fails open with a skip reason when there is no LLM key", async () => {
-    const { createSocraticFrameworkProposal } = await import("../src/lib/db");
+    const { createSocraticFrameworkProposal, setPolicy } = await import("../src/lib/db");
     const { reviewPendingFrameworkProposals } = await import("../src/lib/framework-review");
     const user = "nokey-user";
+    // Reviewer model IS chosen (so we get past the not-configured guard) but the key is absent.
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "NOKEY", redTeamLlmModel: "gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } }, user);
     delete process.env.OPENAI_API_KEY;
     createSocraticFrameworkProposal({ userId: user, subsystem: "strategy", title: "x", rationale: "r", proposedChange: "c" });
     const result = await reviewPendingFrameworkProposals(user);
     expect(result.reviewed).toBe(0);
     expect(result.skippedReason).toBe("no_llm_key");
+  });
+
+  it("fails open as not-configured when a key exists but no reviewer model is chosen", async () => {
+    const { createSocraticFrameworkProposal } = await import("../src/lib/db");
+    const { reviewPendingFrameworkProposals } = await import("../src/lib/framework-review");
+    const user = "nomodel-user";
+    // Key present, but the RED reviewer seat resolves to "" (no redTeamLlmModel; the red role does
+    // NOT fall back to the primary model). Must skip cleanly, NOT send an empty-model request.
+    process.env.OPENAI_API_KEY = "test-key";
+    let requestCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      requestCount += 1;
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    createSocraticFrameworkProposal({ userId: user, subsystem: "strategy", title: "x", rationale: "r", proposedChange: "c" });
+    const result = await reviewPendingFrameworkProposals(user);
+    expect(result.reviewed).toBe(0);
+    expect(result.skippedReason).toBe("reviewer_not_configured");
+    expect(requestCount).toBe(0); // never hit the provider with an empty model
   });
 });
