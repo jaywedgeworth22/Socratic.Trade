@@ -2,24 +2,13 @@
 
 ## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, branch `codex/strategy-lease-correctness`)
 
-Ready PR #1429 is being reconciled after the review autofix commit `9d2ba1fb` was pushed by
-`github-actions[bot]`, which correctly triggered the repo's untrusted-bot CI refusal. The branch now
-contains human-authored merges through current `origin/main@7c01f87e`; no CI trust-policy change was
-made.
-Adversarial review found the bot's non-placement ownership checks were still too late: tradability,
-broker review, bump re-review, and notification awaits could lose ownership before blocked/proposed
-state or follow-on policy writes. The autonomous path now re-proves ownership immediately after each
-broker/health await and before any non-placement persistence; post-notification checks precede later
-side effects. Direct regressions prove loss during tradability or broker review leaves no proposal
-card and never calls the broker. The scheduler heartbeat remains after the leader gate, and a direct
-follower test proves it cannot refresh `scheduler:lastTick`. Current-main reconciliation also removed
-a stale `heartbeatTimer` cleanup from the newly landed broker-health early return; the authoritative
-`finally` owns guard stop and lease release. Current Node 24 scoped verification is green: 4 files / 21
-tests, touched ESLint 0 errors / 33 inherited warnings, TypeScript clean, and `git diff --check` clean.
-Trusted human follow-up `b19650ac` contains the runtime/test reconciliation. The previous full
-3,764-test/build gate predates these review changes; the serialized final full gate, final push, hosted
-checks, merge, and production verification remain. See
-`docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+Ready PR #1429 was reconciled via two review rounds from chatgpt-codex-connector[bot]. Round 1 was
+addressed by the autofix commit `9d2ba1fb` (re-check lock guard before non-placement proposal paths;
+move scheduler heartbeat after leader gate) plus human reconciliation. Round 2 raised two additional P2
+threads: re-check ownership before non-placement writes in `executeProposal` (Thread 3), and re-check
+ownership after run setup awaits in `runStrategyOnce` (Thread 4). Both were addressed in autofix commit
+`3bfd312`, verified (tsc clean, 336 files / 3768 tests pass, build green), and both threads resolved.
+Auto-merge enabled. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 ## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
 
 The admin connections-health route's expected-lane inventory used `alphavantage:env`, while the

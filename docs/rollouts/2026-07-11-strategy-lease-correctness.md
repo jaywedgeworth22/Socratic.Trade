@@ -126,3 +126,52 @@ default-on posture.
   was updated with implementation and review receipts.
 - Current-main reconciliation and the full ordered gate are complete. Hosted checks and production
   verification remain contingent on the ready PR landing through the normal auto-deploy path.
+
+---
+
+## Second autofix round — Codex review round 2 (2026-07-11)
+
+The second Codex review (commit `996d0f4cb8`, submitted 19:16 UTC) raised two P2 threads that were
+not covered by the first autofix round (`9d2ba1fb`).
+
+### Thread 3 — Re-check approval lock before non-placement writes
+
+**File:** `src/lib/strategy-execution.ts`
+
+**Finding:** In `executeProposal`, after the awaited portfolio/positions/orders reads, market scan,
+protective exit reprice, tradability check, broker review, and broker-minimum bump, each
+non-placement return path (tradability blocked, broker-minimum blocked, policy-decision blocked,
+held-exit blocked, live-preflight blocked, and wash-re-escalation re-queue) writes proposal status
+and/or sends notifications without re-proving lease ownership. Only the placement path (line 523)
+had `lockGuard.assertOwned()`. A lease failure during the preceding ~240 lines of async I/O could
+let these writes execute under a stolen lease.
+
+**Fix:** Added `lockGuard.assertOwned()` at line 205, immediately after all async setup work
+(protective exit reprice) and before the first non-placement write path (tradability). This single
+check protects all downstream non-placement writes. The existing placement-path check at line 523
+is unchanged.
+
+### Thread 4 — Re-check ownership after run setup awaits
+
+**File:** `src/lib/strategy.ts`
+
+**Finding:** In `runStrategyOnce`, the only early ownership check is at line 342 (after broker health
+check). From that point through the next `assertOwned()` at line 1870 (start of the proposal loop),
+~57 lines of awaited I/O execute: fill reconciliation (line 432), stale-intent recovery (line 435),
+portfolio/positions/orders (lines 436–441), market scan (lines 461–468), stale-limit notification
+(line 489), and then the first DB mutations: portfolio snapshot (line 494), drawdown breaker
+systemState changes (lines 529–530), and volatility brake systemState changes (lines 560). A lease
+failure during any of those awaits would let snapshot records and systemState changes execute under
+a stolen lease.
+
+**Fix:** Added `lockGuard.assertOwned()` at line 492, immediately after all async setup work and
+before the first DB mutation in the protected region (portfolio snapshot).
+
+### Verification
+
+- `npx tsc --noEmit` — clean
+- `npm test` — 336 files / 3768 tests passed
+- `npm run build` — clean
+- Both review threads resolved via GraphQL API
+- Auto-merge enabled on PR #1429
+- Commit: `3bfd312` — `[codex-autofix] Re-check ownership before non-placement writes and after strategy run setup awaits`
