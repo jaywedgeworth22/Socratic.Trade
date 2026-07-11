@@ -121,11 +121,11 @@ released and clean-install-verified shared `v1.5.0`, delegates rejection body/st
 the app-local HTTP adapter to shared builders while retaining `Response`, `Retry-After`, error text,
 and legacy tuning fields, and preserves real Auth.js provenance coverage instead of the bypass mock
 introduced by the Tradier merge. Representative 429/409 bodies are parsed by the shared schema. The
-pre-reconciliation Node 24 gate was green: focused 4 files / 29 tests, lint 0 errors / 404 inherited
-warnings, TypeScript clean, 329 files / 3,684 tests, and production build clean. The first full-test
+current-main Node 24 gate is green: focused 4 files / 29 tests, lint 0 errors, TypeScript clean,
+330 files / 3,740 tests, and production build clean. The first full-test
 attempt exposed only a Node ABI mismatch caused by the earlier dependency refresh running under Node
-26; rebuilding `better-sqlite3` under Node 24 fixed it before the passing rerun. Current-main
-verification and refreshed hosted checks are pending. The controls are anti-repeat budgets, not hard
+26; rebuilding `better-sqlite3` under Node 24 fixed it before the passing rerun. Refreshed hosted
+checks and the matched Congress.Trade peer pin remain pending. The controls are anti-repeat budgets, not hard
 per-request spend ceilings. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 ## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)

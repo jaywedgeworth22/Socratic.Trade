@@ -23,9 +23,9 @@ filling the missing pieces.
 > route wrappers that #1409's merge had dropped. The released, clean-install-verified shared package
 > `v1.5.0` is exact-pinned in follow-up PR #1426, whose app-local HTTP adapter delegates stable
 > rejection body/status construction to the shared builders while retaining HTTP headers and legacy
-> fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The pre-current-main
-> gate is green: focused 29/29, lint 0 errors, tsc, 3,684/3,684 tests, and build; refreshed verification
-> against `main@e3d04221` remains pending. See
+> fields. It also keeps real Auth.js provenance coverage instead of a bypass mock. The current-main
+> Node 24 gate is green: focused 29/29, lint 0 errors, tsc, 3,740/3,740 tests, and build. Refreshed
+> hosted checks and the matched Congress.Trade peer pin remain pending. See
 > `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 > **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
 > change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger

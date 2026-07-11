@@ -90,7 +90,11 @@ eight route wrappers dropped by #1409. Each current route still authenticates be
 so PR #1426 keeps the main route implementations and narrows to shared `v1.5.0` adoption plus tests.
 The merge also reintroduced a test-only `requireAdmin: () => null` mock; the follow-up removes that
 bypass and retains the verified Auth.js identity-source header plus allowlisted-email setup. The
-current-main full gate is pending below; the earlier receipts remain preserved for audit history.
+current-main full gate passed; the earlier receipts remain preserved for audit history.
+
+- Current-main focused verification: 4 files / 29 tests passed.
+- Current-main ordered Node 24 gate: `npm run lint` (0 errors), `npx tsc --noEmit`, `npm test`
+  (330 files / 3,740 tests), and `npm run build` all passed.
 
 - `git diff --check` — passed.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH node --version` — `v24.18.0`.
