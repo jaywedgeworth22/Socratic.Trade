@@ -97,7 +97,7 @@ default-on posture.
 
 ## Follow-ups and boundaries
 
-- The implementation and current-main merge are committed locally; push/PR/hosted review remain.
+- Head `f70e9043` is pushed in ready PR #1429; hosted checks/review and production verification remain.
 - No scheduler provider-boundary locking, production environment/configuration, PR, merge,
   deployment, or live runtime mutation is part of this change. The branch-neutral live effort board
   was updated with implementation and review receipts.

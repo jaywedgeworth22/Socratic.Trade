@@ -21,7 +21,8 @@ green: focused 7 files / 36 tests, full lint 0 errors / 404 inherited warnings, 
 full 334 files / 3,764 tests, and production build. The first build exposed a client-import trace
 through `node:crypto`; the UUID owner helper now uses Web Crypto, after which focused 3 files / 11
 tests, TypeScript, scoped lint, the full suite, and build all reran green. See
-`docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+`docs/rollouts/2026-07-11-strategy-lease-correctness.md`. Head `f70e9043` is pushed in ready PR
+#1429; hosted checks and production verification remain.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
 Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment

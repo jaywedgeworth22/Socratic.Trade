@@ -19,7 +19,8 @@ filling the missing pieces.
 > to disable. Obsolete teardown calls that could not name the real owner are removed. Setup failure
 > cannot leak the renewing timer/lease; approval loss returns typed busy without broker placement,
 > and autonomous loss preserves any proposal results completed before the stop. Current-main Node 24
-> lint, typecheck, 3,764-test suite, and production build are green. See
+> lint, typecheck, 3,764-test suite, and production build are green; ready PR #1429 is in hosted
+> review. See
 > `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
 > scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
