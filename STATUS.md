@@ -1,5 +1,17 @@
 # Status
 
+## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
+Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
+now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled
+OAuth `state`, and never per spoofable `X-Forwarded-For`); the in-process limiter evicts expired
+buckets and caps live subjects at 10,000 with deterministic LRU eviction. Middleware now parses
+`CF_ACCESS_TRUST_EMAIL_HEADER` explicitly (`1/true/yes/on` only), so the production-style `0`
+override cannot re-arm header trust while Auth.js remains fail-closed. Paid `/api/strategy/tune`
+now uses a named 10/min per-user limiter plus a one-in-flight-per-user guard before its LLM call.
+Scope deliberately excludes active broker/DB lanes and the `.env.example` file owned by active
+PR #1389. Verification and PR state are recorded in
+`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
+
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
 and broker-reported PDT/day-trade requirements — all capability-gated. Verified the $25k PDT rule DID change

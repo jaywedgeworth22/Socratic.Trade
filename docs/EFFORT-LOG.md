@@ -502,6 +502,17 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Public auth + paid-route rate-limit hardening (CODEX, branch
+  `codex/public-auth-rate-limit-hardening`) — IN PROGRESS 2026-07-11.** Bounded security batch from
+  the whole-app reliability audit: key the public Robinhood OAuth callback limiter by client IP
+  before authentication (never by attacker-controlled OAuth state), bound and expire the in-process
+  limiter's key space, parse `CF_ACCESS_TRUST_EMAIL_HEADER` with explicit truth semantics so `0` is
+  off while Auth.js remains fail-closed, and apply a named per-user limiter plus one-in-flight guard
+  to paid strategy tuning.
+  Scope excludes active broker/DB lanes (`connected-accounts`, `alpaca.ts`, `db-api-keys.ts`,
+  `db.ts`). Live board intentionally not modified per coordinator instruction. Rollout:
+  `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
+
 - **Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch
   `monet/privacy-terms-pages`) — IN PROGRESS 2026-07-10, code+tests+full gate done, PR opening
   next.** Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added

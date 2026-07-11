@@ -1,0 +1,138 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserFromEmail } from "../src/lib/request-user";
+import { rateLimit, RATE_LIMITS, resetRateLimiter } from "../src/lib/rate-limit";
+
+const mocks = vi.hoisted(() => ({
+  completeMcpOAuthCallback: vi.fn(),
+  proposeStrategyTuning: vi.fn(),
+  getPolicy: vi.fn()
+}));
+
+vi.mock("@/lib/mcp-oauth", () => ({
+  completeMcpOAuthCallback: mocks.completeMcpOAuthCallback,
+  resolvePublicAppOrigin: () => "https://socratictrade.com"
+}));
+
+vi.mock("@/lib/strategy-tuning", () => ({
+  proposeStrategyTuning: mocks.proposeStrategyTuning
+}));
+
+vi.mock("@/lib/db", () => ({
+  getPolicy: mocks.getPolicy
+}));
+
+vi.mock("@/lib/tuning-invariants", () => ({
+  validateTuningInvariants: () => ({ ok: true, violations: [] })
+}));
+
+vi.mock("@/lib/llm-request", () => ({
+  ALL_LLM_REASONING_EFFORTS: []
+}));
+
+import { GET as robinhoodCallback } from "../app/api/auth/robinhood/callback/route";
+import { POST as tuneStrategy } from "../app/api/strategy/tune/route";
+
+beforeEach(() => {
+  resetRateLimiter();
+  mocks.completeMcpOAuthCallback.mockReset().mockResolvedValue({ accessToken: "unused" });
+  mocks.proposeStrategyTuning.mockReset().mockResolvedValue({ cautions: [], summary: "ok" });
+  mocks.getPolicy.mockReset().mockReturnValue({ tuning: {} });
+});
+
+afterEach(() => resetRateLimiter());
+
+describe("public Robinhood OAuth callback rate limiting", () => {
+  it("shares one pre-auth IP bucket across attacker-controlled state values", async () => {
+    const clientIp = "203.0.113.10";
+    for (let i = 0; i < RATE_LIMITS.oauth.limit; i++) {
+      expect(rateLimit(`${clientIp}:auth/robinhood/callback`, RATE_LIMITS.oauth).allowed).toBe(true);
+    }
+
+    for (const state of ["attacker-state-a", "attacker-state-b"]) {
+      const response = await robinhoodCallback(new NextRequest(
+        `https://socratictrade.com/api/auth/robinhood/callback?code=fake&state=${state}`,
+        { headers: { "cf-connecting-ip": clientIp } }
+      ));
+      expect(response.status).toBe(429);
+      expect(Number(response.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
+    }
+    expect(mocks.completeMcpOAuthCallback).not.toHaveBeenCalled();
+  });
+
+  it("does not trust X-Forwarded-For as a public limiter subject", async () => {
+    for (let i = 0; i < RATE_LIMITS.oauth.limit; i++) {
+      expect(rateLimit("unknown-ip:auth/robinhood/callback", RATE_LIMITS.oauth).allowed).toBe(true);
+    }
+
+    for (const spoofedIp of ["198.51.100.1", "198.51.100.2"]) {
+      const response = await robinhoodCallback(new NextRequest(
+        `https://socratictrade.com/api/auth/robinhood/callback?code=fake&state=${spoofedIp}`,
+        { headers: { "x-forwarded-for": spoofedIp } }
+      ));
+      expect(response.status).toBe(429);
+    }
+    expect(mocks.completeMcpOAuthCallback).not.toHaveBeenCalled();
+  });
+});
+
+describe("paid strategy tuning rate limiting", () => {
+  it("returns 429 before paid work and remains isolated per user", async () => {
+    const limitedEmail = "tuning-burst@example.com";
+    const limitedUserId = resolveRequestUserFromEmail(limitedEmail).userId;
+    for (let i = 0; i < RATE_LIMITS.strategyTuning.limit; i++) {
+      expect(rateLimit(`${limitedUserId}:strategy/tune`, RATE_LIMITS.strategyTuning).allowed).toBe(true);
+    }
+
+    const limited = await tuneStrategy(new Request("https://socratictrade.com/api/strategy/tune", {
+      method: "POST",
+      headers: { [AUTHENTICATED_EMAIL_HEADER]: limitedEmail, "content-type": "application/json" },
+      body: "{}"
+    }));
+    expect(limited.status).toBe(429);
+    expect(mocks.proposeStrategyTuning).not.toHaveBeenCalled();
+
+    const fresh = await tuneStrategy(new Request("https://socratictrade.com/api/strategy/tune", {
+      method: "POST",
+      headers: { [AUTHENTICATED_EMAIL_HEADER]: "fresh-tuning@example.com", "content-type": "application/json" },
+      body: "{}"
+    }));
+    expect(fresh.status).toBe(200);
+    expect(mocks.proposeStrategyTuning).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows only one in-flight tuning review per user and releases the guard in finally", async () => {
+    let resolveFirst!: (value: { cautions: string[]; summary: string }) => void;
+    const firstDeferred = new Promise<{ cautions: string[]; summary: string }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    mocks.proposeStrategyTuning
+      .mockImplementationOnce(() => firstDeferred)
+      .mockResolvedValue({ cautions: [], summary: "ok" });
+
+    const requestFor = (email: string) => new Request("https://socratictrade.com/api/strategy/tune", {
+      method: "POST",
+      headers: { [AUTHENTICATED_EMAIL_HEADER]: email, "content-type": "application/json" },
+      body: "{}"
+    });
+
+    const first = tuneStrategy(requestFor("same-user@example.com"));
+    await vi.waitFor(() => expect(mocks.proposeStrategyTuning).toHaveBeenCalledTimes(1));
+
+    const overlapping = await tuneStrategy(requestFor("same-user@example.com"));
+    expect(overlapping.status).toBe(409);
+    expect(await overlapping.json()).toMatchObject({ error: "strategy_tuning_in_progress" });
+    expect(mocks.proposeStrategyTuning).toHaveBeenCalledTimes(1);
+
+    const otherUser = await tuneStrategy(requestFor("other-user@example.com"));
+    expect(otherUser.status).toBe(200);
+    expect(mocks.proposeStrategyTuning).toHaveBeenCalledTimes(2);
+
+    resolveFirst({ cautions: [], summary: "first complete" });
+    expect((await first).status).toBe(200);
+
+    const afterRelease = await tuneStrategy(requestFor("same-user@example.com"));
+    expect(afterRelease.status).toBe(200);
+    expect(mocks.proposeStrategyTuning).toHaveBeenCalledTimes(3);
+  });
+});
