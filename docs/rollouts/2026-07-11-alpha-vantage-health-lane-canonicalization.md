@@ -55,5 +55,7 @@ failures. The locked install and final ordered checks passed under Node 24.
 
 ## Follow-ups
 
+- Ready PR: `#1438` at head `1687974c`, reconciled through `main@da9558ac`; wait for hosted
+  verify/smoke/security before merge.
 - After merge and auto-deploy, confirm `/admin/connections` shows one Alpha Vantage env lane and no
   legacy-spelling placeholder.
