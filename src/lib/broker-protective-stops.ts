@@ -55,7 +55,7 @@ import {
 import { isRejectedOrCanceledState, liveExitOrderCoverage } from "./broker-side";
 import { normalizeSymbol } from "./money";
 import { livePreflightBlocks } from "./preflight-live-guard";
-import type { BrokerGateway, EquityOrder, EquityPosition, ExecutionMode, FillSource, TradingPolicy } from "./types";
+import type { BrokerGateway, EquityOrder, EquityPosition, ExecutionMode, FillSource, StopPlanStyle, TradingPolicy } from "./types";
 
 /**
  * True when a broker order is done resting for reasons other than an app-issued cancel actually
@@ -252,12 +252,47 @@ export async function reconcileBrokerProtectiveStops(args: {
    * Optional; a symbol with no row yet (freshly registering) falls back to `max(mark, entry)`.
    */
   extremePriceBySymbol?: Record<string, number>;
+  /**
+   * Per-position stop PLANS (LLM-chosen stop TYPE, persisted at fill time), keyed by symbol —
+   * fetched by the caller (synthetic-stops.ts, which already self-loads them). A plan can only
+   * NARROW which of the account's own enabled lane(s) apply to that one symbol — it never invents
+   * a broker capability the account doesn't otherwise have: "trailing" excludes the fixed lane for
+   * that symbol; "fixed"/"atr" exclude the trailing lane; "none" excludes both (any existing
+   * resting row for that symbol is torn down, mirroring the account-wide disabled teardown, so a
+   * broker-held stop can never keep resting in silent contradiction of an owner/LLM "no stop"
+   * choice). A symbol excluded from every kind the account has falls back to the always-on
+   * synthetic monitor, which separately honors "trailing"/"none" unconditionally. Absent/"default"
+   * → the account's own precedence for that symbol, unchanged from before this param existed.
+   */
+  stopPlanBySymbol?: Record<string, StopPlanStyle>;
 }): Promise<ReconcileResult> {
-  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true, extremePriceBySymbol = {} } = args;
+  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true, extremePriceBySymbol = {}, stopPlanBySymbol = {} } = args;
   const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [], partiallyPlacedStopQuantities: {}, filledRecoverySymbols: [] };
 
   const kind = desiredBrokerStopKind(policy, executionMode);
   const source: FillSource = executionMode === "broker/live" ? "live" : "paper";
+  // Narrow the account-wide kind for one symbol per its own stop plan (never widen/invent beyond
+  // what the account already has enabled — see the stopPlanBySymbol param doc above). An "atr" plan
+  // deliberately never maps to the fixed lane here: this reconciler only knows the account's flat
+  // `stopLossPct`, not the pinned per-symbol ATR distance (that's computed and applied entirely
+  // within generateProactiveRiskProposals/enrichOpeningProposal in strategy.ts) — resting a
+  // broker-held stop at the flat % would silently contradict the ATR distance the plan actually
+  // pins. Narrowing to "never invent a mispriced broker stop" leaves the ATR plan's protection to
+  // the always-on, correctly-priced synthetic monitor instead (Codex review, PR #1371).
+  const kindForSymbol = (sym: string): "fixed" | "trailing" | null => {
+    const plan = stopPlanBySymbol[sym] ?? "default";
+    if (plan === "none" || plan === "atr") return null;
+    // `kind` picks TRAILING first when an account has both lanes enabled (desiredBrokerStopKind's
+    // own precedence) — so `kind === "trailing"` already correctly reflects trailing-lane
+    // availability regardless of whether fixed is ALSO enabled. But that same precedence means an
+    // account with BOTH lanes on reports `kind === "trailing"`, which would wrongly make a "fixed"
+    // plan's `kind === "fixed"` check fail even though the fixed lane is independently enabled and
+    // available — check that lane's own enablement directly instead of going through the
+    // precedence-resolved `kind` (Codex review, PR #1371).
+    if (plan === "trailing") return kind === "trailing" ? "trailing" : null;
+    if (plan === "fixed") return brokerProtectiveStopsEnabled(policy, executionMode) ? "fixed" : null;
+    return kind;
+  };
 
   // A broker-held protective stop's tracked order was found FILLED at the broker (native trail or
   // ratcheted stop-market closing the position) before our own reconciliation ever saw it as a
@@ -398,14 +433,23 @@ export async function reconcileBrokerProtectiveStops(args: {
     return Math.max(full - cov.coveredQty, 0);
   };
 
+  // Any Alpaca-family broker (REST native trailing_stop, or MCP's ratcheted stop_market emulation) —
+  // both submit real Alpaca orders at gtc time-in-force. Alpaca's own fractional-trading docs require
+  // time_in_force=day for a fractional stop/stop-limit order; this reconciler always sends gtc, so a
+  // fractional quantity risks a broker rejection that would leave even the whole-share portion with
+  // no broker-held protection (Codex review, PR #1331/#1371). Flooring to whole shares on EITHER
+  // Alpaca transport — not just the native REST lane — sidesteps that entirely; the fractional
+  // remainder still gets synthetic monitor coverage, same as the native lane already relied on.
+  const isAlpacaFamily = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+
   // The share quantity a broker-held stop of this kind should cover: the uncovered remainder,
-  // floored to whole shares on the native trailing lane (Alpaca rejects fractional trailing
-  // stops) — the synthetic monitor's quantity-aware coverage picks up any remainder. `null`
-  // propagates from uncoveredQuantity unchanged — "coverage unknown this tick", not "zero".
-  const desiredStopQuantity = (pos: EquityPosition, sym: string, excludeOrderId?: string): number | null => {
+  // floored to whole shares on any Alpaca trailing lane — the synthetic monitor's quantity-aware
+  // coverage picks up any remainder. `null` propagates from uncoveredQuantity unchanged — "coverage
+  // unknown this tick", not "zero".
+  const desiredStopQuantity = (pos: EquityPosition, sym: string, forKind: "fixed" | "trailing", excludeOrderId?: string): number | null => {
     const qty = uncoveredQuantity(pos, sym, excludeOrderId);
     if (qty === null) return null;
-    return kind === "trailing" && nativeTrailing ? Math.floor(qty) : qty;
+    return forKind === "trailing" && isAlpacaFamily ? Math.floor(qty) : qty;
   };
 
   // Trailing trigger for the ratcheted (non-native) lane: trailingStopPct below the high-water
@@ -452,9 +496,15 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   // 1. Retry pending cancellations first — but for a STILL-OPEN position, skip the retry when a
   //    replacement can't be placed (keep its existing stop rather than orphaning the position).
+  //    EXCEPT when the symbol's CURRENT plan excludes every lane the account has (kindForSymbol
+  //    returns null, e.g. "none", or a scale-in that switched lanes) — that row was never going to
+  //    be replaced regardless of liveReplaceBlocked (section 2b tears it down unconditionally), so
+  //    blocking its retry here just leaves a plan-contradicting stop resting indefinitely while live
+  //    placement happens to be disabled (Codex review, PR #1371).
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
     if (row.status === "pending_cancel") {
-      if (liveReplaceBlocked && liveLongs.has(normalizeSymbol(row.symbol))) continue;
+      const rowSym = normalizeSymbol(row.symbol);
+      if (liveReplaceBlocked && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) continue;
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);
@@ -511,6 +561,52 @@ export async function reconcileBrokerProtectiveStops(args: {
       } catch (err) {
         audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err) }, userId);
         // Mark as pending_cancel to retry later
+        upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
+      }
+    }
+  }
+
+  // 2b. Per-symbol plan-excluded teardown (still cancel-only — runs regardless of `running` or
+  // `liveReplaceBlocked`, same as section 2). Sections 3/4 below are gated behind `running` because
+  // they PLACE/replace orders, but a position whose plan now excludes every lane the account has
+  // enabled — via `kindForSymbol` returning null, e.g. "none", or a scale-in switching a resting
+  // Robinhood fixed stop to "trailing"/"atr" — must not keep that old broker-held stop resting while
+  // the system is Stopped or live placement is disabled. That contradicts the newly selected plan
+  // regardless of whether the app happens to be running this tick (Codex review, PR #1371 — this
+  // originally only checked literal "none"; broadened to match section 3's `symKind === null` gate).
+  for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
+    if (row.status === "pending_cancel") continue; // already handled
+    const sym = normalizeSymbol(row.symbol);
+    if (!liveLongs.has(sym)) continue; // already torn down above (position closed)
+    if (kindForSymbol(sym) !== null) continue;
+    try {
+      await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
+      deleteBrokerProtectiveStop(row.id, userId);
+      out.cancelled++;
+      out.cancelledOrderIds.push(row.brokerOrderId);
+      // A successful cancel doesn't mean nothing filled first — mirror every other cancel path in
+      // this reconciler: check the caller's pre-reconcile order snapshot for an executed fill before
+      // this row disappears (Codex review, PR #1371).
+      const preCancelOrder = orders.find((o) => o.id === row.brokerOrderId);
+      if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
+        filledRecoverySymbols.add(sym);
+        out.filledRecoverySymbols.push(sym);
+        bookBrokerHeldStopFill(row, preCancelOrder);
+      }
+    } catch (err) {
+      // The cancel failed — check whether the broker already terminated the order (most likely it
+      // FILLED before our cancel reached the broker), same recovery as every other cancel path here.
+      const found = orders.find((o) => o.id === row.brokerOrderId);
+      if (found && isDoneRestingState(found.state)) {
+        deleteBrokerProtectiveStop(row.id, userId);
+        if (hadExecutedFill(found)) {
+          filledRecoverySymbols.add(sym);
+          out.filledRecoverySymbols.push(sym);
+          bookBrokerHeldStopFill(row, found);
+        }
+        audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "plan_excluded_teardown" }, userId);
+      } else {
+        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "plan_excluded_teardown" }, userId);
         upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
       }
     }
@@ -581,6 +677,52 @@ export async function reconcileBrokerProtectiveStops(args: {
   }
   for (const [sym, pos] of liveLongs) {
     const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
+    const symKind = kindForSymbol(sym);
+    if (symKind === null) {
+      // This symbol's own stop plan excludes every lane the account currently has enabled (a
+      // "none" plan, or a plan — e.g. "trailing" — that doesn't match the account's only active
+      // lane). Any existing resting row for it is torn down unconditionally, the same as the
+      // account-wide disabled teardown: it must never keep resting in silent contradiction of the
+      // owner/LLM's own choice for this position. The always-on synthetic monitor (which honors
+      // "trailing"/"none" per-symbol directly) remains this position's actual protection.
+      if (existingStop && existingStop.status === "resting") {
+        try {
+          await gateway.cancelEquityOrder(accountNumber, existingStop.brokerOrderId);
+          deleteBrokerProtectiveStop(existingStop.id, userId);
+          out.cancelled++;
+          out.cancelledOrderIds.push(existingStop.brokerOrderId);
+          // A successful cancel doesn't mean nothing filled first — mirror the account-wide disabled
+          // teardown's handling: check the caller's pre-reconcile order snapshot for an executed fill
+          // before this row disappears, or the executed shares never reach fill_events/P&L/learning,
+          // and the caller isn't told the position snapshot may be stale (Codex review, PR #1371).
+          const preCancelOrder = orders.find((o) => o.id === existingStop.brokerOrderId);
+          if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
+            filledRecoverySymbols.add(sym);
+            out.filledRecoverySymbols.push(sym);
+            bookBrokerHeldStopFill(existingStop, preCancelOrder);
+          }
+          audit("broker_protective_stop_mismatch", { symbol: sym, note: "per-position stop plan excludes this account's enabled broker-held lane(s)", kind: null }, userId);
+        } catch (err) {
+          // The cancel failed — check whether the broker already terminated the order (most likely
+          // it FILLED before our cancel reached the broker), same recovery as every other cancel path
+          // in this reconciler (Codex review, PR #1371).
+          const found = orders.find((o) => o.id === existingStop.brokerOrderId);
+          if (found && isDoneRestingState(found.state)) {
+            deleteBrokerProtectiveStop(existingStop.id, userId);
+            if (hadExecutedFill(found)) {
+              filledRecoverySymbols.add(sym);
+              out.filledRecoverySymbols.push(sym);
+              bookBrokerHeldStopFill(existingStop, found);
+            }
+            audit("broker_protective_stop_cancel_recovered", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId);
+          } else {
+            audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId);
+            upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
+          }
+        }
+      }
+      continue;
+    }
     if (existingStop && existingStop.status === "resting") {
       // The broker order this row tracks may already be done resting (filled naturally, or
       // rejected/canceled/expired outside our own cancel path) without the row ever going through
@@ -619,11 +761,11 @@ export async function reconcileBrokerProtectiveStops(args: {
       // check runs cleanly against the final position size.
       if (trackedOrder && String(trackedOrder.state ?? "").trim().toLowerCase() === "partially_filled") {
         audit("broker_protective_stop_skipped", {
-          symbol: sym, kind, note: "tracked order is partially filled and actively executing at the broker — leaving it resting rather than cancelling into an uncertain in-flight state"
+          symbol: sym, kind: symKind, note: "tracked order is partially filled and actively executing at the broker — leaving it resting rather than cancelling into an uncertain in-flight state"
         }, userId);
         continue;
       }
-      const qty = desiredStopQuantity(pos, sym, existingStop.brokerOrderId);
+      const qty = desiredStopQuantity(pos, sym, symKind, existingStop.brokerOrderId);
       // Coverage from OTHER live exit orders is unknown this tick (a real order-list fetch
       // failed) — do not treat that as evidence of drift on its own. But whether the row's OWN
       // recorded quantity now exceeds the CURRENT position size needs no order-list data at all:
@@ -644,7 +786,7 @@ export async function reconcileBrokerProtectiveStops(args: {
             audit("broker_protective_stop_mismatch", {
               symbol: sym,
               note: "existing stop quantity exceeds current position size (other-order coverage unknown this tick)",
-              kind,
+              kind: symKind,
               oldQty: existingStop.quantity,
               newQty: posQty
             }, userId);
@@ -653,20 +795,20 @@ export async function reconcileBrokerProtectiveStops(args: {
             upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
           }
         } else {
-          audit("broker_protective_stop_skipped", { symbol: sym, kind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId);
+          audit("broker_protective_stop_skipped", { symbol: sym, kind: symKind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId);
         }
         continue;
       }
       // Where section 4 would place this stop's trigger today (informational for native trailing —
       // the broker moves that trigger itself).
-      const newStopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
+      const newStopPrice = symKind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
 
       let mismatchNote: string | undefined;
-      if (existingStop.kind !== kind) {
-        mismatchNote = `stop kind ${existingStop.kind} -> ${kind}`;
+      if (existingStop.kind !== symKind) {
+        mismatchNote = `stop kind ${existingStop.kind} -> ${symKind}`;
       } else if (Math.abs(existingStop.quantity - qty) > 0.000001) {
         mismatchNote = "quantity drift";
-      } else if (kind === "fixed") {
+      } else if (symKind === "fixed") {
         if (Math.abs(existingStop.stopPrice - newStopPrice) > 0.02) mismatchNote = "stop price drift";
       } else if (Math.abs((existingStop.trailPercent ?? 0) - trailPct) > 0.0001) {
         mismatchNote = `trail % ${existingStop.trailPercent ?? 0} -> ${trailPct}`;
@@ -687,9 +829,9 @@ export async function reconcileBrokerProtectiveStops(args: {
       // canArmTrailingNow gate still decides, independently, whether a resize replacement can be
       // placed this same tick (Codex review, PR #1331).
       const isQuantityShrink = mismatchNote === "quantity drift" && qty < existingStop.quantity;
-      if (mismatchNote && kind === "trailing" && !isQuantityShrink && !canArmTrailingNow(pos, sym, newStopPrice)) {
+      if (mismatchNote && symKind === "trailing" && !isQuantityShrink && !canArmTrailingNow(pos, sym, newStopPrice)) {
         audit("broker_protective_stop_skipped", {
-          symbol: sym, kind, note: `mismatch (${mismatchNote}) detected but the replacement would be refused this tick — keeping the existing stop rather than cancelling into no protection`
+          symbol: sym, kind: symKind, note: `mismatch (${mismatchNote}) detected but the replacement would be refused this tick — keeping the existing stop rather than cancelling into no protection`
         }, userId);
         mismatchNote = undefined;
       }
@@ -698,7 +840,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         audit("broker_protective_stop_mismatch", {
           symbol: sym,
           note: mismatchNote,
-          kind,
+          kind: symKind,
           oldQty: existingStop.quantity,
           newQty: qty,
           oldStopPrice: existingStop.stopPrice,
@@ -730,6 +872,11 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   for (const [sym, pos] of liveLongs) {
     if (existing.has(sym)) continue;
+    const symKind = kindForSymbol(sym);
+    // This symbol's own stop plan excludes every lane the account currently has enabled (a "none"
+    // plan, or a plan that doesn't match the account's only active lane) — never place a
+    // broker-held stop for it; the synthetic monitor is this position's actual protection.
+    if (symKind === null) continue;
     // Section 1 just recovered this symbol's row THIS call via a FILLED order — `positions` may not
     // yet reflect that fill (see the filledRecoverySymbols comment above). Defer to the next call's
     // fresh position read rather than risk sizing a replacement off a stale (pre-fill) quantity.
@@ -743,28 +890,28 @@ export async function reconcileBrokerProtectiveStops(args: {
     // (which is quantity-aware against whatever it CAN see, and fails safe otherwise) cover the
     // tick (Codex review, PR #1331). Zero (list fetched fine, just fully covered/sub-share) is a
     // normal, confident skip.
-    const qty = desiredStopQuantity(pos, sym);
+    const qty = desiredStopQuantity(pos, sym, symKind);
     if (qty === null) {
-      audit("broker_protective_stop_skipped", { symbol: sym, kind, note: "order list unavailable this tick — coverage unknown, deferring placement to the synthetic monitor rather than guessing" }, userId);
+      audit("broker_protective_stop_skipped", { symbol: sym, kind: symKind, note: "order list unavailable this tick — coverage unknown, deferring placement to the synthetic monitor rather than guessing" }, userId);
       continue;
     }
     if (!(qty > 0)) {
       audit("broker_protective_stop_skipped", {
         symbol: sym,
-        kind,
+        kind: symKind,
         note: "no uncovered whole shares — other live exit orders (or sub-share size) cover this position; the synthetic monitor covers any remainder"
       }, userId);
       continue;
     }
-    const stopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
+    const stopPrice = symKind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
     if (!(stopPrice > 0)) continue;
     // Never arm a broker trail that would be LOOSER than the app-defined one (Codex review, PR
     // #1331, three rounds — see canArmTrailingNow's doc comment for the native-vs-ratcheted logic).
-    if (kind === "trailing" && !canArmTrailingNow(pos, sym, stopPrice)) {
+    if (symKind === "trailing" && !canArmTrailingNow(pos, sym, stopPrice)) {
       const mark = pos.marketValue / pos.quantity;
       audit("broker_protective_stop_skipped", {
         symbol: sym,
-        kind,
+        kind: symKind,
         stopPrice,
         mark,
         trackedExtreme: extremePriceBySymbol[sym],
@@ -785,8 +932,8 @@ export async function reconcileBrokerProtectiveStops(args: {
         // Native trailing (Alpaca): the gateway translates trailPercent to a trailing_stop order
         // and the broker computes/moves the trigger itself — sending a stopPrice would be rejected.
         // Ratcheted trailing (Robinhood) and fixed stops rest at an explicit trigger.
-        stopPrice: kind === "trailing" && nativeTrailing ? undefined : stopPrice,
-        trailPercent: kind === "trailing" && nativeTrailing ? trailPct : undefined,
+        stopPrice: symKind === "trailing" && nativeTrailing ? undefined : stopPrice,
+        trailPercent: symKind === "trailing" && nativeTrailing ? trailPct : undefined,
         timeInForce: "gtc",
         marketHours: "regular_hours",
         refId
@@ -817,8 +964,8 @@ export async function reconcileBrokerProtectiveStops(args: {
         // real one); for fixed/ratcheted stops it is the actual resting trigger.
         stopPrice,
         status: "resting",
-        kind,
-        trailPercent: kind === "trailing" ? trailPct : undefined
+        kind: symKind,
+        trailPercent: symKind === "trailing" ? trailPct : undefined
       });
       out.placed++;
       if (qty >= Math.abs(pos.quantity) - 0.000001) out.placedStopSymbols.push(sym);
@@ -826,7 +973,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         out.partiallyPlacedStopSymbols.push(sym);
         out.partiallyPlacedStopQuantities[sym] = qty;
       }
-      audit("broker_protective_stop_placed", { symbol: sym, kind, stopPrice, trailPercent: kind === "trailing" ? trailPct : undefined, quantity: qty, positionQuantity: Math.abs(pos.quantity), brokerOrderId: exec.orderId }, userId);
+      audit("broker_protective_stop_placed", { symbol: sym, kind: symKind, stopPrice, trailPercent: symKind === "trailing" ? trailPct : undefined, quantity: qty, positionQuantity: Math.abs(pos.quantity), brokerOrderId: exec.orderId }, userId);
     } catch (err) {
       audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId);
     }

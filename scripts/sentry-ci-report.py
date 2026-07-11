@@ -42,6 +42,9 @@ from datetime import datetime, timezone
 # listed here have no `schedule:` trigger and will simply be skipped for the
 # check-in step (they can still send a failure event on other trigger types).
 CRON_SCHEDULES = {
+    "CI": "47 7 * * *",
+    "Cleanup Actions Caches": "5 3 * * *",
+    "Effort Issues Sync": "12 6 * * *",
     "Security": "41 10 * * 1",
     "Playwright Smoke": "17 9 * * 1",
     "Shared package pin check": "0 13 * * 1",

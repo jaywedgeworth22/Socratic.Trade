@@ -1606,6 +1606,7 @@ As of 2026-07-08 (assignment-rule update).
   merged cleanly in the isolated worktree; the uncommitted merge preserves both branches'
   STATUS/effort rows and awaits serialized re-verification before commit/push. Rollout:
   `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
+- **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`, READY PR #1398) — IN PROGRESS 2026-07-11.** Removed the disabled `.github/workflows/deploy.yml`, replaced stale deploy/runner docs, removed retired Sentry observers, added every independently runnable workflow, and mapped all active schedules to source cron. The current-main gate caught and fixed reusable-only `_merge-shepherd-impl` parity: it executes inside its caller and cannot emit an independent `workflow_run`. Current `origin/main@1c7c2be8` is merged; final Node24 gate green: lint 0 errors/408 warnings, tsc clean, 325 files/3,604 tests, build clean; focused parity 2/2. Refreshed head `8c49a8ac` is pushed; hosted verify/smoke are running. No product behavior, merge, auto-merge, or deploy. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch
@@ -2408,6 +2409,40 @@ As of 2026-07-08 (assignment-rule update).
   KNOWN_GLOBAL footer set; evidence_age_anomaly dedup; policy_change attribution. All S,
   batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
 
+- **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (CLAUDE,
+  branch `claude/per-position-stop-plans`, stacked on PR #1331) — IN PROGRESS 2026-07-10, gates
+  green (lint/tsc/3511 tests/build); PR #1371 open, 3 Codex review rounds fixed (21 findings —
+  see the rollout doc's "Review fixes round 1-3" sections).** MOVED from Planned (below) — same
+  title, see that entry for the full original design/requirements record.
+  **Implemented:** `TradeProposal.stopPlan` (`StopPlanStyle` = default/fixed/atr/trailing/none) in
+  the LLM structured-output schema + `sanitizeProposals` coercion; `position_stop_plans` table +
+  CRUD (`getStopPlans`/`recordStopPlan`/`clearStopPlans`, mirroring `take_profit_trims`), persisted
+  on fill (`recordFillFromProposal`), added to the account-deletion coverage list; wired into all
+  four stop-enforcement layers — `generateProactiveRiskProposals` + `enrichOpeningProposal`
+  (per-symbol distance override, `STOP_PLAN_FALLBACK_STOP_PCT`=8% when the account has no stop
+  configured at all — requirement B), `runSyntheticStopMonitor` (self-loads plans; "trailing"
+  registers even with `trailingStopPct`=0 via the fallback; "none" purges any existing
+  registration, including one made before the plan existed), `reconcileBrokerProtectiveStops`
+  (per-symbol `kindForSymbol` that only NARROWS the account's own enabled lane — never invents a
+  broker capability the account doesn't have; "none" tears down any existing broker-held stop for
+  that symbol). UI (requirement A): `stop-flow.tsx` gained a 4th "Per-position override" lane
+  (extends the existing diagram, doesn't add a disconnected element); `DashboardSnapshot` grew
+  `stopPlanBySymbol` (self-loaded, best-effort); `deriveProtection` annotates the Positions
+  protection column (a "none" plan is surfaced prominently, never blended into the generic
+  no-protection case); `approval-card.tsx` shows the LLM's chosen style + rationale on pending
+  proposals with a fresh (non-default) plan. Pre-trade validation stance for `stopPlan: "none"`:
+  deliberately NOT hard-blocked in `policy.ts` (per product philosophy — the schema already
+  encourages a rationale; enforcement is via honest UI surfacing, not a gate).
+  New tests: `test/strategy-hardening.test.ts` (generateProactiveRiskProposals + enrichOpeningProposal
+  per-plan cases), `test/synthetic-stops.test.ts` (trailing-with-fallback registration, none-purge
+  incl. after-the-fact), `test/broker-protective-stops.test.ts` (per-symbol kind narrowing, never
+  invents), `test/position-stop-plans-db.test.ts` (new — DB round-trip + fill-time persistence),
+  `test/console-live-data-derive.test.ts` (deriveProtection plan annotation), `test/stop-flow-model.test.ts`
+  (4th lane universal availability). Rollout: `docs/rollouts/2026-07-10-per-position-stop-plans.md`.
+
+- **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
+  PLANNED 2026-07-10 (owner ask, stop-loss session; requirements sharpened by owner same day).**
+  _(Superseded by the IN PROGRESS entry above — kept for the original design record.)_
 - **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
   PLANNED 2026-07-10 (owner ask, stop-loss session; requirements sharpened by owner same day).**
   Today the LLM already proposes a per-trade stop PRICE (`bracketStopLoss`, honored when valid);

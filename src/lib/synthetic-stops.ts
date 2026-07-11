@@ -5,7 +5,9 @@ import {
   claimSyntheticStop,
   dailyExecutionStats,
   deleteSyntheticStop,
+  filterStopPlansByLiveBasis,
   getActiveConnectedAccount,
+  getStopPlans,
   insertFillEvent,
   listBrokerProtectiveStops,
   listPendingBrokerReconciliationFills,
@@ -23,7 +25,8 @@ import { resolveProtectiveExitRouting, type ProtectiveExitQuote } from "./protec
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
 import { evaluateTradeProposal } from "./policy";
-import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, TradeProposal, TradingPolicy } from "./types";
+import { STOP_PLAN_FALLBACK_STOP_PCT } from "./types";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, StopPlanStyle, TradeProposal, TradingPolicy } from "./types";
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
@@ -110,6 +113,26 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     return result; // can't evaluate safely without positions
   }
   const liveSymbols = new Set(positions.filter((p) => Math.abs(p.quantity) > 0.000001).map((p) => normalizeSymbol(p.symbol)));
+
+  // Per-position stop PLANS (LLM-chosen stop TYPE, persisted at fill time): self-loaded here rather
+  // than threaded through the scheduler, since this monitor already owns its own DB reads. A
+  // "trailing" plan makes trailing protection genuinely available even when the account-wide
+  // trailingStopPct is 0/off (using STOP_PLAN_FALLBACK_STOP_PCT as the trail % in that case); a
+  // "none" plan is a real, owner-accepted no-stop choice that must be honored regardless of the
+  // account-wide trailing config — never silently overridden. "fixed"/"atr" plans don't touch this
+  // lane at all (they pin the distance generateProactiveRiskProposals uses, not the trailing
+  // overlay), so they're absent from this map's effect here.
+  // filterStopPlansByLiveBasis drops any plan whose recorded avgCost no longer matches the live
+  // position's averageCost — reused here (not just on the strategy-run side) so a symbol closed and
+  // re-bought before any run observed it flat can't have its stale plan govern the new lot in THIS
+  // monitor either (Codex review, PR #1371: strategy.ts and this monitor load stop plans
+  // independently, so the basis check must run on both sides).
+  let stopPlanBySymbol: Record<string, StopPlanStyle> = {};
+  try {
+    stopPlanBySymbol = filterStopPlansByLiveBasis(getStopPlans(accountNumber, userId), positions);
+  } catch {
+    // best-effort — a lookup failure just means every symbol falls through to "default" (account-wide) behavior
+  }
 
   // Live open orders for the account, feeding the coverage checks below. A broker-held stop
   // (Alpaca OCO bracket leg, Robinhood broker-held protective stop) is a live exit-side order, so
@@ -259,7 +282,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     listSyntheticStops(accountNumber, userId).map((s) => [normalizeSymbol(s.symbol), s.extremePrice])
   );
   try {
-    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol });
+    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol, stopPlanBySymbol });
     if (reconciled.cancelledOrderIds.length > 0) {
       const cancelledIds = new Set(reconciled.cancelledOrderIds);
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));
@@ -286,11 +309,31 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     listBrokerProtectiveStops(accountNumber, userId).map((r) => [normalizeSymbol(r.symbol), r.brokerOrderId])
   );
 
-  // Auto-register a trailing stop for each open position when a trail % is configured.
-  // Longs trail from a high-watermark and exit with a sell; shorts (only when short
-  // selling is enabled) trail from a low-watermark and exit with a cover.
+  // A "none", "fixed", or "atr" plan explicitly excludes the trailing lane for that symbol — purge
+  // any ACTIVE synthetic trailing registration regardless of the account-wide trailing config, so a
+  // plan set (or CHANGED, e.g. a scale-in add reconsidering protection from "trailing" to "fixed")
+  // AFTER a stop was already registered is actually honored, not just silently skipped by the
+  // registration guard below (which only ever prevents a FRESH registration, not an existing one —
+  // Codex review, PR #1371). A 'triggered' row is left alone — its protective exit may still be
+  // resting/executing at the broker.
+  for (const stop of listSyntheticStops(accountNumber, userId)) {
+    const plan = stopPlanBySymbol[normalizeSymbol(stop.symbol)];
+    if (plan === "none" || plan === "fixed" || plan === "atr") {
+      deleteSyntheticStop(stop.id, userId);
+      audit("synthetic_stop_purged_by_plan", { symbol: stop.symbol, plan, note: `per-position stop plan is '${plan}' — trailing protection removed` }, userId, policy.connectedAccountId);
+    }
+  }
+
+  // Auto-register a trailing stop for each open position when a trail % is configured account-wide,
+  // OR when a position's own per-position plan is explicitly "trailing" (universal availability —
+  // that choice must work even on an account with no trailing % configured at all, so it falls back
+  // to STOP_PLAN_FALLBACK_STOP_PCT in that case). Longs trail from a high-watermark and exit with a
+  // sell; shorts (only when short selling is enabled) trail from a low-watermark and exit with a
+  // cover. A "none" plan never registers (purged above, and skipped below too); "fixed"/"atr"
+  // plans don't touch this lane (they pin generateProactiveRiskProposals' distance instead).
   const trailPct = policy.riskRules?.trailingStopPct ?? 0;
-  if (trailPct > 0) {
+  const anyTrailingPlan = positions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "trailing");
+  if (trailPct > 0 || anyTrailingPlan) {
     // "Already protected" includes TRIGGERED stops: a triggered stop's exit order may still be
     // resting at the broker (e.g. a market sell placed after hours). Re-registering over it flipped
     // the row back to 'active' and re-fired the same stop every tick all night (MU, 2026-07-08).
@@ -301,6 +344,15 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     for (const pos of positions) {
       const sym = normalizeSymbol(pos.symbol);
       if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
+      const planStyle: StopPlanStyle = stopPlanBySymbol[sym] ?? "default";
+      // "none"/"fixed"/"atr" all explicitly exclude the trailing lane for this symbol (mirrors the
+      // purge just above) — without this, an account-wide trailingStopPct > 0 would fall through to
+      // effectiveTrailPct = trailPct for a "fixed"/"atr" plan and re-register a trailing row in the
+      // SAME pass the purge just removed one from, contrary to the plan's pinned protection (Codex
+      // review, PR #1371).
+      if (planStyle === "none" || planStyle === "fixed" || planStyle === "atr") continue;
+      const effectiveTrailPct = planStyle === "trailing" ? (trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT) : trailPct;
+      if (!(effectiveTrailPct > 0)) continue;
       const isShort = pos.quantity < 0;
       if (isShort && !policy.shortSellingEnabled) continue;
       // Reconcile PLACED (or cancel/REPLACED) a broker-held protective stop for this symbol THIS
@@ -344,7 +396,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         quantity: Math.abs(pos.quantity),
         entryPrice: pos.averageCost,
         extremePrice: isShort ? Math.min(mark, pos.averageCost) : Math.max(mark, pos.averageCost),
-        trailPercent: trailPct,
+        trailPercent: effectiveTrailPct,
         status: "active"
       });
     }
