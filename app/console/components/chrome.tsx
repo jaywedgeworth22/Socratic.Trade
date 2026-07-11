@@ -66,6 +66,8 @@ function brokerName(broker: string | undefined): string {
       return "Robinhood";
     case "test":
       return "Test Account";
+    case "tradier":
+      return "Tradier";
     default:
       return broker ?? "";
   }

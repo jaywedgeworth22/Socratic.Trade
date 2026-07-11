@@ -507,6 +507,18 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Global learning reads + batched AI review of proposals (CLAUDE cloud, branch
+  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-07, PR pending.** Lessons (on
+  `socratic_decisions`) + framework proposals now read GLOBAL across a user's accounts (dropped the
+  active-account filter on the dashboard learning panels; still write `connected_account_id` for
+  provenance — no migration; also fixes the dashboard-vs-decision-detail inconsistency). New
+  `src/lib/framework-review.ts` `reviewPendingFrameworkProposals`: one LLM call adjudicates all pending
+  proposals across accounts and attaches an ADVISORY recommendation (verdict + rationale + optional
+  rewrite) via a new nullable `ai_review` column — owner still decides (not auto-apply); reviewer model =
+  `redTeamLlmModel`→`llmModel`. Wired `POST /api/socratic/framework/review` + "AI review pending" UI in
+  `app/console/page.tsx`. Merged latest `origin/main` (incl. Tradier broker #1425) clean 2026-07-11;
+  full gate green (tsc 0, lint 0 errors, **3745 tests pass**, build exit 0). All 11 Codex review threads
+  resolved. Awaiting CI + owner merge. See `docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
 - **Public auth + paid-route rate-limit hardening (CODEX, branch
   `codex/public-auth-rate-limit-hardening`) — MERGED TO `main` 2026-07-11 at `97152c25`; live deploy not independently verified.** Bounded security batch from
   the whole-app reliability audit: key the public Robinhood OAuth callback limiter by client IP
@@ -1598,6 +1610,55 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Tradier broker adapter — fifth broker (CLAUDE subagent, branch `claude/tradier-broker`) —
+  IN PROGRESS 2026-07-10 (tradier-broker workflow); gates green locally, PR opening.** Adds
+  Tradier as a fifth BrokerGateway by mirroring the Alpaca adapter against Tradier's hand-rolled
+  REST (single Bearer token, no SDK): new `src/lib/tradier.ts` (all 9 methods), `"tradier"` added
+  to the `ConnectedAccount.broker` + `TradingPolicy.activeBroker` closed unions, factory switch in
+  `broker.ts` (inherits the `withLivePreflight` live-order choke point for free), `broker-side.ts`
+  + `broker-held-orders.ts` state-vocab additions (`error` terminal-decline, `pending` resting),
+  connect API + settings UI (single Access-Token sheet, explicit Sandbox/Production selector — no
+  PK/PA inference), and labels across execution-mode/dashboard/chrome/strategy. Whole-share only
+  (`fractional:false`, floor-or-throw), DIRECT 4-value side map (buy/sell/sell_short/buy_to_cover,
+  not `toBrokerSide`), synthetic stops (no OTOCO — strategy gates broker brackets to Alpaca).
+  Environment derives the base URL (sandbox.tradier.com vs api.tradier.com) so the two venues can
+  never cross. New `test/tradier.test.ts` + extended route/execution-mode/broker-side tests. Node24
+  gate: tsc clean, eslint 0-err, full suite green, build clean. See
+  `docs/rollouts/2026-07-10-tradier-broker.md`. Follow-ups (openQuestions): native OTOCO brackets,
+  the real preview endpoint for `reviewEquityOrder`, IRA agentic-allowed decision, orders
+  pagination field confirmation, and an optional operator env-token tier.
+  **Adversarial-review fixups (2026-07-10, second pass, gates green node24): 7 confirmed findings
+  fixed, each with a regression test — (1) HIGH symbol canonicalization: positions/orders/quotes now
+  all hyphenate share-class tickers to BRK-B via fromTradierSymbol/toTradierSymbol so a position
+  matches its own orders; (2) market dollar orders size from a FRESH quote not the stale
+  referencePrice (throw if no live quote); (3) environment is the base-URL authority — gateway ignores
+  + connect route rejects a host-mismatched Tradier baseUrl (paper never routes to api.tradier.com);
+  (4) dollar-sizing quote lookup key aligned to #1; (5) synthetic-stop refId kept in the portable
+  [A-Za-z0-9-] charset so the Tradier tag round-trips the client-order-id dedup for u_<hash> users;
+  (6) access-token field masked (type=password); (7) cancel normalizes raw 'ok' -> 'pending_cancel'.
+  Not merged. Tradier tag charset not re-confirmable from live SPA docs — fix is charset-independent.**
+  **Fixups round 2 — codex-autofix (9dd5f40c) reconciliation (CLAUDE, 2026-07-11, gates green node24;
+  updates PR #1380, NOT merged): the `[codex-autofix]` commit's equity-class order filter + PDT
+  buying-power read introduced two money-path regressions, now fixed with regression tests. (1) MEDIUM
+  double-sell: getEquityOrders pagination broke on the post-filter count, so an option-only page could
+  stop the loop before a later page's resting protective EQUITY exit — hiding it from
+  liveExitOrderCoverage and letting the synthetic monitor place a duplicate; continuation now decided on
+  the RAW page (any new id of any class), equity filter applied only to returns, 50-page cap + dedup
+  kept. (2) LOW: surface EQUITY legs of OTOCO/OCO/OTO containers (new equityRowsFromTradierOrder) so a
+  user-placed Tradier bracket's stop leg is visible to coverage — leg field shape NEEDS LIVE-TOKEN
+  CONFIRMATION. (3) LOW: getPortfolio no longer feeds the ~4x intraday pdt.stock_buying_power into
+  sizing — takes the conservative min of the POSITIVE Reg-T/PDT figures (literal 0 treated as absent).
+  (4) INFO: brokerPortableRefId gains a 255-char cap matching Tradier's sanitizeTag. No Alpaca/Robinhood/
+  test-broker behavior changed. See `docs/rollouts/2026-07-10-tradier-broker.md` "Fixups round 2".
+  ROUND 3 (2026-07-10, CLAUDE subagent, updates PR #1380, NOT merged): closed a LOW residual left by
+  round 2's fix (3) — the conservative-min was SYMMETRIC, so an absent/zero Reg-T OVERNIGHT
+  stock_buying_power with a positive ~4x INTRADAY pdt.stock_buying_power made min() return the INTRADAY
+  figure as buying power (silent overnight lever-up, contra owner's NAV-caps+opt-in-leverage decision).
+  Fix: the intraday figure is now a DOWNWARD-ONLY clamp on the overnight base; absent/zero overnight =>
+  buying power UNKNOWN (0, which strategy.ts/policy.ts both read as "don't block, defer to broker" — like
+  Alpaca's missing buying_power). +2 regression tests (45 tradier tests). Rollout note gained a
+  "Pre-live-token validation items" section for the OTOCO leg-`class` shape + 50-page-cap ordering
+  residuals (both need a live sandbox token). See `docs/rollouts/2026-07-10-tradier-broker.md` "Round 3".**
 - **FMP request-quota wiring — extend the unified quota to FMP (CLAUDE, branch
   `claude/fmp-rate-limit`) — IN PROGRESS 2026-07-10, PR open.** FMP was the last high-volume
   enrichment provider NOT metered by the unified quota (PR #1310): `FmpEnrichmentProvider.enrich`

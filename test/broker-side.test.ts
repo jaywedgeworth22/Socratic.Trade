@@ -51,6 +51,10 @@ describe("isRejectedOrCanceledState — broker-agnostic terminal-decline check",
     expect(isRejectedOrCanceledState("Cancelled")).toBe(true);
   });
 
+  it("recognizes the Tradier-flavored terminal-decline state 'error'", () => {
+    expect(isRejectedOrCanceledState("error")).toBe(true);
+  });
+
   it("does not flag accepted/filled/unknown states", () => {
     expect(isRejectedOrCanceledState("filled")).toBe(false);
     expect(isRejectedOrCanceledState("partially_filled")).toBe(false);
@@ -70,6 +74,12 @@ describe("isLiveOrderState — broker-agnostic resting/live check", () => {
     expect(isLiveOrderState("held")).toBe(true);
     expect(isLiveOrderState("partially_filled")).toBe(true);
     expect(isLiveOrderState("open")).toBe(true);
+  });
+
+  it("recognizes the Tradier-flavored resting state 'pending' (open/partially_filled already covered)", () => {
+    expect(isLiveOrderState("pending")).toBe(true);
+    expect(isLiveOrderState("open")).toBe(true);
+    expect(isLiveOrderState("partially_filled")).toBe(true);
   });
 
   it("recognizes Robinhood resting states (queued/confirmed/unconfirmed) — the double-exit fix", () => {

@@ -4,6 +4,7 @@ import { storeCongressScoreVerdict, readCongressScoreVerdict } from "@/lib/congr
 import { getPolicy } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { requireAdmin } from "@/lib/auth/admin";
+import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -37,30 +38,31 @@ export async function POST(request: Request) {
   const auditLimit = Number(url.searchParams.get("auditLimit")) || 1000;
   const placeboSeedRaw = url.searchParams.get("placeboSeed");
   const placeboSeed = placeboSeedRaw != null && placeboSeedRaw !== "" ? Number(placeboSeedRaw) : undefined;
-
-  // P2-3: honor the operator's `congressRequireTopBucketPositive` flag so the cached verdict reflects the
-  // long-leg-positive requirement (default off → unchanged verdict).
   const requireTopBucketPositive = getPolicy(userId).tuning?.congressRequireTopBucketPositive ?? false;
-  const observations = await buildCongressScoreObservations(userId, { horizonDays, auditLimit });
-  const evaluation = evaluateCongressScore(observations, {
-    ...(placeboSeed !== undefined ? { placeboSeed } : {}),
-    requireTopBucketPositive
-  });
-  const verdict = storeCongressScoreVerdict(userId, evaluation);
+  return withAdminOperationGuard(request, "congress-score-eval", async () => {
+    // P2-3: honor the operator's `congressRequireTopBucketPositive` flag so the cached verdict reflects the
+    // long-leg-positive requirement (default off → unchanged verdict).
+    const observations = await buildCongressScoreObservations(userId, { horizonDays, auditLimit });
+    const evaluation = evaluateCongressScore(observations, {
+      ...(placeboSeed !== undefined ? { placeboSeed } : {}),
+      requireTopBucketPositive
+    });
+    const verdict = storeCongressScoreVerdict(userId, evaluation);
 
-  return NextResponse.json({
-    ok: true,
-    verdict,
-    evaluation: {
-      observations: evaluation.observations,
-      dates: evaluation.dates,
-      tickers: evaluation.tickers,
-      rankIC: evaluation.rankIC,
-      marginalIC: evaluation.marginalIC ?? null,
-      topMinusBottomReturn: evaluation.topMinusBottomReturn,
-      placeboDeltaIC: evaluation.placeboDeltaIC ?? null,
-      goNoGo: evaluation.goNoGo
-    },
-    note: "Verdict cached. `policy.tuning.congressGoNoGoGating` (default off) gates the scan on it; a stale (>14d) verdict fails open (no gating)."
+    return NextResponse.json({
+      ok: true,
+      verdict,
+      evaluation: {
+        observations: evaluation.observations,
+        dates: evaluation.dates,
+        tickers: evaluation.tickers,
+        rankIC: evaluation.rankIC,
+        marginalIC: evaluation.marginalIC ?? null,
+        topMinusBottomReturn: evaluation.topMinusBottomReturn,
+        placeboDeltaIC: evaluation.placeboDeltaIC ?? null,
+        goNoGo: evaluation.goNoGo
+      },
+      note: "Verdict cached. `policy.tuning.congressGoNoGoGating` (default off) gates the scan on it; a stale (>14d) verdict fails open (no gating)."
+    });
   });
 }

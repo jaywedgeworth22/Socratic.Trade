@@ -643,7 +643,7 @@ export interface ConnectedAccount {
    * Broker identifier. Add new values here when connecting a new venue
    * (e.g. "coinbase" for a crypto exchange) and wire a matching BrokerGateway.
    */
-  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test";
+  broker: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier";
   environment: "paper" | "live";
   /**
    * @deprecated Use capabilities.accountType instead for new accounts.
@@ -940,7 +940,7 @@ export interface TradingPolicy {
   taxSettings?: TaxSettings;
   tuning?: TuningSettings;
   activeProfileId?: string;
-  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test";
+  activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier";
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter
   // guardrails). When false or absent, short/cover proposals are unconditionally
@@ -1369,6 +1369,17 @@ export interface SocraticDecisionCase {
 export type SocraticFrameworkOwnerVerb = "accept" | "reject" | "rewrite";
 export type SocraticFrameworkProposalStatus = "pending" | "accepted" | "rejected" | "applied";
 
+/** Advisory AI review attached to a pending framework proposal by the single-call
+ *  batched reviewer. It is a RECOMMENDATION only — it never changes the proposal's
+ *  status or owner verb; the owner still makes the final accept/reject/rewrite call. */
+export interface SocraticFrameworkAiReview {
+  verdict: SocraticFrameworkOwnerVerb; // accept | reject | rewrite (recommended)
+  rationale: string;
+  rewrittenChange?: string; // present when verdict is "rewrite": the AI's improved proposedChange
+  model: string;
+  reviewedAt: string;
+}
+
 export interface SocraticFrameworkProposal {
   id: string;
   userId: string;
@@ -1386,6 +1397,8 @@ export interface SocraticFrameworkProposal {
   evidence: SocraticEvidenceItem[];
   ownerVerb?: SocraticFrameworkOwnerVerb;
   ownerResponse?: string;
+  /** Advisory AI recommendation from the batched reviewer; owner decision still required. */
+  aiReview?: SocraticFrameworkAiReview;
 }
 
 export interface SocraticDecisionTrace {
