@@ -460,6 +460,20 @@ export async function reconcileBrokerProtectiveStops(args: {
         deleteBrokerProtectiveStop(row.id, userId);
         out.cancelled++;
         out.cancelledOrderIds.push(row.brokerOrderId);
+        // A successful cancel doesn't mean nothing filled first — a pending_cancel
+        // order whose previous cancel attempt failed may have partially executed before
+        // the retry landed, and the broker still accepts the cancel for the remainder.
+        // The caller's pre-reconcile order snapshot (`orders`) can still show that
+        // partial fill; book it before the row disappears, or the executed shares never
+        // reach fill_events/P&L/learning, and the caller isn't told the position may be
+        // stale. Mirrors the disabled-teardown success handling (Codex review, PR #1331).
+        const preCancelOrder = orders.find((o) => o.id === row.brokerOrderId);
+        if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
+          const s = normalizeSymbol(row.symbol);
+          filledRecoverySymbols.add(s);
+          out.filledRecoverySymbols.push(s);
+          bookBrokerHeldStopFill(row, preCancelOrder);
+        }
       } catch (err) {
         // The cancel call itself failed — but that doesn't necessarily mean the order is still
         // resting broker-side (e.g. a prior cancel attempt actually landed and this one is just
