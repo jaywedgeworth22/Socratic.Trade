@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserFromEmail } from "../src/lib/request-user";
+import {
+  AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+  AUTHENTICATED_IDENTITY_SOURCES
+} from "../src/lib/auth/strip-identity";
 import { rateLimit, RATE_LIMITS, resetRateLimiter } from "../src/lib/rate-limit";
 import { ADMIN_OPERATION_LIMITS, resetAdminOperationInFlight } from "../src/lib/admin-operation-guard";
 import { resetTuningSingleFlight } from "../src/lib/tuning-singleflight";
@@ -34,15 +38,12 @@ vi.mock("@/lib/llm-request", () => ({
   ALL_LLM_REASONING_EFFORTS: []
 }));
 
-vi.mock("@/lib/auth/admin", () => ({
-  requireAdmin: () => null
-}));
-
 import { GET as robinhoodCallback } from "../app/api/auth/robinhood/callback/route";
 import { POST as tuneStrategy } from "../app/api/strategy/tune/route";
 import { GET as dryRunTuning } from "../app/api/admin/tuning-dry-run/route";
 
 beforeEach(() => {
+  vi.unstubAllEnvs();
   resetRateLimiter();
   resetAdminOperationInFlight();
   resetTuningSingleFlight();
@@ -53,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   resetRateLimiter();
   resetAdminOperationInFlight();
   resetTuningSingleFlight();
@@ -168,13 +170,17 @@ describe("paid strategy tuning rate limiting", () => {
 
   it("mutually excludes public tuning and the admin dry run for the same user", async () => {
     const email = "cross-route-tuning@example.com";
+    vi.stubEnv("ADMIN_USER_EMAILS", email);
     const publicRequest = () => new Request("https://socratictrade.com/api/strategy/tune", {
       method: "POST",
       headers: { [AUTHENTICATED_EMAIL_HEADER]: email, "content-type": "application/json" },
       body: "{}"
     });
     const adminRequest = () => new Request("https://socratictrade.com/api/admin/tuning-dry-run", {
-      headers: { [AUTHENTICATED_EMAIL_HEADER]: email }
+      headers: {
+        [AUTHENTICATED_EMAIL_HEADER]: email,
+        [AUTHENTICATED_IDENTITY_SOURCE_HEADER]: AUTHENTICATED_IDENTITY_SOURCES.authJsSession
+      }
     });
 
     let resolveDryRun!: (value: { wouldApply: boolean }) => void;
