@@ -504,13 +504,15 @@ As of 2026-07-08 (assignment-rule update).
 ## 🚧 In Progress
 
 - **Public auth + paid-route rate-limit hardening (CODEX, branch
-  `codex/public-auth-rate-limit-hardening`) — IN PROGRESS 2026-07-11.** Bounded security batch from
+  `codex/public-auth-rate-limit-hardening`) — MERGED TO `main` 2026-07-11 at `97152c25`; live deploy not independently verified.** Bounded security batch from
   the whole-app reliability audit: key the public Robinhood OAuth callback limiter by client IP
   before authentication (never by attacker-controlled OAuth state), bound and expire the in-process
   limiter's key space, parse `CF_ACCESS_TRUST_EMAIL_HEADER` with explicit truth semantics so `0` is
   off while Auth.js remains fail-closed, and apply a named per-user limiter plus one-in-flight guard
-  to paid strategy tuning. Code and full Node 24 gate are green (lint 0 errors, TypeScript clean,
-  319 files / 3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge.
+  to paid strategy tuning. Code and full Node 24 gate were green (lint 0 errors, TypeScript clean,
+  319 files / 3,499 tests, Next build clean). 2026-07-11 CODEX correction: PR #1399 is present on
+  `origin/main`; main-push auto-deploy is configured, but this session did not verify the production
+  revision. Follow-up `codex/admin-rate-limits` consolidates public tuning with the admin dry-run lock.
   Scope excludes active broker/DB lanes (`connected-accounts`, `alpaca.ts`, `db-api-keys.ts`,
   `db.ts`). Live board intentionally not modified per coordinator instruction. Rollout:
   `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
@@ -1592,6 +1594,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Expensive admin-operation abuse/cost controls (CODEX, branch `codex/admin-rate-limits`, worktree `/Users/jay/.codex/worktrees/socratic-admin-rate-limits`) — IN PROGRESS 2026-07-11.** Named per-admin anti-repeat budgets and contract-aligned 429/409 responses wrap high-cost admin actions (`reindex-8k`, `reindex-10k`, `backtest-ic`, `tuning-dry-run`, Congress score-eval/share, `refresh-websource`, Robinhood probe). Claims precede quota debit; explicit validation/config rejection precedes admission; public `/api/strategy/tune` shares a per-user single-flight with admin dry-run while retaining legacy 409 fields. Process-wide groups coordinate manual admin route calls only; scheduler/background convergence is separately planned below. Adversarial re-review found no code blocker; focused Node24 4 files/29 tests, touched lint, and tsc are green; full gate pending. AG's contract is green in READY shared PR #144, with adoption deferred until a tagged release. No commit/push/PR/merge/deploy. Excludes `src/lib/auth/admin.ts`, strategy execution, and provider internals.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch
@@ -2382,6 +2385,7 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
+- **Unify manual and scheduler single-flight at underlying provider/dataset operation boundaries (unassigned, 2026-07-11) — PLANNED.** Move owner-token claims below the admin routes so `refreshFilingBodies`, Congress daily share, and Congress/SEC web-source refresh cannot overlap across manual and scheduler/background entrants. Coordinate with the active scheduler-lease lane before touching `scheduler.ts`; preserve explicit busy outcomes and add scheduler-versus-manual concurrency coverage. The current `codex/admin-rate-limits` lane deliberately guarantees only manual-admin request exclusion and does not claim this broader protection.
 - **Activity-audit P2 backlog (unassigned; from docs/reviews/2026-07-09-activity-feed-audit.md)
   — PLANNED 2026-07-10.** Separable items, each S/M: notification-status recorder honesty
   (§1.5); order_placement_uncertain reclassification (§1.6); stale-exit cancel-pending

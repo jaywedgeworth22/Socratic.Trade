@@ -5,6 +5,19 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
+> scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
+> refresh/share, and broker probes now have named per-admin budgets and single-flight exclusion,
+> returning explicit 429/409 responses before duplicate work reaches providers or long DB scans.
+> Explicit validation/config rejection precedes quota admission; historical default-action body semantics
+> remain unchanged. Process-wide groups cover manual admin route calls, while
+> scheduler/background convergence at the underlying operation boundaries is explicitly planned rather
+> than claimed complete. These are anti-repeat budgets, not hard per-request spend ceilings. Node 24
+> re-verification and the full gate remain pending after adversarial-review fixes. AG's owner-directed
+> portable rejection contract is a separate shared-package follow-up and will be adopted only after a
+> real package release. See
+> `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+
 > **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
 > change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/
 > reference/danger) settings; account-scoped config lives on Framework (`/console/strategy`):

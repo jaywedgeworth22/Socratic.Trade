@@ -81,6 +81,38 @@ The telemetry path treats this as a financial application:
 
 ## Production Notes
 
+### Expensive admin-operation admission controls
+
+The paid/batch/long-running admin actions are admitted through
+`src/lib/admin-operation-guard.ts` after `requireAdmin` succeeds. Limits are keyed by the stable
+middleware-derived admin user ID (never a query/body `userId`) and return HTTP 429 with
+`Retry-After` when exceeded:
+
+- SEC 8-K and 10-K reindexes: 2/hour each. Manual admin requests share one process-wide
+  `rag-reindex` single-flight group, so those two route invocations cannot overlap.
+- IC backtest: 10/5 minutes, one in flight per admin.
+- Tuning dry run: 6/10 minutes and mutually exclusive with the public strategy-tune route for the
+  same user.
+- Congress score evaluation: 6/10 minutes, one in flight per admin.
+- Congress daily share: 2/hour, one manual admin request in flight process-wide.
+- Forced web-source refresh: 4/10 minutes, one manual admin request in flight process-wide.
+- Robinhood MCP probe: 20/5 minutes, one in flight per admin.
+
+An overlapping run returns HTTP 409 before the expensive callback starts **and before rate quota is
+debited**, so duplicate-button/retry spam cannot exhaust the accepted entrant's budget. Rejections
+use stable bodies: `code=rate_limited` with `retryAfterSeconds` for 429, and
+`code=operation_in_flight` with `activeOperation` for 409. Admission state is process-local, matching
+the current single-Next-process deployment; a multi-instance topology would need a shared
+limiter/lease store before these controls could be treated as cluster-wide.
+
+Explicit validation/config rejection runs before quota admission: empty 10-K symbols, missing Congress
+credentials, unknown refresh IDs, and a disabled Robinhood adapter do not consume budget. Historical
+routes that interpret an absent/malformed body as a real default action still enter admission. The
+process-wide route groups do **not** yet coordinate scheduler/background calls to the
+same underlying share, filing-ingest, or web-refresh functions; moving the lock to those operation
+boundaries is tracked separately. These budgets are anti-repeat controls, not hard cost ceilings for one
+accepted backfill; operator-selected batch/limit inputs remain unchanged.
+
 - **Infisical is the canonical store for production secrets** (see `docs/secrets.md`
   and `docs/deployment.md` → "Configuration & secrets"); deliver them with the
   `*:secrets` runner and enforce it with `REQUIRE_SECRETS_MANAGER=1` so the app

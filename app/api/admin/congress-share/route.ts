@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/admin";
 import { congressTradeToken, isCongressShareAutoEnabled, runCongressDailyShare } from "@/lib/congress-share";
+import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 
 export const dynamic = "force-dynamic";
 
 // Admin/ops route to manually push company refs + daily closes + the S&P-500 series to congress.trade
-// (App A). Admin-gated (ADMIN_USER_EMAILS / primary operator, x-admin-token, or non-prod). Requires
+// (App A). Gated by the centralized requireAdmin identity/token policy. Requires
 // CONGRESS_TRADE_TOKEN to be configured; bypasses the once-per-day cadence (force) so ops can test.
 //
 // Body (all optional):
@@ -21,7 +22,6 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-
   if (!congressTradeToken()) {
     return NextResponse.json(
       { ok: false, error: "CONGRESS_TRADE_TOKEN is not configured (server env)." },
@@ -42,9 +42,11 @@ export async function POST(request: Request) {
     flatFile = body?.flatFile === true; // source full history from Massive flat files (bulk) vs per-ticker
     allIndexes = body?.allIndexes === true; // expand the universe to all static index members + monitored
   } catch {
-    // no body → share the monitored universe
+    // no body -> share the monitored universe
   }
 
-  const summary = await runCongressDailyShare({ now: Date.now(), force: true, symbols, fullHistory, flatFile, allIndexes });
-  return NextResponse.json({ autoEnabled: isCongressShareAutoEnabled(), ...summary });
+  return withAdminOperationGuard(request, "congress-share", async () => {
+    const summary = await runCongressDailyShare({ now: Date.now(), force: true, symbols, fullHistory, flatFile, allIndexes });
+    return NextResponse.json({ autoEnabled: isCongressShareAutoEnabled(), ...summary });
+  });
 }

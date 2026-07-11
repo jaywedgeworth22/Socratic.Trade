@@ -9,10 +9,31 @@ buckets and caps live subjects at 10,000 with deterministic LRU eviction. Middle
 override cannot re-arm header trust while Auth.js remains fail-closed. Paid `/api/strategy/tune`
 now uses a named 10/min per-user limiter plus a one-in-flight-per-user guard before its LLM call.
 Scope deliberately excludes active broker/DB lanes and the `.env.example` file owned by active
-PR #1389. Full verification is green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
-3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge. Exact commands
-and the initial Node-ABI mismatch are recorded in
-`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
+PR #1389. Full verification was green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
+3,499 tests, Next build clean). PR #1399 merged to `main` as `97152c25` on 2026-07-11; the configured
+main-push auto-deploy should follow, but this session has not independently verified the live revision.
+Exact commands and the initial Node-ABI mismatch are recorded in
+`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`. Follow-up branch
+`codex/admin-rate-limits` replaces the route-private tuning lock with a guard shared by public tuning
+and the admin dry run.
+## 2026-07-11 — Expensive admin-operation abuse/cost controls (CODEX, `codex/admin-rate-limits`)
+
+High-cost operator actions now enter a shared, named admission guard after `requireAdmin`: paid SEC
+8-K/10-K reindexes, IC backtests, tuning dry runs, Congress score recomputation/share, forced web-source
+refreshes, and Robinhood MCP probes. Budgets are per trusted admin identity with explicit HTTP 429 +
+`Retry-After`; overlapping manual admin work returns HTTP 409. Paid RAG reindex route calls share a
+process-wide single-flight group, while user-scoped analysis/probes remain isolated per admin. Explicit
+validation/config rejection precedes admission so rejected requests do not spend quota; routes that
+intentionally interpret an absent/malformed body as a default action still enter admission. These route
+claims do not cover scheduler/background entrants; underlying-boundary locking is separately planned.
+Public strategy tuning and the admin tuning dry run share one per-user single-flight guard while the
+public route retains its legacy 409 compatibility fields.
+Implementation is merged forward to `origin/main@97152c25`; adversarial re-review found no code blocker,
+and focused Node 24 coverage is green (4 files/29 tests, touched lint, tsc). The full suite/build has not
+run in this lane yet. AG's owner-directed portable rejection contract is green in READY shared PR #144;
+adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request spend ceilings. Not committed, pushed,
+merged to main, or deployed. See
+`docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
