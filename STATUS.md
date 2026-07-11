@@ -1,6 +1,6 @@
 # Status
 
-## 2026-07-11 — Truthful notification delivery status (CODEX, local replacement branch)
+## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 
 Adversarial review rejected unmerged AG PR #1442 because it still discarded results for the
 `price_alert` / `provider_degraded` direct-delivery paths, converted bridge exceptions into neutral
@@ -10,12 +10,13 @@ enabled-event gate, aggregates all channel results without double-send, records 
 failures, retains channel-labelled partial failure detail, and audits legacy webhook outcomes through
 the same `notify.sent` / `notify.error` vocabulary plus an aggregate `notification.delivery` receipt.
 Historical/raw reasons render as human text. The operator fallback email remains a lazy extra lane,
-never the gate. Focused Node 24 verification is green: 7 files / 96 tests, touched lint 0 errors / 43
-inherited warnings, TypeScript clean, and `git diff --check`. Full suite/build, push, PR, and #1442
-supersession remain intentionally deferred until the strategy-lease branch lands. Rollout:
+never the gate. The branch is reconciled through `main@0dda52db` after strategy PR #1429 merged.
+Focused Node 24 verification is green: 7 files / 96 tests, touched lint 0 errors / 43 inherited
+warnings, TypeScript clean, and `git diff --check`. Full suite/build, push, replacement PR, and #1442
+supersession remain. Rollout:
 `docs/rollouts/2026-07-11-notification-status-truth.md`.
 
-## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, draft PR #1429)
+## 2026-07-11 — Strategy lease ownership + scheduler default correctness (CODEX, merged PR #1429)
 
 The final adversarial reconciliation is implemented on `codex/strategy-lease-correctness` after
 merging `origin/main@67e1536d`. A run now snapshots one connected-account id before acquiring its
@@ -39,9 +40,10 @@ is account-bound, walk-forward observations receive the account filter, a failed
 transition returns the actually persisted status without notifying, and tuning computes its clock
 after the strategy run instead of before it. The combined focused Node 24 rerun is green: **11 files /
 129 tests**; touched ESLint **0 errors / 36 inherited warnings**; repository lint, TypeScript, full
-Vitest **341 files / 3,801 tests**, production build, and `git diff --check` are green. PR #1429 is
-intentionally draft; the root lane owns the trusted push, hosted rerun, readiness, merge, and production
-verification. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+Vitest **341 files / 3,801 tests**, production build, and `git diff --check` are green. PR #1429
+passed hosted verify, smoke, and gitleaks with zero unresolved threads and merged as `0dda52db` at
+2026-07-11T20:45:27Z. The configured auto-deploy is building; exact production release and health
+verification remain. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 ## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
 ## 2026-07-11 — Durable provider/dataset operation leases (CODEX, ready PR #1441)
 

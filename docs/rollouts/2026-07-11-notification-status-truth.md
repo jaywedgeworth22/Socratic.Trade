@@ -53,13 +53,14 @@ Node `v24.18.0`:
 - `npx eslint src/lib/notifications.ts src/lib/alerts.ts src/lib/provider-tier.ts src/lib/vector-db.ts src/lib/db-health.ts src/lib/dashboard-ui.ts test/notification-status-truth.test.ts test/persistence-notification.test.ts test/dashboard-feed.test.ts test/connection-health-routing.test.ts` — 0 errors / 43 inherited warnings.
 - `npx tsc --noEmit` — passed.
 - `git diff --check` — passed.
+- After strategy PR #1429 merged, `origin/main@0dda52db` merged cleanly. The same Node 24 focused
+  7-file / 96-test slice, touched ESLint, TypeScript, and diff-check reran green on that base.
 
 The isolated worktree required `npm ci`, followed by `npm rebuild better-sqlite3` under Node 24
 because the shell defaulted to Node 26 during dependency installation.
 
 ## Follow-ups
 
-- Wait for the strategy-lease branch to land, then reconcile current `main`.
 - Run the serialized full lint / TypeScript / Vitest / production-build gate.
 - Push a ready replacement PR, close #1442 as superseded only then, land after hosted checks, and
   verify the auto-deployed production release before moving the effort row to Completed/Deployed.

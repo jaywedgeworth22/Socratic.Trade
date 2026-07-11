@@ -23,8 +23,9 @@ filling the missing pieces.
 > supply only their richer body text. Status derives from every actual result, unexpected bridge
 > failures cannot masquerade as neutral skips, partial failures remain visible, and the legacy
 > policy-webhook lane emits normal channel telemetry. The operator fallback email remains an extra
-> gated lane. Local focused verification is complete; full landing work waits for the strategy-lease
-> merge to avoid competing heavy gates and repeated STATUS/EFFORT reconciliation. See
+> gated lane. The branch is reconciled through strategy merge `main@0dda52db`; focused 7 files / 96
+> tests, touched lint, and TypeScript are green. The serialized full gate, ready replacement PR,
+> #1442 supersession, hosted checks, merge, and production verification remain. See
 > `docs/rollouts/2026-07-11-notification-status-truth.md`.
 
 > **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
@@ -42,10 +43,11 @@ filling the missing pieces.
 > broker work may exist, and account-scoped auto-tuning runs only after completed strategy runs under its
 > own renewed account lease and LLM reservation. A final independent review additionally fixed the
 > account-bound strategy prompt, propagated account scope into walk-forward evidence, honored a lost
-> proposal-transition race, and computes tuning time only after the strategy run finishes. PR #1429 is
-> reconciled through `main@67e1536d` and is intentionally draft pending its trusted push and hosted
-> checks. The final Node 24 gate is green: focused 11 files / 129 tests, repository lint, TypeScript,
-> full 341 files / 3,801 tests, production build, and diff-check. See
+> proposal-transition race, and computes tuning time only after the strategy run finishes. PR #1429
+> passed local and hosted gates with zero unresolved threads and merged as `0dda52db`; its configured
+> production auto-deploy and exact live verification remain. The final Node 24 gate was green: focused
+> 11 files / 129 tests, repository lint, TypeScript, full 341 files / 3,801 tests, production build,
+> and diff-check. See
 > `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
 > change; operator-observability correctness only. The connections-health expected-lane inventory now
