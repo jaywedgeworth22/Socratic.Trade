@@ -106,6 +106,9 @@ warnings, TypeScript clean, 325 files / 3,620 tests, and production build clean.
 
 ## Follow-ups / risks
 
+- Production verification completed 2026-07-11T16:41Z at exact release SHA `d3859025`, which
+  contains merge `2a52e2ac`; process start was 16:28:17Z and the scheduler lease was current.
+  Plain and spoofed unauthenticated admin requests both returned 401 at the edge. No manual deploy.
 - Concurrent `codex/admin-rate-limits` also edits several admin routes. The coordinator must review
   the overlapping route-comment-only hunks while reconciling the branches; auth behavior remains
   owned by this lane.
