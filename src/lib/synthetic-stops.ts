@@ -34,8 +34,14 @@ const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last 
 // lowest-common-denominator charset [A-Za-z0-9-] at generation so it round-trips through ANY broker
 // unchanged. This is collision-safe: userIds are "local" or `u_<24-hex>`, and `_`->`-` can't collide
 // two distinct hashes; Alpaca/Robinhood (which accept underscores) store the same value verbatim.
-function brokerPortableRefId(refId: string): string {
-  return refId.replace(/[^A-Za-z0-9-]/g, "-");
+export function brokerPortableRefId(refId: string): string {
+  // Cap at 255 chars to match Tradier's sanitizeTag (src/lib/tradier.ts), which truncates the `tag`
+  // field to 255. A (hypothetical) long refId must be truncated IDENTICALLY on both the stored copy
+  // (this value, used as lastAttemptRefId) and the broker tag, or the two would diverge past char 255
+  // and the client-order-id dedup that matches a resting broker order back to its stop by EXACT
+  // equality would never match. Alpaca/Robinhood accept longer tags, so the cap is a harmless no-op
+  // on every refId we actually generate today (all well under 255).
+  return refId.replace(/[^A-Za-z0-9-]/g, "-").slice(0, 255);
 }
 
 /**

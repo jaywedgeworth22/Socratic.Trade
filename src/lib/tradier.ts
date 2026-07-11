@@ -63,6 +63,14 @@ function number(value: unknown): number {
   return optionalNumber(value) ?? 0;
 }
 
+// A finite, strictly-positive number, else undefined. Used where a literal 0 must be treated as
+// ABSENT (not a real value) — e.g. a Tradier balance field Tradier omits or zero-fills must not
+// override a genuine figure from another field.
+function positiveNumber(value: unknown): number | undefined {
+  const parsed = optionalNumber(value);
+  return parsed != null && parsed > 0 ? parsed : undefined;
+}
+
 function optionalString(value: unknown): string | undefined {
   if (value === null || value === undefined || value === "") return undefined;
   return String(value);
@@ -370,11 +378,24 @@ class TradierBrokerGateway implements BrokerGateway {
       const pdt = b.pdt as Record<string, unknown> | undefined;
       const totalCash = number(b.total_cash);
       const totalMarketValue = optionalNumber(b.total_equity) ?? number(b.market_value) + totalCash;
-      // For margin accounts, check PDT buying power too — Tradier returns a separate
-      // pdt.stock_buying_power for pattern-day-trader accounts that may differ from the
-      // standard margin.stock_buying_power.
+      // Buying power fed to position sizing must be the OVERNIGHT / Reg-T figure
+      // (margin.stock_buying_power), NEVER the ~4x INTRADAY pdt.stock_buying_power a pattern-day-trader
+      // margin account also reports — sizing off the intraday number would silently lever up an
+      // overnight hold, which the owner's conservative/opt-in-leverage margin decision forbids. Take
+      // the MORE CONSERVATIVE (minimum) of the POSITIVE figures so the PDT number can only pull sizing
+      // DOWN, never inflate it, and a spurious 0 (Tradier omits/zero-fills a field) is treated as
+      // absent (positiveNumber) rather than overriding a real value. Richer PDT/margin figures are
+      // deliberately NOT fed to sizing here. Cash accounts use cash_available; else total cash.
+      const marginBuyingPower = margin
+        ? (() => {
+            const candidates = [positiveNumber(margin.stock_buying_power), positiveNumber(pdt?.stock_buying_power)].filter(
+              (v): v is number => v != null
+            );
+            return candidates.length ? Math.min(...candidates) : 0;
+          })()
+        : undefined;
       const buyingPower = margin
-        ? number(pdt?.stock_buying_power ?? margin.stock_buying_power)
+        ? (marginBuyingPower ?? 0)
         : cashAcct
           ? number(cashAcct.cash_available)
           : totalCash;
@@ -454,21 +475,27 @@ class TradierBrokerGateway implements BrokerGateway {
         });
         const ordersField = typeof body.orders === "object" && body.orders ? (body.orders as Record<string, unknown>).order : undefined;
         const rows = arr<Record<string, unknown>>(ordersField);
-        if (rows.length === 0) break;
-        let added = 0;
+        if (rows.length === 0) break; // genuinely no more pages
+        // Pagination continuation is decided on the RAW page (ALL classes), NOT the post-equity-filter
+        // count. A mixed equity+options account can have a page holding only option/combo rows sitting
+        // BEFORE a later page that carries a resting protective EQUITY exit; breaking as soon as a page
+        // yields zero *equity* rows would stop before that exit, hiding it from liveExitOrderCoverage
+        // and letting the synthetic-stop monitor place a DUPLICATE. Advance while the raw page adds any
+        // NEW order id (of any class); stop only on an empty page or a page that is entirely duplicates
+        // (the guard against a pager that repeats its last page unboundedly, up to the 50-page cap).
+        let newThisPage = 0;
         for (const o of rows) {
-          // Skip non-equity orders (options, combos, multileg) — mapping them as
-          // EquityOrder coerces option sides/types like buy_to_open or debit into
-          // equity-looking orders on the underlying, polluting dashboard state for
-          // mixed equity+options accounts.
-          if (String(o.class ?? "").toLowerCase() !== "equity") continue;
           const id = String(o.id);
           if (seen.has(id)) continue;
           seen.add(id);
-          all.push(o);
-          added += 1;
+          newThisPage += 1;
+          // Only EQUITY-class rows are RETURNED: mapping an option/combo as an EquityOrder coerces
+          // option sides/types (buy_to_open, debit) into equity-looking orders on the underlying,
+          // polluting dashboard/coverage state. A multi-leg OTOCO/OCO/OTO container is not itself
+          // class "equity", so its resting equity stop/limit legs are surfaced from its `leg` array.
+          for (const eq of equityRowsFromTradierOrder(o)) all.push(eq);
         }
-        if (added === 0) break;
+        if (newThisPage === 0) break; // fully-duplicate page — done
       }
       return all.map((o) => mapTradierOrder(o));
     });
@@ -641,6 +668,38 @@ class TradierBrokerGateway implements BrokerGateway {
       raw: body
     };
   }
+}
+
+// Flatten a raw Tradier order row into the EQUITY rows it contributes to coverage/dashboard state.
+//  - A plain equity order returns [itself].
+//  - A multi-leg advanced order (OTOCO/OCO/OTO/combo/multileg) is reported by Tradier as a CONTAINER
+//    whose own `class` is NOT "equity", with the individual legs nested under a `leg` array. A
+//    protective EQUITY stop/limit leg a user placed from Tradier's own OCO/OTOCO UI lives there, so
+//    without surfacing it that resting exit is invisible to getEquityOrders coverage — exactly the
+//    double-exit hole. Each leg carries its own id/side/type/status/price; when a leg omits the
+//    symbol/tag/dates the container's are inherited. Only class-"equity" legs are surfaced.
+//  - Anything else (a lone option/combo order with no equity legs) returns [] and is dropped.
+// NOTE: the nested-`leg` shape follows Tradier's documented advanced-order response; it has not been
+// verified against a live multi-leg account and may need a field-name tweak once one is available.
+export function equityRowsFromTradierOrder(row: Record<string, unknown>): Record<string, unknown>[] {
+  if (String(row.class ?? "").toLowerCase() === "equity") return [row];
+  const legField = row.leg ?? row.legs;
+  if (legField === undefined || legField === null) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const leg of arr<Record<string, unknown>>(legField)) {
+    if (String(leg.class ?? "").toLowerCase() !== "equity") continue;
+    out.push({
+      // Container-level fallbacks first, overlaid by the leg's own fields (leg wins).
+      symbol: row.symbol,
+      status: row.status,
+      create_date: row.create_date,
+      transaction_date: row.transaction_date,
+      duration: row.duration,
+      tag: row.tag,
+      ...leg
+    });
+  }
+  return out;
 }
 
 // Map a raw Tradier order object to our EquityOrder. State is stored RAW (broker-side.ts normalizes).

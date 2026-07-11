@@ -1605,6 +1605,19 @@ As of 2026-07-08 (assignment-rule update).
   [A-Za-z0-9-] charset so the Tradier tag round-trips the client-order-id dedup for u_<hash> users;
   (6) access-token field masked (type=password); (7) cancel normalizes raw 'ok' -> 'pending_cancel'.
   Not merged. Tradier tag charset not re-confirmable from live SPA docs — fix is charset-independent.**
+  **Fixups round 2 — codex-autofix (9dd5f40c) reconciliation (CLAUDE, 2026-07-11, gates green node24;
+  updates PR #1380, NOT merged): the `[codex-autofix]` commit's equity-class order filter + PDT
+  buying-power read introduced two money-path regressions, now fixed with regression tests. (1) MEDIUM
+  double-sell: getEquityOrders pagination broke on the post-filter count, so an option-only page could
+  stop the loop before a later page's resting protective EQUITY exit — hiding it from
+  liveExitOrderCoverage and letting the synthetic monitor place a duplicate; continuation now decided on
+  the RAW page (any new id of any class), equity filter applied only to returns, 50-page cap + dedup
+  kept. (2) LOW: surface EQUITY legs of OTOCO/OCO/OTO containers (new equityRowsFromTradierOrder) so a
+  user-placed Tradier bracket's stop leg is visible to coverage — leg field shape NEEDS LIVE-TOKEN
+  CONFIRMATION. (3) LOW: getPortfolio no longer feeds the ~4x intraday pdt.stock_buying_power into
+  sizing — takes the conservative min of the POSITIVE Reg-T/PDT figures (literal 0 treated as absent).
+  (4) INFO: brokerPortableRefId gains a 255-char cap matching Tradier's sanitizeTag. No Alpaca/Robinhood/
+  test-broker behavior changed. See `docs/rollouts/2026-07-10-tradier-broker.md` "Fixups round 2".**
 - **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
   claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
   (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported

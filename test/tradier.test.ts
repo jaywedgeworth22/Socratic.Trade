@@ -631,6 +631,153 @@ describe("Tradier tag round-trips a synthetic-stop refId for the client-order-id
   });
 });
 
+describe("Tradier adapter — getEquityOrders pagination (double-sell coverage, codex-autofix reconciliation)", () => {
+  // A mixed equity+options account can hold a page of ONLY option/combo orders sitting BEFORE a later
+  // page carrying a resting protective EQUITY exit. The pagination loop must continue past the
+  // option-only page (its rows count toward continuation even though the equity FILTER drops them),
+  // or the equity exit is invisible to liveExitOrderCoverage and the synthetic monitor double-sells.
+  it("does NOT stop at an option-only page; a later page's equity exit is still returned", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`) && u.includes("page=1"),
+        body: { orders: { order: [
+          // Page 1: option-only. Post-equity-filter this page contributes ZERO returned orders — the
+          // old `added === 0` break would have stopped here, hiding the page-2 protective stop.
+          { id: 10, symbol: "AAPL", side: "buy_to_open", type: "limit", status: "open", quantity: 1, create_date: "2026-07-10", class: "option" }
+        ] } }
+      },
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`) && u.includes("page=2"),
+        body: { orders: { order: [
+          { id: 11, symbol: "MSFT", side: "sell", type: "stop", status: "open", quantity: 5, create_date: "2026-07-10", stop_price: 300, tag: "protect", class: "equity" }
+        ] } }
+      },
+      // Page 3+: empty — real end of pages.
+      { match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`), body: { orders: "null" } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    // The option order is dropped; the equity protective stop from page 2 IS present.
+    expect(orders.map((o) => o.id)).toEqual(["11"]);
+    expect(orders[0]).toMatchObject({ symbol: "MSFT", side: "sell", type: "stop_market", state: "open", stopPrice: 300 });
+    // That resting sell is recognized as a live exit by the coverage guard.
+    const { isLiveOrderState } = await import("../src/lib/broker-side");
+    expect(isLiveOrderState(orders[0].state)).toBe(true);
+  });
+
+  it("terminates on a fully-duplicate page (guards a pager that repeats its last page)", async () => {
+    await seedTradier();
+    // Every page returns the SAME single equity order. The loop must stop once a page adds no NEW id
+    // (id-deduped), not spin to the 50-page cap; exactly one order is returned.
+    const { records } = installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`),
+        body: { orders: { order: [
+          { id: 99, symbol: "AAPL", side: "sell", type: "stop", status: "open", quantity: 1, create_date: "2026-07-10", stop_price: 90, class: "equity" }
+        ] } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    expect(orders).toHaveLength(1);
+    const orderPages = records.filter((r) => r.method === "GET" && r.url.includes(`/accounts/${ACCT}/orders`));
+    expect(orderPages.length).toBeLessThanOrEqual(2); // page 1 (new) + page 2 (all dup -> stop); never 50
+  });
+});
+
+describe("Tradier adapter — OTOCO/OCO equity legs surface for coverage (codex-autofix reconciliation)", () => {
+  // A user-placed OCO/OTOCO bracket is reported by Tradier as a CONTAINER whose own class is not
+  // "equity"; the individual legs are nested under a `leg` array. A resting protective EQUITY stop/
+  // limit leg must be surfaced or it is invisible to getEquityOrders coverage. (Leg shape follows
+  // Tradier's documented advanced-order response; needs live-token confirmation.)
+  it("surfaces resting equity legs nested inside an otoco container; a leg inherits container symbol/status", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`),
+        body: { orders: { order: {
+          id: 500, symbol: "AAPL", type: "otoco", class: "otoco", status: "open", create_date: "2026-07-10", tag: "bracket",
+          leg: [
+            { id: 501, symbol: "AAPL", side: "sell", type: "limit", status: "open", quantity: 10, price: 210, class: "equity" },
+            // This leg OMITS symbol + status -> must inherit "AAPL"/"open" from the container.
+            { id: 502, side: "sell", type: "stop", quantity: 10, stop_price: 180, class: "equity" }
+          ]
+        } } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    // Both equity legs surface; the container itself (class 'otoco') is NOT emitted as an order.
+    expect(orders.map((o) => o.id).sort()).toEqual(["501", "502"]);
+    const stopLeg = orders.find((o) => o.type === "stop_market")!;
+    expect(stopLeg).toMatchObject({ id: "502", symbol: "AAPL", side: "sell", type: "stop_market", state: "open", stopPrice: 180 });
+    const { isLiveOrderState } = await import("../src/lib/broker-side");
+    expect(isLiveOrderState(stopLeg.state)).toBe(true); // a long-side coverage check sees the resting exit
+  });
+
+  it("a lone option order (container class not equity, no equity legs) is still dropped", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/orders`),
+        body: { orders: { order: {
+          id: 600, symbol: "AAPL", side: "buy_to_open", type: "limit", status: "open", quantity: 1, create_date: "2026-07-10", class: "option"
+        } } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const orders = await getTradierGateway("local").getEquityOrders(ACCT);
+    expect(orders).toEqual([]);
+  });
+});
+
+describe("Tradier adapter — getPortfolio buying power (no intraday-4x lever-up, codex-autofix reconciliation)", () => {
+  // Position sizing must be fed the OVERNIGHT/Reg-T buying power, never the ~4x intraday PDT figure.
+  it("a PDT margin account uses the conservative overnight figure, not the inflated pdt intraday one", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u) => u.includes("/balances"),
+        body: { balances: { account_number: ACCT, total_equity: 10000, total_cash: 2000, market_value: 8000,
+          margin: { stock_buying_power: 16000 }, pdt: { stock_buying_power: 64000 } } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const p = await getTradierGateway("local").getPortfolio(ACCT);
+    expect(p.buyingPower).toBe(16000); // the 64000 intraday PDT number must NOT inflate sizing
+  });
+
+  it("a literal 0 pdt.stock_buying_power is treated as absent, not a real value that zeroes sizing", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u) => u.includes("/balances"),
+        body: { balances: { account_number: ACCT, total_equity: 5000, total_cash: 1000, market_value: 4000,
+          margin: { stock_buying_power: 12000 }, pdt: { stock_buying_power: 0 } } }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const p = await getTradierGateway("local").getPortfolio(ACCT);
+    expect(p.buyingPower).toBe(12000); // spurious 0 ignored; the real Reg-T figure stands
+  });
+});
+
+describe("Tradier tag / synthetic-stop refId 255-char symmetry (finding #4)", () => {
+  // brokerPortableRefId (the stored lastAttemptRefId) and Tradier's sanitizeTag (the wire tag) must
+  // truncate identically at 255, or a hypothetical long refId would diverge past char 255 and the
+  // client-order-id dedup would never match.
+  it("brokerPortableRefId caps at 255 chars, matching Tradier's sanitizeTag output", async () => {
+    const { brokerPortableRefId } = await import("../src/lib/synthetic-stops");
+    const longRaw = "sstop-" + "a".repeat(400);
+    const stored = brokerPortableRefId(longRaw);
+    expect(stored.length).toBe(255);
+    // The tag Tradier actually stores is sanitizeTag(stored); with both capped at 255 it round-trips.
+    const brokerTag = stored.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 255);
+    expect(brokerTag).toBe(stored);
+  });
+});
+
 describe("Tradier adapter — tenant isolation", () => {
   it("user B never resolves user A's stored token; a non-owner with no row throws", async () => {
     await seedTradier({ userId: "local", environment: "paper", token: SANDBOX_TOKEN });

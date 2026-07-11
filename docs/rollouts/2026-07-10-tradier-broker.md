@@ -224,3 +224,79 @@ clear correctness bug or data-fidelity issue.
 - `npx tsc --noEmit` — clean after `npm run build`.
 - `npm test` — 316 files / 3433 tests passed.
 - `npm run build` — clean.
+
+## Fixups round 2 (codex-autofix reconciliation)
+
+A cross-cutting review of the `[codex-autofix]` commit (`9dd5f40c`) found that
+two of its six fixes — the `class === "equity"` order filter and the PDT
+buying-power read — introduced correctness regressions on the real-money
+protective-stop / position-sizing paths. Round 2 reconciles them and closes two
+smaller gaps. All in `src/lib/tradier.ts` + `src/lib/synthetic-stops.ts`.
+
+### Why / what changed
+
+1. **[MEDIUM — double-sell] Pagination must not terminate on the post-filter
+   count** (`getEquityOrders`). codex-autofix moved the equity `class` filter
+   INSIDE the paging loop and kept `if (added === 0) break;`, where `added` now
+   counts only equity rows. FAILURE: a mixed equity+options account whose current
+   page holds only option/combo rows yields `added === 0` and breaks BEFORE a
+   later page that carries a resting protective EQUITY exit — that exit is then
+   invisible to `getEquityOrders`, `liveExitOrderCoverage` under-counts,
+   `confirmedPriorExitDead` sees no match, and the synthetic-stop monitor can
+   place a DUPLICATE exit. FIX: pagination continuation is now decided on the RAW
+   page — advance while the page adds any NEW order id (of any class), stop only
+   on an empty page or a fully-duplicate page (the repeated-pager guard). The
+   `class === "equity"` filter is still applied to what is RETURNED, and the
+   50-page cap + id-dedup are unchanged.
+
+2. **[LOW] Surface EQUITY legs of OTOCO/OCO/OTO containers**
+   (`getEquityOrders` + new exported `equityRowsFromTradierOrder`). Tradier
+   reports a user-placed OCO/OTOCO bracket as a CONTAINER whose own `class` is
+   `otoco`/`oco`/etc. (not `equity`), with the legs nested under a `leg` array —
+   so the equity filter dropped a protective stop leg resting from Tradier's own
+   UI, hiding it from coverage. FIX: `equityRowsFromTradierOrder` returns a plain
+   equity order as itself, and for a multi-leg container surfaces its
+   `class === "equity"` legs (each leg keeps its own id/side/type/status/price;
+   symbol/tag/dates are inherited from the container when a leg omits them).
+   **NEEDS LIVE-TOKEN CONFIRMATION:** the nested-`leg` field name and per-leg
+   `class` field follow Tradier's documented advanced-order response but have not
+   been verified against a live multi-leg account.
+
+3. **[LOW] Do not feed the intraday-4x PDT figure into sizing** (`getPortfolio`).
+   codex-autofix preferred `pdt.stock_buying_power`, which for a pattern-day-
+   trader margin account is the ~4x INTRADAY number → overstates overnight buying
+   power fed to position sizing; and `??` only falls back on null/undefined, so a
+   literal `0` reported 0 instead of falling back. FIX (per the owner's
+   conservative, opt-in-leverage margin decision): take the MORE CONSERVATIVE
+   (minimum) of the POSITIVE (`positiveNumber`, treats a spurious 0 as absent)
+   figures — the Reg-T overnight `margin.stock_buying_power` and the PDT figure —
+   so the intraday number can only pull sizing DOWN, never lever it up. Cash /
+   non-margin paths unchanged.
+
+4. **[INFORMATIONAL] 255-char refId cap symmetry** (`synthetic-stops.ts`
+   `brokerPortableRefId`, now exported). Added `.slice(0, 255)` to match Tradier's
+   `sanitizeTag` cap so a hypothetical long refId truncates identically on the
+   stored `lastAttemptRefId` and the broker `tag`, keeping the client-order-id
+   dedup matchable. No-op on every refId generated today.
+
+### Files (round 2)
+- `src/lib/tradier.ts` — RAW-page pagination continuation + `equityRowsFromTradierOrder`
+  helper (findings 1 & 2); `positiveNumber` helper + conservative-min PDT/Reg-T
+  buying power (finding 3).
+- `src/lib/synthetic-stops.ts` — `brokerPortableRefId` 255-char cap + export
+  (finding 4).
+- `test/tradier.test.ts` — new regression describes: pagination past an
+  option-only page + duplicate-page termination; OTOCO equity-leg surfacing +
+  lone-option drop; PDT no-inflate + literal-0-absent buying power; 255-char
+  refId symmetry (43 tradier tests total, +11).
+
+### Verification (round 2)
+- `npx vitest run test/tradier.test.ts` — 43 passed.
+- `npx vitest run test/synthetic-stops.test.ts test/broker-protective-stops.test.ts` — 47 passed.
+- `npx tsc --noEmit` — clean (node@24).
+- Full gate (`npx tsc --noEmit` → `npm test` → `npm run build`) run via `scripts/land.sh`.
+
+### Follow-ups (round 2)
+- Confirm Tradier's live multi-leg (OTOCO/OCO) GET-orders leg shape against a
+  real token and adjust `equityRowsFromTradierOrder` field names if they differ.
+- Alpaca/Robinhood/test broker behavior deliberately unchanged.

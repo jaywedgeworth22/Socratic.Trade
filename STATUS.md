@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-11 — Tradier fixups round 2: codex-autofix reconciliation (CLAUDE, branch `claude/tradier-broker`, PR #1380)
+A cross-cutting review of the `[codex-autofix]` commit (`9dd5f40c`) found its equity-class order
+filter and PDT buying-power read introduced two REAL-money-path regressions, now fixed with
+regression tests (43 tradier tests, +11). (1) MEDIUM double-sell: `getEquityOrders` pagination broke
+on the post-filter count — an option-only page could stop the loop before a later page's resting
+protective EQUITY exit, hiding it from `liveExitOrderCoverage` and letting the synthetic monitor place
+a duplicate; continuation now decided on the RAW page (any new id of any class), the `class==="equity"`
+filter applied only to returns, 50-page cap + id-dedup kept. (2) LOW: surface EQUITY legs of
+OTOCO/OCO/OTO containers (new `equityRowsFromTradierOrder`) so a user-placed Tradier bracket stop leg
+is visible to coverage — leg field shape NEEDS LIVE-TOKEN CONFIRMATION. (3) LOW: `getPortfolio` no
+longer feeds the ~4x intraday `pdt.stock_buying_power` into sizing — takes the conservative min of the
+POSITIVE Reg-T/PDT figures (literal 0 treated as absent). (4) INFO: `brokerPortableRefId` gains a
+255-char cap matching Tradier's `sanitizeTag`. No Alpaca/Robinhood/test-broker behavior changed. NOT
+merged. See `docs/rollouts/2026-07-10-tradier-broker.md` "Fixups round 2".
+
 ## 2026-07-11 — Tradier broker adapter: Codex PR review fixes (CLAUDE autofix, branch `claude/tradier-broker`)
 Responded to 6 P2 Codex PR review findings: (1) resolve account number from token profile during
 connect if not user-provided; (2) read `pdt.stock_buying_power` alongside `margin.stock_buying_power`
