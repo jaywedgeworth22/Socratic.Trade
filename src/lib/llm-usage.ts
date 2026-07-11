@@ -170,6 +170,7 @@ export function extractLlmUsage(responseJson: unknown): LlmTokenUsage {
 /** Record one LLM call against a user. Never throws — usage accounting must not break an LLM run. */
 export function recordLlmUsage(entry: LlmUsageEntry): void {
   try {
+    const usageId = crypto.randomUUID();
     const total =
       entry.promptTokens !== undefined || entry.completionTokens !== undefined ? (entry.promptTokens ?? 0) + (entry.completionTokens ?? 0) : undefined;
     const cost = estimateLlmCostUsd(entry.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
@@ -197,7 +198,7 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
-        crypto.randomUUID(),
+        usageId,
         entry.userId,
         entry.provider,
         entry.model ?? null,
@@ -213,6 +214,7 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
       );
     // Fire-and-forget forward to the API Usage Monitor (no-op unless configured; never throws).
     pushLlmUsage({
+      sourceEventId: usageId,
       provider: entry.provider,
       model: entry.model,
       context: entry.context,

@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
+> change. The API Usage Monitor integration now supplies explicit stable IDs for local ledger events,
+> broker balance snapshots, and each aggregated provider-call window so same-flush credential lanes
+> cannot collide under the shared five-field fallback. See
+> `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+
 > **2026-07-10 - Settings IA restructure: global-only Settings (CLAUDE).** No roadmap scope
 > change; console IA only. `/console/settings` now carries ONLY global (user/browser/operator/
 > reference/danger) settings; account-scoped config lives on Framework (`/console/strategy`):

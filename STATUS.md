@@ -36,6 +36,16 @@ separate `workflow_run` events. Current `origin/main@1c7c2be8` is merged. Final 
 lint 0 errors / 408 warnings, tsc clean, 325 Vitest files / 3,604 tests passed, Next build clean;
 focused workflow-parity regression 2/2 passed. READY PR #1398 is refreshed without merge/auto-merge.
 Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+## 2026-07-11 — Explicit usage-telemetry delivery IDs (CODEX, branch `codex-usage-telemetry-idempotency`)
+Cross-app API Usage Monitor hardening found that aggregated credential lanes share one flush
+timestamp while the shared fallback idempotency basis intentionally omits lane metadata. Distinct
+lanes could therefore derive one key and one event disappeared. This branch gives every aggregate
+window an explicit UUID-backed key and uses the durable local `llm_usage` / `rag_usage` row ID for
+discrete delivery keys; broker balance snapshots also get one delivery identity with metric suffixes.
+The shared five-field fallback algorithm is unchanged. Focused 7/7 tests, TypeScript, and scoped
+ESLint pass; full pre-PR gates remain pending. No merge/auto-deploy without an explicit landing
+decision. See `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+
 ## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
 Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
 now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled

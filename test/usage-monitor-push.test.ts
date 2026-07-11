@@ -17,6 +17,7 @@ afterAll(() => {
 
 const push = await import("../src/lib/usage-monitor-push");
 const { recordLlmUsage } = await import("../src/lib/llm-usage");
+const { getDb } = await import("../src/lib/db");
 
 const BASE = "https://usage.example.test";
 const TOKEN = "test-token";
@@ -70,6 +71,7 @@ describe("usage-monitor-push", () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));
     push.pushLlmUsage({
+      sourceEventId: "llm-row-123",
       provider: "anthropic",
       model: "claude-opus-4-8",
       context: "strategy",
@@ -98,6 +100,7 @@ describe("usage-monitor-push", () => {
     expect(e.quantity).toBe(1000);
     expect(e.costUsd).toBe(0.03);
     expect(e.requests).toBe(1);
+    expect(e.idempotencyKey).toBe("socratic-trade:llm:llm-row-123");
     expect(typeof e.occurredAt).toBe("string");
     expect((e.metadata as Record<string, unknown>).model).toBe("claude-opus-4-8");
   });
@@ -105,7 +108,7 @@ describe("usage-monitor-push", () => {
   it("pushes a RAG event and aggregates market-data call-volume in one flush", async () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));
-    push.pushRagUsage({ provider: "voyage", operation: "embed", model: "voyage-finance-2", userId: "local", tokensIn: 120, costUsd: 0.00001 });
+    push.pushRagUsage({ sourceEventId: "rag-row-123", provider: "voyage", operation: "embed", model: "voyage-finance-2", userId: "local", tokensIn: 120, costUsd: 0.00001 });
     push.recordProviderCall("finnhub", { ok: true });
     push.recordProviderCall("finnhub", { ok: true });
     push.recordProviderCall("finnhub", { ok: false });
@@ -117,12 +120,16 @@ describe("usage-monitor-push", () => {
     expect(rag).toBeDefined();
     expect(rag!.provider).toBe("voyage");
     expect(rag!.unit).toBe("token");
+    expect(rag!.idempotencyKey).toBe("socratic-trade:rag:rag-row-123");
 
     const vol = events.find((e) => e.provider === "finnhub");
     expect(vol).toBeDefined();
     expect(vol!.metricType).toBe("usage");
     expect(vol!.unit).toBe("request");
     expect(vol!.requests).toBe(3);
+    expect(vol!.idempotencyKey).toMatch(
+      /^socratic-trade:provider-call-volume:/
+    );
     expect((vol!.metadata as Record<string, unknown>).successes).toBe(2);
     expect((vol!.metadata as Record<string, unknown>).failures).toBe(1);
   });
@@ -144,6 +151,9 @@ describe("usage-monitor-push", () => {
     // Two different credential lanes → two separate finnhub events, not one merged count.
     const finnhub = events.filter((e) => e.provider === "finnhub");
     expect(finnhub).toHaveLength(2);
+    const laneKeys = finnhub.map((event) => event.idempotencyKey);
+    expect(laneKeys.every((key) => typeof key === "string")).toBe(true);
+    expect(new Set(laneKeys).size).toBe(2);
     const userLane = finnhub.find((e) => (e.metadata as Record<string, unknown>).keySource === "user");
     expect(userLane).toBeDefined();
     expect((userLane!.metadata as Record<string, unknown>).userId).toBe("u_abc");
@@ -158,5 +168,46 @@ describe("usage-monitor-push", () => {
     await expect(push.flushUsageMonitor()).resolves.toBeUndefined();
     const { getLlmUsageSummary } = await import("../src/lib/llm-usage");
     expect(getLlmUsageSummary().length).toBeGreaterThan(0);
+  });
+
+  it("uses the durable local ledger row ID for LLM delivery idempotency", async () => {
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(makeFetchStub(captured));
+    recordLlmUsage({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      context: "telemetry-id-test",
+      userId: "local",
+      keySource: "operator",
+      promptTokens: 10,
+      completionTokens: 5,
+    });
+    await push.flushUsageMonitor();
+
+    const row = getDb()
+      .prepare(
+        "SELECT id FROM llm_usage WHERE context = ? ORDER BY created_at DESC LIMIT 1"
+      )
+      .get("telemetry-id-test") as { id: string };
+    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(
+      `socratic-trade:llm:${row.id}`
+    );
+  });
+
+  it("allocates a new explicit key for each aggregate window", async () => {
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(makeFetchStub(captured));
+
+    push.recordProviderCall("finnhub", { ok: true, keySource: "operator" });
+    await push.flushUsageMonitor();
+    push.recordProviderCall("finnhub", { ok: true, keySource: "operator" });
+    await push.flushUsageMonitor();
+
+    expect(captured).toHaveLength(2);
+    const firstKey = captured[0]!.body.events[0]!.idempotencyKey;
+    const secondKey = captured[1]!.body.events[0]!.idempotencyKey;
+    expect(firstKey).toMatch(/^socratic-trade:provider-call-volume:/);
+    expect(secondKey).toMatch(/^socratic-trade:provider-call-volume:/);
+    expect(secondKey).not.toBe(firstKey);
   });
 });

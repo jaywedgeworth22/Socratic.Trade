@@ -22,6 +22,7 @@
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
+import { randomUUID } from "node:crypto";
 import {
   createUsageTelemetryClient,
   type UsageTelemetryEvent,
@@ -80,6 +81,7 @@ function flushDelayMs(): number {
 // ── State (globalThis-pinned so Next.js HMR module duplication can't split it) ──
 
 interface CallVolumeEntry {
+  windowId: string;
   provider: string;
   service?: string;
   keySource?: string;
@@ -110,6 +112,8 @@ const state: PushState =
  * `llm-usage.ts` — avoids a circular import and re-computation.
  */
 export function pushLlmUsage(entry: {
+  /** Stable ID of the local llm_usage row backing this delivery. */
+  sourceEventId?: string;
   provider: string;
   model?: string;
   context?: string;
@@ -125,6 +129,7 @@ export function pushLlmUsage(entry: {
   try {
     const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
     enqueue({
+      idempotencyKey: telemetryIdempotencyKey("llm", entry.sourceEventId),
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
       provider: entry.provider,
@@ -158,6 +163,8 @@ export function pushLlmUsage(entry: {
  * ledger write. Cost is passed in (already computed by the caller).
  */
 export function pushRagUsage(entry: {
+  /** Stable ID of the local rag_usage row backing this delivery. */
+  sourceEventId?: string;
   provider: string;
   operation: string;
   model?: string;
@@ -176,6 +183,7 @@ export function pushRagUsage(entry: {
     // Read/Write Units in tokensIn, with records kept separately in metadata.
     const unit: UsageUnit = isPinecone ? "credit" : "token";
     enqueue({
+      idempotencyKey: telemetryIdempotencyKey("rag", entry.sourceEventId),
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
       provider: entry.provider,
@@ -223,9 +231,11 @@ export function pushBrokerBalance(entry: {
   if (!usageMonitorEnabled()) return;
   try {
     const occurredAt = new Date().toISOString();
+    const snapshotId = randomUUID();
     const maskedAcc = maskAccountNumber(entry.accountNumber);
     if (typeof entry.cash === "number") {
       enqueue({
+        idempotencyKey: telemetryIdempotencyKey("broker-balance", `${snapshotId}:cash`),
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
@@ -246,6 +256,7 @@ export function pushBrokerBalance(entry: {
     }
     if (typeof entry.buyingPower === "number") {
       enqueue({
+        idempotencyKey: telemetryIdempotencyKey("broker-balance", `${snapshotId}:buying-power`),
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
@@ -266,6 +277,7 @@ export function pushBrokerBalance(entry: {
     }
     if (typeof entry.equity === "number") {
       enqueue({
+        idempotencyKey: telemetryIdempotencyKey("broker-balance", `${snapshotId}:equity`),
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
@@ -310,7 +322,16 @@ export function recordProviderCall(
     const key = [provider, opts.service ?? "", opts.keySource ?? "", opts.userId ?? ""].join("|");
     const entry =
       state.callVolume.get(key) ??
-      { provider, service: opts.service, keySource: opts.keySource, userId: opts.userId, requests: 0, successes: 0, failures: 0 };
+      {
+        windowId: randomUUID(),
+        provider,
+        service: opts.service,
+        keySource: opts.keySource,
+        userId: opts.userId,
+        requests: 0,
+        successes: 0,
+        failures: 0,
+      };
     entry.requests += 1;
     if (opts.ok === true) entry.successes += 1;
     else if (opts.ok === false) entry.failures += 1;
@@ -344,6 +365,11 @@ function drainCallVolume(now: string): UsageMonitorEvent[] {
   for (const entry of state.callVolume.values()) {
     if (entry.requests <= 0) continue;
     events.push({
+      idempotencyKey: telemetryIdempotencyKey(
+        "provider-call-volume",
+        // HMR can preserve a pre-upgrade global map entry without windowId.
+        entry.windowId || randomUUID()
+      ),
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
       provider: entry.provider,
@@ -428,6 +454,18 @@ function cleanMetadata(
     out[k] = v;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Delivery identity, separate from the shared five-field fallback. Source-ledger
+ * IDs make discrete events stable; a UUID allocated once per aggregate window
+ * makes same-flush provider lanes unique even though they share occurredAt.
+ */
+function telemetryIdempotencyKey(
+  kind: string,
+  sourceId: string = randomUUID()
+): string {
+  return `${SOURCE_APP}:${kind}:${sourceId}`;
 }
 
 // ── Test seams ─────────────────────────────────────────────────────────────────

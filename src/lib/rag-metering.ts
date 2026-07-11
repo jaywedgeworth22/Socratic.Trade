@@ -83,6 +83,7 @@ function approxTokens(texts: string[]): number {
 /** Record a RAG operation against a user. Never throws. */
 export function recordRagUsage(entry: RagUsageEntry): void {
   try {
+    const usageId = crypto.randomUUID();
     const userId = entry.userId || "local";
     const provider = entry.provider || "voyage";
     const tokensIn = entry.tokensIn ?? 0;
@@ -96,7 +97,7 @@ export function recordRagUsage(entry: RagUsageEntry): void {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
-        crypto.randomUUID(),
+        usageId,
         userId,
         entry.operation,
         provider,
@@ -109,6 +110,7 @@ export function recordRagUsage(entry: RagUsageEntry): void {
       );
     // Fire-and-forget forward to the API Usage Monitor (no-op unless configured; never throws).
     pushRagUsage({
+      sourceEventId: usageId,
       provider,
       operation: entry.operation,
       model: entry.model,

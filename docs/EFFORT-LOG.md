@@ -1610,6 +1610,12 @@ As of 2026-07-08 (assignment-rule update).
   Rollout:
   `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
 - **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`, READY PR #1398) — IN PROGRESS 2026-07-11.** Removed the disabled `.github/workflows/deploy.yml`, replaced stale deploy/runner docs, removed retired Sentry observers, added every independently runnable workflow, and mapped all active schedules to source cron. The current-main gate caught and fixed reusable-only `_merge-shepherd-impl` parity: it executes inside its caller and cannot emit an independent `workflow_run`. Current `origin/main@1c7c2be8` is merged; final Node24 gate green: lint 0 errors/408 warnings, tsc clean, 325 files/3,604 tests, build clean; focused parity 2/2. Refreshed head `8c49a8ac` is pushed; hosted verify/smoke are running. No product behavior, merge, auto-merge, or deploy. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+- **Usage telemetry lane idempotency keys (CODEX, owner-directed cross-app hardening 2026-07-11).**
+  Branch `codex-usage-telemetry-idempotency`. Add explicit stable keys to batched provider-call
+  telemetry so same-flush lanes cannot collide under the shared five-field fallback. Preserve the
+  shared contract algorithm; focused producer tests first. Cross-reference API Usage Monitor branch
+  `codex-app-wide-hardening`. Implemented locally: 7/7 focused tests, TypeScript, and scoped ESLint
+  pass; full pre-PR gate pending. No merge (which auto-deploys) without an explicit landing decision.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch
