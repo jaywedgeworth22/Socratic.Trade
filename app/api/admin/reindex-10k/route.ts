@@ -3,6 +3,7 @@ import { listIngestedAccessions } from "@/lib/db";
 import { refreshFilingBodies } from "@/lib/web-sources/sec-filings";
 import { getVectorStoreStats } from "@/lib/vector-db";
 import { requireAdmin } from "@/lib/auth/admin";
+import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -42,11 +43,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Provide { symbols: string[], limit?: number } in the request body." }, { status: 400 });
   }
 
-  // force: this is the operator explicitly asking for a backfill — it must not silently no-op
-  // behind the scheduler's ingest TTL stamp (it did until 2026-07-09, returning {attempted: 0}
-  // for up to a week after any scheduler attempt). An explicit `limit` also overrides the
-  // free-tier 1-filing cap; omitted, the tier default applies (paid 25 / free 1).
-  const result = await refreshFilingBodies(symbols, Date.now(), limit, { force: true });
-  const stats = await getVectorStoreStats();
-  return NextResponse.json({ ok: result.errors.length === 0, result, vectorStore: stats });
+  return withAdminOperationGuard(request, "reindex-10k", async () => {
+    // force: this is the operator explicitly asking for a backfill — it must not silently no-op
+    // behind the scheduler's ingest TTL stamp (it did until 2026-07-09, returning {attempted: 0}
+    // for up to a week after any scheduler attempt). An explicit `limit` also overrides the
+    // free-tier 1-filing cap; omitted, the tier default applies (paid 25 / free 1).
+    const result = await refreshFilingBodies(symbols, Date.now(), limit, { force: true });
+    const stats = await getVectorStoreStats();
+    return NextResponse.json({ ok: result.errors.length === 0, result, vectorStore: stats });
+  });
 }

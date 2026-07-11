@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { callRobinhoodMcpTool, robinhoodMcpDataEnabled } from "@/lib/robinhood";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { requireAdmin } from "@/lib/auth/admin";
+import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +21,16 @@ export async function GET(request: NextRequest) {
   }
   const userId = resolveRequestUserId(request);
   const symbol = (new URL(request.url).searchParams.get("symbol") || "AAPL").toUpperCase();
-  const [historicals, fundamentals] = await Promise.allSettled([
-    callRobinhoodMcpTool(userId, "get_equity_historicals", { symbols: [symbol], symbol, interval: "day", span: "5year", bounds: "regular" }),
-    callRobinhoodMcpTool(userId, "get_equity_fundamentals", { symbols: [symbol] })
-  ]);
-  return NextResponse.json({
-    ok: true,
-    symbol,
-    historicals: historicals.status === "fulfilled" ? historicals.value : { error: String(historicals.reason) },
-    fundamentals: fundamentals.status === "fulfilled" ? fundamentals.value : { error: String(fundamentals.reason) }
+  return withAdminOperationGuard(request, "robinhood-probe", async () => {
+    const [historicals, fundamentals] = await Promise.allSettled([
+      callRobinhoodMcpTool(userId, "get_equity_historicals", { symbols: [symbol], symbol, interval: "day", span: "5year", bounds: "regular" }),
+      callRobinhoodMcpTool(userId, "get_equity_fundamentals", { symbols: [symbol] })
+    ]);
+    return NextResponse.json({
+      ok: true,
+      symbol,
+      historicals: historicals.status === "fulfilled" ? historicals.value : { error: String(historicals.reason) },
+      fundamentals: fundamentals.status === "fulfilled" ? fundamentals.value : { error: String(fundamentals.reason) }
+    });
   });
 }

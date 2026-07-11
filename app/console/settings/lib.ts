@@ -90,6 +90,24 @@ export function connectAlpacaAccount(body: AlpacaConnectBody): Promise<{ ok: boo
   });
 }
 
+export interface TradierConnectBody {
+  label?: string;
+  apiKey: string;
+  environment: "paper" | "live";
+  accountNumber?: string;
+  taxationType?: "taxable" | "roth_ira" | "traditional_ira";
+}
+
+/** POST /api/connected-accounts {broker:"tradier", ...}. Single access token (no secret). The
+ *  environment is an explicit selector (Sandbox=paper / Production=live) — Tradier tokens carry no
+ *  PK/PA-style prefix — and the server derives the sandbox/production endpoint from it. */
+export function connectTradierAccount(body: TradierConnectBody): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/connected-accounts", {
+    method: "POST",
+    body: JSON.stringify({ broker: "tradier", ...body })
+  });
+}
+
 /** POST /api/connected-accounts {broker:"test"} — creates the explicit local
  *  mock paper account. The server keeps it inactive until the user switches to it. */
 export function connectTestAccount(): Promise<{ ok: boolean; accountNumber?: string; label?: string }> {

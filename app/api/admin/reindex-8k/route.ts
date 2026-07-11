@@ -3,6 +3,7 @@ import { getEightKDataset, reindexEightKDataset } from "@/lib/web-sources/sec8k"
 import { getVectorStoreStats } from "@/lib/vector-db";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { requireAdmin } from "@/lib/auth/admin";
+import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -32,15 +33,17 @@ export async function POST(request: Request) {
     const body = (await request.json()) as { limit?: number };
     if (body && Number.isFinite(Number(body.limit))) limit = Number(body.limit);
   } catch {
-    // no body / not JSON → reindex the whole dataset
+    // no body / not JSON -> reindex the whole dataset
   }
-  const before = await getVectorStoreStats(userId);
-  const result = await reindexEightKDataset(userId, limit);
-  const after = await getVectorStoreStats(userId);
-  return NextResponse.json({
-    ok: !result.error,
-    result,
-    vectorStoreBefore: before,
-    vectorStoreAfter: after
+  return withAdminOperationGuard(request, "reindex-8k", async () => {
+    const before = await getVectorStoreStats(userId);
+    const result = await reindexEightKDataset(userId, limit);
+    const after = await getVectorStoreStats(userId);
+    return NextResponse.json({
+      ok: !result.error,
+      result,
+      vectorStoreBefore: before,
+      vectorStoreAfter: after
+    });
   });
 }
