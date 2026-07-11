@@ -38,6 +38,7 @@ export async function POST(request: Request) {
   const auditLimit = Number(url.searchParams.get("auditLimit")) || 1000;
   const placeboSeedRaw = url.searchParams.get("placeboSeed");
   const placeboSeed = placeboSeedRaw != null && placeboSeedRaw !== "" ? Number(placeboSeedRaw) : undefined;
+
   const requireTopBucketPositive = getPolicy(userId).tuning?.congressRequireTopBucketPositive ?? false;
   return withAdminOperationGuard(request, "congress-score-eval", async () => {
     // P2-3: honor the operator's `congressRequireTopBucketPositive` flag so the cached verdict reflects the

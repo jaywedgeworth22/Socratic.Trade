@@ -78,7 +78,7 @@ it is our own prod-observed fact).
 
 Every quota/pacing/tier flag is an env var in **Infisical prod** (seeded with
 code defaults 2026-07-10; boot-time injection ⇒ changes apply on the next deploy):
-`PROVIDER_QUOTA_{TIINGO,TWELVEDATA}_PER_{MIN,HOUR,DAY}`,
+`PROVIDER_QUOTA_{TIINGO,TWELVEDATA,FMP}_PER_{MIN,HOUR,DAY}`,
 `PROVIDER_RATE_LIMIT_{FINNHUB,ALPHA_VANTAGE,YAHOO_FINANCE,TWELVEDATA}_*`,
 `TIINGO_DROP_NEWS`, `FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`,
 `MASSIVE_{HISTORY,SHORT_INTEREST}_ENABLED`, `MASSIVE_REST_MAX_CALLS_PER_MINUTE`.
@@ -94,7 +94,9 @@ default; the launchd job is not installed yet. See
 
 **Known gap, verified 2026-07-10:** `provider-rate-limit.ts`'s `HARD_DEFAULTS` map
 has entries for exactly four providers — `finnhub`, `alpha-vantage`,
-`yahoo-finance`, `twelvedata`. **marketstack, tradier, intrinio, fred,
+`yahoo-finance`, `twelvedata`. FMP is quota'd (not paced): it sits in
+`RATE_QUOTAS` at 290/min (see the FMP row below), not in `HARD_DEFAULTS`.
+**marketstack, tradier, intrinio, fred,
 fintechstudios, and logodev have NO hard-coded pacing/concurrency default.**
 Nothing throttles these six today besides the generic `fetchWithRetry` 429
 backoff. `resolveProviderLimiterConfig` still lets an operator set one ad hoc
@@ -110,7 +112,7 @@ something already handled.
 | You bought | Set in Infisical |
 |---|---|
 | tiingo Power | `PROVIDER_QUOTA_TIINGO_PER_HOUR=10000`, `PROVIDER_QUOTA_TIINGO_PER_DAY=100000`, `TIINGO_DROP_NEWS=false` |
-| FMP Premium | (no quota knob today — FMP is throttled by `FMP_MAX_SYMBOLS` scan-derived cap; revisit if 429s appear) |
+| FMP Starter / Premium | `PROVIDER_QUOTA_FMP_PER_MIN` (default **290**; FMP Starter = 300/min, 290 leaves headroom) — raise it on a higher plan, set `0` to remove the minute cap. `PROVIDER_QUOTA_FMP_PER_DAY` is UNSET (no daily cap) by default; set it (e.g. `240`) only on the free 250/day tier. `FMP_MAX_SYMBOLS` remains the separate symbols/scan throttle applied before the quota. |
 | Twelve Data Grow | `PROVIDER_QUOTA_TWELVEDATA_PER_MIN=377`, remove/raise `_PER_DAY` |
 | Massive → free downgrade (don't) | `MASSIVE_REST_MAX_CALLS_PER_MINUTE=5` |
 | Alpaca SIP feed | `ALPACA_DATA_FEED=sip` |

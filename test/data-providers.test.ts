@@ -9,6 +9,8 @@ import {
   alpacaSnapshotTtlMs,
   analystScoreFromCounts,
   analystScoreFromMean,
+  apiKeyFingerprint,
+  callsPerSymbol,
   getEnrichmentProvider,
   isTransientError,
   labelFromAnalystScore,
@@ -22,6 +24,8 @@ import {
   type EnrichmentContext,
   type SymbolEnrichment
 } from "../src/lib/data-providers";
+import { admitProviderRequests, resetProviderQuotaState } from "../src/lib/provider-rate-limit";
+import { CircuitOpenError } from "../src/lib/api-circuit-breaker";
 import { getServiceHealthLog } from "../src/lib/db-health";
 
 // Each test file gets its own isolated SQLite db so db module singleton state
@@ -911,6 +915,138 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({ peRatio: 25.5 });
     expect(fetchCount).toBe(4);
+  });
+});
+
+describe("callsPerSymbol('fmp', …) — per-symbol request accounting", () => {
+  it("counts 2 unconditional (insider+senate) + ratios/consensus/targets one-for-one", () => {
+    // Nothing skipped, targets off → insider + senate + ratios-ttm + grades-consensus = 4.
+    expect(callsPerSymbol("fmp", { skipPe: false, skipConsensus: false, wantTargets: false })).toBe(4);
+    expect(callsPerSymbol("fmp")).toBe(4);               // undefined flags are falsy → same as all-false
+    expect(callsPerSymbol("fmp", {})).toBe(4);
+    // + price-target-consensus when wantTargets → 5 (the full worst case).
+    expect(callsPerSymbol("fmp", { skipPe: false, skipConsensus: false, wantTargets: true })).toBe(5);
+    // skipPe drops ratios-ttm.
+    expect(callsPerSymbol("fmp", { skipPe: true, skipConsensus: false, wantTargets: true })).toBe(4);
+    // skipPe + skipConsensus, targets off → only the 2 unconditional calls.
+    expect(callsPerSymbol("fmp", { skipPe: true, skipConsensus: true, wantTargets: false })).toBe(2);
+    // skipPe + skipConsensus, targets on → 2 unconditional + price-target = 3.
+    expect(callsPerSymbol("fmp", { skipPe: true, skipConsensus: true, wantTargets: true })).toBe(3);
+  });
+});
+
+describe("FMP request quota — defer / refund / breaker / cache-hit / per-credential", () => {
+  const QUOTA_ENV = ["PROVIDER_QUOTA_FMP_PER_MIN", "PROVIDER_QUOTA_FMP_PER_DAY", "FMP_PRICE_TARGETS_ENABLED"];
+  beforeEach(() => { for (const k of QUOTA_ENV) delete process.env[k]; resetProviderQuotaState(); });
+  afterEach(() => { for (const k of QUOTA_ENV) delete process.env[k]; resetProviderQuotaState(); });
+
+  // ratios-ttm returns a P/E so a fetched symbol yields non-empty, cacheable data; every other
+  // sub-call returns []. Each fetched symbol therefore costs 4 requests (targets off by default).
+  function stubPeFetch(): () => number {
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCount++;
+      if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: "20" }]));
+      return new Response(JSON.stringify([]));
+    });
+    return () => fetchCount;
+  }
+
+  it("fetches only the affordable best-first prefix, defers the tail as {} (uncached), and refunds the sub-symbol remainder", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "9"; // 9 requests; each symbol costs 4 → 2 whole symbols fit, 1 left over
+    const count = stubPeFetch();
+
+    const provider = new FmpEnrichmentProvider("q-key");
+    const res = await provider.enrich(["AAPL", "MSFT", "GOOG"]);
+    // admit min(12, 9) = 9. Greedy: AAPL(4)→rem5, MSFT(4)→rem1, GOOG(4) doesn't fit → deferred.
+    expect(res.AAPL).toEqual({ peRatio: 20 });
+    expect(res.MSFT).toEqual({ peRatio: 20 });
+    expect(res.GOOG).toEqual({}); // deferred this scan, NOT queried
+    expect(count()).toBe(8);      // exactly 2 symbols × 4 sub-calls
+    // The 8 dispatched were recorded; the 1-request remainder was refunded → 1 headroom remains this minute.
+    expect(admitProviderRequests("fmp", apiKeyFingerprint("q-key"), 100)).toBe(1);
+
+    // GOOG was deferred, never fetched → it must NOT have been cached. A fresh-budget rescan fetches it.
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "290";
+    resetProviderQuotaState();
+    const res2 = await provider.enrich(["GOOG"]);
+    expect(count()).toBe(12);     // +4: GOOG actually fetched (not served from cache)
+    expect(res2.GOOG).toEqual({ peRatio: 20 });
+  });
+
+  it("refunds a breaker-skipped symbol's cost and does not cache it", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "4"; // room for exactly one symbol per minute
+    let phase: "open" | "ok" = "open";
+    let okCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (phase === "open") throw new CircuitOpenError("fmp", "env"); // breaker trips before any request leaves
+      okCalls++;
+      if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: "20" }]));
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("brk-key");
+    const res = await provider.enrich(["ZZZ"]);
+    expect(res.ZZZ).toEqual({}); // all sub-calls CircuitOpenError → breaker-skipped
+
+    // If the cost were NOT refunded, the 4/min budget would be spent and this rescan would defer ZZZ
+    // as {} with zero fetches; if ZZZ had been cached, the rescan would serve {} from cache. Either
+    // failure mode yields no fetch. Getting real data back proves BOTH the refund and the no-cache.
+    phase = "ok";
+    const res2 = await provider.enrich(["ZZZ"]);
+    expect(res2.ZZZ).toEqual({ peRatio: 20 });
+    expect(okCalls).toBe(4);
+  });
+
+  it("does not spend the quota on a cache hit", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "4";
+    const count = stubPeFetch();
+
+    const provider = new FmpEnrichmentProvider("cache-key");
+    await provider.enrich(["IBM"]); // fetches + caches, spends 4
+    expect(count()).toBe(4);
+
+    resetProviderQuotaState(); // clear the budget so any NEW spend on the rescan is detectable
+    const res2 = await provider.enrich(["IBM"]);
+    expect(count()).toBe(4);    // served from cache — no fetch
+    expect(res2.IBM).toEqual({ peRatio: 20 });
+    // The cache hit reserved nothing, so the whole fresh window is still available.
+    expect(admitProviderRequests("fmp", apiKeyFingerprint("cache-key"), 4)).toBe(4);
+  });
+
+  it("keeps a separate quota lane per credential (one key's spend never gates another)", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "4"; // each lane funds exactly one symbol/min
+    const count = stubPeFetch();
+
+    const provA = new FmpEnrichmentProvider("iso-A");
+    const provB = new FmpEnrichmentProvider("iso-B");
+    await provA.enrich(["AAPL"]); // spends lane A's whole minute
+    const resB = await provB.enrich(["MSFT"]); // lane B is untouched → still fetches
+    expect(resB.MSFT).toEqual({ peRatio: 20 });
+    expect(count()).toBe(8); // 4 (A) + 4 (B); a shared lane would have deferred B → only 4
+  });
+
+  it("retries:0 — a 429 does not emit a second (uncounted) call on any sub-endpoint", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.PROVIDER_QUOTA_FMP_PER_MIN = "290";
+    let ratiosCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("ratios-ttm")) { ratiosCalls++; return new Response("rate limited", { status: 429 }); }
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("retry-key");
+    await provider.enrich(["AAPL"]);
+    expect(ratiosCalls).toBe(1); // exactly one attempt — the built-in 429 retry (default 1) is disabled
   });
 });
 

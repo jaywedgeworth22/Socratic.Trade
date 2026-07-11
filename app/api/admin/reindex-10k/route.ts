@@ -28,6 +28,7 @@ export async function POST(request: Request) {
   // excluded by provenance, and this stronger gate also rejects a genuinely verified email alone.
   const denied = requireAdmin(request, { requireTokenInProd: true });
   if (denied) return denied;
+
   let symbols: string[] = [];
   let limit: number | undefined;
   try {
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
     if (Array.isArray(body?.symbols)) symbols = body.symbols.filter((s) => typeof s === "string" && s.length > 0);
     if (Number.isFinite(Number(body?.limit))) limit = Number(body.limit);
   } catch {
-    // no body / not JSON -> empty symbols (will return error)
+    // no body / not JSON → empty symbols (will return error)
   }
 
   if (symbols.length === 0) {

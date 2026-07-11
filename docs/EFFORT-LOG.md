@@ -1598,7 +1598,52 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **Expensive admin-operation abuse/cost controls (CODEX, branch `codex/admin-rate-limits`, MERGED PR #1409, worktree `/Users/jay/.codex/worktrees/socratic-admin-rate-limits`) — COMPLETED; SHARED v1.5.0 ADOPTION FOLLOW-UP IN PROGRESS 2026-07-11.** Named per-admin anti-repeat budgets and contract-aligned 429/409 responses wrap high-cost admin actions (`reindex-8k`, `reindex-10k`, `backtest-ic`, `tuning-dry-run`, Congress score-eval/share, `refresh-websource`, Robinhood probe). Claims precede quota debit; explicit validation/config rejection precedes admission; public `/api/strategy/tune` shares a per-user single-flight with admin dry-run while retaining legacy 409 fields. Process-wide groups coordinate manual admin route calls only; scheduler/background convergence is separately planned below. PR #1409 merged as `9552b648`; current `main@d3859025` contains it plus #1410 and #1405. Shared `v1.5.0` is released and tag-install verified. The follow-up exact-pins it, delegates pure body/status construction from the local HTTP adapter to shared builders, and parses representative 429/409 responses with the shared schema. Refreshed Node24 and hosted gates pending. Excludes strategy execution and provider internals.
+- **Expensive admin-operation abuse/cost controls (CODEX, branch `codex/admin-rate-limits`, MERGED PR #1409, worktree `/Users/jay/.codex/worktrees/socratic-admin-rate-limits`) — COMPLETED; INTEGRATION-REPAIR + SHARED v1.5.0 FOLLOW-UP IN PROGRESS 2026-07-11.** Named per-admin anti-repeat budgets and contract-aligned 429/409 responses wrap high-cost admin actions (`reindex-8k`, `reindex-10k`, `backtest-ic`, `tuning-dry-run`, Congress score-eval/share, `refresh-websource`, Robinhood probe). PR #1409 merged as `9552b648`, but current-main reconciliation proved that merge commit dropped all eight route wrappers while retaining the guard library/tests. The follow-up restores every wrapper, exact-pins released/tag-install-verified shared `v1.5.0`, delegates pure body/status construction from the local HTTP adapter to shared builders, and parses representative 429/409 responses with the shared schema. Current `main@d3859025` also contains #1410 and #1405. Refreshed Node24 route-wiring/full and hosted gates pending. Scheduler/background convergence remains separately reserved.
+- **FMP request-quota wiring — extend the unified quota to FMP (CLAUDE, branch
+  `claude/fmp-rate-limit`) — IN PROGRESS 2026-07-10, PR open.** FMP was the last high-volume
+  enrichment provider NOT metered by the unified quota (PR #1310): `FmpEnrichmentProvider.enrich`
+  fires up to 5 HTTP calls per miss symbol (insider + senate always; ratios-ttm/grades-consensus/
+  price-target-consensus when not skipped) under the single `fmp` circuit-breaker service, bounded
+  only by `FMP_MAX_SYMBOLS`, so a cold-cache scan could burst past FMP Starter's 300/min. Added
+  `fmp: [{290, MINUTE}]` to `RATE_QUOTAS` (290 = 300 minus headroom; NO day window by default —
+  `PROVIDER_QUOTA_FMP_PER_DAY` opts one in for the free 250/day tier); widened `callsPerSymbol` with
+  an `fmp` case (`2 + !skipPe + !skipConsensus + wantTargets`, range 2..5) mirroring the fetch
+  conditions one-for-one; wired admit/greedy-best-first-defer/partial-remainder-refund + breaker-skip
+  refund into `enrich` (exactly the tiingo shape, per-credential lane via `apiKeyFingerprint`); set
+  `retries: 0` on FMP `getJson` so a 429 retry can't emit an uncounted call past the 10-request
+  headroom. Reservation == dispatch (both read the same `skipFlagsFor` + `wantTargets`); cache hits
+  and deferred symbols spend nothing. Docs: `.env.example` FMP block, `docs/market-data-provider-pricing.md`
+  dials table, `docs/rollouts/2026-07-10-fmp-rate-limit.md`. Gate under node@24: tsc clean, lint 0
+  errors, 3412/3412 tests, `npm run build` OK. Extends `docs/rollouts/2026-07-10-unified-provider-quota.md`.
+- **Runtime release identity + Litestream replication health (CODEX, branch `codex/runtime-release-backup-health`, MERGED PR #1405, worktree `/Users/jay/.codex/worktrees/socratic-runtime-health`) — COMPLETED; AUTO-DEPLOY/PRODUCTION VERIFICATION IN PROGRESS 2026-07-11.** Public health exposes sanitized release/process identity and reads Litestream 0.5.12 `GET /list` through an explicitly enabled production Unix socket with deadline/cap/error handling. PR #1405 merged as `4def810c`; current `main@d3859025` contains it and is queued for serialized Coolify auto-deploy. Local/hosted gates were green; no secrets or replica writes. Live release/Litestream proof pending.
+- **Admin server metrics Hetzner response-shape crash fix (CODEX, branch
+  `codex/admin-server-shape-fix`) — IN PROGRESS 2026-07-11.** Production `/admin/server`
+  crashes with React #31 because the API forwards Hetzner's real nested
+  `server_type` and `public_net.ipv4` objects into JSX string slots. Normalize provider
+  metadata and Coolify resource rows to strings at the API boundary, including current
+  `location.name`; retain explicit shape warnings; remove fabricated local metrics/resources;
+  reject provider network/HTTP/JSON failures with a preserved 502 degraded envelope; never mix
+  local-process or hardcoded identity into missing remote fields; and omit malformed samples
+  instead of coercing them to zero. The client now guards all display fields, exposes degraded
+  production state, and renders unavailable telemetry honestly. Current `origin/main@8fca436d`
+  merged cleanly. Final Node 24 gate is green: focused 1 file / 7 tests and touched ESLint clean;
+  full lint 0 errors / 405 inherited warnings, typecheck, 325 files / 3,608 tests, build. A stale
+  post-merge install initially lacked current-main's tracked `ts-morph`; clean locked install
+  repaired it before the passing ordered gate. READY PR #1400 remains the delivery target without
+  merge/auto-merge/deploy. Rendered Browser QA was unavailable because no Browser backend exists.
+  Rollout:
+  `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
+- **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`, READY PR #1398) — IN PROGRESS 2026-07-11.** Removed the disabled `.github/workflows/deploy.yml`, replaced stale deploy/runner docs, removed retired Sentry observers, added every independently runnable workflow, and mapped all active schedules to source cron. The current-main gate caught and fixed reusable-only `_merge-shepherd-impl` parity: it executes inside its caller and cannot emit an independent `workflow_run`. Current `origin/main@1c7c2be8` is merged; final Node24 gate green: lint 0 errors/408 warnings, tsc clean, 325 files/3,604 tests, build clean; focused parity 2/2. Refreshed head `8c49a8ac` is pushed; hosted verify/smoke are running. No product behavior, merge, auto-merge, or deploy. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+- **Usage telemetry lane idempotency keys (CODEX, owner-directed cross-app hardening 2026-07-11).**
+  **OPEN PR #1412**, branch `codex-usage-telemetry-idempotency`. Add explicit stable keys to batched provider-call
+  telemetry so same-flush lanes cannot collide under the shared five-field fallback. Preserve the
+  shared contract algorithm; focused producer tests first. Cross-reference API Usage Monitor branch
+  `codex-app-wide-hardening`. Adversarial fixups preserve exact failed payloads for bounded in-memory
+  retry, reuse ledger timestamps, hash arbitrary source IDs into capped keys, and cancel stale HMR
+  timers. The final Node 24 gate is green: focused producer tests 11/11, repo-wide lint, 325 files/
+  3,614 tests, and Next production build. SHA-256 resolution uses edge-safe Web Crypto after the
+  gate caught a Node-only import in the edge bundle. The queue is not a crash-durable outbox. No
+  merge (which auto-deploys) without an explicit landing decision.
 - **Admin authorization fail-closed hardening (CODEX, branch `codex/admin-fail-closed`, MERGED PR #1410, worktree
   `/Users/jay/.codex/worktrees/socratic-admin-fail-closed`) — COMPLETED 2026-07-11; PRODUCTION REVISION PROOF PENDING.** Make the
   shared `requireAdmin` gate deny by default regardless of `NODE_ENV` or hostname. Middleware now

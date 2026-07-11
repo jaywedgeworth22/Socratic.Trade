@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
+> change; this is an operations-observability slice. `/api/health` gains a public-safe source
+> revision/process identity and hard-deadline, size-capped Litestream daemon status/last-sync
+> inspection over its local IPC socket. Production explicitly enables the v0.5.12 socket and skips
+> the non-verifying metadata-file fallback; staleness requires evidence of newer local DB/WAL activity.
+> See `docs/rollouts/2026-07-11-runtime-release-backup-health.md`.
 > **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
 > scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced
 > refresh/share, and broker probes now have named per-admin budgets and single-flight exclusion,
@@ -18,6 +24,12 @@ filling the missing pieces.
 > body/status construction to the shared builders while retaining HTTP headers and legacy fields.
 > Current `main@d3859025` also includes #1410 and #1405. Refreshed Node 24 gates are pending. See
 > `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
+> **2026-07-11 - Usage telemetry delivery identity (CODEX).** No product-roadmap or trading-path
+> change. The API Usage Monitor integration now supplies fixed-length explicit IDs for local ledger
+> events, broker balance snapshots, and each aggregated provider-call window so same-flush credential
+> lanes cannot collide under the shared five-field fallback. Ledger timestamps are reused on replay,
+> and failed/ambiguous batches retain their exact events for bounded in-memory retry. See
+> `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
 > **2026-07-11 - Admin authorization fail-closed hardening (CODEX).** No roadmap scope change;
 > security/correctness only. The shared admin gate now denies by default in every environment unless
 > the caller has a middleware-proven Cloudflare Access/Auth.js admin email or valid admin token. The

@@ -1,5 +1,36 @@
 # Status
 
+## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
+Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment
+provider that was still unmetered. `FmpEnrichmentProvider.enrich` fires up to 5 HTTP calls per miss
+symbol (insider + senate always; ratios-ttm / grades-consensus / price-target-consensus when not
+skipped) under one `fmp` circuit-breaker service, previously bounded only by `FMP_MAX_SYMBOLS` — a
+cold-cache scan could burst past FMP Starter's 300/min. Changes: `RATE_QUOTAS.fmp = [{290, MINUTE}]`
+(290 = 300 minus headroom; no day window unless `PROVIDER_QUOTA_FMP_PER_DAY` is set — opt-in for the
+free 250/day tier); `callsPerSymbol("fmp", …)` = `2 + !skipPe + !skipConsensus + wantTargets` (range
+2..5) mirroring the fetch conditions one-for-one; admit / greedy best-first defer / partial-remainder
+refund + breaker-skip refund wired into `enrich`, per-credential via `apiKeyFingerprint` (exactly the
+tiingo shape); `retries: 0` on FMP `getJson` so a 429 retry can't emit an uncounted call past the
+10-request headroom. Reservation == dispatch (both read the same `skipFlagsFor` + `wantTargets`); cache
+hits and deferred symbols spend nothing. Docs: `.env.example` FMP block, `docs/market-data-provider-pricing.md`
+dials table, `docs/rollouts/2026-07-10-fmp-rate-limit.md`. Gate under node@24: tsc clean, lint 0 errors,
+3412/3412 tests, `npm run build` OK. NOTE: merge = auto-deploy to live — this is a data-plane throttle,
+not a money-path change. Blockers: none. Next: land via `scripts/land.sh`, PR ready (do not merge).
+## 2026-07-11 — Runtime release + backup health (CODEX, branch `codex/runtime-release-backup-health`)
+
+In progress in an isolated worktree. Public `/api/health` now reports a sanitized Coolify/source
+commit, process start/uptime, and Litestream 0.5.x daemon status plus last successful sync from the
+local Unix-socket `GET /list` endpoint. Production config now explicitly enables Litestream 0.5.12's
+control socket; the client uses a hard wall-clock deadline, bounded body, and abort/error handling.
+Production skips the synchronous metadata-file fallback entirely; non-live scanning is bounded.
+Live mode degrades unavailable/stopped/invalid-time/never-synced states and only calls an old sync
+stale when newer DB/WAL activity proves there is work to upload. The pre-reconciliation Node 24 gate
+was green. The branch now reconciles `origin/main@432ca6fe`; runtime source/tests were disjoint from
+the incoming stop-plan, CI, and admin-server changes, while union-merged STATUS/PLAN/EFFORT history
+was preserved. Final combined Node 24 verification is green: lint 0 errors / 405 inherited warnings,
+TypeScript clean, 326 files / 3,629 tests, and production build clean. The earlier missing `ts-morph`
+report was confirmed as stale worktree dependency state and is resolved. READY PR #1405 remains the
+delivery target without merge, auto-merge, deployment, or live replica mutation.
 ## 2026-07-11 — Admin server Hetzner response-shape crash fix (CODEX, branch `codex/admin-server-shape-fix`)
 Production `/admin/server` hit React error #31 because `/api/admin/server-metrics` passed
 Hetzner's nested `server_type` and `public_net.ipv4` objects into JSX text positions. The API
@@ -38,6 +69,20 @@ lint 0 errors / 408 warnings, tsc clean, 325 Vitest files / 3,604 tests passed, 
 focused workflow-parity regression 2/2 passed. PR #1398 merged externally as `8fca436d`; the configured
 main auto-deploy was triggered, but this session has not independently verified the production revision.
 Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+## 2026-07-11 — Explicit usage-telemetry delivery IDs (CODEX, branch `codex-usage-telemetry-idempotency`)
+Cross-app API Usage Monitor hardening found that aggregated credential lanes share one flush
+timestamp while the shared fallback idempotency basis intentionally omits lane metadata. Distinct
+lanes could therefore derive one key and one event disappeared. This branch gives every aggregate
+window an explicit UUID-backed key and uses a fixed-length hash of the durable local `llm_usage` /
+`rag_usage` row ID for discrete delivery keys; broker balance snapshots also get one delivery
+identity with metric suffixes. Ledger timestamps now flow to the outbound event, failed/ambiguous
+batches retry in memory with the byte-equivalent original event payload, and HMR cancels stale
+module timers before preserving buffered state. The shared five-field fallback algorithm is
+unchanged. Focused usage-push + RAG verification is 18/18 green (11 producer regressions), and
+TypeScript/scoped ESLint pass under Node 24; full pre-PR gates remain pending. The in-memory queue is
+not a crash-durable outbox. No merge/auto-deploy without an explicit landing decision. See
+`docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+
 ## 2026-07-11 — Public auth + paid-route rate-limit hardening (CODEX, branch `codex/public-auth-rate-limit-hardening`)
 Bounded follow-up to the whole-app reliability/security audit. The public Robinhood OAuth callback
 now consumes one pre-auth bucket per trusted Cloudflare client IP (never per attacker-controlled
@@ -68,18 +113,15 @@ Public strategy tuning and the admin tuning dry run share one per-user single-fl
 public route retains its legacy 409 compatibility fields.
 PR #1409 merged to `main` as `9552b648` on 2026-07-11. Current `main@d3859025` contains that
 merge plus #1410's fail-closed authorization and #1405's runtime-health work. The only #1410
-route conflicts were comments; their verified-provenance wording was preserved while every #1409
-guard wrapper remained intact. Shared package `v1.5.0` is now released and clean-install verified.
-This follow-up exact-pins that tag and makes the app-local HTTP adapter delegate rejection body/status
-construction to the shared builders while retaining `Response`, `Retry-After`, error text, and legacy
-tuning fields. Representative 429/409 bodies are parsed by the shared schema in tests. The refreshed
-Node 24 gate and follow-up hosted checks are pending. The controls are anti-repeat budgets, not hard
-per-request spend ceilings. See
+route conflicts were comments on the PR branch, but current-main reconciliation exposed that merge
+commit `9552b648` had actually dropped all eight route wrappers while retaining the guard library/tests.
+This follow-up restores every wrapper and preserves #1410's verified-provenance comments. Shared
+package `v1.5.0` is released and clean-install verified; the follow-up exact-pins it and makes the
+app-local HTTP adapter delegate rejection body/status construction to shared builders while retaining
+`Response`, `Retry-After`, error text, and legacy tuning fields. Representative 429/409 bodies are
+parsed by the shared schema. The refreshed Node 24 route-wiring/full gate and hosted checks are pending.
+The controls are anti-repeat budgets, not hard per-request spend ceilings. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
-3,499 tests, Next build clean). PR #1399 merged externally as `97152c25`; auto-deploy was triggered,
-but this session has not independently verified the production revision. Exact commands
-and the initial Node-ABI mismatch are recorded in
-`docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
 ## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
 
 The shared `requireAdmin` gate no longer treats `NODE_ENV` or a request hostname as authorization.

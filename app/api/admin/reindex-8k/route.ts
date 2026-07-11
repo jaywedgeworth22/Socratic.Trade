@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as { limit?: number };
     if (body && Number.isFinite(Number(body.limit))) limit = Number(body.limit);
   } catch {
-    // no body / not JSON -> reindex the whole dataset
+    // no body / not JSON → reindex the whole dataset
   }
   return withAdminOperationGuard(request, "reindex-8k", async () => {
     const before = await getVectorStoreStats(userId);

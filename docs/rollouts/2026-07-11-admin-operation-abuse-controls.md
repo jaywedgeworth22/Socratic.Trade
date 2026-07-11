@@ -111,6 +111,20 @@ CJS+ESM builder/status smoke passed. The follow-up exact-pins that tag and deleg
 construction to the shared contract. Current `main@d3859025` already includes #1409, #1410, and
 #1405; refreshed local/hosted verification is pending this follow-up commit.
 
+Current-main integration audit found a release-blocking regression in `9552b648`: all eight route
+files on `main` had lost their `withAdminOperationGuard` imports/wrappers even though the guard
+library and wiring tests were present. This follow-up restores the eight wrappers at their original
+post-auth/post-validation admission points and retains #1410's fail-closed provenance comments.
+Route-wiring/behavior tests are mandatory before the follow-up lands.
+
+The first combined focused rerun caught a second integration mismatch: #1410 correctly made
+`requireAdmin` require verified, allowlisted identity provenance, while the cross-route tuning test
+still supplied an arbitrary email under the retired development bypass. The fixture now marks the
+request as an Auth.js session, allowlists that test email, and cleans environment stubs. Rerun:
+
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/admin-operation-guard.test.ts test/admin-operation-route-wiring.test.ts test/admin-operation-route-behavior.test.ts test/public-auth-rate-limit-hardening.test.ts`
+  — 4 files / 29 tests passed.
+
 Shared v1.5.0 adoption verification before current-main reconciliation:
 
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/admin-operation-guard.test.ts`
