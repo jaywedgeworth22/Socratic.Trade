@@ -23,7 +23,17 @@
 # tarballs; node/bash/coreutils are already in the nixpacks image).
 set -euo pipefail
 
-LITESTREAM_VERSION="0.5.14"      # must match the version that wrote the R2 replica (LTX format)
+# Pinned BACK from 0.5.14 (2026-07-10): 0.5.14 in this container churned ~20
+# sockets/s to the R2 endpoint and held thousands of dead TCP socks (peak 16.8k
+# fds on one PID, ~715MB of pinned receive buffers), driving the kernel to
+# tcp_mem exhaustion -- every connection's receive window clamped to ~6KB, git
+# clones from GitHub trickled at ~20KB/s and died mid-transfer ("TLS unexpected
+# eof"), wedging ALL Coolify deploys on the box. All 0.5.x releases read/write
+# the same LTX replica format, so moving within 0.5.x is replica-compatible
+# (the 0.5.14 restore at cutover read history written by earlier 0.5.x).
+# Re-upgrade only after upstream fixes the socket churn.
+# Full diagnosis: docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md
+LITESTREAM_VERSION="0.5.12"
 INFISICAL_CLI_VERSION="0.43.98"  # matches the version production ran on the Mac
 
 DATA_DIR="/app/data"
@@ -64,8 +74,12 @@ install_from_tarball() {
 
 if [ -z "${COOLIFY_PROD_PHASE2:-}" ]; then
   mkdir -p "$BIN_DIR"
-  if [ ! -x "$BIN_DIR/litestream" ]; then
-    log "installing litestream $LITESTREAM_VERSION"
+  # Version-aware install: BIN_DIR lives on the persistent volume, so a plain
+  # existence check would keep serving a stale cached binary forever after a
+  # version change ("litestream version" prints the bare number, e.g. 0.5.12).
+  installed_litestream="$("$BIN_DIR/litestream" version 2>/dev/null || true)"
+  if [ "$installed_litestream" != "$LITESTREAM_VERSION" ]; then
+    log "installing litestream $LITESTREAM_VERSION (cached: ${installed_litestream:-none})"
     install_from_tarball \
       "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-x86_64.tar.gz" \
       litestream

@@ -29,6 +29,13 @@
 // Flags: --models a,b,c (default: every curated catalog model) | --rounds N (default 3)
 //        --role green|red|both (default both) | --out <basePath> (default ./llm-benchmark-<ts>)
 //        --timeout-ms N (soft-timeout override) | --user <id> (default local) | --dry-run
+//        --record-usage (opt-in: log each real call into the REAL app's llm_usage table, tagged
+//          under a pretend account "benchmark:<user>" / context "benchmark:<role>" — so a run's
+//          spend shows up in /admin/llm-usage as its OWN category instead of vanishing from the
+//          ledger. Off by default: this is the one exception to the "no writes to the app DB"
+//          safety rule above, and only touches llm_usage via a dedicated connection — never the
+//          scratch-DB-bound getDb() the rest of the script uses, and never migrations/other tables.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -51,6 +58,7 @@ const CLI = {
   timeoutMs: Number(argValue("--timeout-ms")) || undefined,
   user: argValue("--user") ?? "local",
   dryRun: hasFlag("--dry-run"),
+  recordUsage: hasFlag("--record-usage"),
   // --effort <none|minimal|low|medium|high|xhigh|max|omit>: request a specific reasoning effort
   // instead of the app's default resolution. Still normalized per model by the app's own
   // capability map (so an unsupported value can't produce a 400). "omit" is a DIAGNOSTIC mode:
@@ -116,6 +124,32 @@ try {
   realDb = new Database(realDbPath, { readonly: true, fileMustExist: true });
 } catch (err) {
   console.warn(`[benchmark] app DB not readable at ${realDbPath} (${err instanceof Error ? err.message : String(err)}) — using bundled fixtures + env keys only.`);
+}
+
+// ── Optional writable ledger connection (--record-usage only) ───────────────
+// Deliberately SEPARATE from realDb (readonly) and from getDb() (bound to the scratch DB for the
+// rest of this script) — this connection ONLY ever runs the single INSERT below, never migrations
+// or any other table, so it can't reproduce the corruption risk the readonly design guards against.
+const USAGE_PSEUDO_USER = `benchmark:${CLI.user}`;
+function prepareInsertUsageStmt(db: InstanceType<typeof Database>) {
+  return db.prepare<unknown[]>(
+    `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, key_ref, connected_account_id, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`
+  );
+}
+let usageDb: InstanceType<typeof Database> | undefined;
+let insertUsageStmt: ReturnType<typeof prepareInsertUsageStmt> | undefined;
+if (CLI.recordUsage && !CLI.dryRun) {
+  try {
+    usageDb = new Database(realDbPath, { fileMustExist: true });
+    usageDb.pragma("journal_mode = WAL");
+    usageDb.pragma("busy_timeout = 5000");
+    usageDb.pragma("foreign_keys = ON");
+    insertUsageStmt = prepareInsertUsageStmt(usageDb);
+    console.log(`[benchmark] --record-usage: logging to llm_usage as user_id="${USAGE_PSEUDO_USER}" (context "benchmark:<role>")`);
+  } catch (err) {
+    console.warn(`[benchmark] --record-usage requested but ${realDbPath} isn't writable (${err instanceof Error ? err.message : String(err)}) — usage will NOT be logged.`);
+  }
 }
 
 // Seed the SCRATCH DB with the user's decrypted LLM keys (from the read-only real DB) plus env-var
@@ -693,6 +727,26 @@ async function runOne(model: string, role: Role, round: number): Promise<void> {
     }
   } finally {
     records.push(record);
+    if (insertUsageStmt && (record.promptTokens !== undefined || record.completionTokens !== undefined)) {
+      try {
+        insertUsageStmt.run(
+          crypto.randomUUID(),
+          USAGE_PSEUDO_USER,
+          record.provider,
+          record.model,
+          `benchmark:${role}`,
+          record.keySource === "operator" ? "operator" : "user",
+          null,
+          record.promptTokens ?? null,
+          record.completionTokens ?? null,
+          record.totalTokens ?? null,
+          record.estCostUsd ?? null,
+          new Date().toISOString()
+        );
+      } catch (err) {
+        console.warn(`[benchmark] usage log insert failed (${err instanceof Error ? err.message : String(err)}) — continuing without it.`);
+      }
+    }
     const tail = record.status === "ok"
       ? `${record.latencyMs}ms, ${record.proposalCount} proposal(s), schemaValid=${record.schemaValid}, tokens=${record.totalTokens ?? "?"}`
       : `${record.status}${record.httpStatus ? ` ${record.httpStatus}` : ""}${record.latencyMs ? ` @${record.latencyMs}ms` : ""}`;
@@ -820,11 +874,44 @@ function consoleTable(summaries: Summary[]): void {
   for (const r of rows) console.log(line(r));
 }
 
-function markdownReport(summaries: Summary[]): string {
+/** Grand total + per-provider breakdown of what this run actually spent (est.), across ALL calls
+ *  that returned usable token usage — regardless of role/model, so the script can self-report the
+ *  real cost of a run even though (absent --record-usage) none of it lands in the app's own ledger. */
+interface SpendBreakdown {
+  totalUsd: number;
+  totalCalls: number;
+  byProvider: Array<{ provider: string; usd: number; calls: number }>;
+}
+function computeSpend(): SpendBreakdown {
+  const priced = records.filter((r) => typeof r.estCostUsd === "number");
+  const byProviderMap = new Map<string, { usd: number; calls: number }>();
+  for (const r of priced) {
+    const entry = byProviderMap.get(r.provider) ?? { usd: 0, calls: 0 };
+    entry.usd += r.estCostUsd ?? 0;
+    entry.calls += 1;
+    byProviderMap.set(r.provider, entry);
+  }
+  const byProvider = [...byProviderMap.entries()]
+    .map(([provider, v]) => ({ provider, usd: v.usd, calls: v.calls }))
+    .sort((a, b) => b.usd - a.usd);
+  return { totalUsd: byProvider.reduce((a, b) => a + b.usd, 0), totalCalls: priced.length, byProvider };
+}
+function printSpend(spend: SpendBreakdown): void {
+  console.log(`\n[benchmark] est. total spend this run: $${spend.totalUsd.toFixed(4)} across ${spend.totalCalls} priced call(s)`);
+  for (const p of spend.byProvider) console.log(`  ${p.provider.padEnd(12)} $${p.usd.toFixed(4)}  (${p.calls} call${p.calls === 1 ? "" : "s"})`);
+  if (!CLI.recordUsage) console.log("  (not logged to /admin/llm-usage — pass --record-usage to log it under a pretend account)");
+}
+
+function markdownReport(summaries: Summary[], spend: SpendBreakdown): string {
   const lines: string[] = [];
   lines.push("# LLM model benchmark — Green (Bull proposer) + Red (Bear reviewer)");
   lines.push("");
   lines.push(`- Run: ${new Date().toISOString()} | rounds: ${CLI.rounds} | roles: ${ROLES.join(", ")} | user: ${CLI.user}${CLI.dryRun ? " | DRY RUN (no network)" : ""}`);
+  lines.push(
+    `- **Est. total spend this run: $${spend.totalUsd.toFixed(4)}** across ${spend.totalCalls} priced call(s)` +
+      (spend.byProvider.length ? ` — ${spend.byProvider.map((p) => `${p.provider} $${p.usd.toFixed(4)} (${p.calls})`).join(", ")}` : "") +
+      (CLI.recordUsage ? ` — logged to llm_usage as user_id="${USAGE_PSEUDO_USER}"` : " — NOT logged to /admin/llm-usage (pass --record-usage to log it under a pretend account)")
+  );
   lines.push(`- Input pack: candidates from ${evidence.source}; macro from ${macro.source}; portfolio from ${holdings.source}; Bear reviews ${bearReview.source}.`);
   lines.push("- Request path: resolveLlmEndpoint -> buildLlmRequestBody (real strategy schemas + prompts) -> llmFetchCapturing (soft timeout = strategyLlmTimeoutMs).");
   lines.push("- Rank = success-with-valid-schema rate, ties broken by p50 latency. `brkt` = share of green proposals with a populated bracketStopLoss.");
@@ -875,6 +962,8 @@ if (lateOutcomes.length > 0) {
 
 const summaries = summarize();
 consoleTable(summaries);
+const spend = computeSpend();
+printSpend(spend);
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16);
 const outBase = (CLI.out ?? path.join(process.cwd(), `llm-benchmark-${stamp}`)).replace(/\.(json|md)$/, "");
@@ -888,6 +977,8 @@ fs.writeFileSync(
       models: MODELS,
       dryRun: CLI.dryRun,
       inputPack: { candidates: evidence.source, macro: macro.source, portfolio: holdings.source, bearProposals: bearReview.source },
+      spend,
+      recordedToLedger: CLI.recordUsage,
       summaries,
       records
     },
@@ -895,10 +986,11 @@ fs.writeFileSync(
     2
   )
 );
-fs.writeFileSync(`${outBase}.md`, markdownReport(summaries));
+fs.writeFileSync(`${outBase}.md`, markdownReport(summaries, spend));
 console.log(`\n[benchmark] wrote ${outBase}.json and ${outBase}.md`);
 
 realDb?.close();
+usageDb?.close();
 try {
   fs.rmSync(scratchDir, { recursive: true, force: true });
 } catch {
