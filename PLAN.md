@@ -5,6 +5,18 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Durable provider/dataset operation leases (CODEX).** No product-roadmap or
+> scheduler-loop change; reliability/cost correctness only. The manual admin guards and background
+> entrants now converge on four durable SQLite owner-token lease groups below the route layer:
+> RAG reindex/filing ingest, Congress daily share, Congress refresh, and SEC 8-K refresh. Claims are
+> acquired before admin rate debit, heartbeated for long operations, owner-checked on release, and
+> passed opaquely into core boundaries. Ownership loss aborts cooperatively, and non-force cadence is
+> rechecked after acquisition. Background contention is a typed benign skip with no cadence marker
+> advancement; admin contention remains a shared-contract HTTP 409. The intentionally detached 8-K
+> embedding tail remains a documented pending/retry-job follow-up. Focused Node 24 tests and typecheck
+> are green; full gate/PR remain. See
+> `docs/rollouts/2026-07-11-provider-operation-leases.md`.
+
 > **2026-07-11 - Runtime release and recovery-path observability (CODEX).** No roadmap scope
 > change; this is an operations-observability slice. `/api/health` gains a public-safe source
 > revision/process identity and hard-deadline, size-capped Litestream daemon status/last-sync

@@ -1,5 +1,25 @@
 # Status
 
+## 2026-07-11 — Durable provider/dataset operation leases (CODEX, branch `codex/provider-operation-leases`)
+
+The route-level admin single-flight work is now extended to the underlying provider/dataset
+boundaries shared by manual requests and scheduler/background calls. Four SQLite `settings`-KV
+owner-token groups cover RAG reindex/filing ingest, Congress daily sharing, Congress web-source
+refresh, and SEC 8-K web-source refresh. Acquisition is serialized with `BEGIN IMMEDIATE`, live
+owners heartbeat a TTL, and release deletes only a matching owner token. The admin guard acquires
+the durable group before rate-budget debit and passes an opaque claim into the core function, so
+the core reuses the claim rather than self-conflicting. A competing core caller returns a typed,
+benign busy result without network work or cadence-marker advancement; admin routes map that result
+through the existing shared-v1.5-backed HTTP 409 response. `scheduler.ts` is unchanged. The existing
+detached 8-K summary/full-body embedding remains intentionally detached and therefore outlives the
+primary SEC 8-K refresh lease exactly as before. An adversarial follow-up added persisted-owner
+revalidation, cooperative cancellation on heartbeat/ownership loss, and a second cadence check after
+lease acquisition so a delayed process cannot repeat a just-completed run. Focused Node 24
+verification is green: 9 files / 130
+tests, `tsc --noEmit`, and touched-file ESLint with 0 errors (4 inherited warnings); parent review and
+the ordered full gate remain before commit/PR. Rollout:
+`docs/rollouts/2026-07-11-provider-operation-leases.md`.
+
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
 Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment
 provider that was still unmetered. `FmpEnrichmentProvider.enrich` fires up to 5 HTTP calls per miss
