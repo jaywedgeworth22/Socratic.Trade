@@ -1579,6 +1579,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Hetzner & Coolify metrics on admin dashboard (AG, branch `agent/antigravity-server-metrics`) — IN PROGRESS 2026-07-10.** Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
 - **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
   lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**
   Owner reported Anthropic console spend went ~$35 -> ~$50 in 2 hours while
