@@ -61,9 +61,9 @@ export async function GET(request: Request) {
     const serverUrl = `https://host.jays.services/api/v1/servers/${coolifyServerUuid}`;
     const resourcesUrl = `${serverUrl}/resources`;
 
-    const [serverRes, resourcesRes] = await Promise.all([
-      fetch(serverUrl, { headers: coolifyHeaders }).then((r) => r.json()).catch(() => null),
-      fetch(resourcesUrl, { headers: coolifyHeaders }).then((r) => r.json()).catch(() => null),
+    const [coolifyServerFetch, coolifyResourcesFetch] = await Promise.all([
+      fetchProviderJson("Coolify server metadata", serverUrl, coolifyHeaders),
+      fetchProviderJson("Coolify resources", resourcesUrl, coolifyHeaders),
     ]);
 
     // 2. Fetch server details and metrics from Hetzner Cloud API
@@ -80,51 +80,65 @@ export async function GET(request: Request) {
     const hetznerUrl = `https://api.hetzner.cloud/v1/servers/${hetznerServerId}`;
     const hetznerMetricsUrl = `${hetznerUrl}/metrics?type=cpu&type=disk&type=network&start=${startStr}&end=${endStr}`;
 
-    const [hetznerServerRes, hetznerMetricsRes] = await Promise.all([
-      fetch(hetznerUrl, { headers: hetznerHeaders }).then((r) => r.json()).catch(() => null),
-      fetch(hetznerMetricsUrl, { headers: hetznerHeaders }).then((r) => r.json()).catch(() => null),
+    const [hetznerServerFetch, hetznerMetricsFetch] = await Promise.all([
+      fetchProviderJson("Hetzner server metadata", hetznerUrl, hetznerHeaders),
+      fetchProviderJson("Hetzner metrics", hetznerMetricsUrl, hetznerHeaders),
     ]);
 
     // Parse provider responses at the API boundary. Never forward nested
     // provider objects to the client as display strings.
-    const hetznerMetrics = asRecord(asRecord(hetznerMetricsRes)?.metrics);
+    const hetznerMetrics = asRecord(asRecord(hetznerMetricsFetch.payload)?.metrics);
     const rawTimeSeries = hetznerMetrics?.time_series;
     const parsedMetrics = parseHetznerTimeSeries(rawTimeSeries);
 
     // Merge metadata
-    const coolifyServer = asRecord(serverRes);
+    const coolifyServer = asRecord(coolifyServerFetch.payload);
     const coolifyMeta = asRecord(coolifyServer?.server_metadata);
-    const normalizedHetzner = normalizeHetznerServerResponse(hetznerServerRes);
-    const normalizedResources = normalizeCoolifyResources(resourcesRes);
+    const normalizedHetzner = normalizeHetznerServerResponse(hetznerServerFetch.payload);
+    const normalizedResources = normalizeCoolifyResources(coolifyResourcesFetch.payload);
     const hcloudMeta = normalizedHetzner.server;
-    const warnings = [...normalizedHetzner.warnings, ...normalizedResources.warnings];
+    const providerErrors = [
+      coolifyServerFetch.error,
+      coolifyResourcesFetch.error,
+      hetznerServerFetch.error,
+      hetznerMetricsFetch.error,
+    ].filter((error): error is string => Boolean(error));
+    const warnings = [
+      ...providerErrors,
+      ...normalizedHetzner.warnings,
+      ...normalizedResources.warnings,
+      ...parsedMetrics.warnings,
+    ];
 
     const hostInfo = {
-      name: hcloudMeta.name || readText(coolifyServer?.name) || localHostInfo.name,
-      status: hcloudMeta.status || "running",
-      os: readText(coolifyMeta?.os) || localHostInfo.os,
-      cpus: readPositiveNumber(coolifyMeta?.cpus) || localHostInfo.cpus,
-      memoryTotalBytes: readPositiveNumber(coolifyMeta?.memory_bytes) || localHostInfo.memoryTotalBytes,
-      memoryFreeBytes: localHostInfo.memoryFreeBytes,
-      uptimeSeconds: localHostInfo.uptimeSeconds, // fall back to local uptime check
-      serverType: hcloudMeta.serverType || "vps",
-      location: hcloudMeta.location || "hel1",
-      ip: hcloudMeta.ip || "135.181.192.190",
+      name: hcloudMeta.name || readText(coolifyServer?.name),
+      status: hcloudMeta.status || "unknown",
+      os: readText(coolifyMeta?.os),
+      cpus: readPositiveNumber(coolifyMeta?.cpus),
+      memoryTotalBytes: readPositiveNumber(coolifyMeta?.memory_bytes),
+      serverType: hcloudMeta.serverType,
+      location: hcloudMeta.location,
+      ip: hcloudMeta.ip,
     };
 
     return NextResponse.json({
       isProd: true,
+      degraded: warnings.length > 0,
+      ...(providerErrors.length > 0
+        ? { error: "One or more infrastructure providers could not be queried." }
+        : {}),
       hostInfo,
       resources: normalizedResources.resources,
-      metrics: parsedMetrics,
+      metrics: parsedMetrics.metrics,
       asOf: new Date().toISOString(),
       ...(warnings.length > 0 ? { warnings } : {}),
-    });
+    }, { status: providerErrors.length > 0 ? 502 : 200 });
   } catch (err: unknown) {
     return NextResponse.json({
       isProd: true,
+      degraded: true,
       error: err instanceof Error ? err.message : "Failed to fetch remote server metrics",
-      hostInfo: localHostInfo,
+      hostInfo: { status: "unknown" },
       resources: [],
       metrics: emptyMetrics(),
       asOf: new Date().toISOString(),
@@ -132,8 +146,12 @@ export async function GET(request: Request) {
   }
 }
 
-function parseHetznerTimeSeries(timeSeries: unknown) {
+function parseHetznerTimeSeries(timeSeries: unknown): {
+  metrics: Record<string, MetricValue[]>;
+  warnings: string[];
+} {
   const series = asRecord(timeSeries) ?? {};
+  let omittedSamples = 0;
   const result: Record<string, MetricValue[]> = {
     cpu: [],
     diskRead: [],
@@ -146,11 +164,17 @@ function parseHetznerTimeSeries(timeSeries: unknown) {
     const raw = asRecord(series[key])?.values;
     if (!Array.isArray(raw)) return [];
     return raw.flatMap((item) => {
-      if (!Array.isArray(item) || item.length < 2) return [];
-      const timestamp = Number(item[0]);
-      const value = Number(item[1]);
-      if (!Number.isFinite(timestamp)) return [];
-      return [{ timestamp, value: Number.isFinite(value) ? value : 0 }];
+      if (!Array.isArray(item) || item.length < 2) {
+        omittedSamples += 1;
+        return [];
+      }
+      const timestamp = toFiniteMetricNumber(item[0]);
+      const value = toFiniteMetricNumber(item[1]);
+      if (timestamp === undefined || value === undefined) {
+        omittedSamples += 1;
+        return [];
+      }
+      return [{ timestamp, value }];
     });
   };
 
@@ -167,7 +191,42 @@ function parseHetznerTimeSeries(timeSeries: unknown) {
   result.networkRx = getValues(netRxKey);
   result.networkTx = getValues(netTxKey);
 
-  return result;
+  return {
+    metrics: result,
+    warnings: omittedSamples > 0
+      ? [`Hetzner metrics contained ${omittedSamples} malformed samples that were omitted.`]
+      : [],
+  };
+}
+
+async function fetchProviderJson(
+  label: string,
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ payload?: unknown; error?: string }> {
+  try {
+    const response = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      return { error: `${label} returned HTTP ${response.status}.` };
+    }
+    try {
+      return { payload: await response.json() };
+    } catch {
+      return { error: `${label} returned invalid JSON.` };
+    }
+  } catch {
+    return { error: `${label} was unavailable.` };
+  }
+}
+
+function toFiniteMetricNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" && typeof value !== "string") return undefined;
+  if (typeof value === "string" && !value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function emptyMetrics(): Record<string, MetricValue[]> {

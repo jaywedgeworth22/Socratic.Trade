@@ -1596,15 +1596,18 @@ As of 2026-07-08 (assignment-rule update).
   `codex/admin-server-shape-fix`) — IN PROGRESS 2026-07-11.** Production `/admin/server`
   crashes with React #31 because the API forwards Hetzner's real nested
   `server_type` and `public_net.ipv4` objects into JSX string slots. Normalize provider
-  metadata and Coolify resource rows to strings at the API boundary, retain explicit shape
-  warnings, remove fabricated local metrics/resources, harden the client against malformed
-  runtime JSON, and cover the real provider payload shapes in `test/server-metrics.test.ts`.
-  Node 24 gate is green (lint 0 errors, typecheck, 318 files / 3,491 tests, build); local
-  route/API checks returned HTTP 200 with the expected empty-remote/local-host envelope.
-  Rendered Browser QA was unavailable because no Browser backend was installed. Commit
-  `145fafe8` is on READY PR #1400 without merge/auto-merge. Current `origin/main` (#1397/#1399)
-  merged cleanly in the isolated worktree; the uncommitted merge preserves both branches'
-  STATUS/effort rows and awaits serialized re-verification before commit/push. Rollout:
+  metadata and Coolify resource rows to strings at the API boundary, including current
+  `location.name`; retain explicit shape warnings; remove fabricated local metrics/resources;
+  reject provider network/HTTP/JSON failures with a preserved 502 degraded envelope; never mix
+  local-process or hardcoded identity into missing remote fields; and omit malformed samples
+  instead of coercing them to zero. The client now guards all display fields, exposes degraded
+  production state, and renders unavailable telemetry honestly. Current `origin/main@8fca436d`
+  merged cleanly. Final Node 24 gate is green: focused 1 file / 7 tests and touched ESLint clean;
+  full lint 0 errors / 405 inherited warnings, typecheck, 325 files / 3,608 tests, build. A stale
+  post-merge install initially lacked current-main's tracked `ts-morph`; clean locked install
+  repaired it before the passing ordered gate. READY PR #1400 remains the delivery target without
+  merge/auto-merge/deploy. Rendered Browser QA was unavailable because no Browser backend exists.
+  Rollout:
   `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
 - **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`, READY PR #1398) — IN PROGRESS 2026-07-11.** Removed the disabled `.github/workflows/deploy.yml`, replaced stale deploy/runner docs, removed retired Sentry observers, added every independently runnable workflow, and mapped all active schedules to source cron. The current-main gate caught and fixed reusable-only `_merge-shepherd-impl` parity: it executes inside its caller and cannot emit an independent `workflow_run`. Current `origin/main@1c7c2be8` is merged; final Node24 gate green: lint 0 errors/408 warnings, tsc clean, 325 files/3,604 tests, build clean; focused parity 2/2. Refreshed head `8c49a8ac` is pushed; hosted verify/smoke are running. No product behavior, merge, auto-merge, or deploy. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.

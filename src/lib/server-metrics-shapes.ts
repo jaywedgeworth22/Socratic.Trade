@@ -63,9 +63,9 @@ export function normalizeHetznerServerResponse(payload: unknown): {
     warnings.push("Hetzner public_net.ipv4.ip was not a non-empty string.");
   }
 
-  const datacenter = asRecord(server.datacenter);
-  const location = readText(datacenter?.name)
-    ?? readText(asRecord(datacenter?.location)?.name);
+  const location = readText(asRecord(server.location)?.name)
+    ?? readText(asRecord(server.datacenter)?.name)
+    ?? readText(asRecord(asRecord(server.datacenter)?.location)?.name);
 
   return {
     server: {

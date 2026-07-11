@@ -3,21 +3,22 @@
 ## 2026-07-11 — Admin server Hetzner response-shape crash fix (CODEX, branch `codex/admin-server-shape-fix`)
 Production `/admin/server` hit React error #31 because `/api/admin/server-metrics` passed
 Hetzner's nested `server_type` and `public_net.ipv4` objects into JSX text positions. The API
-now normalizes the real provider shape (`server_type.name`, `public_net.ipv4.ip`) to strings,
-preserves legacy flattened inputs, emits explicit warnings for malformed metadata, and parses
-metric tuples from an `unknown` boundary. Coolify resources now pass through the same string-only
-normalization before the client calls string methods or renders them. The client independently
-refuses to render non-string provider metadata and shows a diagnostic instead of crashing. Local
-and remote-error paths now show real local host metadata with empty remote series/resources rather
-than fabricated values. Regression coverage uses real provider-shaped fixtures and malformed-object
-cases. Node 24 verification is green: lint 0 errors / 376 warnings, typecheck clean, 318 files /
-3,491 tests passed, and the production build completed. The local route and unconfigured API both
-returned HTTP 200 with real local host metadata and empty remote datasets; rendered in-app Browser
-QA was unavailable because no Browser backend was installed. Commit `145fafe8` is on READY PR
-#1400 without merge or auto-merge. After `main` advanced through
-#1397 and #1399, current `origin/main` merged into the isolated branch without textual conflicts;
-the uncommitted merge preserves both new STATUS/effort-log histories and awaits the serialized
-re-verification slot before commit/push. Rollout:
+now normalizes the current provider shape (`server_type.name`, `public_net.ipv4.ip`,
+`location.name`) while retaining legacy flattened/datacenter inputs. Coolify resources pass
+through the same string-only boundary. Provider network, HTTP, and JSON failures now produce an
+explicit HTTP 502 degraded receipt; missing remote data remains unavailable instead of being
+replaced by local-process statistics or hardcoded production identity. Malformed metric samples
+are omitted with a warning rather than converted to false zero readings. The client independently
+guards every host display field, visibly marks degraded production data, and shows unavailable
+telemetry honestly. Fabricated local resources and histories are gone; the unconfigured local-only
+path still reports the actual runtime host with empty remote datasets. Current
+`origin/main@8fca436d` is merged without source conflicts. Final Node 24 verification is green:
+focused 1 file / 7 tests and touched-file ESLint clean; full lint 0 errors / 405 inherited warnings,
+typecheck clean, 325 files / 3,608 tests, and production build clean. The first post-merge typecheck
+found only a stale install missing current-main's tracked `ts-morph`; `npm ci --no-audit --no-fund`
+installed the locked 767 packages and the complete ordered gate then passed. READY PR #1400 remains
+the delivery target without merge, auto-merge, or deployment. Rendered in-app Browser QA remains
+unavailable because no Browser backend is installed. Rollout:
 `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
 
 ## 2026-07-11 — Retired deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`)
