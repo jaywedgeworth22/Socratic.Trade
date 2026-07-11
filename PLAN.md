@@ -18,7 +18,8 @@ filling the missing pieces.
 > Scheduler single-leader remains ON for unset/empty env values and requires an explicit false value
 > to disable. Obsolete teardown calls that could not name the real owner are removed. Setup failure
 > cannot leak the renewing timer/lease; approval loss returns typed busy without broker placement,
-> and autonomous loss preserves any proposal results completed before the stop. See
+> and autonomous loss preserves any proposal results completed before the stop. Current-main Node 24
+> lint, typecheck, 3,764-test suite, and production build are green. See
 > `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Expensive admin-operation abuse/cost controls (CODEX).** No product-roadmap
 > scope change; operator/security hardening only. Paid reindexes, expensive analysis, forced

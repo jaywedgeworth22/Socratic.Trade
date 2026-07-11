@@ -86,16 +86,20 @@ default-on posture.
   call behavior.
 - Post-review `npx tsc --noEmit` — **clean**. Scoped ESLint across touched runtime/test files —
   **0 errors / 35 inherited warnings**. `git diff --check` — **clean**.
+- Current `origin/main@e395e65a` merged cleanly. Final ordered Node 24 gate:
+  focused **7 files / 36 tests**, `npm run lint` **0 errors / 404 inherited warnings**,
+  `npx tsc --noEmit` clean, `npm test` **334 files / 3,764 tests**, and `npm run build` green.
+- The first production build caught an import trace from `strategy-lock-guard.ts` through
+  `node:crypto`, which webpack does not handle in the client-reachable scheduler graph. The UUID
+  helper now uses `globalThis.crypto.randomUUID()` and adds no client bundle dependency. After that
+  fix, focused **3 files / 11 tests**, TypeScript, scoped ESLint, the full **3,764-test** suite, and
+  the production build all reran green.
 
 ## Follow-ups and boundaries
 
-- This worktree is intentionally uncommitted and unpublished for the parent landing/review lane.
+- The implementation and current-main merge are committed locally; push/PR/hosted review remain.
 - No scheduler provider-boundary locking, production environment/configuration, PR, merge,
   deployment, or live runtime mutation is part of this change. The branch-neutral live effort board
   was updated with implementation and review receipts.
-- The full ordered lint/test/build gate remains for the landing owner after reconciliation with the
-  latest `origin/main`.
-- `git fetch origin` found this branch behind current `origin/main@e395e65a` (Tradier merge #1425
-  plus global-learning PR #1417). Incoming changes share filenames `STATUS.md`, `docs/EFFORT-LOG.md`, and `src/lib/strategy.ts`,
-  but the inspected incoming hunks are disjoint from this lane's additions. No rebase or merge was
-  performed.
+- Current-main reconciliation and the full ordered gate are complete. Hosted checks and production
+  verification remain contingent on the ready PR landing through the normal auto-deploy path.

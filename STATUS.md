@@ -16,8 +16,11 @@ single-leader mode now treats unset, empty, and whitespace values as ON; operato
 could start the renewing timer before entering cleanup scope. A forced `insertStrategyRun` failure
 now proves the lock is reacquirable; approval ownership loss returns typed `busy`, keeps the proposal
 pending, and never calls the broker, while autonomous failures preserve already-completed proposal
-results. Focused Node 24 verification is green: the original 6 files / 34 tests plus a 4-file / 22-test
-integration slice, touched-file ESLint 0 errors (35 inherited warnings), and TypeScript clean. See
+results. The branch merged current `origin/main@e395e65a` cleanly. Final Node 24 verification is
+green: focused 7 files / 36 tests, full lint 0 errors / 404 inherited warnings, TypeScript clean,
+full 334 files / 3,764 tests, and production build. The first build exposed a client-import trace
+through `node:crypto`; the UUID owner helper now uses Web Crypto, after which focused 3 files / 11
+tests, TypeScript, scoped lint, the full suite, and build all reran green. See
 `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { renewStrategyLock } from "./db-execution";
 
 export const STRATEGY_LOCK_HEARTBEAT_MS = 60_000;
@@ -23,7 +22,7 @@ export interface StrategyLockGuard {
 }
 
 export function createExecuteProposalLockOwner(proposalId: string): string {
-  return `execute-${proposalId}-${randomUUID()}`;
+  return `execute-${proposalId}-${globalThis.crypto.randomUUID()}`;
 }
 
 export function startStrategyLockGuard(
