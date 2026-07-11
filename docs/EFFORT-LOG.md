@@ -231,6 +231,9 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Admin server metrics provider-shape and degraded-response hardening (CODEX, PR #1400) — COMPLETED 2026-07-11.** Externally squash-merged to `main` as `432ca6fe` after local and hosted verify/smoke/security passed. Current Hetzner shapes are normalized, provider failures return explicit degraded receipts, fabricated fallback telemetry is removed, and malformed samples are omitted. Main auto-deploy was triggered; production revision remains independently unverified.
+- **Retired Mac deploy workflow removal + active CI Sentry coverage (CODEX, PR #1398) — COMPLETED 2026-07-11.** Merged externally as `8fca436d` after hosted/local gates passed. Removed the retired second-scheduler deploy workflow and synchronized real GitHub workflow/cron observability. Main auto-deploy was triggered; production revision remains independently unverified. Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
+- **Public auth/rate-limit hardening (CODEX, PR #1399) — COMPLETED 2026-07-11.** Merged externally as `97152c25`; trusted-IP OAuth limiting, bounded limiter state, explicit CF trust parsing, and paid tuning admission are on `main`. Main auto-deploy was triggered; production revision remains independently unverified.
 - **Refactoring strategy.ts (AG, branch `agent/strategy-split`) — COMPLETED 2026-07-11.** Split the monolithic `strategy.ts` into `strategy-risk.ts` and `strategy-execution.ts`, retaining `strategy.ts` as a coordinator/barrel. Cleaned up dependencies and automated import fixes. All tests (3427) passing. Rollout note: `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — ✅ COMPLETED 2026-07-09: PR #1282 merged to `main` (auto-merge squashed).** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
@@ -1620,6 +1623,20 @@ As of 2026-07-08 (assignment-rule update).
   3,614 tests, and Next production build. SHA-256 resolution uses edge-safe Web Crypto after the
   gate caught a Node-only import in the edge bundle. The queue is not a crash-durable outbox. No
   merge (which auto-deploys) without an explicit landing decision.
+- **Admin authorization fail-closed hardening (CODEX, branch `codex/admin-fail-closed`, READY PR #1410, worktree
+  `/Users/jay/.codex/worktrees/socratic-admin-fail-closed`) — IN PROGRESS 2026-07-11.** Make the
+  shared `requireAdmin` gate deny by default regardless of `NODE_ENV` or hostname. Middleware now
+  forwards identity provenance; only verified Cloudflare Access/Auth.js primary or allowlisted emails
+  can satisfy email-based admin auth, while the auth-unconfigured primary-email fallback is always
+  denied. The spoofable localhost opt-in was removed, the timing-safe token path remains, and every
+  stale admin-route comment now matches the gate. Focused Node24 security coverage is green (6 files/
+  60 tests). Current `origin/main@432ca6fe` is merged. The only source conflict was
+  `test/server-metrics.test.ts`; its resolved union preserves current provider/degraded-response
+  coverage and adds verified Auth.js provenance to authorized route calls. Final combined Node24
+  verification is green: focused 6 files/64 tests, touched ESLint clean, full lint 0 errors/404
+  inherited warnings, tsc, 325 files/3,620 tests, build. Previous hosted checks were green; the
+  refreshed head will rerun them. No production environment, main merge, auto-merge, or deploy
+  mutation.
 - **Strategy owner-token+heartbeat lease & scheduler single-leader default (AG, branch `agent/ag-lease-fix`) — IN PROGRESS 2026-07-11.** Owner-ruled P0 collision fix for strategy vs scheduler concurrency. Upgrading `acquireStrategyLock` to an owner-token/heartbeat lease pattern (mirroring `scheduler-lease.ts`) and flipping `SCHEDULER_SINGLE_LEADER` default to ON. Currently drafting implementation plan.
 - **Code Architecture: Split strategy.ts (AG) — IN PROGRESS.** Extracting execution logic into strategy-execution.ts, and continuing modularization.
 - **Order-status reconciliation — kill the perpetual "verify with broker" alert (CLAUDE, branch

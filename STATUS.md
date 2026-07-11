@@ -12,13 +12,14 @@ are omitted with a warning rather than converted to false zero readings. The cli
 guards every host display field, visibly marks degraded production data, and shows unavailable
 telemetry honestly. Fabricated local resources and histories are gone; the unconfigured local-only
 path still reports the actual runtime host with empty remote datasets. Current
-`origin/main@8fca436d` is merged without source conflicts. Final Node 24 verification is green:
+The change was externally squash-merged to `main` as `432ca6fe` after hosted verify, smoke, and
+security passed. Its configured auto-deploy was triggered, but the running production revision has
+not been independently verified. Final Node 24 verification before merge was green:
 focused 1 file / 7 tests and touched-file ESLint clean; full lint 0 errors / 405 inherited warnings,
 typecheck clean, 325 files / 3,608 tests, and production build clean. The first post-merge typecheck
 found only a stale install missing current-main's tracked `ts-morph`; `npm ci --no-audit --no-fund`
-installed the locked 767 packages and the complete ordered gate then passed. READY PR #1400 remains
-the delivery target without merge, auto-merge, or deployment. Rendered in-app Browser QA remains
-unavailable because no Browser backend is installed. Rollout:
+installed the locked 767 packages and the complete ordered gate then passed. Rendered in-app Browser
+QA remains unavailable because no Browser backend is installed. Rollout:
 `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
 
 ## 2026-07-11 — Retired deploy workflow removal + active CI Sentry coverage (CODEX, branch `codex/retired-deploy-ci-observability`)
@@ -32,9 +33,10 @@ failures but has no Sentry Cron mapping because its in-repo workflow is manual-o
 Vitest coverage that derives independently runnable workflow names and schedules from
 `.github/workflows/` and fails on reporter drift or deploy-workflow resurrection; reusable-only
 `workflow_call` definitions are correctly covered through their caller rather than falsely claimed as
-separate `workflow_run` events. Current `origin/main@1c7c2be8` is merged. Final Node 24 gate is green:
+separate `workflow_run` events. Final Node 24 gate was green:
 lint 0 errors / 408 warnings, tsc clean, 325 Vitest files / 3,604 tests passed, Next build clean;
-focused workflow-parity regression 2/2 passed. READY PR #1398 is refreshed without merge/auto-merge.
+focused workflow-parity regression 2/2 passed. PR #1398 merged externally as `8fca436d`; the configured
+main auto-deploy was triggered, but this session has not independently verified the production revision.
 Rollout: `docs/rollouts/2026-07-11-retired-deploy-ci-observability.md`.
 ## 2026-07-11 — Explicit usage-telemetry delivery IDs (CODEX, branch `codex-usage-telemetry-idempotency`)
 Cross-app API Usage Monitor hardening found that aggregated credential lanes share one flush
@@ -59,10 +61,28 @@ buckets and caps live subjects at 10,000 with deterministic LRU eviction. Middle
 override cannot re-arm header trust while Auth.js remains fail-closed. Paid `/api/strategy/tune`
 now uses a named 10/min per-user limiter plus a one-in-flight-per-user guard before its LLM call.
 Scope deliberately excludes active broker/DB lanes and the `.env.example` file owned by active
-PR #1389. Full verification is green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
-3,499 tests, Next build clean); READY PR #1399 is open without merge or auto-merge. Exact commands
+PR #1389. Full verification was green under Node 24 (lint 0 errors, TypeScript clean, 319 test files /
+3,499 tests, Next build clean). PR #1399 merged externally as `97152c25`; auto-deploy was triggered,
+but this session has not independently verified the production revision. Exact commands
 and the initial Node-ABI mismatch are recorded in
 `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
+## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
+
+The shared `requireAdmin` gate no longer treats `NODE_ENV` or a request hostname as authorization.
+Middleware now forwards identity-source provenance alongside the authenticated email. Email-based
+admin access accepts only Cloudflare Access or Auth.js session provenance; the auth-unconfigured
+`PRIMARY_USER_EMAIL` fallback is denied even when it names the primary operator or appears in
+`ADMIN_USER_EMAILS`. The timing-safe `ADMIN_REINDEX_TOKEN` path remains available in every
+environment. Every stale admin-route comment was updated to match this behavior, and the spoofable
+localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Current
+`origin/main@432ca6fe` is merged. The only source overlap was
+`test/server-metrics.test.ts`; its resolved union preserves current provider-shape/degraded-response
+coverage while adding verified Auth.js provenance to every authorized admin request. The previous
+current-main gate and hosted checks were green. Final combined Node 24 verification is also green:
+focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited warnings,
+TypeScript clean, 325 files / 3,620 tests, and production build clean. READY PR #1410 remains
+unmerged without auto-merge or deployment. See
+`docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
 Owner-directed program to enable margin/leverage awareness, shorting (LIVE), FULL options (single+multi-leg),
