@@ -496,9 +496,15 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   // 1. Retry pending cancellations first — but for a STILL-OPEN position, skip the retry when a
   //    replacement can't be placed (keep its existing stop rather than orphaning the position).
+  //    EXCEPT when the symbol's CURRENT plan excludes every lane the account has (kindForSymbol
+  //    returns null, e.g. "none", or a scale-in that switched lanes) — that row was never going to
+  //    be replaced regardless of liveReplaceBlocked (section 2b tears it down unconditionally), so
+  //    blocking its retry here just leaves a plan-contradicting stop resting indefinitely while live
+  //    placement happens to be disabled (Codex review, PR #1371).
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
     if (row.status === "pending_cancel") {
-      if (liveReplaceBlocked && liveLongs.has(normalizeSymbol(row.symbol))) continue;
+      const rowSym = normalizeSymbol(row.symbol);
+      if (liveReplaceBlocked && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) continue;
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);

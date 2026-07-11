@@ -1309,8 +1309,15 @@ export async function runStrategyOnce(
     // materially since the original entry (Codex review, PR #1371) — so opening candidates always
     // get their OWN fresh computation here, never skipped just because the symbol is also held.
     const atrStopPctByOpeningSymbol: Record<string, number> = {};
+    // Checks BOTH an explicit stopPlan on the proposal AND an INHERITED one from stopPlanBySymbol —
+    // a scale-in that omits stopPlan (inheriting the symbol's persisted "atr" plan) still gets that
+    // plan applied by enrichOpeningProposal below, so the opening ATR precompute must gate the same
+    // way or the inherited plan prices off the flat/8% fallback instead of a fresh ATR distance
+    // (Codex review, PR #1371).
     const anyOpeningAtrPlan = llmProposals.some(
-      (p) => (p.side === "buy" || p.side === "short") && p.stopPlan?.style === "atr"
+      (p) =>
+        (p.side === "buy" || p.side === "short") &&
+        (p.stopPlan?.style === "atr" || (!p.stopPlan && stopPlanBySymbol[normalizeSymbol(p.symbol)] === "atr"))
     );
     if (policy.atrStops === true || anyOpeningAtrPlan) {
       const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);

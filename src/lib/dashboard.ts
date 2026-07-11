@@ -665,13 +665,19 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // Positions table and the stop-flow diagram so a plan is never a hidden override. Best-effort:
   // a lookup failure just means the UI falls back to the account's own precedence for every symbol.
   const stopPlanBySymbol = (() => {
-    if (!policy.accountNumber) return {};
+    // The RESOLVED account number (from brokerChain, same one positions/fills/proposals below all
+    // use) — not policy.accountNumber directly. When the selected account is resolved from the
+    // live/stored account list because policy.accountNumber is unset, using the policy field here
+    // returned {} even though this snapshot is otherwise displaying the resolved account's data,
+    // silently dropping plan-only protection/no-stop disclosures until the policy field catches up
+    // (Codex review, PR #1371).
+    if (!accountNumber) return {};
     try {
       // Filtered by live basis (avgCost match) — same reasoning as the strategy-run and synthetic-
       // monitor sides: a symbol closed and re-bought before cleanup swept the old row must not have
       // its stale plan label the new lot as "No stop (LLM choice)" or an active fixed/ATR/trailing
       // plan for a position that never made that choice (Codex review, PR #1371).
-      return filterFullStopPlansByLiveBasis(getStopPlans(policy.accountNumber, userId), displayPositions);
+      return filterFullStopPlansByLiveBasis(getStopPlans(accountNumber, userId), displayPositions);
     } catch {
       return {};
     }

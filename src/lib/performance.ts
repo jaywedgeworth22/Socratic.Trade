@@ -306,16 +306,22 @@ export function recordFillFromProposal(input: {
       if (input.proposal.stopPlan.style === "default") {
         clearStopPlans(input.accountNumber, [symbol], input.userId ?? "local");
       } else {
-        // On a scale-in, `price` is only THIS fill's execution price — the plan must record the
+        // On a scale-in, `basePrice` is THIS fill's execution price — the plan must record the
         // resulting BLENDED position basis (what the next run's `position.averageCost` will actually
         // be), or `filterStopPlansByLiveBasis` discards the plan as stale on the very next run
-        // (Codex review, PR #1371). No prior position (fresh open) reduces to `price` unchanged.
+        // (Codex review, PR #1371). No prior position (fresh open) reduces to `basePrice` unchanged.
+        // Deliberately `basePrice`, NOT `price` — `price` is net of the paper execution-cost model
+        // (source: "paper" gets ~1bp of synthetic slippage deducted for learning/P&L purposes), but
+        // the BROKER's own reported `position.averageCost` reflects the raw fill, not our synthetic
+        // cost deduction. Using the cost-adjusted `price` here made a paper fill's plan basis drift a
+        // fraction of a cent from what the live-basis filter compares against next run, tripping its
+        // 0.5-cent tolerance and dropping the just-recorded plan as stale (Codex review, PR #1371).
         const existing = input.existingPosition;
         const blendedAvgCost =
           input.stopPlanBasisOverride ??
           (existing && Math.abs(existing.quantity) > 0.000001
-            ? (existing.averageCost * Math.abs(existing.quantity) + price * quantity) / (Math.abs(existing.quantity) + quantity)
-            : price);
+            ? (existing.averageCost * Math.abs(existing.quantity) + basePrice * quantity) / (Math.abs(existing.quantity) + quantity)
+            : basePrice);
         recordStopPlan(input.accountNumber, symbol, input.proposal.stopPlan.style, input.proposal.stopPlan.rationale, blendedAvgCost, input.userId);
       }
     } catch {
