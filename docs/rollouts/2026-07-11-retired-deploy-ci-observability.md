@@ -21,6 +21,10 @@ PR: <https://github.com/jaywedgeworth22/Socratic.Trade/pull/1398> (ready, not me
 - Added a structural Vitest regression that derives active workflow names and
   scheduled cron expressions from the workflow directory, compares them with
   the Sentry reporter configuration, and asserts that `deploy.yml` stays absent.
+  After current main added `_merge-shepherd-impl`, the gate exposed an important
+  distinction: reusable-only `workflow_call` definitions execute inside their
+  caller and cannot emit a separate `workflow_run`. The regression now excludes
+  reusable-only definitions while continuing to observe their independent caller.
 
 ## Why
 
@@ -50,7 +54,7 @@ six schedules currently defined in the repository.
 
 ## Verification
 
-- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm ci` — passed; installed 760
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm ci` — passed; installed 767
   packages. npm reported four moderate audit findings and three existing
   allow-scripts review notices; no install failure.
 - `python3 -m py_compile scripts/sentry-ci-report.py` — passed.
@@ -64,10 +68,15 @@ six schedules currently defined in the repository.
   mapping for manual-only `merge-shepherd`.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run
   test/sentry-ci-report-workflows.test.ts` — 1 file, 2 tests passed.
-- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint` — passed with 0 errors
-  and 378 grandfathered warnings.
+- First current-main gate stopped at TypeScript because the lane's stale `node_modules`
+  lacked main-added `ts-morph`; the clean `npm ci` above repaired the dependency tree.
+- First post-install full suite stopped at 3,603/3,604 because the parity regression
+  incorrectly expected reusable-only `_merge-shepherd-impl` to emit an independent
+  `workflow_run`. The source test and reporter comment were corrected; focused 2/2 passed.
+- Final `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint` — passed with 0 errors
+  and 408 grandfathered warnings.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit` — clean.
-- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` — 319 files, 3,490 tests
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` — 325 files, 3,604 tests
   passed.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build` — Next.js webpack
   production build passed. Existing middleware-deprecation, Sentry Edge-runtime,
@@ -76,8 +85,8 @@ six schedules currently defined in the repository.
 
 ## Follow-ups
 
-- The branch now includes current `origin/main` with the STATUS/EFFORT union reviewed; rerun the
-  serialized Node 24 gate before refreshing PR #1398.
+- The branch includes `origin/main@1c7c2be8`; the STATUS/EFFORT union was reviewed and the final
+  serialized Node 24 gate is green. PR #1398 is refreshed, ready, and intentionally unmerged.
 
 - After the PR merges, confirm the next scheduled run of each mapped workflow
   produces the expected Sentry Cron monitor check-in.

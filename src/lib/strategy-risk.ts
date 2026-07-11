@@ -9,7 +9,7 @@ import { estimateNotional, applyOpeningOrderHeadroom } from "./policy";
 import { accountEquity } from "./risk-breaker";
 import { bracketWholeShareMinimum, brokerLabel, brokerMinimumDollarNotional, estimateOpeningProposalNotional, formatWholeDollars, openingPolicyNotionalCap, openingRiskCapacity } from "./strategy";
 import { StressPositionInput, stressScenario } from "./stress-scenario";
-import { PolicyDecision, TradingPolicy, ApprovedEscalation, TradeProposal, EquityPosition, OrderSide, MarketQuote, MarketFactorBreakdown, FillSource, MarketScan, Portfolio } from "./types";
+import { PolicyDecision, TradingPolicy, ApprovedEscalation, TradeProposal, EquityPosition, OrderSide, MarketQuote, MarketFactorBreakdown, FillSource, MarketScan, Portfolio, StopPlanStyle } from "./types";
 import { PortfolioHeatResult, volTargetScale, positionRiskUsd } from "./vol-targeting";
 
 export function shouldEscalateDecision(decision: PolicyDecision, policy: TradingPolicy): boolean {
@@ -431,7 +431,11 @@ export function applyDeterministicSizing(
   // the heat budget isn't configured or volTargeting is off. This proposal's own incremental risk is
   // computed fresh below and added to bookHeat.totalRiskUsd for the remaining-budget taper.
   bookHeat?: PortfolioHeatResult,
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  // Per-position stop plans, keyed by symbol — needed so the bracket-whole-share-minimum bump below
+  // knows a "trailing"/"none" plan will strip BOTH bracket legs at enrichOpeningProposal and never
+  // needs a whole-share bump to support a bracket that won't be sent (Codex review, PR #1371).
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
 ): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
@@ -709,7 +713,7 @@ export function applyDeterministicSizing(
     }
   }
 
-  const bracketMinimum = bracketWholeShareMinimum(proposal, policy, marketScan);
+  const bracketMinimum = bracketWholeShareMinimum(proposal, policy, marketScan, stopPlanBySymbol);
   let bracketMinNote = "";
   if (bracketMinimum != null && targetNotional > 0 && targetNotional < bracketMinimum) {
     const minNotional = Math.ceil(bracketMinimum);

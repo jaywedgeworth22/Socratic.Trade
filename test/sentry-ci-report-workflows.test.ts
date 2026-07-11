@@ -20,6 +20,12 @@ function workflowCron(source: string): string | undefined {
   return match?.[1].trim();
 }
 
+function independentlyRunnable(source: string): boolean {
+  const onBlock = source.match(/^on:\s*\n((?:^[ \t].*(?:\n|$))*)/m)?.[1] ?? "";
+  const triggers = [...onBlock.matchAll(/^  ([a-zA-Z_]+):/gm)].map((match) => match[1]);
+  return triggers.some((trigger) => trigger !== "workflow_call");
+}
+
 function observedWorkflowNames(source: string): string[] {
   const block = source.match(/workflow_run:\s*\n\s+workflows:\s*\n([\s\S]*?)\n\s+types:/);
   if (!block) throw new Error("Sentry reporter is missing workflow_run.workflows");
@@ -39,7 +45,11 @@ function cronMappings(source: string): Record<string, string> {
 
 const activeWorkflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
-  .filter((name) => name !== "sentry-ci-report.yml");
+  .filter((name) => name !== "sentry-ci-report.yml")
+  // Reusable-only workflows execute inside their caller's run and do not emit an independent
+  // workflow_run event. Observing the caller covers their failure; listing the reusable name here
+  // would create a false assurance because the reporter can never receive that event.
+  .filter((name) => independentlyRunnable(readFileSync(join(workflowsDir, name), "utf8")));
 
 describe("Sentry CI workflow coverage", () => {
   it("observes every active workflow and no retired workflow", () => {
@@ -50,6 +60,7 @@ describe("Sentry CI workflow coverage", () => {
     expect(observedWorkflowNames(reporterSource).sort()).toEqual(activeNames.sort());
     expect(activeNames).not.toContain("Deploy");
     expect(activeNames).not.toContain("Sync Preview Lanes");
+    expect(activeNames).not.toContain("_merge-shepherd-impl");
     expect(existsSync(join(workflowsDir, "deploy.yml"))).toBe(false);
   });
 
