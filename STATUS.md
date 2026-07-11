@@ -23,6 +23,22 @@ steps materially change.
 
 ## 2026-07-10 — Server & infrastructure metrics dashboard page (AG, branch `agent/antigravity-server-metrics`)
 Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
+## 2026-07-10 — Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud lane, branch `claude/anthropic-spend-spike-e2di8j`)
+Owner reported Anthropic console spend jumped ~$35 -> ~$50 in 2 hours while `/admin/llm-usage`
+only reflected ~$35. Root cause (codebase-only investigation — no prod DB access this session):
+`scripts/benchmark-llm-models.ts` hits real provider APIs through the app's real credential path
+but is deliberately built with NO writes to the app DB, so its real Anthropic billing never lands
+in `llm_usage`. Fixed: the script now self-reports a total-spend rollup every run, and gained an
+opt-in `--record-usage` flag that logs real calls into the real `llm_usage` table under a pretend
+account (`user_id="benchmark:<user>"`) via a dedicated writable connection, never touching
+migrations or other tables. Owner's follow-up (opus-dominant/haiku-scattered/sonnet-absent call
+pattern) does NOT match a default full-catalog sweep — still open whether this specific spike was
+a scoped benchmark run or organic opus-configured production traffic; needs a real
+`/admin/llm-usage` pull to close out (no `OPS_DIAGNOSTIC_TOKEN` in this session).
+`scripts/eval/run-offline.ts` has the same ledger gap, left as a follow-up. Gate: tsc clean, lint 0
+errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main` in this sandbox
+(pre-existing, confirmed via stash-and-rebuild). See
+`docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`.
 ## 2026-07-10 — Deploy pipeline blocker fixed: kernel tcp_mem exhaustion via litestream 0.5.14 (CLAUDE, branch `claude/litestream-tcpmem-pin`)
 All Coolify deploys of `socratic-trade-prod` failed 08:59Z–11:52Z (12 consecutive; "TLS
 unexpected eof" at git clone; prod drifted ~15 commits stale). Root cause was ON-BOX, not
