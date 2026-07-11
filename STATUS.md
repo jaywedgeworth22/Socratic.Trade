@@ -109,6 +109,25 @@ independently kept despite my having deferred them per the "not blocking this me
 language; the owner's own follow-up PR comment then confirmed all 4 round-5 fixes were independently
 verified correct). Verify: tsc clean, lint 0 errors, 319 files/3566 tests passed, build clean.
 
+**2026-07-11 update 3 — round 6 (4 more findings, all fixed):** broker-protective-stops.ts's
+section-1 `pending_cancel` retry guard was blocking a retry for a plan-excluded row
+(`kindForSymbol === null`) whenever `liveReplaceBlocked` was set, even though that row was never
+going to be replaced anyway — narrowed the guard to skip retry only for rows the account still
+actively manages; performance.ts's `recordFillFromProposal` blended-avgCost calc switched from
+`price` (paper mode's synthetic-slippage-adjusted execution price) to `basePrice` (raw execution
+price) in both branches of the blend ternary, so a persisted stop-plan basis matches what the
+broker itself reports as `position.averageCost` instead of drifting by the ~1bp paper-mode
+adjustment; dashboard.ts's `stopPlanBySymbol` block was filtering by `policy.accountNumber`
+instead of the already-resolved `accountNumber` (destructured from `brokerChain`, the same one
+used for `liveFills`/`paperFills`/`dailyStats`) — could show/hide plans against the wrong account
+when they differ; strategy.ts's `anyOpeningAtrPlan` predicate only checked `p.stopPlan?.style`
+(an explicit LLM-set plan), missing an INHERITED "atr" plan carried via `stopPlanBySymbol` — now
+checks both, so the opening ATR precompute runs whenever either is set. A CI "autofix" run failed
+with `error_max_turns` on an earlier (now-superseded) commit — confirmed non-blocking (same known
+pattern as prior rounds; `verify` is the only required check). Verify: tsc clean, lint 0
+errors/379 pre-existing warnings, 319 files/3566 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round6-codex-fixes.md`.
+
 ## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
 Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
 Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no
