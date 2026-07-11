@@ -2383,6 +2383,8 @@ As of 2026-07-08 (assignment-rule update).
 - **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
   PLANNED 2026-07-10 (owner ask, stop-loss session; requirements sharpened by owner same day).**
   _(Superseded by the IN PROGRESS entry above — kept for the original design record.)_
+- **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
+  PLANNED 2026-07-10 (owner ask, stop-loss session; requirements sharpened by owner same day).**
   Today the LLM already proposes a per-trade stop PRICE (`bracketStopLoss`, honored when valid);
   what it cannot choose is the stop TYPE (fixed / ATR / trailing / none) or have that choice
   survive for the position's lifetime — held positions are governed by the account-level policy
