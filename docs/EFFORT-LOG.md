@@ -1628,6 +1628,28 @@ As of 2026-07-08 (assignment-rule update).
   Alpaca's missing buying_power). +2 regression tests (45 tradier tests). Rollout note gained a
   "Pre-live-token validation items" section for the OTOCO leg-`class` shape + 50-page-cap ordering
   residuals (both need a live sandbox token). See `docs/rollouts/2026-07-10-tradier-broker.md` "Round 3".**
+- **[P2][Infra][S] Provider-knob sync: API-Usage-Monitor -> Infisical (CLAUDE (opus subagent),
+  branch `claude/provider-knob-sync`) — IN PROGRESS 2026-07-10, PR #1370 OPEN (READY, gate green:
+  tsc clean / 3422 tests 316 files / build clean), awaiting owner review — NOT merged. Stays
+  DRY-RUN until api-usage-monitor PR #83 (contract-matching endpoint) deploys; that repo is
+  merge-frozen on a pre-existing migrate-safe.mjs blocker.** Mac-side script +
+  launchd template that makes API-Usage-Monitor the source of truth for market-data subscription
+  plans. `scripts/sync-provider-knobs.sh` (ASCII, bash 3.2-safe) GETs the monitor's token-authed
+  `/api/subscriptions` (Bearer `USAGE_INGEST_TOKEN` from `~/.secrets/usage-monitor.env`), computes
+  each plan's desired knobs via `scripts/provider-knob-diff.mjs` (pure, unit-tested: active ->
+  `knobEnv`, canceled/paused -> `freeTierKnobEnv`, considering/null -> skip), reads current values
+  from Infisical prod over the proven SSH+universal-auth CLI path (box `135.181.192.190`), and
+  WRITES ONLY DIFFS. Hard allow-list guard (`^(PROVIDER_QUOTA_|PROVIDER_RATE_LIMIT_|MASSIVE_|`
+  `TIINGO_DROP_NEWS$|FINNHUB_DROP_RECOMMENDATION$|ALPACA_DATA_FEED$)`) + value-charset guard reject
+  anything else from the API. Dry-run by default (prints diff, exit 0); `--apply` writes + posts one
+  `#agent-sync` line per change. `com.jay.provider-knob-sync.plist` (30-min, `--apply`) NOT installed
+  by default; install command in the rollout note. Monitor-unreachable = exit 0, no spam. Contract
+  against the parallel monitor-side PR (subscription-knob linkage phase 1). Rollout:
+  `docs/rollouts/2026-07-10-provider-knob-sync.md`.
+- **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) — landing
+  2026-07-10.** Owner-directed after two pricing misreads in one day (tiingo annual, AV per-IP):
+  docs/market-data-provider-pricing.md = canonical vendor facts + traps + knob cheat-sheet.
+  Related (paused pending owner): API-Usage-Monitor subscription->knob linkage phase 1.
 - **Hetzner & Coolify metrics on admin dashboard (AG, branch `agent/antigravity-server-metrics`) — IN PROGRESS 2026-07-10.** Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
 - **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
   lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**
