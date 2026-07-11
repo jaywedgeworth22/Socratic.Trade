@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { generateProactiveRiskProposals, planTakeProfitTrims, takeProfitTrimQuantity } from "../src/lib/strategy";
-import { insertFillEvent, listFillEvents } from "../src/lib/db";
+import { getStopPlans, insertFillEvent, listFillEvents, recordStopPlan } from "../src/lib/db";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { BrokerGateway } from "../src/lib/types";
 import type { EquityOrder, TradingPolicy } from "../src/lib/types";
@@ -71,6 +71,103 @@ describe("reconcilePendingFills", () => {
     expect(matched!.status).toBe("filled");
     expect(matched!.price).toBe(155);
     expect(matched!.notional).toBe(1550);
+  });
+
+  it("commits a per-position stop plan once a pending_reconciliation opening fill is CONFIRMED filled (the plan couldn't commit at placement time — the order might still cancel/expire before ever opening the lot; Codex review, PR #1371)", async () => {
+    const fillId = randomUUID();
+    const brokerOrderId = "broker-order-stopplan-1";
+    insertFillEvent({
+      id: fillId,
+      accountNumber: "ACC-STOPPLAN-1",
+      source: "live",
+      symbol: "NVDA",
+      side: "buy",
+      quantity: 4,
+      price: 100,
+      notional: 400,
+      status: "pending_reconciliation",
+      brokerOrderId,
+      raw: {
+        proposal: {
+          symbol: "NVDA", side: "buy", type: "market", quantity: 4,
+          timeInForce: "gfd", marketHours: "regular_hours", rationale: "opening buy",
+          tradeThesisTag: "Breakout", entryMarketRegime: "Bull",
+          stopPlan: { style: "trailing", rationale: "scale into strength" }
+        }
+      }
+    });
+
+    expect(getStopPlans("ACC-STOPPLAN-1")).toEqual({}); // not yet committed — still pending_reconciliation
+
+    const mockGateway = createMockGateway({
+      getEquityOrders: async () => [
+        {
+          id: brokerOrderId,
+          symbol: "NVDA",
+          side: "buy",
+          type: "market",
+          state: "filled",
+          filledQuantity: 4,
+          averagePrice: 100,
+          createdAt: new Date().toISOString(),
+          updatedAt: "2026-06-15T12:00:00.000Z"
+        } as EquityOrder
+      ]
+    }) as unknown as BrokerGateway;
+
+    await reconcilePendingFills(mockGateway, "ACC-STOPPLAN-1");
+
+    expect(getStopPlans("ACC-STOPPLAN-1")).toEqual({
+      NVDA: { style: "trailing", rationale: "scale into strength", avgCost: 100, side: "long" }
+    });
+  });
+
+  it("an EXPLICIT 'default' plan CLEARS an existing persisted override once the reconciled fill confirms filled (Codex review, PR #1371)", async () => {
+    recordStopPlan("ACC-STOPPLAN-2", "NVDA", "none", "initial thesis", 100);
+    expect(getStopPlans("ACC-STOPPLAN-2").NVDA).toMatchObject({ style: "none" });
+
+    const fillId = randomUUID();
+    const brokerOrderId = "broker-order-stopplan-2";
+    insertFillEvent({
+      id: fillId,
+      accountNumber: "ACC-STOPPLAN-2",
+      source: "live",
+      symbol: "NVDA",
+      side: "buy",
+      quantity: 2,
+      price: 105,
+      notional: 210,
+      status: "pending_reconciliation",
+      brokerOrderId,
+      raw: {
+        proposal: {
+          symbol: "NVDA", side: "buy", type: "market", quantity: 2,
+          timeInForce: "gfd", marketHours: "regular_hours", rationale: "scale-in add",
+          tradeThesisTag: "Breakout", entryMarketRegime: "Bull",
+          stopPlan: { style: "default" } // explicit reset
+        }
+      }
+    });
+
+    const mockGateway = createMockGateway({
+      getEquityOrders: async () => [
+        {
+          id: brokerOrderId,
+          symbol: "NVDA",
+          side: "buy",
+          type: "market",
+          state: "filled",
+          filledQuantity: 2,
+          averagePrice: 105,
+          createdAt: new Date().toISOString(),
+          updatedAt: "2026-06-15T12:00:00.000Z"
+        } as EquityOrder
+      ]
+    }) as unknown as BrokerGateway;
+
+    await reconcilePendingFills(mockGateway, "ACC-STOPPLAN-2");
+
+    expect(getStopPlans("ACC-STOPPLAN-2")).toEqual({});
   });
 
   it("updates status to cancelled/rejected when broker order fails", async () => {
