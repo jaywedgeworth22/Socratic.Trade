@@ -1610,6 +1610,8 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Alpha Vantage health lane canonicalization (CODEX, branch `codex/alpha-health-lane-fix`, worktree `/Users/jay/.codex/worktrees/socratic-alpha-health`) — IN PROGRESS 2026-07-11.** Live Alpha failures are genuine free-plan daily-cap exhaustion and correctly noncritical; no provider or secret change is planned. Fixed the `EXPECTED_BACKEND_LANES` typo `alphavantage` -> `alpha-vantage` that created a phantom neutral card beside the real env lane; authenticated route coverage proves one canonical lane and no legacy-spelling entry. Focused Vitest, scoped ESLint, and TypeScript are green under Node 24; full landing gate and production UI verification remain. Separate unused dev-only `drizzle-kit` cleanup waits for the shared-pin train because it touches the same package lock.
+
 - **Tradier broker adapter — fifth broker (CLAUDE subagent, branch `claude/tradier-broker`) —
   IN PROGRESS 2026-07-10 (tradier-broker workflow); gates green locally, PR opening.** Adds
   Tradier as a fifth BrokerGateway by mirroring the Alpaca adapter against Tradier's hand-rolled

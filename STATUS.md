@@ -1,5 +1,18 @@
 # Status
 
+## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, branch `codex/alpha-health-lane-fix`)
+
+The admin connections-health route's expected-lane inventory used `alphavantage:env`, while the
+provider and health log use the canonical `alpha-vantage:env` service name. That mismatch injected a
+phantom never-used card beside the real quota-exhausted lane. The placeholder now uses
+`alpha-vantage`, so the existing `(service,keySource)` dedupe preserves exactly one real env lane.
+An authenticated route regression seeds canonical health history and proves the response contains one
+`alpha-vantage:env` entry and no `alphavantage` entry. This is display/health-inventory correctness
+only: provider dispatch, credentials, quota rotation, and failure classification are unchanged.
+Focused Vitest (1/1), scoped ESLint, and `tsc --noEmit` are green under Node 24; full landing gates and
+production UI confirmation remain with the parent lane. See
+`docs/rollouts/2026-07-11-alpha-vantage-health-lane-canonicalization.md`.
+
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)
 Extended the unified per-provider request quota (PR #1310) to FMP, the last high-volume enrichment
 provider that was still unmetered. `FmpEnrichmentProvider.enrich` fires up to 5 HTTP calls per miss
