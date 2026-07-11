@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OperationGuardRejectionSchema } from "@jaywedgeworth22/congress-trading-shared";
 import {
   ADMIN_OPERATION_LIMITS,
   adminOperationIdentity,
@@ -92,7 +93,9 @@ describe("admin operation guard", () => {
     const blocked = await withAdminOperationGuard(request, operation, run);
     expect(blocked.status).toBe(429);
     expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
-    await expect(blocked.json()).resolves.toMatchObject({
+    const body = await blocked.json();
+    expect(() => OperationGuardRejectionSchema.parse(body)).not.toThrow();
+    expect(body).toMatchObject({
       ok: false,
       code: "rate_limited",
       operation,
@@ -130,7 +133,9 @@ describe("admin operation guard", () => {
     );
 
     expect(duplicate.status).toBe(409);
-    await expect(duplicate.json()).resolves.toMatchObject({
+    const duplicateBody = await duplicate.json();
+    expect(() => OperationGuardRejectionSchema.parse(duplicateBody)).not.toThrow();
+    expect(duplicateBody).toMatchObject({
       ok: false,
       code: "operation_in_flight",
       operation: "robinhood-probe",

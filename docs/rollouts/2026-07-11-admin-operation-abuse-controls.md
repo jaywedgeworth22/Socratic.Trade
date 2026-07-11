@@ -1,6 +1,6 @@
 # 2026-07-11 — Expensive admin-operation abuse/cost controls
 
-PR: <https://github.com/jaywedgeworth22/Socratic.Trade/pull/1409> (ready, not merged)
+PR: <https://github.com/jaywedgeworth22/Socratic.Trade/pull/1409> (merged as `9552b648`)
 
 ## Summary
 
@@ -57,8 +57,9 @@ Congress score routes retain their existing behavior.
 
 - `src/lib/admin-operation-guard.ts` — named budgets, trusted-identity rate keys, explicit 429/409
   responses, and exception-safe single-flight release.
-- `src/lib/operation-guard-response.ts` — local stable 429/409 rejection builders aligned with the
-  owner-directed shared-package contract.
+- `src/lib/operation-guard-response.ts` — app-local HTTP adapter using the released shared 429/409
+  builders/status mapping while retaining `Response`, `Retry-After`, error, and legacy fields.
+- `package.json`, `package-lock.json` — exact pin to the clean-install-verified shared `v1.5.0` tag.
 - `src/lib/tuning-singleflight.ts` — owner-token single-flight shared by public tuning and the admin
   dry run.
 - `app/api/strategy/tune/route.ts` — replaces the route-private set with the shared tuning guard.
@@ -71,7 +72,8 @@ Congress score routes retain their existing behavior.
 - `app/api/admin/refresh-websource/route.ts`
 - `app/api/admin/robinhood-probe/route.ts`
 - `test/admin-operation-guard.test.ts` — budget, trusted identity, per-admin/manual concurrency,
-  duplicate-spam quota preservation, cross-reindex exclusion, and throw/owner-token release coverage.
+  duplicate-spam quota preservation, cross-reindex exclusion, throw/owner-token release coverage,
+  and shared-schema validation for representative 429/409 bodies.
 - `test/admin-operation-route-wiring.test.ts` — all eight routes authenticate before entering the
   correct named guard.
 - `test/admin-operation-route-behavior.test.ts` — invoked-handler coverage for auth ordering,
@@ -103,14 +105,26 @@ histories overlapped. Final combined verification is green: focused 4 files/29 t
 ESLint clean, full lint 0 errors/405 inherited warnings, TypeScript clean, 328 files/3,633 tests,
 and production build clean.
 
+Landing and shared-contract follow-up: PR #1409 merged to `main` as `9552b648`. Shared package
+`v1.5.0` was then released as lightweight tag `v1.5.0 -> 2222baeb`; clean tokenless tag install and
+CJS+ESM builder/status smoke passed. The follow-up exact-pins that tag and delegates pure rejection
+construction to the shared contract. Current `main@d3859025` already includes #1409, #1410, and
+#1405; refreshed local/hosted verification is pending this follow-up commit.
+
+Shared v1.5.0 adoption verification before current-main reconciliation:
+
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/admin-operation-guard.test.ts`
+  — 1 file / 9 tests passed.
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx eslint src/lib/operation-guard-response.ts test/admin-operation-guard.test.ts`
+  — passed with no output.
+- Lock/install receipt: root dependency spec `#v1.5.0`, installed package version 1.5.0, resolved
+  commit `2222baeb`; shared builders/status mapping/schema exports present.
+
 ## Follow-ups / boundaries
 
-- Owner-directed shared-contract follow-up: AG opened green READY
-  [`congress-trading-shared` PR #144](https://github.com/jaywedgeworth22/congress-trading-shared/pull/144) for a portable `OperationGuard` rejection
-  contract in `congress-trading-shared` (`rate_limited` / `operation_in_flight`, 429/409 status
-  mapping, retry/operation metadata). This lane intentionally keeps its local response builder until
-  that package has a merged/tagged release; consumer adoption will be a separate commit, not a
-  speculative git reference or blocker for these route controls.
+- Shared-contract follow-up completed: `congress-trading-shared` PR #144 merged and released as
+  `v1.5.0`; this app now consumes its portable `rate_limited` / `operation_in_flight` body and
+  429/409 status mapping through the local HTTP adapter.
 - This is process-local state, consistent with the current single-Next-process deployment. A future
   multi-instance topology requires a shared rate-limit/lease backend.
 - The single-flight groups coordinate manual admin route calls only. Scheduler/background entrants call
@@ -128,5 +142,5 @@ and production build clean.
   need sender-contract coordination and should not be keyed to the local admin user. Cheap/status
   reads (`rag-coverage`, connection health, usage, ledgers) and idempotent test emitters were also
   left unchanged.
-- No strategy, broker/provider implementation, production configuration, merge, or deployment action
-  is included.
+- No strategy, broker/provider implementation, production configuration, or manual deployment action
+  is included in the shared-contract adoption follow-up.

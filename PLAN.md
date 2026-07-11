@@ -13,11 +13,10 @@ filling the missing pieces.
 > remain unchanged. Process-wide groups cover manual admin route calls, while
 > scheduler/background convergence at the underlying operation boundaries is explicitly planned rather
 > than claimed complete. These are anti-repeat budgets, not hard per-request spend ceilings. Node 24
-> current-main (`432ca6fe`) gate is green (focused 4 files/29 tests, touched ESLint clean, full lint
-> 0 errors/405 inherited warnings, tsc, 328 files/3,633 tests, build).
-> AG's owner-directed
-> portable rejection contract is a separate shared-package follow-up and will be adopted only after a
-> real package release. See
+> PR #1409 is merged as `9552b648`. The released, clean-install-verified shared package `v1.5.0`
+> is now exact-pinned in the follow-up; the app-local HTTP adapter delegates stable rejection
+> body/status construction to the shared builders while retaining HTTP headers and legacy fields.
+> Current `main@d3859025` also includes #1410 and #1405. Refreshed Node 24 gates are pending. See
 > `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 > **2026-07-11 - Admin authorization fail-closed hardening (CODEX).** No roadmap scope change;
 > security/correctness only. The shared admin gate now denies by default in every environment unless

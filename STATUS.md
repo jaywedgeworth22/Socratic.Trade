@@ -66,13 +66,15 @@ intentionally interpret an absent/malformed body as a default action still enter
 claims do not cover scheduler/background entrants; underlying-boundary locking is separately planned.
 Public strategy tuning and the admin tuning dry run share one per-user single-flight guard while the
 public route retains its legacy 409 compatibility fields.
-Implementation is merged forward to current `origin/main@432ca6fe`; the incoming admin-server source
-is disjoint and STATUS/EFFORT histories were union-merged. Adversarial re-review found no code blocker.
-Final combined Node 24 verification is green: focused 4 files/29 tests and touched ESLint clean,
-full lint 0 errors/405 inherited warnings, TypeScript clean, 328 files/3,633 tests, and production
-build clean. Previous hosted checks were green; the refreshed head will rerun them. AG's owner-directed portable rejection contract is green in READY shared PR #144;
-adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request
-spend ceilings. READY PR #1409 is not merged/auto-merged or deployed. See
+PR #1409 merged to `main` as `9552b648` on 2026-07-11. Current `main@d3859025` contains that
+merge plus #1410's fail-closed authorization and #1405's runtime-health work. The only #1410
+route conflicts were comments; their verified-provenance wording was preserved while every #1409
+guard wrapper remained intact. Shared package `v1.5.0` is now released and clean-install verified.
+This follow-up exact-pins that tag and makes the app-local HTTP adapter delegate rejection body/status
+construction to the shared builders while retaining `Response`, `Retry-After`, error text, and legacy
+tuning fields. Representative 429/409 bodies are parsed by the shared schema in tests. The refreshed
+Node 24 gate and follow-up hosted checks are pending. The controls are anti-repeat budgets, not hard
+per-request spend ceilings. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 3,499 tests, Next build clean). PR #1399 merged externally as `97152c25`; auto-deploy was triggered,
 but this session has not independently verified the production revision. Exact commands
@@ -87,13 +89,14 @@ admin access accepts only Cloudflare Access or Auth.js session provenance; the a
 `ADMIN_USER_EMAILS`. The timing-safe `ADMIN_REINDEX_TOKEN` path remains available in every
 environment. Every stale admin-route comment was updated to match this behavior, and the spoofable
 localhost opt-in plus `ADMIN_ALLOW_UNAUTHENTICATED_LOCAL_ACCESS` example were removed. Current
-`origin/main@432ca6fe` is merged. The only source overlap was
+PR #1410 merged to `main` as `2a52e2ac` at 2026-07-11T15:59:32Z. Its only pre-merge source overlap was
 `test/server-metrics.test.ts`; its resolved union preserves current provider-shape/degraded-response
 coverage while adding verified Auth.js provenance to every authorized admin request. The previous
 current-main gate and hosted checks were green. Final combined Node 24 verification is also green:
 focused 6 files / 64 tests, touched-file ESLint clean, full lint 0 errors / 404 inherited warnings,
-TypeScript clean, 325 files / 3,620 tests, and production build clean. READY PR #1410 remains
-unmerged without auto-merge or deployment. See
+TypeScript clean, 325 files / 3,620 tests, and production build clean. The exact 2a52 deployment was
+superseded/cancelled after startup; current `main@d3859025` still contains the change and has a queued
+serialized auto-deploy. Live revision proof remains pending #1405's release-identity surface. See
 `docs/rollouts/2026-07-11-admin-auth-fail-closed.md`.
 
 ## 2026-07-10 — Capability-trading roadmap locked (CLAUDE, branch claude/capability-trading-roadmap)
