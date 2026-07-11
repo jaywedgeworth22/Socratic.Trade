@@ -1,5 +1,6 @@
 import type { AuditFeedItem as DashboardAuditFeedItem, SymbolMeta as DashboardSymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 import type { AccountReadiness } from "@/lib/dashboard";
+import type { PositionStopPlan } from "@/lib/db";
 import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
@@ -64,6 +65,9 @@ export interface DashboardSnapshot {
   portfolio?: Portfolio;
   positions: EquityPosition[];
   symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;
+  /** Per-position stop PLAN (LLM-chosen stop TYPE, persisted at fill time), keyed by symbol — see
+   *  StopPlanStyle/position_stop_plans. Absent entry = "default" (account's own precedence). */
+  stopPlanBySymbol?: Record<string, PositionStopPlan>;
   livePortfolio?: Portfolio;
   livePositions?: EquityPosition[];
   paperPortfolio?: Portfolio;

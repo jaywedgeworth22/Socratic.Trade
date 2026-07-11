@@ -35,6 +35,146 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Per-position stop PLANS (CLAUDE, branch `claude/per-position-stop-plans`, stacked on PR #1331)
+Owner-directed follow-up to the broker-trailing-stops session below. The LLM can now choose a
+per-position stop TYPE (fixed/ATR/trailing/none — distinct from the existing per-trade stop PRICE)
+at open time, persisted for the position's life (`position_stop_plans`, committed on fill like the
+take-profit band ratchet) and honored by all four stop-enforcement layers: `generateProactiveRiskProposals`/
+`enrichOpeningProposal` (per-symbol distance pin, `STOP_PLAN_FALLBACK_STOP_PCT`=8% when the account
+has none configured), `runSyntheticStopMonitor` (self-loads plans; "trailing" registers even with
+`trailingStopPct`=0; "none" purges any existing registration, even one made before the plan was
+set), `reconcileBrokerProtectiveStops` (per-symbol `kindForSymbol` narrows the account's own enabled
+lane, never invents a new broker capability; "none" tears down any existing broker-held stop).
+ATR precompute extended to opening candidates (not just held positions) for universal availability.
+UI extends (not duplicates) the existing stop-flow diagram with a 4th "Per-position override" lane;
+Positions table and approval cards surface an active plan honestly (a "none" plan is never blended
+into the generic "nothing configured" case). `stopPlan: "none"` is deliberately NOT hard-blocked in
+policy.ts, per product philosophy. **PR #1371 open, 3 Codex review rounds fixed (21 findings total)**
+— see the rollout doc's "Review fixes round 1-3" sections: opening-candidate ATR precompute quote
+fallback; in-memory `stopPlanBySymbol` pruning; stop-plan persistence gated on an actually-executed
+fill (not `pending_reconciliation`) plus a matching commit-on-confirm path in `reconcilePendingFills`;
+an "atr" plan never prices a broker-held stop off the flat % (mispriced vs. the pinned distance);
+purge-on-plan-change now covers "fixed"/"atr" transitions too, not just "none"; a "trailing"/"none"
+plan strips BOTH bracket legs, unconditionally (not just inside the whole-share bracket branch — a
+sub-share order with LLM-supplied bracket fields was still getting rejected by the Alpaca gateway);
+"fixed"/"atr" plans always reprice the bracket stop, never keep a "valid" LLM one; `deriveProtection`
+now builds its label/tone from `stopPlan.style` + halted state directly, never inherited from the
+account-wide base label's content (which can describe an entirely different mechanism than what the
+plan pins); a "none" plan with no rationale downgrades to "default" (auditability); an EXPLICIT
+"default" now CLEARS a persisted override (previously impossible to ever reset once overridden);
+`bracketWholeShareMinimum` now correctly bumps sub-share orders for "fixed"/"atr" plans (which
+guarantee a bracket via the fallback even on a bare account) and skips the bump for "trailing"/"none";
+a "fixed" plan on an account with BOTH lanes configured now uses the independently-enabled fixed lane;
+a scale-in's INHERITED persisted plan is now stamped onto the returned proposal (was invisible to the
+approval card before); a new exported `filterStopPlansByLiveBasis` drops a plan whose recorded avgCost
+no longer matches the live position (a stale plan from a close+reopen the app's own sweep never
+caught); `evaluateTradeProposal`'s bracket-permission gate now recognizes an explicit "fixed"/"atr"
+plan as a green light on a bare account; the opening-candidate ATR precompute now always recomputes
+fresh for a scale-in instead of reusing the held-position lot's (possibly stale) ATR%; a "default"
+opening no longer attaches an ATR bracket stop when the account has no base stop-loss % configured
+(ATR only scales an already-enabled flat stop). Gates green (lint/tsc/3511 tests/build). The repo's
+automated `autofix` GitHub Action failed on this PR's head commit with an empty `DEEPSEEK_API_KEY`
+secret (owner action needed, unrelated to this diff — all findings above were fixed manually instead).
+Rollout: `docs/rollouts/2026-07-10-per-position-stop-plans.md`.
+
+**2026-07-11 update — PR #1331 merged forward + round 4 (32 more Codex findings, all fixed):**
+PR #1331 (base) landed its own round-10 fixes + a merge from `main` (no conflicts) and was merged
+into this branch — see that PR's STATUS.md entry. On top of that, worked through this PR's own
+remaining/fresh Codex threads (27 carried over + 5 from a new round triggered by the merge push, all
+32 now resolved): a scale-in's stop plan now records the resulting BLENDED position basis (weighted
+pre-fill position + this fill), not the single fill price, across all three `recordFillFromProposal`
+call sites plus `reconcilePendingFills`'s crash-recovery path (previously `filterStopPlansByLiveBasis`
+discarded a freshly-recorded scale-in plan as stale on the very next run); `filterStopPlansByLiveBasis`
+moved to `db-api-keys.ts` (colocated with `getStopPlans`) so `synthetic-stops.ts` applies the SAME
+live-basis filter independently, not just the strategy-run side; the synthetic monitor no longer
+re-registers a trailing row for "fixed"/"atr" plans in the same pass its own purge just removed one
+(only "none" was excluded before); `reconcileBrokerProtectiveStops` tears down a "none"-plan's
+resting broker stop even while the system is Stopped (was gated behind `running`), and books any
+fill executed before a per-symbol-plan-driven cancel completes; the portfolio-heat budget calculation
+is now stop-plan-aware ("none" excluded from heat entirely, "fixed"/"atr" guaranteed a fallback
+distance instead of counting as "no basis"); a rationale-less "none" plan is now dropped entirely
+instead of downgraded to "default" (which has RESET semantics and could silently wipe an existing
+override); an inherited scale-in plan's rationale is now stamped onto the returned proposal (was
+losing the audit trail); a short position with short selling disabled now keeps its muted/unsafe
+protection label instead of showing an active plan; the approval card discloses an explicit "default"
+as a reset; the dashboard filters its stop-plan display by live basis too; `trailingStopPct` now has
+`looserWhen: "up"` (live-account typed-CONFIRM friction); Alpaca MCP ratcheted trailing stops now
+floor to whole shares (not just native REST) to avoid a broker rejection on fractional GTC orders.
+One thread left open (PR comment on #1331, not resolved): OCO sibling-identity pairing needs a
+broker API change to fix precisely. Verify: tsc clean, lint 0 errors, 3558 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round4-codex-fixes.md`. Auto-merge enabled once CI is green.
+
+**2026-07-11 update 2 — PR #1331 squash-merged to `main`; round 5 (4 more findings) + 3 merge
+reconciliations:** #1331 merged (an owner/Opus adversarial-triage session resolved its last 3
+threads and merged — see that PR's own disposition comment); GitHub auto-retargeted this PR's base
+from the now-gone `claude/stop-loss-preset-options-f1jygn` branch straight to `main`. Fixed 4 fresh
+Codex findings triggered by the merge push: broker-protective-stops.ts's section-2b "none"-plan
+teardown (added round-4) broadened to cover ANY plan-excluded broker-held stop
+(`kindForSymbol === null`, not just literal "none") and now books fills before deleting, mirroring
+every other cancel path; strategy.ts's `staleStopPlanSymbols` cleanup — a regression MY OWN round-4
+fix introduced — was computing candidates from the already-live-basis-filtered `stopPlanBySymbol`
+map, which never contains a closed symbol in the first place, making the cleanup a silent no-op
+exactly when a position closes (fixed by hoisting the raw unfiltered `getStopPlans` result and
+computing stale symbols from that instead); `deleteConnectedAccount` now purges `position_stop_plans`
+too, with a new regression test. Then reconciled with #1331's squash-merge (7 file conflicts — kept
+this branch's per-position stop-plan additions throughout, since main's squash tip predates them) and
+a concurrent owner+Opus push (2 file conflicts — reinstating two round-2 #1331 fixes that push had
+independently kept despite my having deferred them per the "not blocking this merge" disposition
+language; the owner's own follow-up PR comment then confirmed all 4 round-5 fixes were independently
+verified correct). Verify: tsc clean, lint 0 errors, 319 files/3566 tests passed, build clean.
+
+**2026-07-11 update 3 — round 6 (4 more findings, all fixed):** broker-protective-stops.ts's
+section-1 `pending_cancel` retry guard was blocking a retry for a plan-excluded row
+(`kindForSymbol === null`) whenever `liveReplaceBlocked` was set, even though that row was never
+going to be replaced anyway — narrowed the guard to skip retry only for rows the account still
+actively manages; performance.ts's `recordFillFromProposal` blended-avgCost calc switched from
+`price` (paper mode's synthetic-slippage-adjusted execution price) to `basePrice` (raw execution
+price) in both branches of the blend ternary, so a persisted stop-plan basis matches what the
+broker itself reports as `position.averageCost` instead of drifting by the ~1bp paper-mode
+adjustment; dashboard.ts's `stopPlanBySymbol` block was filtering by `policy.accountNumber`
+instead of the already-resolved `accountNumber` (destructured from `brokerChain`, the same one
+used for `liveFills`/`paperFills`/`dailyStats`) — could show/hide plans against the wrong account
+when they differ; strategy.ts's `anyOpeningAtrPlan` predicate only checked `p.stopPlan?.style`
+(an explicit LLM-set plan), missing an INHERITED "atr" plan carried via `stopPlanBySymbol` — now
+checks both, so the opening ATR precompute runs whenever either is set. A CI "autofix" run failed
+with `error_max_turns` on an earlier (now-superseded) commit — confirmed non-blocking (same known
+pattern as prior rounds; `verify` is the only required check). Verify: tsc clean, lint 0
+errors/379 pre-existing warnings, 319 files/3566 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round6-codex-fixes.md`.
+
+**2026-07-11 update 4 — merged main's strategy.ts split refactor:** owner enabled auto-merge on
+#1371; `main` had meanwhile landed #1397 (order-reconcile fix bundled with an unrelated AG/Fable
+refactor splitting `strategy.ts` into `strategy-execution.ts` + `strategy-risk.ts`, see the entry
+just below), producing real merge conflicts since this branch's stop-plan edits sit in functions
+that physically moved. Reconciled by identifying exactly which functions moved
+(`executeProposal`, `reconcilePendingFills`, `flagStalePlacingIntents` →
+`strategy-execution.ts`; `applyDeterministicSizing` → `strategy-risk.ts`) and porting this
+branch's stop-plan logic into each new location, merged alongside main's own new logic there
+(declined-order handling, already-booked dedup, `resolveBrokerVerificationNotifications`) rather
+than overwriting it; `bracketWholeShareMinimum` stayed in `strategy.ts` (now exported, since
+`strategy-risk.ts` imports it) with its stop-plan-aware signature intact. Two test files got
+import-list conflicts from the same relocations, resolved to match main's new module layout.
+Verify: tsc clean, lint 0 errors/408 pre-existing warnings, 323 files/3590 tests passed, build
+clean. Rollout: `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`.
+
+**2026-07-11 update 5 — round 7 (3 fixed, 1 partially fixed + deferred to owner):** stopPlan
+schema's `"default"` description now makes explicit that it RESETS (clears any persisted
+override) rather than being a safe no-op recommendation, and directs the LLM to leave the field
+null/omitted for a genuine no-change scale-in instead; `PositionStopPlan` grew a `side`
+("long"/"short") field, threaded through `recordStopPlan`'s two call sites (derived from the
+opening proposal's buy/short) and a new `position_stop_plans.side` column (migration 18,
+default 'long' for pre-existing rows), so `filterFullStopPlansByLiveBasis` now matches on
+symbol+avgCost+side — closing a long and shorting the same symbol at a coincidentally similar
+basis no longer inherits the long's plan; the short-stop mandatory-stop-loss gate in policy.ts
+now also accepts an explicit `fixed`/`atr`/`trailing` stopPlan as satisfying the requirement
+(parity with the existing bracket-permission gate), letting those plans work on a bare short
+account. Left open: whether an explicit `none` plan should also bypass that gate — that's a
+pre-existing, short-specific safety invariant (unbounded loss direction) distinct from the
+general "none is never hard-blocked" rule, so posted a PR reply asking the owner rather than
+deciding unilaterally; thread left unresolved pending that call. Verify: tsc clean, lint 0
+errors/408 pre-existing warnings, 323 files/3591 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-11-pr1371-round7-codex-fixes.md`.
+
 ## 2026-07-11 — Refactoring strategy.ts: split risk and execution (AG, branch `agent/strategy-split`)
 Extracted risk gates, veto rules, and sizing logic into `strategy-risk.ts` and the main execution loop/reconciliation into `strategy-execution.ts`. `strategy.ts` remains as a re-export hub and coordinator. Automated import updates across 100+ files via a custom `ts-morph` script. Gate green: tsc clean, lint 0 errors, 3427 tests passing, build clean. See `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
 

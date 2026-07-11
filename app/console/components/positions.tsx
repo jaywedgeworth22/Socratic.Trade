@@ -45,7 +45,7 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
     const unrealizedPct =
       unrealized !== undefined && costBasis !== 0 ? (unrealized / Math.abs(costBasis)) * 100 : undefined;
     const weightPct = equity && equity !== 0 ? (p.marketValue / equity) * 100 : undefined;
-    const protection = deriveProtection(p, snapshot.orders ?? [], snapshot.policy);
+    const protection = deriveProtection(p, snapshot.orders ?? [], snapshot.policy, snapshot.stopPlanBySymbol?.[p.symbol]);
     const meta = snapshot.symbolMetaBySymbol?.[p.symbol];
     const exposure = exposureCue(weightPct, exposureCap);
     return { p, short, unrealized, unrealizedPct, weightPct, protection, meta, exposure };
