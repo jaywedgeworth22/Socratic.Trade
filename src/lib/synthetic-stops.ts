@@ -26,6 +26,18 @@ import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, TradePropo
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
+// A synthetic-stop refId doubles as the broker client-order-id (tag), and the secondary dedup below
+// matches a resting broker order back to its stop by EXACT client-order-id equality. Some brokers
+// restrict that field's charset — Tradier's order `tag` is letters/numbers/dash only and rewrites an
+// underscore to a dash, so a raw refId carrying the `u_<hash>` non-primary userId would come back
+// mangled and never match its stored refId, defeating the dedup. Keep the refId within the portable
+// lowest-common-denominator charset [A-Za-z0-9-] at generation so it round-trips through ANY broker
+// unchanged. This is collision-safe: userIds are "local" or `u_<24-hex>`, and `_`->`-` can't collide
+// two distinct hashes; Alpaca/Robinhood (which accept underscores) store the same value verbatim.
+function brokerPortableRefId(refId: string): string {
+  return refId.replace(/[^A-Za-z0-9-]/g, "-");
+}
+
 /**
  * A live open order that EXITS the position — market, limit, or stop; any of them reduces the
  * position when it executes, so any of them counts as protection. Only recognizing /stop/i-type
@@ -492,7 +504,10 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         refId = stop.lastAttemptRefId;
       }
     }
-    refId ??= `sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}${generation > 0 ? `-g${generation}` : ""}`;
+    // Generate within the broker-portable charset so the tag round-trips exactly for the secondary
+    // client-order-id dedup (see brokerPortableRefId). A reused stop.lastAttemptRefId was itself
+    // stored portable, so both branches stay consistent.
+    refId ??= brokerPortableRefId(`sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}${generation > 0 ? `-g${generation}` : ""}`);
     recordSyntheticStopAttempt(stop.id, refId, userId);
     try {
       const exec = await gateway.placeEquityOrder({

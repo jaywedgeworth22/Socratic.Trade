@@ -101,6 +101,25 @@ export async function POST(req: Request) {
         return new NextResponse("Tradier access token is required", { status: 400 });
       }
       environment = body.environment === "live" ? "live" : "paper";
+      // `environment` is the authority for the venue. Reject a baseUrl whose host doesn't match the
+      // selected environment so a paper-labeled account can never be pointed at the live
+      // api.tradier.com (or a live account at sandbox). The gateway also ignores a mismatched stored
+      // baseUrl at read time; this rejects it at write time so the bad value never persists.
+      if (typeof body.baseUrl === "string" && body.baseUrl.trim()) {
+        const expectedHost = environment === "live" ? "api.tradier.com" : "sandbox.tradier.com";
+        let host: string | undefined;
+        try {
+          host = new URL(body.baseUrl.trim()).host.toLowerCase();
+        } catch {
+          host = undefined;
+        }
+        if (host !== expectedHost) {
+          return new NextResponse(
+            `Tradier ${environment} accounts must use ${expectedHost}; the provided base URL host does not match the selected environment.`,
+            { status: 400 }
+          );
+        }
+      }
     } else if (broker === "alpaca" || broker === "alpaca-mcp") {
       environment = isAlpacaPaperCredential({ accountNumber: body.accountNumber, apiKey }) ? "paper" : "live";
     } else if (broker === "test") {

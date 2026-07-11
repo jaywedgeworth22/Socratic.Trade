@@ -1595,6 +1595,16 @@ As of 2026-07-08 (assignment-rule update).
   `docs/rollouts/2026-07-10-tradier-broker.md`. Follow-ups (openQuestions): native OTOCO brackets,
   the real preview endpoint for `reviewEquityOrder`, IRA agentic-allowed decision, orders
   pagination field confirmation, and an optional operator env-token tier.
+  **Adversarial-review fixups (2026-07-10, second pass, gates green node24): 7 confirmed findings
+  fixed, each with a regression test — (1) HIGH symbol canonicalization: positions/orders/quotes now
+  all hyphenate share-class tickers to BRK-B via fromTradierSymbol/toTradierSymbol so a position
+  matches its own orders; (2) market dollar orders size from a FRESH quote not the stale
+  referencePrice (throw if no live quote); (3) environment is the base-URL authority — gateway ignores
+  + connect route rejects a host-mismatched Tradier baseUrl (paper never routes to api.tradier.com);
+  (4) dollar-sizing quote lookup key aligned to #1; (5) synthetic-stop refId kept in the portable
+  [A-Za-z0-9-] charset so the Tradier tag round-trips the client-order-id dedup for u_<hash> users;
+  (6) access-token field masked (type=password); (7) cancel normalizes raw 'ok' -> 'pending_cancel'.
+  Not merged. Tradier tag charset not re-confirmable from live SPA docs — fix is charset-independent.**
 - **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
   claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
   (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported

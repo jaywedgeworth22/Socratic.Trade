@@ -32,9 +32,12 @@ import { fillMissingQuotesWithClose, estimateReviewNotional } from "./alpaca";
  *
  * Tradier is WHOLE-SHARE only (no fractional equities, no notional field), natively accepts the
  * 4-value order side (buy/sell/sell_short/buy_to_cover) so OrderSide maps DIRECTLY rather than
- * through toBrokerSide, and uses BRK.B dot notation which is already our canonical form (no
- * toAlpacaSymbol conversion on the wire). v1 uses synthetic stops (no OTOCO brackets) because
- * strategy.ts gates broker brackets to Alpaca.
+ * through toBrokerSide, and uses BRK.B dot notation on the wire. Our canonical INTERNAL form is
+ * hyphenated (BRK-B, matching every other broker/proposal/fill via money.ts/normalizeSymbol), so
+ * every read path (positions, orders, quotes) converts dot->hyphen with fromTradierSymbol and every
+ * write converts hyphen->dot with toTradierSymbol — the two must stay symmetric so a share-class
+ * position always matches its own resting orders. v1 uses synthetic stops (no OTOCO brackets)
+ * because strategy.ts gates broker brackets to Alpaca.
  */
 export function getTradierGateway(userId: string = "local", connectedAccountId?: string): BrokerGateway {
   return new TradierBrokerGateway(userId, connectedAccountId);
@@ -152,7 +155,25 @@ function durationFor(input: { marketHours?: EquityOrderInput["marketHours"]; typ
   return input.timeInForce === "gfd" ? "day" : "gtc";
 }
 
-// Sanitize a refId into Tradier's `tag` field: alnum + dash, <= 255 chars.
+// Tradier equity symbols use DOT notation for share classes (BRK.B); our canonical INTERNAL form is
+// HYPHENATED (BRK-B — the Robinhood convention, see money.ts/normalizeSymbol) so it matches
+// proposal/fill/synthetic-stop symbols everywhere else. Convert at the wire boundary in BOTH
+// directions so positions, orders, and quotes all key alike AND agree with the proposal symbols a
+// double-exit / held-exit guard compares against.
+function fromTradierSymbol(symbol: string): string {
+  return normalizeSymbol(symbol).replace(/\./g, "-");
+}
+function toTradierSymbol(symbol: string): string {
+  return normalizeSymbol(symbol).replace(/-/g, ".");
+}
+
+// Sanitize a refId into Tradier's `tag` field: alnum + dash, <= 255 chars. Tradier's documented tag
+// charset is letters/numbers/dash only, so an underscore or dot would be rewritten to a dash and the
+// tag would no longer round-trip to the raw refId a dedup compares against. Synthetic-stop refIds
+// are therefore kept within [A-Za-z0-9-] at generation (src/lib/synthetic-stops.ts), and primary
+// refIds are UUIDs — so this stays IDENTITY on every refId we actually place, and the broker-returned
+// tag matches the stored refId exactly. This remains as defense-in-depth against a future refId
+// source introducing an out-of-charset character.
 function sanitizeTag(refId: string): string {
   return String(refId).replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 255);
 }
@@ -213,9 +234,24 @@ class TradierBrokerGateway implements BrokerGateway {
     this.keySource = "user";
     this.environment = keys.environment;
 
-    // Base URL is DERIVED from environment so a sandbox token can only ever reach sandbox and a
-    // production token only api.tradier.com — the two venues can never be crossed.
-    let baseUrl = keys.baseUrl?.trim() || (this.environment === "live" ? "https://api.tradier.com/v1" : "https://sandbox.tradier.com/v1");
+    // `environment` is the AUTHORITY for the venue: live => api.tradier.com, paper => sandbox.tradier.com.
+    // A stored baseUrl is honored ONLY when its host matches the environment's venue — a mismatched or
+    // unparseable baseUrl is IGNORED (never allowed to route a paper-labeled account to the live API,
+    // or a live account to sandbox). This fails safe on corrupt/legacy rows even though the connect
+    // route also rejects a host-mismatched baseUrl at write time.
+    const derivedBase = this.environment === "live" ? "https://api.tradier.com/v1" : "https://sandbox.tradier.com/v1";
+    const expectedHost = new URL(derivedBase).host.toLowerCase();
+    let baseUrl = derivedBase;
+    const stored = keys.baseUrl?.trim();
+    if (stored) {
+      let storedHost: string | undefined;
+      try {
+        storedHost = new URL(stored).host.toLowerCase();
+      } catch {
+        storedHost = undefined;
+      }
+      if (storedHost === expectedHost) baseUrl = stored; // consistent venue — honor path/version customizations
+    }
     baseUrl = baseUrl.replace(/\/+$/, "");
     if (!/\/v1$/i.test(baseUrl)) baseUrl = `${baseUrl}/v1`;
     this.baseUrl = baseUrl;
@@ -364,12 +400,14 @@ class TradierBrokerGateway implements BrokerGateway {
       const positionsField = typeof body.positions === "object" && body.positions ? (body.positions as Record<string, unknown>).position : undefined;
       const rows = arr<Record<string, unknown>>(positionsField);
       if (rows.length === 0) return [];
-      const symbols = rows.map((p) => normalizeSymbol(String(p.symbol)));
+      // Canonicalize to the hyphenated form so a share-class position (BRK-B) matches its own resting
+      // orders/quotes/proposals — Tradier returns dotted (BRK.B), which would otherwise never match.
+      const symbols = rows.map((p) => fromTradierSymbol(String(p.symbol)));
       // Tradier position rows carry TOTAL cost_basis and no live market_value — price them via a
       // single batched quote call (fall back to cost basis when a quote is missing).
       const quotes = await this.getEquityQuotes(accountNumber, symbols).catch(() => ({} as Record<string, BrokerQuote>));
       return rows.map((p) => {
-        const symbol = normalizeSymbol(String(p.symbol));
+        const symbol = fromTradierSymbol(String(p.symbol));
         const quantity = number(p.quantity);
         const totalCost = number(p.cost_basis);
         const averageCost = quantity !== 0 ? totalCost / quantity : 0;
@@ -416,12 +454,13 @@ class TradierBrokerGateway implements BrokerGateway {
     const aliasesByCanonical = new Map<string, Set<string>>();
     for (const rawSymbol of symbols) {
       const requested = normalizeSymbol(rawSymbol);
-      if (!requested) continue;
-      // Tradier uses BRK.B dot notation, which is NOT our canonical (hyphenated) form; canonicalize
-      // via normalizeSymbol only (no toAlpacaSymbol) and convert to dots on the wire.
-      const canonical = requested;
+      // Canonicalize to our HYPHENATED form (BRK-B) so the quote map keys the same way positions,
+      // orders, and proposals do; Tradier's dotted wire form is applied only on the request below.
+      const canonical = fromTradierSymbol(requested);
+      if (!canonical) continue;
       const aliases = aliasesByCanonical.get(canonical) ?? new Set<string>();
       aliases.add(canonical);
+      if (requested) aliases.add(requested);
       aliasesByCanonical.set(canonical, aliases);
     }
     const canonicalSymbols = Array.from(aliasesByCanonical.keys());
@@ -429,7 +468,7 @@ class TradierBrokerGateway implements BrokerGateway {
     if (canonicalSymbols.length > 0) {
       try {
         // Tradier equity symbols use dots (BRK.B); our canonical is hyphenated, so convert on the wire.
-        const wireSymbols = canonicalSymbols.map((s) => s.replace(/-/g, "."));
+        const wireSymbols = canonicalSymbols.map((s) => toTradierSymbol(s));
         const body = await this.trackHealth(() =>
           this.request<{ quotes?: { quote?: unknown } | string }>("GET", "/markets/quotes", {
             query: { symbols: wireSymbols.join(","), greeks: "false" }
@@ -437,7 +476,7 @@ class TradierBrokerGateway implements BrokerGateway {
         );
         const quotesField = typeof body.quotes === "object" && body.quotes ? (body.quotes as Record<string, unknown>).quote : undefined;
         for (const q of arr<Record<string, unknown>>(quotesField)) {
-          const symbol = normalizeSymbol(String(q.symbol)).replace(/\./g, "-");
+          const symbol = fromTradierSymbol(String(q.symbol));
           const last = optionalNumber(q.last);
           const close = optionalNumber(q.close);
           const ask = optionalNumber(q.ask);
@@ -475,35 +514,42 @@ class TradierBrokerGateway implements BrokerGateway {
   async getEquityTradability(accountNumber: string, symbols: string[]) {
     // v1 stub mirroring Alpaca, but fractional MUST be false — Tradier has no fractional equities,
     // which also forces whole-share sizing upstream.
-    return Object.fromEntries(symbols.map((symbol) => [normalizeSymbol(symbol), { tradable: true, fractional: false }]));
+    return Object.fromEntries(symbols.map((symbol) => [fromTradierSymbol(symbol), { tradable: true, fractional: false }]));
   }
 
   async reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder> {
     // v1 self-computes (no Tradier preview call) using the shared over-cap/exit notional semantics.
     const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
-    const quotePrice = quotes[normalizeSymbol(input.symbol)]?.price;
+    const quotePrice = quotes[fromTradierSymbol(input.symbol)]?.price;
     const { estimatedNotional, alerts } = estimateReviewNotional(input, quotePrice);
     return { estimatedNotional, alerts, raw: { tradier: true } };
   }
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
-    // WHOLE-SHARE resolution: Tradier has no notional field, so a dollar order is floored into
-    // shares at an anchor price. Never default to 1 — a $500 order must not become 500 shares — and
-    // throw when it can't make a whole share.
+    // WHOLE-SHARE resolution: Tradier has no notional field AND no broker-side notional cap, so WE
+    // size a dollar order into shares at an anchor price and must not overspend the budget. Never
+    // default to 1 — a $500 order must not become 500 shares.
+    //  - A LIMIT order's fill price is capped at limitPrice, so limitPrice is a safe (never-
+    //    overspending) anchor.
+    //  - A MARKET order has NO price cap, so the STALE proposal referencePrice is unsafe: on a stock
+    //    that rose since the proposal it under-prices the share and buys too many. Size a market
+    //    order from a FRESH quote at placement time, and THROW (never silently fall back to the stale
+    //    price and overspend) when no live price is available.
     let shares = input.quantity != null ? input.quantity : undefined;
     if (shares == null && input.dollarAmount) {
-      let anchorPrice = input.limitPrice ?? input.referencePrice;
-      if (anchorPrice == null || !(anchorPrice > 0)) {
+      let anchorPrice = input.limitPrice != null && input.limitPrice > 0 ? input.limitPrice : undefined;
+      if (anchorPrice == null) {
         const quotes = await this.getEquityQuotes(input.accountNumber, [input.symbol]);
-        anchorPrice = quotes[normalizeSymbol(input.symbol)]?.price;
+        anchorPrice = quotes[fromTradierSymbol(input.symbol)]?.price;
       }
-      if (anchorPrice && anchorPrice > 0) {
-        shares = input.dollarAmount / anchorPrice;
+      if (!(anchorPrice != null && anchorPrice > 0)) {
+        throw new Error("Tradier: cannot size a dollar order without a live quote.");
       }
+      shares = input.dollarAmount / anchorPrice;
     }
     const wholeQty = shares != null ? Math.floor(shares) : NaN;
     if (!(wholeQty >= 1)) {
-      throw new Error("Tradier order too small for a whole share (or no positive price to size a dollar order).");
+      throw new Error("Tradier order too small for a whole share.");
     }
 
     // v1 IGNORES bracketTakeProfit/bracketStopLoss: strategy.ts never sets them for Tradier
@@ -511,7 +557,7 @@ class TradierBrokerGateway implements BrokerGateway {
     // Native Tradier OTOCO brackets are a follow-up.
     const form: Record<string, string | number | undefined> = {
       class: "equity",
-      symbol: normalizeSymbol(input.symbol).replace(/-/g, "."),
+      symbol: toTradierSymbol(input.symbol),
       side: mapTradierSideWrite(input.side), // DIRECT 4-value map (short->sell_short, cover->buy_to_cover)
       type: mapTradierTypeWrite(input.type), // stop_market->stop
       quantity: String(wholeQty),
@@ -556,10 +602,18 @@ class TradierBrokerGateway implements BrokerGateway {
     const body = await this.trackHealth(() =>
       this.request<{ order?: Record<string, unknown> }>("DELETE", `/accounts/${accountNumber}/orders/${orderId}`)
     );
+    // Tradier's DELETE returns status "ok" = the cancel REQUEST was accepted (async), not a confirmed
+    // terminal state — the order transitions to "canceled" only once the broker confirms it dead.
+    // Normalize the bare "ok" (which no broker-side.ts state check recognizes) to "pending_cancel", a
+    // state isLiveOrderState still treats as live: a cancel-requested order can still fill until the
+    // broker confirms it dead, so protection/coverage must keep counting it. A real terminal status
+    // passes through verbatim.
+    const raw = String(body.order?.status ?? "");
+    const state = raw && raw.toLowerCase() !== "ok" ? raw : "pending_cancel";
     return {
       orderId,
       refId: crypto.randomUUID(),
-      state: String(body.order?.status ?? "cancel_requested"),
+      state,
       raw: body
     };
   }
@@ -569,7 +623,7 @@ class TradierBrokerGateway implements BrokerGateway {
 export function mapTradierOrder(o: Record<string, unknown>): EquityOrder {
   return {
     id: String(o.id),
-    symbol: normalizeSymbol(String(o.symbol)).replace(/\./g, "-"),
+    symbol: fromTradierSymbol(String(o.symbol)),
     side: mapTradierSideRead(o.side),
     type: mapTradierTypeRead(o.type),
     state: String(o.status),

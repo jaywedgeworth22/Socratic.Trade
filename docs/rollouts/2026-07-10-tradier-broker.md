@@ -89,6 +89,67 @@ maps.
 
 No Alpaca/Robinhood/test broker behavior changed. No deploy. No live token exercised.
 
+## Fixups from adversarial review (2026-07-10, second pass)
+
+Seven confirmed review findings fixed on this branch. Each has a dedicated regression test; no
+Alpaca/Robinhood/test-broker behavior changed. Gates re-run green (node@24): lint 0 errors, tsc
+clean, 316 files / 3446 tests, build OK.
+
+1. **[HIGH] Symbol-canonicalization inconsistency (`src/lib/tradier.ts`).** `getEquityPositions`
+   left Tradier's dotted share-class tickers (BRK.B) un-hyphenated while orders/quotes hyphenated
+   them, so a share-class position never matched its own resting orders/proposals. Added
+   `fromTradierSymbol`/`toTradierSymbol` helpers (dot<->hyphen at the wire boundary; canonical
+   internal form is HYPHENATED per `money.ts/normalizeSymbol`) and routed ALL read paths (positions,
+   orders via `mapTradierOrder`, quotes, tradability) through `fromTradierSymbol` and all writes
+   (order symbol, quote request) through `toTradierSymbol`. `getEquityQuotes` now canonicalizes to
+   the hyphenated form and aliases the requested form, mirroring Alpaca exactly. Fixed the misleading
+   header comment that called dots "our canonical form." Test: a dotted BRK.B from a position, an
+   order, and a quote all normalize to the identical `BRK-B`.
+2. **[MEDIUM] Market dollar-order share sizing used the stale proposal `referencePrice`.** Tradier
+   has no broker-side notional cap, so a rising stock overspent the dollar budget. A LIMIT order now
+   anchors on its `limitPrice` (fill-capped, never overspends); a MARKET order sizes from a FRESH
+   quote at placement time and THROWS `"cannot size a dollar order without a live quote"` rather than
+   fall back to the stale price. `referencePrice` dropped as an anchor entirely. Test: reference 100
+   but fresh quote 200 on a $1000 order yields floor(1000/200)=5 shares, never 10.
+3. **[MEDIUM] Environment/baseUrl crossing.** The gateway trusted a stored `baseUrl` over
+   `environment`, so a paper account with a mismatched baseUrl could route real orders to
+   api.tradier.com. The gateway now DERIVES the base URL from `environment` (live=>api, paper=>sandbox)
+   and honors a stored baseUrl only when its host matches the environment's venue (else ignores it).
+   The connect route (`app/api/connected-accounts/route.ts`) now REJECTS (400) a Tradier `baseUrl`
+   whose host doesn't match the selected environment. Tests: paper env never yields an api.tradier.com
+   base even with a mismatched stored baseUrl (gateway) + 400 on a host-mismatched connect (route).
+4. **[LOW] Dollar-sizing fresh-quote lookup keyed by the wrong form.** Same root cause as #1 — the
+   quote-map lookup used `normalizeSymbol(input.symbol)` (dot-preserving) against a hyphenated store
+   key. Now `fromTradierSymbol` on both. Asserted explicitly: a dotted BRK.B market dollar order finds
+   its fresh quote and sizes off it (floor(1200/400)=3).
+5. **[LOW] `sanitizeTag` `_`->`-` broke the synthetic-stop client-order-id dedup.** Tradier's tag
+   charset is letters/numbers/dash only, so a raw refId carrying a non-primary `u_<hash>` userId came
+   back mangled and never matched the stored refId. Fix keeps the generated synthetic-stop refId within
+   the broker-portable `[A-Za-z0-9-]` charset AT GENERATION (`src/lib/synthetic-stops.ts`
+   `brokerPortableRefId`), so the tag round-trips byte-identical through Tradier (and any broker) —
+   `sanitizeTag` is now identity on every refId we place. Collision-safe (userIds are `local` or
+   `u_<24hex>`). Test: a `u_<hash>` synthetic-stop refId placed and read back matches exactly.
+   NOTE: Tradier's exact tag charset could not be re-confirmed from the live docs (their new site is a
+   JS SPA that WebFetch can't render; archive.org is blocked). The chosen fix is safe REGARDLESS of
+   whether Tradier allows underscores — a portable refId contains none either way.
+6. **[LOW] Plaintext token field.** The Tradier access-token input
+   (`app/console/settings/brokers.tsx`) now renders `type="password"` (masked), matching the Alpaca
+   secret field.
+7. **[LOW] `cancelEquityOrder` returned Tradier's raw `'ok'` as the state.** No `broker-side.ts` state
+   check recognizes `'ok'`. Now normalized to `'pending_cancel'` (a state `isLiveOrderState` treats as
+   live — an async cancel can still fill until confirmed dead); a real terminal status passes through
+   verbatim. Tests: `'ok'` -> `'pending_cancel'` (recognized live, not terminal); `'canceled'` passes
+   through.
+
+### Fixup files touched
+- `src/lib/tradier.ts` — findings #1, #2, #3, #4, #7 (+ `sanitizeTag` comment for #5).
+- `src/lib/synthetic-stops.ts` — finding #5 (`brokerPortableRefId` + apply at generation).
+- `app/api/connected-accounts/route.ts` — finding #3 (reject host-mismatched Tradier baseUrl).
+- `app/console/settings/brokers.tsx` — finding #6 (`type="password"`).
+- `test/tradier.test.ts` — regression tests for #1, #2, #3 (gateway), #4, #5, #7 (+ updated the
+  no-price throw assertion to the clearer message).
+- `test/connected-accounts-route.test.ts` — regression tests for #3 (route reject/accept).
+
 ## Follow-ups (from SPEC openQuestions)
 1. Confirm whole-share-only with a sandbox fractional-quantity preview before trusting the
    floor-or-throw path in production (conservative either way).

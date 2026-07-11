@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 // Seed an active Tradier connected account for `userId`.
-async function seedTradier(opts: { environment?: "paper" | "live"; token?: string; userId?: string; accountNumber?: string } = {}): Promise<void> {
+async function seedTradier(opts: { environment?: "paper" | "live"; token?: string; userId?: string; accountNumber?: string; baseUrl?: string } = {}): Promise<void> {
   const { upsertConnectedAccount } = await import("../src/lib/db");
   const environment = opts.environment ?? "paper";
   upsertConnectedAccount({
@@ -43,7 +43,7 @@ async function seedTradier(opts: { environment?: "paper" | "live"; token?: strin
     label: environment === "live" ? "Tradier Brokerage" : "Tradier Sandbox",
     apiKey: opts.token ?? (environment === "live" ? LIVE_TOKEN : SANDBOX_TOKEN),
     apiSecret: undefined,
-    baseUrl: undefined,
+    baseUrl: opts.baseUrl,
     isActive: true
   });
 }
@@ -218,7 +218,7 @@ describe("Tradier adapter — whole-share resolution", () => {
     expect(new URLSearchParams(post.body ?? "").get("quantity")).toBe("5"); // floor(550/100)
   });
 
-  it("THROWS (never quantity 1) when there is no positive price to size a dollar order", async () => {
+  it("THROWS (never quantity 1) when there is no live quote to size a market dollar order", async () => {
     await seedTradier();
     installFetchMock([
       { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: { symbol: "AAPL" } } } } // no price
@@ -229,7 +229,44 @@ describe("Tradier adapter — whole-share resolution", () => {
         accountNumber: ACCT, symbol: "AAPL", side: "buy", type: "market", dollarAmount: 550,
         timeInForce: "gfd", marketHours: "regular_hours", refId: "rt"
       })
-    ).rejects.toThrow(/whole share/i);
+    ).rejects.toThrow(/without a live quote/i);
+  });
+
+  // Finding #2/#4: a MARKET dollar order must size from a FRESH quote, NOT the stale proposal
+  // referencePrice — and the fresh-quote lookup must key by the SAME (hyphenated) form the quote map
+  // stores under. Reference says 100 (proposal-time), but the stock has RISEN to 200 by placement;
+  // sizing off the stale 100 would buy 10 shares (=$2000, DOUBLE the $1000 budget). Fresh 200 -> 5.
+  it("sizes a market dollar order from the FRESH (higher) quote, never the stale referencePrice", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: { symbol: "AAPL", last: 200 } } } },
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 88, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "AAPL", side: "buy", type: "market", dollarAmount: 1000,
+      referencePrice: 100, // stale/lower — must be ignored for a market order
+      timeInForce: "gfd", marketHours: "regular_hours", refId: "rrise"
+    });
+    const post = records.find((r) => r.method === "POST")!;
+    expect(new URLSearchParams(post.body ?? "").get("quantity")).toBe("5"); // floor(1000/200), NOT floor(1000/100)=10
+  });
+
+  // A LIMIT dollar order keeps sizing off its limitPrice (the fill is capped there, so it never
+  // overspends) — no fresh quote needed.
+  it("sizes a LIMIT dollar order off limitPrice (the capped fill price), not a quote", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 89, status: "ok" } } }
+      // no /markets/quotes handler: if the code fetched a quote it would 404 -> price 0 -> throw
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "AAPL", side: "buy", type: "limit", dollarAmount: 1000, limitPrice: 250,
+      timeInForce: "gfd", marketHours: "regular_hours", refId: "rlim"
+    });
+    const post = records.find((r) => r.method === "POST")!;
+    expect(new URLSearchParams(post.body ?? "").get("quantity")).toBe("4"); // floor(1000/250)
   });
 
   it("getEquityTradability reports fractional:false for all symbols", async () => {
@@ -402,6 +439,106 @@ describe("Tradier adapter — positions", () => {
   });
 });
 
+describe("Tradier adapter — share-class symbol canonicalization (finding #1/#4)", () => {
+  // Tradier speaks dotted BRK.B on the wire; our canonical is hyphenated BRK-B. A POSITION, an
+  // ORDER, and a QUOTE for the same share-class ticker must ALL normalize to the identical canonical
+  // string, or a resting share-class order never matches its own position and every symbol-equality
+  // double-exit / held-exit guard breaks.
+  it("a dotted BRK.B from a position, an order, and a quote all normalize to 'BRK-B'", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u) => u.includes("/positions"), body: { positions: { position: { symbol: "BRK.B", quantity: 4, cost_basis: 1600 } } } },
+      { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 7, symbol: "BRK.B", side: "sell", type: "stop", status: "open", quantity: 4, create_date: "2026-07-10", stop_price: 380, tag: "abc" } } } },
+      { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: { symbol: "BRK.B", last: 400 } } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const gw = getTradierGateway("local");
+
+    const positions = await gw.getEquityPositions(ACCT);
+    const orders = await gw.getEquityOrders(ACCT);
+    const quotes = await gw.getEquityQuotes(ACCT, ["BRK.B"]);
+
+    const CANON = "BRK-B";
+    expect(positions[0].symbol).toBe(CANON);
+    expect(orders[0].symbol).toBe(CANON);
+    expect(quotes[CANON]?.symbol).toBe(CANON);
+    // All three agree with each other AND with the canonical string a proposal/guard compares on.
+    expect(new Set([positions[0].symbol, orders[0].symbol, quotes[CANON]?.symbol]).size).toBe(1);
+    // The position was priced from the quote (marketValue = qty * quote price), proving the position
+    // symbol and the quote-map key match after canonicalization.
+    expect(positions[0].marketValue).toBe(1600); // 4 * 400
+  });
+
+  it("the wire request converts the canonical hyphen back to a dot (BRK-B -> BRK.B)", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: { symbol: "BRK.B", last: 400 } } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").getEquityQuotes(ACCT, ["BRK-B"]);
+    const call = records.find((r) => r.url.includes("/markets/quotes"))!;
+    expect(call.url).toContain("symbols=BRK.B");
+  });
+
+  // Finding #4 explicit: a dotted-symbol market dollar order must find its fresh quote (store key ==
+  // lookup key after canonicalization) and size off it — not fall through to the unsizable throw.
+  it("sizes a dotted-symbol (BRK.B) market dollar order from its fresh quote", async () => {
+    await seedTradier();
+    const { records } = installFetchMock([
+      { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: { symbol: "BRK.B", last: 400 } } } },
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 91, status: "ok" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").placeEquityOrder({
+      accountNumber: ACCT, symbol: "BRK-B", side: "buy", type: "market", dollarAmount: 1200,
+      timeInForce: "gfd", marketHours: "regular_hours", refId: "rbrk"
+    });
+    const post = records.find((r) => r.method === "POST")!;
+    expect(post.contentType).toBe("application/x-www-form-urlencoded");
+    const form = new URLSearchParams(post.body ?? "");
+    expect(form.get("quantity")).toBe("3"); // floor(1200/400)
+    expect(form.get("symbol")).toBe("BRK.B"); // dotted on the wire
+  });
+});
+
+describe("Tradier adapter — environment is the base-URL authority (finding #3)", () => {
+  // A paper account with a MISMATCHED stored baseUrl pointing at the LIVE host must still route to
+  // sandbox — the environment is the authority; the corrupt/legacy baseUrl is ignored.
+  it("a paper row NEVER hits api.tradier.com even with a stored live baseUrl", async () => {
+    await seedTradier({ environment: "paper", baseUrl: "https://api.tradier.com/v1" });
+    const { records } = installFetchMock([
+      { match: (u) => u.includes("/user/profile"), body: { profile: { account: { account_number: ACCT, type: "cash", classification: "individual" } } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").getAccounts();
+    const call = records.find((r) => r.url.includes("/user/profile"))!;
+    expect(call.url).toContain("https://sandbox.tradier.com/v1/");
+    expect(call.url).not.toContain("api.tradier.com");
+  });
+
+  it("a live row NEVER hits sandbox even with a stored sandbox baseUrl", async () => {
+    await seedTradier({ environment: "live", baseUrl: "https://sandbox.tradier.com/v1" });
+    const { records } = installFetchMock([
+      { match: (u) => u.includes("/user/profile"), body: { profile: { account: { account_number: ACCT, type: "cash", classification: "individual" } } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").getAccounts();
+    const call = records.find((r) => r.url.includes("/user/profile"))!;
+    expect(call.url).toContain("https://api.tradier.com/v1/");
+    expect(call.url).not.toContain("sandbox.tradier.com");
+  });
+
+  it("a host-consistent stored baseUrl is still honored (paper -> sandbox)", async () => {
+    await seedTradier({ environment: "paper", baseUrl: "https://sandbox.tradier.com/v1" });
+    const { records } = installFetchMock([
+      { match: (u) => u.includes("/user/profile"), body: { profile: { account: { account_number: ACCT, type: "cash", classification: "individual" } } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    await getTradierGateway("local").getAccounts();
+    expect(records.find((r) => r.url.includes("/user/profile"))!.url).toContain("https://sandbox.tradier.com/v1/");
+  });
+});
+
 describe("Tradier adapter — capsFromProfile", () => {
   it("margin -> shortSelling/marginEnabled true; classifications map to account types", async () => {
     await seedTradier();
@@ -422,7 +559,10 @@ describe("Tradier adapter — capsFromProfile", () => {
 });
 
 describe("Tradier adapter — cancel", () => {
-  it("DELETEs the order and returns the broker status", async () => {
+  // Finding #7: Tradier's DELETE returns the bare "ok" (= cancel request accepted, async), which no
+  // broker-side.ts state check recognizes. Normalize it to "pending_cancel" — a state isLiveOrderState
+  // still treats as live (a cancel-requested order can still fill until confirmed dead).
+  it("DELETEs the order and normalizes the bare 'ok' to 'pending_cancel' (a recognized live state)", async () => {
     await seedTradier();
     const { records } = installFetchMock([
       { match: (u, m) => m === "DELETE" && u.includes("/orders/42"), body: { order: { id: 42, status: "ok" } } }
@@ -430,7 +570,64 @@ describe("Tradier adapter — cancel", () => {
     const { getTradierGateway } = await import("../src/lib/tradier");
     const res = await getTradierGateway("local").cancelEquityOrder(ACCT, "42");
     expect(res.orderId).toBe("42");
+    expect(res.state).toBe("pending_cancel");
     expect(records.some((r) => r.method === "DELETE" && r.url.includes("/orders/42"))).toBe(true);
+    const { isLiveOrderState, isRejectedOrCanceledState } = await import("../src/lib/broker-side");
+    expect(isLiveOrderState(res.state)).toBe(true); // never the bare, unrecognized "ok"
+    expect(isRejectedOrCanceledState(res.state)).toBe(false);
+  });
+
+  it("passes a real terminal cancel status through verbatim", async () => {
+    await seedTradier();
+    installFetchMock([
+      { match: (u, m) => m === "DELETE" && u.includes("/orders/43"), body: { order: { id: 43, status: "canceled" } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const res = await getTradierGateway("local").cancelEquityOrder(ACCT, "43");
+    expect(res.state).toBe("canceled");
+    const { isRejectedOrCanceledState } = await import("../src/lib/broker-side");
+    expect(isRejectedOrCanceledState(res.state)).toBe(true);
+  });
+});
+
+describe("Tradier tag round-trips a synthetic-stop refId for the client-order-id dedup (finding #5)", () => {
+  // A non-primary user's id is `u_<hash>` (contains an underscore). The synthetic-stop refId embeds
+  // that id, and the secondary dedup matches a resting broker order to its stop by EXACT
+  // client-order-id equality. Tradier's tag charset rewrites '_' -> '-', so the raw refId would come
+  // back mangled and never match. brokerPortableRefId keeps the generated refId within [A-Za-z0-9-]
+  // so Tradier's sanitizeTag is IDENTITY on it and the tag round-trips to the stored refId exactly.
+  it("a u_<hash> synthetic-stop refId is placed and read back byte-identical (dedup matches)", async () => {
+    await seedTradier();
+    // The refId the monitor would generate for a non-primary user (see synthetic-stops.ts):
+    //   sstop-synstop-<userId>-<account>-<sym>-<price*100>. Build it, sanitize it portably, place it,
+    // read it back, and assert the client_order_id equals the STORED refId used for dedup.
+    const userId = "u_" + "a".repeat(24); // shape of userIdForEmail() for a non-primary user
+    const rawRefId = `sstop-synstop-${userId}-${ACCT}-BRK-B-40000`;
+    const { records } = installFetchMock([
+      { match: (u) => u.includes("/markets/quotes"), body: { quotes: { quote: { symbol: "BRK.B", last: 400 } } } },
+      { match: (u, m) => m === "POST" && u.includes("/orders"), body: { order: { id: 200, status: "ok" } } },
+      // The broker echoes back whatever tag it stored — model Tradier's charset by sanitizing here.
+      { match: (u, m) => m === "GET" && u.includes("/orders"), body: { orders: { order: { id: 200, symbol: "BRK.B", side: "sell", type: "stop", status: "open", quantity: 1, create_date: "2026-07-10", stop_price: 400, tag: rawRefId.replace(/[^a-zA-Z0-9-]/g, "-") } } } }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+
+    // What synthetic-stops.ts stores as lastAttemptRefId (portable form):
+    const storedRefId = rawRefId.replace(/[^A-Za-z0-9-]/g, "-");
+    // Sanity: portable refId has NO underscore, so Tradier's tag transform is a no-op on it.
+    expect(storedRefId).not.toContain("_");
+
+    const gw = getTradierGateway("local");
+    await gw.placeEquityOrder({
+      accountNumber: ACCT, symbol: "BRK-B", side: "sell", type: "stop_market", quantity: 1, stopPrice: 400,
+      timeInForce: "gtc", marketHours: "regular_hours", refId: storedRefId
+    });
+    // The tag actually SENT equals the stored refId (round-trip is identity, no mangling).
+    const post = records.find((r) => r.method === "POST")!;
+    expect(new URLSearchParams(post.body ?? "").get("tag")).toBe(storedRefId);
+
+    // Read the order back: its clientOrderId must EXACTLY equal the stored refId the dedup compares.
+    const orders = await gw.getEquityOrders(ACCT);
+    expect(orders[0].clientOrderId).toBe(storedRefId);
   });
 });
 

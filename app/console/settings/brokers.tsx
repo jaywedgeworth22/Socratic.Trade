@@ -734,6 +734,7 @@ function TradierConnectSheet({
           <Field label="Access token" hint="A single Bearer token — no secret." htmlFor="trd-key">
             <TextInput
               id="trd-key"
+              type="password"
               value={apiKey}
               autoComplete="off"
               placeholder="Tradier access token"

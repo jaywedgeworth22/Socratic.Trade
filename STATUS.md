@@ -24,6 +24,19 @@ with no stored token throws loudly. node@24 gate: eslint 0-err, tsc clean, full 
 green, build clean. See `docs/rollouts/2026-07-10-tradier-broker.md`. Follow-ups: native OTOCO
 brackets, real preview endpoint for `reviewEquityOrder`, IRA agentic-allowed decision, orders
 pagination field confirmation, optional operator env-token tier. No deploy; no live token exercised.
+**Adversarial-review fixups (2026-07-10, second pass on this branch, PR #1380; gates green node24 —
+lint 0-err, tsc, 316/3446 tests, build):** 7 confirmed findings, each with a regression test. (1)
+HIGH symbol canonicalization — positions now hyphenate share-class tickers (BRK-B) like orders/quotes
+via new `fromTradierSymbol`/`toTradierSymbol`, so a share-class position matches its own resting
+orders/proposals. (2) Market dollar orders size from a FRESH quote, not the stale `referencePrice`
+(throw if no live quote — Tradier has no notional cap). (3) `environment` is the base-URL authority:
+gateway ignores a host-mismatched stored baseUrl and the connect route rejects one (400) — a paper
+account can never route to api.tradier.com. (4) Dollar-sizing quote-lookup key aligned to #1. (5)
+Synthetic-stop refId kept within the portable `[A-Za-z0-9-]` charset at generation
+(`synthetic-stops.ts`) so the Tradier `tag` round-trips the client-order-id dedup for `u_<hash>`
+users. (6) Access-token field masked (`type="password"`). (7) Cancel normalizes raw `'ok'` ->
+`'pending_cancel'`. No Alpaca/Robinhood/test-broker behavior changed; not merged. Tradier's exact tag
+charset couldn't be re-confirmed from the live SPA docs — the #5 fix is charset-independent.
 
 ## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
 Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval
