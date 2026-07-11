@@ -128,6 +128,21 @@ pattern as prior rounds; `verify` is the only required check). Verify: tsc clean
 errors/379 pre-existing warnings, 319 files/3566 tests passed, build clean.
 Rollout: `docs/rollouts/2026-07-11-pr1371-round6-codex-fixes.md`.
 
+**2026-07-11 update 4 — merged main's strategy.ts split refactor:** owner enabled auto-merge on
+#1371; `main` had meanwhile landed #1397 (order-reconcile fix bundled with an unrelated AG/Fable
+refactor splitting `strategy.ts` into `strategy-execution.ts` + `strategy-risk.ts`, see the entry
+just below), producing real merge conflicts since this branch's stop-plan edits sit in functions
+that physically moved. Reconciled by identifying exactly which functions moved
+(`executeProposal`, `reconcilePendingFills`, `flagStalePlacingIntents` →
+`strategy-execution.ts`; `applyDeterministicSizing` → `strategy-risk.ts`) and porting this
+branch's stop-plan logic into each new location, merged alongside main's own new logic there
+(declined-order handling, already-booked dedup, `resolveBrokerVerificationNotifications`) rather
+than overwriting it; `bracketWholeShareMinimum` stayed in `strategy.ts` (now exported, since
+`strategy-risk.ts` imports it) with its stop-plan-aware signature intact. Two test files got
+import-list conflicts from the same relocations, resolved to match main's new module layout.
+Verify: tsc clean, lint 0 errors/408 pre-existing warnings, 323 files/3590 tests passed, build
+clean. Rollout: `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`.
+
 ## 2026-07-11 — Refactoring strategy.ts: split risk and execution (AG, branch `agent/strategy-split`)
 Extracted risk gates, veto rules, and sizing logic into `strategy-risk.ts` and the main execution loop/reconciliation into `strategy-execution.ts`. `strategy.ts` remains as a re-export hub and coordinator. Automated import updates across 100+ files via a custom `ts-morph` script. Gate green: tsc clean, lint 0 errors, 3427 tests passing, build clean. See `docs/rollouts/2026-07-11-strategy-split-refactoring.md`.
 
