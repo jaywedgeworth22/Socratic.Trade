@@ -23,9 +23,9 @@ write. A final independent review caught and fixed four remaining boundaries: st
 is account-bound, walk-forward observations receive the account filter, a failed pending-to-blocked
 transition returns the actually persisted status without notifying, and tuning computes its clock
 after the strategy run instead of before it. The combined focused Node 24 rerun is green: **11 files /
-129 tests**; touched ESLint **0 errors / 36 inherited warnings**; TypeScript and `git diff --check`
-clean. PR #1429 is intentionally draft; the root lane
-owns the serialized full test/build gate, trusted push, hosted rerun, readiness, merge, and production
+129 tests**; touched ESLint **0 errors / 36 inherited warnings**; repository lint, TypeScript, full
+Vitest **341 files / 3,801 tests**, production build, and `git diff --check` are green. PR #1429 is
+intentionally draft; the root lane owns the trusted push, hosted rerun, readiness, merge, and production
 verification. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 ## 2026-07-11 — Alpha Vantage admin health lane canonicalization (CODEX, ready PR #1438)
 ## 2026-07-11 — Durable provider/dataset operation leases (CODEX, ready PR #1441)

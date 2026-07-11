@@ -33,9 +33,10 @@ filling the missing pieces.
 > own renewed account lease and LLM reservation. A final independent review additionally fixed the
 > account-bound strategy prompt, propagated account scope into walk-forward evidence, honored a lost
 > proposal-transition race, and computes tuning time only after the strategy run finishes. PR #1429 is
-> reconciled through `main@67e1536d` and is intentionally draft pending the root lane's serialized full
-> gate. The combined final Node 24 slice is green: 11 files / 129 tests, touched lint 0 errors,
-> TypeScript, and diff-check. See `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
+> reconciled through `main@67e1536d` and is intentionally draft pending its trusted push and hosted
+> checks. The final Node 24 gate is green: focused 11 files / 129 tests, repository lint, TypeScript,
+> full 341 files / 3,801 tests, production build, and diff-check. See
+> `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 > **2026-07-11 - Alpha Vantage admin health lane canonicalization (CODEX).** No roadmap scope
 > change; operator-observability correctness only. The connections-health expected-lane inventory now
 > uses the provider's canonical `alpha-vantage:env` identity, preventing a synthetic empty

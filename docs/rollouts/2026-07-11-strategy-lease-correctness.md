@@ -176,14 +176,17 @@ default-on posture.
   tests**, including the new `test/backtest-account-scope.test.ts`, and passed.
 - Final touched ESLint — **0 errors / 36 inherited warnings**. Three `npx tsc --noEmit` checks
   completed cleanly during implementation. A final core rerun after docs/current-main refresh passed
-  **4 files / 25 tests**; `git diff --check` is clean. Per owner gate serialization, this lane did not
-  run the full Vitest suite or production build.
+  **4 files / 25 tests**; `git diff --check` is clean. The implementation worker deferred the full
+  Vitest suite and production build to the root lane's serialized gate below.
+- Root serialized final gate under Node 24 after the post-review commit: `npm run lint` passed;
+  `npx tsc --noEmit` passed; `npm test` passed **341 files / 3,801 tests**; and `npm run build` passed
+  with only the inherited Next middleware deprecation, Edge/Sentry trace, and webpack cache warnings.
 
 ## Follow-ups and boundaries
 
 - Draft PR #1429 remains open. The root lane intentionally converted it from ready while this final
-  reconciliation was in flight and owns the serialized full test/build gate, trusted push, hosted
-  checks, readiness, merge, and production verification; prior full gates predate these review fixes.
+  reconciliation was in flight and owns the trusted push, hosted checks, readiness, merge, and
+  production verification; the final local full gate now includes every review fix.
 - No scheduler provider-boundary locking, production environment/configuration, PR, merge,
   deployment, or live runtime mutation is part of this change. The branch-neutral live effort board
   was updated with implementation and review receipts.
