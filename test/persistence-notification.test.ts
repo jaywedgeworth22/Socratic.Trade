@@ -592,7 +592,7 @@ describe("persistence and notifications", () => {
     );
 
     expect(event.status).toBe("sent");
-    expect(event.error).toBeNull();
+    expect(event.error).toBeUndefined();
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://api.resend.com/emails");
     const emailBody = calls[0]?.body as { text?: string };
