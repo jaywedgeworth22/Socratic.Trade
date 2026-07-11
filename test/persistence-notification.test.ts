@@ -591,8 +591,8 @@ describe("persistence and notifications", () => {
       { policy: DEFAULT_POLICY, userId }
     );
 
-    expect(event.status).toBe("skipped");
-    expect(event.error).toContain("Notifications Webhook");
+    expect(event.status).toBe("sent");
+    expect(event.error).toBeNull();
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://api.resend.com/emails");
     const emailBody = calls[0]?.body as { text?: string };
