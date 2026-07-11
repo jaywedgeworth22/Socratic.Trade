@@ -43,11 +43,11 @@ only concluded when the broker order list is authoritative for terminal orders (
 `BrokerGateway.ordersListIncludesTerminal` — Alpaca `true`, Robinhood unset/conservative ⇒
 absent=`uncertain`) in `reconcilePlacementError` AND the sweep; (4) durable double-fill backstop —
 migration v16 partial UNIQUE index `fill_events(proposal_id, broker_order_id)` + `insertFillEvent`
-idempotent no-op on conflict. +4 new test cases groups. Local gates green: tsc 0, full suite
-3424/3424, lint 0-err, build clean (ran under default node26 — the shared `node_modules`
-`better-sqlite3` is ABI 147/node26; `node@24` hits the reverse ABI mismatch). PR: READY, NOT merged.
-See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — push updates PR #1382,
-await review.
+idempotent no-op on conflict. +4 new test cases groups. Local gates green: tsc 0, full suite 3427/3427, lint 0-err, build clean.
+PR: READY, NOT merged.
+See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: Codex review items (#1382) —
+Thread 2 fixed (sweep authoritative no-match now resolves uncertain alert). Remaining architectural
+items (partial fills on declined, not_placed timing, migration dedupe strategy) asked via PR comment.
 ## 2026-07-10 — Server & infrastructure metrics dashboard page (AG, branch `agent/antigravity-server-metrics`)
 Added a new Server & Infrastructure metrics page to the operator admin dashboard showing CPU, RAM, disk, and network load, plus running Coolify container health. Wired `/api/admin/server-metrics` to Hetzner and Coolify APIs, with local host fallback using Node `os` module for development. Gate green: tsc clean, lint 0 errors, 3 new unit tests passing, Next.js build clean. PR opened via `land.sh`. See [2026-07-10-server-metrics.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-10-server-metrics.md).
 ## 2026-07-10 — Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud lane, branch `claude/anthropic-spend-spike-e2di8j`)

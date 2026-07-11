@@ -265,3 +265,27 @@ brokerOrderIds coexist; NULL broker_order_id rows are unconstrained.
   `test/fill-events-dedupe-index.test.ts` (new),
   `test/placement-reconcile.test.ts` (+1 case),
   `test/placement-reconcile-sweep.test.ts` (+3 cases).
+
+## Codex review autofix (2026-07-11)
+
+Addressed 1 of 8 Codex review threads from PR #1382.
+
+### Fixed: Sweep authoritative no-match resolves uncertain alert (Thread #2, P2)
+
+When the stale-placing sweep proves an order was never placed (authoritative broker
+list with no matching refId), any outstanding "verify with broker" uncertain alert
+is now resolved via `resolveBrokerVerificationNotifications()`. Previously the alert
+stayed unresolved forever despite the sweep definitively proving non-placement.
+
+File touched:
+- `src/lib/strategy.ts` — added `resolveBrokerVerificationNotifications` call in
+  the authoritative no-match branch of `flagStalePlacingIntents`.
+
+Remaining 6 threads (Threads #3-8) were architecturally significant (partial fills
+on declined, not_placed timing race, migration dedupe strategy) and asked via PR
+comment to the maintainer.
+
+Verification:
+- `npx tsc --noEmit` — clean
+- `npm test` — 3427 passed / 320 files
+- `npm run build` — clean
