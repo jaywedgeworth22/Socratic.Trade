@@ -385,3 +385,30 @@ order and a pending-then-terminated order settle identically.
   at the two placement sites) also book no partial on a 200-with-partial-then-terminal
   response. This is pre-existing origin/main behavior (not touched by round 1), so left out
   of this regression fix; note it for a follow-up if IOC/FOK partials show up in practice.
+
+Note: the Codex PR #1382 review flagged "partial fills on declined" as an open thread
+(see the Codex autofix note below) — this round-2 section is the fix for it.
+
+## Codex review autofix (2026-07-11)
+
+Addressed 1 of 8 Codex review threads from PR #1382.
+
+### Fixed: Sweep authoritative no-match resolves uncertain alert (Thread #2, P2)
+
+When the stale-placing sweep proves an order was never placed (authoritative broker
+list with no matching refId), any outstanding "verify with broker" uncertain alert
+is now resolved via `resolveBrokerVerificationNotifications()`. Previously the alert
+stayed unresolved forever despite the sweep definitively proving non-placement.
+
+File touched:
+- `src/lib/strategy.ts` — added `resolveBrokerVerificationNotifications` call in
+  the authoritative no-match branch of `flagStalePlacingIntents`.
+
+Remaining 6 threads (Threads #3-8) were architecturally significant (partial fills
+on declined, not_placed timing race, migration dedupe strategy) and asked via PR
+comment to the maintainer.
+
+Verification:
+- `npx tsc --noEmit` — clean
+- `npm test` — 3427 passed / 320 files
+- `npm run build` — clean

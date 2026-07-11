@@ -5641,6 +5641,9 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
       // status:"all") ⇒ the order truly never reached the matching engine. Abandon it.
       updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId, undefined, "Order never confirmed — broker record not found during reconciliation.");
       audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId, connectedAccountId);
+      // The sweep just proved the order was never placed by the broker — resolve any outstanding
+      // "verify with broker" uncertain alert so it doesn't stay unacknowledged forever (Codex #2).
+      resolveBrokerVerificationNotifications(userId, { proposalId: row.id, resolution: "not_placed" });
     } else {
       // Absent from a NON-authoritative list (terminal-inclusion unverified, e.g. Robinhood): absence
       // can't prove "never placed" vs "placed, filled, and aged out". Abandoning would risk dropping a
