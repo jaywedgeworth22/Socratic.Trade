@@ -1,12 +1,73 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "../app/api/admin/server-metrics/route";
+import { displayProviderText } from "../app/admin/server/server-metrics-client";
 import { AUTHENTICATED_EMAIL_HEADER } from "../src/lib/request-user";
+import { normalizeCoolifyResources, normalizeHetznerServerResponse } from "../src/lib/server-metrics-shapes";
 
 function reqWithEmail(email?: string): Request {
   const headers: Record<string, string> = {};
   if (email) headers[AUTHENTICATED_EMAIL_HEADER] = email;
   return new Request("https://socratictrade.com/api/admin/server-metrics", { method: "GET", headers });
 }
+
+describe("server-metrics provider shape normalization", () => {
+  it("extracts display strings from the real Hetzner server response shape", () => {
+    const normalized = normalizeHetznerServerResponse({
+      server: {
+        name: "ubuntu-8gb-hel1-2",
+        status: "running",
+        server_type: { name: "cpx32", cores: 4, memory: 8 },
+        datacenter: { name: "hel1-dc2" },
+        public_net: { ipv4: { ip: "135.181.192.190", blocked: false } },
+      },
+    });
+
+    expect(normalized).toEqual({
+      server: {
+        name: "ubuntu-8gb-hel1-2",
+        status: "running",
+        serverType: "cpx32",
+        location: "hel1-dc2",
+        ip: "135.181.192.190",
+      },
+      warnings: [],
+    });
+  });
+
+  it("reports malformed nested values and the client renders diagnostics instead of objects", () => {
+    const malformedServerType = { cores: 4 };
+    const malformedIpv4 = { blocked: false };
+    const normalized = normalizeHetznerServerResponse({
+      server: {
+        server_type: malformedServerType,
+        public_net: { ipv4: malformedIpv4 },
+      },
+    });
+
+    expect(normalized.server.serverType).toBeUndefined();
+    expect(normalized.server.ip).toBeUndefined();
+    expect(normalized.warnings).toEqual([
+      "Hetzner server_type.name was not a non-empty string.",
+      "Hetzner public_net.ipv4.ip was not a non-empty string.",
+    ]);
+    expect(displayProviderText(malformedServerType, "vps", "server type")).toBe("Invalid server type");
+    expect(displayProviderText(malformedIpv4, "127.0.0.1", "server IP")).toBe("Invalid server IP");
+  });
+
+  it("omits malformed Coolify resources and returns string-only display fields", () => {
+    const normalized = normalizeCoolifyResources([
+      { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
+      { uuid: "app-2", name: { rendered: "bad" }, type: "application", status: { state: "running" } },
+    ]);
+
+    expect(normalized.resources).toEqual([
+      { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
+    ]);
+    expect(normalized.warnings).toEqual([
+      "Coolify resource at index 1 had malformed display fields and was omitted.",
+    ]);
+  });
+});
 
 describe("server-metrics API route", () => {
   afterEach(() => {
@@ -24,7 +85,7 @@ describe("server-metrics API route", () => {
     expect(body.ok).toBe(false);
   });
 
-  it("ALLOWS access and returns local mock metrics when not configured", async () => {
+  it("ALLOWS access and returns real local host metadata with empty remote data when not configured", async () => {
     vi.stubEnv("NODE_ENV", "development");
     // Leave HETZNER_API_TOKEN etc unset
     vi.stubEnv("HETZNER_API_TOKEN", "");
@@ -35,8 +96,14 @@ describe("server-metrics API route", () => {
     expect(body.isProd).toBe(false);
     expect(body.hostInfo).toBeDefined();
     expect(body.hostInfo.cpus).toBeGreaterThan(0);
-    expect(body.resources.length).toBeGreaterThan(0);
-    expect(body.metrics.cpu.length).toBeGreaterThan(0);
+    expect(body.resources).toEqual([]);
+    expect(body.metrics).toEqual({
+      cpu: [],
+      diskRead: [],
+      diskWrite: [],
+      networkRx: [],
+      networkTx: [],
+    });
   });
 
   it("ALLOWS access and calls Hetzner/Coolify APIs when configured", async () => {
@@ -73,8 +140,9 @@ describe("server-metrics API route", () => {
             server: {
               name: "prod-server",
               status: "running",
-              server_type: "cx33",
-              datacenter: { name: "hel1" }
+              server_type: { name: "cx33", cores: 4, memory: 8 },
+              datacenter: { name: "hel1" },
+              public_net: { ipv4: { ip: "135.181.192.190", blocked: false } }
             }
           })
         });
@@ -82,7 +150,8 @@ describe("server-metrics API route", () => {
       if (url.includes("api/v1/servers/mock-coolify-uuid/resources")) {
         return Promise.resolve({
           json: () => Promise.resolve([
-            { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" }
+            { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
+            { uuid: "app-2", name: { bad: true }, type: "application", status: { state: "running" } }
           ])
         });
       }
@@ -110,6 +179,12 @@ describe("server-metrics API route", () => {
     expect(body.isProd).toBe(true);
     expect(body.hostInfo.name).toBe("prod-server");
     expect(body.hostInfo.cpus).toBe(4);
+    expect(body.hostInfo.serverType).toBe("cx33");
+    expect(body.hostInfo.ip).toBe("135.181.192.190");
+    expect(body.warnings).toEqual([
+      "Coolify resource at index 1 had malformed display fields and was omitted.",
+    ]);
+    expect(body.resources).toHaveLength(1);
     expect(body.resources[0].name).toBe("socratic-trade-prod");
     expect(body.metrics.cpu[0].value).toBe(12.34);
     expect(body.metrics.diskRead[0].value).toBe(1024);

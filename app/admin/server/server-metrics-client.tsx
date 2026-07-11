@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Card, Chip, Dot } from "../../ui/primitives";
 import { Server, Cpu, Database, Activity, RefreshCw, Layers, ArrowDown, ArrowUp, Globe, Shield } from "lucide-react";
+import { asRecord, normalizeCoolifyResources, readText } from "@/lib/server-metrics-shapes";
 
 interface MetricPoint {
   timestamp: number;
@@ -18,22 +19,18 @@ interface HostInfo {
   memoryFreeBytes: number;
   uptimeSeconds: number;
   loadAvg?: number[];
-  serverType?: string;
-  location?: string;
-  ip?: string;
-}
-
-interface ResourceItem {
-  uuid: string;
-  name: string;
-  type: string;
-  status: string;
+  // JSON is an untrusted runtime boundary. These are normalized to strings by
+  // the API, but remain unknown here so a future provider regression renders a
+  // diagnostic instead of passing an object to React.
+  serverType?: unknown;
+  location?: unknown;
+  ip?: unknown;
 }
 
 interface ServerMetricsData {
   isProd: boolean;
   hostInfo: HostInfo;
-  resources: ResourceItem[];
+  resources: unknown;
   metrics: {
     cpu: MetricPoint[];
     diskRead: MetricPoint[];
@@ -43,6 +40,7 @@ interface ServerMetricsData {
   };
   asOf: string;
   error?: string;
+  warnings?: unknown;
 }
 
 // Helper formats
@@ -70,6 +68,12 @@ function formatUptime(seconds: number) {
   return `${h}h ${m}m`;
 }
 
+export function displayProviderText(value: unknown, fallback: string, label: string): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value === undefined || value === null || value === "") return fallback;
+  return `Invalid ${label}`;
+}
+
 export function ServerMetricsClient() {
   const [data, setData] = useState<ServerMetricsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,8 +88,17 @@ export function ServerMetricsClient() {
         const json = await res.json();
         setData(json);
       } else {
-        const json = await res.json().catch(() => ({}));
-        setData((prev) => prev ? { ...prev, error: json.error || "Failed to load metrics" } : null);
+        const json: unknown = await res.json().catch(() => undefined);
+        const envelope = asRecord(json);
+        const error = readText(envelope?.error) || "Failed to load metrics";
+        // The API intentionally returns real local-host metadata with empty
+        // remote datasets on provider failure. Preserve that useful receipt
+        // even on a non-2xx response; reject unrelated/malformed error JSON.
+        if (asRecord(envelope?.hostInfo) && asRecord(envelope?.metrics) && Array.isArray(envelope?.resources)) {
+          setData({ ...(envelope as unknown as ServerMetricsData), error });
+        } else {
+          setData((prev) => prev ? { ...prev, error } : null);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -117,8 +130,18 @@ export function ServerMetricsClient() {
   }
 
   const host = data?.hostInfo;
-  const resources = data?.resources || [];
+  const normalizedResources = normalizeCoolifyResources(data?.resources ?? []);
+  const resources = normalizedResources.resources;
   const metrics = data?.metrics;
+  const providerWarnings = Array.isArray(data?.warnings)
+    ? data.warnings.filter((warning): warning is string => typeof warning === "string" && Boolean(warning.trim()))
+    : data?.warnings == null
+      ? []
+      : ["The server metrics warnings payload was malformed."];
+  const warnings = [...providerWarnings, ...normalizedResources.warnings];
+  const hostIp = displayProviderText(host?.ip, "127.0.0.1", "server IP");
+  const hostLocation = displayProviderText(host?.location, "local", "server location");
+  const serverType = displayProviderText(host?.serverType, "vps", "server type");
 
   const usedMem = host ? host.memoryTotalBytes - host.memoryFreeBytes : 0;
   const memPct = host ? Math.round((usedMem / host.memoryTotalBytes) * 100) : 0;
@@ -150,7 +173,7 @@ export function ServerMetricsClient() {
             {data?.isProd ? (
               <Chip tone="accent">PRODUCTION</Chip>
             ) : (
-              <Chip tone="warn">DEVELOPMENT MOCK</Chip>
+              <Chip tone="warn">LOCAL HOST</Chip>
             )}
           </div>
           <p className="mt-1 text-sm text-muted">
@@ -181,7 +204,13 @@ export function ServerMetricsClient() {
 
       {data?.error && (
         <div className="mb-6 rounded-xl border border-neg/20 bg-neg/5 p-4 text-sm text-neg">
-          <span className="font-semibold">Error retrieving full metrics:</span> {data.error}. Reverting to local metrics fallback.
+          <span className="font-semibold">Error retrieving full metrics:</span> {data.error}. Showing local host metrics.
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="mb-6 rounded-xl border border-warn/20 bg-warn/5 p-4 text-sm text-warn" role="status">
+          <span className="font-semibold">Provider metadata warning:</span> {warnings.join(" ")}
         </div>
       )}
 
@@ -195,7 +224,7 @@ export function ServerMetricsClient() {
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Host Server</div>
             <div className="font-bold text-fg">{host?.name || "localhost"}</div>
             <div className="text-xs text-muted flex items-center gap-1.5 mt-0.5">
-              <Globe size={11} /> {host?.ip || "127.0.0.1"} • {host?.location || "local"}
+              <Globe size={11} /> {hostIp} • {hostLocation}
             </div>
           </div>
         </Card>
@@ -208,7 +237,7 @@ export function ServerMetricsClient() {
             <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">CPU Cores</div>
             <div className="font-bold text-fg">{host?.cpus || 2} Cores</div>
             <div className="text-xs text-muted mt-0.5">
-              {host?.serverType || "vps"} • Load: {host?.loadAvg ? host.loadAvg[0].toFixed(2) : "n/a"}
+              {serverType} • Load: {host?.loadAvg ? host.loadAvg[0].toFixed(2) : "n/a"}
             </div>
           </div>
         </Card>

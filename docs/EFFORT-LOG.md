@@ -1579,6 +1579,18 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Admin server metrics Hetzner response-shape crash fix (CODEX, branch
+  `codex/admin-server-shape-fix`) — IN PROGRESS 2026-07-11.** Production `/admin/server`
+  crashes with React #31 because the API forwards Hetzner's real nested
+  `server_type` and `public_net.ipv4` objects into JSX string slots. Normalize provider
+  metadata and Coolify resource rows to strings at the API boundary, retain explicit shape
+  warnings, remove fabricated local metrics/resources, harden the client against malformed
+  runtime JSON, and cover the real provider payload shapes in `test/server-metrics.test.ts`.
+  Node 24 gate is green (lint 0 errors, typecheck, 318 files / 3,491 tests, build); local
+  route/API checks returned HTTP 200 with the expected empty-remote/local-host envelope.
+  Rendered Browser QA was unavailable because no Browser backend was installed. Commit and
+  ready PR pending. Rollout:
+  `docs/rollouts/2026-07-11-admin-server-shape-fix.md`.
 - **Broker-held trailing stops (Alpaca native + RH ratcheted) + Guardrails stop-consolidation UI
   (CLAUDE, cloud session, branch `claude/stop-loss-preset-options-f1jygn`) — IN PROGRESS
   2026-07-10.** Owner-directed: (1) trailing stops now become BROKER-HELD when
