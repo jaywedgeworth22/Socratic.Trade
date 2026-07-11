@@ -164,6 +164,24 @@ export function recordFillFromProposal(input: {
   execution?: ExecutedOrder;
   marketScan?: MarketScan;
   status?: string;
+  /**
+   * The position's PRE-fill state (average cost + quantity), when the caller has it, for blending a
+   * stop plan's recorded basis on a SCALE-IN. Without this, an opening fill's `price` (this ONE
+   * fill's execution price) gets recorded as the plan's `avgCost` even when the position already had
+   * shares — the very next run's `filterStopPlansByLiveBasis` then compares that single-fill price
+   * against the position's true BLENDED averageCost, sees a mismatch beyond tolerance, and discards
+   * the just-recorded plan as stale (Codex review, PR #1371). Omit for a fresh open (no prior
+   * position) — blended cost then correctly reduces to the fill price itself.
+   */
+  existingPosition?: { averageCost: number; quantity: number };
+  /**
+   * Explicit, already-known stop-plan basis that bypasses the pre-fill blend math entirely — for a
+   * caller that already looked up the LIVE (post-fill) position average cost directly (e.g. a
+   * crash-recovery sweep reconciling an order that already executed at the broker, where the broker's
+   * own current averageCost IS the correct blended basis with no arithmetic needed). Takes precedence
+   * over `existingPosition` when both are supplied.
+   */
+  stopPlanBasisOverride?: number;
 }): FillEvent {
   const symbol = normalizeSymbol(input.proposal.symbol);
   const marketPrice = input.marketScan?.quotesBySymbol[symbol]?.price;
@@ -288,7 +306,17 @@ export function recordFillFromProposal(input: {
       if (input.proposal.stopPlan.style === "default") {
         clearStopPlans(input.accountNumber, [symbol], input.userId ?? "local");
       } else {
-        recordStopPlan(input.accountNumber, symbol, input.proposal.stopPlan.style, input.proposal.stopPlan.rationale, price, input.userId);
+        // On a scale-in, `price` is only THIS fill's execution price — the plan must record the
+        // resulting BLENDED position basis (what the next run's `position.averageCost` will actually
+        // be), or `filterStopPlansByLiveBasis` discards the plan as stale on the very next run
+        // (Codex review, PR #1371). No prior position (fresh open) reduces to `price` unchanged.
+        const existing = input.existingPosition;
+        const blendedAvgCost =
+          input.stopPlanBasisOverride ??
+          (existing && Math.abs(existing.quantity) > 0.000001
+            ? (existing.averageCost * Math.abs(existing.quantity) + price * quantity) / (Math.abs(existing.quantity) + quantity)
+            : price);
+        recordStopPlan(input.accountNumber, symbol, input.proposal.stopPlan.style, input.proposal.stopPlan.rationale, blendedAvgCost, input.userId);
       }
     } catch {
       // plan bookkeeping must never break fill recording

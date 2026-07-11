@@ -5,6 +5,7 @@ import {
   claimSyntheticStop,
   dailyExecutionStats,
   deleteSyntheticStop,
+  filterStopPlansByLiveBasis,
   getActiveConnectedAccount,
   getStopPlans,
   insertFillEvent,
@@ -121,11 +122,14 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // account-wide trailing config — never silently overridden. "fixed"/"atr" plans don't touch this
   // lane at all (they pin the distance generateProactiveRiskProposals uses, not the trailing
   // overlay), so they're absent from this map's effect here.
-  const stopPlanBySymbol: Record<string, StopPlanStyle> = {};
+  // filterStopPlansByLiveBasis drops any plan whose recorded avgCost no longer matches the live
+  // position's averageCost — reused here (not just on the strategy-run side) so a symbol closed and
+  // re-bought before any run observed it flat can't have its stale plan govern the new lot in THIS
+  // monitor either (Codex review, PR #1371: strategy.ts and this monitor load stop plans
+  // independently, so the basis check must run on both sides).
+  let stopPlanBySymbol: Record<string, StopPlanStyle> = {};
   try {
-    for (const [sym, plan] of Object.entries(getStopPlans(accountNumber, userId))) {
-      stopPlanBySymbol[normalizeSymbol(sym)] = plan.style;
-    }
+    stopPlanBySymbol = filterStopPlansByLiveBasis(getStopPlans(accountNumber, userId), positions);
   } catch {
     // best-effort — a lookup failure just means every symbol falls through to "default" (account-wide) behavior
   }
@@ -341,7 +345,12 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       const sym = normalizeSymbol(pos.symbol);
       if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
       const planStyle: StopPlanStyle = stopPlanBySymbol[sym] ?? "default";
-      if (planStyle === "none") continue; // owner/LLM chose no stop for this position — never overridden
+      // "none"/"fixed"/"atr" all explicitly exclude the trailing lane for this symbol (mirrors the
+      // purge just above) — without this, an account-wide trailingStopPct > 0 would fall through to
+      // effectiveTrailPct = trailPct for a "fixed"/"atr" plan and re-register a trailing row in the
+      // SAME pass the purge just removed one from, contrary to the plan's pinned protection (Codex
+      // review, PR #1371).
+      if (planStyle === "none" || planStyle === "fixed" || planStyle === "atr") continue;
       const effectiveTrailPct = planStyle === "trailing" ? (trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT) : trailPct;
       if (!(effectiveTrailPct > 0)) continue;
       const isShort = pos.quantity < 0;

@@ -95,7 +95,7 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
-import { clearStopPlans, clearTakeProfitTrimBands, getStopPlans, getTakeProfitTrimBands, recordStopPlan } from "./db";
+import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
@@ -125,7 +125,6 @@ import {
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
 import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
-import type { PositionStopPlan } from "./db-api-keys";
 import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
@@ -713,9 +712,18 @@ export async function runStrategyOnce(
     // one symbol only — "default" (the common case, no row or an explicit default) falls through to the
     // account-wide fixed/ATR/beta chain unchanged.
     let stopPlanBySymbol: Record<string, StopPlanStyle> = {};
+    // Rationale-only side map for the SAME live-basis-filtered plans, keyed alongside stopPlanBySymbol
+    // — kept separate (rather than widening stopPlanBySymbol's value type everywhere it's threaded)
+    // so enrichOpeningProposal can stamp an inherited plan's original rationale onto the returned
+    // proposal for the approval card, instead of erasing it (Codex review, PR #1371).
+    const stopPlanRationaleBySymbol: Record<string, string | undefined> = {};
     if (policy.accountNumber) {
       try {
-        stopPlanBySymbol = filterStopPlansByLiveBasis(getStopPlans(policy.accountNumber, userId), workingPositions);
+        const rawPlans = getStopPlans(policy.accountNumber, userId);
+        stopPlanBySymbol = filterStopPlansByLiveBasis(rawPlans, workingPositions);
+        for (const sym of Object.keys(stopPlanBySymbol)) {
+          stopPlanRationaleBySymbol[sym] = rawPlans[sym]?.rationale;
+        }
       } catch (err) {
         console.warn("[strategy] stop plan lookup failed:", err instanceof Error ? err.message : err);
       }
@@ -775,7 +783,10 @@ export async function runStrategyOnce(
         // Prune the in-memory snapshot too — enrichOpeningProposal (below, same run) reads this same
         // map by closure, and a symbol closed then re-opened within this run must not inherit its old
         // plan from before the DB clear (Codex review, PR #1371).
-        for (const s of staleStopPlanSymbols) delete stopPlanBySymbol[s];
+        for (const s of staleStopPlanSymbols) {
+          delete stopPlanBySymbol[s];
+          delete stopPlanRationaleBySymbol[s];
+        }
       } catch (err) {
         console.warn("[strategy] stop plan cleanup failed:", err instanceof Error ? err.message : err);
       }
@@ -1337,6 +1348,32 @@ export async function runStrategyOnce(
         if (Math.abs(p.quantity) <= 0.000001) continue;
         const sym = normalizeSymbol(p.symbol);
         const baseStop = p.quantity < 0 ? (policy.riskRules.shortStopLossPct ?? flatStopPct) : flatStopPct;
+        // A per-position stop PLAN overrides the account-wide distance chain for heat purposes too —
+        // without this, a "none" plan (genuinely no stop basis) got counted as if a flat/ATR/beta
+        // stop still limited its risk (UNDERSTATING true book risk and letting the heat taper admit
+        // more size than it should), while "fixed"/"atr" plans on a bare account (no flatStopPct
+        // configured) were excluded as "no stop basis" even though they're GUARANTEED a distance via
+        // STOP_PLAN_FALLBACK_STOP_PCT (Codex review, PR #1371).
+        const plan: StopPlanStyle = stopPlanBySymbol[sym] ?? "default";
+        if (plan === "none") continue; // no stop basis at all — excluded from heat, never estimated
+        if (plan === "trailing") {
+          // The trail distance IS this position's effective worst-case distance for heat purposes.
+          const trailPct = policy.riskRules?.trailingStopPct ?? 0;
+          stopPctBySymbol[sym] = trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT;
+          continue;
+        }
+        if (plan === "fixed") {
+          stopPctBySymbol[sym] = baseStop > 0 ? baseStop : STOP_PLAN_FALLBACK_STOP_PCT;
+          continue;
+        }
+        if (plan === "atr") {
+          const atrPct = atrStopPctBySymbol[sym];
+          stopPctBySymbol[sym] =
+            typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0
+              ? atrPct
+              : baseStop > 0 ? baseStop : STOP_PLAN_FALLBACK_STOP_PCT;
+          continue;
+        }
         if (baseStop <= 0) continue;
         const atrPct = atrStopPctBySymbol[sym];
         const resolved =
@@ -1373,7 +1410,7 @@ export async function runStrategyOnce(
       .map((p) => {
         const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills, stopPlanBySymbol);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
-        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctByOpeningSymbol, stopPlanBySymbol);
+        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctByOpeningSymbol, stopPlanBySymbol, stopPlanRationaleBySymbol);
       });
 
     const debatedProposals: TradeProposal[] = [];
@@ -2340,6 +2377,7 @@ export async function runStrategyOnce(
       recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
       auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
+      const preFillPosition = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
       const fill = recordFillFromProposal({
         userId,
         accountNumber: policy.accountNumber,
@@ -2351,7 +2389,8 @@ export async function runStrategyOnce(
         review,
         execution,
         marketScan,
-        status: execution.state === "filled" ? "filled" : "pending_reconciliation"
+        status: execution.state === "filled" ? "filled" : "pending_reconciliation",
+        existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
       });
       await sendNotification(
         { type: "fill", title: `${normalizedProposal.symbol} live order ${execution.state}`, payload: { runId, proposalId, fill } },
@@ -4176,6 +4215,7 @@ export async function executeProposal(
 
     updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
     const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
+    const preFillPosition = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
     const fill = recordFillFromProposal({
       userId,
       accountNumber: row.accountNumber,
@@ -4187,7 +4227,8 @@ export async function executeProposal(
       review,
       execution,
       marketScan: approvalScan,
-      status: fillStatus
+      status: fillStatus,
+      existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
     });
     audit("proposal_approved", {
       proposalId,
@@ -5286,36 +5327,11 @@ function recordLlmOutcome(
   })();
 }
 
-/**
- * Filter the account's persisted per-position stop plans down to the ones that actually apply to
- * the CURRENT lot. Ratchet-style basis check (mirrors planTakeProfitTrims' lastBand-keyed-to-avgCost
- * pattern): a persisted plan only counts if its recorded avgCost still matches the LIVE position's
- * averageCost. Without this, a symbol closed and re-bought before any run ever observed it flat
- * (e.g. a fast broker/manual close+reopen the app's own clearStopPlans sweep never caught between
- * ticks) could have its stale "none"/"trailing"/fixed plan silently govern a completely different
- * lot (Codex review, PR #1371). A symbol with no CURRENT position at all has no basis to compare and
- * is skipped too — a persisted row only ever makes sense for a scale-in add to an already-open
- * position.
- */
-export function filterStopPlansByLiveBasis(
-  plans: Record<string, PositionStopPlan>,
-  positions: EquityPosition[]
-): Record<string, StopPlanStyle> {
-  const liveAvgCostBySymbol = new Map(
-    positions
-      .filter((p) => Math.abs(p.quantity) > 0.000001)
-      .map((p) => [normalizeSymbol(p.symbol), p.averageCost])
-  );
-  const out: Record<string, StopPlanStyle> = {};
-  for (const [sym, plan] of Object.entries(plans)) {
-    if (plan.style === "default") continue;
-    const s = normalizeSymbol(sym);
-    const liveAvgCost = liveAvgCostBySymbol.get(s);
-    if (liveAvgCost === undefined || Math.abs(plan.avgCost - liveAvgCost) >= 0.005) continue;
-    out[s] = plan.style;
-  }
-  return out;
-}
+// filterStopPlansByLiveBasis lives in db-api-keys.ts (alongside getStopPlans/PositionStopPlan) so
+// synthetic-stops.ts can import it too without depending on this module — re-exported here (as the
+// same binding imported above) so existing consumers (tests included) keep importing it from
+// "./strategy" unchanged.
+export { filterStopPlansByLiveBasis };
 
 export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
@@ -5371,10 +5387,14 @@ export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradePro
             : undefined;
         // "none" is a real, risk-increasing choice — the schema asks for a rationale, but the LLM
         // isn't guaranteed to supply one. Without it, "none" is indistinguishable from an oversight,
-        // so downgrade to "default" rather than silently suppressing every stop-enforcement layer
-        // with no explanation ever recorded for it (Codex review, PR #1371).
-        const style = proposal.stopPlan.style === "none" && !rationale ? "default" : proposal.stopPlan.style;
-        return { style, ...(rationale ? { rationale } : {}) };
+        // so it must never persist unexplained. Treat it as ABSENT (undefined), not as an explicit
+        // "default" — "default" has RESET semantics downstream (enrichOpeningProposal ignores any
+        // persisted plan for the symbol, and the fill path CLEARS the row), so manufacturing one from
+        // a malformed "none" could silently wipe out an existing fixed/ATR/trailing/none override the
+        // owner deliberately set earlier. Absent falls through to whatever's on file, unchanged —
+        // the same as any other unrecognized/missing plan (Codex review, PR #1371).
+        if (proposal.stopPlan.style === "none" && !rationale) return undefined;
+        return { style: proposal.stopPlan.style, ...(rationale ? { rationale } : {}) };
       })()
     }))
     // Protective Risk-Exits execute as market orders so they cannot rest unfilled (see helper above).
@@ -5387,6 +5407,24 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
 
   try {
     const brokerOrders = await gateway.getEquityOrders(accountNumber);
+    // Lazily fetched (only if a pending fill actually carries an opening stopPlan) and cached across
+    // the loop — these orders already EXECUTED at the broker, so the live position's averageCost is
+    // the real POST-fill blended basis (no manual weighting needed, unlike the placement-time callers
+    // in performance.ts that only have the PRE-fill snapshot). Recording the raw single-fill `price`
+    // instead would make `filterStopPlansByLiveBasis` discard a scale-in's plan as stale on the very
+    // next run (Codex review, PR #1371).
+    let liveBasisBySymbol: Map<string, number> | null = null;
+    const liveBasisFor = async (symbol: string): Promise<number | undefined> => {
+      if (!liveBasisBySymbol) {
+        try {
+          const livePositions = await gateway.getEquityPositions(accountNumber);
+          liveBasisBySymbol = new Map(livePositions.map((p) => [normalizeSymbol(p.symbol), p.averageCost]));
+        } catch {
+          liveBasisBySymbol = new Map();
+        }
+      }
+      return liveBasisBySymbol.get(normalizeSymbol(symbol));
+    };
     for (const fill of pending) {
       const matched = brokerOrders.find((bo) => bo.id === fill.brokerOrderId);
       if (!matched) continue;
@@ -5398,7 +5436,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
       // leave a plan row governing a lot that never opened (Codex review, PR #1371). Any executed
       // quantity (full or partial fill) DID open the lot, so commit the plan now from the original
       // proposal stamped into this fill's own raw payload.
-      const commitStopPlanIfOpening = (price: number) => {
+      const commitStopPlanIfOpening = async (price: number) => {
         const openingProposal = (fill.raw as { proposal?: TradeProposal } | undefined)?.proposal;
         if (
           openingProposal?.stopPlan &&
@@ -5411,7 +5449,8 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
             if (openingProposal.stopPlan.style === "default") {
               clearStopPlans(accountNumber, [fill.symbol], userId);
             } else {
-              recordStopPlan(accountNumber, fill.symbol, openingProposal.stopPlan.style, openingProposal.stopPlan.rationale, price, userId);
+              const basis = (await liveBasisFor(fill.symbol)) ?? price;
+              recordStopPlan(accountNumber, fill.symbol, openingProposal.stopPlan.style, openingProposal.stopPlan.rationale, basis, userId);
             }
           } catch {
             // plan bookkeeping must never break fill reconciliation
@@ -5422,7 +5461,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
       // existing fill record (by fill.id), so a later poll overwriting with a larger
       // executed quantity never double counts; the realtime trade_updates stream funnels
       // into the same record too.
-      const bookExecuted = (auditStatus: string) => {
+      const bookExecuted = async (auditStatus: string) => {
         updateFillEvent(fill.id, {
           status: "filled",
           price: execPrice,
@@ -5432,7 +5471,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
         audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId, connectedAccountId);
-        commitStopPlanIfOpening(execPrice);
+        await commitStopPlanIfOpening(execPrice);
       };
 
       if (matched.state === "filled") {
@@ -5447,16 +5486,16 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
         audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId, connectedAccountId);
-        commitStopPlanIfOpening(price);
+        await commitStopPlanIfOpening(price);
       } else if (matched.state === "partially_filled") {
         // A live order that has executed some-but-not-all shares: book the executed
         // portion now so it enters P&L/exposure instead of being silently dropped.
-        if (execQty > 0) bookExecuted("partially_filled");
+        if (execQty > 0) await bookExecuted("partially_filled");
       } else if (isRejectedOrCanceledState(matched.state)) {
         if (execQty > 0) {
           // Order terminated AFTER a partial execution — book the executed shares
           // rather than marking the whole fill cancelled and losing them.
-          bookExecuted(`${matched.state}_partial`);
+          await bookExecuted(`${matched.state}_partial`);
         } else {
           updateFillEvent(fill.id, {
             status: matched.state,
@@ -5507,6 +5546,22 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
     return;
   }
 
+  // Lazily fetched (only if a recovered fill actually carries an opening stopPlan) — these orders
+  // already EXECUTED at the broker, so the live position's averageCost is the real POST-fill blended
+  // basis, same reasoning as reconcilePendingFills' liveBasisFor (Codex review, PR #1371).
+  let liveBasisBySymbol: Map<string, number> | null = null;
+  const liveBasisFor = async (symbol: string): Promise<number | undefined> => {
+    if (!liveBasisBySymbol) {
+      try {
+        const livePositions = await gateway.getEquityPositions(accountNumber);
+        liveBasisBySymbol = new Map(livePositions.map((pos) => [normalizeSymbol(pos.symbol), pos.averageCost]));
+      } catch {
+        liveBasisBySymbol = new Map();
+      }
+    }
+    return liveBasisBySymbol.get(normalizeSymbol(symbol));
+  };
+
   for (const row of stale) {
     const p = row.proposal as TradeProposal | undefined;
     const matched = row.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === row.refId) : undefined;
@@ -5515,6 +5570,7 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
       if (p) {
         const recoveredExecutionMode = row.executionMode ?? "broker/live";
         const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
+        const existingAvgCost = p.stopPlan ? await liveBasisFor(p.symbol) : undefined;
         recordFillFromProposal({
           userId,
           accountNumber,
@@ -5523,7 +5579,11 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
           executionMode: recoveredExecutionMode,
           proposal: p,
           execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
-          status: matched.state === "filled" ? "filled" : "pending_reconciliation"
+          status: matched.state === "filled" ? "filled" : "pending_reconciliation",
+          // The order already executed at the broker, so the live position's averageCost IS the
+          // correct post-fill blended basis already — bypass the pre-fill blend math entirely rather
+          // than re-deriving it from the single recovered fill price.
+          stopPlanBasisOverride: existingAvgCost
         });
       }
       audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId, connectedAccountId);
@@ -5552,7 +5612,11 @@ export function enrichOpeningProposal(
   // record for a scale-in add to an already-open position. The proposal's OWN `stopPlan` (freshly
   // chosen by the LLM this run, if any) always takes precedence over a stale persisted one — a new
   // opening decision reconsidering the position's protection wins over whatever was on file.
-  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {},
+  // The SAME persisted plans' original rationale, keyed alongside stopPlanBySymbol — carried onto an
+  // inherited plan stamp below so a "none" plan's required explanation survives a scale-in instead of
+  // being erased (Codex review, PR #1371).
+  stopPlanRationaleBySymbol: Record<string, string | undefined> = {}
 ): TradeProposal {
   if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
   const sym = normalizeSymbol(proposal.symbol);
@@ -5568,7 +5632,10 @@ export function enrichOpeningProposal(
   // proposal too, or the approval card's disclosure (which reads p.stopPlan directly) never shows
   // the owner an inherited "none"/"trailing"/fixed/atr choice actually governed this order (Codex
   // review, PR #1371). A fresh, explicit stopPlan from THIS proposal is never overwritten.
-  if (!next.stopPlan && plan !== "default") next = { ...next, stopPlan: { style: plan } };
+  if (!next.stopPlan && plan !== "default") {
+    const inheritedRationale = stopPlanRationaleBySymbol[sym];
+    next = { ...next, stopPlan: { style: plan, ...(inheritedRationale ? { rationale: inheritedRationale } : {}) } };
+  }
   // A "trailing"/"none" plan means NO bracket at all, regardless of whole-share eligibility below —
   // strip any LLM-supplied bracket legs UNCONDITIONALLY, right here. Stripping them only INSIDE the
   // whole-share branch left them on a sub-share dollar order (`canUseWholeShareBracket === false`):

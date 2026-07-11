@@ -18,6 +18,7 @@ import {
   listFillEvents,
   listConnectedAccounts,
   getActiveConnectedAccount,
+  filterFullStopPlansByLiveBasis,
   getStopPlans,
   userHasAnyLlmCredential,
   listSocraticDecisionCases,
@@ -666,7 +667,11 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const stopPlanBySymbol = (() => {
     if (!policy.accountNumber) return {};
     try {
-      return getStopPlans(policy.accountNumber, userId);
+      // Filtered by live basis (avgCost match) — same reasoning as the strategy-run and synthetic-
+      // monitor sides: a symbol closed and re-bought before cleanup swept the old row must not have
+      // its stale plan label the new lot as "No stop (LLM choice)" or an active fixed/ATR/trailing
+      // plan for a position that never made that choice (Codex review, PR #1371).
+      return filterFullStopPlansByLiveBasis(getStopPlans(policy.accountNumber, userId), displayPositions);
     } catch {
       return {};
     }

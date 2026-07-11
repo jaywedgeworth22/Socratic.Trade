@@ -5,11 +5,13 @@ import crypto from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { getDb, audit } from "./db";
+import { normalizeSymbol } from "./money";
 import type {
   AccountCapabilities,
   ChatTurn,
   ChatTurnRole,
   ConnectedAccount,
+  EquityPosition,
   MemoryItem,
   NotifyChannelId,
   NotifyPrefs,
@@ -1443,6 +1445,57 @@ export function getStopPlans(accountNumber: string, userId: string = "local"): R
   for (const r of rows) {
     const style = (STOP_PLAN_STYLES as readonly string[]).includes(r.style) ? (r.style as StopPlanStyle) : "default";
     out[r.symbol] = { style, rationale: r.rationale ?? undefined, avgCost: Number(r.avg_cost) || 0 };
+  }
+  return out;
+}
+
+/**
+ * Filter the account's persisted per-position stop plans down to the ones that actually apply to
+ * the CURRENT lot. Ratchet-style basis check (mirrors planTakeProfitTrims' lastBand-keyed-to-avgCost
+ * pattern): a persisted plan only counts if its recorded avgCost still matches the LIVE position's
+ * averageCost. Without this, a symbol closed and re-bought before any run ever observed it flat
+ * (e.g. a fast broker/manual close+reopen the app's own clearStopPlans sweep never caught between
+ * ticks) could have its stale "none"/"trailing"/fixed plan silently govern a completely different
+ * lot (Codex review, PR #1371). A symbol with no CURRENT position at all has no basis to compare and
+ * is skipped too — a persisted row only ever makes sense for a scale-in add to an already-open
+ * position. Colocated here (not in strategy.ts, which re-exports it) so both strategy.ts and
+ * synthetic-stops.ts can share it without depending on each other.
+ */
+export function filterStopPlansByLiveBasis(
+  plans: Record<string, PositionStopPlan>,
+  positions: EquityPosition[]
+): Record<string, StopPlanStyle> {
+  const out: Record<string, StopPlanStyle> = {};
+  for (const [sym, plan] of Object.entries(filterFullStopPlansByLiveBasis(plans, positions))) {
+    out[sym] = plan.style;
+  }
+  return out;
+}
+
+/**
+ * Same live-basis filter as `filterStopPlansByLiveBasis`, but preserves the FULL `PositionStopPlan`
+ * (rationale + avgCost included) rather than narrowing to just the style — for a display-only
+ * consumer (the dashboard/Positions table) that needs the rationale text too, not just the
+ * enforcement-relevant style (Codex review, PR #1371: the dashboard read `getStopPlans` directly,
+ * unfiltered, so it could still label a closed-and-rebought symbol's NEW position with the OLD
+ * lot's plan).
+ */
+export function filterFullStopPlansByLiveBasis(
+  plans: Record<string, PositionStopPlan>,
+  positions: EquityPosition[]
+): Record<string, PositionStopPlan> {
+  const liveAvgCostBySymbol = new Map(
+    positions
+      .filter((p) => Math.abs(p.quantity) > 0.000001)
+      .map((p) => [normalizeSymbol(p.symbol), p.averageCost])
+  );
+  const out: Record<string, PositionStopPlan> = {};
+  for (const [sym, plan] of Object.entries(plans)) {
+    if (plan.style === "default") continue;
+    const s = normalizeSymbol(sym);
+    const liveAvgCost = liveAvgCostBySymbol.get(s);
+    if (liveAvgCost === undefined || Math.abs(plan.avgCost - liveAvgCost) >= 0.005) continue;
+    out[s] = plan;
   }
   return out;
 }

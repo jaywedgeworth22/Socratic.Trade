@@ -204,6 +204,14 @@ export function deriveProtection(
   if (base.label === "Broker stop") {
     return { ...base, detail: `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice). ${base.detail}` };
   }
+  // A short position with short selling turned off: every enforcement layer (synthetic monitor,
+  // proactive risk exits, broker-protective-stops) skips shorts entirely while shortSellingEnabled is
+  // off, regardless of any per-position plan — a "Fixed"/"ATR"/"Trailing plan" label here would show
+  // active protection for a short the app has deliberately stopped managing (Codex review, PR #1371).
+  // Preserve deriveBaseProtection's muted/unsafe state instead of building an active plan label.
+  if (position.quantity < 0 && !policy.shortSellingEnabled) {
+    return { ...base, detail: `Per-position plan: ${planLabel} (would pin this position's stop, but it never takes effect while short selling is off). ${base.detail}` };
+  }
   // Otherwise, build the label/tone from the PLAN itself, never from the account-wide base label's
   // CONTENT — that label describes whatever mechanism the ACCOUNT happens to have configured (e.g.
   // "App stop −8%" for a flat stop), which may be an entirely different mechanism than what this

@@ -433,14 +433,23 @@ export async function reconcileBrokerProtectiveStops(args: {
     return Math.max(full - cov.coveredQty, 0);
   };
 
+  // Any Alpaca-family broker (REST native trailing_stop, or MCP's ratcheted stop_market emulation) —
+  // both submit real Alpaca orders at gtc time-in-force. Alpaca's own fractional-trading docs require
+  // time_in_force=day for a fractional stop/stop-limit order; this reconciler always sends gtc, so a
+  // fractional quantity risks a broker rejection that would leave even the whole-share portion with
+  // no broker-held protection (Codex review, PR #1331/#1371). Flooring to whole shares on EITHER
+  // Alpaca transport — not just the native REST lane — sidesteps that entirely; the fractional
+  // remainder still gets synthetic monitor coverage, same as the native lane already relied on.
+  const isAlpacaFamily = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+
   // The share quantity a broker-held stop of this kind should cover: the uncovered remainder,
-  // floored to whole shares on the native trailing lane (Alpaca rejects fractional trailing
-  // stops) — the synthetic monitor's quantity-aware coverage picks up any remainder. `null`
-  // propagates from uncoveredQuantity unchanged — "coverage unknown this tick", not "zero".
+  // floored to whole shares on any Alpaca trailing lane — the synthetic monitor's quantity-aware
+  // coverage picks up any remainder. `null` propagates from uncoveredQuantity unchanged — "coverage
+  // unknown this tick", not "zero".
   const desiredStopQuantity = (pos: EquityPosition, sym: string, forKind: "fixed" | "trailing", excludeOrderId?: string): number | null => {
     const qty = uncoveredQuantity(pos, sym, excludeOrderId);
     if (qty === null) return null;
-    return forKind === "trailing" && nativeTrailing ? Math.floor(qty) : qty;
+    return forKind === "trailing" && isAlpacaFamily ? Math.floor(qty) : qty;
   };
 
   // Trailing trigger for the ratcheted (non-native) lane: trailingStopPct below the high-water
@@ -551,6 +560,28 @@ export async function reconcileBrokerProtectiveStops(args: {
     }
   }
 
+  // 2b. Per-symbol "none" plan teardown (still cancel-only — runs regardless of `running` or
+  // `liveReplaceBlocked`, same as section 2). Sections 3/4 below are gated behind `running` because
+  // they PLACE/replace orders, but a position switched to a "none" plan while the system is Stopped
+  // (or live placement is disabled) must not keep an existing app-managed broker-held stop resting —
+  // that contradicts the per-position no-stop choice regardless of whether the app happens to be
+  // running this tick (Codex review, PR #1371).
+  for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
+    if (row.status === "pending_cancel") continue; // already handled
+    const sym = normalizeSymbol(row.symbol);
+    if (!liveLongs.has(sym)) continue; // already torn down above (position closed)
+    if (stopPlanBySymbol[sym] !== "none") continue;
+    try {
+      await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
+      deleteBrokerProtectiveStop(row.id, userId);
+      out.cancelled++;
+      out.cancelledOrderIds.push(row.brokerOrderId);
+    } catch (err) {
+      audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "none_plan_teardown" }, userId);
+      upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
+    }
+  }
+
   if (!running) return out;
 
   // Live placement explicitly disabled (ALLOW_LIVE_TRADING=false escape hatch): sections 3 and 4
@@ -612,10 +643,34 @@ export async function reconcileBrokerProtectiveStops(args: {
           deleteBrokerProtectiveStop(existingStop.id, userId);
           out.cancelled++;
           out.cancelledOrderIds.push(existingStop.brokerOrderId);
+          // A successful cancel doesn't mean nothing filled first — mirror the account-wide disabled
+          // teardown's handling: check the caller's pre-reconcile order snapshot for an executed fill
+          // before this row disappears, or the executed shares never reach fill_events/P&L/learning,
+          // and the caller isn't told the position snapshot may be stale (Codex review, PR #1371).
+          const preCancelOrder = orders.find((o) => o.id === existingStop.brokerOrderId);
+          if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
+            filledRecoverySymbols.add(sym);
+            out.filledRecoverySymbols.push(sym);
+            bookBrokerHeldStopFill(existingStop, preCancelOrder);
+          }
           audit("broker_protective_stop_mismatch", { symbol: sym, note: "per-position stop plan excludes this account's enabled broker-held lane(s)", kind: null }, userId);
         } catch (err) {
-          audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId);
-          upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
+          // The cancel failed — check whether the broker already terminated the order (most likely
+          // it FILLED before our cancel reached the broker), same recovery as every other cancel path
+          // in this reconciler (Codex review, PR #1371).
+          const found = orders.find((o) => o.id === existingStop.brokerOrderId);
+          if (found && isDoneRestingState(found.state)) {
+            deleteBrokerProtectiveStop(existingStop.id, userId);
+            if (hadExecutedFill(found)) {
+              filledRecoverySymbols.add(sym);
+              out.filledRecoverySymbols.push(sym);
+              bookBrokerHeldStopFill(existingStop, found);
+            }
+            audit("broker_protective_stop_cancel_recovered", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId);
+          } else {
+            audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId);
+            upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
+          }
         }
       }
       continue;

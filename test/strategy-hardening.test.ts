@@ -435,14 +435,14 @@ describe("filterStopPlansByLiveBasis (Codex review, PR #1371)", () => {
 });
 
 describe("sanitizeProposals — per-position stop plan coercion (Codex review, PR #1371)", () => {
-  it("downgrades a 'none' plan with no rationale to 'default' (an unauditable no-stop choice must never silently apply)", () => {
+  it("drops a 'none' plan with no rationale entirely (an unauditable no-stop choice must never silently apply, and must never manufacture a 'default' RESET of an existing override)", () => {
     const [p] = sanitizeProposals([buy({ stopPlan: { style: "none" } })]);
-    expect(p.stopPlan).toEqual({ style: "default" });
+    expect(p.stopPlan).toBeUndefined();
   });
 
-  it("downgrades a 'none' plan with a blank/whitespace-only rationale to 'default' too", () => {
+  it("drops a 'none' plan with a blank/whitespace-only rationale too", () => {
     const [p] = sanitizeProposals([buy({ stopPlan: { style: "none", rationale: "   " } })]);
-    expect(p.stopPlan).toEqual({ style: "default" });
+    expect(p.stopPlan).toBeUndefined();
   });
 
   it("keeps a 'none' plan WITH a real rationale", () => {

@@ -554,7 +554,13 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 {typeof p.bracketTakeProfit === "number" ? `take-profit ${fmtMoney(p.bracketTakeProfit)}` : ""}.
               </>
             ) : null}
-            {p.stopPlan && p.stopPlan.style !== "default" ? (
+            {p.stopPlan && p.stopPlan.style === "default" ? (
+              <>
+                {" "}
+                <strong>Stop plan (reset to default):</strong> this scale-in clears any existing per-position override
+                (none/trailing/fixed/ATR) and returns the combined lot to the account's own stop precedence.
+              </>
+            ) : p.stopPlan && p.stopPlan.style !== "default" ? (
               <>
                 {" "}
                 <strong>Stop plan ({STOP_PLAN_DISPLAY[p.stopPlan.style] ?? p.stopPlan.style}):</strong>{" "}
