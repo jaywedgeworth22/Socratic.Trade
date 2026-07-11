@@ -13,7 +13,7 @@ import { isOverLlmBudget } from "./llm-budget";
 import { buildLlmRequestBody, extractLlmText, llmAuthHeaders } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { llmFetch } from "./llm-request";
+import { isModelRotationSentinel, llmFetch, resolveReviewerReasoningEffort } from "./llm-request";
 import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
@@ -127,6 +127,10 @@ export async function reviewPendingFrameworkProposals(
     "https://api.openai.com/v1/chat/completions",
     "red"
   );
+  // The rotation sentinel ("__rotate__") is a valid PERSISTED reviewer-seat value that only a
+  // strategy RUN substitutes with a concrete model. This standalone advisory reviewer has no run
+  // to do that, so fail open rather than send the literal sentinel to a provider.
+  if (isModelRotationSentinel(model)) return { reviewed: 0, skippedReason: "rotation_unresolved", model };
   if (!key) return { reviewed: 0, skippedReason: "no_llm_key" };
 
   const userContent = JSON.stringify({
@@ -153,7 +157,10 @@ export async function reviewPendingFrameworkProposals(
       systemPrompt: REVIEW_SYSTEM_PROMPT,
       userContent,
       maxOutputTokens,
-      reasoningEffort: policy.llmReasoningEffort,
+      // The Reviewer seat's own reasoning effort (redTeamReasoningEffort, falling back to the
+      // proposer's) — resolveReviewerReasoningEffort owns that fallback, same as the other AI-Review
+      // paths — so a separate Reviewer effort isn't overridden by the Proposer's.
+      reasoningEffort: resolveReviewerReasoningEffort(policy),
       // Structured output for BOTH transports: a JSON schema drives OpenAI's json_schema AND
       // Anthropic's forced tool-use, so the reviewer can't return prose that parseReviewResponse
       // would drop (openAiJsonObject alone is ignored by the Anthropic Messages path).
