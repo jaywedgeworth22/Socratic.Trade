@@ -95,6 +95,11 @@ current-main full gate passed; the earlier receipts remain preserved for audit h
 - Current-main focused verification: 4 files / 29 tests passed.
 - Current-main ordered Node 24 gate: `npm run lint` (0 errors), `npx tsc --noEmit`, `npm test`
   (330 files / 3,740 tests), and `npm run build` all passed.
+- Final pre-landing reconciliation merged `origin/main@e395e65a` cleanly. The repeated Node 24 gate
+  passed: focused 4 files / 29 tests, lint 0 errors / 404 inherited warnings, TypeScript clean,
+  331 files / 3,746 tests, and production build. Antigravity's ready Congress.Trade PR #296 uses
+  exact `#v1.5.0` and resolves `2222baeb`; its 940-test app gate is green and its peer check is
+  expected red until Socratic #1426 lands first. Congress merge/deploy remains separately owner-gated.
 
 - `git diff --check` — passed.
 - `PATH=/opt/homebrew/opt/node@24/bin:$PATH node --version` — `v24.18.0`.

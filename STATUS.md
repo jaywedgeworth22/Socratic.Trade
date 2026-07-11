@@ -121,11 +121,14 @@ released and clean-install-verified shared `v1.5.0`, delegates rejection body/st
 the app-local HTTP adapter to shared builders while retaining `Response`, `Retry-After`, error text,
 and legacy tuning fields, and preserves real Auth.js provenance coverage instead of the bypass mock
 introduced by the Tradier merge. Representative 429/409 bodies are parsed by the shared schema. The
-current-main Node 24 gate is green: focused 4 files / 29 tests, lint 0 errors, TypeScript clean,
-330 files / 3,740 tests, and production build clean. The first full-test
+final current-main Node 24 gate is green against `origin/main@e395e65a`: focused 4 files / 29 tests,
+lint 0 errors / 404 inherited warnings, TypeScript clean, 331 files / 3,746 tests, and production
+build clean. The first full-test
 attempt exposed only a Node ABI mismatch caused by the earlier dependency refresh running under Node
-26; rebuilding `better-sqlite3` under Node 24 fixed it before the passing rerun. Refreshed hosted
-checks and the matched Congress.Trade peer pin remain pending. The controls are anti-repeat budgets, not hard
+26; rebuilding `better-sqlite3` under Node 24 fixed it before the passing rerun. Antigravity's ready
+Congress.Trade PR #296 exact-pins the same tag/commit and has 940 tests green; its peer check is
+expected red until #1426 lands first, while Congress merge/deploy remains owner-gated. Refreshed
+hosted checks remain pending. The controls are anti-repeat budgets, not hard
 per-request spend ceilings. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.
 ## 2026-07-11 — Admin authorization fails closed with verified provenance (CODEX, branch `codex/admin-fail-closed`)
