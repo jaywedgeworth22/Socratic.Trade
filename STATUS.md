@@ -15,8 +15,9 @@ follower test proves it cannot refresh `scheduler:lastTick`. Current-main reconc
 a stale `heartbeatTimer` cleanup from the newly landed broker-health early return; the authoritative
 `finally` owns guard stop and lease release. Current Node 24 scoped verification is green: 4 files / 21
 tests, touched ESLint 0 errors / 33 inherited warnings, TypeScript clean, and `git diff --check` clean.
-The previous full 3,764-test/build gate predates these review changes; the serialized final full gate,
-push, hosted checks, merge, and production verification remain. See
+Trusted human follow-up `b19650ac` contains the runtime/test reconciliation. The previous full
+3,764-test/build gate predates these review changes; the serialized final full gate, push, hosted
+checks, merge, and production verification remain. See
 `docs/rollouts/2026-07-11-strategy-lease-correctness.md`.
 
 ## 2026-07-10 — FMP request-quota wiring (CLAUDE, branch claude/fmp-rate-limit)

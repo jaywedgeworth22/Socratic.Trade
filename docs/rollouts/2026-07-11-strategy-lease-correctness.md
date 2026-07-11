@@ -103,7 +103,8 @@ default-on posture.
   the production build all reran green.
 - Review autofix `9d2ba1fb` was pushed by `github-actions[bot]`; gitleaks, hosted verify, and smoke
   correctly refused that untrusted actor. No CI trust policy was changed. A human-authored follow-up
-  merged current `origin/main@da9558ac` and owns the reconciled tip.
+  merged current `origin/main@da9558ac`; trusted runtime/test reconciliation commit `b19650ac` owns
+  the corrected tip.
 - The first scoped rerun used the shell's Node 26 and failed only on the expected native SQLite ABI
   mismatch (`NODE_MODULE_VERSION 147` vs the worktree's 137 build). The committed source was not
   implicated. `npm ci --no-audit --no-fund` under Node 24 refreshed the exact locked shared-v1.5
