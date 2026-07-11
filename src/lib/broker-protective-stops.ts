@@ -433,17 +433,23 @@ export async function reconcileBrokerProtectiveStops(args: {
     return Math.max(full - cov.coveredQty, 0);
   };
 
+  // Any Alpaca-family broker (REST native trailing_stop, or MCP's ratcheted stop_market emulation) —
+  // both submit real Alpaca orders at gtc time-in-force. Alpaca's own fractional-trading docs require
+  // time_in_force=day for a fractional stop/stop-limit order; this reconciler always sends gtc, so a
+  // fractional quantity risks a broker rejection that would leave even the whole-share portion with
+  // no broker-held protection (Codex review, PR #1331/#1371). Flooring to whole shares on EITHER
+  // Alpaca transport — not just the native REST lane — sidesteps that entirely; the fractional
+  // remainder still gets synthetic monitor coverage, same as the native lane already relied on.
+  const isAlpacaFamily = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+
   // The share quantity a broker-held stop of this kind should cover: the uncovered remainder,
-  // floored to whole shares on the native trailing lane (Alpaca rejects fractional trailing
-  // stops) — the synthetic monitor's quantity-aware coverage picks up any remainder. `null`
-  // propagates from uncoveredQuantity unchanged — "coverage unknown this tick", not "zero".
-  // NOTE: MCP's ratcheted (non-native) lane is NOT floored here — flagged as a follow-up (owner
-  // disposition, PR #1331 round-2 triage), not applied yet; the synthetic monitor remains the
-  // backstop for a fractional Alpaca-MCP position meanwhile.
+  // floored to whole shares on any Alpaca trailing lane — the synthetic monitor's quantity-aware
+  // coverage picks up any remainder. `null` propagates from uncoveredQuantity unchanged — "coverage
+  // unknown this tick", not "zero".
   const desiredStopQuantity = (pos: EquityPosition, sym: string, forKind: "fixed" | "trailing", excludeOrderId?: string): number | null => {
     const qty = uncoveredQuantity(pos, sym, excludeOrderId);
     if (qty === null) return null;
-    return forKind === "trailing" && nativeTrailing ? Math.floor(qty) : qty;
+    return forKind === "trailing" && isAlpacaFamily ? Math.floor(qty) : qty;
   };
 
   // Trailing trigger for the ratcheted (non-native) lane: trailingStopPct below the high-water
