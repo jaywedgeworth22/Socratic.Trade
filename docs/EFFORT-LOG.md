@@ -1809,11 +1809,43 @@ As of 2026-07-08 (assignment-rule update).
   tiingo (50/hour+1000/day)**; finnhub/yahoo/alpha-vantage stay on the PACER. Fixes the tiingo 403
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
+- **Learning-review orphan hardening — adversarial re-review of PR #1328 found + fixed 2 more
+  orphaning gaps (MONET, branch `monet/learning-review-orphan-hardening`) — ✅ DEPLOYED TO PROD
+  2026-07-10: PR #1363 squash-merged to `main` (`d9dc5d5d`), auto-deployed. Took ~2.5hrs of
+  GitHub mergeStateStatus DIRTY re-syncs under a heavy same-day push burst (a new commit landing
+  roughly every 1-2 min) despite the branch being conflict-free by every local check the whole
+  time — GitHub's cached mergeability flag can lag real state under load; the reliable tiebreaker
+  was a direct `gh pr merge <n> --squash` (no `--auto`) attempt, which forces a fresh server-side
+  merge check independent of the stale cached flag. The new `merge-shepherd` scheduled automation
+  also helped by autonomously re-syncing the branch with `main` several times.**
+  A Workflow-based adversarial re-review (4 lenses, each finding independently re-verified by a
+  second agent trying to REFUTE it via empirical execution against the real code, not just reading)
+  of merged PR #1328 found it had 2 real, empirically-reproduced gaps reproducing the SAME
+  "shown to LLM zero times, silently marked reviewed" failure mode via different mechanisms: (1) a
+  tied-timestamp cluster > MAX_REVIEW_ITEMS(80) freezes the drain forever (same id-ordered 80
+  re-selected every run); (2) a budget-deferred item can silently age out of the 7-day pack window
+  before its promised later sweep on a multi-day drain — directly falsifying the shipped rollout
+  note's own "no item ever silently marked reviewed" claim. One fix closes both:
+  `buildLearningReviewContextPack`'s learned-row filter now keeps a row if in-window OR un-reviewed
+  (mirrors the trigger's own window-free design, 8da047aa) + the truncation cut widens to consume a
+  full boundary tie-group. Also closes the previously-"accepted" isolated-old-row self-healing gap
+  as a free side effect (traced to 8da047aa's deliberate, narrower-scoped tradeoff — confirmed real
+  but pre-existing, not a #1328 regression, then closed anyway since the same fix does it for free).
+  Caught+fixed a bug in the fix itself (a stray re-slice silently re-dropping the just-widened items)
+  via its own new test before landing. 2 tests rewritten (asserted the old, now-wrong "self-healing"
+  behavior), 2 new added, all falsified against pre-fix source. node@24: tsc clean, learning-review
+  38/38, full suite 315 files/3388 tests, eslint 0-err, build clean. Closes finding #2 for real — no
+  known open gaps remain in the daily learning-review job's coverage guarantees. See
+  `docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum.
+
 - **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
   `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — DEPLOYED TO PROD 2026-07-10;
   merged to `main` as squash `79b542e3` (PR #1328, verify-green + auto-merge), then AUTO-DEPLOYED —
   `79b542e3` is an ancestor of main HEAD `e9e9138b` (#1352), the healthy webhook build (~12:45Z) running
-  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired).**
+  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired). **SUPERSEDED same day by
+  the "Learning-review orphan hardening" row above** — an adversarial re-review found this fix had 2
+  adjacent orphaning gaps of its own, currently live in prod until the hardening PR lands+deploys; see
+  that row.**
   `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
   advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
   the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
