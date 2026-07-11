@@ -11,11 +11,10 @@ Live mode degrades unavailable/stopped/invalid-time/never-synced states and only
 stale when newer DB/WAL activity proves there is work to upload. The pre-reconciliation Node 24 gate
 was green. The branch now reconciles `origin/main@432ca6fe`; runtime source/tests were disjoint from
 the incoming stop-plan, CI, and admin-server changes, while union-merged STATUS/PLAN/EFFORT history
-was preserved. The complete gate through `8fca436d` was green (lint 0 errors / 408 inherited
-warnings, TypeScript, 326 files / 3,625 tests, build); the final combined gate after the externally
-merged #1400 is running before PR refresh. The earlier missing `ts-morph` report was confirmed as
-stale worktree dependency state and is resolved. READY PR #1405 remains the delivery target without
-merge, auto-merge, deployment, or live replica mutation.
+was preserved. Final combined Node 24 verification is green: lint 0 errors / 405 inherited warnings,
+TypeScript clean, 326 files / 3,629 tests, and production build clean. The earlier missing `ts-morph`
+report was confirmed as stale worktree dependency state and is resolved. READY PR #1405 remains the
+delivery target without merge, auto-merge, deployment, or live replica mutation.
 ## 2026-07-11 — Admin server Hetzner response-shape crash fix (CODEX, branch `codex/admin-server-shape-fix`)
 Production `/admin/server` hit React error #31 because `/api/admin/server-metrics` passed
 Hetzner's nested `server_type` and `public_net.ipv4` objects into JSX text positions. The API

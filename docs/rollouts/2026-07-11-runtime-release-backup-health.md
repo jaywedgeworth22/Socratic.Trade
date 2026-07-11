@@ -137,8 +137,9 @@ npm run build
 
 While `scripts/land.sh` was starting, #1400 externally squash-merged as `432ca6fe`. The landing
 safety check stopped before push because shared status/effort files had advanced. That new main was
-then merged deliberately; its admin-server source is disjoint from runtime health, and the final
-combined gate is being rerun before PR refresh.
+then merged deliberately; its admin-server source is disjoint from runtime health. Final combined
+verification passed: lint 0 errors / 405 inherited warnings, TypeScript clean, 326 files / 3,629
+tests, and production build clean.
 
 ## Follow-ups
 
