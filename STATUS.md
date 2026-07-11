@@ -68,8 +68,9 @@ Public strategy tuning and the admin tuning dry run share one per-user single-fl
 public route retains its legacy 409 compatibility fields.
 Implementation is merged forward to current `origin/main@432ca6fe`; the incoming admin-server source
 is disjoint and STATUS/EFFORT histories were union-merged. Adversarial re-review found no code blocker.
-The prior Node 24 gate and hosted checks were green; final combined verification is running before PR
-refresh. Focused invoked-route/guard coverage remains 4 files/29 tests. AG's owner-directed portable rejection contract is green in READY shared PR #144;
+Final combined Node 24 verification is green: focused 4 files/29 tests and touched ESLint clean,
+full lint 0 errors/405 inherited warnings, TypeScript clean, 328 files/3,633 tests, and production
+build clean. Previous hosted checks were green; the refreshed head will rerun them. AG's owner-directed portable rejection contract is green in READY shared PR #144;
 adoption waits for a real merged/tagged release. The controls are anti-repeat budgets, not hard per-request
 spend ceilings. READY PR #1409 is not merged/auto-merged or deployed. See
 `docs/rollouts/2026-07-11-admin-operation-abuse-controls.md`.

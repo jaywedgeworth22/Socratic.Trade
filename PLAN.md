@@ -13,9 +13,8 @@ filling the missing pieces.
 > remain unchanged. Process-wide groups cover manual admin route calls, while
 > scheduler/background convergence at the underlying operation boundaries is explicitly planned rather
 > than claimed complete. These are anti-repeat budgets, not hard per-request spend ceilings. Node 24
-> gate through `origin/main@8fca436d` is green (lint 0 errors/408 warnings, tsc, 328 files/3,629
-> tests, build); current `main@432ca6fe` is merged source-disjointly and final combined verification
-> is running before PR refresh.
+> current-main (`432ca6fe`) gate is green (focused 4 files/29 tests, touched ESLint clean, full lint
+> 0 errors/405 inherited warnings, tsc, 328 files/3,633 tests, build).
 > AG's owner-directed
 > portable rejection contract is a separate shared-package follow-up and will be adopted only after a
 > real package release. See

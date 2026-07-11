@@ -99,7 +99,9 @@ Congress score routes retain their existing behavior.
 
 Current-main reconciliation: `origin/main@432ca6fe` merged without textual conflicts. The incoming
 admin-server source/tests are disjoint from guarded routes; only union-managed STATUS and effort
-histories overlapped. The final combined gate is running before PR #1409 is refreshed.
+histories overlapped. Final combined verification is green: focused 4 files/29 tests, touched
+ESLint clean, full lint 0 errors/405 inherited warnings, TypeScript clean, 328 files/3,633 tests,
+and production build clean.
 
 ## Follow-ups / boundaries
 
