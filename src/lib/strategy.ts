@@ -5392,9 +5392,12 @@ export type PlacementReconcileOutcome =
  * the broker what actually happened instead of immediately firing a perpetual "verify with broker"
  * alert. Mirrors flagStalePlacingIntents' matching so inline and sweep converge on identical
  * behavior:
- *   - getEquityOrders throws            → uncertain (broker unreachable; the ONLY genuinely-unknown case)
- *   - no order carries our refId        → not_placed (broker reachable, our key absent ⇒ order never
- *                                          reached the matching engine; safe to retry)
+ *   - getEquityOrders throws            → uncertain (broker unreachable)
+ *   - no order carries our refId, list AUTHORITATIVE for terminal orders (gateway
+ *     .ordersListIncludesTerminal === true, e.g. Alpaca status:"all") → not_placed (safe to retry)
+ *   - no order carries our refId, list NOT authoritative (e.g. Robinhood — terminal inclusion
+ *     unverified) → uncertain (absence can't prove "never placed" vs "placed then aged out"; keep
+ *     the protected 'placing' alert rather than risk dropping/duplicating a real order)
  *   - order present + terminal-declined → declined (reached the broker but was rejected/canceled)
  *   - order present + live/filled       → placed (book the fill, idempotently)
  *
@@ -5425,7 +5428,19 @@ export async function reconcilePlacementError(p: {
   }
   // Truthiness guard identical to the sweep's (:5249) so undefined === undefined can never false-match.
   const matched = p.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === p.refId) : undefined;
-  if (!matched) return { kind: "not_placed" };
+  if (!matched) {
+    // Absent-from-list is only a SAFE not_placed conclusion when the broker's order list is
+    // authoritative for recently-terminal orders (Alpaca pages status:"all"). If the adapter can't
+    // guarantee the list includes filled/canceled orders for the lookback window (Robinhood —
+    // unverified; ordersListIncludesTerminal unset), absence can't distinguish "never placed" from
+    // "placed, filled, and already aged out", so prefer uncertain (keep 'placing' + protected alert)
+    // over dropping a possibly-real order that the next run would then duplicate (MP-3).
+    if (p.gateway.ordersListIncludesTerminal === true) return { kind: "not_placed" };
+    return {
+      kind: "uncertain",
+      error: `${p.placeErrorMessage} (broker reachable but its order list may omit recently-terminal orders — cannot confirm the order was never placed)`
+    };
+  }
   if (isRejectedOrCanceledState(matched.state)) return { kind: "declined", orderId: matched.id, state: matched.state };
   // Live / filled / any non-terminal state: the order reached the broker. Book it (deduped).
   try {
@@ -5496,7 +5511,16 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
   for (const row of stale) {
     const p = row.proposal as TradeProposal | undefined;
     const matched = row.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === row.refId) : undefined;
-    if (matched) {
+    if (matched && isRejectedOrCanceledState(matched.state)) {
+      // The order reached the broker but was REJECTED/CANCELED — a terminal decline, NOT a placed
+      // order. Mirror reconcilePlacementError (:declined) and reconcilePendingFills (:isRejectedOr…):
+      // mark the proposal rejected_by_broker and DO NOT book a fill or clear the uncertain alert as
+      // "placed" (booking a phantom fill / silently claiming placement is the money-path hazard the
+      // matched branch below must never do for a declined order).
+      const declinedMsg = `Broker declined the order (state: ${matched.state}).`;
+      updateProposalStatus(row.id, "rejected_by_broker", matched.id, undefined, undefined, userId, undefined, declinedMsg);
+      audit("order_rejected_by_broker", { proposalId: row.id, refId: row.refId, orderId: matched.id, brokerState: matched.state, symbol: p?.symbol, side: p?.side, via: "sweep" }, userId, connectedAccountId);
+    } else if (matched) {
       updateProposalStatus(row.id, "placed", matched.id, undefined, undefined, userId);
       if (p) {
         // Layer-B dedupe (crash window): if a prior inline reconcile / sweep already booked this
@@ -5524,9 +5548,18 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
       // A recovered order is a CONFIRMED placement — clear any perpetual "verify with broker" alert
       // this proposal left behind (the primary fix for "even reconciled orders stay uncertain").
       resolveBrokerVerificationNotifications(userId, { proposalId: row.id, refId: row.refId ?? undefined, resolution: "recovered" });
-    } else {
+    } else if (gateway.ordersListIncludesTerminal === true) {
+      // Absent from an AUTHORITATIVE order list (includes recently-terminal orders, e.g. Alpaca
+      // status:"all") ⇒ the order truly never reached the matching engine. Abandon it.
       updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId, undefined, "Order never confirmed — broker record not found during reconciliation.");
       audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId, connectedAccountId);
+    } else {
+      // Absent from a NON-authoritative list (terminal-inclusion unverified, e.g. Robinhood): absence
+      // can't prove "never placed" vs "placed, filled, and aged out". Abandoning would risk dropping a
+      // real fill that the next run then duplicates, so KEEP the row 'placing' + its protected
+      // uncertain alert (a human must verify). Matches reconcilePlacementError's conservative branch —
+      // without this the sweep would silently undo that inline conservatism.
+      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent absent from a non-authoritative broker order list — cannot confirm it was never placed; kept 'placing' for verification rather than abandoned." }, userId, connectedAccountId);
     }
   }
 }

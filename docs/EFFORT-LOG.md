@@ -1597,6 +1597,17 @@ As of 2026-07-08 (assignment-rule update).
   test/placement-reconcile.test.ts (5, e2e through executeProposal), placement-reconcile-sweep.test.ts
   (4), +5 in notification-lifecycle.test.ts. Money-path: no change to Alpaca/Robinhood placement or
   the idempotency keys. See docs/rollouts/2026-07-10-order-status-reconcile.md.
+  FIXUPS (2026-07-10, adversarial review, same branch, PR #1382): (1) RH getEquityOrders now THROWS
+  on tool-level isError / malformed / missing-collection instead of coalescing to [] (masked-empty
+  would mark a placed order not_placed -> drop intent -> duplicate); (2) sweep matched-DECLINED branch
+  gained the isRejectedOrCanceledState guard (no phantom fill, no false "placed"); (3) not_placed now
+  only concluded when the broker order list is authoritative for terminal orders (new
+  BrokerGateway.ordersListIncludesTerminal: Alpaca=true status:"all", Robinhood unset/conservative ->
+  absent=uncertain) in BOTH reconcilePlacementError and the sweep; (4) durable double-fill backstop:
+  migration v16 partial UNIQUE index on fill_events(proposal_id, broker_order_id) + insertFillEvent
+  idempotent no-op on conflict. +4 new tests (robinhood-orders-error-throws, fill-events-dedupe-index,
+  +conservative-inline case, +3 sweep cases). Gates green under node26 (tsc clean, 3424 tests, lint
+  0-err, build ok). NOT merged.
 - **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
   claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
   (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported

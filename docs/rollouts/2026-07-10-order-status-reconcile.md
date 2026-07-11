@@ -132,3 +132,136 @@ the default `node v26.5.0`; `npx tsc --noEmit` also run under node@24):
 - HEADS-UP: `claude/tradier-broker` also touches `strategy.ts` (broker-union
   switch cases — a different region than the placement catches here). If a
   merge-forward conflicts, keep both sets of changes.
+
+## Fixups from adversarial review (2026-07-10, same branch)
+
+An adversarial money-path review of the reconcile fix above surfaced four
+findings. All four are fixed on this branch; each has a dedicated regression
+test. No change to the Alpaca/Robinhood placement calls or the idempotency keys.
+
+### (1) [HIGH] Robinhood `getEquityOrders` masked broker errors as an empty list
+
+`getEquityOrders` coalesced anything without an `orders`/`results` array to `[]`,
+and `callRobinhoodMcpMethod` only threw on a JSON-RPC `error` / HTTP non-2xx —
+never on a **tool-level `isError: true`** result. So a broker-side failure
+(rate limit, auth lapse, upstream 5xx surfaced by the MCP proxy) returned `[]`,
+which `reconcilePlacementError` reads as "the broker has no such order ⇒
+`not_placed` (safe to retry)". A genuinely placed/filled order could be marked
+`not_placed`, drop its durable `placing` intent, never book its fill, and be
+DUPLICATED next run.
+
+Root fix (`src/lib/robinhood.ts`):
+- `unpackMcpToolResult` now THROWS on a tool-level `isError: true` (surfacing the
+  content text) — every `tools/call` funnels through it, so `get_equity_orders`
+  (and every other RH tool) can no longer silently unwrap an error payload.
+- New `extractRobinhoodOrderCollection(raw)` replaces the inline coalesce: an
+  array or an object carrying an `orders`/`results` array is an AUTHORITATIVE list
+  (empty `[]` = a real "no orders" account); anything else THROWS
+  (`unrecognized shape … treating as an error, not an empty account`). After this,
+  `[]` from `getEquityOrders` means the broker authoritatively returned no orders.
+- Every existing caller already tolerated `getEquityOrders` rejecting (it always
+  could, on HTTP/JSON-RPC errors), so this widens *which* responses throw without
+  introducing a new crash surface (`reconcilePlacementError` / `flagStalePlacingIntents`
+  / `reconcilePendingFills` all catch it → `uncertain`/skip; `synthetic-stops`
+  falls back to protection-over-dedup).
+
+Test: `test/robinhood-orders-error-throws.test.ts` — isError → throws; malformed
+success → throws; `{ results: [] }` → `[]`; populated → mapped orders.
+
+### (2) [HIGH] Sweep booked a fill for a matched-but-DECLINED order
+
+`flagStalePlacingIntents`' matched branch booked a fill, marked the proposal
+`placed`, and cleared the uncertain alert for ANY matched broker order — it
+lacked the `isRejectedOrCanceledState(matched.state)` guard that
+`reconcilePlacementError` (`declined`) and `reconcilePendingFills` both have. A
+stale `placing` intent whose broker order was rejected/canceled would book a
+phantom fill and falsely report "placed".
+
+Fix (`src/lib/strategy.ts`): a matched order in a terminal-decline state now marks
+the proposal `rejected_by_broker`, books NO fill, and does NOT clear the uncertain
+alert as "placed" (a declined order is a standing fact). Mirrors the inline and
+pending-fill decline handling exactly.
+
+Test: `test/placement-reconcile-sweep.test.ts` — matched-declined → status
+`rejected_by_broker`, zero fills, uncertain alert left unacked.
+
+### (3) [MEDIUM] `not_placed` could be concluded from a non-authoritative list
+
+A placement that threw on a lost ack but was actually ACCEPTED (then filled and
+aged out of a live-only order list) could be misclassified `not_placed`
+(sweepable/self-clearing) rather than the protected `uncertain` alert. `not_placed`
+is only safe when the broker's order list authoritatively includes recently-terminal
+orders.
+
+Fix: new optional `BrokerGateway.ordersListIncludesTerminal` capability.
+- **Alpaca** sets it `true` — `getEquityOrders` pages `status:"all"`, so the list
+  includes filled/canceled/rejected/expired orders (verified in `alpaca.ts`).
+- **Robinhood** leaves it unset (⇒ conservative/false): its `get_equity_orders`
+  terminal-inclusion window can't be verified without a live token, so we treat
+  absent-from-list as `uncertain`, not `not_placed`.
+- `reconcilePlacementError` only returns `not_placed` when
+  `ordersListIncludesTerminal === true`; otherwise `uncertain` (keep `placing` +
+  protected alert). The stale sweep's absent branch is gated the SAME way (absent
+  + non-authoritative ⇒ keep `placing`, don't abandon) so the sweep can't silently
+  undo the inline conservatism 2 minutes later.
+
+Conservative classification made without a live token: **Robinhood
+`get_equity_orders` terminal-order inclusion is unverified**, so Robinhood is
+treated as non-authoritative — an absent order stays `uncertain`/`placing`
+(human verifies) rather than `not_placed`. Flip `ordersListIncludesTerminal` to
+`true` on `HttpMcpRobinhoodGateway` only once verified against a live account.
+
+Tests: `test/placement-reconcile.test.ts` (inline: non-authoritative + absent →
+stays `placing` + uncertain, NOT `not_placed`) and
+`test/placement-reconcile-sweep.test.ts` (authoritative absent → `placing_failed`;
+non-authoritative absent → stays `placing`).
+
+### (4) [LOW] Durable double-fill backstop (DB UNIQUE index)
+
+Added migration **v16** (`db.ts` `MIGRATIONS`): a **partial** UNIQUE index
+`idx_fill_events_proposal_broker_order` on `fill_events (proposal_id,
+broker_order_id) WHERE proposal_id IS NOT NULL AND broker_order_id IS NOT NULL`.
+The migration first collapses any pre-existing duplicate `(proposal_id,
+broker_order_id)` rows (keep earliest by rowid, delete the rest, logged loudly) so
+the index can't fail to build on legacy double-books — a duplicate for the same
+physical order is a double-count bug, so collapsing it is the intended consistency
+fix. Partial-on-non-null so the many legitimate NULL-column rows (pre-placement /
+paper / non-broker fills) are never constrained.
+
+`insertFillEvent` (`db-fills.ts`) now catches the unique-constraint violation and
+returns the already-booked fill (idempotent no-op) instead of throwing or
+double-booking — a last-resort backstop under the existing single-process dedupe
+guards, covering the concurrent-process case they can't.
+
+Test: `test/fill-events-dedupe-index.test.ts` — second insert of same
+`(proposalId, brokerOrderId)` → one row, returns the first fill; different
+brokerOrderIds coexist; NULL broker_order_id rows are unconstrained.
+
+## Fixups verification
+
+- `npx tsc --noEmit` — clean.
+- `npm test` (vitest) — 3424 passed / 319 files (was 3408; +16 across the four new
+  test files + the added sweep/inline cases).
+- `npm run lint` — 0 errors (pre-existing grandfathered warnings only).
+- `npm run build` — Next.js production build OK.
+- NODE NOTE: the shared `node_modules` `better-sqlite3` is currently built for
+  Node 26 (the homebrew default). Gates were run under Node 26; forcing
+  `node@24` on PATH hits the reverse ABI mismatch (`NODE_MODULE_VERSION 147 vs
+  137`). Run gates under the node the shared native module matches; do NOT rebuild
+  the shared module for node24 (it would break concurrent node26 sessions).
+
+## Fixups files touched
+
+- `src/lib/robinhood.ts` — isError throw in `unpackMcpToolResult`;
+  `extractRobinhoodOrderCollection`; `ordersListIncludesTerminal` unset (RH,
+  documented) / `true` (TestBroker).
+- `src/lib/alpaca.ts` — `ordersListIncludesTerminal = true`.
+- `src/lib/types.ts` — `BrokerGateway.ordersListIncludesTerminal?`.
+- `src/lib/strategy.ts` — `reconcilePlacementError` not_placed gate;
+  `flagStalePlacingIntents` decline guard + non-authoritative absent gate.
+- `src/lib/db.ts` — migration v16 (dedupe + partial unique index).
+- `src/lib/db-fills.ts` — `insertFillEvent` idempotent no-op on unique conflict.
+- `test/robinhood-orders-error-throws.test.ts` (new),
+  `test/fill-events-dedupe-index.test.ts` (new),
+  `test/placement-reconcile.test.ts` (+1 case),
+  `test/placement-reconcile-sweep.test.ts` (+3 cases).

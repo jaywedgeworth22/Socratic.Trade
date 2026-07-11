@@ -22,10 +22,19 @@ new `not_placed` (safe to retry, sweepable); only a truly unreachable broker kee
 recover, or a normal fill reaching `filled`); `isBrokerVerificationRunFailed` is now
 reconcile-marker-driven so `not_placed` self-clears while `uncertain`/`declined` stay protected.
 Idempotency: status gate + a `(proposalId, brokerOrderId)` dedupe guard on BOTH the inline booking
-and the sweep. Money-path: NO change to Alpaca/Robinhood placement or the idempotency keys. Local
-gates green: tsc 0, full suite 3408/3408, lint 0-err, build clean (ran under default node26 — this
-worktree's node_modules is ABI 147). PR: READY, not merged. See
-`docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — open PR, await review.
+and the sweep. Money-path: NO change to Alpaca/Robinhood placement or the idempotency keys.
+FIXUPS (adversarial review, PR #1382): (1) RH `getEquityOrders` now THROWS on tool-level
+`isError`/malformed/missing-collection instead of masking as `[]`; (2) sweep matched-DECLINED branch
+gained the `isRejectedOrCanceledState` guard (no phantom fill / false "placed"); (3) `not_placed`
+only concluded when the broker order list is authoritative for terminal orders (new
+`BrokerGateway.ordersListIncludesTerminal` — Alpaca `true`, Robinhood unset/conservative ⇒
+absent=`uncertain`) in `reconcilePlacementError` AND the sweep; (4) durable double-fill backstop —
+migration v16 partial UNIQUE index `fill_events(proposal_id, broker_order_id)` + `insertFillEvent`
+idempotent no-op on conflict. +4 new test cases groups. Local gates green: tsc 0, full suite
+3424/3424, lint 0-err, build clean (ran under default node26 — the shared `node_modules`
+`better-sqlite3` is ABI 147/node26; `node@24` hits the reverse ABI mismatch). PR: READY, NOT merged.
+See `docs/rollouts/2026-07-10-order-status-reconcile.md`. Blocker/next: none — push updates PR #1382,
+await review.
 
 ## 2026-07-10 — Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch `claude/adversary-review-duplication-026e6b`)
 Owner-reported with a screenshot: a failed Red Team review rendered TWICE on the pending approval

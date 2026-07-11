@@ -149,6 +149,67 @@ describe("flagStalePlacingIntents idempotency", () => {
   });
 });
 
+describe("flagStalePlacingIntents terminal-decline + non-authoritative guards", () => {
+  it("(2) matched order in a DECLINED state → rejected_by_broker, NO fill, alert NOT cleared as placed", async () => {
+    const userId = `sweep-declined-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    await seedPlacingProposal(userId, proposalId, refId);
+
+    const { insertNotificationEvent, listNotificationEvents, listFillEventsByProposalId, getProposal } = await import("../src/lib/db");
+    const { flagStalePlacingIntents } = await import("../src/lib/strategy");
+    const alert = insertNotificationEvent({
+      userId, type: "run_failed", status: "sent",
+      title: "AAPL order placement uncertain — verify with broker",
+      payload: { proposalId, refId, reconcile: "uncertain" }
+    });
+
+    // The broker order carrying our refId is TERMINALLY DECLINED (rejected). The sweep must NOT book
+    // a fill and must NOT mark it placed (the money-path bug: phantom fill + false "placed").
+    const gateway = createMockGateway({ getEquityOrders: async () => [orderWith(refId, { state: "rejected" })] });
+    await flagStalePlacingIntents(gateway, ACCOUNT, userId);
+
+    expect(getProposal(proposalId, userId)?.status).toBe("rejected_by_broker");
+    expect(listFillEventsByProposalId(proposalId, userId).length).toBe(0);
+    // The uncertain alert is never silently cleared as "placed" — a declined order is a standing fact.
+    const notifs = listNotificationEvents(userId);
+    expect(notifs.find((n) => n.id === alert.id)?.acknowledgedAt).toBeUndefined();
+  });
+
+  it("(3) order ABSENT from an AUTHORITATIVE list → abandoned (placing_failed)", async () => {
+    const userId = `sweep-absent-auth-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    await seedPlacingProposal(userId, proposalId, refId);
+
+    const { getProposal } = await import("../src/lib/db");
+    const { flagStalePlacingIntents } = await import("../src/lib/strategy");
+    const gateway = createMockGateway({
+      ordersListIncludesTerminal: true,
+      getEquityOrders: async () => [orderWith("unrelated-key")]
+    });
+    await flagStalePlacingIntents(gateway, ACCOUNT, userId);
+
+    expect(getProposal(proposalId, userId)?.status).toBe("placing_failed");
+  });
+
+  it("(3) order ABSENT from a NON-authoritative list (Robinhood) → stays 'placing', NOT abandoned", async () => {
+    const userId = `sweep-absent-conservative-${randomUUID()}`;
+    const proposalId = randomUUID();
+    const refId = randomUUID();
+    await seedPlacingProposal(userId, proposalId, refId);
+
+    const { getProposal } = await import("../src/lib/db");
+    const { flagStalePlacingIntents } = await import("../src/lib/strategy");
+    // No ordersListIncludesTerminal ⇒ conservative: absence can't prove "never placed", so the sweep
+    // must keep the durable 'placing' intent (+ protected alert) rather than abandon a maybe-real order.
+    const gateway = createMockGateway({ getEquityOrders: async () => [orderWith("unrelated-key")] });
+    await flagStalePlacingIntents(gateway, ACCOUNT, userId);
+
+    expect(getProposal(proposalId, userId)?.status).toBe("placing");
+  });
+});
+
 describe("flagStalePlacingIntents resolves the uncertain alert on recovery", () => {
   it("acks the recovered proposal's uncertain alert only — a different proposal's stays unacked", async () => {
     const userId = `sweep-resolve-${randomUUID()}`;

@@ -68,6 +68,11 @@ let capturedRefId = "";
 let placementAttempted = false;
 let postPlacementOrders: EquityOrder[] = [];
 let getEquityOrdersThrowsAfterPlacement = false;
+// Whether the mocked broker's order list is authoritative for recently-terminal orders. Default
+// true (Alpaca-like) so "order ABSENT → not_placed" exercises the safe-to-retry path; the
+// conservative case (Robinhood-like, terminal inclusion unverified) sets it false so an absent order
+// stays 'placing' + uncertain instead of being wrongly declared not_placed.
+let authoritativeOrderList = true;
 
 const placeImpl = async (input: { refId: string }) => {
   capturedRefId = input.refId;
@@ -88,6 +93,7 @@ function echoReview(input: { dollarAmount?: number; quantity?: number }): Review
 
 function makeGateway() {
   return {
+    ordersListIncludesTerminal: authoritativeOrderList,
     getAccounts: async () => [{ accountNumber: ACCOUNT, type: "brokerage" }],
     getPortfolio: async () => ({
       accountNumber: ACCOUNT,
@@ -167,6 +173,7 @@ beforeEach(() => {
   placementAttempted = false;
   postPlacementOrders = [];
   getEquityOrdersThrowsAfterPlacement = false;
+  authoritativeOrderList = true;
   placeEquityOrder.mockReset();
   placeEquityOrder.mockImplementation(placeImpl);
   getEquityOrders.mockReset();
@@ -281,6 +288,36 @@ describe("inline placement-error reconciliation via executeProposal", () => {
     const np = notifs.find((n) => n.type === "run_failed" && (n.payload as Record<string, unknown>).reconcile === "not_placed");
     expect(np).toBeTruthy();
     expect(np?.title).toContain("was NOT placed");
+  });
+
+  it("throw + order ABSENT + NON-authoritative list (Robinhood) → uncertain, stays 'placing', NOT not_placed", async () => {
+    // (3) The conservative-broker guard: when the gateway can't guarantee its order list includes
+    // recently-terminal orders (ordersListIncludesTerminal falsey), an absent order must NOT be
+    // declared not_placed — a placed-then-filled order that aged out would be dropped and duplicated.
+    // It must stay 'placing' + the protected uncertain alert instead.
+    authoritativeOrderList = false;
+    const userId = `reco-absent-conservative-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    getEquityOrders.mockImplementation(async () => {
+      if (!placementAttempted) return [];
+      // Order genuinely absent from a list that may omit terminal orders.
+      return [brokerOrder({ clientOrderId: "some-other-key", state: "accepted" })];
+    });
+
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, listFillEventsByProposalId, listNotificationEvents } = await import("../src/lib/db");
+
+    const result = await executeProposal(proposalId, userId);
+    expect(result.status).toBe("error");
+    // Must stay 'placing' (the ONLY durable-intent state) — never not_placed for a non-authoritative broker.
+    expect(getProposal(proposalId, userId)?.status).toBe("placing");
+    expect(listFillEventsByProposalId(proposalId, userId).length).toBe(0);
+
+    const notifs = listNotificationEvents(userId);
+    expect(notifs.some((n) => n.type === "run_failed" && (n.payload as Record<string, unknown>).reconcile === "not_placed")).toBe(false);
+    const uncertain = notifs.find((n) => n.type === "run_failed" && (n.payload as Record<string, unknown>).reconcile === "uncertain");
+    expect(uncertain).toBeTruthy();
+    expect(uncertain?.title).toContain("verify with broker");
   });
 
   it("throw + broker UNREACHABLE → stays 'placing' + protected uncertain alert, NO fill", async () => {

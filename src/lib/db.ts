@@ -398,6 +398,46 @@ const MIGRATIONS: Migration[] = [
         );
       }
     }
+  },
+  {
+    // Durable double-fill backstop: a partial UNIQUE index on fill_events (proposal_id,
+    // broker_order_id) so the inline/sweep check-then-insert can't double-book the same physical
+    // broker order even if the single-process invariant is ever violated (concurrent scheduler +
+    // approval, or a crash-retry across processes). Partial (WHERE both non-null) so pre-placement
+    // rows and non-broker fills — which legitimately share NULLs — are never constrained. Existing
+    // duplicate (proposal_id, broker_order_id) rows are collapsed FIRST (keep the earliest by rowid,
+    // delete the rest, logged loudly) so the index can't fail to build on legacy double-books — a
+    // duplicate for the same physical order IS a double-count bug, so collapsing it is the intended
+    // consistency fix, not data loss. insertFillEvent treats the constraint violation as an
+    // idempotent no-op (returns the already-booked fill).
+    version: 16,
+    name: "fill_events_dedupe_unique_index",
+    up: (database) => {
+      const dupGroups = database
+        .prepare(
+          `SELECT proposal_id, broker_order_id, COUNT(*) AS c, MIN(rowid) AS keep_rowid
+           FROM fill_events
+           WHERE proposal_id IS NOT NULL AND broker_order_id IS NOT NULL
+           GROUP BY proposal_id, broker_order_id
+           HAVING c > 1`
+        )
+        .all() as Array<{ proposal_id: string; broker_order_id: string; c: number; keep_rowid: number }>;
+      const deleteExtras = database.prepare(
+        `DELETE FROM fill_events
+         WHERE proposal_id = ? AND broker_order_id = ? AND rowid != ?`
+      );
+      for (const g of dupGroups) {
+        const info = deleteExtras.run(g.proposal_id, g.broker_order_id, g.keep_rowid);
+        console.warn(
+          `[db] migration 16: collapsed ${info.changes} duplicate fill_events row(s) for (proposal_id=${g.proposal_id}, broker_order_id=${g.broker_order_id}) — kept rowid ${g.keep_rowid}. A duplicate for the same physical broker order is a double-count bug; the new UNIQUE index prevents recurrence.`
+        );
+      }
+      database.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_fill_events_proposal_broker_order
+         ON fill_events (proposal_id, broker_order_id)
+         WHERE proposal_id IS NOT NULL AND broker_order_id IS NOT NULL`
+      );
+    }
   }
 ];
 
