@@ -688,6 +688,20 @@ export interface EquityOrder {
    * recover an order whose placement response was lost (broker-truth-first reconciliation).
    */
   clientOrderId?: string;
+  /**
+   * Broker-reported order-class family (Alpaca `order_class`: "simple" | "bracket" | "oco" | "oto"),
+   * carried through unchanged on both the parent AND the split child legs once a bracket's entry
+   * fills. The ONLY authoritative signal that two resting exit orders are true bracket/OCO siblings
+   * (as opposed to two independently-placed orders that merely happen to match in quantity, or in
+   * quantity and rough timing) — `liveExitOrderCoverage` requires this before pairing two legs into
+   * one unit of coverage (Codex review, PR #1331: a quantity-only, or quantity+time-window, match
+   * can still conflate an owner's separately-placed same-size stop and limit, which can BOTH fill
+   * and over-sell the position). Absent for brokers without a bracket concept (Robinhood) or for a
+   * manually-placed simple order — absence never pairs, which only risks the bounded,
+   * previously-accepted "half-bracket looks fully covered" gap, never a false-positive pair that
+   * could stack two real exits on the same shares.
+   */
+  orderClass?: string;
 }
 
 export interface BrokerQuote {
@@ -952,6 +966,26 @@ export interface TradingPolicy {
    * the synthetic monitor remains the always-on fallback either way.
    */
   robinhoodBrokerStops?: boolean;
+  /**
+   * Broker-held TRAILING stops (default ON; inert until riskRules.trailingStopPct > 0). When a
+   * trailing % is configured, the protective-stop reconciler maintains a broker-held trailing stop
+   * for each open long instead of (not in addition to — shares can only back one resting sell) the
+   * fixed broker stop:
+   *  - Alpaca REST (paper or live): a TRUE native `trailing_stop` order — the broker trails the
+   *    high-water mark itself, so the trail keeps moving even while this app is offline. An
+   *    alpaca-mcp account takes the Robinhood-style ratcheted lane through its MCP transport
+   *    instead (an endpoint-only account has no REST keys for the native order type).
+   *  - Robinhood (live only, and additionally gated on `robinhoodBrokerStops` — the existing
+   *    "resting stops at Robinhood are live-verified" opt-in): the Robinhood MCP exposes no
+   *    verified native trailing parameter, so the reconciler places a resting GTC stop-market at
+   *    trailingStopPct below the high-water mark and RATCHETS it upward (cancel-replace) on each
+   *    scheduler tick as the price rises. Between ticks the broker holds a real fixed stop, so
+   *    protection survives app downtime; the trail catches up on the app's cadence.
+   * Positions already covered by another live exit-side order (e.g. an Alpaca bracket stop leg)
+   * are skipped — the synthetic scheduler-tick monitor remains the always-on fallback for anything
+   * a broker-held stop doesn't cover. Set false to keep trailing purely app-managed.
+   */
+  brokerTrailingStops?: boolean;
   /**
    * Scale per-position stop-loss distance by the name's beta (clamped 0.5×–2.0×) so high-beta names
    * get wider stops (fewer noise stop-outs) and low-beta names tighter stops (cut losers sooner),
@@ -1737,6 +1771,14 @@ export interface EquityOrderInput {
    * When absent the stop-loss leg is a plain stop-market.
    */
   bracketStopLimit?: number;
+  /**
+   * Native broker-held trailing stop distance (% below the high-water mark). Alpaca translates this
+   * to a `trailing_stop` order with `trail_percent` (the broker trails the extreme itself; any
+   * `stopPrice` is ignored for that order type). Brokers WITHOUT a verified native trailing
+   * parameter (Robinhood MCP) must fail closed — the protective-stop reconciler emulates trailing
+   * there by ratcheting a plain stop_market instead, and never sets this field for them.
+   */
+  trailPercent?: number;
 }
 
 export interface BrokerGateway {

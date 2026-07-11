@@ -1579,6 +1579,54 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Broker-held trailing stops (Alpaca native + RH ratcheted) + Guardrails stop-consolidation UI
+  (CLAUDE, cloud session, branch `claude/stop-loss-preset-options-f1jygn`) — IN PROGRESS
+  2026-07-10.** Owner-directed: (1) trailing stops now become BROKER-HELD when
+  `riskRules.trailingStopPct` > 0 — native Alpaca `trailing_stop`/`trail_percent` orders (paper +
+  live; new `EquityOrderInput.trailPercent`, translated in alpaca.ts), and on live Robinhood a
+  resting GTC stop-market the protective-stop reconciler RATCHETS upward each tick (RH MCP has no
+  verified native trailing param; gated on the existing `robinhoodBrokerStops` opt-in). New policy
+  flag `brokerTrailingStops` (default ON, inert until a trail % is set);
+  `broker_protective_stops` grew `kind`/`trail_percent` (migration 16); placement is now
+  coverage-aware (skips positions already backed by a live exit order, e.g. an Alpaca bracket
+  leg). (2) Guardrails UI: the lone Essentials "Stop-loss" row + the buried "Protective stops
+  plumbing" advanced group merged into ONE "Protective stops" card with a dynamic stop-flow
+  diagram (ATR → beta → flat distance fallback, trailing overlay, broker-held → app-monitor
+  enforcement). Rollout: `docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`.
+  **PR #1331 open, 9 Codex review rounds fixed so far** (see the rollout doc's "Review fixes
+  round 1-9" sections); round 5: OCO-pairing now requires a created-together time window (no
+  longer conflates two independent equal-qty manual orders as one bracket), a stale `resting`
+  broker-stop row is now checked against the tracked order's actual terminal state, an oversized
+  existing stop is cancelled even when other-order coverage is unknown this tick, and a pure
+  quantity-shrink mismatch on a trailing stop cancels unconditionally instead of being swallowed
+  by the arm-refusal guard; round 6 (Codex correctly rejected round 5's time-window heuristic
+  twice — timing proximity alone isn't proof of a real bracket): OCO-pairing now requires a NEW
+  `EquityOrder.orderClass` field (mapped from Alpaca's own `order_class`) on BOTH legs — the
+  broker's own verified sibling identity — and a partial native-trail placement no longer
+  blanket-skips the synthetic fire path (its known quantity folds into coverage so the uncovered
+  fractional remainder still fires this tick), plus an honest short-position caveat on the
+  stop-flow diagram's broker-held node; round 7: a `partially_filled` (actively executing)
+  broker-held stop is no longer cancelled by the quantity-drift mismatch check, and
+  `confirmedPriorExitDead`'s re-arm confirmation now checks the SPECIFIC tracked order (by
+  client_order_id) instead of a symbol-wide sweep, so an unrelated still-live broker stop
+  (covering different shares) can no longer permanently block re-arming a partial remainder's
+  own dead exit; plus an Alpaca REST-vs-MCP trailing-copy docs fix; round 8: round 7's
+  `client_order_id`-only re-arm branch was itself fragile (the field is optional — a still-live
+  order missing it would falsely read "dead"), replaced with `brokerHeldOrderIdBySymbol` keyed
+  off the account's own `broker_protective_stops` row instead of any broker-supplied id; fixed an
+  ordering bug found while verifying it (the re-arm pass runs BEFORE the tick's own reconcile
+  call, so the map needed seeding from DB state at declaration, not only refreshed after
+  reconcile); and a broker-held stop recognized as FILLED during stale-row cleanup now books a
+  `fill_events` row (`bookBrokerHeldStopFill`) before its row is deleted, instead of the exit
+  silently vanishing from P&L/learning/activity; round 9: the DISABLED-teardown path
+  (`kind === null`) now recovers a FILLED stop the same way section 1 does (previously retried its
+  cancel forever with the fill never booked); a new `hadExecutedFill` predicate books a fill at all
+  three recovery sites on the literal "filled" state OR a positive `filledQuantity` regardless of
+  state, so a PARTIAL fill that terminates as canceled/expired is no longer lost; and a native
+  trail's mismatch-driven replacement now backfills a missing tracked high-water mark from the
+  existing stop's own recorded `stopPrice`/`trailPercent` (inverting the ratchet math) so it can
+  never reseed looser than the broker's own already-moved-up peak. Gates green
+  (lint/tsc/3438 tests/build) in the isolated worktree.
 - **Effort-log union-merge safety net (fleet-infra) (CLAUDE, branch
   `claude/union-merge-live-rows`) — IN PROGRESS 2026-07-10, gates green, PR #1354 open with
   squash-auto-merge armed (round-3 pickup landing); owner-directed fix for the reported
@@ -2300,6 +2348,44 @@ As of 2026-07-08 (assignment-rule update).
   stuck dust-fill terminal flip; storage-warning event type (+ direct-notify skip set);
   KNOWN_GLOBAL footer set; evidence_age_anomaly dedup; policy_change attribution. All S,
   batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
+
+- **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
+  PLANNED 2026-07-10 (owner ask, stop-loss session; requirements sharpened by owner same day).**
+  Today the LLM already proposes a per-trade stop PRICE (`bracketStopLoss`, honored when valid);
+  what it cannot choose is the stop TYPE (fixed / ATR / trailing / none) or have that choice
+  survive for the position's lifetime — held positions are governed by the account-level policy
+  rules. Design sketch: (1) add `TradeProposal.stopPlan`
+  (`style: "default"|"fixed"|"atr"|"trailing"|"none"` + optional distance overrides + rationale)
+  to the LLM structured-output schema alongside `bracketStopLoss`; (2) persist it per position at
+  fill time in a new `position_stop_plans` table (precedent: the take-profit band ratchet
+  persisted by `recordFillFromProposal`), cleared when the position closes; (3) thread a
+  `stopPlanBySymbol` map into `generateProactiveRiskProposals`, `runSyntheticStopMonitor`,
+  `reconcileBrokerProtectiveStops`, and `enrichOpeningProposal` so all four enforcement layers
+  honor the SAME per-position plan (a "none" plan must annotate honestly everywhere protection
+  status is displayed); (4) `stopPlan: "none"` is an owner-preference gate — overridable per
+  product philosophy, but surfaced loudly on the approval card.
+  **Owner requirement A — no hidden prioritization (2026-07-10):** Settings must NEVER render the
+  stop options as disjointed independent toggles while the engine secretly orders/compose them.
+  The Guardrails stop-flow diagram (PR #1331) is the binding pattern: the precedence/fallback
+  wiring is drawn on screen with arrows, active/inactive states, and the account's current values.
+  This feature must EXTEND that diagram — per-position plans appear as an explicit top lane
+  ("LLM's per-position choice → account defaults when it declines") and every position's ACTIVE
+  plan is visible where the position is shown (Positions table protection column + approval card).
+  Any new stop mechanism added later must join the diagram, not become a stray toggle.
+  **Owner requirement B — universal availability (2026-07-10):** every stop style must be
+  genuinely available for ALL stocks — both currently-HELD positions and every CANDIDATE at
+  consideration/purchase time — so the LLM (or owner) can pick any style for any name. Concretely:
+  (a) ATR: extend the `atrStopPctBySymbol` bars precompute beyond open positions to the full
+  candidate set the LLM sees (bounded by the scan cap), so an ATR plan is priceable pre-purchase;
+  when a name truly has no history, the UI/proposal must say "ATR unavailable for this symbol —
+  falls back to X" rather than silently substituting. (b) Trailing: available on every
+  broker/environment (native Alpaca REST, ratcheted RH-live + alpaca-mcp, synthetic monitor
+  everywhere) — shipped in PR #1331. (c) Fixed and none: intrinsically universal. (d) Broker-held
+  vs app-managed is a PLACEMENT detail, never a different option: the choice set the user/LLM
+  sees is identical for every symbol, and the engine guarantees each style works on any
+  broker/symbol combination, with the actual mechanism (broker order vs app monitor) displayed
+  transparently per position. Money-path change across ~6 modules + migration — needs its own
+  verify cycle; deliberately NOT ridden along with the 2026-07-10 broker-trailing-stops PR.
 
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09.** Reservation/diagnosis row; the effort moved to 🚧 In Progress (same title, this file) when implementation began and is now in PR via land.sh, auto-merge armed — see that row for the full record. (Corrected in place per protocol, not deleted; annotation by CLAUDE while landing MONET's work under the owner-directed usage-cap pickup.)
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).

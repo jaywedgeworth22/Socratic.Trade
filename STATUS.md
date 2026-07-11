@@ -21,6 +21,82 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
+Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
+Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no
+bracket combos; MCP lane bypassed) and, on live Robinhood, a resting GTC stop-market the
+protective-stop reconciler RATCHETS upward each tick (RH MCP has no verified native trailing
+param — `toMcpOrder` fails closed on trailPercent; lane gated on the `robinhoodBrokerStops`
+opt-in, still default OFF pending live verification). New `brokerTrailingStops` flag (default ON,
+inert until a trail % is set); `broker_protective_stops` grew `kind`/`trail_percent`
+(migration 16); placement now coverage-aware vs live exit orders (bracket legs). UI: Essentials'
+lone "Stop-loss" row + the advanced "Protective stops plumbing" group merged into ONE
+"Protective stops" card under a dynamic stop-flow diagram (ATR → beta → flat fallback, trailing
+overlay, broker-held → app-monitor enforcement; pure `stopFlowModel` unit-tested). Per-position
+LLM-chosen stop plans (fixed/ATR/trailing/none at proposal time) deliberately deferred —
+design sketch in `docs/EFFORT-LOG.md` Planned. Rollout:
+`docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`. PR #1331 open; Codex has run
+5 review rounds so far, all fixed on the branch: coverage-unknown handling (`ordersListed`),
+partial-broker-stop preservation, OCO bracket-leg double-counting in `liveExitOrderCoverage`,
+keep-existing-stop-when-replacement-refused, never seeding a broker trail looser than the
+synthetic monitor's own tracked high-water mark (`extremePriceBySymbol`); round 5: OCO pairing now
+also requires a `BRACKET_SIBLING_WINDOW_MS` created-together check (no more conflating two
+independent equal-qty manual orders as one bracket), stale `resting` rows are checked against the
+tracked order's actual broker state (mirrors section 1's fill/terminal recovery), an oversized
+existing stop is now cancelled even when other-order coverage is unknown (position-shrink is
+knowable from `positions` alone), and a pure quantity-shrink mismatch on a trailing stop now
+cancels unconditionally instead of being swallowed by the arm-refusal guard; round 6 (Codex pushed
+back twice on round 5's OCO time-window heuristic): pairing now requires a NEW `EquityOrder.orderClass`
+field (mapped from Alpaca's own `order_class`) on BOTH legs — a real bracket/OCO sibling check, not a
+timing guess — and a partial native-trail placement no longer blanket-skips the synthetic fire path
+(its known quantity now folds into coverage so the uncovered fractional remainder still fires), plus
+an honest short-position caveat added to the stop-flow diagram's broker-held node; round 7: a
+`partially_filled` (actively executing) broker-held stop is no longer cancelled by the quantity-drift
+check, and `confirmedPriorExitDead`'s re-arm confirmation now checks the SPECIFIC tracked order (by
+client_order_id) instead of a symbol-wide sweep, so an unrelated still-live broker stop (covering
+different shares) can no longer permanently block re-arming a partial remainder's own dead exit; plus
+a docs fix clarifying Alpaca REST (native trailing) vs Alpaca MCP (ratcheted) in the Guardrails hint;
+round 8: replaced round 7's `client_order_id`-only re-arm branch (fragile — the field is optional and
+a missing one would falsely read "dead") with `brokerHeldOrderIdBySymbol`, keyed off the account's own
+`broker_protective_stops` row instead of any broker-supplied id; also fixed an ordering bug found while
+verifying it (the re-arm pass runs BEFORE the tick's own reconcile call, so the map must be seeded from
+DB state at declaration, not only refreshed after reconcile), and a filled broker-held stop recognized
+during stale-row cleanup now books a `fill_events` row (`bookBrokerHeldStopFill`) before its row is
+deleted, instead of the exit silently vanishing from P&L/learning/activity; round 9: the DISABLED-
+teardown path (`kind === null`) now recovers a FILLED stop the same way section 1 does instead of
+retrying its cancel forever with the fill unbooked; a NEW `hadExecutedFill` predicate books a fill at
+all three recovery sites on either the literal "filled" state OR a positive `filledQuantity`
+regardless of state, so a PARTIAL fill that terminates as canceled/expired is no longer lost; and a
+native trail's mismatch-driven replacement (trail %/quantity change) now backfills a missing tracked
+high-water mark from the existing stop's own recorded `stopPrice`/`trailPercent` (inverting the ratchet
+math) before deciding whether a reseed would be looser than the broker's own already-moved-up peak;
+round 10 (2026-07-11): the Codex Autofix bot (`.github/workflows/codex-autofix.yml`) had been broken
+since ~2026-07-10T23:00Z — missing `ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN` — so 6 rounds of Codex
+review comments piled up unaddressed on this PR (35 threads) and its stacked follow-on PR #1371 (27
+threads); PR #1373 (merged to `main`) fixed the workflow to route through DeepSeek's Anthropic-compatible
+endpoint (`DEEPSEEK_API_KEY` secret, `api.deepseek.com/anthropic`, `deepseek-v4-flash`) but that fix
+never reached this feature branch. Cherry-picked it (`45bb477`) so the bot works going forward. Then
+triaged every open Codex thread against the CURRENT code: 32 of 34 non-outdated/outdated threads were
+already fixed by rounds 5-9 (just needed `resolveReviewThread`, never run before because the bot was
+down); 2 were fixed fresh this round (`72ec8d1`) — the DISABLED-teardown path now books a fill found in
+the caller's pre-reconcile order snapshot before clearing a row (both on a successful cancel and on a
+failed-cancel-but-broker-already-terminal recovery), and signals `filledRecoverySymbols` from there so
+the caller skips synthetic registration/fire against a stale pre-fill position, same as the
+enabled-lane recovery paths already did; and the synthetic monitor's auto-registration coverage check
+now folds in `justPlacedPartialBrokerStopQty` (previously only the fire path used it), so a partial
+broker stop placed earlier in the SAME reconcile pass is counted as coverage before deciding whether to
+arm a new synthetic row. One thread left open (posted as a PR comment, not resolved): "Require shared
+OCO identity before pairing legs" — `liveExitOrderCoverage` pairs stop/limit legs on matching
+bracket-family `orderClass` + exact quantity, but `orderClass` is a family string ("bracket"/"oco"),
+not a specific group id, so two DIFFERENT brackets' orphaned same-family same-qty legs could in theory
+still mispair; neither the Alpaca REST nor MCP order shape currently exposes a more precise sibling id,
+so a real fix needs either a broker API change (nested order fetch + parent correlation) or an accepted
+tradeoff — flagged for deliberate follow-up rather than guessed at. Branch is now `mergeable_state:
+dirty` against `main` (main has moved ~20 commits since this PR's base) — needs a merge before it can
+land; not yet done this round.
+Next action: watch for
+further review rounds / merge; then live-verify the RH ratchet lane before flipping
+`robinhoodBrokerStops` on.
 ## 2026-07-10 — Effort-log union-merge safety net (fleet-infra) (CLAUDE, branch `claude/union-merge-live-rows`)
 Fix for the reported "live-board union-merge clobber": a claim row added to
 `/Users/jay/apps/TRADING-EFFORT-LOG.md` at 17:35 on 2026-07-09 was gone by 18:22. Investigation

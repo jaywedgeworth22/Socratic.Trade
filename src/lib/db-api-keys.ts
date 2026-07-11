@@ -945,7 +945,7 @@ export function purgeSyntheticStops(accountNumber: string, liveSymbols: Set<stri
   return purged;
 }
 
-// ── Broker-held protective stops (Robinhood) ──────────────────────────────────
+// ── Broker-held protective stops (Robinhood fixed / Alpaca+Robinhood trailing) ─
 
 export interface BrokerProtectiveStop {
   id: string;
@@ -956,6 +956,11 @@ export interface BrokerProtectiveStop {
   quantity: number;
   stopPrice: number;
   status: string;
+  /** 'fixed' = stop at stopLossPct below entry; 'trailing' = native Alpaca trailing_stop or a
+   *  Robinhood stop-market the reconciler ratchets upward each tick. */
+  kind: "fixed" | "trailing";
+  /** Configured trail distance (% below the high-water mark) — set only on 'trailing' rows. */
+  trailPercent?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -970,27 +975,35 @@ function mapBrokerProtectiveStop(r: Record<string, unknown>): BrokerProtectiveSt
     quantity: Number(r.quantity),
     stopPrice: Number(r.stop_price),
     status: String(r.status),
+    kind: r.kind === "trailing" ? "trailing" : "fixed",
+    trailPercent: r.trail_percent == null ? undefined : Number(r.trail_percent),
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
   };
 }
 
-export function upsertBrokerProtectiveStop(stop: Omit<BrokerProtectiveStop, "createdAt" | "updatedAt"> & { createdAt?: string }): void {
+export function upsertBrokerProtectiveStop(
+  stop: Omit<BrokerProtectiveStop, "createdAt" | "updatedAt" | "kind" | "trailPercent"> &
+    { createdAt?: string; kind?: "fixed" | "trailing"; trailPercent?: number }
+): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO broker_protective_stops (id, user_id, account_number, symbol, broker_order_id, quantity, stop_price, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO broker_protective_stops (id, user_id, account_number, symbol, broker_order_id, quantity, stop_price, status, kind, trail_percent, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
         broker_order_id = excluded.broker_order_id,
         quantity = excluded.quantity,
         stop_price = excluded.stop_price,
         status = excluded.status,
+        kind = excluded.kind,
+        trail_percent = excluded.trail_percent,
         updated_at = excluded.updated_at`
     )
     .run(
       stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.brokerOrderId,
-      stop.quantity, stop.stopPrice, stop.status, stop.createdAt ?? now, now
+      stop.quantity, stop.stopPrice, stop.status, stop.kind ?? "fixed", stop.trailPercent ?? null,
+      stop.createdAt ?? now, now
     );
 }
 

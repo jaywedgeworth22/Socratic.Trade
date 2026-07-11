@@ -398,6 +398,23 @@ const MIGRATIONS: Migration[] = [
         );
       }
     }
+  },
+  {
+    // Broker-held TRAILING stops: broker_protective_stops rows grow a `kind` ('fixed' | 'trailing')
+    // and, for trailing rows, the configured `trail_percent`. Pre-existing rows are all the
+    // Robinhood fixed stops — the 'fixed' default is exactly right for them. Idempotent — skips
+    // each column when already present (fresh DBs get both from CREATE TABLE).
+    version: 16,
+    name: "broker_protective_stops_trailing_columns",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(broker_protective_stops)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "kind")) {
+        database.exec("ALTER TABLE broker_protective_stops ADD COLUMN kind TEXT NOT NULL DEFAULT 'fixed'");
+      }
+      if (!cols.some((c) => c.name === "trail_percent")) {
+        database.exec("ALTER TABLE broker_protective_stops ADD COLUMN trail_percent REAL");
+      }
+    }
   }
 ];
 
@@ -754,9 +771,12 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_synthetic_stops_account ON synthetic_trailing_stops (user_id, account_number);
 
-    -- Broker-held protective stops (Robinhood): the resting stop-market order id placed at the broker
-    -- for an open position, so it can be cancelled when the position closes (no orphaned stops). One
-    -- per (user, account, symbol). Distinct from synthetic_trailing_stops, which is the app-side monitor.
+    -- Broker-held protective stops: the resting protective order id placed at the broker for an open
+    -- position, so it can be cancelled when the position closes (no orphaned stops). One per (user,
+    -- account, symbol). Distinct from synthetic_trailing_stops, which is the app-side monitor.
+    -- kind 'fixed' = stop-market at stopLossPct below entry (Robinhood, opt-in);
+    -- kind 'trailing' = native Alpaca trailing_stop (trail_percent) or a Robinhood stop-market the
+    -- reconciler ratchets upward each tick (trail_percent records the configured trail distance).
     CREATE TABLE IF NOT EXISTS broker_protective_stops (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -766,6 +786,8 @@ function migrate(database: Database.Database): void {
       quantity REAL NOT NULL,
       stop_price REAL NOT NULL,
       status TEXT NOT NULL DEFAULT 'resting',
+      kind TEXT NOT NULL DEFAULT 'fixed',
+      trail_percent REAL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       UNIQUE(user_id, account_number, symbol)

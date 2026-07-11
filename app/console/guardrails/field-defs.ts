@@ -24,9 +24,6 @@ export const ESSENTIALS: FieldDef[] = [
   { path: "maxOrderPctOfNav", label: "Max per order (% of portfolio)", kind: "pct", optional: true, looserWhen: "up" },
   { path: "maxDailyNotional", label: "Max spend per day", kind: "money", optional: true, looserWhen: "up", hint: "Opening orders only — protective exits never consume this cap." },
   { path: "maxDailyOrders", label: "Max opening orders per day", kind: "int", looserWhen: "up" },
-  { path: "riskRules.stopLossPct", label: "Stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Sell automatically if a position drops this far. Wider = looser protection." },
-  { path: "riskRules.takeProfitPct", label: "Take profit at", kind: "pct", optional: true },
-  { path: "riskRules.takeProfitTrimPct", label: "Take-profit trim", kind: "pct", optional: true, hint: "How much of the position to sell when take-profit triggers (100 = full exit)." },
   { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: `Advisory circuit breaker: if the account loses this much in a day, it logs a receipt and tells the agent — which decides how to react (default: advisory, no auto-halt). Set drawdownBreakerAction to close_only/halt for hard enforcement. Blank = off. ${ADVISORY_NOTE}` },
   { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: `Advisory circuit breaker on the fall from the account's high-water mark. On breach it logs a receipt and surfaces the drawdown to the agent, which decides (default: advisory, no auto-halt). ${ADVISORY_NOTE}` },
   { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
@@ -75,14 +72,23 @@ export const ENTRY_QUALITY: FieldDef[] = [
   { path: "marketableLimitEntries", label: "Marketable-limit entries", kind: "bool", hint: "Converts opening market orders to tightly-priced limits so a fast tape can't fill arbitrarily far past the quote." }
 ];
 
-export const STOPS_PLUMBING: FieldDef[] = [
-  { path: "riskRules.trailingStopPct", label: "Trailing stop", kind: "pct", optional: true },
+/** One consolidated group for EVERY per-position exit rule (owner ask, 2026-07-10): the base
+ *  stop-loss % used to live alone in Essentials while ATR/beta/trailing/broker plumbing hid in the
+ *  Advanced rulebook — so nothing on screen said that with ATR on (the default) the flat % is only
+ *  the FALLBACK distance. These now render together under the stop-flow diagram (stop-flow.tsx),
+ *  ordered the way the flow reads: distance rules, then the trailing overlay, then who enforces. */
+export const PROTECTIVE_STOPS: FieldDef[] = [
+  { path: "riskRules.stopLossPct", label: "Stop-loss (base %)", kind: "pct", optional: true, looserWhen: "up", hint: "Base stop distance below entry — and the always-on FALLBACK when the per-symbol rules below can't price a name (no bars for ATR, no beta). Wider = looser protection. ATR/beta set the distance OF this stop. Clearing the field resets it to the shipped 8% default — it does not turn stops off." },
+  { path: "atrStops", label: "ATR-based stops", kind: "bool", looserWhen: "off", hint: "First choice for the stop distance: the name's own realized daily range (ATR multiple × ATR ÷ entry). Falls back to beta-scaled/fixed when bars are unavailable." },
+  { path: "riskRules.atrStopPeriod", label: "ATR period", kind: "int", optional: true, hint: "Lookback (daily bars) for the ATR read. Default 14." },
+  { path: "riskRules.atrStopMultiple", label: "ATR multiple", kind: "int", optional: true, hint: "Stop distance = this many ATRs below entry. Default 2." },
+  { path: "betaScaledStops", label: "Beta-scaled stops", kind: "bool", looserWhen: "off", hint: "Second choice: the base % scaled by the name's beta (clamped 0.5–2.0×) — wider for high-beta names, tighter for low-beta. Used when ATR has no bars; names without a beta fall through to the flat base %." },
+  { path: "riskRules.trailingStopPct", label: "Trailing stop", kind: "pct", optional: true, hint: "An extra high-water-mark exit: triggers when price falls this far from its best level since entry. Blank/0 = off. Becomes broker-held where supported (see Broker-held trailing below). Honest limit: shares already committed to a resting broker exit (e.g. Alpaca bracket stop/take legs) can't also back a trail — those positions keep their bracket exits and the trail applies to unbracketed ones." },
+  { path: "riskRules.takeProfitPct", label: "Take profit at", kind: "pct", optional: true, hint: "Profit target (always a flat % — never widened by ATR/beta)." },
+  { path: "riskRules.takeProfitTrimPct", label: "Take-profit trim", kind: "pct", optional: true, hint: "How much of the position to sell when take-profit triggers (100 = full exit)." },
   { path: "brokerBracketsEnabled", label: "Broker-held brackets", kind: "bool", hint: `Stop/take-profit legs rest at the broker (where supported) so protection survives app downtime. Turning this OFF is looser. ${ADVISORY_NOTE}`, looserWhen: "off" },
-  { path: "robinhoodBrokerStops", label: "Robinhood resting stops", kind: "bool", hint: "Opt-in true broker-side stop for live Robinhood positions." },
-  { path: "betaScaledStops", label: "Beta-scaled stops", kind: "bool", hint: "Stop distance scaled by the name's beta (clamped 0.5–2.0×)." },
-  { path: "atrStops", label: "ATR-based stops", kind: "bool", hint: "Stop distance from the name's own realized daily range instead of a flat %." },
-  { path: "riskRules.atrStopPeriod", label: "ATR period", kind: "int", optional: true },
-  { path: "riskRules.atrStopMultiple", label: "ATR multiple", kind: "int", optional: true },
+  { path: "brokerTrailingStops", label: "Broker-held trailing stops", kind: "bool", looserWhen: "off", hint: `With a trailing % set: on Alpaca REST, a native trailing_stop order (the broker moves the trigger itself, even while the app is down); an Alpaca MCP-endpoint account instead gets the SAME app-ratcheted resting stop as Robinhood (MCP has no native trailing parameter, so the trigger only moves on the app's own tick cadence, not continuously); on live Robinhood a resting stop the app ratchets upward each cycle (needs Robinhood resting stops ON). Turning this OFF keeps trailing app-managed only. ${ADVISORY_NOTE}` },
+  { path: "robinhoodBrokerStops", label: "Robinhood resting stops", kind: "bool", looserWhen: "off", hint: "Opt-in true broker-side stop for live Robinhood positions (Robinhood cannot hold OCO brackets). Also the gate for broker-held trailing on Robinhood." },
   { path: "allowExtendedHoursSyntheticStops", label: "App stops in extended hours", kind: "bool", looserWhen: "on" }
 ];
 
@@ -184,7 +190,7 @@ export const ALL_DEFS: FieldDef[] = [
   ...SOCRATIC_OVERRIDE,
   ...EXPOSURE,
   ...ENTRY_QUALITY,
-  ...STOPS_PLUMBING,
+  ...PROTECTIVE_STOPS,
   ...PANIC_BRAKE,
   ...SHORTS,
   ...HYGIENE,
