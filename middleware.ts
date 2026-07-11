@@ -7,7 +7,7 @@
 //   3. Dev/local fallback to PRIMARY_USER_EMAIL — ONLY when auth is NOT configured.
 //
 // Fail-closed signal ("authConfigured"):
-//   authConfigured = !!AUTH_SECRET || !!CF_ACCESS_TRUST_EMAIL_HEADER
+//   authConfigured = !!AUTH_SECRET || isFlagOn(CF_ACCESS_TRUST_EMAIL_HEADER)
 //
 // This deliberately does NOT use `process.env.NODE_ENV === "production"` because
 // Next.js inlines NODE_ENV at BUILD time in the edge runtime — so at runtime in the
@@ -136,12 +136,12 @@ export function withSecurityHeaders(res: NextResponse): NextResponse {
 // Auth is "configured" (armed) when at least one real identity source is active.
 // This is the reliable fail-closed signal — it does not depend on NODE_ENV.
 function isAuthConfigured(): boolean {
-  return !!(process.env.AUTH_SECRET || process.env.CF_ACCESS_TRUST_EMAIL_HEADER);
+  return Boolean(process.env.AUTH_SECRET) || isFlagOn(process.env.CF_ACCESS_TRUST_EMAIL_HEADER);
 }
 
 /** Extract the verified email from a Cloudflare Access request header, if present. */
 function getCfEmail(req: NextRequest): string | null {
-  if (!process.env.CF_ACCESS_TRUST_EMAIL_HEADER) return null;
+  if (!isFlagOn(process.env.CF_ACCESS_TRUST_EMAIL_HEADER)) return null;
   const email = req.headers.get("cf-access-authenticated-user-email");
   return email ? email.trim().toLowerCase() : null;
 }
