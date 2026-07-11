@@ -8,6 +8,15 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-11 — Tradier broker adapter: Codex PR review fixes (CLAUDE autofix, branch `claude/tradier-broker`)
+Responded to 6 P2 Codex PR review findings: (1) resolve account number from token profile during
+connect if not user-provided; (2) read `pdt.stock_buying_power` alongside `margin.stock_buying_power`
+for PDT margin accounts; (3) filter non-equity orders (options/combos) before mapping to
+`EquityOrder`; (4) canonicalize position symbols from Tradier dots (BRK.B) to hyphenated form
+(BRK-B) so they match quote-map keys; (5) use `Math.abs(quantity)` for short position average costs;
+(6) use stock-specific balance fields (`stock_long_value`, `stock_short_value`) for
+`equityMarketValue` to avoid double-counting option value. All 316 files / 3433 tests green.
+
 ## 2026-07-10 — Tradier broker adapter, fifth broker (CLAUDE subagent, branch `claude/tradier-broker`)
 Added Tradier as a fifth `BrokerGateway`, mirroring the Alpaca adapter against Tradier's hand-rolled
 REST (single Bearer token, no SDK). New `src/lib/tradier.ts` implements all 9 methods; `"tradier"`

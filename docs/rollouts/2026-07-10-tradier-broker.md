@@ -104,3 +104,62 @@ No Alpaca/Robinhood/test broker behavior changed. No deploy. No live token exerc
    "account activity unavailable"; the REST surface used here is documented to work).
 7. Rate-limit backoff on HTTP 429 if strategy-loop volume approaches limits.
 8. Optional operator `tradier_access_token` env tier (intentionally omitted; fail-loud).
+
+# 2026-07-11 — Codex PR review fixes (6 P2 items)
+
+## Summary
+Responded to 6 P2 findings from the Codex PR reviewer on PR #1380, all in
+`src/lib/tradier.ts` and `app/api/connected-accounts/route.ts`. Each was a
+clear correctness bug or data-fidelity issue.
+
+## Changes
+
+1. **Resolve Tradier account number during connect**
+   (`app/api/connected-accounts/route.ts`). If the user leaves the account
+   number field empty, the route now probes the token's `/user/profile` after
+   storing the connected account, resolves the real account number, and updates
+   the row. Previously a missing account number caused `getPolicy()` to copy
+   `undefined` into `policy.accountNumber`, making every strategy run fail with
+   "No account selected" before the gateway could probe.
+
+2. **Read PDT buying power** (`src/lib/tradier.ts` `getPortfolio`). Added
+   `pdt.stock_buying_power` as the preferred buying-power field for margin
+   accounts — Tradier returns it for pattern-day-trader accounts, separate from
+   `margin.stock_buying_power`. Previously buying power for PDT margin accounts
+   was understated, potentially shrinking sizing/funding checks.
+
+3. **Filter non-equity orders** (`src/lib/tradier.ts` `getEquityOrders`). Added
+   a `class === "equity"` filter before pushing each row, so option/combo/
+   multileg orders are never mapped as `EquityOrder`. Previously they polluted
+   dashboard order state with coerced sides/types.
+
+4. **Canonicalize position symbols** (`src/lib/tradier.ts`
+   `getEquityPositions`). Position symbols now use `.replace(/\./g, "-")` to
+   match the hyphenated canonical form (BRK-B) that `getEquityQuotes` uses as
+   keys, fixing a quote-lookup mismatch for share-class symbols like BRK.B.
+
+5. **Keep short average costs positive** (`src/lib/tradier.ts`
+   `getEquityPositions`). Changed `totalCost / quantity` to
+   `totalCost / Math.abs(quantity)` so short positions (negative quantity) get
+   a positive average cost. Risk paths treat `averageCost <= 0` as unusable.
+
+6. **Avoid double-counting option value as equity** (`src/lib/tradier.ts`
+   `getPortfolio`). Changed `equityMarketValue` from `market_value` (which
+   includes option value) to `stock_long_value - stock_short_value` with a
+   fallback to `market_value - optionMarketValue`. Previously
+   `accountEquity()` added option value twice for mixed stock/options accounts,
+   inflating drawdown breakers and dashboard invested values.
+
+## Files
+- `app/api/connected-accounts/route.ts` — `const`→`let` for accountNumber;
+  profile-probe block after upsert.
+- `src/lib/tradier.ts` — PDT buying power (pdt), non-equity order filter,
+  position symbol canonicalization, short average cost abs(), stock-specific
+  equity market value.
+- `test/tradier.test.ts` — Added `class: "equity"` to order mock fixtures.
+
+## Verification
+- `npm run lint` — 0 errors.
+- `npx tsc --noEmit` — clean after `npm run build`.
+- `npm test` — 316 files / 3433 tests passed.
+- `npm run build` — clean.

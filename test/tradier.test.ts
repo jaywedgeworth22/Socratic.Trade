@@ -159,8 +159,8 @@ describe("Tradier adapter — read-back mapping", () => {
       {
         match: (u) => u.includes(`/accounts/${ACCT}/orders`),
         body: { orders: { order: [
-          { id: 1, symbol: "AAPL", side: "sell_short", type: "stop", status: "open", quantity: 5, duration: "gtc", create_date: "2026-07-10", stop_price: 90, tag: "abc" },
-          { id: 2, symbol: "MSFT", side: "buy_to_cover", type: "limit", status: "pending", quantity: 5, duration: "day", create_date: "2026-07-10", price: 300 }
+          { id: 1, symbol: "AAPL", side: "sell_short", type: "stop", status: "open", quantity: 5, duration: "gtc", create_date: "2026-07-10", stop_price: 90, tag: "abc", class: "equity" },
+          { id: 2, symbol: "MSFT", side: "buy_to_cover", type: "limit", status: "pending", quantity: 5, duration: "day", create_date: "2026-07-10", price: 300, class: "equity" }
         ] } }
       }
     ]);
@@ -306,7 +306,7 @@ describe("Tradier adapter — envelope normalization", () => {
     await seedTradier();
     // Single object
     installFetchMock([
-      { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 1, symbol: "AAPL", side: "buy", type: "market", status: "filled", create_date: "2026-07-10" } } } }
+      { match: (u) => u.includes("/orders"), body: { orders: { order: { id: 1, symbol: "AAPL", side: "buy", type: "market", status: "filled", create_date: "2026-07-10", class: "equity" } } } }
     ]);
     const mod1 = await import("../src/lib/tradier");
     const one = await mod1.getTradierGateway("local").getEquityOrders(ACCT);
