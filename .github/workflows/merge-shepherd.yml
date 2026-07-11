@@ -35,36 +35,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  shepherd:
-    runs-on: ubuntu-latest
-    # Server-side branch gate: the `merge-shepherd` GitHub Environment has a
-    # deployment_branch_policy locked to `main` (custom_branch_policies=true,
-    # branch policy "main" only -- configured via the Environments API, not
-    # YAML). That policy is enforced by GitHub before the job is even
-    # dispatched and cannot be edited by a branch's copy of this file, unlike
-    # the `if:` guard below. Keep both: the `if:` guard is defense-in-depth
-    # for the (rare) case the environment policy is ever removed or
-    # misconfigured, and it's what actually skips the job cleanly rather than
-    # failing environment protection checks.
-    environment: merge-shepherd
-    # A manual workflow_dispatch run against a non-main branch loads THAT branch's
-    # copy of this workflow file before any step runs -- so a branch could edit this
-    # file to add steps using SHEPHERD_TOKEN/GITHUB_TOKEN. Refuse to run the job at
-    # all unless the dispatch itself targeted main, before either token is exposed
-    # to any step. (The checkout pin below is a second, redundant safeguard: even a
-    # main-triggered run always executes main's copy of the script.)
-    if: github.ref == 'refs/heads/main'
-    steps:
-      # Pin to main regardless of which ref the dispatch was run against, so a
-      # workflow_dispatch from a non-main branch can never run a branch-modified
-      # copy of the script with this job's write-scoped token.
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - name: Run merge shepherd
-        env:
-          GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          SHEPHERD_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
-          SHEPHERD_HAS_PAT: ${{ secrets.SHEPHERD_TOKEN != '' && '1' || '0' }}
-        run: bash scripts/merge-shepherd.sh
+  call-shepherd:
+    uses: ./.github/workflows/_merge-shepherd-impl.yml@main
+    with:
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit

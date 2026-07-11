@@ -2,9 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { evaluateTradeProposal, betaScaledStopPct } from "../src/lib/policy";
 import {
-  allowedProposalSides,
   enrichOpeningProposal,
-  deterministicBearFilter,
   generateProactiveRiskProposals
 } from "../src/lib/strategy";
 import type {
@@ -16,6 +14,7 @@ import type {
   TradeProposal,
   TradingPolicy
 } from "../src/lib/types";
+import { allowedProposalSides, deterministicBearFilter } from "../src/lib/strategy-risk";
 
 // The wash-sale gate resolves a DB-backed locked provenance map when the caller omits one; stub it out.
 vi.mock("../src/lib/tax", () => ({
