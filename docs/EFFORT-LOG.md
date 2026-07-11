@@ -1579,6 +1579,26 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud
+  lane, branch `claude/anthropic-spend-spike-e2di8j`) — IN PROGRESS 2026-07-10, PR open.**
+  Owner reported Anthropic console spend went ~$35 -> ~$50 in 2 hours while
+  `/admin/llm-usage` only reflected ~$35. Root-caused (from codebase only — no prod DB
+  access this session): `scripts/benchmark-llm-models.ts` calls real provider APIs
+  through the app's real credential/request path but was deliberately built with NO
+  writes to the app DB, so a benchmark run's real Anthropic billing never lands in
+  `llm_usage`. Fixed: the script now prints/writes a total-spend rollup (per-provider
+  breakdown) every run, and gained an opt-in `--record-usage` flag that logs real calls
+  into the REAL `llm_usage` table via a dedicated writable connection, tagged under a
+  pretend account (`user_id="benchmark:<user>"`, `context="benchmark:<role>"`) so it's
+  visible in `/admin/llm-usage` without being conflated with a real tenant. Owner's
+  follow-up correction: the reported per-model pattern (opus-dominant, ~4 scattered
+  haiku, sonnet never called) does NOT match a default full-catalog benchmark sweep —
+  still unresolved whether this specific spike was a scoped benchmark run or organic
+  production traffic from an opus-configured account; needs a real prod ledger pull to
+  close out. `scripts/eval/run-offline.ts` has the same ledger gap, left as a follow-up.
+  See `docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`. Gate: tsc clean,
+  lint 0 errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main`
+  in this sandbox (pre-existing, confirmed via stash-and-rebuild, unrelated to this diff).
 - **Prod deploy-pipeline blocker: TCP-mem exhaustion via litestream 0.5.14 socket churn
   (CLAUDE, branch `claude/litestream-tcpmem-pin`, fleet-infra pickup session) — IN PROGRESS
   2026-07-10.** Diagnosed the 12 consecutive Coolify deploy failures 08:59–11:52Z ("TLS
