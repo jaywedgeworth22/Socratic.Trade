@@ -169,7 +169,8 @@ export function logApiHealth(opts: {
       // Scope the streak that gates the alert to this user's own history for user-key lanes, so
       // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.
       const lane = getLaneHealth(opts.service, keySource, opts.userId ?? null);
-      if (lane.stoppedWorking) {
+      const isRateLimit = /429|rate limit/i.test(opts.errorText);
+      if (lane.stoppedWorking && !isRateLimit) {
         void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText);
       }
     }
