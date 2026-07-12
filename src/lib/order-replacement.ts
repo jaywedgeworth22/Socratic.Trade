@@ -65,7 +65,7 @@ export class MarketReplacePreconditionError extends Error {
 }
 
 export interface MarketReplaceResult {
-  status: "replaced" | "already_filled";
+  status: "replaced" | "already_filled" | "pending_cancel";
   canceledOrderId: string;
   replacementOrderId?: string;
   brokerState?: string;
@@ -218,12 +218,12 @@ async function executeMarketReplace(input: MarketReplaceInput): Promise<MarketRe
   const afterCancel = afterCancelOrders.find((order) => order.id === original.id);
   if (afterCancel && isPostCancelActiveState(afterCancel.state)) {
     audit(
-      "order_replace_market_aborted",
+      "order_replace_market_deferred_pending_cancel",
       { orderId: original.id, symbol: original.symbol, state: afterCancel.state, reason: "original_order_still_active_after_cancel", cancelResult },
       userId,
       input.policy.connectedAccountId
     );
-    throw new MarketReplacePreconditionError("Cancel request is still pending at the broker. Wait for cancellation before placing the market replacement.", 409);
+    return { status: "pending_cancel", canceledOrderId: original.id, remainingQuantity: stale.remainingQuantity };
   }
 
   const remainingQuantity = remainingAfterCancel(original, afterCancel);

@@ -592,10 +592,16 @@ function utcDate(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
-/** True when the once-per-day batch has not yet run for `now`'s UTC date. Pure (no env gate). */
+/** True when the once-per-day batch has not yet run for `now`'s UTC date and isn't in failure backoff. Pure (no env gate). */
 export function isCongressDailyShareDue(now: number): boolean {
   const last = getInternalSetting<string>(LAST_DAILY_RUN_KEY);
-  return last !== utcDate(now);
+  if (last === utcDate(now)) return false;
+  
+  // 60-minute backoff after a failure to prevent unbounded retry storms
+  const lastFailure = getInternalSetting<number>("congress_share_last_failure_ms");
+  if (lastFailure && now - lastFailure < 60 * 60 * 1000) return false;
+  
+  return true;
 }
 
 /** Union of every user's watchlist symbols + policy-universe symbols (what this app monitors). */
@@ -846,12 +852,16 @@ async function runCongressDailyShareUnlocked(
 
   const ok = posts > 0 && failedPosts === 0;
   // Advance the once-per-day marker only for the real scheduled universe (not admin custom-symbol tests).
-  if (ok && !customUniverse) {
+  if (!customUniverse) {
     assertOperationLeaseOwnership(operationLeaseClaim);
     try {
-      setInternalSetting(LAST_DAILY_RUN_KEY, utcDate(now));
+      if (ok) {
+        setInternalSetting(LAST_DAILY_RUN_KEY, utcDate(now));
+      } else {
+        setInternalSetting("congress_share_last_failure_ms", now);
+      }
     } catch (err) {
-      console.error("[congress-share] failed to persist daily-run marker:", err);
+      console.error("[congress-share] failed to persist daily-run or failure marker:", err);
     }
   }
 

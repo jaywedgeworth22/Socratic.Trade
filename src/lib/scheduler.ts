@@ -583,12 +583,21 @@ async function tick(): Promise<void> {
       return;
     }
 
+    let jitterMs = 0;
     for (const { userId, accountId } of dueRuns) {
+      // P2.9: Stagger/jitter LLM calls to prevent concurrent-account bursts from blowing QPM.
+      // Offset each simultaneous launch by 2-5s to stagger their LLM phase.
+      const runDelayMs = jitterMs;
+      jitterMs += 2000 + Math.random() * 3000;
+
       // The daily LLM budget ceiling is enforced INSIDE runStrategyOnce (after its non-LLM risk
       // breakers + reconciliation, before proposal generation), NOT here — suppressing the run at this
       // outer gate would also skip the drawdown/volatility breakers + fill reconciliation, disabling
       // safety maintenance for the rest of the day. So we always enter the run; it skips only LLM work.
-      const p = runScheduledStrategyAndMaybeTune(userId, accountId)
+      const p = (async () => {
+        if (runDelayMs > 0) await new Promise((r) => setTimeout(r, runDelayMs));
+        await runScheduledStrategyAndMaybeTune(userId, accountId);
+      })()
         // Item 1 (opt-in): after a successful cadence run, attempt account-bound, cadence-gated
         // autonomous weight tuning. Failed/busy runs never tune; the helper owns that invariant.
         .catch((err) => {
