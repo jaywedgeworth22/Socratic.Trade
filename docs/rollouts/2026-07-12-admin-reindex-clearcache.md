@@ -10,6 +10,17 @@ The new `socratic-trade` Pinecone database was empty of filings, but the local S
 - `app/api/admin/reindex-10k/route.ts` [MODIFY]
 - `docs/rollouts/2026-07-12-admin-reindex-clearcache.md` [NEW]
 
-## Verification
-- Ran `npx tsc --noEmit` and verified TypeScript compilation is clean.
-- Verified that the `clearCache` flag properly executes SQL delete statements inside the admin lease guard.
+## Post-hoc fix (2026-07-12, codex-autofix PR #1493)
+
+Codex review flagged two P2 issues:
+
+1. **Unscoped DELETE**: The `clearCache: true` code was `DELETE FROM ingested_accessions` and `DELETE FROM document_chunks` (full table truncation), even when only a few symbols were requested. Scoped to `DELETE FROM ingested_accessions WHERE ticker IN (?)` and `DELETE FROM document_chunks WHERE symbol IN (?)` using the same placeholder list.
+
+2. **Unnormalized symbols**: The raw request-body symbols were used directly. Since `refreshFilingBodiesUnlocked` silently skips tickers not in the CIK map (e.g. lowercase "aapl"), an invalid/typo ticker could clear unrelated cache entries without repopulating. Added `normalizeSymbol()` (`.trim().toUpperCase()`) and dedup (Set) when parsing the `symbols` array.
+
+### Verification
+- `npx tsc --noEmit`: clean
+- `npm test`: 350 files, 3927 tests passed
+- `npm run build`: clean
+- Auto-merge enabled on PR #1493
+- Both Codex threads resolved

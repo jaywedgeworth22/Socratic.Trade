@@ -5,6 +5,11 @@
 Added a `clearCache: true` option to the `POST /api/admin/reindex-10k` body to truncate local `document_chunks` and `ingested_accessions` tables. This enables a clean backfill of filings into the empty `socratic-trade` Pinecone index without the local cache incorrectly skipping filings. Flipped `WEB_SOURCE_SEC8K_FULL_BODY` to `on` in Infisical so that both summaries and full text are embedded for 8-Ks.
 Rollout: `docs/rollouts/2026-07-12-admin-reindex-clearcache.md`.
 
+## 2026-07-12 — [codex-autofix] Scope cache clearing to requested symbols + normalize ticker case (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review (2x P2) flagged that `clearCache: true` in reindex-10k was (1) clearing ALL ingested_accessions and document_chunks records regardless of which symbols were requested, and (2) not normalizing symbols before clearing, so a lowercase/typo ticker would silently wipe the cache and fail to repopulate. Scoped DELETEs to requested symbols (`WHERE ticker IN` / `WHERE symbol IN`) and added `normalizeSymbol()` to uppercase tickers with dedup. Verify trio passes (tsc clean, 3927 tests, build clean). Auto-merge enabled. Both Codex threads resolved.
+Rollout: `docs/rollouts/2026-07-12-admin-reindex-clearcache.md`.
+
 ## 2026-07-12 — [codex-autofix] Honor HTTP-date Retry-After in 429 handling (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 ## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 
