@@ -136,14 +136,17 @@ describe("Connection Health & Failure Routing", () => {
     await health.alertStorageWarning("disk_space", "Persistent volume is nearly full");
 
     expect(calls).toEqual(["https://api.resend.com/emails"]);
-    const event = db.listNotificationEvents("local", 10).find((candidate) => candidate.title === "Storage Warning: disk space");
-    expect(event).toMatchObject({ status: "sent", error: undefined });
+    const eventAuditRow = db
+      .getDb()
+      .prepare("SELECT payload FROM audit_events WHERE kind = 'notification' ORDER BY created_at DESC LIMIT 1")
+      .get() as { payload: string } | undefined;
+    expect(JSON.parse(eventAuditRow?.payload ?? "{}")).toMatchObject({ title: "Storage Warning: disk space", status: "sent" });
     const delivery = db
       .getDb()
       .prepare("SELECT payload FROM audit_events WHERE kind = 'notification.delivery' ORDER BY created_at DESC LIMIT 1")
       .get() as { payload: string } | undefined;
     expect(JSON.parse(delivery?.payload ?? "{}")).toMatchObject({
-      notificationEventId: event?.id,
+      notificationEventId: JSON.parse(eventAuditRow?.payload ?? "{}").id,
       status: "sent",
       results: [{ channel: "email", ok: true }]
     });

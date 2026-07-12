@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-12 — Sentry issues resolution (AG, branch `agent/antigravity`)
+
+Fixed unresolved Sentry issues in production:
+1. Replaced `.map()` + array spread (`...`) with `.reduce()` in `app/console/components/equity-chart.tsx` to stop `RangeError: Maximum call stack size exceeded` in Mobile Safari.
+2. Silenced expected 429 and rate limit failures in `db-health.ts` from firing `alertConnectionFailure` to Sentry while preserving the underlying API circuit-breaker logic.
+Tested via `vitest` (3896 tests) and `next build`. Rollout: `docs/rollouts/2026-07-12-sentry-issues-resolution.md`.
+
+## 2026-07-12 — Activity feed coalescing and audit attribution bug fixes (Antigravity, branch `agent/bug-fixes`)
+
+Resolved test regressions in `test/dashboard-feed.test.ts` and `test/connection-health-routing.test.ts` by correctly accounting for feed-storm coalescing (using distinct ticker symbols to prevent identical rows from being grouped) and the new `storage_warning` skip-set logic (which intentionally suppresses duplicate `notification_events` when handled directly by the audit logger). Additionally, completed a full sweep of `broker-protective-stops.ts` to ensure `connectedAccountId` is properly provided to all remaining `audit()` calls, fixing the attribution bugs identified in the activity log review. Verified via a full test suite run. Rollout: `docs/rollouts/2026-07-12-bug-fixes.md`.
 ## 2026-07-12 — Raise RAG Ingestion Limits and Deepen Filing Lookback (Antigravity, branch `agent/antigravity-rag`)
 
 Raised RAG ingestion daily caps (`RAG_INGEST_MAX_TEXTS_PER_DAY` to 1,000,000, `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10,000,000) and deepened the SEC filing lookback depth (`fetchRecentFilings` pulls 10 historical 10-K and 10-Qs, `DEFAULT_PAID_MAX_FILINGS_PER_RUN` bumped to 200) to allow massive historical ingestion of information into Pinecone.
@@ -37,7 +47,7 @@ every skill cites as canon alongside the relevant rollout notes. Rollout:
 `docs/rollouts/2026-07-10-fleet-procedure-skills.md`.
 ## 2026-07-11 — Native iOS App Overhaul (Antigravity, branch `agent/antigravity`)
 
-Completely replaced the legacy iOS starter app with a modern SwiftUI application (`ios/`). Initialized via `xcodegen`. Built the initial SwiftUI scaffold (`ios/`) with tabbed views: Dashboard, Proposals, and Watchlist. Implemented `MobileStore` for persistence and `MobileAPIClient` for API communication. Auth flow (OAuth via `ASWebAuthenticationSession`) and `/api/mobile/auth-redirect` route are still pending implementation on the `agent/antigravity` branch. Assessed Cloudflare hosting for the mobile backend vs. Hetzner, deciding to keep it on Hetzner to avoid database splitting. Verified build via `xcodebuild`. Rollout: `docs/rollouts/2026-07-11-native-ios-app.md`.
+Completely replaced the legacy iOS starter app with a modern SwiftUI application (`ios/`). Initialized via `xcodegen`. Built `AuthenticationView` for OAuth via `ASWebAuthenticationSession` with secure token handoff via the `/api/mobile/auth-redirect` route and `socratictrade://` URL scheme. Implemented `MobileStore` and `MobileAPIClient` for persistence and cookie injection. Built tabbed views: Dashboard, Proposals, and Watchlist. Assessed Cloudflare hosting for the mobile backend vs. Hetzner, deciding to keep it on Hetzner to avoid database splitting. Verified via `xcodebuild`. Ready to land. Rollout: `docs/rollouts/2026-07-11-native-ios-app.md`.
 
 
 ## 2026-07-11 — Settings + LLM telemetry sweep (CLAUDE, branch `claude/settings-llm-usage-sweep`)
@@ -129,7 +139,7 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - Implemented and verified LLM Failover UI and architecture.
 
 ## What's blocking / unresolved
-- Nothing. All P1 and P2 items specified in the current sprint are complete.
+- Nothing. All P1, P2, and P3 items specified in the current sprint are complete.
 
 ## Next Action
 - Land changes to main via `land.sh`.

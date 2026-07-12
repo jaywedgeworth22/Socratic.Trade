@@ -297,8 +297,8 @@ describe("dashboard feed helpers", () => {
         { id: "r6", createdAt: "2026-07-08T14:01:39.000Z", kind: "socratic_outcome_job", payload: { runId } },
         // Allowlisted-before kinds still join:
         { id: "r7", createdAt: "2026-07-08T14:01:40.100Z", kind: "candidates_considered", payload: { runId, llmSteps: [] } },
-        // A DIFFERENT run stays its own group:
-        { id: "q1", createdAt: "2026-07-08T13:01:40.000Z", kind: "strategy_run", payload: { runId: "run-other", status: "completed", summary: "ok" } }
+        // A DIFFERENT run stays its own group (pushed back >24h to avoid the new feed-storm coalescing):
+        { id: "q1", createdAt: "2026-07-06T13:01:40.000Z", kind: "strategy_run", payload: { runId: "run-other", status: "completed", summary: "ok" } }
       ],
       notifications: [
         // Run-scoped alert (carries runId, no proposalId) — used to be a standalone sibling card.
@@ -784,7 +784,7 @@ describe("dashboard feed helpers", () => {
       id: `f${i}`,
       accountNumber: "CAP1",
       source: "paper",
-      symbol: "AAA",
+      symbol: `AAPL${i}`, // distinct symbol ensures distinct titles so they don't coalesce
       side: "buy",
       quantity: 1,
       price: 10,
@@ -833,7 +833,7 @@ describe("dashboard feed helpers", () => {
       id: `lf${i}`,
       accountNumber: "CAP2",
       source: "paper",
-      symbol: "BBB",
+      symbol: `BBB${i}`, // distinct symbol ensures distinct titles so they don't coalesce
       side: "buy",
       quantity: 1,
       price: 10,

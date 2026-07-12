@@ -79,7 +79,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "deterministic_bear_veto",
   "red_team_veto_overridden",
   "prompt_injection_suspected",
-  "evidence_age_anomaly"
+  "evidence_age_anomaly",
+  "storage_warning"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
