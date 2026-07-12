@@ -1,5 +1,20 @@
 # Current Status
 
+## 2026-07-12 — Kalshi event-data fetcher, lane K1 (CLAUDE subagent, branch `claude/kalshi-data-fetcher`)
+
+New-files-only dormant plumbing for the capability program's Kalshi lane: `src/lib/kalshi.ts`
+(flag-gated client — `KALSHI_ENV` demo|prod derives the base URL, absent => inert; RSA-PSS
+SHA-256 request signing with KALSHI-ACCESS-KEY/-TIMESTAMP/-SIGNATURE over
+timestamp+method+path-without-query; typed public market/event/series fetchers; `*_dollars`
+fixed-point string price parsing (Kalshi removed integer-cent fields March 2026) with legacy
+cent fallback; `_fp` count fields; `getKalshiEventSignals(seriesList)` normalized event-probability
+surface with 15-min success-only cache (only caches when all series succeeded), per-series fail-soft,
+full cursor pagination, and blank-subtitle fallback fix) + `test/kalshi.test.ts` (31 mocked-fetch
+tests incl. crypto.verify-based signing proofs). Nothing imports it yet — Wave 2 wires it into
+the strategist; strategy.ts/data-providers.ts/types.ts untouched. Codex-triage (4 P2 findings
+from chatgpt-codex-connector[bot]) addressed: `_dollars` pricing, partial-batch cache guard,
+cursor pagination, blank subtitle fallback. Gates (node24): tsc clean, 350/3927 tests pass,
+build clean. Rollout: `docs/rollouts/2026-07-12-kalshi-data-fetcher.md`.
 ## 2026-07-12 — Sentry issues resolution (AG, branch `agent/antigravity`)
 
 Fixed unresolved Sentry issues in production:
