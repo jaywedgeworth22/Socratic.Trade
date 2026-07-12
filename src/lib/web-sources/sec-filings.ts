@@ -51,7 +51,7 @@ const PAID_KEY_THRESHOLD_MS = 5_000;
 // filing backlog take decades (prod 2026-07-09: two filings ever ingested); 25/run at the paid
 // embed pace is minutes of work, and RAG_INGEST_MAX_TEXTS_PER_DAY still bounds daily spend.
 const DEFAULT_MAX_FILINGS_PER_RUN = 1;
-const DEFAULT_PAID_MAX_FILINGS_PER_RUN = 25;
+const DEFAULT_PAID_MAX_FILINGS_PER_RUN = 200;
 
 export interface FilingRef {
   accession: string;   // dashed form: NNNNNNNNNN-YY-NNNNNN
@@ -474,7 +474,7 @@ async function refreshFilingBodiesUnlocked(
     const cik = tickerToCik[symbol];
     if (!cik) return; // symbol not in CIK map — skip silently
     try {
-      const filings = await fetchRecentFilings(cik, ["10-K", "10-Q"], 2);
+      const filings = await fetchRecentFilings(cik, ["10-K", "10-Q"], 10);
       throwIfOperationLeaseCancelled(operationLeaseSignal);
       for (const ref of filings) {
         if (!hasIngestedAccession(ref.accession, ref.docType)) {
