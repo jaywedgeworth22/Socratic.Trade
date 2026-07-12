@@ -34,7 +34,11 @@ export function listStaleLimitOrders(
     if (!LIMIT_ORDER_TYPES.has(String(order.type ?? "").toLowerCase())) return [];
     if (!isWorkingOrderState(order.state)) return [];
 
-    const createdMs = Date.parse(order.createdAt);
+    // P2.7: Measure staleness from bracket-leg ACTIVATION not createdAt.
+    // Bracket exits are created with the entry order but only activate when the entry fills.
+    // Broker updates the order (bumping updatedAt) on state change (e.g., held -> new).
+    // So updatedAt accurately measures how long the exit has been WORKING.
+    const createdMs = order.updatedAt ? Date.parse(order.updatedAt) : Date.parse(order.createdAt);
     if (!Number.isFinite(createdMs) || createdMs > nowMs) return [];
 
     const quantity = order.quantity ?? 0;

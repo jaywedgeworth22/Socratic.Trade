@@ -773,7 +773,7 @@ export async function fetchAppACongressTrades(now: number = Date.now()): Promise
   let since: string | undefined;
   for (let page = 0; page < APP_A_MAX_PAGES; page++) {
     const client = getCongressTradeClient();
-    const res = await client.getTransactions({ from, limit: APP_A_PAGE_SIZE, ...(since ? { since } : {}) }).catch(() => null);
+    const res = await client.getTransactions({ from, limit: APP_A_PAGE_SIZE, ...(since ? { since } : {}) }).catch(e => { console.error("getTransactions error:", e); return null; });
     if (!res || res.transactions.length === 0) break;
     for (const raw of res.transactions) {
       const t = coerceCongressTrade(raw);

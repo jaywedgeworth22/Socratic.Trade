@@ -60,6 +60,30 @@ const REARM_CONFIRM_GRACE_MS = 15 * 60_000;
 // Share-count tolerance for coverage comparisons (mirrors the position-size epsilon used below).
 const QTY_EPSILON = 0.000001;
 
+// P2.8: Per-(stopId, fingerprint) emission cooldown for synthetic-stop failures.
+const SYNTHETIC_ERROR_COOLDOWN_MS = 60 * 60_000;
+const errorCooldownHost = globalThis as unknown as { __syntheticStopErrors?: Map<string, number> };
+const recentlyEmittedSyntheticErrors: Map<string, number> =
+  errorCooldownHost.__syntheticStopErrors ?? (errorCooldownHost.__syntheticStopErrors = new Map<string, number>());
+
+function auditSyntheticStopError(stopId: string, symbol: string, errorMsg: string, userId: string, connectedAccountId: string | undefined, extra: Record<string, unknown> = {}) {
+  const fingerprint = crypto.createHash("sha256").update(errorMsg).digest("hex").slice(0, 16);
+  const key = `${stopId}:${fingerprint}`;
+  const now = Date.now();
+  const lastEmitted = recentlyEmittedSyntheticErrors.get(key);
+  
+  // Prune expired entries to prevent unbounded growth
+  for (const [k, t] of recentlyEmittedSyntheticErrors) {
+    if (now - t > SYNTHETIC_ERROR_COOLDOWN_MS) recentlyEmittedSyntheticErrors.delete(k);
+  }
+
+  if (lastEmitted != null && now - lastEmitted < SYNTHETIC_ERROR_COOLDOWN_MS) {
+    return; // Cooldown active, suppress duplicate emission
+  }
+  
+  recentlyEmittedSyntheticErrors.set(key, now);
+  audit("synthetic_stop_error", { symbol, error: errorMsg, ...extra }, userId, connectedAccountId);
+}
 export interface StopEvaluation {
   newExtreme: number;
   triggerPrice: number;
@@ -623,7 +647,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // and re-arm the stop so the position isn't left unprotected behind a stuck 'triggered' row.
       if (isRejectedOrCanceledState(exec.state)) {
         revertSyntheticStopClaim(stop.id, userId);
-        audit("synthetic_stop_error", { symbol: stop.symbol, error: `Broker declined the protective exit (state: ${exec.state}).`, orderId: exec.orderId }, userId, policy.connectedAccountId);
+        auditSyntheticStopError(stop.id, stop.symbol, `Broker declined the protective exit (state: ${exec.state}).`, userId, policy.connectedAccountId, { orderId: exec.orderId });
         continue;
       }
       // The fill is FINAL only when the broker confirms it filled synchronously (same rule as the
@@ -664,7 +688,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // 'triggered' synthetic row that stays inert until the 15-min re-arm grace (Codex review, PR
       // #1331). Best-effort either way.
       if (qty >= positionQty - QTY_EPSILON) {
-        await cancelBrokerProtectiveStop(userId, accountNumber, stop.symbol, gateway).catch(() => {});
+        await cancelBrokerProtectiveStop(userId, accountNumber, stop.symbol, gateway, policy.connectedAccountId).catch(() => {});
       }
       // Already 'triggered' via the claim; this just records the final lastPrice.
       upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price });
@@ -677,7 +701,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // this order before the call threw, and remembering its client_order_id is what lets the
       // retry reuse the same id (422-safe) until that order is positively confirmed dead.
       revertSyntheticStopClaim(stop.id, userId);
-      audit("synthetic_stop_error", { symbol: stop.symbol, error: err instanceof Error ? err.message : String(err) }, userId, policy.connectedAccountId);
+      auditSyntheticStopError(stop.id, stop.symbol, err instanceof Error ? err.message : String(err), userId, policy.connectedAccountId);
     }
   }
 
