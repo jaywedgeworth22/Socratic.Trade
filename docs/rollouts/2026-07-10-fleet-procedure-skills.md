@@ -75,3 +75,22 @@ find .claude -type f                                     # only the 5 SKILL.md f
 - If `land.sh`, the auto-deploy mechanism, the codex-triage GraphQL shape, or the Coolify/litestream
   verification steps change, update the corresponding `SKILL.md` in the same PR as the underlying
   change — these five files will drift silently otherwise, same risk class as any other doc.
+
+## Addendum: effort-log protocol enforcement hook (same PR)
+
+`scripts/claude-hooks/board-check.sh` — a Claude Code PreToolUse (Bash) hook that DENIES
+`git push` / `scripts/land.sh` / `gh pr create` when the current branch has not touched
+`docs/EFFORT-LOG.md` since forking from origin/main (and it is not dirty), replying with the
+full pre-push checklist (board row, STATUS stanza, rollout note, #agent-sync claim).
+Escape hatch: `BOARD_CHECK_SKIP=1` prefix with stated reason. Fail-open on internal errors.
+Self-scoping: only acts in repos that track `docs/EFFORT-LOG.md`; silent elsewhere.
+
+Wired from USER-level `~/.claude/settings.json` (NOT a tracked `.claude/settings.json` —
+this repo deliberately keeps that file untracked for per-machine session hooks; a tracked
+copy would collide with existing local files in every worktree). The hook covers both the
+CLAUDE and MONET seats and all worktrees. Verified: bash -n, ASCII-only, four pipe-test
+scenarios (non-push allow / violating-push deny / BOARD_CHECK_SKIP allow / docs-touched
+allow), settings schema via jq.
+
+Why: owner 2026-07-10 — "I have to remind you about agent-sync and effort log all the
+time." Prose in AGENTS.md reminds; the harness hook enforces at the moment it matters.
