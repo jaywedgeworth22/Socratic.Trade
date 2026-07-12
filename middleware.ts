@@ -53,6 +53,12 @@ const PUBLIC_PREFIXES = [
   "/access-denied",
   "/login",
   "/logout",
+  // Crawler/metadata files: these MUST be anonymously reachable or robots
+  // rules never reach crawlers (a robots.txt that 307s to /login parses as
+  // "no rules"). Discovered live 2026-07-11: production redirected all three.
+  "/robots.txt",
+  "/sitemap.xml",
+  "/manifest.webmanifest",
   "/welcome",
   "/strategy",
   "/framework",
