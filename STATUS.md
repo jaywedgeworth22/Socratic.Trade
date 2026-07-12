@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-12 — [codex-autofix] Honor HTTP-date Retry-After in 429 handling (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
+
+Codex review (P2) flagged that the existing 429 Retry-After handling only parses delta-seconds via
+parseInt, ignoring the legal HTTP-date format (RFC 7231 §7.1.3). Added Date.parse() fallback so
+"Wed, 21 Oct 2015 07:28:00 GMT" resolves to seconds-until-reset. The error-message seconds format
+is unchanged so runLoop()'s existing regex continues extracting the correct backoff. Verify trio
+passes (349 files, 3896 tests, build clean). Auto-merge enabled. Resolved the Codex thread.
+Rollout: `docs/rollouts/2026-07-12-codex-triage-429-retry-after.md`.
+
 ## 2026-07-12 — Merge origin/main, resolve .gitignore conflict (CLAUDE, branch `claude/fleet-skills`)
 
 Merged latest `origin/main` to resolve CONFLICTING merge state on PR #1470. Only conflict was
