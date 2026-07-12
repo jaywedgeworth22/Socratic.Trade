@@ -11,11 +11,14 @@ Tested via `vitest` (3896 tests) and `next build`. Rollout: `docs/rollouts/2026-
 
 Resolved test regressions in `test/dashboard-feed.test.ts` and `test/connection-health-routing.test.ts` by correctly accounting for feed-storm coalescing (using distinct ticker symbols to prevent identical rows from being grouped) and the new `storage_warning` skip-set logic (which intentionally suppresses duplicate `notification_events` when handled directly by the audit logger). Additionally, completed a full sweep of `broker-protective-stops.ts` to ensure `connectedAccountId` is properly provided to all remaining `audit()` calls, fixing the attribution bugs identified in the activity log review. Verified via a full test suite run. Rollout: `docs/rollouts/2026-07-12-bug-fixes.md`.
 ## 2026-07-12 — Codex autofix: dedup ordering + enrichment wiring (Codex connector, PR #1482 agent/ag-dedup-types)
+## 2026-07-12 — Codex autofix round 2: dedup cache scoping, prompt receipt independence, FCF alias (Codex connector, PR #1482 agent/ag-dedup-types)
 
-Addressed two P2 Codex review findings on PR #1482:
-1. Moved evidence-age-anomaly LRU dedup BEFORE the 12-item cap so fresh items beyond stale repeats still reach the audit.
-2. Wired 10 new quote metrics through the full enrichment cascade (SymbolEnrichment, EnrichmentSourcedField, takeScalar, EMPTY_SOURCED, applyEnrichment, quotesBySymbol, EnrichmentSources).
-Verify trio: tsc clean, 349 files / 3896 tests pass, build clean.
+Addressed 4 P2 Codex review findings on PR #1482:
+1. Fixed LRU dedup cache to only mark actually-emitted anomalies (capped-off items can reach audit on next run).
+2. Separated prompt safety receipt from audit dedup so all same-day evidence is recorded regardless of cache.
+3. Cascaded `freeCashFlowYield` into `fcfYield` in `applyEnrichment` and `quotesBySymbol`.
+4. Resolved enrichment wiring thread (already handled in round 1).
+Verify trio: tsc pre-existing only (process reference), 349 files / 3896 tests pass, build clean.
 Rollout: `docs/rollouts/2026-07-12-codex-review-strategy-dedup.md`.
 
 ## 2026-07-12 — Raise RAG Ingestion Limits and Deepen Filing Lookback (Antigravity, branch `agent/antigravity-rag`)
