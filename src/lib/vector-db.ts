@@ -85,8 +85,8 @@ const DEFAULT_EMBED_BATCH_DELAY_MS = 21_000; // unpaid Voyage limit is 3 RPM; pa
 const DEFAULT_CONTEXT_MAX_CHARS = 2400;
 const DEFAULT_EMBED_RETRY_ATTEMPTS = 2;
 const DEFAULT_EMBED_RETRY_DELAY_MS = 20_000;
-const DEFAULT_INGEST_MAX_TEXTS_PER_DAY = 1_000;
-const DEFAULT_PINECONE_WRITE_UNITS_PER_DAY = 50_000;
+const DEFAULT_INGEST_MAX_TEXTS_PER_DAY = 1_000_000;
+const DEFAULT_PINECONE_WRITE_UNITS_PER_DAY = 10_000_000;
 
 /**
  * Embedding integrity guard (R2, 2026-07-01 expert review): a Voyage model/config drift (partial

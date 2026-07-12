@@ -752,11 +752,7 @@ export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot;
 
 // ── Signed-in identity + sign out ────────────────────────────────────────────
 
-const THEME_LABEL: Record<ConsoleTheme, string> = {
-  system: "Theme: following your system setting. Click for dark.",
-  dark: "Theme: dark. Click for light.",
-  light: "Theme: light. Click to follow your system setting."
-};
+// Labels removed since we don't cycle anymore
 const THEME_WORD: Record<ConsoleTheme, string> = { system: "System", dark: "Dark", light: "Light" };
 
 function Avatar({ imageUrl, size, iconSize }: { imageUrl?: string; size: string; iconSize: number }) {
@@ -779,11 +775,11 @@ function Avatar({ imageUrl, size, iconSize }: { imageUrl?: string; size: string;
 export function UserMenu({
   snapshot,
   theme,
-  cycleTheme
+  setTheme
 }: {
   snapshot: DashboardSnapshot;
   theme: ConsoleTheme;
-  cycleTheme: () => void;
+  setTheme: (theme: ConsoleTheme) => void;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -809,7 +805,6 @@ export function UserMenu({
   if (!user) return null;
 
   const who = user.name ?? user.email ?? user.userId;
-  const ThemeIcon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
 
   return (
     // Not position:relative — the dropdown anchors to the bar row (the nearest
@@ -850,16 +845,30 @@ export function UserMenu({
               </div>
               <div className="flex items-center justify-between gap-3 rounded-lg border border-[color:var(--con-line)] px-3 py-2">
                 <span className="text-[color:var(--con-muted)]">Theme</span>
-                <button
-                  type="button"
-                  onClick={cycleTheme}
-                  title={THEME_LABEL[theme]}
-                  aria-label={THEME_LABEL[theme]}
-                  className="flex items-center gap-2 rounded-lg border border-[color:var(--con-line-strong)] px-2.5 py-1.5 text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
-                >
-                  <ThemeIcon size={14} />
-                  {THEME_WORD[theme]}
-                </button>
+                <div className="flex items-center gap-1 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-bg)] p-0.5">
+                  {(["light", "dark", "system"] as const).map((t) => {
+                    const active = theme === t;
+                    const Icon = t === "dark" ? Moon : t === "light" ? Sun : Monitor;
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setTheme(t)}
+                        title={THEME_WORD[t]}
+                        aria-label={`Set theme to ${THEME_WORD[t]}`}
+                        className={cx(
+                          "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[length:var(--con-fs-xs)] transition-colors",
+                          active
+                            ? "bg-[color:var(--con-surface)] text-[color:var(--con-text)] font-medium shadow-sm border border-[color:var(--con-line)]"
+                            : "text-[color:var(--con-muted)] hover:text-[color:var(--con-text)] border border-transparent"
+                        )}
+                      >
+                        <Icon size={13} />
+                        {THEME_WORD[t]}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
                 Signing out only ends this browser session. The strategy keeps its current run state on the server —

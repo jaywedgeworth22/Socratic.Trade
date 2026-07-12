@@ -17,6 +17,7 @@ import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Card, Field, Select, Toggle } from "../ui/primitives";
+import { ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
 
 const MODE_OPTIONS = [
   {
@@ -73,40 +74,31 @@ export function LearningReviewCard() {
   };
 
   return (
-    <Card title="Daily learning review">
-      <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-        Once a day, a frontier-class model re-examines what the system has been learning — recent learned facts and the
-        pending approval queue — against the system&apos;s own recent failures and fixes. It catches lessons built on
-        corrupted evidence, like a thesis blamed for losses a stuck exit order actually caused. One review call per day.
-      </p>
-      <div className="flex flex-col gap-3">
-        <div
-          className="con-row flex items-center justify-between gap-4 rounded-md px-1.5 py-1.5"
-          title="Run the review once per UTC day. Off = nothing runs and nothing is spent."
-        >
-          <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Run the daily review</div>
-            <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
-              {enabled
-                ? "On — the review runs once per day and posts its findings to the activity log and notifications."
-                : "Off — no review runs, no model call is made."}
-            </p>
-          </div>
+    <ListSection title="Daily learning review">
+      <div className="px-2 pb-2">
+        <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+          Once a day, a frontier-class model re-examines what the system has been learning — recent learned facts and the
+          pending approval queue — against the system&apos;s own recent failures and fixes. It catches lessons built on
+          corrupted evidence, like a thesis blamed for losses a stuck exit order actually caused. One review call per day.
+        </p>
+      </div>
+      
+      <ListRow>
+        <LabeledContent label="Run the daily review" hint={enabled ? "On — posts findings to the activity log and notifications." : "Off — no review runs, no model call is made."}>
           <Toggle
             checked={enabled}
             disabled={busy}
-            label="Run the daily review"
             onChange={(next) => void save({ learningReviewEnabled: next }, next ? "Daily learning review on" : "Daily learning review off")}
           />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="When it disagrees with a lesson"
-            hint="Annotate only flags; Decide also acts on the verdicts."
-            htmlFor="learning-review-mode"
-          >
-            <Select
+        </LabeledContent>
+      </ListRow>
+
+      <ListRow>
+        <div className="w-full py-1">
+          <LabeledContent label="When it disagrees with a lesson" hint="Annotate only flags; Decide also acts on the verdicts.">
+            <select
               id="learning-review-mode"
+              className="bg-transparent text-right text-[length:var(--con-fs-sm)] focus:outline-none focus:ring-0 cursor-pointer"
               value={mode}
               disabled={busy}
               title="Annotate records verdicts without changing anything. Decide applies them — removals, expiries, and pending approvals/rejections — each one audited."
@@ -122,15 +114,17 @@ export function LearningReviewCard() {
                   {o.label}
                 </option>
               ))}
-            </Select>
-          </Field>
-          <Field
-            label="Learning-review model"
-            hint="One call per day, so a frontier model is the point. Defaults to claude-fable-5."
-            htmlFor="learning-review-model"
-          >
-            <Select
+            </select>
+          </LabeledContent>
+        </div>
+      </ListRow>
+
+      <ListRow>
+        <div className="w-full py-1">
+          <LabeledContent label="Learning-review model" hint="One call per day, so a frontier model is the point. Defaults to claude-fable-5.">
+            <select
               id="learning-review-model"
+              className="bg-transparent text-right text-[length:var(--con-fs-sm)] focus:outline-none focus:ring-0 cursor-pointer max-w-[200px]"
               value={model}
               disabled={busy}
               title="The model that runs the daily learning review. Needs a resolvable key for its provider (Settings → API keys)."
@@ -146,10 +140,10 @@ export function LearningReviewCard() {
                   {o.label}
                 </option>
               ))}
-            </Select>
-          </Field>
+            </select>
+          </LabeledContent>
         </div>
-      </div>
-    </Card>
+      </ListRow>
+    </ListSection>
   );
 }

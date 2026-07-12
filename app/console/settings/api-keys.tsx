@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleApiError } from "../lib/api";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Field, TextInput } from "../ui/primitives";
+import { ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
 import { deleteApiKey, listApiKeys, saveApiKey, type ApiKeyEntry } from "./lib";
 
 const getSourceCopy = (source: ApiKeyEntry["source"], credName: string) => {
@@ -83,7 +84,7 @@ export function ApiKeysCard() {
   };
 
   return (
-    <Card title="API keys">
+    <ListSection title="API keys">
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         Optional provider keys, stored per user on the server. Keys are write-only: once saved they are never displayed
         again — only whether one is set and where it came from. Everything works without any of these; each key just
@@ -100,138 +101,138 @@ export function ApiKeysCard() {
       )}
 
       {entries === null && !loadError && (
-        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading key status…</p>
+        <ListRow>
+          <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading key status…</p>
+        </ListRow>
       )}
 
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-6 w-full">
         {byCategory.map(([category, list]) => (
           <div key={category}>
-            <div className="con-card-title mb-1.5" title={`Keys in the "${category}" group.`}>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold mb-2 ml-1" title={`Keys in the "${category}" group.`}>
               {category}
             </div>
-            <div className="flex flex-col divide-y divide-[color:var(--con-line)] rounded-lg border border-[color:var(--con-line)]">
+            <div className="rounded-xl overflow-hidden shadow-sm">
               {list.map((entry) => {
                 const credName = entry.credentialName ?? "key";
                 const source = getSourceCopy(entry.source, credName);
                 const isEditing = editing === entry.service;
                 const isConfirmingDelete = confirmingDelete === entry.service;
                 return (
-                  <div
-                    key={entry.service}
-                    tabIndex={0}
-                    className="px-3 py-2.5 transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="font-semibold" title={entry.unlocks}>
-                          {entry.label}
-                        </span>
-                        <Chip tone={source.tone} title={source.title}>
-                          {source.chip}
-                        </Chip>
-                        {entry.source === "user" && entry.updatedAt && (
-                          <span
-                            className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                            title="When you last saved a key for this service."
-                          >
-                            saved <Ago iso={entry.updatedAt} />
+                  <ListRow key={entry.service}>
+                    <div className="w-full">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="font-semibold" title={entry.unlocks}>
+                            {entry.label}
                           </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <a
-                          href={entry.docsUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
-                          title={`Opens ${entry.label}'s own site, where keys are created. (new tab)`}
-                        >
-                          get a key ↗
-                        </a>
-                        <Btn
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy !== null}
-                          onClick={() => {
-                            setEditing(isEditing ? null : entry.service);
-                            setConfirmingDelete(null);
-                          }}
-                          title={
-                            entry.source === "user"
-                              ? `Replace your stored ${credName} with a new value. The old one is overwritten server-side.`
-                              : `Store your own ${credName} for this service.`
-                          }
-                        >
-                          {isEditing ? "Close" : entry.source === "user" ? "Replace" : `Add ${credName}`}
-                        </Btn>
-                        {entry.source === "user" && (
+                          <Chip tone={source.tone} title={source.title}>
+                            {source.chip}
+                          </Chip>
+                          {entry.source === "user" && entry.updatedAt && (
+                            <span
+                              className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+                              title="When you last saved a key for this service."
+                            >
+                              saved <Ago iso={entry.updatedAt} />
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <a
+                            href={entry.docsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)] hover:underline"
+                            title={`Opens ${entry.label}'s own site, where keys are created. (new tab)`}
+                          >
+                            get a key ↗
+                          </a>
                           <Btn
                             size="sm"
-                            variant="dangerOutline"
+                            variant="ghost"
                             disabled={busy !== null}
                             onClick={() => {
-                              setConfirmingDelete(isConfirmingDelete ? null : entry.service);
-                              setEditing(null);
+                              setEditing(isEditing ? null : entry.service);
+                              setConfirmingDelete(null);
                             }}
-                            title={`Delete your stored ${credName} from the server. Falls back to the server ${credName} if one exists.`}
+                            title={
+                              entry.source === "user"
+                                ? `Replace your stored ${credName} with a new value. The old one is overwritten server-side.`
+                                : `Store your own ${credName} for this service.`
+                            }
                           >
-                            Remove
+                            {isEditing ? "Close" : entry.source === "user" ? "Replace" : `Add ${credName}`}
                           </Btn>
-                        )}
-                      </div>
-                    </div>
-                    <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title={entry.envVar ? `Server-side env var for this service: ${entry.envVar}` : undefined}>
-                      {entry.unlocks}
-                    </p>
-                    {isConfirmingDelete && (
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-2.5">
-                        <span className="text-[length:var(--con-fs-xs)]">
-                          Remove your {entry.label} {credName}? This can&apos;t be undone — you&apos;d have to paste a new {credName}.
-                        </span>
-                        <div className="flex gap-2">
-                          <Btn size="sm" variant="ghost" onClick={() => setConfirmingDelete(null)} title={`Keep the ${credName}.`}>
-                            Cancel
-                          </Btn>
-                          <Btn
-                            size="sm"
-                            variant="danger"
-                            disabled={busy !== null}
-                            onClick={() => void removeKey(entry)}
-                            title={`Delete the stored ${credName} now.`}
-                          >
-                            {busy === entry.service ? "Removing…" : `Remove ${credName}`}
-                          </Btn>
+                          {entry.source === "user" && (
+                            <Btn
+                              size="sm"
+                              variant="dangerOutline"
+                              disabled={busy !== null}
+                              onClick={() => {
+                                setConfirmingDelete(isConfirmingDelete ? null : entry.service);
+                                setEditing(null);
+                              }}
+                              title={`Delete your stored ${credName} from the server. Falls back to the server ${credName} if one exists.`}
+                            >
+                              Remove
+                            </Btn>
+                          )}
                         </div>
                       </div>
-                    )}
-                    {isEditing && (
-                      <KeyEditor
-                        entry={entry}
-                        busy={busy === entry.service}
-                        onCancel={() => setEditing(null)}
-                        onSave={async (value, label) => {
-                          setBusy(entry.service);
-                          try {
-                            await saveApiKey(entry.service, value, label);
-                            await load();
-                            setEditing(null);
-                            toast.push("pos", `${entry.label} ${credName} saved`, "Stored server-side. It won't be shown again.");
-                          } catch (error) {
-                            toast.push("neg", `Could not save ${credName}`, error instanceof ConsoleApiError ? error.message : String(error));
-                          } finally {
-                            setBusy(null);
-                          }
-                        }}
-                      />
-                    )}
-                  </div>
+                      <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title={entry.envVar ? `Server-side env var for this service: ${entry.envVar}` : undefined}>
+                        {entry.unlocks}
+                      </p>
+                      {isConfirmingDelete && (
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-2.5">
+                          <span className="text-[length:var(--con-fs-xs)]">
+                            Remove your {entry.label} {credName}? This can&apos;t be undone — you&apos;d have to paste a new {credName}.
+                          </span>
+                          <div className="flex gap-2">
+                            <Btn size="sm" variant="ghost" onClick={() => setConfirmingDelete(null)} title={`Keep the ${credName}.`}>
+                              Cancel
+                            </Btn>
+                            <Btn
+                              size="sm"
+                              variant="danger"
+                              disabled={busy !== null}
+                              onClick={() => void removeKey(entry)}
+                              title={`Delete the stored ${credName} now.`}
+                            >
+                              {busy === entry.service ? "Removing…" : `Remove ${credName}`}
+                            </Btn>
+                          </div>
+                        </div>
+                      )}
+                      {isEditing && (
+                        <KeyEditor
+                          entry={entry}
+                          busy={busy === entry.service}
+                          onCancel={() => setEditing(null)}
+                          onSave={async (value, label) => {
+                            setBusy(entry.service);
+                            try {
+                              await saveApiKey(entry.service, value, label);
+                              await load();
+                              setEditing(null);
+                              toast.push("pos", `${entry.label} ${credName} saved`, "Stored server-side. It won't be shown again.");
+                            } catch (error) {
+                              toast.push("neg", `Could not save ${credName}`, error instanceof ConsoleApiError ? error.message : String(error));
+                            } finally {
+                              setBusy(null);
+                            }
+                          }}
+                        />
+                      )}
+                    </div>
+                  </ListRow>
                 );
               })}
             </div>
           </div>
         ))}
       </div>
-    </Card>
+    </ListSection>
   );
 }
 

@@ -231,6 +231,8 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Quiver Quant API Integration & FMP Endpoint Expansion (AG, branch `agent/antigravity`) — COMPLETED 2026-07-12.** Integrated the Quiver Quant API into the backend application. Added Quiver Quant key support in `src/lib/db-api-keys.ts` and `app/api/keys/route.ts`. Created `QuiverQuantEnrichmentProvider` in `src/lib/data-providers.ts` and injected it into the main cascading enrichment workflow. Expanded the existing `FmpEnrichmentProvider` to utilize `/v3/key-metrics-ttm` and `/v3/financial-growth` endpoints. Updated `MarketQuote` and `SymbolEnrichment` structures in `src/lib/types.ts`. All test suites updated to reflect the new 6-endpoint FMP fetch count. Passed 3896 tests and clean build. Rollout: `docs/rollouts/2026-07-12-quiver-quant-fmp.md`.
+- **Web App Settings UI Refresh (AG, branch `agent/antigravity`) — COMPLETED 2026-07-12.** Replaced all settings page cards with iOS-style `ListSection` and `ListRow` components for a unified cross-platform aesthetic matching the native iOS app. Passed 349/3896 tests and clean build. Rollout: `docs/rollouts/2026-07-12-ios-ui-refresh.md`.
 - **App-wide Audit: Draining State and Cap Fixes (Antigravity/AG, branch `codex/app-wide-audit-20260711`) — COMPLETED 2026-07-12.** Fixed account-deletion race conditions by introducing a safe `is_draining` state and cascade cleanup (`purgeConnectedAccount`). Fixed daily notional risk tracking to accurately attribute to `placed_at` instead of `created_at`, covering `placing` intents as well. Updated various tests, SEC time-flakiness, and local dev forwarded-host behaviors. Rollout: `docs/rollouts/2026-07-12-app-wide-audit-draining-fixes.md`.
 - **LLM failover UI & account bursts (AG) — COMPLETED 2026-07-12.** Added jitter/stagger to concurrent account scheduling in `scheduler.ts` to mitigate shared OpenAI key bursts. Exposed `llmFallbackModels` in `app/console/strategy/page.tsx` via a text input and persistence logic.
 - **Twilio A2P 10DLC compliance error handling (AG) — COMPLETED 2026-07-12.** Handled Twilio Error 30034 (A2P 10DLC unregistered) in `src/lib/notify.ts` to gracefully mark notification failures instead of crashing or retrying continuously.
@@ -511,6 +513,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **Raise RAG Ingestion Limits and Deepen Filing Lookback (AG, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Raised `RAG_INGEST_MAX_TEXTS_PER_DAY` to 1M and `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10M to allow massive ingestion. Deepened historical 10-K/10-Q filing lookback to 10 each per ticker and raised `DEFAULT_PAID_MAX_FILINGS_PER_RUN` to 200.
 
 - **Native iOS App Overhaul (Antigravity, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Replaced the legacy iOS starter app with a native SwiftUI application (`ios/`) using `xcodegen`. Includes tabbed navigation (Dashboard, Proposals, Watchlist), `MobileStore` persistence, and `MobileAPIClient`. Assessed Cloudflare hosting vs current Hetzner server and decided to keep it on Hetzner to avoid splitting the database. Verified build via `xcodebuild`. Ready to merge.
 
