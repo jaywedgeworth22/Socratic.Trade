@@ -23,6 +23,7 @@ import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useToast } from "../ui/toast";
 import { Card, Chip, Field, RawNumInput, TextInput, Toggle } from "../ui/primitives";
+import { List, ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
 import { SaveStatus } from "../ui/save-status";
 import { ApiKeysCard } from "./api-keys";
 import { BrokerAccountsCard } from "./brokers";
@@ -65,108 +66,64 @@ export default function SettingsPage() {
 
   return (
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
-      <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
+      <h1 className="text-[length:var(--con-fs-lg)] font-bold px-4 lg:px-0">Settings</h1>
 
       {/* Account-scoped config (models, tax treatment, prompt, weights) lives on
           Framework (/console/strategy) and Mandates — Settings is global-only. */}
 
-      {/* ── ALL ACCOUNTS ── */}
-      <section className="flex flex-col gap-4">
-        <div className="flex items-center gap-2">
-          <Chip
-            tone="accent"
-            title="Settings tagged ALL YOUR ACCOUNTS are stored per user — they overlay every account you connect, in every scope."
-          >
-            ALL YOUR ACCOUNTS
-          </Chip>
-          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-            applies everywhere, for you
-          </span>
-        </div>
-        {/* Anchor ids (#brokers/#api-keys) are deep-link targets used by the
-            Run-once blocked-reason sheet; scroll-mt clears the sticky chrome. */}
-        <div id="brokers" className="scroll-mt-28">
-          <BrokerAccountsCard />
-        </div>
-        <div id="api-keys" className="scroll-mt-28">
-          <ApiKeysCard />
-        </div>
-        {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
-            in db-profiles): one event list + webhook overlaid on every account —
-            so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
-        <EventNotificationsCard />
-        <DeliveryChannelsCard />
-        <div id="sharing" className="scroll-mt-28">
-          <DataSharingCard />
-        </div>
-        <ScanShapeCard />
-        {/* learningReviewEnabled/Mode/Model are USER-level policy fields
-            (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per
-            user per day over user-level learned context, so its config overlays
-            every account — it belongs under ALL YOUR ACCOUNTS, not THIS ACCOUNT.
-            The anchor id is a deep-link target (the Learning Review blocks on
-            /console/approvals link here as "Model settings"). */}
-        <div id="learning-review" className="scroll-mt-28">
-          <LearningReviewCard />
-        </div>
-        {/* requireTypedConfirmation is a USER-level policy field
-            (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
-            phrase ceremony is an owner preference, not a per-account guardrail,
-            so one switch applies across every account. */}
-        <div id="confirmation" className="scroll-mt-28">
-          <AdvancedActionConfirmationCard />
-        </div>
-        <BootBehaviorCard />
-        <YouCard />
-      </section>
-
-      {/* ── THIS BROWSER ── */}
-      <section className="flex flex-col gap-4">
-        <div className="flex items-center gap-2">
-          <Chip tone="muted" title="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
-            THIS BROWSER
-          </Chip>
-          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-            local display preferences
-          </span>
-        </div>
-        <AppearanceCard />
-      </section>
-
-      {/* ── OPERATOR (admin only: links, no new admin UI) ── */}
-      {snapshot.currentUser?.isAdmin && (
-        <section id="admin" className="flex scroll-mt-28 flex-col gap-4">
-          <div className="flex items-center gap-2">
-            <Chip tone="accent" title="Visible because this login has operator/admin rights on the server.">
-              OPERATOR
-            </Chip>
-            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              server-wide diagnostics, outside the console
-            </span>
+      <List>
+        {/* ── ALL ACCOUNTS ── */}
+        <ListSection title="ALL YOUR ACCOUNTS" footer="Settings tagged ALL YOUR ACCOUNTS are stored per user — they overlay every account you connect, in every scope.">
+          {/* Anchor ids (#brokers/#api-keys) are deep-link targets used by the
+              Run-once blocked-reason sheet; scroll-mt clears the sticky chrome. */}
+          <div id="brokers" className="scroll-mt-28">
+            <BrokerAccountsCard />
           </div>
-          <AdminLinksCard />
-        </section>
-      )}
+          <div id="api-keys" className="scroll-mt-28">
+            <ApiKeysCard />
+          </div>
+          <EventNotificationsCard />
+          <DeliveryChannelsCard />
+          <div id="sharing" className="scroll-mt-28">
+            <DataSharingCard />
+          </div>
+          <ScanShapeCard />
+          <div id="learning-review" className="scroll-mt-28">
+            <LearningReviewCard />
+          </div>
+          <div id="confirmation" className="scroll-mt-28">
+            <AdvancedActionConfirmationCard />
+          </div>
+          <BootBehaviorCard />
+          <YouCard />
+        </ListSection>
 
-      {/* ── REFERENCE ── */}
-      <section className="flex flex-col gap-4">
-        <div className="flex items-center gap-2">
-          <Chip tone="muted" title="Nothing here changes any setting — it's the app's vocabulary, searchable.">
-            REFERENCE
-          </Chip>
-        </div>
-        <HelpGlossaryCard />
-      </section>
+        {/* ── THIS BROWSER ── */}
+        <ListSection title="THIS BROWSER" footer="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
+          <AppearanceCard />
+        </ListSection>
 
-      {/* ── DANGER ── */}
-      <section id="danger" className="flex scroll-mt-28 flex-col gap-4">
-        <div className="flex items-center gap-2">
-          <Chip tone="neg" title="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
-            DANGER
-          </Chip>
+        {/* ── OPERATOR (admin only: links, no new admin UI) ── */}
+        {snapshot.currentUser?.isAdmin && (
+          <div id="admin" className="scroll-mt-28">
+            <ListSection title="OPERATOR" footer="Visible because this login has operator/admin rights on the server. Server-wide diagnostics, outside the console.">
+              <AdminLinksCard />
+            </ListSection>
+          </div>
+        )}
+
+        {/* ── REFERENCE ── */}
+        <ListSection title="REFERENCE" footer="Nothing here changes any setting — it's the app's vocabulary, searchable.">
+          <HelpGlossaryCard />
+        </ListSection>
+
+        {/* ── DANGER ── */}
+        <div id="danger" className="scroll-mt-28">
+          <ListSection title="DANGER" footer="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
+            <AccountDeletionCard />
+          </ListSection>
         </div>
-        <AccountDeletionCard />
-      </section>
+      </List>
     </div>
   );
 }
@@ -199,24 +156,17 @@ function AdvancedActionConfirmationCard() {
     }
   };
   return (
-    <Card title="Advanced action confirmation">
-      <Field
-        label="Type a phrase to confirm high-impact live actions"
-        hint="One switch for your whole login — it applies across every account you connect. On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click. Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless."
-      >
-        <div className="flex items-center gap-3">
+    <ListSection title="Advanced action confirmation" footer="One switch for your whole login — it applies across every account you connect. On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click. Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless.">
+      <ListRow>
+        <LabeledContent label="Require typed confirmation" hint={required ? "On — type to confirm" : "Off — one click"}>
           <Toggle
             checked={required}
             onChange={(next) => void setRequired(next)}
             disabled={saving}
-            label="Require typed confirmation for high-impact live actions"
           />
-          <span className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-            {required ? "On — type to confirm" : "Off — one click"}
-          </span>
-        </div>
-      </Field>
-    </Card>
+        </LabeledContent>
+      </ListRow>
+    </ListSection>
   );
 }
 
@@ -271,16 +221,20 @@ function AppearanceCard() {
   const { textBoxFont, setTextBoxFont } = useConsoleTextBoxFont();
   const { consoleFont, setConsoleFont } = useConsoleFont();
   return (
-    <Card title="Appearance">
-      <Field label="Console Font" hint="The whole console (nav, cards, copy) uses this font in this browser.">
-        <FontOptionGrid options={CONSOLE_FONT_OPTIONS} selected={consoleFont} onSelect={setConsoleFont} />
-      </Field>
-      <div className="mt-4">
-        <Field label="Text Box Font" hint="Editable text boxes use this font in this browser.">
+    <ListSection title="Appearance" footer="The whole console uses this font in this browser.">
+      <ListRow>
+        <div className="flex flex-col gap-3 w-full py-2">
+          <div className="text-[length:var(--con-fs-sm)] font-semibold">Console Font</div>
+          <FontOptionGrid options={CONSOLE_FONT_OPTIONS} selected={consoleFont} onSelect={setConsoleFont} />
+        </div>
+      </ListRow>
+      <ListRow>
+        <div className="flex flex-col gap-3 w-full py-2">
+          <div className="text-[length:var(--con-fs-sm)] font-semibold">Text Box Font</div>
           <FontOptionGrid options={CONSOLE_TEXT_BOX_FONT_OPTIONS} selected={textBoxFont} onSelect={setTextBoxFont} />
-        </Field>
-      </div>
-    </Card>
+        </div>
+      </ListRow>
+    </ListSection>
   );
 }
 
@@ -295,27 +249,23 @@ const ADMIN_LINKS: Array<{ href: string; label: string; desc: string }> = [
 
 function AdminLinksCard() {
   return (
-    <Card title="Admin pages">
-      <p className="mb-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-        Operator diagnostics from the legacy app — they open outside the console and keep their own styling.
-      </p>
-      <div className="flex flex-col gap-1">
-        {ADMIN_LINKS.map((link) => (
+    <ListSection title="Admin pages" footer="Operator diagnostics from the legacy app — they open outside the console and keep their own styling.">
+      {ADMIN_LINKS.map((link) => (
+        <ListRow key={link.href}>
           <a
-            key={link.href}
             href={link.href}
-            className="con-row flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 text-[length:var(--con-fs-sm)]"
+            className="flex items-center justify-between w-full text-[length:var(--con-fs-sm)] py-1"
             title={`${link.desc} Opens outside the console.`}
           >
-            <span>
-              <span className="font-semibold">{link.label}</span>
-              <span className="ml-2 hidden text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] sm:inline">{link.desc}</span>
-            </span>
-            <ExternalLink size={13} className="shrink-0 text-[color:var(--con-faint)]" />
+            <div className="flex flex-col min-w-0">
+              <span className="font-medium text-[color:var(--con-fg)]">{link.label}</span>
+              <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)] truncate">{link.desc}</span>
+            </div>
+            <ExternalLink size={16} className="shrink-0 text-[color:var(--con-muted)] ml-3" />
           </a>
-        ))}
-      </div>
-    </Card>
+        </ListRow>
+      ))}
+    </ListSection>
   );
 }
 
@@ -356,46 +306,39 @@ function EventNotificationsCard() {
   };
 
   return (
-    <Card title="Event notifications" action={<SaveStatus status={autoSave.status} />}>
-      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which events send notifications, and the webhook they go to. One list for your whole login — it applies across
-        every account, not just the one you&apos;re viewing. Delivery channels (push/email/SMS) are configured once per
-        user, below.
-      </p>
-      <div className="grid gap-1.5 sm:grid-cols-2">
-        {NOTIFICATION_EVENT_TYPES.map((type) => {
-          const on = events.includes(type);
-          return (
-            <label
-              key={type}
-              title={`When on, you get a notification whenever ${EVENT_HINT[type] ?? `a "${type}" event happens`}.`}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
-            >
-              <input
-                type="checkbox"
+    <ListSection 
+      title="Event notifications" 
+      footer="Which events send notifications, and the webhook they go to. One list for your whole login — it applies across every account."
+      action={<SaveStatus status={autoSave.status} />}
+    >
+      {NOTIFICATION_EVENT_TYPES.map((type) => {
+        const on = events.includes(type);
+        return (
+          <ListRow key={type}>
+            <LabeledContent label={type} hint={EVENT_HINT[type]}>
+              <Toggle
                 checked={on}
                 disabled={autoSave.saving}
                 onChange={() => toggleEvent(type, on)}
               />
-              <span className="font-semibold">{type}</span>
-              <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{EVENT_HINT[type]}</span>
-            </label>
-          );
-        })}
-      </div>
-      <div className="mt-3 max-w-md">
-        <Field label="Webhook URL (optional)" hint="Rich embeds for chat webhooks; generic JSON otherwise." htmlFor="webhook">
-          <TextInput
+            </LabeledContent>
+          </ListRow>
+        );
+      })}
+      <ListRow>
+        <LabeledContent label="Webhook URL" hint="Rich embeds for chat webhooks; generic JSON otherwise.">
+          <input
             id="webhook"
+            className="w-48 text-right bg-transparent text-[length:var(--con-fs-sm)] focus:outline-none placeholder:text-[color:var(--con-muted)]"
             value={webhook}
             placeholder="https://…"
-            title="Every enabled event is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON. Saves when you click away."
+            title="Every enabled event is also POSTed to this URL."
             onChange={(e) => setLocalWebhook(e.target.value)}
             onBlur={commitWebhook}
           />
-        </Field>
-      </div>
-    </Card>
+        </LabeledContent>
+      </ListRow>
+    </ListSection>
   );
 }
 
@@ -421,34 +364,36 @@ function ScanShapeCard() {
   };
 
   return (
-    <Card title="Market-scan shape" action={<SaveStatus status={autoSave.status} />}>
-      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        How wide every account&apos;s market scan looks. These two are user-level, like everything on this page: they
-        overlay all your accounts.
-      </p>
-      <div className="grid max-w-md grid-cols-2 gap-3">
-        <Field label="Enriched candidates" hint="Ranked names that get full enrichment per run." htmlFor="scan-limit">
+    <ListSection 
+      title="Market-scan shape" 
+      footer="How wide every account's market scan looks. These two are user-level."
+      action={<SaveStatus status={autoSave.status} />}
+    >
+      <ListRow>
+        <LabeledContent label="Enriched candidates" hint="Ranked names that get full enrichment per run.">
           <RawNumInput
             id="scan-limit"
+            className="w-20 text-right bg-transparent border-0 px-0 text-[length:var(--con-fs-sm)] focus:ring-0"
             value={String(candidateLimit ?? "")}
             emptyValue={0}
-            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs. Saves when you click away."
             onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanCandidateLimit: parsed }))}
             onBlur={() => commitNumber("marketScanCandidateLimit", candidateLimit, policy.marketScanCandidateLimit)}
           />
-        </Field>
-        <Field label="Outlier reserve" hint="Below-cutoff slots reserved for notable web signals." htmlFor="scan-reserve">
+        </LabeledContent>
+      </ListRow>
+      <ListRow>
+        <LabeledContent label="Outlier reserve" hint="Below-cutoff slots reserved for notable web signals.">
           <RawNumInput
             id="scan-reserve"
+            className="w-20 text-right bg-transparent border-0 px-0 text-[length:var(--con-fs-sm)] focus:ring-0"
             value={String(outlierReserve ?? "")}
             emptyValue={0}
-            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity). Saves when you click away."
             onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanOutlierReserve: parsed }))}
             onBlur={() => commitNumber("marketScanOutlierReserve", outlierReserve, policy.marketScanOutlierReserve)}
           />
-        </Field>
-      </div>
-    </Card>
+        </LabeledContent>
+      </ListRow>
+    </ListSection>
   );
 }
 
@@ -461,38 +406,28 @@ function BootBehaviorCard() {
   if (!snapshot) return null;
 
   return (
-    <Card title="After a restart">
-      <div
-        className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
-        title="Controls what happens to Running accounts when the server process restarts. Off keeps the safety net: a human must start trading again."
-      >
-        <div>
-          <div className="text-[length:var(--con-fs-sm)] font-semibold">Auto-resume on boot</div>
-          <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
-            Off (recommended): whenever the server restarts, any Running account is stopped until a person starts it
-            again — a restored backup or crash-loop can never silently resume trading. Turning this ON removes that
-            safety net.
-          </p>
-        </div>
-        <Toggle
-          checked={snapshot.autoResumeOnBoot}
-          onChange={async (next) => {
-            setBusy(true);
-            try {
-              await setAutoResume(next);
-              await refresh();
-              toast.push(next ? "warn" : "pos", next ? "Auto-resume ON" : "Auto-resume off", next ? "Accounts left Running will resume by themselves after a restart." : "Restarts stop everything until you start it again.");
-            } catch (error) {
-              toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-            } finally {
-              setBusy(false);
-            }
-          }}
-          disabled={busy}
-          label="Auto-resume on boot"
-        />
-      </div>
-    </Card>
+    <ListSection title="After a restart" footer="Off (recommended): whenever the server restarts, any Running account is stopped until a person starts it again. Turning this ON removes that safety net.">
+      <ListRow>
+        <LabeledContent label="Auto-resume on boot">
+          <Toggle
+            checked={snapshot.autoResumeOnBoot}
+            onChange={async (next) => {
+              setBusy(true);
+              try {
+                await setAutoResume(next);
+                await refresh();
+                toast.push(next ? "warn" : "pos", next ? "Auto-resume ON" : "Auto-resume off", next ? "Accounts left Running will resume by themselves after a restart." : "Restarts stop everything until you start it again.");
+              } catch (error) {
+                toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
+              } finally {
+                setBusy(false);
+              }
+            }}
+            disabled={busy}
+          />
+        </LabeledContent>
+      </ListRow>
+    </ListSection>
   );
 }
 
@@ -503,23 +438,23 @@ function YouCard() {
   if (!snapshot?.currentUser) return null;
   const user = snapshot.currentUser;
   return (
-    <Card title="You">
-      <div className="flex flex-wrap items-center gap-2 text-[length:var(--con-fs-sm)]">
-        <span className="font-semibold" title="The signed-in user every ALL YOUR ACCOUNTS setting belongs to.">
-          {user.name ?? user.email ?? user.userId}
-        </span>
-        {user.email && user.name && <span className="text-[color:var(--con-faint)]">{user.email}</span>}
-        {user.isAdmin && (
-          <Chip tone="accent" title="This login has operator/admin rights on the server.">
-            admin
-          </Chip>
-        )}
-        {user.loginProvider && (
-          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title="Which identity provider authenticated this session.">
-            via {user.loginProvider}
-          </span>
-        )}
-      </div>
-    </Card>
+    <ListSection title="You">
+      <ListRow>
+        <LabeledContent label={user.name ?? user.email ?? user.userId} hint={user.email && user.name ? user.email : undefined}>
+          <div className="flex items-center gap-2">
+            {user.isAdmin && (
+              <Chip tone="accent">
+                admin
+              </Chip>
+            )}
+            {user.loginProvider && (
+              <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                via {user.loginProvider}
+              </span>
+            )}
+          </div>
+        </LabeledContent>
+      </ListRow>
+    </ListSection>
   );
 }

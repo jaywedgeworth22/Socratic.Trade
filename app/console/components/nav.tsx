@@ -133,7 +133,7 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
   const learnedCount = useLearnedPendingCount();
   const decisionCount = pendingCount + learnedCount;
   return (
-    <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex" aria-label="Console navigation">
+    <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex border-r border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] shadow-sm mr-4" aria-label="Console navigation">
       {groupedDestinations(DESTINATIONS).map((group, i) => (
         <div key={group.label} className={cx("flex flex-col gap-1", i > 0 && "mt-4")}>
           <div className="con-card-title px-3 pb-1">{group.label}</div>
@@ -288,7 +288,7 @@ function TabsSheet({
         aria-labelledby={headingId}
         tabIndex={-1}
         className={cx(
-          "fixed inset-x-0 z-[101] flex flex-col overflow-hidden rounded-[var(--con-radius)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] shadow-[var(--con-shadow-lg)] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 lg:hidden",
+          "fixed inset-x-0 z-[101] flex flex-col overflow-hidden rounded-t-[24px] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] shadow-[var(--con-shadow-lg)] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 lg:hidden",
           entered ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"
         )}
         style={{
@@ -296,8 +296,9 @@ function TabsSheet({
           maxHeight: `calc(100dvh - ${barOffset + TABS_SHEET_GAP + TABS_SHEET_TOP_GAP}px)`
         }}
       >
-        <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5">
-          <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold">
+        <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5 relative">
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 w-9 h-1.5 rounded-full bg-[color:var(--con-line-strong)] opacity-60"></div>
+          <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold mt-2">
             Tabs
           </h2>
           <button
@@ -411,7 +412,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
     <>
       <nav
         ref={navRef}
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         aria-label="Console navigation"
       >

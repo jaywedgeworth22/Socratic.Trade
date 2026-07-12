@@ -15,6 +15,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
+import { ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
 import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle } from "lucide-react";
 import {
   connectAlpacaAccount,
@@ -182,12 +183,8 @@ export function BrokerAccountsCard() {
     const caps = account.capabilities;
     const needsReconnect = rhNeedsReconnect(account);
     return (
-      <div
-        key={account.id}
-        tabIndex={0}
-        className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <ListRow key={account.id}>
+        <div className="flex flex-wrap items-center justify-between gap-2 w-full py-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
               {account.label || brokerName(account.broker)}
@@ -312,12 +309,12 @@ export function BrokerAccountsCard() {
             )}
           </div>
         )}
-      </div>
+      </ListRow>
     );
   };
 
   return (
-    <Card
+    <ListSection
       title="Broker connections"
       action={
         <div className="flex gap-2">
@@ -374,31 +371,41 @@ export function BrokerAccountsCard() {
       </p>
 
       {accounts.length === 0 ? (
-        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-          No brokerage connected yet. Use the buttons above when you want broker-backed execution — Robinhood connects
-          through the broker&apos;s own sign-in, Alpaca through an API key pair.
-        </p>
+        <ListRow>
+          <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] py-2">
+            No brokerage connected yet. Use the buttons above when you want broker-backed execution — Robinhood connects
+            through the broker&apos;s own sign-in, Alpaca through an API key pair.
+          </p>
+        </ListRow>
       ) : (
         <div className="flex flex-col gap-4">
           <section>
             <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Currently Loaded Account</h3>
-            {loaded ? (
-              renderAccountRow(loaded)
-            ) : (
-              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                No account loaded — select one below.
-              </p>
-            )}
+            <div className="rounded-xl overflow-hidden shadow-sm">
+              {loaded ? (
+                renderAccountRow(loaded)
+              ) : (
+                <ListRow>
+                  <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] py-2">
+                    No account loaded — select one below.
+                  </p>
+                </ListRow>
+              )}
+            </div>
           </section>
           <section>
             <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Other Accounts</h3>
-            {others.length > 0 ? (
-              <div className="flex flex-col gap-2">{others.map(renderAccountRow)}</div>
-            ) : (
-              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                No other accounts. Use the buttons above to connect one.
-              </p>
-            )}
+            <div className="rounded-xl overflow-hidden shadow-sm">
+              {others.length > 0 ? (
+                others.map(renderAccountRow)
+              ) : (
+                <ListRow>
+                  <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] py-2">
+                    No other accounts. Use the buttons above to connect one.
+                  </p>
+                </ListRow>
+              )}
+            </div>
           </section>
         </div>
       )}
@@ -410,30 +417,28 @@ export function BrokerAccountsCard() {
             not wired yet
           </Chip>
         </div>
-        <div className="grid gap-2 lg:grid-cols-3">
+        <div className="rounded-xl overflow-hidden shadow-sm">
           {BROKER_ROADMAP.map((broker) => (
-            <div
-              key={broker.name}
-              className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
-              title={broker.detail}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <span className="font-semibold">{broker.name}</span>
-                <Chip tone="warn">{broker.status}</Chip>
+            <ListRow key={broker.name}>
+              <div className="w-full" title={broker.detail}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-semibold">{broker.name}</span>
+                  <Chip tone="warn">{broker.status}</Chip>
+                </div>
+                <p className="mt-1 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+                  {broker.detail}
+                </p>
+                <Btn
+                  size="sm"
+                  variant="ghost"
+                  disabled
+                  className="mt-2"
+                  title={`Connect ${broker.name} is disabled because no ${broker.name} broker gateway exists in this app yet.`}
+                >
+                  Connect unavailable
+                </Btn>
               </div>
-              <p className="mt-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
-                {broker.detail}
-              </p>
-              <Btn
-                size="sm"
-                variant="ghost"
-                disabled
-                className="mt-2"
-                title={`Connect ${broker.name} is disabled because no ${broker.name} broker gateway exists in this app yet.`}
-              >
-                Connect unavailable
-              </Btn>
-            </div>
+            </ListRow>
           ))}
         </div>
       </div>
@@ -498,7 +503,7 @@ export function BrokerAccountsCard() {
           await refresh();
         }}
       />
-    </Card>
+    </ListSection>
   );
 }
 

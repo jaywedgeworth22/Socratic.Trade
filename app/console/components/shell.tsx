@@ -49,7 +49,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
 
 function ShellFrame({ children }: { children: ReactNode }) {
   const { snapshot, fetchedAt, loading, error, stream } = useConsoleData();
-  const { theme, dataTheme, cycle } = useConsoleTheme();
+  const { theme, dataTheme, set: setTheme } = useConsoleTheme();
   const { dataTextBoxFont } = useConsoleTextBoxFont();
   const { dataConsoleFont } = useConsoleFont();
 
@@ -113,7 +113,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
               bar (nav.tsx) overlays anything at document end on phones. */}
           <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
             <RealityBanner snapshot={snapshot} />
-            <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
+            <ChromeBar snapshot={snapshot} theme={theme} setTheme={setTheme} />
             <MobileFreshnessBar snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
           </div>
           <div className="mx-auto flex w-full max-w-[1400px] flex-1">
@@ -254,11 +254,11 @@ function MobileBrandRow() {
 function ChromeBar({
   snapshot,
   theme,
-  cycleTheme
+  setTheme
 }: {
   snapshot: DashboardSnapshot;
   theme: ConsoleTheme;
-  cycleTheme: () => void;
+  setTheme: (theme: ConsoleTheme) => void;
 }) {
   return (
     <header className="border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
@@ -278,7 +278,7 @@ function ChromeBar({
         <div className="hidden md:block">
           <CommandPaletteTrigger />
         </div>
-        <UserMenu snapshot={snapshot} theme={theme} cycleTheme={cycleTheme} />
+        <UserMenu snapshot={snapshot} theme={theme} setTheme={setTheme} />
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
         </div>
