@@ -114,6 +114,23 @@ against AI or bots/systems trying to extract any information from it."
 - Full ordered Node 24 gate (lint → tsc → full vitest → build): run after the
   fleet gate window cleared; results in STATUS.md.
 
+## Live verification + follow-up fix (post-deploy, same day)
+
+PR #1460 merged as `0f894d16`; auto-deploy verified live. Production checks:
+curl default/GPTBot/python-requests UAs → **403 at the Cloudflare edge** (WAF
+rule working); browser UA → 200 shell with zero framework prose in HTML;
+noai/noindex + tdm-reservation + no-store headers present; content API 404s
+without the proof header; /api/health ok on the new sha with the scheduler
+ticking.
+
+One live gap found: **production auth-gated `/robots.txt`, `/sitemap.xml`,
+and `/manifest.webmanifest`** (307 → /login for anonymous requests —
+pre-existing since the edge-auth rework, unnoticed because dev fails open).
+A redirected robots.txt parses as "no rules," killing the robots/noai opt-out
+layer for the whole site. Follow-up branch `claude/public-metadata-routes`
+adds the three metadata paths to `PUBLIC_PREFIXES` plus a regression test in
+`test/middleware-auth.test.ts` (auth armed → 200 for all three).
+
 ## Follow-ups / risks
 
 - CODEX PR #1399 (`public-auth-rate-limit-hardening`) also touches

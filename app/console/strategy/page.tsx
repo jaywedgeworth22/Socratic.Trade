@@ -185,9 +185,9 @@ function ModelSelect({
           <optgroup key={group.provider} label={group.label}>
             {group.options.map((option) => {
               const label = role === "proposer" && option.recommendedGreen
-                ? `${option.label} (Rec Proposer)`
+                ? `${option.label} (Rec Green Team)`
                 : role === "red-team" && option.recommendedRed
-                ? `${option.label} (Rec Reviewer)`
+                ? `${option.label} (Rec Red Team)`
                 : option.label;
               return (
                 <option key={option.value} value={option.value}>
@@ -214,7 +214,7 @@ function ModelSelect({
 
 /** One seat's own reasoning/thinking control (per-team split 2026-07-10): rendered under that
  *  seat's model picker, only when THAT model exposes a reasoning knob. The reviewer additionally
- *  gets an `inherit` blank option ("Same as proposer") representing the unset per-team field.
+ *  gets an `inherit` blank option ("Same as Green Team") representing the unset per-team field.
  *  Disallowed interactive combos (gpt-5.5 + high) are disabled IN the select — the rule surfaces
  *  before any save instead of as a post-save 400 toast — and curated per-model advice
  *  (src/lib/model-reasoning-recommendations.ts) renders underneath. */
@@ -260,9 +260,9 @@ function SeatEffortSelect({
           {inherit && (
             <option
               value=""
-              title="No reviewer-specific effort stored — the reviewer inherits the proposer's effort, re-clamped to this model's supported range at call time."
+              title="No Red Team-specific effort stored — the Red Team inherits the Green Team's effort, re-clamped to this model's supported range at call time."
             >
-              Same as proposer{inherit.resolvedLabel ? ` (${inherit.resolvedLabel})` : ""}
+              Same as Green Team{inherit.resolvedLabel ? ` (${inherit.resolvedLabel})` : ""}
             </option>
           )}
           {control.options.map((option) => {
@@ -322,7 +322,7 @@ function AccountScopedStrategyPage() {
   const autoSaveFallback = useAutoSave();
   // Per-team reasoning overlays (per-team split 2026-07-10). Proposer: plain optimistic value —
   // llmReasoningEffort always resolves (it has a "medium" default). Reviewer: "cleared" = an
-  // optimistic explicit-unset (the "Same as proposer" option) awaiting the server round-trip;
+  // optimistic explicit-unset (the "Same as Green Team" option) awaiting the server round-trip;
   // null = no local overlay (fall back to the saved policy value).
   const [localReasoningEffort, setLocalReasoningEffort] = useState<LlmReasoningEffort | null>(null);
   const [localRedTeamReasoningEffort, setLocalRedTeamReasoningEffort] = useState<LlmReasoningEffort | "cleared" | null>(null);
@@ -439,7 +439,7 @@ function AccountScopedStrategyPage() {
     setLocalProposerModel(model);
     autoSaveModels.save(() => savePolicy(patch, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalProposerModel(prev),
-      errorTitle: "Proposer not saved"
+      errorTitle: "Green Team not saved"
     });
   };
   const commitRedTeamModel = (model: string, prev: string) => {
@@ -455,7 +455,7 @@ function AccountScopedStrategyPage() {
     setLocalRedTeamModel(model);
     autoSaveModels.save(() => savePolicy(patch, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalRedTeamModel(prev),
-      errorTitle: "Reviewer not saved"
+      errorTitle: "Red Team not saved"
     });
   };
   const commitProposerReasoningEffort = (effort: LlmReasoningEffort) => {
@@ -463,7 +463,7 @@ function AccountScopedStrategyPage() {
     setLocalReasoningEffort(effort);
     autoSaveModels.save(() => savePolicy({ llmReasoningEffort: effort }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalReasoningEffort(prev),
-      errorTitle: "Proposer reasoning not saved"
+      errorTitle: "Green Team reasoning not saved"
     });
   };
   const commitReviewerReasoningEffort = (effort: LlmReasoningEffort) => {
@@ -471,10 +471,10 @@ function AccountScopedStrategyPage() {
     setLocalRedTeamReasoningEffort(effort);
     autoSaveModels.save(() => savePolicy({ redTeamReasoningEffort: effort }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalRedTeamReasoningEffort(prev),
-      errorTitle: "Reviewer reasoning not saved"
+      errorTitle: "Red Team reasoning not saved"
     });
   };
-  // The reviewer's "Same as proposer" blank option: clear the explicit per-team value entirely
+  // The reviewer's "Same as Green Team" blank option: clear the explicit per-team value entirely
   // (the policy route strips the null back to absent), so the reviewer goes back to inheriting
   // the proposer's effort via resolveReviewerReasoningEffort at call time.
   const clearReviewerReasoningEffort = () => {
@@ -482,7 +482,7 @@ function AccountScopedStrategyPage() {
     setLocalRedTeamReasoningEffort("cleared");
     autoSaveModels.save(() => savePolicy({ redTeamReasoningEffort: null }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalRedTeamReasoningEffort(prev),
-      errorTitle: "Reviewer reasoning not saved"
+      errorTitle: "Red Team reasoning not saved"
     });
   };
 
@@ -556,10 +556,10 @@ function AccountScopedStrategyPage() {
             <Field
               label={
                 <>
-                  <span className="text-[color:var(--con-pos)]">Proposer</span> Model
+                  <span className="text-[color:var(--con-pos)]">Green Team</span> Model
                 </>
               }
-              hint="Green — writes the trade proposals each run."
+              hint="The proposer — writes the trade proposals each run."
               htmlFor="llm-model"
             >
               <div className="flex items-start gap-2">
@@ -605,10 +605,10 @@ function AccountScopedStrategyPage() {
             <Field
               label={
                 <>
-                  <span className="text-[color:var(--con-neg)]">Reviewer</span> Model
+                  <span className="text-[color:var(--con-neg)]">Red Team</span> Model
                 </>
               }
-              hint="Red — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = not configured: it does NOT inherit the Proposer model — every risk-adding opening routes to human review until a Reviewer model is set."
+              hint="The adversarial reviewer — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = not configured: it does NOT inherit the Green Team model — every risk-adding opening routes to human review until a Red Team model is set."
               htmlFor="rt-model"
             >
               <div className="flex items-start gap-2">
@@ -664,8 +664,8 @@ function AccountScopedStrategyPage() {
 
         <div className="mt-4 pt-4 border-t border-[color:var(--con-line)]">
           <Field
-            label="Proposer Fallback Models"
-            hint="Comma-separated model IDs. If the primary Proposer model hits a transient error (e.g. rate limit, timeout), these models are tried in order. Does not apply to the Reviewer."
+            label="Green Team Fallback Models"
+            hint="Comma-separated model IDs. If the primary Green Team model hits a transient error (e.g. rate limit, timeout), these models are tried in order. Does not apply to the Red Team."
             htmlFor="llm-fallback-models"
           >
             <div className="flex items-center gap-3 max-w-xl">
@@ -699,7 +699,7 @@ function AccountScopedStrategyPage() {
           </div>
         )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-          Proposer: {modelProviderLabel(proposerModel)}. Reviewer: {modelProviderLabel(redTeamModel)}.
+          Green Team: {modelProviderLabel(proposerModel)}. Red Team: {modelProviderLabel(redTeamModel)}.
           {" "}
           {reasoningSummary(reasoningControl)}
         </div>
@@ -949,7 +949,7 @@ function AiReviewPanel({
   const inheritedReviewerModel =
     [policy.redTeamLlmModel, policy.llmModel].find((m) => m && m !== ROTATE_ALL_MODELS_ID) || "";
   const inheritedReviewerLabel =
-    policy.redTeamLlmModel && policy.redTeamLlmModel !== ROTATE_ALL_MODELS_ID ? "Reviewer" : "Proposer";
+    policy.redTeamLlmModel && policy.redTeamLlmModel !== ROTATE_ALL_MODELS_ID ? "Red Team" : "Green Team";
   // With EVERY team seat rotating there is no concrete model to inherit; a blank pick then honestly
   // degrades server-side to local rules (no LLM) — disclose that upfront instead of only via the
   // after-the-fact "local rules" chip (see policyForTuningReviewer in src/lib/strategy-tuning.ts).
@@ -961,7 +961,7 @@ function AiReviewPanel({
   // effort is the reviewer's own (redTeamReasoningEffort, falling back to the proposer's) —
   // mirrors policyForTuningReviewer / resolveReviewerReasoningEffort server-side.
   const inheritedEffort =
-    !model && inheritedReviewerLabel === "Reviewer"
+    !model && inheritedReviewerLabel === "Red Team"
       ? (policy.redTeamReasoningEffort ?? policy.llmReasoningEffort)
       : policy.llmReasoningEffort;
   const reviewerReasoningValue = reviewerReasoningControl
