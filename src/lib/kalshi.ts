@@ -305,8 +305,8 @@ function parseDollarsPrice(value: unknown): number | undefined {
   if (trimmed.length === 0) return undefined;
   const num = parseFloat(trimmed);
   if (!Number.isFinite(num) || num <= 0 || num >= 100) return undefined;
-  // Convert to cent-equivalent (e.g. 0.50 → 50) and verify it's a valid cent price.
-  const cents = Math.round(num * 100);
+  // Convert to cent-equivalent (e.g. 0.5012 → 50.12) and verify it's a valid cent price.
+  const cents = num * 100;
   return cents > 0 && cents < 100 ? cents : undefined;
 }
 
@@ -389,6 +389,14 @@ export interface KalshiEventSignalsOptions {
 }
 
 const finiteOrUndef = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const parseFloatOrUndef = (v: unknown): number | undefined => {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const p = parseFloat(v);
+    if (Number.isFinite(p)) return p;
+  }
+  return undefined;
+};
 
 // Success-only cache: event probabilities move faster than the 1h market-signals bundle but a
 // 15-min TTL is plenty at signal cadence, and a transient failure never poisons a prior success.
@@ -412,7 +420,10 @@ async function fetchAllMarketsForSeries(
   let cursor: string | undefined;
   for (let page = 0; page < 10; page++) {
     const pageData = await fetchKalshiMarkets({ seriesTicker, status: "open", limit: 200, cursor }, config);
-    if (!pageData) break;
+    if (!pageData) {
+      if (page > 0) throw new Error("Pagination failed");
+      break;
+    }
     all.push(...pageData.markets);
     if (!pageData.cursor) break;
     cursor = pageData.cursor;
@@ -463,8 +474,8 @@ export async function getKalshiEventSignals(
           title: title || market.ticker,
           probability: implied.probability,
           probabilityBasis: implied.basis,
-          volume24h: finiteOrUndef(market.volume_24h_fp) ?? finiteOrUndef(market.volume_24h) ?? finiteOrUndef(market.volume),
-          openInterest: finiteOrUndef(market.open_interest_fp) ?? finiteOrUndef(market.open_interest),
+          volume24h: parseFloatOrUndef(market.volume_24h_fp) ?? finiteOrUndef(market.volume_24h) ?? finiteOrUndef(market.volume),
+          openInterest: parseFloatOrUndef(market.open_interest_fp) ?? finiteOrUndef(market.open_interest),
           closeTime: typeof market.close_time === "string" && market.close_time.length > 0 ? market.close_time : undefined,
           asOf
         });
