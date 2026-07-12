@@ -65,11 +65,17 @@ function openMarket(overrides: Record<string, unknown> = {}): Record<string, unk
     title: "Fed decision in September 2026?",
     subtitle: "Cut of 25bps",
     status: "open",
+    // Current API representation: *_dollars fixed-point strings.
+    yes_bid_dollars: "0.42",
+    yes_ask_dollars: "0.46",
+    last_price_dollars: "0.43",
+    // Legacy integer-cent fields (may still be present in some environments).
     yes_bid: 42,
     yes_ask: 46,
     last_price: 43,
     volume: 120_000,
     volume_24h: 15_000,
+    open_interest_fp: 80_000,
     open_interest: 80_000,
     close_time: "2026-09-17T18:00:00Z",
     ...overrides
@@ -331,9 +337,9 @@ describe("getKalshiEventSignals", () => {
     installFetchMock(() => ({
       body: {
         markets: [
-          openMarket({ ticker: "M-MID", yes_bid: 30, yes_ask: 34, last_price: 90 }),
-          openMarket({ ticker: "M-LAST", yes_bid: 0, yes_ask: 0, last_price: 12, open_interest: 10 }),
-          openMarket({ ticker: "M-DEAD", yes_bid: 0, yes_ask: 0, last_price: 0 }),
+          openMarket({ ticker: "M-MID", yes_bid_dollars: "0.30", yes_ask_dollars: "0.34", last_price_dollars: "0.90", yes_bid: 30, yes_ask: 34, last_price: 90 }),
+          openMarket({ ticker: "M-LAST", yes_bid_dollars: undefined, yes_ask_dollars: undefined, last_price_dollars: "0.12", yes_bid: 0, yes_ask: 0, last_price: 12, open_interest_fp: 10, open_interest: 10 }),
+          openMarket({ ticker: "M-DEAD", yes_bid_dollars: undefined, yes_ask_dollars: undefined, last_price_dollars: undefined, yes_bid: 0, yes_ask: 0, last_price: 0 }),
           openMarket({ ticker: undefined })
         ]
       }
@@ -349,9 +355,9 @@ describe("getKalshiEventSignals", () => {
     installFetchMock(() => ({
       body: {
         markets: [
-          openMarket({ ticker: "M-SMALL", open_interest: 5 }),
-          openMarket({ ticker: "M-BIG", open_interest: 900 }),
-          openMarket({ ticker: "M-MEDIUM", open_interest: 50 })
+          openMarket({ ticker: "M-SMALL", open_interest_fp: 5, open_interest: 5 }),
+          openMarket({ ticker: "M-BIG", open_interest_fp: 900, open_interest: 900 }),
+          openMarket({ ticker: "M-MEDIUM", open_interest_fp: 50, open_interest: 50 })
         ]
       }
     }));

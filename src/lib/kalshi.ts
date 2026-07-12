@@ -126,7 +126,10 @@ export function kalshiAuthHeaders(
 // Raw API shapes (snake_case, straight off the wire)
 // ---------------------------------------------------------------------------
 
-/** A single Kalshi market. Price fields are INTEGER CENTS (1-99); *_dollars variants ignored. */
+/** A single Kalshi market. Since March 2026, Kalshi uses `*_dollars` (fixed-point string) and
+ * `*_fp` (fixed-point integer) fields instead of legacy integer-cent/count fields. We parse the
+ * `_dollars` string fields for prices and `_fp` fields for counts, with legacy integer fallbacks
+ * for any environment that still returns them. */
 export interface KalshiApiMarket {
   ticker?: string;
   event_ticker?: string;
@@ -135,13 +138,24 @@ export interface KalshiApiMarket {
   subtitle?: string;
   yes_sub_title?: string;
   status?: string;
+  // Current price representation: fixed-point dollar strings (e.g. "0.50").
+  yes_bid_dollars?: string;
+  yes_ask_dollars?: string;
+  last_price_dollars?: string;
+  // Legacy integer-cent price fields (removed March 2026 from production; kept as fallback).
   yes_bid?: number;
   yes_ask?: number;
   last_price?: number;
+  // Current count representation: fixed-point integers (*_fp).
+  volume_24h_fp?: number;
+  open_interest_fp?: number;
+  // Legacy integer count fields.
   volume?: number;
   volume_24h?: number;
   open_interest?: number;
   liquidity?: number;
+  // String-based dollar representations for liquidity (Feb 2026: deprecated, returns 0).
+  liquidity_dollars?: string;
   open_time?: string;
   close_time?: string;
   expiration_time?: string;
@@ -278,17 +292,48 @@ export async function fetchKalshiSeries(
 }
 
 // ---------------------------------------------------------------------------
-// Normalization — cents to probability
+// Normalization — dollars strings and cents to probability
 // ---------------------------------------------------------------------------
+
+/**
+ * Parse a Kalshi `*_dollars` fixed-point string (e.g. "0.50" or "$0.50") into cents (50).
+ * Returns undefined for missing/blank/invalid values.
+ */
+function parseDollarsPrice(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().replace(/^[$]/, "");
+  if (trimmed.length === 0) return undefined;
+  const num = parseFloat(trimmed);
+  if (!Number.isFinite(num) || num <= 0 || num >= 100) return undefined;
+  // Convert to cent-equivalent (e.g. 0.50 → 50) and verify it's a valid cent price.
+  const cents = Math.round(num * 100);
+  return cents > 0 && cents < 100 ? cents : undefined;
+}
 
 /** A valid Kalshi cent price: finite number in (0, 100). 0 means "no book on that side". */
 function validCents(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value < 100 ? value : undefined;
 }
 
+/**
+ * Resolve a market's YES-side price to cents, preferring the current `*_dollars` string
+ * representation with legacy integer-cent fallback.
+ */
+function marketYesBidCents(market: KalshiApiMarket): number | undefined {
+  return parseDollarsPrice(market.yes_bid_dollars) ?? validCents(market.yes_bid);
+}
+
+function marketYesAskCents(market: KalshiApiMarket): number | undefined {
+  return parseDollarsPrice(market.yes_ask_dollars) ?? validCents(market.yes_ask);
+}
+
+function marketLastPriceCents(market: KalshiApiMarket): number | undefined {
+  return parseDollarsPrice(market.last_price_dollars) ?? validCents(market.last_price);
+}
+
 /** Convert an integer-cent price (1-99) to a probability in (0, 1), 4dp. */
 export function centsToProbability(cents: unknown): number | undefined {
-  const valid = validCents(cents);
+  const valid = typeof cents === "number" && Number.isFinite(cents) && cents > 0 && cents < 100 ? cents : undefined;
   return valid === undefined ? undefined : Math.round((valid / 100) * 10_000) / 10_000;
 }
 
@@ -298,16 +343,16 @@ export function centsToProbability(cents: unknown): number | undefined {
  * never fabricated.
  */
 export function impliedProbability(
-  market: Pick<KalshiApiMarket, "yes_bid" | "yes_ask" | "last_price">
+  market: KalshiApiMarket
 ): { probability: number; basis: "mid" | "last" } | undefined {
-  const bid = validCents(market.yes_bid);
-  const ask = validCents(market.yes_ask);
+  const bid = marketYesBidCents(market);
+  const ask = marketYesAskCents(market);
   if (bid !== undefined && ask !== undefined) {
     const mid = centsToProbability((bid + ask) / 2);
     if (mid !== undefined) return { probability: mid, basis: "mid" };
   }
-  const last = centsToProbability(market.last_price);
-  if (last !== undefined) return { probability: last, basis: "last" };
+  const last = marketLastPriceCents(market);
+  if (last !== undefined) return { probability: centsToProbability(last)!, basis: "last" };
   return undefined;
 }
 
@@ -355,6 +400,27 @@ export function clearKalshiCacheForTests(): void {
 }
 
 /**
+ * Fetch ALL markets for a series by following cursor pagination, then sort by open interest
+ * descending and return the top N (capped at 200 per page, but accumulated across pages).
+ * Returns an empty array on total failure (caller handles fail-soft).
+ */
+async function fetchAllMarketsForSeries(
+  seriesTicker: string,
+  config: KalshiConfig,
+): Promise<KalshiApiMarket[]> {
+  const all: KalshiApiMarket[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const pageData = await fetchKalshiMarkets({ seriesTicker, status: "open", limit: 200, cursor }, config);
+    if (!pageData) break;
+    all.push(...pageData.markets);
+    if (!pageData.cursor) break;
+    cursor = pageData.cursor;
+  }
+  return all;
+}
+
+/**
  * Fetch normalized event-probability signals for a list of Kalshi series tickers
  * (e.g. ["KXFEDDECISION", "KXCPIYOY", "KXRECSSNBER"]). Public endpoints only. Fail-soft:
  * unconfigured module, empty input, or total failure all return [] — a failed series is skipped
@@ -377,16 +443,17 @@ export async function getKalshiEventSignals(
 
   const asOf = new Date(now).toISOString();
   const signals: KalshiEventSignal[] = [];
+  let allSeriesSucceeded = true;
   for (const seriesTicker of series) {
     try {
-      const page = await fetchKalshiMarkets({ seriesTicker, status: "open", limit: 200 }, config);
-      if (!page) continue; // fail-soft: skip this series, keep the rest
+      const allMarkets = await fetchAllMarketsForSeries(seriesTicker, config);
+      if (allMarkets.length === 0) { allSeriesSucceeded = false; continue; }
       const rows: KalshiEventSignal[] = [];
-      for (const market of page.markets) {
+      for (const market of allMarkets) {
         if (typeof market.ticker !== "string" || market.ticker.length === 0) continue;
         const implied = impliedProbability(market);
         if (!implied) continue; // no usable price — drop, never fabricate
-        const title = [market.title, market.subtitle ?? market.yes_sub_title]
+        const title = [market.title, market.subtitle || market.yes_sub_title]
           .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
           .map((part) => part.trim())
           .join(" — ");
@@ -396,8 +463,8 @@ export async function getKalshiEventSignals(
           title: title || market.ticker,
           probability: implied.probability,
           probabilityBasis: implied.basis,
-          volume24h: finiteOrUndef(market.volume_24h) ?? finiteOrUndef(market.volume),
-          openInterest: finiteOrUndef(market.open_interest),
+          volume24h: finiteOrUndef(market.volume_24h_fp) ?? finiteOrUndef(market.volume_24h) ?? finiteOrUndef(market.volume),
+          openInterest: finiteOrUndef(market.open_interest_fp) ?? finiteOrUndef(market.open_interest),
           closeTime: typeof market.close_time === "string" && market.close_time.length > 0 ? market.close_time : undefined,
           asOf
         });
@@ -405,11 +472,12 @@ export async function getKalshiEventSignals(
       rows.sort((a, b) => (b.openInterest ?? 0) - (a.openInterest ?? 0));
       signals.push(...rows.slice(0, maxPerSeries));
     } catch {
+      allSeriesSucceeded = false;
       // fail-soft: a throwing series never takes down the batch
     }
   }
 
-  if (signals.length > 0) {
+  if (signals.length > 0 && allSeriesSucceeded) {
     signalsCache.set(cacheKey, { expiresAt: now + SIGNALS_TTL_MS, data: signals });
   }
   return signals;

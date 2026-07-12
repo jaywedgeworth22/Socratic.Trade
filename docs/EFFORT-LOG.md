@@ -1622,19 +1622,22 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **Kalshi event-data fetcher — capability program lane K1 (CLAUDE subagent, branch
-  `claude/kalshi-data-fetcher`, detached scratchpad worktree) — READY TO LAND 2026-07-12
-  (committed locally; serialized Land phase handles the PR/merge).** New-files-only dormant
+  `claude/kalshi-data-fetcher`, detached scratchpad worktree) — IN PROGRESS 2026-07-12
+  (codex-triage fixes applied; PR #1481 review threads pending resolution).** New-files-only dormant
   plumbing: `src/lib/kalshi.ts` (env-derived demo/prod base URLs via `KALSHI_ENV`, RSA-PSS
   SHA-256 request signing with the KALSHI-ACCESS-* headers over timestamp+method+
-  path-without-query, typed public market/event/series fetchers, integer-CENTS price parsing
-  per the feasibility correction, and `getKalshiEventSignals(seriesList)` returning normalized
-  event-probability signals with a 15-min success-only cache and per-series fail-soft) +
+  path-without-query, typed public market/event/series fetchers, `*_dollars` fixed-point string
+  price parsing per Kalshi's March 2026 schema change (integer‑cent fields removed), `_fp` count
+  fields, cursor pagination, blank-subtitle fallback fix, and
+  `getKalshiEventSignals(seriesList)` returning normalized event-probability signals with a 15-min
+  success-only cache (only caches when all series succeeded) and per-series fail-soft) +
   `test/kalshi.test.ts` (31 mocked-fetch tests incl. signature verification against a
   node-crypto keypair proving the exact signed message). Config: KALSHI_ENV /
   KALSHI_API_KEY_ID / KALSHI_PRIVATE_KEY_PEM — env absent => module inert. Nothing imports
-  the module yet; strategy.ts/data-providers.ts/types.ts untouched (Wave-2 keepouts). Gate
-  (node24): tsc clean, 31/31 new tests, eslint 0 errors on new files. Rollout:
-  `docs/rollouts/2026-07-12-kalshi-data-fetcher.md`.
+  the module yet; strategy.ts/data-providers.ts/types.ts untouched (Wave-2 keepouts). Codex-triage
+  (4 P2 findings from chatgpt-codex-connector[bot]) addressed: `_dollars` pricing, partial-batch
+  cache guard, cursor pagination, blank subtitle fallback. Gate (node24): tsc clean, 350/3927 tests
+  pass, build clean. Rollout: `docs/rollouts/2026-07-12-kalshi-data-fetcher.md`.
 - **Fleet-procedure skills: land-lane/unstick-pr/codex-triage/pickup-seat/deploy-verify (CLAUDE, branch `claude/fleet-skills`) — owner-directed, IN PROGRESS 2026-07-11, landing.** Five Claude Code skills under `.claude/skills/` encode the pickup-era fleet procedures (landing a branch via `land.sh`, unsticking a blocked PR, triaging codex-connector review threads, picking up a capped peer seat's work, verifying a post-deploy state) as on-demand skills instead of per-prompt re-spelling. `.claude/` stays git-ignored for per-agent/per-machine local settings and session hooks; `.gitignore` now carves out `!.claude/skills/` specifically so these five files are tracked. Skills are Claude Code-only — cross-agent rules (all tools) remain in `AGENTS.md`, which every skill cites as canon. Rollout: `docs/rollouts/2026-07-10-fleet-procedure-skills.md`.
 - **Settings + LLM telemetry sweep (CLAUDE, branch `claude/settings-llm-usage-sweep`, scratchpad worktree (session-managed)) — IMPLEMENTATION COMPLETE, GATES RUNNING, PR OPENING 2026-07-11.** Seven-item batch: unified LLM usage labels via centralized `app/ui/llm-usage-labels.ts` (all contexts sentence-case + humanizer fallback), strategy reviews persisted server-side (new `strategy_tuning_reviews` table + `db-tuning-reviews.ts` CRUD + GET latest-open + PATCH applied/dismissed handlers; AiReviewPanel restores unapplied on mount with dismissible banner), account-attribution fix (review-cost and review evidence now tied to initiating `targetConnectedAccountId` not global `is_active` — root cause of owner's "missing" Fable Roth-IRA cost), cross-account settings import (new `importAccountSettings()` + POST `/api/connected-accounts/[id]/import-settings`, ownership both sides, strips identity + user fields, preserves target systemState, carries lineage tracking), framework-page grid width fixes (removed max-w-xl / w-64 / w-56 caps from input/selects in `app/console/strategy/page.tsx`; now min-w-0 flex-1), strategist model-stats drawer (ModelStatsButton gets `role="strategist"`, shows Cost/call + Runs + Total historical cost per model), LLM telemetry closure (scripts benchmark/eval/salience now all record via `recordLlmUsage()`; `strategy_tuning_reviews` added to DELETE_TABLES_BY_USER_ID). Verification: `npx tsc --noEmit` clean, lint 0 errors, focused suites 10+8+21+118 all green, full gate running at doc-write time. Rollout: `docs/rollouts/2026-07-11-settings-llm-usage-sweep.md`.
 - **Team display names back to Green Team / Red Team (CLAUDE, branch `claude/team-names-green-red`) — IN PROGRESS 2026-07-11, landing.** Owner-directed copy rename across console UI (Framework model pickers, stats drawer, results columns, policy/llm-required error copy, help) — display strings only; plus a factual help fix (blank Red Team fails closed, never self-reviews). Rollout: `docs/rollouts/2026-07-11-team-names-green-red.md`.

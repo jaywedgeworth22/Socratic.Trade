@@ -76,3 +76,42 @@
 - Spot-check the curated series tickers against live Kalshi series at Wave-2 time (series
   tickers churn; this module takes the list as an argument precisely so no ticker is
   hardcoded here).
+
+## 2026-07-12 — Codex-triage: address 4 Codex review findings (PR #1481)
+
+Codex (chatgpt-codex-connector[bot]) filed 4 P2 findings against this PR. All 4
+were addressed:
+
+1. **Use `*_dollars` price fields instead of integer cents** — Codex correctly flagged
+   that Kalshi removed integer-cent price fields (`yes_bid`, `yes_ask`, `last_price`)
+   on March 12, 2026. The current API returns `yes_bid_dollars` / `yes_ask_dollars` /
+   `last_price_dollars` fixed-point strings (e.g. `"0.50"`). Added `parseDollarsPrice()`,
+   updated `impliedProbability()` to prefer `_dollars` with integer-cent fallback, added
+   `_fp` count fields (`volume_24h_fp`, `open_interest_fp`) to the interface, and updated
+   signal normalization to prefer them. Test fixture updated to use `_dollars` fields.
+
+2. **Only cache fully successful batches** — `getKalshiEventSignals` now tracks
+   `allSeriesSucceeded`. The success-only cache only stores results when every
+   requested series returned data. Transient failures are never cached, so a
+   retry on the next call re-fetches all series.
+
+3. **Page through markets before ranking** — Added `fetchAllMarketsForSeries()` which
+   follows cursor pagination (up to 10 pages) to collect all open markets before
+   sorting by open interest and capping at `maxMarketsPerSeries`.
+
+4. **Fall back past blank subtitles** — Changed `market.subtitle ?? market.yes_sub_title`
+   to `market.subtitle || market.yes_sub_title` so an empty-string subtitle falls
+   through to the `yes_sub_title` field (the actual outcome label).
+
+### Files touched
+
+- `src/lib/kalshi.ts` — all four fixes above
+- `test/kalshi.test.ts` — updated fixture to use `_dollars` fields, fixed 2 tests
+  whose overrides need to also clear `_dollars`/`_fp` defaults
+- `docs/rollouts/2026-07-12-kalshi-data-fetcher.md` (this section)
+
+### Verification
+
+- `npx tsc --noEmit` — clean
+- `npm test` — 350 files / 3927 tests passed
+- `npm run build` — clean

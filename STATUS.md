@@ -5,13 +5,16 @@
 New-files-only dormant plumbing for the capability program's Kalshi lane: `src/lib/kalshi.ts`
 (flag-gated client — `KALSHI_ENV` demo|prod derives the base URL, absent => inert; RSA-PSS
 SHA-256 request signing with KALSHI-ACCESS-KEY/-TIMESTAMP/-SIGNATURE over
-timestamp+method+path-without-query; typed public market/event/series fetchers; integer-cents
-price parsing; `getKalshiEventSignals(seriesList)` normalized event-probability surface with
-15-min success-only cache and per-series fail-soft) + `test/kalshi.test.ts` (31 mocked-fetch
+timestamp+method+path-without-query; typed public market/event/series fetchers; `*_dollars`
+fixed-point string price parsing (Kalshi removed integer-cent fields March 2026) with legacy
+cent fallback; `_fp` count fields; `getKalshiEventSignals(seriesList)` normalized event-probability
+surface with 15-min success-only cache (only caches when all series succeeded), per-series fail-soft,
+full cursor pagination, and blank-subtitle fallback fix) + `test/kalshi.test.ts` (31 mocked-fetch
 tests incl. crypto.verify-based signing proofs). Nothing imports it yet — Wave 2 wires it into
-the strategist; strategy.ts/data-providers.ts/types.ts untouched. Gates (node24): tsc clean,
-31/31 new tests, eslint 0 errors on new files. Committed locally, ready for the serialized
-Land phase. Rollout: `docs/rollouts/2026-07-12-kalshi-data-fetcher.md`.
+the strategist; strategy.ts/data-providers.ts/types.ts untouched. Codex-triage (4 P2 findings
+from chatgpt-codex-connector[bot]) addressed: `_dollars` pricing, partial-batch cache guard,
+cursor pagination, blank subtitle fallback. Gates (node24): tsc clean, 350/3927 tests pass,
+build clean. Rollout: `docs/rollouts/2026-07-12-kalshi-data-fetcher.md`.
 ## 2026-07-12 — Raise RAG Ingestion Limits and Deepen Filing Lookback (Antigravity, branch `agent/antigravity-rag`)
 
 Raised RAG ingestion daily caps (`RAG_INGEST_MAX_TEXTS_PER_DAY` to 1,000,000, `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10,000,000) and deepened the SEC filing lookback depth (`fetchRecentFilings` pulls 10 historical 10-K and 10-Qs, `DEFAULT_PAID_MAX_FILINGS_PER_RUN` bumped to 200) to allow massive historical ingestion of information into Pinecone.
