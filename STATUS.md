@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
+
+Codex review (P2) flagged that the existing 429 Retry-After handling only parses delta-seconds via
+parseInt, ignoring the legal HTTP-date format (RFC 7231 §7.1.3). Added Date.parse() fallback so
+"Wed, 21 Oct 2015 07:28:00 GMT" resolves to seconds-until-reset. The error-message seconds format
+is unchanged so runLoop()'s existing regex continues extracting the correct backoff. Verify trio
+passes (349 files, 3896 tests, build clean). Auto-merge enabled. Resolved the Codex thread.
+Rollout: `docs/rollouts/2026-07-12-codex-triage-429-retry-after.md`.
 ## 2026-07-12 — Kalshi event-data fetcher, lane K1 (CLAUDE subagent, branch `claude/kalshi-data-fetcher`)
 
 New-files-only dormant plumbing for the capability program's Kalshi lane: `src/lib/kalshi.ts`
@@ -15,6 +23,12 @@ the strategist; strategy.ts/data-providers.ts/types.ts untouched. Codex-triage (
 from chatgpt-codex-connector[bot]) addressed: `_dollars` pricing, partial-batch cache guard,
 cursor pagination, blank subtitle fallback. Gates (node24): tsc clean, 350/3927 tests pass,
 build clean. Rollout: `docs/rollouts/2026-07-12-kalshi-data-fetcher.md`.
+Codex review (P2) flagged that 429 rate-limit failures were being completely suppressed from
+api_health_log, causing the admin Connections/health dashboard to show stale success data when
+the SSE feed was being rate-limited. Removed the guard that skipped logApiHealth for 429s, since
+logApiHealth already detects 429|rate limit in the error text and suppresses Sentry via skipSentry
+(db-health.ts L172-174). Verify trio passes (349 files, 3896 tests, build clean).
+Rollout: `docs/rollouts/2026-07-12-codex-triage-429-retry-after.md`. State: **Completed 2026-07-12**.
 ## 2026-07-12 — Sentry issues resolution (AG, branch `agent/antigravity`)
 ## 2026-07-12 — Safety Maintenance Coordinator & Draining Fence (Antigravity, branch `agent/antigravity`)
 
