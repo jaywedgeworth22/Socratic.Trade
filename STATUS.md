@@ -8,6 +8,10 @@ parseInt, ignoring the legal HTTP-date format (RFC 7231 §7.1.3). Added Date.par
 is unchanged so runLoop()'s existing regex continues extracting the correct backoff. Verify trio
 passes (349 files, 3896 tests, build clean). Auto-merge enabled. Resolved the Codex thread.
 Rollout: `docs/rollouts/2026-07-12-codex-triage-429-retry-after.md`.
+## 2026-07-12 — X0.3 Exit Replacement State Machine (Antigravity, branch `agent/antigravity`)
+
+Completed X0.3 from the Codex audit roadmap (PR #1490 follow-up). Migrated `replaceStaleLimitOrderWithMarket` from an in-memory execution loop into a robust, database-backed state machine tracked in the `order_replacements` table. Addressed the re-entrant `UNIQUE` constraint bug by using `db.transaction` with explicit checks. Restored missing state transitions, correctly fetching the original order during background remediation, and re-wired the position-size guard to emit `MarketReplacePreconditionError` so manual replacements throw correctly while auto-remediations cleanly log a `stale_exit_auto_remediation_failed` audit. Reinstated the 5-minute cooldown for double-sells via SQLite query. All 3927 tests passing. Code is ready to land. Rollout: `docs/rollouts/2026-07-12-exit-replacement-state-machine.md`.
+
 ## 2026-07-12 — Kalshi event-data fetcher, lane K1 (CLAUDE subagent, branch `claude/kalshi-data-fetcher`)
 
 New-files-only dormant plumbing for the capability program's Kalshi lane: `src/lib/kalshi.ts`

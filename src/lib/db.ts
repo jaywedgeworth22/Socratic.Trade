@@ -204,6 +204,8 @@ const MIGRATIONS: Migration[] = [
       // 3. Composite indices for capping and sorting listPending/listRecent
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_status_created ON trade_proposals (user_id, account_number, status, created_at DESC)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_created ON trade_proposals (user_id, account_number, created_at DESC)");
+      
+      database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
 
       // 4. Composite index for day-trade counting and excursions
       database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_user_account_symbol_filled ON fill_events (user_id, account_number, symbol, filled_at DESC)");
@@ -739,6 +741,21 @@ function migrate(database: Database.Database): void {
       positions TEXT NOT NULL,
       created_at TEXT NOT NULL,
       execution_mode TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS order_replacements (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      original_order_id TEXT NOT NULL,
+      replacement_ref_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
+      remaining_quantity REAL,
+      cancel_result TEXT,
+      replacement_order_id TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS fill_events (

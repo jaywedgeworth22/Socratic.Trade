@@ -53,7 +53,8 @@ const DELETE_TABLES_BY_USER_ID = [
   "position_stop_plans",
   // Added 2026-07-11: strategy_tuning_reviews (src/lib/db-tuning-reviews.ts) — persisted AI
   // strategy-review results, user-scoped.
-  "strategy_tuning_reviews"
+  "strategy_tuning_reviews",
+  "order_replacements"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];

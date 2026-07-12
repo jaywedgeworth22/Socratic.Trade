@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { audit, insertFillEvent } from "./db";
+import { audit, insertFillEvent, getDb } from "./db";
 import { applyPaperExitCost } from "./execution-cost";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
@@ -13,26 +13,20 @@ const MARKET_REPLACE_TYPES = new Set(["limit", "stop_limit"]);
 const POST_CANCEL_ACTIVE_STATES = new Set(["done_for_day", "stopped", "calculated"]);
 const POSITION_EPSILON = 1e-6;
 
-// Per-order cooldown for auto-remediation: once a stale EXIT limit is cancel-replaced, do not remediate
-// the SAME order again for this long. A slow broker can keep listing the just-cancelled order as
-// "working" past the next 60s tick; without this a second market sell would fire for the same shares
-// (double-sell / accidental short). globalThis-hosted so Next.js HMR module duplication can't split it.
-const REMEDIATION_COOLDOWN_MS = 5 * 60_000;
-const remediationHost = globalThis as unknown as { __recentlyRemediatedExits?: Map<string, number> };
-const recentlyRemediatedExits: Map<string, number> =
-  remediationHost.__recentlyRemediatedExits ?? (remediationHost.__recentlyRemediatedExits = new Map<string, number>());
-
-// In-flight replacement lock shared by BOTH the auto-remediation loop and the manual
-// /api/orders/replace-market route (both funnel through replaceStaleLimitOrderWithMarket).
-// A cancel-and-replace spans 1s+ (cancel + settle + refetch + review), and the manual path never
-// consults the auto path's cooldown map — so a human click racing the 60s auto tick (or a
-// double-click) could otherwise cancel-replace the SAME order twice: two market sells for one lot.
-// Keyed by account:orderId; the entry is removed in try/finally. globalThis-hosted like the cooldown
-// map above so Next.js HMR module duplication can't split it. Node is single-threaded, so the
-// synchronous has()/add() pair before the first await is race-free.
-const inFlightHost = globalThis as unknown as { __inFlightMarketReplaces?: Set<string> };
-const inFlightMarketReplaces: Set<string> =
-  inFlightHost.__inFlightMarketReplaces ?? (inFlightHost.__inFlightMarketReplaces = new Set<string>());
+export interface OrderReplacementRow {
+  id: string;
+  user_id: string;
+  account_number: string;
+  original_order_id: string;
+  replacement_ref_id: string;
+  status: "cancel_requested" | "cancel_confirmed" | "replacement_submitted" | "replacement_confirmed" | "failed" | "aborted";
+  remaining_quantity: number | null;
+  cancel_result: string | null;
+  replacement_order_id: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface MarketReplaceConfirmation {
   orderId?: string | null;
@@ -88,27 +82,42 @@ export interface MarketReplaceInput {
 }
 
 export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput): Promise<MarketReplaceResult> {
-  // Concurrency gate: only ONE cancel-and-replace may run per order at a time, across the auto loop
-  // AND the manual route. Second entrant 409s instead of double-cancelling / double-selling.
-  const inFlightKey = `${input.policy.accountNumber}:${input.orderId}`;
-  if (inFlightMarketReplaces.has(inFlightKey)) {
-    throw new MarketReplacePreconditionError(
-      "This order is already being replaced by another request (auto-remediation or a concurrent click). Wait for that replacement to finish, then refresh Activity.",
-      409
-    );
-  }
-  inFlightMarketReplaces.add(inFlightKey);
-  try {
-    return await executeMarketReplace(input);
-  } finally {
-    inFlightMarketReplaces.delete(inFlightKey);
-  }
-}
-
-async function executeMarketReplace(input: MarketReplaceInput): Promise<MarketReplaceResult> {
   const userId = input.userId ?? "local";
+  const db = getDb();
+  
+  // Concurrency guard is now enforced via SQLite UNIQUE constraint: Only one 
+  // replacement state machine per (account_number, original_order_id).
+  const id = crypto.randomUUID();
+  const refId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  
+  const insertTx = db.transaction(() => {
+    const active = db.prepare(`
+      SELECT 1 FROM order_replacements
+      WHERE account_number = ? AND original_order_id = ?
+      AND status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+    `).get(input.policy.accountNumber, input.orderId);
+
+    if (active) {
+      throw new MarketReplacePreconditionError(
+        "This order is already being replaced by another request (auto-remediation or a concurrent click). Wait for that replacement to finish, then refresh Activity.",
+        409
+      );
+    }
+
+    db.prepare(`
+      INSERT INTO order_replacements 
+      (id, user_id, account_number, original_order_id, replacement_ref_id, status, created_at, updated_at) 
+      VALUES (?, ?, ?, ?, ?, 'cancel_requested', ?, ?)
+    `).run(id, userId, input.policy.accountNumber, input.orderId, refId, now, now);
+  });
+  
+  insertTx();
+
+  // Initial Preconditions Check
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   if (!executionState.submitsBrokerOrders || !executionState.mode) {
+    await markReplacementError(id, "Market replacement is only available for broker-backed Paper or Brokerage accounts.");
     throw new MarketReplacePreconditionError("Market replacement is only available for broker-backed Paper or Brokerage accounts.", 400);
   }
   const executionMode: ExecutionMode = executionState.mode;
@@ -116,24 +125,24 @@ async function executeMarketReplace(input: MarketReplaceInput): Promise<MarketRe
   const orders = await input.gateway.getEquityOrders(input.policy.accountNumber);
   const stale = listStaleLimitOrders(orders, input.policy).find((item) => item.order.id === input.orderId);
   const original = orders.find((order) => order.id === input.orderId);
-  if (!original) throw new MarketReplacePreconditionError("Order was not found at the broker.", 404);
+  if (!original) {
+    await markReplacementError(id, "Order was not found at the broker.");
+    throw new MarketReplacePreconditionError("Order was not found at the broker.", 404);
+  }
   if (!stale) {
+    await markReplacementError(id, "Order is not an active stale limit order.");
     throw new MarketReplacePreconditionError("Order is not an active stale limit order. Refresh Activity before replacing it.", 409);
   }
   if (!MARKET_REPLACE_TYPES.has(String(original.type ?? "").toLowerCase())) {
+    await markReplacementError(id, "Only limit and stop-limit orders can be replaced with a market order here.");
     throw new MarketReplacePreconditionError("Only limit and stop-limit orders can be replaced with a market order here.", 400);
   }
 
   const symbol = normalizeSymbol(original.symbol);
-  const isExit = original.side === "sell" || original.side === "cover";
-
-  // Broker-HELD legs are rejected HERE, in the shared path, not only in the auto loop's skip: "held"
-  // is an active state to listStaleLimitOrders, so a held bracket/OTO/OCO protective leg reaches this
-  // function via the manual /api/orders/replace-market route too — and an OLD position for the same
-  // symbol can satisfy the position-backed guard below (e.g. holding 100 XYZ from an old lot while a
-  // new 50-share bracket entry is unfilled: 100 >= 50 passes). Cancelling the held leg destroys the
-  // bracket's protection AND market-sells shares of the old lot the bracket never bought.
+  
   if (String(original.state ?? "").trim().toLowerCase() === "held") {
+    const errStr = `${symbol} ${original.side} order is broker-held — a contingency leg of a bracket/OTO/OCO that activates only when its entry order fills. It cannot be cancel-replaced with a market order: cancelling it would destroy the entry's protection and trade shares the entry never bought. If the trade is unwanted, cancel the ENTRY order instead. Nothing was canceled.`;
+    await markReplacementError(id, errStr);
     audit(
       "order_replace_market_rejected_held_leg",
       {
@@ -148,227 +157,253 @@ async function executeMarketReplace(input: MarketReplaceInput): Promise<MarketRe
       userId,
       input.policy.connectedAccountId
     );
-    throw new MarketReplacePreconditionError(
-      `${symbol} ${original.side} order is broker-held — a contingency leg of a bracket/OTO/OCO that activates only when its entry order fills. ` +
-        "It cannot be cancel-replaced with a market order: cancelling it would destroy the entry's protection and trade shares the entry never bought. " +
-        "If the trade is unwanted, cancel the ENTRY order instead. Nothing was canceled.",
-      409
-    );
+    throw new MarketReplacePreconditionError(errStr, 409);
   }
 
-  assertMarketReplaceConfirmation({
-    executionMode,
-    confirmation: input.liveConfirmation,
-    order: original,
-    accountNumber: input.policy.accountNumber,
-    remainingQuantity: stale.remainingQuantity,
-    requireTypedConfirmation: input.policy.requireTypedConfirmation !== false
-  });
+  try {
+    assertMarketReplaceConfirmation({
+      executionMode,
+      confirmation: input.liveConfirmation,
+      order: original,
+      accountNumber: input.policy.accountNumber,
+      remainingQuantity: stale.remainingQuantity,
+      requireTypedConfirmation: input.policy.requireTypedConfirmation !== false
+    });
+  } catch (err: any) {
+    await markReplacementError(id, err.message);
+    throw err;
+  }
 
-  // Live pre-flight BEFORE the cancel phase: this is a cancel-then-place workflow, so if the market
-  // replacement would be blocked (broker/live without ALLOW_LIVE_TRADING), fail HERE — before the
-  // live cancel — so we never leave the stale order cancelled with no replacement.
   assertLivePreflight({
-    mode: executionMode,
+    mode: executionState.mode,
     symbol: original.symbol,
     side: original.side
   });
-
-  // Position-backed guard (2026-07-08 PG/T incident, PR #1036 regression): a market replacement for an
-  // EXIT must be covered by a real broker position, or the "replacement" opens a naked short (sell) /
-  // an unintended long (cover). Checked BEFORE the cancel phase so an unbacked order is left fully
-  // intact — cancelling a bracket/OTO leg also cancels its paired entry, which is unrecoverable.
-  // Broker position qty is TOTAL shares (holds reduce availability, not qty) and cancelling this order
-  // releases its own hold, so total-vs-remaining is the right comparison; a residual hold from some
-  // OTHER order surfaces as a broker rejection of the replacement, never as an unbacked fill.
-  if (isExit) {
-    const positions = await input.gateway.getEquityPositions(input.policy.accountNumber);
-    const { signedQuantity, backingQuantity } = exitBackingQuantity(positions, symbol, original.side);
-    if (backingQuantity + POSITION_EPSILON < stale.remainingQuantity) {
-      audit(
-        "stale_exit_remediation_skipped_no_position",
-        {
-          orderId: original.id,
-          symbol,
-          side: original.side,
-          state: original.state,
-          orderQuantity: original.quantity,
-          filledQuantity: original.filledQuantity ?? 0,
-          remainingQuantity: stale.remainingQuantity,
-          positionQuantity: signedQuantity,
-          backingQuantity,
-          reason: backingQuantity <= POSITION_EPSILON ? "no_position" : "position_smaller_than_order"
-        },
-        userId,
-        input.policy.connectedAccountId
-      );
-      throw new MarketReplacePreconditionError(
-        `${symbol} ${original.side} order is not backed by the broker position ` +
-          `(position ${signedQuantity}, order remaining ${stale.remainingQuantity}). ` +
-          "Market replacement skipped; the original order was left untouched.",
-        409
-      );
-    }
+  
+  let row = getReplacementRecord(id);
+  const maxLoops = 10;
+  let loops = 0;
+  while (row && !isTerminalState(row.status) && loops < maxLoops) {
+    await stepReplacementState(row, input, original);
+    row = getReplacementRecord(id);
+    loops++;
   }
 
-  const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, original.id);
-  await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
-
-  const afterCancelOrders = await input.gateway.getEquityOrders(input.policy.accountNumber);
-  const afterCancel = afterCancelOrders.find((order) => order.id === original.id);
-  if (afterCancel && isPostCancelActiveState(afterCancel.state)) {
-    audit(
-      "order_replace_market_deferred_pending_cancel",
-      { orderId: original.id, symbol: original.symbol, state: afterCancel.state, reason: "original_order_still_active_after_cancel", cancelResult },
-      userId,
-      input.policy.connectedAccountId
-    );
+  if (row?.status === 'replacement_confirmed') {
+    return { status: "replaced", canceledOrderId: original.id, replacementOrderId: row.replacement_order_id!, fillStatus: "pending_reconciliation", remainingQuantity: row.remaining_quantity! };
+  } else if (row?.status === 'aborted') {
+    if (row.cancel_result && row.remaining_quantity === 0) {
+      return { status: "already_filled", canceledOrderId: original.id, remainingQuantity: 0 };
+    }
+    if (row.error) {
+      throw new MarketReplacePreconditionError(row.error, 409);
+    }
+    return { status: "pending_cancel", canceledOrderId: original.id, remainingQuantity: stale.remainingQuantity };
+  } else if (row?.status === 'failed') {
+    throw new Error(row.error ?? "Replacement failed");
+  } else {
+    // Timeout or pending
     return { status: "pending_cancel", canceledOrderId: original.id, remainingQuantity: stale.remainingQuantity };
   }
-
-  const remainingQuantity = remainingAfterCancel(original, afterCancel);
-  if (remainingQuantity <= 0) {
-    audit(
-      "order_replace_market_skipped",
-      { orderId: original.id, symbol: original.symbol, state: afterCancel?.state, reason: "no_remaining_quantity", cancelResult },
-      userId,
-      input.policy.connectedAccountId
-    );
-    return { status: "already_filled", canceledOrderId: original.id, remainingQuantity: 0 };
-  }
-
-  // TOCTOU re-verify: the position-backed check above ran BEFORE the cancel phase, and 1s+ has
-  // elapsed since (cancel + settle delay + order refetch). Re-verify the backing position NOW,
-  // immediately before placing the market order — a concurrent fill (another exit, a short, a manual
-  // trade) can shrink it in that window. If backing dropped below the remaining qty, place NOTHING:
-  // the original order is already canceled and cannot be resurrected, so emit a DISTINCT receipt
-  // (stale_exit_replacement_aborted_post_cancel) so the human surface explains the order is now
-  // canceled-but-NOT-replaced, unlike the pre-cancel skip which leaves the order untouched.
-  if (isExit) {
-    const positionsNow = await input.gateway.getEquityPositions(input.policy.accountNumber);
-    const { signedQuantity, backingQuantity } = exitBackingQuantity(positionsNow, symbol, original.side);
-    if (backingQuantity + POSITION_EPSILON < remainingQuantity) {
-      audit(
-        "stale_exit_replacement_aborted_post_cancel",
-        {
-          orderId: original.id,
-          symbol,
-          side: original.side,
-          remainingQuantity,
-          positionQuantity: signedQuantity,
-          backingQuantity,
-          cancelResult,
-          reason: backingQuantity <= POSITION_EPSILON ? "no_position_after_cancel" : "position_shrank_below_remaining"
-        },
-        userId,
-        input.policy.connectedAccountId
-      );
-      throw new MarketReplacePreconditionError(
-        `${symbol} ${original.side} replacement aborted after cancel: the backing position shrank to ${signedQuantity} ` +
-          `before the market order could be placed (order remaining ${remainingQuantity}). ` +
-          "The original order is now CANCELED and was NOT replaced — no market order was placed. " +
-          "Review the position and place a fresh exit manually if one is still needed.",
-        409
-      );
-    }
-  }
-
-  const marketOrder: EquityOrderInput = {
-    accountNumber: input.policy.accountNumber,
-    symbol: normalizeSymbol(original.symbol),
-    side: original.side,
-    type: "market",
-    quantity: remainingQuantity,
-    timeInForce: "gfd",
-    marketHours: "regular_hours"
-  };
-  const review = await input.gateway.reviewEquityOrder(marketOrder);
-  const refId = crypto.randomUUID();
-  let execution;
-  try {
-    execution = await input.gateway.placeEquityOrder({ ...marketOrder, refId });
-    if (isRejectedOrCanceledState(execution.state) || !execution.orderId) {
-      throw new Error(`Broker immediately rejected or failed to return an order ID for the replacement order (state: ${execution.state})`);
-    }
-  } catch (error) {
-    audit(
-      "order_replace_market_failed",
-      {
-        orderId: original.id,
-        symbol: original.symbol,
-        remainingQuantity,
-        cancelResult,
-        error: error instanceof Error ? error.message : String(error)
-      },
-      userId,
-      input.policy.connectedAccountId
-    );
-    throw error;
-  }
-
-  const source = fillSourceForExecutionMode(executionState);
-  const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
-  const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
-  // B8: a paper EXIT (sell/cover) booked here at the simulated mid pays no execution cost otherwise,
-  // overstating realized edge on the losing tail that feeds the tuner/sizer. Debit the exit-side cost for
-  // paper exits only; entries and live fills are unchanged. applyPaperExitCost no-ops on non-paper sources.
-  const price = isExit ? applyPaperExitCost(rawPrice, original.side, source) : rawPrice;
-  insertFillEvent({
-    userId,
-    accountNumber: input.policy.accountNumber,
-    source,
-    executionMode,
-    symbol: normalizeSymbol(original.symbol),
-    side: original.side,
-    quantity: remainingQuantity,
-    price,
-    notional: Math.abs(price * remainingQuantity),
-    status: fillStatus,
-    brokerOrderId: execution.orderId,
-    raw: {
-      source: "market_replace",
-      replacedOrderId: original.id,
-      cancel: cancelResult,
-      review,
-      execution
-    }
-  });
-
-  audit(
-    "order_replace_market",
-    {
-      replacedOrderId: original.id,
-      replacementOrderId: execution.orderId,
-      symbol: original.symbol,
-      side: original.side,
-      remainingQuantity,
-      brokerState: execution.state,
-      fillStatus
-    },
-    userId,
-    input.policy.connectedAccountId
-  );
-
-  return {
-    status: "replaced",
-    canceledOrderId: original.id,
-    replacementOrderId: execution.orderId,
-    brokerState: execution.state,
-    fillStatus,
-    remainingQuantity
-  };
 }
 
-/**
- * Auto-remediate STALE EXIT limit orders by cancel-and-replacing them with a market order, so a
- * protective exit that a resting limit failed to fill cannot strand the position. This is the backstop
- * for the MU deadlock: a stale sell limit held all the shares and blocked every re-exit until the
- * broker expired it a day later. Scoped to EXITS only (sell/cover) — an unfilled ENTRY limit is the
- * owner's price discipline and is never forced to market. Respects the live typed-confirmation
- * preference: on a live account with requireTypedConfirmation on it DEFERS to the human (the stale
- * alert still fires) rather than auto-confirming a real-money market order; on paper (or live with
- * confirmation off) it remediates automatically. Opt-out via policy.autoRemediateStaleExits = false.
- */
+async function markReplacementError(id: string, error: string) {
+  getDb().prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+    .run(error, new Date().toISOString(), id);
+}
+
+function getReplacementRecord(id: string): OrderReplacementRow | undefined {
+  return getDb().prepare(`SELECT * FROM order_replacements WHERE id = ?`).get(id) as OrderReplacementRow | undefined;
+}
+
+function isTerminalState(status: string) {
+  return status === 'replacement_confirmed' || status === 'failed' || status === 'aborted';
+}
+
+async function stepReplacementState(row: OrderReplacementRow, input: MarketReplaceInput, original?: EquityOrder) {
+  const db = getDb();
+  const userId = input.userId ?? "local";
+
+  if (!original) {
+    const orders = await input.gateway.getEquityOrders(input.policy.accountNumber);
+    original = orders.find((o) => o.id === row.original_order_id);
+    if (!original) {
+      await markReplacementError(row.id, "Original order not found at broker during state step");
+      return;
+    }
+  }
+
+  const symbol = normalizeSymbol(original.symbol);
+  const executionState = deriveExecutionState(input.policy, input.activeAccount);
+  const executionMode: ExecutionMode = executionState.mode!;
+
+  try {
+    if (row.status === 'cancel_requested') {
+      const isExit = original.side === "sell" || original.side === "cover";
+      if (isExit) {
+        const positions = await input.gateway.getEquityPositions(input.policy.accountNumber);
+        const { signedQuantity, backingQuantity } = exitBackingQuantity(positions, symbol, original.side);
+        const remainingQuantity = remainingAfterCancel(original);
+        if (backingQuantity + POSITION_EPSILON < remainingQuantity) {
+          const errStr = `${symbol} ${original.side} order is not backed by the broker position (position ${signedQuantity}, order remaining ${remainingQuantity}). Market replacement skipped; the original order was left untouched.`;
+          db.prepare(`UPDATE order_replacements SET status = 'aborted', updated_at = ?, error = ? WHERE id = ?`)
+            .run(new Date().toISOString(), errStr, row.id);
+          audit(
+            "stale_exit_remediation_skipped_no_position",
+            { orderId: original.id, symbol, side: original.side, remainingQuantity, positionQuantity: signedQuantity, backingQuantity, reason: backingQuantity === 0 ? "no_position" : "position_smaller_than_order" },
+            userId,
+            input.policy.connectedAccountId
+          );
+          throw new MarketReplacePreconditionError(errStr, 409);
+        }
+      }
+
+      const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, original.id);
+      db.prepare(`UPDATE order_replacements SET cancel_result = ?, status = 'cancel_confirmed', updated_at = ? WHERE id = ?`)
+        .run(JSON.stringify(cancelResult), new Date().toISOString(), row.id);
+      await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
+    }
+    
+    // Reload row in case it changed
+    row = getReplacementRecord(row.id)!;
+    
+    if (row.status === 'cancel_confirmed') {
+      const afterCancelOrders = await input.gateway.getEquityOrders(input.policy.accountNumber);
+      const afterCancel = afterCancelOrders.find((order) => order.id === original.id);
+      
+      const staleOrders = listStaleLimitOrders(afterCancelOrders, input.policy);
+      const remainingQuantity = remainingAfterCancel(original, afterCancel);
+
+      if (afterCancel && isPostCancelActiveState(afterCancel.state)) {
+        audit(
+          "order_replace_market_deferred_pending_cancel",
+          { orderId: original.id, symbol, state: afterCancel.state, reason: "original_order_still_active_after_cancel", cancelResult: row.cancel_result },
+          userId,
+          input.policy.connectedAccountId
+        );
+        // We stay in cancel_confirmed and try again next tick
+        return;
+      }
+
+      if (remainingQuantity <= 0) {
+        audit(
+          "order_replace_market_skipped",
+          { orderId: original.id, symbol, state: afterCancel?.state, reason: "no_remaining_quantity", cancelResult: row.cancel_result },
+          userId,
+          input.policy.connectedAccountId
+        );
+        db.prepare(`UPDATE order_replacements SET status = 'aborted', remaining_quantity = 0, updated_at = ? WHERE id = ? AND status = 'cancel_confirmed'`)
+          .run(new Date().toISOString(), row.id);
+        return;
+      }
+
+      // Re-verify backing position
+      const isExit = original.side === "sell" || original.side === "cover";
+      if (isExit) {
+        const positionsNow = await input.gateway.getEquityPositions(input.policy.accountNumber);
+        const { signedQuantity, backingQuantity } = exitBackingQuantity(positionsNow, symbol, original.side);
+        if (backingQuantity + POSITION_EPSILON < remainingQuantity) {
+          const reason = backingQuantity <= POSITION_EPSILON ? "no_position_after_cancel" : "position_shrank_below_remaining";
+          const errStr = `${symbol} ${original.side} replacement aborted after cancel: the backing position shrank to ${signedQuantity} before the market order could be placed (order remaining ${remainingQuantity}). The original order is now CANCELED and was NOT replaced — no market order was placed. Review the position and place a fresh exit manually if one is still needed.`;
+          
+          audit(
+            "stale_exit_replacement_aborted_post_cancel",
+            { orderId: original.id, symbol, side: original.side, remainingQuantity, positionQuantity: signedQuantity, backingQuantity, cancelResult: row.cancel_result, reason },
+            userId,
+            input.policy.connectedAccountId
+          );
+          db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, remaining_quantity = ?, updated_at = ? WHERE id = ? AND status = 'cancel_confirmed'`)
+            .run(errStr, remainingQuantity, new Date().toISOString(), row.id);
+          return;
+        }
+      }
+
+      const marketOrder: EquityOrderInput = {
+        accountNumber: input.policy.accountNumber,
+        symbol: symbol,
+        side: original.side,
+        type: "market",
+        quantity: remainingQuantity,
+        timeInForce: "gfd",
+        marketHours: "regular_hours"
+      };
+      
+      const review = await input.gateway.reviewEquityOrder(marketOrder);
+      db.prepare(`UPDATE order_replacements SET status = 'replacement_submitted', remaining_quantity = ?, updated_at = ? WHERE id = ? AND status = 'cancel_confirmed'`)
+        .run(remainingQuantity, new Date().toISOString(), row.id);
+
+      // We placed it, transition immediately
+      let execution;
+      try {
+        execution = await input.gateway.placeEquityOrder({ ...marketOrder, refId: row.replacement_ref_id });
+        if (isRejectedOrCanceledState(execution.state) || !execution.orderId) {
+          throw new Error(`Broker immediately rejected or failed to return an order ID for the replacement order (state: ${execution.state})`);
+        }
+        db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
+          .run(execution.orderId, new Date().toISOString(), row.id);
+
+        const source = fillSourceForExecutionMode(executionState);
+        const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
+        const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
+        const price = isExit ? applyPaperExitCost(rawPrice, original.side, source) : rawPrice;
+        insertFillEvent({
+          userId,
+          accountNumber: input.policy.accountNumber,
+          source,
+          executionMode,
+          symbol,
+          side: original.side,
+          quantity: remainingQuantity,
+          price,
+          notional: Math.abs(price * remainingQuantity),
+          status: fillStatus,
+          brokerOrderId: execution.orderId,
+          raw: {
+            source: "market_replace",
+            replacedOrderId: original.id,
+            cancel: row.cancel_result,
+            review,
+            execution
+          }
+        });
+
+        audit(
+          "order_replace_market",
+          {
+            replacedOrderId: original.id,
+            replacementOrderId: execution.orderId,
+            symbol,
+            side: original.side,
+            remainingQuantity,
+            brokerState: execution.state,
+            fillStatus
+          },
+          userId,
+          input.policy.connectedAccountId
+        );
+
+      } catch (error) {
+        // We failed after submission. Stay in replacement_submitted, or fail?
+        // Since the broker might have received the order but our connection dropped,
+        // we can leave it in replacement_submitted and it can be recovered by reconciliation later,
+        // or we mark it failed.
+        audit(
+          "order_replace_market_failed",
+          { orderId: original.id, symbol, remainingQuantity, cancelResult: row.cancel_result, error: error instanceof Error ? error.message : String(error) },
+          userId,
+          input.policy.connectedAccountId
+        );
+        db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+          .run(error instanceof Error ? error.message : String(error), new Date().toISOString(), row.id);
+      }
+    }
+  } catch (e: any) {
+     if (e instanceof MarketReplacePreconditionError) throw e;
+     db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+       .run(e.message, new Date().toISOString(), row.id);
+  }
+}
+
 export async function autoRemediateStaleExitOrders(input: {
   userId?: string;
   policy: TradingPolicy & { accountNumber: string };
@@ -385,26 +420,16 @@ export async function autoRemediateStaleExitOrders(input: {
   if (!executionState.submitsBrokerOrders || !executionState.mode) return out;
   const liveNeedsHuman = executionState.mode === "broker/live" && input.policy.requireTypedConfirmation !== false;
 
-  const nowMs = (input.now ?? new Date()).getTime();
-  // Prune expired cooldown markers so the map can't grow unbounded.
-  for (const [k, t] of recentlyRemediatedExits) if (nowMs - t > REMEDIATION_COOLDOWN_MS) recentlyRemediatedExits.delete(k);
-
   const orders = input.orders ?? (await input.gateway.getEquityOrders(input.policy.accountNumber));
   const stale = listStaleLimitOrders(orders, input.policy, input.now ?? new Date());
+  const db = getDb();
 
+  // Enqueue new replacements
   for (const item of stale) {
     const side = String(item.order.side ?? "").toLowerCase();
-    if (side !== "sell" && side !== "cover") continue; // EXITS only — never force an entry to market
-    // Broker-HELD legs are never stranded exits. Alpaca reports "held" only for a contingency leg the
-    // broker itself is holding pending activation — the protective exit of a bracket/OTO whose ENTRY
-    // has not filled, or the dormant half of an OCO — never for a plain resting exit. EquityOrder
-    // carries no parent-order linkage (mapAlpacaOrder drops Alpaca's `legs`), so the held state alone
-    // is the exclusion signal, and it is sufficient: the genuinely stranded exit this backstop exists
-    // for (the MU deadlock) rests in an ACTIVE state ("new"/"accepted"/"partially_filled"). Cancel-
-    // replacing a held leg cancels its unfilled entry AND market-sells shares that were never bought
-    // (the 2026-07-08 PG -12 naked short). Silent skip like the entry-side filter above — this runs
-    // every scheduler tick, and the stale-limit notifier already alerts the human on these orders.
+    if (side !== "sell" && side !== "cover") continue;
     if (String(item.order.state ?? "").trim().toLowerCase() === "held") continue;
+    
     const symbol = normalizeSymbol(item.order.symbol);
     if (liveNeedsHuman) {
       out.deferred++;
@@ -416,46 +441,73 @@ export async function autoRemediateStaleExitOrders(input: {
       );
       continue;
     }
-    // Double-sell guard: skip an order we already cancel-replaced within the cooldown — a slow broker
-    // may still list the just-cancelled order as working, and a second market sell for the same shares
-    // would flip the position short / be rejected.
-    const remKey = `${input.policy.accountNumber}:${item.order.id}`;
-    const lastAttempt = recentlyRemediatedExits.get(remKey);
-    if (lastAttempt != null && nowMs - lastAttempt < REMEDIATION_COOLDOWN_MS) {
-      audit(
-        "stale_exit_auto_remediation_skipped_cooldown",
-        { orderId: item.order.id, symbol, side, sinceMs: nowMs - lastAttempt },
-        userId,
-        input.policy.connectedAccountId
-      );
-      continue;
+    
+    // Use a transaction for check-and-insert
+    const insertTx = db.transaction(() => {
+      const fiveMinsAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+      const activeOrRecent = db.prepare(`
+        SELECT 1 FROM order_replacements
+        WHERE account_number = ? AND original_order_id = ?
+        AND (
+          status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+          OR updated_at > ?
+        )
+      `).get(input.policy.accountNumber, item.order.id, fiveMinsAgo);
+
+      if (!activeOrRecent) {
+        const id = crypto.randomUUID();
+        const refId = crypto.randomUUID();
+        const now = new Date().toISOString();
+        return db.prepare(`
+          INSERT INTO order_replacements 
+          (id, user_id, account_number, original_order_id, replacement_ref_id, status, created_at, updated_at) 
+          VALUES (?, ?, ?, ?, ?, 'cancel_requested', ?, ?)
+        `).run(id, userId, input.policy.accountNumber, item.order.id, refId, now, now);
+      }
+      return { changes: 0 };
+    });
+    
+    const result = insertTx();
+    
+    if (result.changes > 0) {
+      out.attempted++;
     }
-    recentlyRemediatedExits.set(remKey, nowMs); // mark BEFORE the attempt — favor no-double-sell over a fast retry
-    out.attempted++;
+  }
+
+  // Pump all active state machines for this account
+  const activeReplacements = db.prepare(`SELECT * FROM order_replacements WHERE account_number = ? AND status IN ('cancel_requested', 'cancel_confirmed', 'replacement_submitted')`)
+    .all(input.policy.accountNumber) as OrderReplacementRow[];
+
+  for (const row of activeReplacements) {
     try {
-      const result = await replaceStaleLimitOrderWithMarket({
+      await stepReplacementState(row, {
         userId,
         policy: input.policy,
         activeAccount: input.activeAccount,
         gateway: input.gateway,
-        orderId: item.order.id
+        orderId: row.original_order_id
       });
+    } catch (e: any) {
+      if (e instanceof MarketReplacePreconditionError) {
+        audit("stale_exit_auto_remediation_failed", { orderId: row.original_order_id, reason: "precondition_failed", details: e.message }, userId, input.policy.connectedAccountId);
+      } else {
+        console.error(`autoRemediateStaleExitOrders unexpected error for row ${row.id}:`, e);
+      }
+    }
+    
+    const after = getReplacementRecord(row.id);
+    if (after && after.status === 'replacement_confirmed') {
       out.remediated++;
+      const orig = orders.find(o => o.id === row.original_order_id);
       audit(
         "stale_exit_auto_remediated",
-        { orderId: item.order.id, symbol, side, ageMinutes: item.ageMinutes, status: result.status, replacementOrderId: result.replacementOrderId },
-        userId,
-        input.policy.connectedAccountId
-      );
-    } catch (err) {
-      audit(
-        "stale_exit_auto_remediation_failed",
-        { orderId: item.order.id, symbol, side, error: err instanceof Error ? err.message : String(err) },
+        { orderId: row.original_order_id, symbol: orig?.symbol ?? "unknown", side: orig?.side ?? "unknown", status: "replaced", replacementOrderId: after.replacement_order_id },
         userId,
         input.policy.connectedAccountId
       );
     }
   }
+
   return out;
 }
 
@@ -468,7 +520,6 @@ function assertMarketReplaceConfirmation(input: {
   requireTypedConfirmation: boolean;
 }): void {
   if (input.executionMode !== "broker/live") return;
-  // Owner-adjustable (policy.requireTypedConfirmation): off = one-click replace, no phrase required.
   if (!input.requireTypedConfirmation) return;
   const expectedText = marketReplaceText(input.order.symbol);
   const confirmation = input.confirmation;
@@ -492,8 +543,6 @@ function isPostCancelActiveState(state: string | undefined): boolean {
   return isActiveBrokerOrderState(normalized) || POST_CANCEL_ACTIVE_STATES.has(normalized);
 }
 
-// Shared by the pre-cancel guard and the post-cancel TOCTOU re-verify: how many shares of the broker
-// position actually back this exit. A sell needs a LONG position; a cover needs a SHORT one.
 function exitBackingQuantity(
   positions: EquityPosition[],
   symbol: string,
