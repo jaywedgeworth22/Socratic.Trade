@@ -92,20 +92,19 @@ describe("market replacement for stale limit orders", () => {
     const pendingCancel = order({ id: "limit-1", state: "pending_cancel" });
     const gateway = gatewayMock({ orders: [[original], [pendingCancel]] });
 
-    await expect(
-      replaceStaleLimitOrderWithMarket({
-        userId: "local",
-        policy: paperPolicy(),
-        activeAccount: account("paper"),
-        gateway,
-        orderId: "limit-1",
-        cancelSettleMs: 0
-      })
-    ).rejects.toMatchObject({
-      name: "MarketReplacePreconditionError",
-      message: "Cancel request is still pending at the broker. Wait for cancellation before placing the market replacement."
+    const result = await replaceStaleLimitOrderWithMarket({
+      userId: "local",
+      policy: paperPolicy(),
+      activeAccount: account("paper"),
+      gateway,
+      orderId: "limit-1",
+      cancelSettleMs: 0
     });
-    expect(MarketReplacePreconditionError).toBeDefined();
+    expect(result).toMatchObject({
+      status: "pending_cancel",
+      canceledOrderId: "limit-1",
+      remainingQuantity: 10
+    });
     expect(gateway.cancelEquityOrder).toHaveBeenCalledWith("APCA-PAPER", "limit-1");
     expect(gateway.placeEquityOrder).not.toHaveBeenCalled();
   });
