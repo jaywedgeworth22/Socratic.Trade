@@ -1005,23 +1005,21 @@ export async function runStrategyOnce(
     // ONE aggregated audit + ONE kind-'safety' evidence item when same-day evidence (a fresh,
     // high-relevance RAG chunk or a fact asserted today) entered this run's prompts. No text is
     // changed, nothing is dropped or blocked — the receipt IS the control.
-    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
-    
-    // LRU deduplication: filter out items we've already audited for this user/account in the last 6 hours.
-    const dedupedAnomalies = evidenceAgeAnomalies.filter((a) => {
+    // LRU dedup BEFORE the cap so already-audited items don't consume receipt slots
+    // and fresh items beyond index 12 still reach the audit.
+    const dedupedInputs = evidenceAgeInputs.filter((input) => {
       if (evidenceAgeAnomalyDedup.size > 1000) evidenceAgeAnomalyDedup.clear();
-      const key = `${userId}:${connectedAccountId ?? "global"}:${a.id}`;
+      const key = `${userId}:${connectedAccountId ?? "global"}:${input.id}`;
       const now = Date.now();
       const last = evidenceAgeAnomalyDedup.get(key);
       if (last && now - last < 6 * 60 * 60 * 1000) return false;
       evidenceAgeAnomalyDedup.set(key, now);
       return true;
     });
+    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(dedupedInputs);
 
     if (evidenceAgeAnomalies.length > 0) {
-      if (dedupedAnomalies.length > 0) {
-        audit("evidence_age_anomaly", { runId, items: dedupedAnomalies }, userId, connectedAccountId);
-      }
+      audit("evidence_age_anomaly", { runId, items: evidenceAgeAnomalies }, userId, connectedAccountId);
       promptSafetyEvidence.push({
         kind: "safety",
         tone: "warning",

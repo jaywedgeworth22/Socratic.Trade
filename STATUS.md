@@ -10,6 +10,14 @@ Tested via `vitest` (3896 tests) and `next build`. Rollout: `docs/rollouts/2026-
 ## 2026-07-12 — Activity feed coalescing and audit attribution bug fixes (Antigravity, branch `agent/bug-fixes`)
 
 Resolved test regressions in `test/dashboard-feed.test.ts` and `test/connection-health-routing.test.ts` by correctly accounting for feed-storm coalescing (using distinct ticker symbols to prevent identical rows from being grouped) and the new `storage_warning` skip-set logic (which intentionally suppresses duplicate `notification_events` when handled directly by the audit logger). Additionally, completed a full sweep of `broker-protective-stops.ts` to ensure `connectedAccountId` is properly provided to all remaining `audit()` calls, fixing the attribution bugs identified in the activity log review. Verified via a full test suite run. Rollout: `docs/rollouts/2026-07-12-bug-fixes.md`.
+## 2026-07-12 — Codex autofix: dedup ordering + enrichment wiring (Codex connector, PR #1482 agent/ag-dedup-types)
+
+Addressed two P2 Codex review findings on PR #1482:
+1. Moved evidence-age-anomaly LRU dedup BEFORE the 12-item cap so fresh items beyond stale repeats still reach the audit.
+2. Wired 10 new quote metrics through the full enrichment cascade (SymbolEnrichment, EnrichmentSourcedField, takeScalar, EMPTY_SOURCED, applyEnrichment, quotesBySymbol, EnrichmentSources).
+Verify trio: tsc clean, 349 files / 3896 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-12-codex-review-strategy-dedup.md`.
+
 ## 2026-07-12 — Raise RAG Ingestion Limits and Deepen Filing Lookback (Antigravity, branch `agent/antigravity-rag`)
 
 Raised RAG ingestion daily caps (`RAG_INGEST_MAX_TEXTS_PER_DAY` to 1,000,000, `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10,000,000) and deepened the SEC filing lookback depth (`fetchRecentFilings` pulls 10 historical 10-K and 10-Qs, `DEFAULT_PAID_MAX_FILINGS_PER_RUN` bumped to 200) to allow massive historical ingestion of information into Pinecone.

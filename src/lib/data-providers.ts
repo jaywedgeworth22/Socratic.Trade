@@ -150,6 +150,16 @@ export interface SymbolEnrichment {
   targetHigh?: number;
   targetLow?: number;
   targetMedian?: number;
+  returnOnEquity?: number;
+  returnOnAssets?: number;
+  revenueGrowth?: number;
+  freeCashFlowYield?: number;
+  grossProfitMargin?: number;
+  congressTradesQuiver?: number;
+  insiderTradesQuiver?: number;
+  govContractsQuiver?: number;
+  lobbyingQuiver?: number;
+  patentsQuiver?: number;
   // Which provider supplied each scalar field (filled by the cascade).
   sources?: Partial<Record<EnrichmentSourcedField, string>>;
   // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
@@ -189,7 +199,17 @@ export type EnrichmentSourcedField =
   | "targetMean"
   | "targetHigh"
   | "targetLow"
-  | "targetMedian";
+  | "targetMedian"
+  | "returnOnEquity"
+  | "returnOnAssets"
+  | "revenueGrowth"
+  | "freeCashFlowYield"
+  | "grossProfitMargin"
+  | "congressTradesQuiver"
+  | "insiderTradesQuiver"
+  | "govContractsQuiver"
+  | "lobbyingQuiver"
+  | "patentsQuiver";
 
 /** Per-run hint the cascade passes to paid providers when the short-circuit is on.
  *  `coveredFields[symbol]` is the set of `SymbolEnrichment` keys a free upstream
@@ -1034,6 +1054,16 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("targetHigh", name, r.targetHigh);
         takeScalar("targetLow", name, r.targetLow);
         takeScalar("targetMedian", name, r.targetMedian);
+        takeScalar("returnOnEquity", name, r.returnOnEquity);
+        takeScalar("returnOnAssets", name, r.returnOnAssets);
+        takeScalar("revenueGrowth", name, r.revenueGrowth);
+        takeScalar("freeCashFlowYield", name, r.freeCashFlowYield);
+        takeScalar("grossProfitMargin", name, r.grossProfitMargin);
+        takeScalar("congressTradesQuiver", name, r.congressTradesQuiver);
+        takeScalar("insiderTradesQuiver", name, r.insiderTradesQuiver);
+        takeScalar("govContractsQuiver", name, r.govContractsQuiver);
+        takeScalar("lobbyingQuiver", name, r.lobbyingQuiver);
+        takeScalar("patentsQuiver", name, r.patentsQuiver);
         if (!base.headlines?.length && r.headlines?.length) {
           base.headlines = r.headlines;
           this.contributingNames.add(name);
@@ -1146,7 +1176,17 @@ const EMPTY_SOURCED: Record<EnrichmentSourcedField, true> = {
   targetMean: true,
   targetHigh: true,
   targetLow: true,
-  targetMedian: true
+  targetMedian: true,
+  returnOnEquity: true,
+  returnOnAssets: true,
+  revenueGrowth: true,
+  freeCashFlowYield: true,
+  grossProfitMargin: true,
+  congressTradesQuiver: true,
+  insiderTradesQuiver: true,
+  govContractsQuiver: true,
+  lobbyingQuiver: true,
+  patentsQuiver: true
 };
 
 // ── Webull unofficial quote bridge (opt-in, market-data only) ────────────────
