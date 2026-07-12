@@ -161,7 +161,7 @@ describe("per-account policy isolation (PR 1)", () => {
     db.insertStrategyRun(randomUUID(), u, drop);
     db.setCounterfactualLearningWatermark({ userId: u, connectedAccountId: drop, lastAuditRowid: 42 });
 
-    expect(db.deleteConnectedAccount(drop, u)).toBe(true);
+    expect(db.purgeConnectedAccount(drop, u)).toBe(true);
 
     // Dropped account's isolated state is gone…
     expect(db.getLastStrategyRunStartedAt(u, drop)).toBeNull();

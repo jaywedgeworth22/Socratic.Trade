@@ -331,24 +331,7 @@ export async function runStrategyOnce(
       : { ...savedPolicy, accountNumber };
     const activeAccount = connectedAccountId ? getConnectedAccount(connectedAccountId, userId) : undefined;
     
-    // Check broker health before determining execution state (and before making LLM calls).
-    // The gateway is required for live broker checks; if missing, checkBrokerHealth safely returns healthy=true.
-    const brokerGateway = activeAccount ? getBrokerGateway(policy, userId) : undefined;
-    const healthSignals = activeAccount ? await checkBrokerHealth(userId, activeAccount, brokerGateway) : undefined;
-    // Broker health performs network reads. Re-prove this invocation still owns the account lease
-    // before it records a skip or proceeds into any more run work.
-    lockGuard.assertOwned();
-    
-    if (healthSignals && !healthSignals.isHealthy) {
-      const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
-      console.warn(`[Strategy] ${reason}`);
-      audit("run_skipped_broker_unhealthy", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "completed", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "completed", reason, userId);
-      return result;
-    }
-
-    const executionState = deriveExecutionState(policy, activeAccount, healthSignals);
+    const executionState = deriveExecutionState(policy, activeAccount);
     // An account is an account: with none connected there is no broker to trade through, and there
     // is no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
     if (!executionState.mode) throw new Error("No connected account. Connect a broker account before running the strategy.");
@@ -436,6 +419,19 @@ export async function runStrategyOnce(
     // mid-call: match it against the broker by clientOrderId and recover or abandon it.
     await flagStalePlacingIntents(gateway, policy.accountNumber, userId, connectedAccountId);
     lockGuard.assertOwned();
+
+    // Check broker health before making LLM calls.
+    const healthSignals = activeAccount ? await checkBrokerHealth(userId, activeAccount, gateway) : undefined;
+    lockGuard.assertOwned();
+    if (healthSignals && !healthSignals.isHealthy) {
+      const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
+      console.warn(`[Strategy] ${reason}`);
+      audit("run_skipped_broker_unhealthy", { runId, userId, reason }, userId, connectedAccountId);
+      result = { runId, status: "completed", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "completed", reason, userId);
+      return result;
+    }
+
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
       gateway.getPortfolio(policy.accountNumber),

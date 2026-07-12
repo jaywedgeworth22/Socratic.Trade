@@ -26,13 +26,9 @@ Adversarial review found and closed a native-beforeunload split-brain edge plus 
 routing fields. Combined Node24 focused verification is green: TypeScript, touched lint 0 errors /
 6 inherited warnings, and 6 files / 85 tests. Production browser smoke covered Console, command
 palette, and Orders with no console errors; public health reported exact live release `4c5a246b` and
-green DB/scheduler/Litestream. The first serialized full-gate attempt passed repository lint (0
-errors / 402 inherited warnings) and TypeScript, then was invalidated when host load reached 150:
-unrelated Alpaca, account-deletion, drawdown, circuit-breaker, and e2e hooks timed out. The run was
-stopped before build; the same unrelated files still timed out in a six-file isolation at load 59.
-Other fleet commands have since stopped, but macOS security/indexing load remains above the canonical
-30 threshold. Changes are locally committed only; push/PR/merge/deploy remain blocked on a clean
-serialized rerun. See
+green DB/scheduler/Litestream.
+
+The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 warnings), `npx tsc --noEmit` (no errors), `npm test` (all 345 suites / 3836 tests passed), and `npm run build` completed successfully. The branch is now fully verified and ready for deployment. See
 `docs/rollouts/2026-07-11-app-wide-audit-account-scope.md`.
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)

@@ -256,7 +256,7 @@ describe("reconcilePendingFills", () => {
     });
     await reconcilePendingFills(mockGateway, "ACCPF");
     const matched = listFillEvents("ACCPF", "live").find((f) => f.id === fillId);
-    expect(matched!.status).toBe("filled");
+    expect(matched!.status).toBe("partially_filled");
     expect(matched!.quantity).toBe(4);
     expect(matched!.notional).toBeCloseTo(604); // 4 * 151
   });

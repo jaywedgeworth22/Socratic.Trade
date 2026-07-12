@@ -657,6 +657,7 @@ export interface ConnectedAccount {
   apiSecret?: string;
   baseUrl?: string;
   isActive: boolean;
+  isDraining?: boolean;
   /**
    * Persisted snapshot of the capabilities last reported by the broker for
    * this account. Populated on connect/re-sync; undefined for legacy rows

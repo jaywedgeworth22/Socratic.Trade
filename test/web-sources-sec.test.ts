@@ -30,7 +30,7 @@ afterEach(() => vi.unstubAllGlobals());
 const FORM4_BUY_XML = `<?xml version="1.0"?><ownershipDocument>
   <issuer><issuerTradingSymbol>NVDA</issuerTradingSymbol></issuer>
   <reportingOwner><reportingOwnerId><rptOwnerName>Jensen Huang</rptOwnerName></reportingOwnerId></reportingOwner>
-  <periodOfReport>2026-06-12</periodOfReport>
+  <periodOfReport>2026-07-01</periodOfReport>
   <nonDerivativeTable>
     <nonDerivativeTransaction>
       <transactionCoding><transactionCode>P</transactionCode></transactionCoding>
@@ -64,7 +64,7 @@ describe("SEC Form 4 parsers", () => {
   it("counts only open-market P/S transactions (ignores option exercises)", () => {
     const filing = parseForm4Xml(FORM4_BUY_XML, { accession: "acc-1" });
     expect(filing).not.toBeNull();
-    expect(filing).toMatchObject({ symbol: "NVDA", owner: "Jensen Huang", buyTx: 1, sellTx: 0, filedAt: "2026-06-12" });
+    expect(filing).toMatchObject({ symbol: "NVDA", owner: "Jensen Huang", buyTx: 1, sellTx: 0, filedAt: "2026-07-01" });
     expect(filing!.buyShares).toBe(1000); // the M (option exercise) 5000 shares is excluded
   });
 
@@ -76,10 +76,10 @@ describe("SEC Form 4 parsers", () => {
   it("drops Form 4s with a future, near-future, or impossible reported date", () => {
     // A reported transaction date can't be after today — far-future, tomorrow (within the old skew),
     // and rolled-over impossible dates are all rejected rather than re-anchored to today.
-    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-06-12", "2030-01-01"), { accession: "fut" })).toBeNull();
+    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-07-01", "2030-01-01"), { accession: "fut" })).toBeNull();
     const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-06-12", tomorrow), { accession: "tmrw" })).toBeNull();
-    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-06-12", "2026-02-30"), { accession: "roll" })).toBeNull();
+    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-07-01", tomorrow), { accession: "tmrw" })).toBeNull();
+    expect(parseForm4Xml(FORM4_BUY_XML.replace("2026-07-01", "2026-02-30"), { accession: "roll" })).toBeNull();
   });
 });
 

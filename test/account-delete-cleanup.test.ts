@@ -7,7 +7,7 @@ beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-acctdel-${randomUUID()}.db`)}`;
 });
 
-describe("deleteConnectedAccount — FK pragma + cascade cleanup", () => {
+describe("purgeConnectedAccount — FK pragma + cascade cleanup", () => {
   it("enables foreign_keys enforcement", async () => {
     const { getDb } = await import("../src/lib/db");
     expect(Number(getDb().pragma("foreign_keys", { simple: true }))).toBe(1);
@@ -33,7 +33,7 @@ describe("deleteConnectedAccount — FK pragma + cascade cleanup", () => {
     expect(db.getProposal(pid, "local")).toBeTruthy();
     expect(db.listSyntheticStops(acct, "local")).toHaveLength(1);
 
-    expect(db.deleteConnectedAccount(accId, "local")).toBe(true);
+    expect(db.purgeConnectedAccount(accId, "local")).toBe(true);
 
     // All purged.
     expect(db.listFillEvents(acct, "live", 10, "local")).toHaveLength(0);
@@ -43,8 +43,8 @@ describe("deleteConnectedAccount — FK pragma + cascade cleanup", () => {
   });
 
   it("returns false for a non-existent account and touches nothing", async () => {
-    const { deleteConnectedAccount } = await import("../src/lib/db");
-    expect(deleteConnectedAccount("does-not-exist", "local")).toBe(false);
+    const { purgeConnectedAccount } = await import("../src/lib/db");
+    expect(purgeConnectedAccount("does-not-exist", "local")).toBe(false);
   });
 
   // Codex review, PR #1371: account deletion must purge the account's per-position stop plans, or a
@@ -61,7 +61,7 @@ describe("deleteConnectedAccount — FK pragma + cascade cleanup", () => {
     db.recordStopPlan(acct, "AAPL", "none", "high-conviction hold", 100, "local");
     expect(db.getStopPlans(acct, "local")).toHaveProperty("AAPL");
 
-    expect(db.deleteConnectedAccount(accId, "local")).toBe(true);
+    expect(db.purgeConnectedAccount(accId, "local")).toBe(true);
     expect(db.getStopPlans(acct, "local")).not.toHaveProperty("AAPL");
   });
 
@@ -80,7 +80,7 @@ describe("deleteConnectedAccount — FK pragma + cascade cleanup", () => {
     });
     expect(db.listLearningMutations("local", { connectedAccountId: accId }).length).toBe(1);
 
-    expect(db.deleteConnectedAccount(accId, "local")).toBe(true);
+    expect(db.purgeConnectedAccount(accId, "local")).toBe(true);
     expect(db.listLearningMutations("local", { connectedAccountId: accId }).length).toBe(0);
   });
 });
