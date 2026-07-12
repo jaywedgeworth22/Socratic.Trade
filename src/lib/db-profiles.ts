@@ -424,10 +424,10 @@ function migrateLegacyStrategyModelFieldsToAccounts(userId: string): void {
 }
 
 /** Write only the user-level fields of a policy to user_settings.policy. */
-function writeUserPolicyFields(userId: string, policy: TradingPolicy): void {
+function writeUserPolicyFields(userId: string, policy: TradingPolicy, emitAudit = true): void {
   migrateLegacyStrategyModelFieldsToAccounts(userId);
   const userFields = pickUserFields(policy);
-  setUserSetting(userId, "policy", userFields);
+  setUserSetting(userId, "policy", userFields, { auditPolicyChange: emitAudit });
 }
 
 /** The user-level base policy (active library profile, else legacy user_settings). */
@@ -562,19 +562,21 @@ export function setPolicy(policy: TradingPolicy, userId: string = "local", conne
 
   if (account) {
     // ── Tiered write: user fields → user_settings, account fields → account_strategy_state ──
-    writeUserPolicyFields(userId, merged);
+    writeUserPolicyFields(userId, merged, false);
     syncActiveProfile({ policy: pickAccountFields(merged) as TradingPolicy, scoringWeights: merged.scoringWeights }, userId);
     writeAccountStrategyState(userId, account.id, {
       policy: pickAccountFields(merged) as TradingPolicy,
       prompt: getStrategyPrompt(userId, account.id),
       scoringWeights: merged.scoringWeights
     });
+    audit("policy_change", { userId, key: "policy", value: merged }, userId, account.id);
   } else {
     // ── No connected account: store the full policy in user_settings (backward compat) ──
     // Users without a connected account (legacy single-user mode) keep the old behaviour:
     // the full policy is stored as a single blob under user_settings.policy.
-    setUserSetting(userId, "policy", merged);
+    setUserSetting(userId, "policy", merged, { auditPolicyChange: false });
     syncActiveProfile({ policy: merged, scoringWeights: merged.scoringWeights }, userId);
+    audit("policy_change", { userId, key: "policy", value: merged }, userId);
   }
 }
 
@@ -588,12 +590,15 @@ export function getStrategyPrompt(userId: string = "local", connectedAccountId?:
 }
 
 export function setStrategyPrompt(prompt: string, userId: string = "local", connectedAccountId?: string): void {
-  setUserSetting(userId, "strategyPrompt", prompt);
+  setUserSetting(userId, "strategyPrompt", prompt, { auditPolicyChange: false });
   syncActiveProfile({ prompt }, userId);
   const account = resolveAccount(userId, connectedAccountId);
   if (account) {
     const base = getPolicy(userId, account.id);
     writeAccountStrategyState(userId, account.id, { policy: base, prompt, scoringWeights: base.scoringWeights });
+    audit("policy_change", { userId, key: "strategyPrompt", value: prompt }, userId, account.id);
+  } else {
+    audit("policy_change", { userId, key: "strategyPrompt", value: prompt }, userId);
   }
 }
 
