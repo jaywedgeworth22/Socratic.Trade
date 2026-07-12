@@ -14,9 +14,9 @@
 
 export const LLM_USAGE_CONTEXT_LABELS: Record<string, string> = {
   chat: "Chat",
-  strategy: "Proposer (Green team)",
-  "red-team": "Reviewer (Red team)",
-  "strategy-bear": "Reviewer (Red team, legacy)",
+  strategy: "Green Team (proposer)",
+  "red-team": "Red Team (reviewer)",
+  "strategy-bear": "Red Team (reviewer, legacy)",
   "strategy-tuning": "AI strategy review",
   "proposal-revalidation": "Proposal revalidation",
   "post-mortem": "Post-mortem reflection",

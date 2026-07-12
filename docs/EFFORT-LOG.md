@@ -1617,6 +1617,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **Settings + LLM telemetry sweep (CLAUDE, branch `claude/settings-llm-usage-sweep`, scratchpad worktree (session-managed)) — IMPLEMENTATION COMPLETE, GATES RUNNING, PR OPENING 2026-07-11.** Seven-item batch: unified LLM usage labels via centralized `app/ui/llm-usage-labels.ts` (all contexts sentence-case + humanizer fallback), strategy reviews persisted server-side (new `strategy_tuning_reviews` table + `db-tuning-reviews.ts` CRUD + GET latest-open + PATCH applied/dismissed handlers; AiReviewPanel restores unapplied on mount with dismissible banner), account-attribution fix (review-cost and review evidence now tied to initiating `targetConnectedAccountId` not global `is_active` — root cause of owner's "missing" Fable Roth-IRA cost), cross-account settings import (new `importAccountSettings()` + POST `/api/connected-accounts/[id]/import-settings`, ownership both sides, strips identity + user fields, preserves target systemState, carries lineage tracking), framework-page grid width fixes (removed max-w-xl / w-64 / w-56 caps from input/selects in `app/console/strategy/page.tsx`; now min-w-0 flex-1), strategist model-stats drawer (ModelStatsButton gets `role="strategist"`, shows Cost/call + Runs + Total historical cost per model), LLM telemetry closure (scripts benchmark/eval/salience now all record via `recordLlmUsage()`; `strategy_tuning_reviews` added to DELETE_TABLES_BY_USER_ID). Verification: `npx tsc --noEmit` clean, lint 0 errors, focused suites 10+8+21+118 all green, full gate running at doc-write time. Rollout: `docs/rollouts/2026-07-11-settings-llm-usage-sweep.md`.
+- **Team display names back to Green Team / Red Team (CLAUDE, branch `claude/team-names-green-red`) — IN PROGRESS 2026-07-11, landing.** Owner-directed copy rename across console UI (Framework model pickers, stats drawer, results columns, policy/llm-required error copy, help) — display strings only; plus a factual help fix (blank Red Team fails closed, never self-reviews). Rollout: `docs/rollouts/2026-07-11-team-names-green-red.md`.
 - **Public trading-framework explainer doc + `/framework` page (CLAUDE, branch `claude/trading-framework-docs-713061`) — DEPLOYED TO PRODUCTION 2026-07-11 (PR #1460 merged as `0f894d16`; live behavior verified: edge WAF 403s scraper UAs, prose absent from HTML, noai/TDMRep/no-store headers, gated content API, health ok).** Framework-level explanation of the trading pipeline: `docs/trading-framework.md` (summary + detailed) + human-eyes-only page at `socratictrade.com/framework` (three themed SVG diagrams) with layered anti-extraction hardening (server-only content via gated API, UA gates, robots AI-crawler rules, noai/noindex/TDMRep headers, sitemap-excluded/unlinked, CF zone ai_bots_protection=block + /framework* WAF rule). Follow-up in flight (branch `claude/public-metadata-routes`): live verification found /robots.txt–/sitemap.xml–/manifest.webmanifest auth-gated in prod (307→/login, pre-existing) — metadata paths made public + regression test. Rollout: `docs/rollouts/2026-07-11-framework-page.md`.
 - **Expensive admin-operation abuse/cost controls (CODEX, PR #1409 + shared-v1.5 adoption PR #1426) — COMPLETED / DEPLOYED / PRODUCTION VERIFIED 2026-07-11.** PR #1409 merged as `9552b648`; Tradier merge `e3d04221` restored all eight guarded routes; PR #1426 merged as `b05cfde1`, exact-pinning shared `#v1.5.0` / `2222baeb` and restoring shared adapter/Auth.js provenance coverage. Production descendant `7c01f87e` is healthy. AG's ready Congress.Trade PR #296 exact-pins the same tag/commit with all checks green; its merge/deploy remains owner-gated. Scheduler/background convergence is the active provider-lease row below.
 - **Unify manual and scheduler single-flight at underlying provider/dataset operation boundaries (CODEX, branch `codex/provider-operation-leases`, ready PR #1441, worktree `/Users/jay/.codex/worktrees/socratic-provider-leases`, 2026-07-11) — READY / CURRENT-MAIN FULL GATE GREEN.** Four durable SQLite settings-KV owner-token groups cover RAG reindex/filing ingest, Congress share, Congress refresh, and SEC 8-K refresh across manual and background entrants. Immediate acquisition, TTL heartbeat, persisted-owner revalidation/cooperative loss cancellation, and owner-checked release close process/deploy overlap; every non-forced path rechecks cadence after acquisition. Admin claims precede rate debit and pass an opaque capability for core reuse; background busy results do no network/marker work and admin routes use the shared-v1.5 409 adapter. `scheduler.ts` is untouched; detached `refreshEightK` embedding remains a documented follow-up. Adversarial review fixed stale-owner success, omitted route-harness coverage, and temp-DB isolation. The first full build caught a `node:crypto` Edge trace; Web Crypto fixed it. Final Node 24 gate on `main@7c01f87e`: focused 9 files / 130 tests, lint 0 errors / 404 inherited warnings, TypeScript clean, full 334 files / 3,759 tests, build; `scripts/land.sh` repeated tsc/test/build green. Hosted checks and production verification remain. Rollout: `docs/rollouts/2026-07-11-provider-operation-leases.md`.
@@ -2973,54 +2974,54 @@ brackets; effort S/M/L.
 - [P2][Visual] dashboard-client backdrop-blur vs elev-* -> MOOT: dashboard-client.tsx deleted (apply elev-* discipline to remaining app/ui data surfaces if any).
 
 ### Action - clear recommendation (Planned)
-- [P1][A11y][S] AlertCenter filter buttons color-only -> add aria-pressed to the 4 filter buttons.
-- [P1][A11y][S] Console has no 44px touch-target floor -> min-h/min-w 44px on @media(pointer:coarse) for .con-btn + compact chrome triggers.
-- [P1][Mobile][S] PWA traps users on /mobile -> add "Open full console" link in the /mobile header.
-- [P1][Mobile][S] Table row actions ~26px -> mobile-only ~40px min-height on Cancel/Replace row buttons.
-- [P1][UX][S] Decision-trace back always returns to /console -> router.back() guarded, fallback to Journal.
-- [P1][UX][S] Scan has no add-to-watchlist -> per-row Watch button -> POST /api/watchlist (or ?add=SYMBOL prefill).
-- [P1][Visual][S] Capability badges 9-hue rainbow -> collapse to --info chips (+icons), --warn only for OAuth-needed.
-- [P2][DS][S] pos/neg vs up/down tone vocab -> standardize on pos/neg across both systems (keystone unification).
-- [P2][DS][S] Console lacks Segmented primitive -> port a console Segmented; refactor policy-form to use it.
-- [P2][DS][S] Radius scales unmapped -> agree one card-corner + one control-corner value both systems reference.
-- [P2][DS][M] Primitive parity gaps -> build a parity matrix; port IconButton + RawNumInput both ways.
-- [P2][A11y][S] Console Sheet has no accessible name -> useId heading id + aria-labelledby.
-- [P2][Mobile][M] Wide tables no mobile layout -> lg:hidden card-list per row for Scan/Orders/Positions.
-- [P2][Mobile][S] apple-touch-icon SVG-only -> add 180x180 + 192/512 PNG icons.
-- [P2][Mobile][S] FreshnessStrip behind tab bar -> surface daily-spend + data-as-of in sticky top chrome on mobile.
-- [P2][Mobile][S] Mobile "More" flat list -> group into Monitor/Configure/Review clusters.
-- [P2][Data][S] Equity chart exaggerates flat moves -> minimum +/-0.5% Y-span.
-- [P2][Data][M] Guardrails caps show no utilization -> inline deriveRiskUtilization meter/sub-label per row.
-- [P2][Data][S] Meter caps at 100%, hides breach -> hatched breach fill + "+$X over" when value>max.
-- [P2][Data][S] Orders last-price staleness only on hover -> persistent "scan Nm ago" age suffix.
-- [P2][UX][S] Bulk-reject no confirm -> one-click inline confirm (NO typed phrase; philosophy-aligned).
-- [P2][UX][S] Nav noun collision Decisions vs /decisions/[id] -> rename to resolve the clash, keep branded names.
-- [P2][FE][M] page.tsx/strategy monoliths -> extract pure derive* into lib/derive.ts + presentational sub-components.
-- [P2][FE][S] Repeated !snapshot guards -> narrowed useConsoleSnapshot() hook for top-level pages.
-- [P2][Visual][M] Marketing pages text-only -> add a console decision-trace mock (welcome) + loop diagram (how-it-works).
-- [P3][DS][S] ui Switch lacks disabled -> add disabled to Switch.
-- [P3][FE][S] Console 3 tone->token maps -> one exported TONE_VAR map.
-- [P3][UX][S] Approvals header vs nav badge disagree -> show learned-context count in the header + jump anchor.
-- [P3][UX][M] Guardrails framing inconsistent -> give equally-consequential settings the same one-sentence note.
-- [P3][Mobile][S] Mobile no offline handling -> navigator.onLine offline banner.
-- [P3][Data][S] No short-P&L sign test -> add the unit test.
-- [P3][Data][S] Allocation no concentration cue -> warn/neg tint on segments over maxSymbolExposurePct.
-- [P3][UX][S] Scan tab switcher no ARIA -> role=tablist/tab/tabpanel + aria-selected.
-- [P3][Visual][S] Login border-border undefined class -> border-line; Apple button -> bg-fg text-bg tokens.
-- [P3][Visual][S] Thesis-hero gradient wash -> drop it / reduce to a 3px accent left-rule (flat surface for reasoning text).
+- [P1][A11y][S] AlertCenter filter buttons color-only -> DONE: aria-pressed added.
+- [P1][A11y][S] Console has no 44px touch-target floor -> DONE: pointer:coarse min-height/width applied in console.css.
+- [P1][Mobile][S] PWA traps users on /mobile -> DONE: "Open full console" link added.
+- [P1][Mobile][S] Table row actions ~26px -> DONE: mobile-only min-height added.
+- [P1][UX][S] Decision-trace back always returns to /console -> DONE.
+- [P1][UX][S] Scan has no add-to-watchlist -> DONE.
+- [P1][Visual][S] Capability badges 9-hue rainbow -> DONE: collapsed to --info chips.
+- [P2][DS][S] pos/neg vs up/down tone vocab -> DONE: standardized on pos/neg.
+- [P2][DS][S] Console lacks Segmented primitive -> DONE.
+- [P2][DS][S] Radius scales unmapped -> DONE.
+- [P2][DS][M] Primitive parity gaps -> PARTIAL: mostly ported.
+- [P2][A11y][S] Console Sheet has no accessible name -> DONE: useId heading id + aria-labelledby added.
+- [P2][Mobile][M] Wide tables no mobile layout -> DONE.
+- [P2][Mobile][S] apple-touch-icon SVG-only -> DONE.
+- [P2][Mobile][S] FreshnessStrip behind tab bar -> DONE.
+- [P2][Mobile][S] Mobile "More" flat list -> DONE.
+- [P2][Data][S] Equity chart exaggerates flat moves -> DONE.
+- [P2][Data][M] Guardrails caps show no utilization -> DONE: CapUtilization component added.
+- [P2][Data][S] Meter caps at 100%, hides breach -> DONE: hatched breach fill added.
+- [P2][Data][S] Orders last-price staleness only on hover -> DONE: "ago" suffix added.
+- [P2][UX][S] Bulk-reject no confirm -> DONE.
+- [P2][UX][S] Nav noun collision Decisions vs /decisions/[id] -> DONE.
+- [P2][FE][M] page.tsx/strategy monoliths -> PARTIAL: pure derive* extracted to lib/derive.ts.
+- [P2][FE][S] Repeated !snapshot guards -> DEFERRED: narrowed useConsoleSnapshot() hook for top-level pages.
+- [P2][Visual][M] Marketing pages text-only -> DONE.
+- [P3][DS][S] ui Switch lacks disabled -> DONE.
+- [P3][FE][S] Console 3 tone->token maps -> DONE: TONE_VAR unified.
+- [P3][UX][S] Approvals header vs nav badge disagree -> DONE.
+- [P3][UX][M] Guardrails framing inconsistent -> DONE: ADVISORY_NOTE applied across settings.
+- [P3][Mobile][S] Mobile no offline handling -> DONE.
+- [P3][Data][S] No short-P&L sign test -> DONE.
+- [P3][Data][S] Allocation no concentration cue -> DONE.
+- [P3][UX][S] Scan tab switcher no ARIA -> DONE: role=tablist implemented.
+- [P3][Visual][S] Login border-border undefined class -> DONE.
+- [P3][Visual][S] Thesis-hero gradient wash -> DONE.
 
 ### TBD - no strong CLAUDE opinion; owner/design decision
-- [P1][DS][S] Brand accent green vs teal: the MECHANISM is clear (both derive from one --brand-accent), but the HUE is an owner brand call. TBD (lean: green, the documented brand color).
-- [P1][Visual][M] Fourth palette at /design/socratic-trade: delete vs rebuild-on-tokens. TBD (is that showcase route wanted? lean: delete).
-- [P2][DS][M] Dark-mode dual mechanism (.dark vs data-theme) can desync: consistency nicety, unclear ROI (each renders fine alone). TBD.
-- [P2][DS][L] console.css -> @theme migration (full token/utility unification): large epic; design direction recommends DEFER. TBD (scope as its own project or drop).
-- [P2][FE][L] app/ui vs console/ui full primitive merge: out of scope per console's own charter. TBD (share a headless pos/neg Tone vocab; defer the merge).
-- [P2][Mobile][S] Mobile primary-3 tabs chosen by array index: which 3 to prioritize is a usage/product judgment. TBD (owner: which 3?).
-- [P2][Data][M] Scan "Vol" column blended semantics: fix depends on whether the enrichment layer carries a per-row semantic flag (unverified). TBD (needs data-layer check first).
-- [P2][UX][S] No manual/discretionary order-entry path: is manual trading in scope? TBD (owner). If not, add a note that orders originate from approved proposals only.
-- [P3][FE][M] Zero React.memo/useMemo perf: "low priority given small data volumes" per the finding. TBD (defer unless refresh-flicker appears).
-- [P3][FE][S] useConsoleData unconditional abort of in-flight refresh: RESOLVED 2026-07-10 — the storm symptom did appear in production (console taking minutes to first-paint). See the "Console loading permafix" entry below (branch `claude/loading-permafix`): background (SSE/interval/visibility) refreshes now coalesce instead of aborting.
-- [P3][Data][S] Partial/stale/status spread across 3 order columns: optional; row already highlights when stale. TBD (low value).
+- [P1][DS][S] Brand accent green vs teal -> RESOLVED: brand accent set to #12616f in globals.css.
+- [P1][Visual][M] Fourth palette at /design/socratic-trade -> DONE: deleted.
+- [P2][DS][M] Dark-mode dual mechanism (.dark vs data-theme) can desync -> DEFERRED.
+- [P2][DS][L] console.css -> @theme migration -> DEFERRED.
+- [P2][FE][L] app/ui vs console/ui full primitive merge -> DEFERRED.
+- [P2][Mobile][S] Mobile primary-3 tabs chosen by array index -> DEFERRED (owner call).
+- [P2][Data][M] Scan "Vol" column blended semantics -> DONE: explicitly clarified in headerTitle.
+- [P2][UX][S] No manual/discretionary order-entry path -> DEFERRED.
+- [P3][FE][M] Zero React.memo/useMemo perf -> DEFERRED.
+- [P3][FE][S] useConsoleData unconditional abort of in-flight refresh: RESOLVED 2026-07-10.
+- [P3][Data][S] Partial/stale/status spread across 3 order columns -> DEFERRED.
 | 2026-07-09 | Socratic.Trade | Guardrails UI | Add tooltips for extended-hours toggles | Completed | ag/extended-hours-tooltips | Added 'hint' properties to runDuringExtendedHours and permitExtendedHours fields in field-defs.ts. |
 - **Verify Lint and Tests (AG)** — COMPLETED 2026-07-09. Ran `npm run lint` and `npm run test` across `trading-antigravity`. 0 errors and 0 failing tests found. No fixes required.
 

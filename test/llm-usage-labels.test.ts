@@ -60,9 +60,9 @@ describe("llmUsageContextLabel", () => {
 
   it("known exact labels match the spec", () => {
     expect(llmUsageContextLabel("chat")).toBe("Chat");
-    expect(llmUsageContextLabel("strategy")).toBe("Proposer (Green team)");
-    expect(llmUsageContextLabel("red-team")).toBe("Reviewer (Red team)");
-    expect(llmUsageContextLabel("strategy-bear")).toBe("Reviewer (Red team, legacy)");
+    expect(llmUsageContextLabel("strategy")).toBe("Green Team (proposer)");
+    expect(llmUsageContextLabel("red-team")).toBe("Red Team (reviewer)");
+    expect(llmUsageContextLabel("strategy-bear")).toBe("Red Team (reviewer, legacy)");
     expect(llmUsageContextLabel("strategy-tuning")).toBe("AI strategy review");
     expect(llmUsageContextLabel("proposal-revalidation")).toBe("Proposal revalidation");
     expect(llmUsageContextLabel("post-mortem")).toBe("Post-mortem reflection");
