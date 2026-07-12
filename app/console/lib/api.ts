@@ -155,16 +155,50 @@ export function startStrategy(): Promise<TradingPolicy> {
 
 /** Set close_only / liquidating via the policy endpoint (halted goes through stopEverything,
  *  active through startStrategy so the server's arming preconditions run). */
-export function setSystemState(state: Exclude<SystemState, "active" | "halted">): Promise<TradingPolicy> {
-  return request<TradingPolicy>("/api/policy", { method: "PUT", body: JSON.stringify({ systemState: state }) });
+let policyWriteTail: Promise<void> = Promise.resolve();
+
+/** Serialize every policy PUT in this browser module, not merely saves issued by one card's
+ *  useAutoSave instance. The endpoint performs a read/merge/write; cross-card concurrency would
+ *  otherwise let the last response overwrite a sibling card's freshly persisted field. */
+function enqueuePolicyWrite<T>(run: () => Promise<T>): Promise<T> {
+  const result = policyWriteTail.then(run, run);
+  policyWriteTail = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+function targetedPolicyBody(patch: PolicyPatchBody, targetConnectedAccountId?: string): string {
+  return JSON.stringify({
+    ...patch,
+    ...(targetConnectedAccountId ? { targetConnectedAccountId } : {})
+  });
+}
+
+export function setSystemState(
+  state: Exclude<SystemState, "active" | "halted">,
+  targetConnectedAccountId?: string
+): Promise<TradingPolicy> {
+  return enqueuePolicyWrite(() =>
+    request<TradingPolicy>("/api/policy", {
+      method: "PUT",
+      body: targetedPolicyBody({ systemState: state }, targetConnectedAccountId)
+    })
+  );
 }
 
 // ── Policy / prompt ──────────────────────────────────────────────────────────
 
 export type PolicyPatchBody = Record<string, unknown> & { strategyPrompt?: string };
 
-export function savePolicy(patch: PolicyPatchBody): Promise<TradingPolicy> {
-  return request<TradingPolicy>("/api/policy", { method: "PUT", body: JSON.stringify(patch) });
+export function savePolicy(patch: PolicyPatchBody, targetConnectedAccountId?: string): Promise<TradingPolicy> {
+  return enqueuePolicyWrite(() =>
+    request<TradingPolicy>("/api/policy", {
+      method: "PUT",
+      body: targetedPolicyBody(patch, targetConnectedAccountId)
+    })
+  );
 }
 
 /** AI strategy review (#12): POST the existing tune endpoint. The server builds

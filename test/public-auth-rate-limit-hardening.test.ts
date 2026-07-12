@@ -8,6 +8,7 @@ import {
 import { rateLimit, RATE_LIMITS, resetRateLimiter } from "../src/lib/rate-limit";
 import { ADMIN_OPERATION_LIMITS, resetAdminOperationInFlight } from "../src/lib/admin-operation-guard";
 import { resetTuningSingleFlight } from "../src/lib/tuning-singleflight";
+import { encodeSessionToken } from "../src/lib/auth/session-token";
 
 const mocks = vi.hoisted(() => ({
   completeMcpOAuthCallback: vi.fn(),
@@ -91,6 +92,54 @@ describe("public Robinhood OAuth callback rate limiting", () => {
       expect(response.status).toBe(429);
     }
     expect(mocks.completeMcpOAuthCallback).not.toHaveBeenCalled();
+  });
+
+  it("optionally binds the callback to a verified Auth.js session cookie", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    const email = "oauth-owner@example.com";
+    vi.stubEnv("AUTH_SECRET", secret);
+    const sessionToken = await encodeSessionToken({
+      token: { email },
+      secret,
+      salt: "authjs.session-token",
+      maxAge: 60 * 60
+    });
+
+    const response = await robinhoodCallback(new NextRequest(
+      "https://socratictrade.com/api/auth/robinhood/callback?code=real-code&state=real-state",
+      {
+        headers: {
+          "cf-connecting-ip": "203.0.113.40",
+          cookie: `authjs.session-token=${sessionToken}`
+        }
+      }
+    ));
+
+    expect(response.status).toBe(307);
+    expect(mocks.completeMcpOAuthCallback).toHaveBeenCalledWith({
+      code: "real-code",
+      state: "real-state",
+      expectedUserId: resolveRequestUserFromEmail(email).userId
+    });
+  });
+
+  it("does not treat a client-supplied identity header as callback session binding", async () => {
+    const response = await robinhoodCallback(new NextRequest(
+      "https://socratictrade.com/api/auth/robinhood/callback?code=real-code&state=real-state",
+      {
+        headers: {
+          "cf-connecting-ip": "203.0.113.41",
+          [AUTHENTICATED_EMAIL_HEADER]: "attacker@example.com"
+        }
+      }
+    ));
+
+    expect(response.status).toBe(307);
+    expect(mocks.completeMcpOAuthCallback).toHaveBeenCalledWith({
+      code: "real-code",
+      state: "real-state",
+      expectedUserId: undefined
+    });
   });
 });
 

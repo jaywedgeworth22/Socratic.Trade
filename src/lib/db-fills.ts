@@ -227,7 +227,7 @@ export function listPendingBrokerReconciliationFills(accountNumber: string, user
       `SELECT * FROM fill_events
        WHERE account_number = ?
          AND user_id = ?
-         AND status = 'pending_reconciliation'
+         AND status IN ('pending_reconciliation', 'partially_filled')
          AND broker_order_id IS NOT NULL
          AND (source = 'live' OR execution_mode IN ('broker/paper', 'broker/live'))
        ORDER BY filled_at ASC`

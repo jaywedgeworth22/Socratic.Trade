@@ -54,7 +54,7 @@ export function dailyExecutionStats(
   // (which have no limitPrice) count correctly against the daily cap.
   const rows = getDb()
     .prepare(
-      "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE coalesce(placed_at, created_at) >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper', 'placing')"
     )
     .all(dayStart.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 
@@ -88,7 +88,7 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
   const cutoff = new Date(now.getTime() - minutes * 60_000);
   const rows = getDb()
     .prepare(
-      "SELECT proposal, estimated_notional FROM trade_proposals WHERE created_at >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper')"
+      "SELECT proposal, estimated_notional FROM trade_proposals WHERE coalesce(placed_at, created_at) >= ? AND account_number = ? AND user_id = ? AND status IN ('placed', 'paper', 'placing')"
     )
     .all(cutoff.toISOString(), scopeAccount(accountNumber), userId) as Array<{ proposal: string; estimated_notional: number | null }>;
 

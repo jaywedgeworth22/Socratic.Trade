@@ -6,7 +6,7 @@
 
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
-import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
+import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
@@ -449,16 +449,25 @@ async function tick(): Promise<void> {
         const executionState = deriveExecutionState(policy, account);
         const brokerGateway = executionState.submitsBrokerOrders ? getBrokerGateway(policy, userId) : undefined;
         
-        // Fast pre-proposal broker health gate.
-        // E.g., skips queuing an LLM strategy run if the broker is unreachable, account is suspended, 
-        // or there's an elevated order_placement_uncertain error rate.
-        const healthSignals = await checkBrokerHealth(userId, account, brokerGateway);
-        if (!healthSignals.isHealthy) {
-          console.warn(`[scheduler] Skipping account ${accountId}: ${healthSignals.reason}`);
-          schedule.nextRunAt = null; // Re-evaluate on next tick without advancing the cadence
+        if (account.isDraining) {
+          if (brokerGateway && policy.accountNumber) {
+            void brokerGateway.getEquityOrders(policy.accountNumber).then(async (orders) => {
+              const openOrders = orders.filter(o => o.state === "open" || o.state === "partially_filled");
+              for (const o of openOrders) {
+                await brokerGateway.cancelEquityOrder(policy.accountNumber!, o.id).catch((err: unknown) => {
+                  console.error(`[scheduler] draining account cancel error for order ${o.id}:`, err);
+                });
+              }
+              await reconcilePendingFills(brokerGateway, policy.accountNumber!, userId, policy.connectedAccountId);
+              if (openOrders.length === 0) purgeConnectedAccount(accountId, userId);
+            }).catch((err: unknown) => console.error("[scheduler] draining account order check error:", err));
+          } else {
+            purgeConnectedAccount(accountId, userId);
+          }
+          schedule.nextRunAt = null;
           continue;
         }
-
+        
         if (brokerGateway && !staleExitInFlight.has(key)) {
           staleExitInFlight.add(key);
           const gw = brokerGateway;
@@ -498,6 +507,16 @@ async function tick(): Promise<void> {
         if (brokerGateway) {
           void reconcilePendingFills(brokerGateway, policy.accountNumber, userId, policy.connectedAccountId)
             .catch((err) => console.error("[scheduler] pending-fill reconcile error:", err));
+        }
+
+        // Fast pre-proposal broker health gate.
+        // E.g., skips queuing an LLM strategy run if the broker is unreachable, account is suspended, 
+        // or there's an elevated order_placement_uncertain error rate.
+        const healthSignals = await checkBrokerHealth(userId, account, brokerGateway);
+        if (!healthSignals.isHealthy) {
+          console.warn(`[scheduler] Skipping account ${accountId}: ${healthSignals.reason}`);
+          schedule.nextRunAt = null; // Re-evaluate on next tick without advancing the cadence
+          continue;
         }
 
         if (policy.systemState !== "active") {

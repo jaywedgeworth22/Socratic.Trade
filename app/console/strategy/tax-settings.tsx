@@ -45,7 +45,7 @@ export function TaxSettingsCard() {
   // (their transient text lives in `draft` until then). `next` is the value already
   // applied to `draft` optimistically; `prev` is what to restore if the write fails.
   const commit = <K extends keyof TaxDraft>(key: K, next: TaxDraft[K], prev: TaxDraft[K]) => {
-    autoSave.save(() => savePolicy({ taxSettings: { [key]: next } }).then(() => refresh()), {
+    autoSave.save(() => savePolicy({ taxSettings: { [key]: next } }, snapshot.policy.connectedAccountId).then(() => refresh()), {
       onError: () => setDraft((d) => ({ ...d, [key]: prev }))
     });
   };

@@ -34,6 +34,7 @@ import {
 import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
 import type { ConsoleStreamHealth } from "../lib/useConsoleData";
 import { useConsoleData } from "../lib/useConsoleData";
+import { useDirtyActionGuard, useNextUnloadBypass } from "../lib/useDirtyGuard";
 import type { ConsoleTheme } from "../lib/useConsoleTheme";
 import { useToast } from "../ui/toast";
 import { Btn, Chip, Dot, Meter, TextInput } from "../ui/primitives";
@@ -74,8 +75,9 @@ function brokerName(broker: string | undefined): string {
 }
 
 export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapshot; compact?: boolean }) {
-  const { refresh } = useConsoleData();
   const toast = useToast();
+  const guardAction = useDirtyActionGuard();
+  const allowNextUnload = useNextUnloadBypass();
   const [open, setOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -114,12 +116,13 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     setBusyId(id);
     try {
       await activateAccount(id);
-      await refresh();
-      toast.push("info", "Account loaded", "The whole console now shows this account.");
-      setOpen(false);
+      // Activation changes the server-side scope used by run-state and broker actions. A full reload
+      // removes any window where stale Account A UI could remain interactive while the server points
+      // at Account B, and remounts every account-scoped editor from B's snapshot.
+      allowNextUnload();
+      window.location.reload();
     } catch (error) {
       toast.push("neg", "Could not load account", error instanceof ConsoleApiError ? error.message : undefined);
-    } finally {
       setBusyId(null);
     }
   };
@@ -140,7 +143,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         role="menuitemradio"
         aria-checked={isActive}
         disabled={isActive || busyId !== null}
-        onClick={() => void switchTo(account.id)}
+        onClick={() => guardAction(() => void switchTo(account.id))}
         className={cx(
           "con-scope-row flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left",
           isActive ? "border-[color:var(--con-accent-border)]" : "border-[color:var(--con-line)]"
@@ -454,7 +457,7 @@ function ControlSheet({
                   </Btn>
                 )}
                 {o.id === "close_only" && (
-                  <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void act("close_only", () => setSystemState("close_only"), "Close-only", "No new buys. Protective exits keep working.")}>
+                  <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => void act("close_only", () => setSystemState("close_only", snapshot.policy.connectedAccountId), "Close-only", "No new buys. Protective exits keep working.")}>
                     {busy === "close_only" ? "Switching…" : "Confirm"}
                   </Btn>
                 )}
@@ -480,7 +483,7 @@ function ControlSheet({
                   confirmLabel="Wind down — this sells"
                   variant="danger"
                   onConfirm={() =>
-                    void act("liquidating", () => setSystemState("liquidating"), "Winding down", "Only sell orders until the account is in cash.")
+                    void act("liquidating", () => setSystemState("liquidating", snapshot.policy.connectedAccountId), "Winding down", "Only sell orders until the account is in cash.")
                   }
                 />
               )}
