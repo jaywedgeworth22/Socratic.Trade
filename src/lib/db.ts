@@ -206,6 +206,7 @@ const MIGRATIONS: Migration[] = [
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_created ON trade_proposals (user_id, account_number, created_at DESC)");
       
       database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
+      database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
 
       // 4. Composite index for day-trade counting and excursions
       database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_user_account_symbol_filled ON fill_events (user_id, account_number, symbol, filled_at DESC)");

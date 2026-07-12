@@ -190,7 +190,12 @@ export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput
   }
 
   if (row?.status === 'replacement_confirmed') {
-    return { status: "replaced", canceledOrderId: original.id, replacementOrderId: row.replacement_order_id!, fillStatus: "pending_reconciliation", remainingQuantity: row.remaining_quantity! };
+    // Read the actual fill status from the fill event that was created inside
+    // stepReplacementState, so the caller sees "filled" for immediately-filled
+    // market replacements instead of always reporting "pending_reconciliation".
+    const fillEvent = db.prepare(`SELECT status FROM fill_events WHERE broker_order_id = ? ORDER BY filled_at DESC LIMIT 1`).get(row.replacement_order_id) as { status: string } | undefined;
+    const fillStatus = fillEvent?.status ?? "pending_reconciliation";
+    return { status: "replaced", canceledOrderId: original.id, replacementOrderId: row.replacement_order_id!, fillStatus, remainingQuantity: row.remaining_quantity! };
   } else if (row?.status === 'aborted') {
     if (row.cancel_result && row.remaining_quantity === 0) {
       return { status: "already_filled", canceledOrderId: original.id, remainingQuantity: 0 };
@@ -238,7 +243,32 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
   const executionMode: ExecutionMode = executionState.mode!;
 
   try {
+    // Live trading preflight guard — must be checked inside the state-machine step
+    // because the background pump may process a row that was enqueued before the env
+    // changed (e.g. ALLOW_LIVE_TRADING set to false after the row was inserted) or
+    // that was created through a path where preflight was already passed (the manual
+    // wrapper) but whose execution is now being handled by the pump.
+    assertLivePreflight({ mode: executionMode, symbol, side: original.side });
+
     if (row.status === 'cancel_requested') {
+      // Re-check eligibility — order type and broker-held state may have changed
+      // between enqueue time and the pump processing this row, and the pump should
+      // not blindly cancel an order that is no longer eligible for replacement.
+      if (!MARKET_REPLACE_TYPES.has(String(original.type ?? "").toLowerCase())) {
+        const errStr = `${symbol} order type (${original.type}) is no longer eligible for market replacement.`;
+        db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, updated_at = ? WHERE id = ?`)
+          .run(errStr, new Date().toISOString(), row.id);
+        audit("stale_exit_remediation_skipped_type_changed", { orderId: original.id, symbol, side: original.side, type: original.type }, userId, input.policy.connectedAccountId);
+        throw new MarketReplacePreconditionError(errStr, 409);
+      }
+      if (String(original.state ?? "").trim().toLowerCase() === "held") {
+        const errStr = `${symbol} ${original.side} order is broker-held — cannot be cancel-replaced.`;
+        db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, updated_at = ? WHERE id = ?`)
+          .run(errStr, new Date().toISOString(), row.id);
+        audit("stale_exit_remediation_skipped_held", { orderId: original.id, symbol, side: original.side, state: original.state }, userId, input.policy.connectedAccountId);
+        throw new MarketReplacePreconditionError(errStr, 409);
+      }
+
       const isExit = original.side === "sell" || original.side === "cover";
       if (isExit) {
         const positions = await input.gateway.getEquityPositions(input.policy.accountNumber);
@@ -329,8 +359,17 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       };
       
       const review = await input.gateway.reviewEquityOrder(marketOrder);
-      db.prepare(`UPDATE order_replacements SET status = 'replacement_submitted', remaining_quantity = ?, updated_at = ? WHERE id = ? AND status = 'cancel_confirmed'`)
+      const casResult = db.prepare(`UPDATE order_replacements SET status = 'replacement_submitted', remaining_quantity = ?, updated_at = ? WHERE id = ? AND status = 'cancel_confirmed'`)
         .run(remainingQuantity, new Date().toISOString(), row.id);
+      if (casResult.changes !== 1) {
+        audit(
+          "order_replace_market_claimed_by_another",
+          { orderId: original.id, symbol, remainingQuantity, cancelResult: row.cancel_result, reason: "CAS update affected 0 rows — another instance claimed this cancel_confirmed row" },
+          userId,
+          input.policy.connectedAccountId
+        );
+        return;
+      }
 
       // We placed it, transition immediately
       let execution;
@@ -475,8 +514,8 @@ export async function autoRemediateStaleExitOrders(input: {
   }
 
   // Pump all active state machines for this account
-  const activeReplacements = db.prepare(`SELECT * FROM order_replacements WHERE account_number = ? AND status IN ('cancel_requested', 'cancel_confirmed', 'replacement_submitted')`)
-    .all(input.policy.accountNumber) as OrderReplacementRow[];
+  const activeReplacements = db.prepare(`SELECT * FROM order_replacements WHERE user_id = ? AND account_number = ? AND status IN ('cancel_requested', 'cancel_confirmed', 'replacement_submitted')`)
+    .all(userId, input.policy.accountNumber) as OrderReplacementRow[];
 
   for (const row of activeReplacements) {
     try {

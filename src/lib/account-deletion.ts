@@ -83,6 +83,15 @@ export interface AccountDeletionBlockers {
    * running-strategy-run / placing-proposal / pending-fill blockers.
    */
   activeMobileCommands: number;
+  /**
+   * Non-terminal order-replacement state-machine rows. If deletion proceeds while a
+   * replacement is in-flight (order canceled but replacement not yet placed, or replacement
+   * submitted but not confirmed), the row is deleted and the maintenance pump can no longer
+   * complete the replacement — the broker order would be canceled without the intended
+   * market exit. Counted as a blocker so deletion waits for the row to reach a terminal
+   * status first.
+   */
+  activeReplacements: number;
 }
 
 export interface AccountDeletionPreview {
@@ -172,11 +181,15 @@ export function getAccountDeletionBlockers(userId: string): AccountDeletionBlock
   const activeMobileCommands = db
     .prepare("SELECT COUNT(*) AS count FROM mobile_commands WHERE user_id = ? AND status IN ('queued','running')")
     .get(userId) as { count: number };
+  const activeReplacements = db
+    .prepare("SELECT COUNT(*) AS count FROM order_replacements WHERE user_id = ? AND status IN ('cancel_requested', 'cancel_confirmed', 'replacement_submitted')")
+    .get(userId) as { count: number };
   return {
     runningStrategyRuns: runningStrategyRuns.count,
     placingProposals: placingProposals.count,
     pendingReconciliationFills: pendingReconciliationFills.count,
-    activeMobileCommands: activeMobileCommands.count
+    activeMobileCommands: activeMobileCommands.count,
+    activeReplacements: activeReplacements.count
   };
 }
 
@@ -276,7 +289,7 @@ export function confirmAndDeleteAccount(input: {
 
   const blockers = getAccountDeletionBlockers(input.userId);
   const blockerCount =
-    blockers.runningStrategyRuns + blockers.placingProposals + blockers.pendingReconciliationFills + blockers.activeMobileCommands;
+    blockers.runningStrategyRuns + blockers.placingProposals + blockers.pendingReconciliationFills + blockers.activeMobileCommands + blockers.activeReplacements;
   if (blockerCount > 0) {
     throw Object.assign(new Error("Account deletion is blocked by in-flight trading activity."), { status: 409, blockers });
   }
