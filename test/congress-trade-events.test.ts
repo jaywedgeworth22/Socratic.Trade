@@ -201,15 +201,23 @@ describe("fetchAppACongressTrades — public feed with rolling from= window", ()
       new Response(
         JSON.stringify({
           transactions: [
-            { ticker: "AAPL", memberName: "Jane Doe", chamber: "house", txType: "P", txDate: recent(3), amountMin: 1, amountMax: 2 }
+            {
+              id: "test-1", docId: "doc-1", filerId: "filer-1", owner: "self", assetName: "Apple", assetType: "stock", isOption: false,
+              capGainsOver200: false, rawText: "AAPL", confidence: 1, source: "primary", createdAt: new Date().toISOString(),
+              cursorSeq: 1,
+              ticker: "AAPL", memberName: "Jane Doe", chamber: "house", txType: "P", txDate: recent(3), amountMin: 1, amountMax: 2
+            }
           ],
+          count: 1,
+          total: 1,
+          limit: 100,
           cursor: 1
         }),
         { status: 200 }
       )
     );
     vi.stubGlobal("fetch", fetchSpy);
-    const trades = await fetchAppACongressTrades(Date.now());
+    const trades = await fetchAppACongressTrades(Date.now()).catch(e => { console.error("fetchAppACongressTrades Error:", e); return []; });
     expect(trades.length).toBeGreaterThanOrEqual(1);
     expect(trades[0]).toMatchObject({ symbol: "AAPL", side: "buy", member: "Jane Doe", chamber: "house" });
     expect(String(fetchSpy.mock.calls[0][0])).toContain("from="); // rolling-window bound is sent

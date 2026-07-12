@@ -229,12 +229,20 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
       const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(cfg.sms.twilioSid)}/Messages.json`;
       const authToken = Buffer.from(`${cfg.sms.twilioSid}:${cfg.sms.twilioToken}`).toString("base64");
       const form = new URLSearchParams({ From: cfg.sms.twilioFrom, To: to, Body: `${msg.title}\n${msg.body}`.slice(0, 1500) });
-      await postOrThrow(
-        fetchImpl,
-        url,
-        { method: "POST", headers: { authorization: `Basic ${authToken}`, "content-type": "application/x-www-form-urlencoded" }, body: form.toString() },
-        timeoutMs
-      );
+      try {
+        await postOrThrow(
+          fetchImpl,
+          url,
+          { method: "POST", headers: { authorization: `Basic ${authToken}`, "content-type": "application/x-www-form-urlencoded" }, body: form.toString() },
+          timeoutMs
+        );
+      } catch (e) {
+        const errStr = e instanceof Error ? e.message : String(e);
+        if (errStr.includes("30034") || errStr.includes("Message cannot be sent")) {
+          throw new Error("Twilio A2P 10DLC restriction: SMS blocked until sender registration is verified. " + errStr);
+        }
+        throw e;
+      }
     }
   }
 };
