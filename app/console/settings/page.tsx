@@ -163,6 +163,7 @@ function AdvancedActionConfirmationCard() {
             checked={required}
             onChange={(next) => void setRequired(next)}
             disabled={saving}
+            label="Require typed confirmation"
           />
         </LabeledContent>
       </ListRow>
@@ -320,6 +321,7 @@ function EventNotificationsCard() {
                 checked={on}
                 disabled={autoSave.saving}
                 onChange={() => toggleEvent(type, on)}
+                label={type}
               />
             </LabeledContent>
           </ListRow>
@@ -333,6 +335,7 @@ function EventNotificationsCard() {
             value={webhook}
             placeholder="https://…"
             title="Every enabled event is also POSTed to this URL."
+            aria-label="Webhook URL"
             onChange={(e) => setLocalWebhook(e.target.value)}
             onBlur={commitWebhook}
           />
@@ -424,6 +427,7 @@ function BootBehaviorCard() {
               }
             }}
             disabled={busy}
+            label="Auto-resume on boot"
           />
         </LabeledContent>
       </ListRow>

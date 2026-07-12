@@ -63,14 +63,14 @@ export function ListRow({
 export function LabeledContent({ label, hint, value, icon, alignRight = true, children }: { label: React.ReactNode; hint?: React.ReactNode; value?: React.ReactNode; icon?: React.ReactNode; alignRight?: boolean; children?: React.ReactNode }) {
   return (
     <div className="flex w-full items-center justify-between gap-4">
-      <div className="flex flex-col gap-0.5 shrink-0">
+      <div className="flex flex-col gap-0.5">
         <div className="flex items-center gap-3">
-          {icon && <span className="text-muted">{icon}</span>}
-          <span className="font-medium text-fg">{label}</span>
+          {icon && <span className="text-[color:var(--con-muted)]">{icon}</span>}
+          <div className="font-medium text-[color:var(--con-fg)]">{label}</div>
         </div>
-        {hint && <span className="text-[length:var(--con-fs-xs)] text-muted max-w-[280px] leading-relaxed">{hint}</span>}
+        {hint && <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)] max-w-[min(280px,40vw)] leading-relaxed">{hint}</span>}
       </div>
-      <div className={cn("text-muted", alignRight ? "text-right" : "text-left")}>
+      <div className={cn("text-[color:var(--con-muted)]", alignRight ? "text-right" : "text-left")}>
         {children ?? value}
       </div>
     </div>

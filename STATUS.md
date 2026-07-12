@@ -1,5 +1,16 @@
 # Current Status
 
+## 2026-07-12 — Codex follow-up: accessibility + styling fixes for iOS-native settings (CLAUDE, branch `ag/codex-autofix-1476`)
+
+Addressed 5 P2 items from the Codex review on PR #1476 (already merged). Changes applied on a new branch from `main`:
+1. **Toggle aria-labels** — Added `label` prop to 3 Toggle instances in console settings so switches have programmatic names
+2. **Mobile layout** — Removed `shrink-0` from label column, capped hint width at `min(280px,40vw)` to prevent overflow
+3. **Console-scoped colors** — Changed `text-fg`/`text-muted` to `--con-*` CSS variables in `LabeledContent` so rows respond to console theme changes
+4. **Valid HTML** — Changed `<span>` wrapper to `<div>` in `LabeledContent` so block-level labels don't produce invalid `span>div` markup
+5. **Input aria-label** — Added `aria-label="Webhook URL"` to bare `<input>` in notification settings
+
+Verify trio: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test` (349 files / 3896 tests passed), `npm run build` (clean). Rollout: `docs/rollouts/2026-07-12-codex-autofix-1476.md`.
+
 ## 2026-07-12 — Web App UI Refresh (Antigravity, branch `agent/antigravity`)
 
 Successfully migrated the web application settings pages to use an iOS native-inspired aesthetic ("Inset Grouped" lists, edge-to-edge content on small viewports, semantic grouping) to match the new native iOS app design. Overhauled `app/ui/ios-components.tsx` and all files under `app/console/settings/*.tsx`.
