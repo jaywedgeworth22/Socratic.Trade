@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { completeMcpOAuthCallback, resolvePublicAppOrigin } from "@/lib/mcp-oauth";
-import { AUTHENTICATED_EMAIL_HEADER, resolveRequestUserId } from "@/lib/request-user";
+import { resolveRequestUserFromEmail } from "@/lib/request-user";
 import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { getSessionEmail } from "@/lib/auth/session-edge";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +11,6 @@ export async function GET(request: NextRequest) {
   const error = url.searchParams.get("error");
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  // Providers call the callback without the app session headers. If middleware did verify and
-  // forward identity, keep the cross-check; otherwise bind by the one-time stored OAuth state.
-  const expectedUserId = request.headers.get(AUTHENTICATED_EMAIL_HEADER) ? resolveRequestUserId(request) : undefined;
   // Production is Cloudflare-fronted, so only its overwritten connecting-IP header is a trusted
   // client address here. A direct caller can forge X-Forwarded-For; requests without the CF header
   // deliberately share one conservative fallback bucket instead of minting attacker-chosen keys.
@@ -32,6 +30,14 @@ export async function GET(request: NextRequest) {
   if (!code || !state) return new NextResponse("Missing OAuth code or state.", { status: 400 });
 
   try {
+    // This is a public middleware path, so middleware intentionally strips identity headers. A
+    // same-browser Auth.js cookie is optional but, when present, verify its signature here and
+    // cross-check it against the initiating state owner. Provider callbacks without that cookie
+    // remain securely bound by the one-time, high-entropy server-side state row.
+    const sessionEmail = process.env.AUTH_SECRET
+      ? await getSessionEmail(request.headers.get("cookie"), process.env.AUTH_SECRET)
+      : null;
+    const expectedUserId = sessionEmail ? resolveRequestUserFromEmail(sessionEmail).userId : undefined;
     await completeMcpOAuthCallback({ code, state, expectedUserId });
     return NextResponse.redirect(new URL("/console/settings?robinhoodMcp=connected", resolvePublicAppOrigin(request)));
   } catch (callbackError) {

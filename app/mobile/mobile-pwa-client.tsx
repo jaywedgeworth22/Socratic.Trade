@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -52,7 +52,7 @@ type PendingProposal = {
     };
   };
 };
-type MobileSnapshot = {
+export type MobileSnapshot = {
   currentUser?: { email?: string; userId: string };
   readiness: {
     hasAccount: boolean;
@@ -167,6 +167,129 @@ function executionModeLabel(value?: string): string {
   return map[value] ?? "mode unknown";
 }
 
+export type MobileCommandAvailability = {
+  canSubmit: boolean;
+  canSubmitAccountCommand: boolean;
+  canSubmitTrading: boolean;
+  canSubmitStop: boolean;
+};
+
+export type MobileSnapshotFreshness = "unknown" | "refreshing" | "fresh" | "stale";
+
+export type MobileSnapshotLoadResult =
+  | { ok: true; snapshot: MobileSnapshot }
+  | { ok: false; error: Error };
+
+export const MOBILE_SNAPSHOT_TIMEOUT_MS = 45_000;
+
+export async function requestMobileSnapshot(
+  fetcher: (input: string, init: RequestInit) => Promise<Response> = fetch,
+  timeoutMs = MOBILE_SNAPSHOT_TIMEOUT_MS,
+  externalSignal?: AbortSignal
+): Promise<MobileSnapshot> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) onExternalAbort();
+  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    const response = await fetcher("/api/mobile/snapshot", { cache: "no-store", signal: controller.signal });
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()) as MobileSnapshot;
+  } catch (error) {
+    if (timedOut) throw new Error(`Mobile snapshot request timed out after ${Math.ceil(timeoutMs / 1000)} seconds.`);
+    if (controller.signal.aborted) throw new Error("Mobile snapshot request was cancelled.");
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+export function createCoalescedMobileSnapshotLoader(request: () => Promise<MobileSnapshot>) {
+  let inFlight: Promise<MobileSnapshotLoadResult> | null = null;
+  let runAgain = false;
+
+  const refresh = (): Promise<MobileSnapshotLoadResult> => {
+    if (inFlight) {
+      runAgain = true;
+      return inFlight;
+    }
+
+    const execute = async (): Promise<MobileSnapshotLoadResult> => {
+      let result: MobileSnapshotLoadResult;
+      do {
+        runAgain = false;
+        try {
+          result = { ok: true, snapshot: await request() };
+        } catch (error) {
+          result = { ok: false, error: error instanceof Error ? error : new Error("Failed to load mobile snapshot.") };
+        }
+      } while (runAgain);
+      return result;
+    };
+
+    inFlight = execute().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  };
+
+  return { refresh };
+}
+
+export function getMobileCommandAvailability(
+  snapshot: MobileSnapshot | null,
+  busyCommand: string | null,
+  isOnline: boolean,
+  freshness: MobileSnapshotFreshness
+): MobileCommandAvailability {
+  // `recentCommands` is durable history and can contain a stale queued/running row after a process
+  // crash. It is useful status evidence, not a client lock: only this tab's active POST blocks a new
+  // submission, while the server remains authoritative for real command conflicts.
+  const canReachServer = snapshot !== null && isOnline && busyCommand === null;
+  const canSubmit = canReachServer && freshness === "fresh";
+  return {
+    canSubmit,
+    canSubmitAccountCommand: canSubmit && snapshot.readiness.hasAccount,
+    canSubmitTrading: canSubmit && snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse,
+    // Halting is protective and does not depend on scan-universe or snapshot freshness. Once this
+    // client has loaded one valid snapshot, keep STOP available through refreshes/stale-data errors.
+    canSubmitStop: canReachServer,
+  };
+}
+
+export function nextDraftAfterCommandAcceptance<T>(current: T, submitted: T, accepted: boolean, empty: T): T {
+  return accepted && Object.is(current, submitted) ? empty : current;
+}
+
+export function MobileSnapshotUnavailable({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <main className="grid min-h-dvh place-items-center bg-bg px-5 text-fg">
+      <div
+        className="w-full max-w-sm rounded-md border border-red-300 bg-red-50 p-4 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100"
+        role="alert"
+      >
+        <h1 className="text-base font-semibold">Mobile data unavailable</h1>
+        <p className="mt-2 text-sm">No account, market, proposal, or position status is shown until current data loads.</p>
+        <p className="mt-2 break-words text-xs opacity-80">{error}</p>
+        <button
+          className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-red-300 bg-bg px-3 text-sm font-semibold text-fg active:scale-[0.99] dark:border-red-500/40"
+          onClick={onRetry}
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
+    </main>
+  );
+}
+
 export function MobilePwaClient() {
   const [snapshot, setSnapshot] = useState<MobileSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -179,29 +302,68 @@ export function MobilePwaClient() {
   const [deleteIdentity, setDeleteIdentity] = useState("");
   const [deletePhrase, setDeletePhrase] = useState("");
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [snapshotFreshness, setSnapshotFreshness] = useState<MobileSnapshotFreshness>("unknown");
+  const [lastSnapshotAt, setLastSnapshotAt] = useState<string | null>(null);
   // Starts true so server-rendered/first-paint markup matches the client
   // (navigator is unavailable during SSR); corrected immediately on mount.
   const [isOnline, setIsOnline] = useState(true);
+  const mountedRef = useRef(true);
+  const snapshotRef = useRef<MobileSnapshot | null>(null);
+  const activeSnapshotControllerRef = useRef<AbortController | null>(null);
+  const snapshotLoaderRef = useRef<ReturnType<typeof createCoalescedMobileSnapshotLoader> | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async (): Promise<boolean> => {
+    if (!mountedRef.current) return false;
     setError(null);
-    const response = await fetch("/api/mobile/snapshot", { cache: "no-store" });
-    if (!response.ok) throw new Error(await response.text());
-    setSnapshot((await response.json()) as MobileSnapshot);
-  };
+    setSnapshotFreshness(snapshotRef.current ? "refreshing" : "unknown");
+    const result = await snapshotLoaderRef.current!.refresh();
+    if (!mountedRef.current) return false;
+    if (result.ok) {
+      snapshotRef.current = result.snapshot;
+      setSnapshot(result.snapshot);
+      setLastSnapshotAt(new Date().toISOString());
+      setSnapshotFreshness("fresh");
+      setError(null);
+      return true;
+    }
+    setSnapshotFreshness(snapshotRef.current ? "stale" : "unknown");
+    setError(result.error.message);
+    return false;
+  }, []);
 
   useEffect(() => {
-    load()
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load mobile snapshot."))
-      .finally(() => setLoading(false));
-  }, []);
+    mountedRef.current = true;
+    if (!snapshotLoaderRef.current) {
+      snapshotLoaderRef.current = createCoalescedMobileSnapshotLoader(async () => {
+        if (!mountedRef.current) throw new Error("Mobile snapshot request was cancelled.");
+        const controller = new AbortController();
+        activeSnapshotControllerRef.current = controller;
+        try {
+          return await requestMobileSnapshot(fetch, MOBILE_SNAPSHOT_TIMEOUT_MS, controller.signal);
+        } finally {
+          if (activeSnapshotControllerRef.current === controller) activeSnapshotControllerRef.current = null;
+        }
+      });
+    }
+    void load().finally(() => {
+      if (mountedRef.current) setLoading(false);
+    });
+    return () => {
+      mountedRef.current = false;
+      activeSnapshotControllerRef.current?.abort();
+    };
+  }, [load]);
+
+  const retryInitialLoad = async () => {
+    setLoading(true);
+    await load();
+    if (mountedRef.current) setLoading(false);
+  };
 
   useEffect(() => {
     const events = new EventSource("/api/mobile/events");
     const refresh = () => {
-      void load().catch(() => {
-        /* next manual refresh will surface the error */
-      });
+      void load();
     };
     events.addEventListener("mobile.command", refresh);
     events.addEventListener("dashboard.run-complete", refresh);
@@ -210,11 +372,14 @@ export function MobilePwaClient() {
     events.addEventListener("dashboard.market-data", refresh);
     events.addEventListener("dashboard.dirty", refresh);
     return () => events.close();
-  }, []);
+  }, [load]);
 
   useEffect(() => {
     setIsOnline(navigator.onLine);
-    const onOnline = () => setIsOnline(true);
+    const onOnline = () => {
+      setIsOnline(true);
+      void load();
+    };
     const onOffline = () => setIsOnline(false);
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
@@ -222,9 +387,22 @@ export function MobilePwaClient() {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
     };
-  }, []);
+  }, [load]);
 
-  const submitCommand = async (commandType: string, payload: Record<string, unknown> = {}) => {
+  useEffect(() => {
+    const onFocus = () => void load();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [load]);
+
+  const submitCommand = async (commandType: string, payload: Record<string, unknown> = {}): Promise<boolean> => {
     setBusyCommand(commandType);
     setError(null);
     try {
@@ -239,9 +417,14 @@ export function MobilePwaClient() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? "Command failed.");
-      await load();
+      const refreshed = await load();
+      if (!refreshed && mountedRef.current) {
+        setError((current) => `Command accepted, but current mobile data could not be refreshed: ${current ?? "Refresh failed."}`);
+      }
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Command failed.");
+      return false;
     } finally {
       setBusyCommand(null);
     }
@@ -293,6 +476,10 @@ export function MobilePwaClient() {
   const positions = snapshot?.positions ?? [];
   const watchlist = snapshot?.watchlist ?? [];
   const alerts = snapshot?.alerts ?? [];
+  const commandAvailability = useMemo(
+    () => getMobileCommandAvailability(snapshot, busyCommand, isOnline, snapshotFreshness),
+    [snapshot, busyCommand, isOnline, snapshotFreshness]
+  );
 
   if (loading) {
     return (
@@ -302,6 +489,15 @@ export function MobilePwaClient() {
           Loading mobile control
         </div>
       </main>
+    );
+  }
+
+  if (!snapshot) {
+    return (
+      <MobileSnapshotUnavailable
+        error={error ?? "Failed to load current mobile data."}
+        onRetry={() => void retryInitialLoad()}
+      />
     );
   }
 
@@ -326,12 +522,13 @@ export function MobilePwaClient() {
               <ExternalLink className="h-5 w-5" />
             </Link>
             <button
-              className="grid h-11 w-11 place-items-center rounded-md border border-line bg-surface text-muted active:scale-95"
+              className="grid h-11 w-11 place-items-center rounded-md border border-line bg-surface text-muted active:scale-95 disabled:opacity-50"
+              disabled={snapshotFreshness === "refreshing"}
               onClick={() => void load()}
               aria-label="Refresh mobile snapshot"
               title="Refresh"
             >
-              <RefreshCw className="h-5 w-5" />
+              <RefreshCw className={`h-5 w-5 ${snapshotFreshness === "refreshing" ? "animate-spin" : ""}`} />
             </button>
           </div>
         </div>
@@ -344,8 +541,26 @@ export function MobilePwaClient() {
             Offline — data may be stale
           </div>
         )}
+        {snapshotFreshness === "refreshing" && (
+          <div
+            className="flex items-center gap-2 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100"
+            role="status"
+          >
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            Refreshing current data — new commands are paused; Stop remains available.
+          </div>
+        )}
+        {snapshotFreshness === "stale" && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+            <ShieldAlert className="h-4 w-4 shrink-0" />
+            Current data could not be verified. New commands are paused; Stop remains available.
+          </div>
+        )}
         {error && (
-          <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100">
+          <div
+            className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100"
+            role="alert"
+          >
             {error}
           </div>
         )}
@@ -365,7 +580,7 @@ export function MobilePwaClient() {
           <div className="grid grid-cols-2 gap-2">
             <button
               className="flex min-h-12 items-center justify-center gap-2 rounded-md bg-emerald-500 px-3 text-sm font-semibold text-black disabled:opacity-50"
-              disabled={busyCommand !== null}
+              disabled={!commandAvailability.canSubmitTrading}
               onClick={() => void submitCommand("strategy.run_once")}
             >
               <Activity className="h-4 w-4" />
@@ -373,7 +588,7 @@ export function MobilePwaClient() {
             </button>
             <button
               className="flex min-h-12 items-center justify-center gap-2 rounded-md bg-accent px-3 text-sm font-semibold text-accent-fg disabled:opacity-50"
-              disabled={busyCommand !== null}
+              disabled={!commandAvailability.canSubmitTrading}
               onClick={() => void submitCommand("strategy.start")}
             >
               <Wifi className="h-4 w-4" />
@@ -381,7 +596,7 @@ export function MobilePwaClient() {
             </button>
             <button
               className="flex min-h-12 items-center justify-center gap-2 rounded-md border border-line bg-surface px-3 text-sm font-semibold text-fg disabled:opacity-50"
-              disabled={busyCommand !== null}
+              disabled={!commandAvailability.canSubmitAccountCommand}
               onClick={() => void submitCommand("strategy.close_only")}
             >
               <ShieldAlert className="h-4 w-4" />
@@ -389,7 +604,7 @@ export function MobilePwaClient() {
             </button>
             <button
               className="flex min-h-12 items-center justify-center gap-2 rounded-md border border-red-300 bg-red-50 px-3 text-sm font-semibold text-red-700 disabled:opacity-50 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-100"
-              disabled={busyCommand !== null}
+              disabled={!commandAvailability.canSubmitStop}
               onClick={() => void submitCommand("strategy.stop")}
             >
               <CircleStop className="h-4 w-4" />
@@ -473,7 +688,7 @@ export function MobilePwaClient() {
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button
                       className="min-h-11 rounded-md bg-emerald-500 px-3 text-sm font-semibold text-black disabled:opacity-50"
-                      disabled={busyCommand !== null || !livePhraseMatches}
+                      disabled={!commandAvailability.canSubmitAccountCommand || !livePhraseMatches}
                       onClick={() =>
                         void submitCommand("proposal.approve", {
                           proposalId: proposal.id,
@@ -496,7 +711,7 @@ export function MobilePwaClient() {
                     </button>
                     <button
                       className="min-h-11 rounded-md border border-line bg-bg px-3 text-sm font-semibold text-fg disabled:opacity-50"
-                      disabled={busyCommand !== null}
+                      disabled={!commandAvailability.canSubmitAccountCommand}
                       onClick={() => void submitCommand("proposal.reject", { proposalId: proposal.id })}
                     >
                       <X className="mr-1 inline h-4 w-4" />
@@ -521,10 +736,12 @@ export function MobilePwaClient() {
             />
             <button
               className="grid h-11 w-11 place-items-center rounded-md bg-accent text-accent-fg disabled:opacity-50"
-              disabled={busyCommand !== null || !symbolInput.trim()}
+              disabled={!commandAvailability.canSubmit || !symbolInput.trim()}
               onClick={() => {
-                void submitCommand("watchlist.add", { symbol: symbolInput });
-                setSymbolInput("");
+                const submitted = symbolInput;
+                void submitCommand("watchlist.add", { symbol: submitted }).then((accepted) => {
+                  setSymbolInput((current) => nextDraftAfterCommandAcceptance(current, submitted, accepted, ""));
+                });
               }}
               aria-label="Add ticker"
               title="Add ticker"
@@ -540,6 +757,7 @@ export function MobilePwaClient() {
                 <button
                   key={item.symbol}
                   className="min-h-9 rounded-md border border-line bg-surface px-3 text-sm font-medium text-fg"
+                  disabled={!commandAvailability.canSubmit}
                   onClick={() => void submitCommand("watchlist.remove", { symbol: item.symbol })}
                 >
                   {item.symbol}
@@ -576,10 +794,14 @@ export function MobilePwaClient() {
             />
             <button
               className="grid h-11 w-11 place-items-center rounded-md bg-accent text-accent-fg disabled:opacity-50"
-              disabled={busyCommand !== null || !alertInput.symbol.trim() || !alertInput.price.trim()}
+              disabled={!commandAvailability.canSubmit || !alertInput.symbol.trim() || !alertInput.price.trim()}
               onClick={() => {
-                void submitCommand("alert.create", alertInput);
-                setAlertInput({ symbol: "", op: ">", price: "" });
+                const submitted = alertInput;
+                void submitCommand("alert.create", submitted).then((accepted) => {
+                  setAlertInput((current) =>
+                    nextDraftAfterCommandAcceptance(current, submitted, accepted, { symbol: "", op: ">", price: "" })
+                  );
+                });
               }}
               aria-label="Create alert"
               title="Create alert"
@@ -600,6 +822,7 @@ export function MobilePwaClient() {
                   <span className="ml-auto capitalize text-faint">{alert.status}</span>
                   <button
                     className="grid h-8 w-8 place-items-center rounded-md text-muted"
+                    disabled={!commandAvailability.canSubmit}
                     onClick={() => void submitCommand("alert.delete", { alertId: alert.id })}
                     aria-label={`Delete ${alert.symbol} alert`}
                     title="Delete alert"
@@ -728,9 +951,14 @@ export function MobilePwaClient() {
           )}
         </section>
 
-        <footer className="flex items-center justify-center gap-2 py-3 text-xs text-faint">
-          <Wifi className="h-3.5 w-3.5" />
-          Backend is source of truth. No broker/provider secrets are stored on this device.
+        <footer className="space-y-1 py-3 text-center text-xs text-faint">
+          <div className="flex items-center justify-center gap-2">
+            <Wifi className="h-3.5 w-3.5" />
+            Backend is source of truth. No broker/provider secrets are stored on this device.
+          </div>
+          <p>
+            Snapshot {snapshotFreshness === "fresh" ? `updated ${shortTime(lastSnapshotAt)}` : snapshotFreshness}
+          </p>
         </footer>
       </div>
     </main>

@@ -5,6 +5,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Whole-app audit and prioritized correctness fixes (CODEX, in progress).** No roadmap
+> phase change. The current-main audit added 34 reproducible findings to both effort boards (8 P0,
+> 18 P1, 8 P2). The first P0 account-scope slice is implemented: account switching passes through the
+> dirty guard, account editors remount, account-scoped policy/prompt writes carry an owned target,
+> prompt+policy persistence is atomic after validation, and same-tab card writes serialize. This
+> branch also implements synthetic-stop account targeting, mobile initial/command truth, and
+> Robinhood OAuth exact-state/origin integrity. The mobile refresh race has a bounded/coalesced core
+> fix; SSE-outage fallback polling remains. Remaining rows stay separately prioritized rather than
+> being folded into an unsafe monolithic change. See
+> `docs/rollouts/2026-07-11-app-wide-audit-account-scope.md`.
+
 > **2026-07-11 - Durable provider/dataset operation leases (CODEX).** No product-roadmap or
 > scheduler-loop change; reliability/cost correctness only. The manual admin guards and background
 > entrants now converge on four durable SQLite owner-token lease groups below the route layer:

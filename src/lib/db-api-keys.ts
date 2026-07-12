@@ -607,6 +607,7 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
     baseUrl: r.base_url != null ? String(r.base_url) : undefined,
     capabilities: parseCapabilities(r.capabilities),
     isActive: r.is_active === 1,
+    isDraining: r.is_draining === 1,
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
   }));
@@ -652,6 +653,7 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
     baseUrl: row.base_url != null ? String(row.base_url) : undefined,
     capabilities: parseCapabilities(row.capabilities),
     isActive: row.is_active === 1,
+    isDraining: row.is_draining === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -677,6 +679,7 @@ export function getConnectedAccount(id: string, userId: string = "local"): Conne
     baseUrl: row.base_url != null ? String(row.base_url) : undefined,
     capabilities: parseCapabilities(row.capabilities),
     isActive: row.is_active === 1,
+    isDraining: row.is_draining === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -745,7 +748,7 @@ export function setActiveConnectedAccount(id: string, userId: string = "local"):
   })();
 }
 
-export function deleteConnectedAccount(id: string, userId: string = "local"): boolean {
+export function purgeConnectedAccount(id: string, userId: string = "local"): boolean {
   const database = getDb();
   const row = database
     .prepare("SELECT account_number FROM connected_accounts WHERE id = ? AND user_id = ?")
@@ -780,6 +783,16 @@ export function deleteConnectedAccount(id: string, userId: string = "local"): bo
     return result.changes > 0;
   });
   return run();
+}
+
+export function deleteConnectedAccount(id: string, userId: string = "local"): boolean {
+  const database = getDb();
+  // We mark it as draining rather than deleting immediately.
+  // The scheduler will handle reconciling pending actions and then call purgeConnectedAccount.
+  const result = database
+    .prepare("UPDATE connected_accounts SET is_draining = 1, is_active = 0 WHERE id = ? AND user_id = ?")
+    .run(id, userId);
+  return result.changes > 0;
 }
 
 // ── Synthetic trailing stops (R2 scaffolding) ──────────────────────────────────

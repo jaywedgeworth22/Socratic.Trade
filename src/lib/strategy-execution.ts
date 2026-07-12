@@ -770,7 +770,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
       // into the same record too.
       const bookExecuted = async (auditStatus: string) => {
         updateFillEvent(fill.id, {
-          status: "filled",
+          status: matched.state === "partially_filled" ? "partially_filled" : "filled",
           price: execPrice,
           quantity: execQty,
           notional: execPrice * execQty,

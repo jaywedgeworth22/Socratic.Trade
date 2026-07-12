@@ -16,7 +16,7 @@ import {
   upsertConnectedAccount,
   upsertSyntheticStop
 } from "../src/lib/db";
-import type { BrokerGateway, EquityOrder, TradingPolicy } from "../src/lib/types";
+import type { BrokerGateway, ConnectedAccount, EquityOrder, TradingPolicy } from "../src/lib/types";
 import { reconcilePendingFills } from "../src/lib/strategy-execution";
 
 vi.mock("../src/lib/vector-db", () => ({
@@ -40,38 +40,42 @@ const broker = vi.hoisted(() => ({
   ordersError: null as Error | null,
   // When set, placeEquityOrder records the placement (the broker ACCEPTED it) and then throws —
   // the "placement threw but the broker may have taken the order" money-path trap.
-  placeError: null as Error | null
+  placeError: null as Error | null,
+  gatewayPolicies: [] as Array<{ connectedAccountId?: string; activeBroker?: string; accountNumber?: string }>
 }));
 
 vi.mock("../src/lib/broker", () => ({
-  getBrokerGateway: () => ({
-    getPortfolio: async () => ({
-      accountNumber: "TEST",
-      totalMarketValue: 10000,
-      buyingPower: 5000,
-      equityMarketValue: 10000,
-      optionMarketValue: 0,
-      cash: 5000
-    }),
-    getEquityPositions: async () => broker.positions,
-    getEquityOrders: async () => {
-      if (broker.ordersError) throw broker.ordersError;
-      return broker.orders;
-    },
-    getEquityQuotes: async () => broker.quotes,
-    getEquityTradability: async (_accountNumber: string, symbols: string[]) => Object.fromEntries(
-      symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])
-    ),
-    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number; trailPercent?: number }) => {
-      broker.placed.push(order);
-      if (broker.placeError) throw broker.placeError;
-      return { orderId: `ord-${broker.placed.length}`, refId: order.refId, state: broker.placeState, raw: {} };
-    },
-    cancelEquityOrder: async (_accountNumber: string, orderId: string) => {
-      broker.cancelled.push(orderId);
-      return { orderId, refId: "x", state: "cancel_requested", raw: {} };
-    }
-  })
+  getBrokerGateway: (policy: { connectedAccountId?: string; activeBroker?: string; accountNumber?: string }) => {
+    broker.gatewayPolicies.push(policy);
+    return {
+      getPortfolio: async () => ({
+        accountNumber: "TEST",
+        totalMarketValue: 10000,
+        buyingPower: 5000,
+        equityMarketValue: 10000,
+        optionMarketValue: 0,
+        cash: 5000
+      }),
+      getEquityPositions: async () => broker.positions,
+      getEquityOrders: async () => {
+        if (broker.ordersError) throw broker.ordersError;
+        return broker.orders;
+      },
+      getEquityQuotes: async () => broker.quotes,
+      getEquityTradability: async (_accountNumber: string, symbols: string[]) => Object.fromEntries(
+        symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])
+      ),
+      placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number; trailPercent?: number }) => {
+        broker.placed.push(order);
+        if (broker.placeError) throw broker.placeError;
+        return { orderId: `ord-${broker.placed.length}`, refId: order.refId, state: broker.placeState, raw: {} };
+      },
+      cancelEquityOrder: async (_accountNumber: string, orderId: string) => {
+        broker.cancelled.push(orderId);
+        return { orderId, refId: "x", state: "cancel_requested", raw: {} };
+      }
+    };
+  }
 }));
 
 beforeAll(() => {
@@ -120,6 +124,8 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     return {
       ...DEFAULT_POLICY,
       accountNumber: account,
+      connectedAccountId: `acct-${account}`,
+      activeBroker: "test",
       systemState: "active",
       shortSellingEnabled: true,
       additionalSymbols: ["AAPL", "TSLA", "NVDA"],
@@ -128,14 +134,18 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
   }
 
   // An account is an account: runSyntheticStopMonitor derives its execution mode from the real
-  // connected account's own `environment` (getActiveConnectedAccount) — there is no local-simulation
-  // fallback. getBrokerGateway itself is mocked above, but the account lookup is real DB state, so
-  // every test needs a matching connected TEST-BROKER account (test infrastructure) wired up first.
-  function connectTestAccount(accountNumber: string, environment: "paper" | "live" = "paper"): void {
+  // connected account identified by policy.connectedAccountId — there is no local-simulation
+  // fallback. getBrokerGateway itself is mocked above, but the ownership-scoped account lookup is
+  // real DB state, so every test needs a matching connected TEST-BROKER account wired up first.
+  function connectTestAccount(
+    accountNumber: string,
+    environment: "paper" | "live" = "paper",
+    brokerName: ConnectedAccount["broker"] = "test"
+  ): void {
     upsertConnectedAccount({
       id: `acct-${accountNumber}`,
       userId: "local",
-      broker: "test",
+      broker: brokerName,
       environment,
       accountNumber,
       label: accountNumber,
@@ -152,6 +162,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     broker.placeState = "accepted";
     broker.ordersError = null;
     broker.placeError = null;
+    broker.gatewayPolicies = [];
   });
 
   /** Audit receipts of one kind for one symbol (payloads are JSON with a `symbol` field). */
@@ -163,6 +174,125 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       .map((r) => JSON.parse(r.payload) as Record<string, unknown>)
       .filter((p) => p.symbol === symbol);
   }
+
+  it("uses the policy-targeted Account A context when Account B is UI-active", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    upsertConnectedAccount({
+      id: "acct-SYN-TARGET-A",
+      userId: "local",
+      broker: "test",
+      environment: "paper",
+      accountNumber: "SYN-TARGET-A",
+      label: "Target Account A",
+      isActive: false
+    });
+    upsertConnectedAccount({
+      id: "acct-SYN-ACTIVE-B",
+      userId: "local",
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "SYN-ACTIVE-B",
+      label: "UI-active Account B",
+      isActive: true
+    });
+
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-TARGET-A"), true);
+
+    expect(result.exited).toBe(1);
+    expect(broker.gatewayPolicies.at(-1)).toMatchObject({
+      activeBroker: "test",
+      connectedAccountId: "acct-SYN-TARGET-A"
+    });
+    const fills = listFillEvents("SYN-TARGET-A", "paper", 10, "local");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toMatchObject({ source: "paper", executionMode: "broker/paper" });
+    expect(listFillEvents("SYN-TARGET-A", "live", 10, "local")).toHaveLength(0);
+  });
+
+  it("rebinds spoofed policy routing fields to the owned target account row", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    upsertConnectedAccount({
+      id: "acct-SYN-ROW-A",
+      userId: "local",
+      broker: "test",
+      environment: "paper",
+      accountNumber: "SYN-ROW-A",
+      label: "Authoritative Account A",
+      isActive: false
+    });
+    upsertConnectedAccount({
+      id: "acct-SYN-ROW-B",
+      userId: "local",
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "SYN-ROW-B",
+      label: "UI-active Account B",
+      isActive: true
+    });
+    const spoofedPolicy = {
+      ...policyFor("SYN-SPOOFED-NUMBER"),
+      connectedAccountId: "acct-SYN-ROW-A",
+      accountNumber: "SYN-SPOOFED-NUMBER",
+      activeBroker: "alpaca" as const
+    };
+
+    const result = await runSyntheticStopMonitor("local", spoofedPolicy, true);
+
+    expect(result.exited).toBe(1);
+    expect(broker.gatewayPolicies.at(-1)).toMatchObject({
+      connectedAccountId: "acct-SYN-ROW-A",
+      accountNumber: "SYN-ROW-A",
+      activeBroker: "test"
+    });
+    expect(listFillEvents("SYN-ROW-A", "paper", 10, "local")).toHaveLength(1);
+    expect(listFillEvents("SYN-SPOOFED-NUMBER", undefined, 10, "local")).toHaveLength(0);
+  });
+
+  it("does no broker work when a policy has no explicit connected-account target", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    upsertConnectedAccount({
+      id: "acct-SYN-UNRELATED-ACTIVE",
+      userId: "local",
+      broker: "test",
+      environment: "paper",
+      accountNumber: "SYN-UNRELATED-ACTIVE",
+      label: "Unrelated active account",
+      isActive: true
+    });
+    const unboundPolicy = { ...policyFor("SYN-NO-TARGET"), connectedAccountId: undefined };
+
+    const result = await runSyntheticStopMonitor("local", unboundPolicy, true);
+
+    expect(result).toEqual({ evaluated: 0, triggered: 0, exited: 0, purged: 0 });
+    expect(broker.gatewayPolicies).toHaveLength(0);
+    expect(broker.placed).toHaveLength(0);
+  });
+
+  it("does no broker work when the explicit target belongs to another user", async () => {
+    upsertConnectedAccount({
+      id: "acct-SYN-FOREIGN",
+      userId: "other-user",
+      broker: "test",
+      environment: "live",
+      accountNumber: "SYN-FOREIGN",
+      label: "Other user's account",
+      isActive: true
+    });
+    connectTestAccount("SYN-OWN-ACTIVE");
+    const foreignTargetPolicy = {
+      ...policyFor("SYN-FOREIGN"),
+      connectedAccountId: "acct-SYN-FOREIGN"
+    };
+
+    const result = await runSyntheticStopMonitor("local", foreignTargetPolicy, true);
+
+    expect(result).toEqual({ evaluated: 0, triggered: 0, exited: 0, purged: 0 });
+    expect(broker.gatewayPolicies).toHaveLength(0);
+    expect(broker.placed).toHaveLength(0);
+  });
 
   it("auto-registers and fires a SELL to exit a long when the trail breaches (running)", async () => {
     broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
@@ -320,7 +450,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       id: "protstop-local-SYN-REPLACE-MU", userId: "local", accountNumber: "SYN-REPLACE",
       symbol: "MU", brokerOrderId: "prot-old", quantity: 40, stopPrice: 92, status: "resting"
     });
-    connectTestAccount("SYN-REPLACE", "live");
+    connectTestAccount("SYN-REPLACE", "live", "robinhood");
     const policy: TradingPolicy = {
       ...policyFor("SYN-REPLACE"),
       activeBroker: "robinhood",
@@ -365,7 +495,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     broker.positions = [{ symbol: "JPLC", quantity: 100, averageCost: 100, marketValue: 10000 }];
     broker.quotes = { JPLC: { price: 90 } }; // breaches the 5% trail off extreme 100
     broker.orders = []; // pre-reconcile list: nothing resting yet (the stop is placed mid-tick)
-    connectTestAccount("SYN-JUSTPLACED", "live");
+    connectTestAccount("SYN-JUSTPLACED", "live", "robinhood");
     const policy: TradingPolicy = {
       ...policyFor("SYN-JUSTPLACED"),
       activeBroker: "robinhood",
@@ -407,7 +537,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     broker.positions = [{ symbol: "MU", quantity: 100, averageCost: 100, marketValue: 10000 }]; // mark == entry (100)
     broker.quotes = { MU: { price: 100 } };
     broker.orders = [{ id: "manual-sell", symbol: "MU", side: "sell", type: "limit", state: "queued", quantity: 40 }];
-    connectTestAccount("SYN-REG-PARTIAL", "live");
+    connectTestAccount("SYN-REG-PARTIAL", "live", "robinhood");
     const policy: TradingPolicy = {
       ...policyFor("SYN-REG-PARTIAL"),
       activeBroker: "robinhood",
@@ -442,7 +572,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       id: "synstop-local-SYN-PARTIALFIRE-AAPL", userId: "local", accountNumber: "SYN-PARTIALFIRE",
       symbol: "AAPL", side: "long", quantity: 10.6, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active"
     });
-    connectTestAccount("SYN-PARTIALFIRE", "paper");
+    connectTestAccount("SYN-PARTIALFIRE", "paper", "alpaca");
     const policy: TradingPolicy = {
       ...policyFor("SYN-PARTIALFIRE"),
       activeBroker: "alpaca",
@@ -618,7 +748,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     // the two and leave the remainder permanently unprotected.
     broker.positions = [{ symbol: "AAPL", quantity: 10.6, averageCost: 100, marketValue: 1060 }];
     broker.quotes = { AAPL: { price: 90 } };
-    connectTestAccount("SYN-REARM-PARTIAL");
+    connectTestAccount("SYN-REARM-PARTIAL", "paper", "alpaca");
     const alpacaPolicy = { ...policyFor("SYN-REARM-PARTIAL"), activeBroker: "alpaca" as const };
     const first = await runSyntheticStopMonitor("local", alpacaPolicy, true);
     expect(first.exited).toBe(1);
@@ -781,7 +911,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     // the rest of the tick (and exposed indefinitely if the app stopped before the next one).
     broker.positions = [{ symbol: "AAPL", quantity: 10.5, averageCost: 100, marketValue: 1050 }];
     broker.quotes = { AAPL: { price: 90 } }; // extreme 100, 5% trail → trigger 95; 90 breaches
-    connectTestAccount("SYN-PARTIAL-NATIVE");
+    connectTestAccount("SYN-PARTIAL-NATIVE", "paper", "alpaca");
     const alpacaPolicy = { ...policyFor("SYN-PARTIAL-NATIVE"), activeBroker: "alpaca" as const };
     const result = await runSyntheticStopMonitor("local", alpacaPolicy, true);
     expect(result.exited).toBe(1);

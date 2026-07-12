@@ -302,6 +302,12 @@ function RotationEffortNote() {
 }
 
 export default function StrategyPage() {
+  const { snapshot } = useConsoleData();
+  if (!snapshot) return null;
+  return <AccountScopedStrategyPage key={snapshot.policy.connectedAccountId ?? "no-account"} />;
+}
+
+function AccountScopedStrategyPage() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
 
@@ -413,7 +419,7 @@ export default function StrategyPage() {
     if (promptDraft === null || promptDraft === snapshot.strategyPrompt) return;
     const next = promptDraft;
     const prev = snapshot.strategyPrompt;
-    autoSavePrompt.save(() => savePolicy({ strategyPrompt: next }).then(() => refresh()), {
+    autoSavePrompt.save(() => savePolicy({ strategyPrompt: next }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setPromptDraft(prev),
       errorTitle: "Prompt not saved"
     });
@@ -431,7 +437,7 @@ export default function StrategyPage() {
       ...seatReasoningPatch("llmReasoningEffort", model, storedProposerEffort)
     };
     setLocalProposerModel(model);
-    autoSaveModels.save(() => savePolicy(patch).then(() => refresh()), {
+    autoSaveModels.save(() => savePolicy(patch, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalProposerModel(prev),
       errorTitle: "Proposer not saved"
     });
@@ -447,7 +453,7 @@ export default function StrategyPage() {
       ...seatReasoningPatch("redTeamReasoningEffort", model || proposerModel, storedReviewerEffort)
     };
     setLocalRedTeamModel(model);
-    autoSaveModels.save(() => savePolicy(patch).then(() => refresh()), {
+    autoSaveModels.save(() => savePolicy(patch, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalRedTeamModel(prev),
       errorTitle: "Reviewer not saved"
     });
@@ -455,7 +461,7 @@ export default function StrategyPage() {
   const commitProposerReasoningEffort = (effort: LlmReasoningEffort) => {
     const prev = localReasoningEffort;
     setLocalReasoningEffort(effort);
-    autoSaveModels.save(() => savePolicy({ llmReasoningEffort: effort }).then(() => refresh()), {
+    autoSaveModels.save(() => savePolicy({ llmReasoningEffort: effort }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalReasoningEffort(prev),
       errorTitle: "Proposer reasoning not saved"
     });
@@ -463,7 +469,7 @@ export default function StrategyPage() {
   const commitReviewerReasoningEffort = (effort: LlmReasoningEffort) => {
     const prev = localRedTeamReasoningEffort;
     setLocalRedTeamReasoningEffort(effort);
-    autoSaveModels.save(() => savePolicy({ redTeamReasoningEffort: effort }).then(() => refresh()), {
+    autoSaveModels.save(() => savePolicy({ redTeamReasoningEffort: effort }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalRedTeamReasoningEffort(prev),
       errorTitle: "Reviewer reasoning not saved"
     });
@@ -474,7 +480,7 @@ export default function StrategyPage() {
   const clearReviewerReasoningEffort = () => {
     const prev = localRedTeamReasoningEffort;
     setLocalRedTeamReasoningEffort("cleared");
-    autoSaveModels.save(() => savePolicy({ redTeamReasoningEffort: null }).then(() => refresh()), {
+    autoSaveModels.save(() => savePolicy({ redTeamReasoningEffort: null }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalRedTeamReasoningEffort(prev),
       errorTitle: "Reviewer reasoning not saved"
     });
@@ -494,7 +500,7 @@ export default function StrategyPage() {
   // Scoring weights: one factor per blur, skip the write if unchanged from the saved value.
   const commitWeight = (key: keyof ScoringWeights, next: number, saved: number) => {
     if (next === saved) return;
-    autoSaveWeights.save(() => savePolicy({ scoringWeights: { [key]: next } }).then(() => refresh()), {
+    autoSaveWeights.save(() => savePolicy({ scoringWeights: { [key]: next } }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setWeightsOverlay((d) => ({ ...d, [key]: saved }))
     });
   };
@@ -995,7 +1001,7 @@ function AiReviewPanel({
         ...(sectorCaps ? { sectorCaps: { ...policy.sectorCaps, ...sectorCaps } } : {}),
         ...(patch.scoringWeights ? { scoringWeights: patch.scoringWeights } : {}),
         ...(patch.prompt ? { strategyPrompt: patch.prompt } : {})
-      });
+      }, policy.connectedAccountId);
       await refresh();
       setReview(null);
       setTyped("");
