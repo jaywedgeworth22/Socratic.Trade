@@ -246,26 +246,24 @@ async function runLoop(): Promise<void> {
         break;
       }
 
-      let isRateLimit = false;
-      const retryMatch = msg.match(/HTTP 429 \(Retry-After: (\d+)\)/);
-      if (retryMatch || msg.includes("HTTP 429")) {
-        isRateLimit = true;
-        if (retryMatch) {
-          const sec = parseInt(retryMatch[1], 10);
-          state.backoffMs = Math.max(state.backoffMs, sec * 1000);
-        } else {
-          // Default to a 60s backoff if 429 but no Retry-After
-          state.backoffMs = Math.max(state.backoffMs, 60_000);
-        }
-      }
+      // Record ALL failures in api_health_log so the admin dashboard shows current state.
+      // logApiHealth already detects 429|rate limit in error text and suppresses Sentry
+      // alerts via skipSentry (see db-health.ts line 172-174), so rate-limit backpressure
+      // events are recorded without noise.
+      logApiHealth({
+        service: "congress.trade:sse",
+        ok: false,
+        errorText: msg,
+      });
 
-      // Do not record 429s as "failures" for the circuit breaker, it's expected backpressure
-      if (!isRateLimit) {
-        logApiHealth({
-          service: "congress.trade:sse",
-          ok: false,
-          errorText: msg,
-        });
+      // Back off on 429 explicitly, using the parsed Retry-After seconds if available
+      const retryMatch = msg.match(/HTTP 429 \(Retry-After: (\d+)\)/);
+      if (retryMatch) {
+        const sec = parseInt(retryMatch[1], 10);
+        state.backoffMs = Math.max(state.backoffMs, sec * 1000);
+      } else if (msg.includes("HTTP 429")) {
+        // Default to a 60s backoff if 429 but no Retry-After
+        state.backoffMs = Math.max(state.backoffMs, 60_000);
       }
     }
     if (state.closing) break;
