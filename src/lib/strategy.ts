@@ -50,6 +50,7 @@ import { LlmCredentialRequiredError, LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_RE
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
+import { OrderValidationError } from "./types";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
 import { planFundingSells } from "./sell-to-fund";
@@ -2416,6 +2417,29 @@ export async function runStrategyOnce(
       } catch (placeError) {
         const message = placeError instanceof Error ? placeError.message : String(placeError);
         const sym = normalizedProposal.symbol;
+
+        // P2.6: Explicitly intercept pre-flight validation throws and broker 4xx rejections.
+        // A 4xx (e.g. 403 Forbidden, 400 Bad Request) means the broker definitively received and rejected it.
+        // OrderValidationError means the adapter blocked it before sending.
+        // Neither case is "uncertain", so we abort the placement loop immediately.
+        if (placeError instanceof OrderValidationError || /\bHTTP 4\d\d\b/i.test(message)) {
+          const status = placeError instanceof OrderValidationError ? "blocked" : "rejected_by_broker";
+          updateProposalStatus(proposalId, status, undefined, review, review.estimatedNotional, userId, undefined, message);
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: { ...decision, approved: false, reasons: [...decision.reasons, message] }, status, review, overrideResolution });
+          if (status === "rejected_by_broker") {
+            audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
+          } else {
+            audit("order_blocked_live_preflight", { runId, proposalId, symbol: sym, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
+          }
+          results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+          await sendNotification(
+            { type: "run_failed", title: `${sym} order ${status.replace(/_/g, " ")}`, payload: { runId, proposalId, refId, reason: message, reconcile: status } },
+            { policy, userId }
+          );
+          lockGuard.assertOwned();
+          continue;
+        }
+
         // The broker may or may not have accepted the order. Ask the broker what actually happened
         // (via the refId idempotency key) instead of immediately firing a perpetual "verify with
         // broker" alert. Only a truly unreachable broker leaves the durable 'placing' intent behind.

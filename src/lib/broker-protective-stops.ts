@@ -125,7 +125,8 @@ export async function cancelBrokerProtectiveStop(
   userId: string,
   accountNumber: string,
   symbol: string,
-  gateway: BrokerGateway
+  gateway: BrokerGateway,
+  connectedAccountId?: string
 ): Promise<void> {
   const sym = normalizeSymbol(symbol);
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
@@ -134,7 +135,7 @@ export async function cancelBrokerProtectiveStop(
       await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
       deleteBrokerProtectiveStop(row.id, userId);
     } catch (err) {
-      audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: row.brokerOrderId, error: errMsg(err) }, userId);
+      audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: row.brokerOrderId, error: errMsg(err) }, userId, connectedAccountId);
       // Mark as pending_cancel in DB instead of deleting immediately, to retry later
       upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
     }
@@ -762,7 +763,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       if (trackedOrder && String(trackedOrder.state ?? "").trim().toLowerCase() === "partially_filled") {
         audit("broker_protective_stop_skipped", {
           symbol: sym, kind: symKind, note: "tracked order is partially filled and actively executing at the broker — leaving it resting rather than cancelling into an uncertain in-flight state"
-        }, userId);
+        }, userId, policy.connectedAccountId);
         continue;
       }
       const qty = desiredStopQuantity(pos, sym, symKind, existingStop.brokerOrderId);
@@ -795,7 +796,7 @@ export async function reconcileBrokerProtectiveStops(args: {
             upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
           }
         } else {
-          audit("broker_protective_stop_skipped", { symbol: sym, kind: symKind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId);
+          audit("broker_protective_stop_skipped", { symbol: sym, kind: symKind, note: "order list unavailable this tick — leaving the existing broker-held stop untouched rather than resizing on unknown coverage" }, userId, policy.connectedAccountId);
         }
         continue;
       }
@@ -845,7 +846,7 @@ export async function reconcileBrokerProtectiveStops(args: {
           newQty: qty,
           oldStopPrice: existingStop.stopPrice,
           newStopPrice
-        }, userId);
+        }, userId, policy.connectedAccountId);
 
         try {
           await gateway.cancelEquityOrder(accountNumber, existingStop.brokerOrderId);
@@ -892,7 +893,7 @@ export async function reconcileBrokerProtectiveStops(args: {
     // normal, confident skip.
     const qty = desiredStopQuantity(pos, sym, symKind);
     if (qty === null) {
-      audit("broker_protective_stop_skipped", { symbol: sym, kind: symKind, note: "order list unavailable this tick — coverage unknown, deferring placement to the synthetic monitor rather than guessing" }, userId);
+      audit("broker_protective_stop_skipped", { symbol: sym, kind: symKind, note: "order list unavailable this tick — coverage unknown, deferring placement to the synthetic monitor rather than guessing" }, userId, policy.connectedAccountId);
       continue;
     }
     if (!(qty > 0)) {
@@ -918,7 +919,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         note: nativeTrailing
           ? "mark below entry or the app's tracked high-water mark — a native broker trail would seed from the depressed market and be looser than the app's own trail; the synthetic monitor keeps covering until the mark recovers"
           : "trail already breached at placement — leaving the exit to the synthetic monitor instead of arming a fresh, lower broker trail"
-      }, userId);
+      }, userId, policy.connectedAccountId);
       continue;
     }
     const refId = `protstop-${userId}-${accountNumber}-${sym}-${Date.now()}`;
@@ -950,7 +951,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       }
       if (!exec.orderId) {
         // No broker order id means we couldn't later cancel it — don't record an untrackable stop.
-        audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: "broker returned no order id" }, userId);
+        audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: "broker returned no order id" }, userId, policy.connectedAccountId);
         continue;
       }
       upsertBrokerProtectiveStop({

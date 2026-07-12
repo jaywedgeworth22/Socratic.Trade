@@ -312,6 +312,8 @@ export default function StrategyPage() {
   // change; the custom-id text fields persist on blur. Reverted by useAutoSave's onError.
   const [localProposerModel, setLocalProposerModel] = useState<string | null>(null);
   const [localRedTeamModel, setLocalRedTeamModel] = useState<string | null>(null);
+  const [localFallbackModels, setLocalFallbackModels] = useState<string | null>(null);
+  const autoSaveFallback = useAutoSave();
   // Per-team reasoning overlays (per-team split 2026-07-10). Proposer: plain optimistic value —
   // llmReasoningEffort always resolves (it has a "medium" default). Reviewer: "cleared" = an
   // optimistic explicit-unset (the "Same as proposer" option) awaiting the server round-trip;
@@ -478,6 +480,17 @@ export default function StrategyPage() {
     });
   };
 
+  const commitFallbackModels = () => {
+    if (localFallbackModels === null) return;
+    const array = localFallbackModels.split(",").map(s => s.trim()).filter(Boolean);
+    const prevArray = policy.llmFallbackModels || [];
+    if (array.join(",") === prevArray.join(",")) return;
+    autoSaveFallback.save(() => savePolicy({ llmFallbackModels: array }).then(() => refresh()), {
+      onError: () => setLocalFallbackModels(prevArray.join(", ")),
+      errorTitle: "Fallback models not saved"
+    });
+  };
+
   // Scoring weights: one factor per blur, skip the write if unchanged from the saved value.
   const commitWeight = (key: keyof ScoringWeights, next: number, saved: number) => {
     if (next === saved) return;
@@ -641,6 +654,26 @@ export default function StrategyPage() {
               </p>
             )}
           </div>
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-[color:var(--con-line)]">
+          <Field
+            label="Proposer Fallback Models"
+            hint="Comma-separated model IDs. If the primary Proposer model hits a transient error (e.g. rate limit, timeout), these models are tried in order. Does not apply to the Reviewer."
+            htmlFor="llm-fallback-models"
+          >
+            <div className="flex items-center gap-3 max-w-xl">
+              <TextInput
+                id="llm-fallback-models"
+                value={localFallbackModels ?? (policy.llmFallbackModels || []).join(", ")}
+                placeholder="e.g. gpt-4o, claude-3-5-sonnet-20240620"
+                onChange={(e) => setLocalFallbackModels(e.target.value)}
+                onBlur={commitFallbackModels}
+                disabled={autoSaveFallback.saving}
+              />
+              <SaveStatus status={autoSaveFallback.status} />
+            </div>
+          </Field>
         </div>
         {showCustomModelWarning && (
           <div className="mt-3 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50 rounded-md p-2.5 flex items-start gap-1.5">

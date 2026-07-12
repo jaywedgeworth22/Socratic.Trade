@@ -16,6 +16,7 @@ import type {
   BrokerGateway,
   EquityOrderInput
 } from "./types";
+import { OrderValidationError } from "./types";
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
@@ -479,10 +480,10 @@ class AlpacaBrokerGateway implements BrokerGateway {
     // deliberately dropped.
     if (isTrailing) {
       if (isBracket) {
-        throw new Error("Alpaca trailing stop cannot carry bracket legs — place one or the other.");
+        throw new OrderValidationError("Alpaca trailing stop cannot carry bracket legs — place one or the other.");
       }
       if (!input.quantity || !(input.quantity > 0)) {
-        throw new Error("Alpaca trailing stop requires a positive share quantity (no notional trailing stops).");
+        throw new OrderValidationError("Alpaca trailing stop requires a positive share quantity (no notional trailing stops).");
       }
       try {
         const raw = await this.trackHealth(() => this.alpaca.createOrder({
@@ -515,11 +516,11 @@ class AlpacaBrokerGateway implements BrokerGateway {
     if (isBracket && input.dollarAmount && !input.quantity) {
       const estPrice = input.limitPrice ?? input.referencePrice;
       if (estPrice == null || !(estPrice > 0)) {
-        throw new Error("Alpaca bracket dollar orders require a positive limitPrice or referencePrice.");
+        throw new OrderValidationError("Alpaca bracket dollar orders require a positive limitPrice or referencePrice.");
       }
       bracketQty = Math.floor(input.dollarAmount / estPrice);
       if (bracketQty < 1) {
-        throw new Error("Alpaca bracket dollar order is too small for a whole-share bracket at the reference price.");
+        throw new OrderValidationError("Alpaca bracket dollar order is too small for a whole-share bracket at the reference price.");
       }
     }
 
