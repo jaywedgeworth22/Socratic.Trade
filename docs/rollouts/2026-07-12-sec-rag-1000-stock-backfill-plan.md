@@ -21,6 +21,9 @@ The plan defines:
 No product source, provider configuration, corpus data, Pinecone index, production runtime, or deployment was
 changed. No bulk backfill was started.
 
+Delivery: commit `8fda1325`; ready PR
+[#1494](https://github.com/jaywedgeworth22/Socratic.Trade/pull/1494); unmerged; production unchanged.
+
 ## Why
 
 The merged cap/lookback increase makes more ingestion possible, but the current synchronous recent-filings path

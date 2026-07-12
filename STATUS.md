@@ -13,8 +13,8 @@ backfill architecture. Blocking fixes are occurrence-level provenance (global co
 later filing instances), durable artifact/job state, DOM/iXBRL table parsing, exact acceptance-time safety,
 historical/exhibit discovery, real-corpus evaluation, and truthful coverage/config reporting. Plan:
 `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. Rollout:
-`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete locally;
-unmerged; production unchanged**.
+`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete; ready
+PR #1494; unmerged; production unchanged**.
 
 ## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 

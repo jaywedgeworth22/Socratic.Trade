@@ -519,8 +519,8 @@ As of 2026-07-08 (assignment-rule update).
 ## 🚧 In Progress
 - **1,000-stock SEC/RAG high-yield backfill plan (CODEX, branch
   `codex/rag-1000-stock-backfill-plan`, worktree
-  `/Users/jay/.codex/worktrees/socratic-rag-1000-plan`, 2026-07-12) — DESIGN COMPLETE / READY FOR
-  REVIEW, UNMERGED.** Three read-only expert lanes audited EDGAR coverage, RAG architecture, and
+  `/Users/jay/.codex/worktrees/socratic-rag-1000-plan`, 2026-07-12) — DESIGN COMPLETE / READY PR
+  [#1494](https://github.com/jaywedgeworth22/Socratic.Trade/pull/1494), UNMERGED.** Three read-only expert lanes audited EDGAR coverage, RAG architecture, and
   backfill economics against `main@c9023ea6`; no product source or production data changed. The plan
   specifies archive-vs-structure-vs-embed rules, form/section yield, occurrence-safe provenance,
   durable jobs, DOM/iXBRL tables, intent-routed hybrid retrieval, real-EDGAR evaluation, cost breakers,
