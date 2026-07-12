@@ -1,6 +1,11 @@
 .DS_Store
 .air/
-.claude/
+# .claude/ stays git-ignored (per-agent/per-machine local settings & session hooks -- see
+# scripts/setup-slack-sync.sh), EXCEPT .claude/skills/: those are tracked, Claude-only
+# fleet-procedure skills meant to be shared across seats. Cross-agent rules still live in
+# AGENTS.md; skills here are Claude Code-specific procedure shortcuts.
+.claude/*
+!.claude/skills/
 .agents/
 .tools/
 # Secrets come from Infisical (see docs/secrets.md). .env / .env*.local are NEVER a secret

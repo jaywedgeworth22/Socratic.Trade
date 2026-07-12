@@ -1,5 +1,22 @@
 # Current Status
 
+## 2026-07-12 — Merge origin/main, resolve .gitignore conflict (CLAUDE, branch `claude/fleet-skills`)
+
+Merged latest `origin/main` to resolve CONFLICTING merge state on PR #1470. Only conflict was
+`.gitignore` (PR branch tracks `!.claude/skills/`, main had the old blanket `.claude/` ignore —
+kept PR branch version). All Codex review threads were already resolved; no new findings to
+address. Verify trio: tsc clean, 349 files / 3896 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-12-codex-triage-fleet-skills.md`.
+
+## 2026-07-11 — Fleet-procedure skills: land-lane/unstick-pr/codex-triage/pickup-seat/deploy-verify (CLAUDE, branch `claude/fleet-skills`)
+
+Owner-directed: encoded five pickup-era fleet procedures as on-demand Claude Code skills under
+`.claude/skills/` (`land-lane`, `unstick-pr`, `codex-triage`, `pickup-seat`, `deploy-verify`)
+instead of re-spelling them per-prompt. `.gitignore` now carves out `!.claude/skills/` from the
+otherwise-ignored `.claude/` directory (per-agent local settings/hooks stay ignored) so these five
+files are tracked. Skills are Claude Code-only — cross-agent rules remain in `AGENTS.md`, which
+every skill cites as canon alongside the relevant rollout notes. Rollout:
+`docs/rollouts/2026-07-10-fleet-procedure-skills.md`.
 ## 2026-07-11 — Native iOS App Overhaul (Antigravity, branch `agent/antigravity`)
 
 Completely replaced the legacy iOS starter app with a modern SwiftUI application (`ios/`). Initialized via `xcodegen`. Built the initial SwiftUI scaffold (`ios/`) with tabbed views: Dashboard, Proposals, and Watchlist. Implemented `MobileStore` for persistence and `MobileAPIClient` for API communication. Auth flow (OAuth via `ASWebAuthenticationSession`) and `/api/mobile/auth-redirect` route are still pending implementation on the `agent/antigravity` branch. Assessed Cloudflare hosting for the mobile backend vs. Hetzner, deciding to keep it on Hetzner to avoid database splitting. Verified build via `xcodebuild`. Rollout: `docs/rollouts/2026-07-11-native-ios-app.md`.
