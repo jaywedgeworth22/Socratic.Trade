@@ -65,8 +65,17 @@ const errorCooldownHost = globalThis as unknown as { __syntheticStopErrors?: Map
 const recentlyEmittedSyntheticErrors: Map<string, number> =
   errorCooldownHost.__syntheticStopErrors ?? (errorCooldownHost.__syntheticStopErrors = new Map<string, number>());
 
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return (hash >>> 0).toString(16);
+}
+
 function auditSyntheticStopError(stopId: string, symbol: string, errorMsg: string, userId: string, connectedAccountId: string | undefined, extra: Record<string, unknown> = {}) {
-  const fingerprint = crypto.createHash("sha256").update(errorMsg).digest("hex").slice(0, 16);
+  const fingerprint = hashString(errorMsg);
   const key = `${stopId}:${fingerprint}`;
   const now = Date.now();
   const lastEmitted = recentlyEmittedSyntheticErrors.get(key);
