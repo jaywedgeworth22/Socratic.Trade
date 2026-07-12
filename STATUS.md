@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-12 — Kalshi event-data fetcher, lane K1 (CLAUDE subagent, branch `claude/kalshi-data-fetcher`)
+
+New-files-only dormant plumbing for the capability program's Kalshi lane: `src/lib/kalshi.ts`
+(flag-gated client — `KALSHI_ENV` demo|prod derives the base URL, absent => inert; RSA-PSS
+SHA-256 request signing with KALSHI-ACCESS-KEY/-TIMESTAMP/-SIGNATURE over
+timestamp+method+path-without-query; typed public market/event/series fetchers; integer-cents
+price parsing; `getKalshiEventSignals(seriesList)` normalized event-probability surface with
+15-min success-only cache and per-series fail-soft) + `test/kalshi.test.ts` (31 mocked-fetch
+tests incl. crypto.verify-based signing proofs). Nothing imports it yet — Wave 2 wires it into
+the strategist; strategy.ts/data-providers.ts/types.ts untouched. Gates (node24): tsc clean,
+31/31 new tests, eslint 0 errors on new files. Committed locally, ready for the serialized
+Land phase. Rollout: `docs/rollouts/2026-07-12-kalshi-data-fetcher.md`.
+
 ## 2026-07-12 — Web App UI Refresh (Antigravity, branch `agent/antigravity`)
 
 Successfully migrated the web application settings pages to use an iOS native-inspired aesthetic ("Inset Grouped" lists, edge-to-edge content on small viewports, semantic grouping) to match the new native iOS app design. Overhauled `app/ui/ios-components.tsx` and all files under `app/console/settings/*.tsx`.
