@@ -178,7 +178,7 @@ const FOCUSABLE_SELECTOR =
  * the sheet off the very top of the viewport (status bar / notch). A floor
  * is used until the first measurement lands (effectively instant — the bar
  * is always mounted before a user can tap "Tabs" to open this). */
-const TABS_SHEET_GAP = 8;
+const TABS_SHEET_GAP = 0;
 const TABS_SHEET_TOP_GAP = 16;
 const TABS_SHEET_BAR_FLOOR = 56;
 
@@ -429,7 +429,11 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                 aria-current={active ? "page" : undefined}
                 title={d.desc}
                 style={active ? { fontWeight: 800 } : undefined}
-                onClick={(e) => guardNav(e, d.href)}
+                onClick={(e) => {
+                  if (guardNav(e, d.href)) {
+                    setTabsOpen(false);
+                  }
+                }}
               >
                 <span
                   className="relative flex h-7 w-10 items-center justify-center rounded-full transition-colors"
@@ -449,14 +453,14 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
           <button
             type="button"
             className="con-tab-item"
-            data-active={tabsButtonActive}
-            title="Choose which screens show up here, or jump to any screen"
-            style={tabsButtonActive ? { fontWeight: 800 } : undefined}
-            onClick={() => setTabsOpen(true)}
+            data-active={tabsButtonActive || tabsOpen}
+            title={tabsOpen ? "Close tabs menu" : "Choose which screens show up here, or jump to any screen"}
+            style={tabsButtonActive || tabsOpen ? { fontWeight: 800 } : undefined}
+            onClick={() => setTabsOpen(!tabsOpen)}
           >
             <span
               className="relative flex h-7 w-10 items-center justify-center rounded-full transition-colors"
-              style={tabsButtonActive ? { background: "var(--con-accent-soft)" } : undefined}
+              style={tabsButtonActive || tabsOpen ? { background: "var(--con-accent-soft)" } : undefined}
             >
               <LayoutGrid size={19} />
             </span>
