@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Web App Settings UI Refresh (AG, branch `agent/antigravity`) — COMPLETED 2026-07-12.** Replaced all settings page cards with iOS-style `ListSection` and `ListRow` components for a unified cross-platform aesthetic matching the native iOS app. Passed 349/3896 tests and clean build. Rollout: `docs/rollouts/2026-07-12-ios-ui-refresh.md`.
 - **App-wide Audit: Draining State and Cap Fixes (Antigravity/AG, branch `codex/app-wide-audit-20260711`) — COMPLETED 2026-07-12.** Fixed account-deletion race conditions by introducing a safe `is_draining` state and cascade cleanup (`purgeConnectedAccount`). Fixed daily notional risk tracking to accurately attribute to `placed_at` instead of `created_at`, covering `placing` intents as well. Updated various tests, SEC time-flakiness, and local dev forwarded-host behaviors. Rollout: `docs/rollouts/2026-07-12-app-wide-audit-draining-fixes.md`.
 - **LLM failover UI & account bursts (AG) — COMPLETED 2026-07-12.** Added jitter/stagger to concurrent account scheduling in `scheduler.ts` to mitigate shared OpenAI key bursts. Exposed `llmFallbackModels` in `app/console/strategy/page.tsx` via a text input and persistence logic.
 - **Twilio A2P 10DLC compliance error handling (AG) — COMPLETED 2026-07-12.** Handled Twilio Error 30034 (A2P 10DLC unregistered) in `src/lib/notify.ts` to gracefully mark notification failures instead of crashing or retrying continuously.

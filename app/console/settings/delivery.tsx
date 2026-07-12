@@ -20,6 +20,7 @@ import { useAutoSave } from "../lib/useAutoSave";
 import { useToast } from "../ui/toast";
 import { SaveStatus } from "../ui/save-status";
 import { Btn, Card, Field, TextInput, Toggle } from "../ui/primitives";
+import { ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
 import {
   fetchDeliverySettings,
   saveDeliveryPrefs,
@@ -143,7 +144,7 @@ export function DeliveryChannelsCard() {
   };
 
   return (
-    <Card
+    <ListSection
       title="Delivery channels"
       action={
         <div className="flex items-center gap-3">
@@ -159,99 +160,100 @@ export function DeliveryChannelsCard() {
         </div>
       }
     >
-      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] px-2">
         Where alerts leave the app — one setup for your whole login, across every account. Which events fire is chosen
         in Event notifications above; this is how they reach you. Without any channel, events are still recorded in
         Activity, just not pushed anywhere.
       </p>
 
       {loadError && (
-        <p className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
-          {loadError}{" "}
-          <button type="button" className="font-semibold underline" onClick={() => void load()} title="Try loading the channels again.">
-            Retry
-          </button>
-        </p>
-      )}
-
-      {channels === null && !loadError && (
-        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading channels…</p>
-      )}
-
-      {channels !== null && (
-        <div className="flex flex-col gap-2">
-          {channels.map((ch) => {
-            const on = prefs.channels.includes(ch.id);
-            const target = targetValue(ch.targetField as TargetField);
-            return (
-              <div
-                key={ch.id}
-                className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[length:var(--con-fs-sm)] font-semibold" title={CHANNEL_TITLE[ch.id]}>
-                      {ch.label}
-                    </span>
-                    {ch.id === "push" && ch.available && (
-                      <span
-                        className="rounded-full border border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[color:var(--con-pos)]"
-                        title="Push via ntfy needs no account or key and is free — the recommended first channel."
-                      >
-                        recommended · free
-                      </span>
-                    )}
-                    {!ch.available && (
-                      <span
-                        className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
-                        title="The server operator hasn't configured this channel's provider, so it can't be enabled from here."
-                      >
-                        not configured on the server
-                      </span>
-                    )}
-                  </div>
-                  <Toggle
-                    checked={on}
-                    disabled={!ch.available || busy}
-                    onChange={(next) => toggleChannel(ch.id, next)}
-                    label={`${ch.label} channel`}
-                  />
-                </div>
-                {on && ch.available && (
-                  <div className="mt-2 max-w-md">
-                    <Field label={ch.targetLabel} hint={ch.hint} htmlFor={`ch-${ch.id}`}>
-                      <TextInput
-                        id={`ch-${ch.id}`}
-                        value={typeof target === "string" ? target : ""}
-                        placeholder={ch.placeholder}
-                        onChange={(e) => setTarget(ch.targetField as TargetField, e.target.value)}
-                        onBlur={() => commitTarget(ch.targetField as TargetField)}
-                        title={ch.hint}
-                      />
-                    </Field>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div className="px-2 mb-3">
+          <p className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+            {loadError}{" "}
+            <button type="button" className="font-semibold underline" onClick={() => void load()} title="Try loading the channels again.">
+              Retry
+            </button>
+          </p>
         </div>
       )}
 
-      {results && (
-        <ul className="mt-3 flex flex-col gap-1 text-[length:var(--con-fs-xs)]">
-          {results.length === 0 && <li className="text-[color:var(--con-muted)]">No channels enabled — toggle one above first.</li>}
-          {results.map((r, i) => (
-            <li
-              key={i}
-              className={r.ok ? "text-[color:var(--con-pos)]" : "text-[color:var(--con-muted)]"}
-              title={r.ok ? "The test message was accepted by the provider." : r.skipped ? "Skipped — the channel is off, has no target, or its provider isn't configured." : r.error ?? "The provider rejected the test."}
-            >
-              {r.ok ? "✓" : "—"} {r.channel}
-              {r.skipped ? ` (${r.skipped.replace(/_/g, " ")})` : r.ok ? " — sent" : ` — failed${r.error ? `: ${r.error}` : ""}`}
-            </li>
-          ))}
-        </ul>
+      {channels === null && !loadError && (
+        <ListRow>
+          <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)] py-1">Loading channels…</p>
+        </ListRow>
       )}
-    </Card>
+
+      {channels !== null && channels.map((ch) => {
+        const on = prefs.channels.includes(ch.id);
+        const target = targetValue(ch.targetField as TargetField);
+        return (
+          <ListRow key={ch.id}>
+            <div className="flex flex-col gap-2 w-full">
+              <LabeledContent label={
+                <div className="flex flex-wrap items-center gap-2">
+                  <span title={CHANNEL_TITLE[ch.id]}>{ch.label}</span>
+                  {ch.id === "push" && ch.available && (
+                    <span
+                      className="rounded-full border border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[color:var(--con-pos)]"
+                      title="Push via ntfy needs no account or key and is free — the recommended first channel."
+                    >
+                      recommended · free
+                    </span>
+                  )}
+                  {!ch.available && (
+                    <span
+                      className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)] font-normal"
+                      title="The server operator hasn't configured this channel's provider, so it can't be enabled from here."
+                    >
+                      not configured on the server
+                    </span>
+                  )}
+                </div>
+              } hint={ch.id === "push" && ch.available ? undefined : ""}>
+                <Toggle
+                  checked={on}
+                  disabled={!ch.available || busy}
+                  onChange={(next) => toggleChannel(ch.id, next)}
+                />
+              </LabeledContent>
+              
+              {on && ch.available && (
+                <div className="pl-2 pr-1 pb-1 mt-1 border-t border-[color:var(--con-border-subtle)] pt-2">
+                  <LabeledContent label={ch.targetLabel} hint={ch.hint}>
+                    <input
+                      id={`ch-${ch.id}`}
+                      className="w-48 text-right bg-transparent text-[length:var(--con-fs-sm)] focus:outline-none placeholder:text-[color:var(--con-muted)]"
+                      value={typeof target === "string" ? target : ""}
+                      placeholder={ch.placeholder}
+                      onChange={(e) => setTarget(ch.targetField as TargetField, e.target.value)}
+                      onBlur={() => commitTarget(ch.targetField as TargetField)}
+                      title={ch.hint}
+                    />
+                  </LabeledContent>
+                </div>
+              )}
+            </div>
+          </ListRow>
+        );
+      })}
+
+      {results && (
+        <ListRow>
+          <ul className="flex flex-col gap-1 text-[length:var(--con-fs-xs)] w-full py-2">
+            {results.length === 0 && <li className="text-[color:var(--con-muted)]">No channels enabled — toggle one above first.</li>}
+            {results.map((r, i) => (
+              <li
+                key={i}
+                className={r.ok ? "text-[color:var(--con-pos)]" : "text-[color:var(--con-muted)]"}
+                title={r.ok ? "The test message was accepted by the provider." : r.skipped ? "Skipped — the channel is off, has no target, or its provider isn't configured." : r.error ?? "The provider rejected the test."}
+              >
+                {r.ok ? "✓" : "—"} {r.channel}
+                {r.skipped ? ` (${r.skipped.replace(/_/g, " ")})` : r.ok ? " — sent" : ` — failed${r.error ? `: ${r.error}` : ""}`}
+              </li>
+            ))}
+          </ul>
+        </ListRow>
+      )}
+    </ListSection>
   );
 }

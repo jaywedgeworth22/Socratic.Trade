@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-12 — Web App UI Refresh (Antigravity, branch `agent/antigravity`)
+
+Successfully migrated the web application settings pages to use an iOS native-inspired aesthetic ("Inset Grouped" lists, edge-to-edge content on small viewports, semantic grouping) to match the new native iOS app design. Overhauled `app/ui/ios-components.tsx` and all files under `app/console/settings/*.tsx`.
+Verified full health via `tsc`, `lint`, 349/3896 passing tests, and clean production build.
+Rollout: `docs/rollouts/2026-07-12-ios-ui-refresh.md`.
+
+
 ## 2026-07-12 — Merge origin/main, resolve .gitignore conflict (CLAUDE, branch `claude/fleet-skills`)
 
 Merged latest `origin/main` to resolve CONFLICTING merge state on PR #1470. Only conflict was
