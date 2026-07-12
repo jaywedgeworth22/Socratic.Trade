@@ -10,6 +10,23 @@ Tested via `vitest` (3896 tests) and `next build`. Rollout: `docs/rollouts/2026-
 ## 2026-07-12 — Activity feed coalescing and audit attribution bug fixes (Antigravity, branch `agent/bug-fixes`)
 
 Resolved test regressions in `test/dashboard-feed.test.ts` and `test/connection-health-routing.test.ts` by correctly accounting for feed-storm coalescing (using distinct ticker symbols to prevent identical rows from being grouped) and the new `storage_warning` skip-set logic (which intentionally suppresses duplicate `notification_events` when handled directly by the audit logger). Additionally, completed a full sweep of `broker-protective-stops.ts` to ensure `connectedAccountId` is properly provided to all remaining `audit()` calls, fixing the attribution bugs identified in the activity log review. Verified via a full test suite run. Rollout: `docs/rollouts/2026-07-12-bug-fixes.md`.
+## 2026-07-12 — Raise RAG Ingestion Limits and Deepen Filing Lookback (Antigravity, branch `agent/antigravity-rag`)
+
+Raised RAG ingestion daily caps (`RAG_INGEST_MAX_TEXTS_PER_DAY` to 1,000,000, `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10,000,000) and deepened the SEC filing lookback depth (`fetchRecentFilings` pulls 10 historical 10-K and 10-Qs, `DEFAULT_PAID_MAX_FILINGS_PER_RUN` bumped to 200) to allow massive historical ingestion of information into Pinecone.
+Verified full health via `tsc`, `lint`, and 3896 passing tests.
+Rollout: `docs/rollouts/2026-07-12-rag-ingestion-limits.md`.
+## 2026-07-12 — Quiver Quant API Integration & FMP Endpoint Expansion (AG, branch `agent/antigravity`)
+
+Integrated the Quiver Quant API into the backend application. Added Quiver Quant key support in `src/lib/db-api-keys.ts` and `app/api/keys/route.ts`. Created `QuiverQuantEnrichmentProvider` in `src/lib/data-providers.ts` and injected it into the main cascading enrichment workflow. Expanded the existing `FmpEnrichmentProvider` to utilize `/v3/key-metrics-ttm` and `/v3/financial-growth` endpoints. Updated `MarketQuote` and `SymbolEnrichment` structures in `src/lib/types.ts`. All test suites updated to reflect the new 6-endpoint FMP fetch count.
+Passed 3896 tests and clean build.
+Rollout: `docs/rollouts/2026-07-12-quiver-quant-fmp.md`.
+
+## 2026-07-12 — Web App UI Refresh (Antigravity, branch `agent/antigravity`)
+
+Successfully migrated the web application settings pages to use an iOS native-inspired aesthetic ("Inset Grouped" lists, edge-to-edge content on small viewports, semantic grouping) to match the new native iOS app design. Overhauled `app/ui/ios-components.tsx` and all files under `app/console/settings/*.tsx`.
+Verified full health via `tsc`, `lint`, 349/3896 passing tests, and clean production build.
+Rollout: `docs/rollouts/2026-07-12-ios-ui-refresh.md`.
+
 
 ## 2026-07-12 — Merge origin/main, resolve .gitignore conflict (CLAUDE, branch `claude/fleet-skills`)
 

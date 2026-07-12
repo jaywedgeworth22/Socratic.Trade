@@ -133,7 +133,7 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
   const learnedCount = useLearnedPendingCount();
   const decisionCount = pendingCount + learnedCount;
   return (
-    <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex" aria-label="Console navigation">
+    <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex border-r border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] shadow-sm mr-4" aria-label="Console navigation">
       {groupedDestinations(DESTINATIONS).map((group, i) => (
         <div key={group.label} className={cx("flex flex-col gap-1", i > 0 && "mt-4")}>
           <div className="con-card-title px-3 pb-1">{group.label}</div>
@@ -178,7 +178,7 @@ const FOCUSABLE_SELECTOR =
  * the sheet off the very top of the viewport (status bar / notch). A floor
  * is used until the first measurement lands (effectively instant — the bar
  * is always mounted before a user can tap "Tabs" to open this). */
-const TABS_SHEET_GAP = 8;
+const TABS_SHEET_GAP = 0;
 const TABS_SHEET_TOP_GAP = 16;
 const TABS_SHEET_BAR_FLOOR = 56;
 
@@ -288,7 +288,7 @@ function TabsSheet({
         aria-labelledby={headingId}
         tabIndex={-1}
         className={cx(
-          "fixed inset-x-0 z-[101] flex flex-col overflow-hidden rounded-[var(--con-radius)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] shadow-[var(--con-shadow-lg)] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 lg:hidden",
+          "fixed inset-x-0 z-[101] flex flex-col overflow-hidden rounded-t-[24px] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] shadow-[var(--con-shadow-lg)] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 lg:hidden",
           entered ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"
         )}
         style={{
@@ -296,8 +296,9 @@ function TabsSheet({
           maxHeight: `calc(100dvh - ${barOffset + TABS_SHEET_GAP + TABS_SHEET_TOP_GAP}px)`
         }}
       >
-        <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5">
-          <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold">
+        <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5 relative">
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 w-9 h-1.5 rounded-full bg-[color:var(--con-line-strong)] opacity-60"></div>
+          <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold mt-2">
             Tabs
           </h2>
           <button
@@ -411,7 +412,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
     <>
       <nav
         ref={navRef}
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         aria-label="Console navigation"
       >
@@ -428,7 +429,11 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                 aria-current={active ? "page" : undefined}
                 title={d.desc}
                 style={active ? { fontWeight: 800 } : undefined}
-                onClick={(e) => guardNav(e, d.href)}
+                onClick={(e) => {
+                  if (guardNav(e, d.href)) {
+                    setTabsOpen(false);
+                  }
+                }}
               >
                 <span
                   className="relative flex h-7 w-10 items-center justify-center rounded-full transition-colors"
@@ -448,14 +453,14 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
           <button
             type="button"
             className="con-tab-item"
-            data-active={tabsButtonActive}
-            title="Choose which screens show up here, or jump to any screen"
-            style={tabsButtonActive ? { fontWeight: 800 } : undefined}
-            onClick={() => setTabsOpen(true)}
+            data-active={tabsButtonActive || tabsOpen}
+            title={tabsOpen ? "Close tabs menu" : "Choose which screens show up here, or jump to any screen"}
+            style={tabsButtonActive || tabsOpen ? { fontWeight: 800 } : undefined}
+            onClick={() => setTabsOpen(!tabsOpen)}
           >
             <span
               className="relative flex h-7 w-10 items-center justify-center rounded-full transition-colors"
-              style={tabsButtonActive ? { background: "var(--con-accent-soft)" } : undefined}
+              style={tabsButtonActive || tabsOpen ? { background: "var(--con-accent-soft)" } : undefined}
             >
               <LayoutGrid size={19} />
             </span>
