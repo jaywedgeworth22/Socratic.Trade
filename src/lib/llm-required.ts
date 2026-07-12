@@ -18,7 +18,7 @@ export const LLM_REQUIRED_CHAT_MESSAGE = "Connect an LLM provider in Settings to
  * with this actionable message instead of sending an empty-model request.
  */
 export const LLM_MODEL_REQUIRED_STRATEGY_MESSAGE =
-  "Choose both the Strategist (green team) and Reviewer (red team) models under Framework → Models to run a strategy session.";
+  "Choose both the Green Team (strategist) and Red Team (reviewer) models under Framework → Models to run a strategy session.";
 
 /**
  * Shown when the Strategist model is the rotation sentinel ("__rotate__") but no provider

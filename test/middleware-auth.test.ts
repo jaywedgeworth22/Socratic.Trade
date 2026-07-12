@@ -296,6 +296,19 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.headers.get("x-middleware-request-x-user-id")).toBeNull();
   });
 
+  it("crawler metadata files (robots/sitemap/manifest) are public even when auth is armed", async () => {
+    // A robots.txt that 307s to /login parses as "no rules" to crawlers, so
+    // every robots/noai directive silently dies. Regression for the live gap
+    // found 2026-07-11: production auth-gated all three metadata routes.
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
+    const middleware = await loadMiddleware();
+    for (const path of ["/robots.txt", "/sitemap.xml", "/manifest.webmanifest"]) {
+      const res = await middleware(makeRequest(path));
+      expect(res.status, `${path} must not require auth`).toBe(200);
+    }
+  });
+
   it("Auth.js callback paths are public so provider sign-in can complete", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "");

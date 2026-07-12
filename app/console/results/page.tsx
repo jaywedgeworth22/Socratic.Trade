@@ -385,7 +385,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
               <table className="con-table">
                 <thead>
                   <tr>
-                    <th>Reviewer</th>
+                    <th>Red Team</th>
                     <th className="num">n</th>
                     <th className="num">Avoided</th>
                     <th className="num">Missed</th>
@@ -451,7 +451,7 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
                     <th>Symbol</th>
                     <th>Side</th>
                     <th>Thesis</th>
-                    <th>Reviewer</th>
+                    <th>Red Team</th>
                     <th className="num" title="Side-adjusted forward return after the veto. Negative = the veto avoided a loser.">Return</th>
                     <th>Readout</th>
                   </tr>

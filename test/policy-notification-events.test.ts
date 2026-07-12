@@ -60,7 +60,7 @@ describe("policy notification event settings", () => {
     const proposerMessage = await response.text();
     expect(proposerMessage).toContain("gpt-5.5 with high reasoning is disabled");
     // Per-team split (2026-07-10): the rejection names WHICH team's combo violated.
-    expect(proposerMessage).toContain("Proposer (green team)");
+    expect(proposerMessage).toContain("Green Team");
 
     // Reviewer violation via the FALLBACK: no explicit redTeamReasoningEffort, so the reviewer
     // inherits the proposer's high — and the reviewer model is the gpt-5.5.
@@ -81,7 +81,7 @@ describe("policy notification event settings", () => {
     expect(redTeamResponse.status).toBe(400);
     const reviewerMessage = await redTeamResponse.text();
     expect(reviewerMessage).toContain("gpt-5.5 with high reasoning is disabled");
-    expect(reviewerMessage).toContain("Reviewer (red team)");
+    expect(reviewerMessage).toContain("Red Team");
 
     // Reviewer violation via its EXPLICIT per-team effort (proposer effort is innocent).
     const explicitReviewerResponse = await PUT(
@@ -97,7 +97,7 @@ describe("policy notification event settings", () => {
       })
     );
     expect(explicitReviewerResponse.status).toBe(400);
-    expect(await explicitReviewerResponse.text()).toContain("Reviewer (red team)");
+    expect(await explicitReviewerResponse.text()).toContain("Red Team");
 
     // An explicit reviewer medium RESCUES the fallback: the proposer's high no longer reaches the
     // gpt-5.5 reviewer, and the gpt-5.4-mini proposer may run at high — nothing violates.
@@ -182,6 +182,6 @@ describe("policy notification event settings", () => {
     const stillRejectedMessage = await stillRejected.text();
     expect(stillRejectedMessage).toContain("gpt-5.5 with high reasoning is disabled");
     // The gpt-5.5 seat here is the reviewer (inheriting the proposer's high via the fallback).
-    expect(stillRejectedMessage).toContain("Reviewer (red team)");
+    expect(stillRejectedMessage).toContain("Red Team");
   });
 });

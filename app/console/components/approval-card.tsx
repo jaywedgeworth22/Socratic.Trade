@@ -52,7 +52,7 @@ function redTeamTriggerMeta(trigger?: RedTeamTrigger) {
     case "all_openings":
       return { label: "risk-adding opening", title: "Every risk-adding opening gets the single Red Team review at its finalized size — coverage is structural, not conviction-gated." };
     case "confidence":
-      return { label: "confidence", title: "The proposer confidence cleared the configured Red Team conviction threshold." };
+      return { label: "confidence", title: "The Green Team confidence cleared the configured Red Team conviction threshold." };
     case "notional":
       return { label: "large notional", title: "The order was large enough as a percentage of NAV to require adversarial review." };
     case "live_opening":
