@@ -11,9 +11,21 @@
 //
 // Role mapping conventions (see recordLlmUsage call sites + recordLlmOutcome):
 //   llm_usage.context: "strategy" = green/proposer; "strategy-bear" and
-//   "red-team" = red/reviewer. Other contexts (chat, coach, …) are ignored —
-//   this rollup exists for the Proposer/Reviewer pickers.
-//   llm_call_latency payload.step: "bull" = green, "bear" = red.
+//   "red-team" = red/reviewer; "strategy-tuning" = strategist (the AI review /
+//   strategy-tune seat, src/lib/strategy-tuning.ts). Other contexts (chat,
+//   coach, …) are ignored — this rollup exists for the Proposer/Reviewer/
+//   Strategist pickers. These raw context strings are NEVER changed here —
+//   only mapped to a picker role.
+//   llm_call_latency payload.step: "bull" = green, "bear" = red. Strategist has
+//   no latency audit events (AI review is a one-shot call, not a scored step),
+//   so strategist rows always carry latencySamples: 0 / p50LatencyMs: null.
+//
+// Strategist rows carry cost/call + total cost over the window (the owner's
+// explicit ask: historical spend on running AI review, per model) via the SAME
+// live cost aggregation as green/red — just keyed under the "strategist" role.
+// They never carry latency, benchmark, perf, or reviewerPerf: there's no
+// offline benchmark for the tuning seat and no closed-trade/veto attribution
+// concept for it either.
 //
 // Performance gating contract (owner request 2026-07-08): the API always
 // reports `closedTrades`, and includes `perf` whenever closedTrades >= 1 —
@@ -25,7 +37,7 @@
 // negative avg return = the veto added value). The UI applies the same
 // 20/50-resolved-veto gates as the Results page 'Red Team veto efficacy' card.
 
-export type ModelRole = "green" | "red";
+export type ModelRole = "green" | "red" | "strategist";
 
 /** The "unattributed" reviewer bucket from getRedTeamEfficacy — matured vetoes with no
  *  persisted reviewer model. It never matches a catalog model, so it's dropped from the
@@ -97,6 +109,10 @@ export interface ModelRoleStats {
   liveCalls: number;
   /** Live avg cost per call (USD); null when liveCalls === 0. */
   avgCostUsd: number | null;
+  /** Live TOTAL cost (USD) summed over the window; null when liveCalls === 0. Primarily for the
+   *  Strategist section (historical spend on running AI review, per model) but computed for every
+   *  role from the same cost aggregation. */
+  totalCostUsd: number | null;
   /** Live p50 latency (ms) from llm_call_latency audits; null when no samples. */
   p50LatencyMs: number | null;
   /** Number of successful live latency samples behind p50LatencyMs. */
@@ -116,6 +132,7 @@ export interface ModelRoleStats {
 export function roleForUsageContext(context: string | null | undefined): ModelRole | null {
   if (context === "strategy") return "green";
   if (context === "strategy-bear" || context === "red-team") return "red";
+  if (context === "strategy-tuning") return "strategist";
   return null;
 }
 
@@ -238,13 +255,14 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
   const out: ModelRoleStats[] = [];
   const models = Array.from(modelSet).sort();
   for (const model of models) {
-    for (const role of ["green", "red"] as ModelRole[]) {
+    for (const role of ["green", "red", "strategist"] as ModelRole[]) {
       const c = cost.get(key(model, role));
       const lat = latency.get(key(model, role)) ?? [];
       const bench = benchmark.get(key(model, role));
-      const lots = role === "green" 
-        ? (proposerLotsByModel.get(model) ?? []) 
-        : (reviewerLotsByModel.get(model) ?? []);
+      // Strategist has no closed-trade/veto attribution concept — only green (proposer entries)
+      // and red (reviewer vetoes) ever carry lots; strategist always sees an empty list here.
+      const lots =
+        role === "green" ? (proposerLotsByModel.get(model) ?? []) : role === "red" ? (reviewerLotsByModel.get(model) ?? []) : [];
       const closedTrades = lots.length;
       let perf: ModelPerf | null = null;
       if (closedTrades >= 1) {
@@ -261,6 +279,7 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
         role,
         liveCalls: c?.calls ?? 0,
         avgCostUsd: c && c.calls > 0 ? Number((c.totalCostUsd / c.calls).toFixed(6)) : null,
+        totalCostUsd: c && c.calls > 0 ? Number(c.totalCostUsd.toFixed(6)) : null,
         p50LatencyMs: medianMs(lat),
         latencySamples: lat.length,
         benchmarkCostUsd: typeof bench?.benchmarkCostUsd === "number" ? bench.benchmarkCostUsd : null,

@@ -19,14 +19,16 @@ import mistralRebenchJson from "../../../../docs/benchmarks/2026-07-10-mistral-r
 
 export const dynamic = "force-dynamic";
 
-// Per-(model, role) cost / latency / realized-performance stats for the Proposer/Reviewer
-// model pickers (the Framework/strategy page drawers). Auth mirrors the sibling
+// Per-(model, role) cost / latency / realized-performance stats for the Proposer/Reviewer/
+// Strategist model pickers (the Framework/strategy page drawers). Auth mirrors the sibling
 // /api/llm-usage route: identity comes only from the middleware-verified user.
 //
 // Live sources (this user's data only):
 //   - llm_usage rows        → calls + avg cost per call ("strategy" = green,
-//                             "strategy-bear"/"red-team" = red)
-//   - llm_call_latency audit events → p50 latency (step bull = green, bear = red)
+//                             "strategy-bear"/"red-team" = red, "strategy-tuning" = strategist —
+//                             the AI review seat; see roleForUsageContext in model-stats.ts)
+//   - llm_call_latency audit events → p50 latency (step bull = green, bear = red; strategist has
+//     no latency audit events, so its rows always show latencySamples: 0)
 //   - closed lots across ALL of the user's connected accounts, attributed to the entry
 //     proposal's proposedByModel → realized win-rate / avg P&L (GREEN only).
 //   - getRedTeamEfficacy(userId).byModel (user-wide, all accounts) → per-reviewer veto
@@ -35,7 +37,10 @@ export const dynamic = "force-dynamic";
 //     rather than the closed-trade `perf` field — see model-stats.ts.
 // Benchmark sources: docs/benchmarks/2026-07-08-llm-model-benchmark.json (full sweep, cold p50 +
 // est. cost/call) topped up by the 2026-07-10 Mistral re-benchmark (see the import comment above),
-// clearly separated in the payload so the UI can label live vs benchmark.
+// clearly separated in the payload so the UI can label live vs benchmark. No benchmark rows exist
+// for the strategist role — it's live-only (cost/call, call count, total cost over the window); the
+// `stats` array already carries `role: "strategist"` rows via aggregateModelStats, so the drawer
+// filters on that role rather than this route needing a separate response field.
 export async function GET(request: Request) {
   const userId = resolveRequestUserId(request);
   const url = new URL(request.url);
