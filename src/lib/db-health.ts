@@ -564,7 +564,7 @@ export async function alertStorageWarning(warningType: string, message: string):
         ? () =>
             notify(
               "local",
-              { title, body, kind: "provider_degraded", data: payload },
+              { title, body, kind: "storage_warning", data: payload },
               {
                 config,
                 prefs: {
@@ -585,11 +585,11 @@ export async function alertStorageWarning(warningType: string, message: string):
       ...policy,
       notificationSettings: {
         ...policy.notificationSettings,
-        enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
+        enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "storage_warning" as const])) as any
       }
     };
     await sendNotification(
-      { type: "provider_degraded", title, payload },
+      { type: "storage_warning", title, payload },
       { userId: "local", policy: forcedPolicy as any, directBody: body, notifyDeps: { config }, additionalDelivery }
     ).catch(() => {});
   } catch {

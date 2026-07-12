@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-12 — Activity feed coalescing and audit attribution bug fixes (Antigravity, branch `agent/bug-fixes`)
+
+Resolved test regressions in `test/dashboard-feed.test.ts` and `test/connection-health-routing.test.ts` by correctly accounting for feed-storm coalescing (using distinct ticker symbols to prevent identical rows from being grouped) and the new `storage_warning` skip-set logic (which intentionally suppresses duplicate `notification_events` when handled directly by the audit logger). Additionally, completed a full sweep of `broker-protective-stops.ts` to ensure `connectedAccountId` is properly provided to all remaining `audit()` calls, fixing the attribution bugs identified in the activity log review. Verified via a full test suite run. Rollout: `docs/rollouts/2026-07-12-bug-fixes.md`.
+
 ## 2026-07-11 — Native iOS App Overhaul (Antigravity, branch `agent/antigravity`)
 
 Completely replaced the legacy iOS starter app with a modern SwiftUI application (`ios/`). Initialized via `xcodegen`. Built the initial SwiftUI scaffold (`ios/`) with tabbed views: Dashboard, Proposals, and Watchlist. Implemented `MobileStore` for persistence and `MobileAPIClient` for API communication. Auth flow (OAuth via `ASWebAuthenticationSession`) and `/api/mobile/auth-redirect` route are still pending implementation on the `agent/antigravity` branch. Assessed Cloudflare hosting for the mobile backend vs. Hetzner, deciding to keep it on Hetzner to avoid database splitting. Verified build via `xcodebuild`. Rollout: `docs/rollouts/2026-07-11-native-ios-app.md`.
@@ -94,7 +98,7 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - Implemented and verified LLM Failover UI and architecture.
 
 ## What's blocking / unresolved
-- Nothing. All P1 and P2 items specified in the current sprint are complete.
+- Nothing. All P1, P2, and P3 items specified in the current sprint are complete.
 
 ## Next Action
 - Land changes to main via `land.sh`.

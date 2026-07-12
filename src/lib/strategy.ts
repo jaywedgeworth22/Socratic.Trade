@@ -288,6 +288,9 @@ export function preVetoTaggedOpeningWillPlace(
     !!p.autonomyOverride.thesis?.trim()
   );
 }
+// LRU deduplication cache for evidence_age_anomaly emissions.
+// Prevents flooding the DB with identical audits on every run cycle.
+const evidenceAgeAnomalyDedup = new Map<string, number>();
 
 export async function runStrategyOnce(
   userId: string = "local",
@@ -1003,8 +1006,22 @@ export async function runStrategyOnce(
     // high-relevance RAG chunk or a fact asserted today) entered this run's prompts. No text is
     // changed, nothing is dropped or blocked — the receipt IS the control.
     const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
+    
+    // LRU deduplication: filter out items we've already audited for this user/account in the last 6 hours.
+    const dedupedAnomalies = evidenceAgeAnomalies.filter((a) => {
+      if (evidenceAgeAnomalyDedup.size > 1000) evidenceAgeAnomalyDedup.clear();
+      const key = `${userId}:${connectedAccountId ?? "global"}:${a.id}`;
+      const now = Date.now();
+      const last = evidenceAgeAnomalyDedup.get(key);
+      if (last && now - last < 6 * 60 * 60 * 1000) return false;
+      evidenceAgeAnomalyDedup.set(key, now);
+      return true;
+    });
+
     if (evidenceAgeAnomalies.length > 0) {
-      audit("evidence_age_anomaly", { runId, items: evidenceAgeAnomalies }, userId, connectedAccountId);
+      if (dedupedAnomalies.length > 0) {
+        audit("evidence_age_anomaly", { runId, items: dedupedAnomalies }, userId, connectedAccountId);
+      }
       promptSafetyEvidence.push({
         kind: "safety",
         tone: "warning",

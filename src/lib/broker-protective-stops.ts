@@ -388,9 +388,9 @@ export async function reconcileBrokerProtectiveStops(args: {
             out.filledRecoverySymbols.push(s);
             bookBrokerHeldStopFill(row, found);
           }
-          audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "disabled_teardown" }, userId);
+          audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "disabled_teardown" }, userId, policy.connectedAccountId);
         } else {
-          audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "disabled_teardown" }, userId);
+          audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "disabled_teardown" }, userId, policy.connectedAccountId);
           // Keep it as pending_cancel so a later tick retries the cancel rather than orphaning the
           // resting broker stop (listBrokerProtectiveStops returns pending_cancel rows, so the next
           // disabled reconcile re-attempts it).
@@ -540,7 +540,8 @@ export async function reconcileBrokerProtectiveStops(args: {
           audit(
             "broker_protective_stop_cancel_recovered",
             { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err) },
-            userId
+            userId,
+            policy.connectedAccountId
           );
         } else {
           // Keep it in DB as pending_cancel to retry on the next tick
@@ -560,7 +561,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         out.cancelled++;
         out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {
-        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err) }, userId);
+        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err) }, userId, policy.connectedAccountId);
         // Mark as pending_cancel to retry later
         upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
       }
@@ -605,9 +606,9 @@ export async function reconcileBrokerProtectiveStops(args: {
           out.filledRecoverySymbols.push(sym);
           bookBrokerHeldStopFill(row, found);
         }
-        audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "plan_excluded_teardown" }, userId);
+        audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "plan_excluded_teardown" }, userId, policy.connectedAccountId);
       } else {
-        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "plan_excluded_teardown" }, userId);
+        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "plan_excluded_teardown" }, userId, policy.connectedAccountId);
         upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
       }
     }
@@ -702,7 +703,7 @@ export async function reconcileBrokerProtectiveStops(args: {
             out.filledRecoverySymbols.push(sym);
             bookBrokerHeldStopFill(existingStop, preCancelOrder);
           }
-          audit("broker_protective_stop_mismatch", { symbol: sym, note: "per-position stop plan excludes this account's enabled broker-held lane(s)", kind: null }, userId);
+          audit("broker_protective_stop_mismatch", { symbol: sym, note: "per-position stop plan excludes this account's enabled broker-held lane(s)", kind: null }, userId, policy.connectedAccountId);
         } catch (err) {
           // The cancel failed — check whether the broker already terminated the order (most likely
           // it FILLED before our cancel reached the broker), same recovery as every other cancel path
@@ -715,9 +716,9 @@ export async function reconcileBrokerProtectiveStops(args: {
               out.filledRecoverySymbols.push(sym);
               bookBrokerHeldStopFill(existingStop, found);
             }
-            audit("broker_protective_stop_cancel_recovered", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId);
+            audit("broker_protective_stop_cancel_recovered", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId, policy.connectedAccountId);
           } else {
-            audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId);
+            audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId, policy.connectedAccountId);
             upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
           }
         }
@@ -748,7 +749,8 @@ export async function reconcileBrokerProtectiveStops(args: {
         audit(
           "broker_protective_stop_recovered",
           { symbol: sym, brokerOrderId: existingStop.brokerOrderId, brokerState: trackedOrder.state, context: "stale_resting_row" },
-          userId
+          userId,
+          policy.connectedAccountId
         );
         continue;
       }
@@ -790,9 +792,9 @@ export async function reconcileBrokerProtectiveStops(args: {
               kind: symKind,
               oldQty: existingStop.quantity,
               newQty: posQty
-            }, userId);
+            }, userId, policy.connectedAccountId);
           } catch (err) {
-            audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err) }, userId);
+            audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err) }, userId, policy.connectedAccountId);
             upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
           }
         } else {
@@ -833,7 +835,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       if (mismatchNote && symKind === "trailing" && !isQuantityShrink && !canArmTrailingNow(pos, sym, newStopPrice)) {
         audit("broker_protective_stop_skipped", {
           symbol: sym, kind: symKind, note: `mismatch (${mismatchNote}) detected but the replacement would be refused this tick — keeping the existing stop rather than cancelling into no protection`
-        }, userId);
+        }, userId, policy.connectedAccountId);
         mismatchNote = undefined;
       }
 
@@ -854,7 +856,7 @@ export async function reconcileBrokerProtectiveStops(args: {
           out.cancelled++;
           out.cancelledOrderIds.push(existingStop.brokerOrderId);
         } catch (err) {
-          audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err) }, userId);
+          audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err) }, userId, policy.connectedAccountId);
           upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
         }
       }
@@ -901,7 +903,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         symbol: sym,
         kind: symKind,
         note: "no uncovered whole shares — other live exit orders (or sub-share size) cover this position; the synthetic monitor covers any remainder"
-      }, userId);
+      }, userId, policy.connectedAccountId);
       continue;
     }
     const stopPrice = symKind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
@@ -946,7 +948,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         // section 3 sees no qty/price mismatch on it, and `existing` above blocks section 4) and
         // don't advertise the symbol via placedStopSymbols (that would suppress this tick's
         // synthetic registration for protection that doesn't exist).
-        audit("broker_protective_stop_error", { symbol: sym, stopPrice, orderId: exec.orderId, error: `broker declined the protective stop (state: ${exec.state})` }, userId);
+        audit("broker_protective_stop_error", { symbol: sym, stopPrice, orderId: exec.orderId, error: `broker declined the protective stop (state: ${exec.state})` }, userId, policy.connectedAccountId);
         continue;
       }
       if (!exec.orderId) {
@@ -974,9 +976,9 @@ export async function reconcileBrokerProtectiveStops(args: {
         out.partiallyPlacedStopSymbols.push(sym);
         out.partiallyPlacedStopQuantities[sym] = qty;
       }
-      audit("broker_protective_stop_placed", { symbol: sym, kind: symKind, stopPrice, trailPercent: symKind === "trailing" ? trailPct : undefined, quantity: qty, positionQuantity: Math.abs(pos.quantity), brokerOrderId: exec.orderId }, userId);
+      audit("broker_protective_stop_placed", { symbol: sym, kind: symKind, stopPrice, trailPercent: symKind === "trailing" ? trailPct : undefined, quantity: qty, positionQuantity: Math.abs(pos.quantity), brokerOrderId: exec.orderId }, userId, policy.connectedAccountId);
     } catch (err) {
-      audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId);
+      audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId, policy.connectedAccountId);
     }
   }
   return out;

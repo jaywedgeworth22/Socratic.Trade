@@ -28,6 +28,12 @@ const CHANNEL_LABELS: Record<NotifyChannelId, string> = {
 
 export const NO_NOTIFICATION_CHANNELS_REASON = "No notification channels enabled.";
 
+// Types that emit their own in-app audit rows before calling sendNotification.
+// Skip writing a second in-app notification_events row for them to avoid double-writing.
+const DIRECT_NOTIFY_SKIP_SET: ReadonlySet<NotificationEventType> = new Set([
+  "storage_warning"
+]);
+
 // The ntfy push channel (notify.ts's CHANNELS.push.send) carries the message TITLE as a raw HTTP
 // header value. The Fetch/Headers spec requires header values to be ByteString (Latin-1, code
 // points 0x00-0xFF) — anything outside that range throws `TypeError: Cannot convert argument to a
@@ -484,16 +490,30 @@ function record(
   userId: string = "local",
   connectedAccountId?: string
 ): NotificationEvent {
-  const event = insertNotificationEvent({
-    userId,
-    connectedAccountId,
-    type: input.type,
-    title: input.title,
-    status,
-    webhookUrl: webhookUrl ? maskWebhookUrl(webhookUrl) : undefined,
-    payload: input.payload,
-    error
-  });
+  const isSkippedInApp = DIRECT_NOTIFY_SKIP_SET.has(input.type);
+  const event: NotificationEvent = isSkippedInApp
+    ? {
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        type: input.type,
+        title: input.title,
+        status,
+        webhookUrl: webhookUrl ? maskWebhookUrl(webhookUrl) : undefined,
+        payload: input.payload,
+        error,
+        connectedAccountId
+      }
+    : insertNotificationEvent({
+        userId,
+        connectedAccountId,
+        type: input.type,
+        title: input.title,
+        status,
+        webhookUrl: webhookUrl ? maskWebhookUrl(webhookUrl) : undefined,
+        payload: input.payload,
+        error
+      });
+
   audit("notification", event, userId, connectedAccountId);
   return event;
 }
