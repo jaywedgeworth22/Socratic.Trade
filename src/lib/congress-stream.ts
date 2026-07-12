@@ -180,7 +180,19 @@ export async function connectOnce(): Promise<void> {
     if (state.subscription) state.subscription = undefined;
     throw new Error(`SSE connect rejected: HTTP ${res.status} (subscription invalid?)`);
   }
-  if (!res.ok || !res.body) throw new Error(`SSE connect failed: HTTP ${res.status}`);
+  if (!res.ok || !res.body) {
+    let retryMsg = "";
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("retry-after");
+      if (retryAfter) {
+        const parsed = parseInt(retryAfter, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          retryMsg = ` (Retry-After: ${parsed})`;
+        }
+      }
+    }
+    throw new Error(`SSE connect failed: HTTP ${res.status}${retryMsg}`);
+  }
   state.backoffMs = INITIAL_BACKOFF_MS; // healthy connection → reset backoff
   // Connection-health signal for the admin Connections page (App B's side of the App A → App B
   // real-time link). Re-fires on each (re)connect within App A's ~25min stream lifetime.
@@ -224,11 +236,27 @@ async function runLoop(): Promise<void> {
         break;
       }
 
-      logApiHealth({
-        service: "congress.trade:sse",
-        ok: false,
-        errorText: msg,
-      });
+      let isRateLimit = false;
+      const retryMatch = msg.match(/HTTP 429 \(Retry-After: (\d+)\)/);
+      if (retryMatch || msg.includes("HTTP 429")) {
+        isRateLimit = true;
+        if (retryMatch) {
+          const sec = parseInt(retryMatch[1], 10);
+          state.backoffMs = Math.max(state.backoffMs, sec * 1000);
+        } else {
+          // Default to a 60s backoff if 429 but no Retry-After
+          state.backoffMs = Math.max(state.backoffMs, 60_000);
+        }
+      }
+
+      // Do not record 429s as "failures" for the circuit breaker, it's expected backpressure
+      if (!isRateLimit) {
+        logApiHealth({
+          service: "congress.trade:sse",
+          ok: false,
+          errorText: msg,
+        });
+      }
     }
     if (state.closing) break;
     await sleep(state.backoffMs);
