@@ -8,7 +8,34 @@ parseInt, ignoring the legal HTTP-date format (RFC 7231 §7.1.3). Added Date.par
 is unchanged so runLoop()'s existing regex continues extracting the correct backoff. Verify trio
 passes (349 files, 3896 tests, build clean). Auto-merge enabled. Resolved the Codex thread.
 Rollout: `docs/rollouts/2026-07-12-codex-triage-429-retry-after.md`.
+## 2026-07-12 — Kalshi event-data fetcher, lane K1 (CLAUDE subagent, branch `claude/kalshi-data-fetcher`)
+
+New-files-only dormant plumbing for the capability program's Kalshi lane: `src/lib/kalshi.ts`
+(flag-gated client — `KALSHI_ENV` demo|prod derives the base URL, absent => inert; RSA-PSS
+SHA-256 request signing with KALSHI-ACCESS-KEY/-TIMESTAMP/-SIGNATURE over
+timestamp+method+path-without-query; typed public market/event/series fetchers; `*_dollars`
+fixed-point string price parsing (Kalshi removed integer-cent fields March 2026) with legacy
+cent fallback; `_fp` count fields; `getKalshiEventSignals(seriesList)` normalized event-probability
+surface with 15-min success-only cache (only caches when all series succeeded), per-series fail-soft,
+full cursor pagination, and blank-subtitle fallback fix) + `test/kalshi.test.ts` (31 mocked-fetch
+tests incl. crypto.verify-based signing proofs). Nothing imports it yet — Wave 2 wires it into
+the strategist; strategy.ts/data-providers.ts/types.ts untouched. Codex-triage (4 P2 findings
+from chatgpt-codex-connector[bot]) addressed: `_dollars` pricing, partial-batch cache guard,
+cursor pagination, blank subtitle fallback. Gates (node24): tsc clean, 350/3927 tests pass,
+build clean. Rollout: `docs/rollouts/2026-07-12-kalshi-data-fetcher.md`.
 ## 2026-07-12 — Sentry issues resolution (AG, branch `agent/antigravity`)
+## 2026-07-12 — Safety Maintenance Coordinator & Draining Fence (Antigravity, branch `agent/antigravity`)
+
+Completed Wave 0 (PR 1) tasks from the Codex audit roadmap (A21, A28, etc.):
+1. **Safety Maintenance Coordinator**: Moved protective tasks (fill reconciliation, stale placing-intent recovery, stale-exit handling, synthetic stops, proposal expiry) to a new coordinator `runSafetyMaintenance` that executes strictly *before* strategy admission. This enforces the single-flight tick structure.
+2. **Strict Timeouts**: Broker read calls inside the safety coordinator are wrapped with a `withStrictDeadline` helper (15s total timeout) to prevent the scheduler from hanging indefinitely if the broker connection is stalled.
+3. **Draining Fence**: Implemented an explicit `is_draining` and `is_deleted` check immediately before order placement inside `strategy-execution.ts`, safely dropping intents for accounts marked for deletion.
+4. **Context Snapshotting**: Captured `accountNumber` and `policyRevision` onto the `strategy_runs` row when the run starts.
+Verified full health via `tsc`, `lint`, and 3896 passing tests.
+Rollout: `docs/rollouts/2026-07-12-safety-maintenance-draining-fence.md`.
+
+
+## 2026-07-12 — Codex autofix: dedup ordering + enrichment wiring (Codex connector, PR #1482 agent/ag-dedup-types)
 
 Fixed unresolved Sentry issues in production:
 1. Replaced `.map()` + array spread (`...`) with `.reduce()` in `app/console/components/equity-chart.tsx` to stop `RangeError: Maximum call stack size exceeded` in Mobile Safari.
@@ -18,6 +45,17 @@ Tested via `vitest` (3896 tests) and `next build`. Rollout: `docs/rollouts/2026-
 ## 2026-07-12 — Activity feed coalescing and audit attribution bug fixes (Antigravity, branch `agent/bug-fixes`)
 
 Resolved test regressions in `test/dashboard-feed.test.ts` and `test/connection-health-routing.test.ts` by correctly accounting for feed-storm coalescing (using distinct ticker symbols to prevent identical rows from being grouped) and the new `storage_warning` skip-set logic (which intentionally suppresses duplicate `notification_events` when handled directly by the audit logger). Additionally, completed a full sweep of `broker-protective-stops.ts` to ensure `connectedAccountId` is properly provided to all remaining `audit()` calls, fixing the attribution bugs identified in the activity log review. Verified via a full test suite run. Rollout: `docs/rollouts/2026-07-12-bug-fixes.md`.
+## 2026-07-12 — Codex autofix: dedup ordering + enrichment wiring (Codex connector, PR #1482 agent/ag-dedup-types)
+## 2026-07-12 — Codex autofix round 2: dedup cache scoping, prompt receipt independence, FCF alias (Codex connector, PR #1482 agent/ag-dedup-types)
+
+Addressed 4 P2 Codex review findings on PR #1482:
+1. Fixed LRU dedup cache to only mark actually-emitted anomalies (capped-off items can reach audit on next run).
+2. Separated prompt safety receipt from audit dedup so all same-day evidence is recorded regardless of cache.
+3. Cascaded `freeCashFlowYield` into `fcfYield` in `applyEnrichment` and `quotesBySymbol`.
+4. Resolved enrichment wiring thread (already handled in round 1).
+Verify trio: tsc pre-existing only (process reference), 349 files / 3896 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-12-codex-review-strategy-dedup.md`.
+
 ## 2026-07-12 — Raise RAG Ingestion Limits and Deepen Filing Lookback (Antigravity, branch `agent/antigravity-rag`)
 
 Raised RAG ingestion daily caps (`RAG_INGEST_MAX_TEXTS_PER_DAY` to 1,000,000, `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10,000,000) and deepened the SEC filing lookback depth (`fetchRecentFilings` pulls 10 historical 10-K and 10-Qs, `DEFAULT_PAID_MAX_FILINGS_PER_RUN` bumped to 200) to allow massive historical ingestion of information into Pinecone.
