@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/auth/admin";
 import { withAdminOperationGuard } from "@/lib/admin-operation-guard";
 import { getOperationLeaseBusy } from "@/lib/operation-lease";
 import { operationLeaseBusyResponse } from "@/lib/operation-guard-response";
+import { normalizeSymbol } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,9 @@ export async function POST(request: Request) {
   let clearCache = false;
   try {
     const body = (await request.json()) as { symbols?: string[]; limit?: number; clearCache?: boolean };
-    if (Array.isArray(body?.symbols)) symbols = body.symbols.filter((s) => typeof s === "string" && s.length > 0);
+    if (Array.isArray(body?.symbols)) symbols = [...new Set(body.symbols
+      .filter((s) => typeof s === "string" && s.length > 0)
+      .map((s) => normalizeSymbol(s)))];
     if (Number.isFinite(Number(body?.limit))) limit = Number(body.limit);
     if (body?.clearCache === true) clearCache = true;
   } catch {
@@ -50,9 +53,10 @@ export async function POST(request: Request) {
   return withAdminOperationGuard(request, "reindex-10k", async (operationLeaseClaim) => {
     if (clearCache) {
       const { getDb } = await import("@/lib/db");
-      getDb().prepare("DELETE FROM ingested_accessions").run();
-      getDb().prepare("DELETE FROM document_chunks").run();
-      console.log("[reindex-10k] Cleared local RAG metadata cache tables (ingested_accessions, document_chunks).");
+      const placeholders = symbols.map(() => "?").join(",");
+      getDb().prepare(`DELETE FROM ingested_accessions WHERE ticker IN (${placeholders})`).run(...symbols);
+      getDb().prepare(`DELETE FROM document_chunks WHERE symbol IN (${placeholders})`).run(...symbols);
+      console.log(`[reindex-10k] Cleared local RAG metadata cache for ${symbols.length} symbol(s): ${symbols.join(", ")}.`);
     }
 
     // force: this is the operator explicitly asking for a backfill — it must not silently no-op
