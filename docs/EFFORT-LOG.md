@@ -512,6 +512,8 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Native iOS App Overhaul (Antigravity, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Replaced the legacy iOS starter app with a native SwiftUI application (`ios/`) using `xcodegen`. Includes tabbed navigation (Dashboard, Proposals, Watchlist), `MobileStore` persistence, and `MobileAPIClient`. Assessed Cloudflare hosting vs current Hetzner server and decided to keep it on Hetzner to avoid splitting the database. Verified build via `xcodebuild`. Ready to merge.
+
 - **Global learning reads + batched AI review of proposals (CLAUDE cloud, branch
   `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-07, PR pending.** Lessons (on
   `socratic_decisions`) + framework proposals now read GLOBAL across a user's accounts (dropped the
