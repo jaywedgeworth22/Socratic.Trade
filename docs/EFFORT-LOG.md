@@ -231,7 +231,6 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
-- **Native iOS App Overhaul (Antigravity, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Built a completely native SwiftUI application (`ios/`) using `xcodegen`, replacing the legacy stub. Includes secure `ASWebAuthenticationSession` login flow, tabbed navigation (Dashboard, Proposals, Watchlist), and `MobileStore` persistence. Assessed Cloudflare hosting vs current Hetzner server and decided to keep it on Hetzner to avoid splitting the database. Verified build via `xcodebuild`. Ready to merge.
 - **App-wide Audit: Draining State and Cap Fixes (Antigravity/AG, branch `codex/app-wide-audit-20260711`) — COMPLETED 2026-07-12.** Fixed account-deletion race conditions by introducing a safe `is_draining` state and cascade cleanup (`purgeConnectedAccount`). Fixed daily notional risk tracking to accurately attribute to `placed_at` instead of `created_at`, covering `placing` intents as well. Updated various tests, SEC time-flakiness, and local dev forwarded-host behaviors. Rollout: `docs/rollouts/2026-07-12-app-wide-audit-draining-fixes.md`.
 - **LLM failover UI & account bursts (AG) — COMPLETED 2026-07-12.** Added jitter/stagger to concurrent account scheduling in `scheduler.ts` to mitigate shared OpenAI key bursts. Exposed `llmFallbackModels` in `app/console/strategy/page.tsx` via a text input and persistence logic.
 - **Twilio A2P 10DLC compliance error handling (AG) — COMPLETED 2026-07-12.** Handled Twilio Error 30034 (A2P 10DLC unregistered) in `src/lib/notify.ts` to gracefully mark notification failures instead of crashing or retrying continuously.
@@ -512,6 +511,8 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+
+- **Native iOS App Overhaul (Antigravity, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Replaced the legacy iOS starter app with a native SwiftUI application (`ios/`) using `xcodegen`. Includes tabbed navigation (Dashboard, Proposals, Watchlist), `MobileStore` persistence, and `MobileAPIClient`. Assessed Cloudflare hosting vs current Hetzner server and decided to keep it on Hetzner to avoid splitting the database. Verified build via `xcodebuild`. Ready to merge.
 
 - **Global learning reads + batched AI review of proposals (CLAUDE cloud, branch
   `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-07, PR pending.** Lessons (on
@@ -1324,7 +1325,6 @@ As of 2026-07-08 (assignment-rule update).
 - PR #340 - Socratic Trade rebrand.
 
 ## Completed
-- **Native iOS App Overhaul (Antigravity, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Built a completely native SwiftUI application (`ios/`) using `xcodegen`, replacing the legacy stub. Includes secure `ASWebAuthenticationSession` login flow, tabbed navigation (Dashboard, Proposals, Watchlist), and `MobileStore` persistence. Assessed Cloudflare hosting vs current Hetzner server and decided to keep it on Hetzner to avoid splitting the database. Verified build via `xcodebuild`. Ready to merge.
 - **App-wide Audit: Draining State and Cap Fixes (Antigravity/AG, branch `codex/app-wide-audit-20260711`) — COMPLETED 2026-07-12.** Fixed account-deletion race conditions by introducing a safe `is_draining` state and cascade cleanup (`purgeConnectedAccount`). Fixed daily notional risk tracking to accurately attribute to `placed_at` instead of `created_at`, covering `placing` intents as well. Updated various tests, SEC time-flakiness, and local dev forwarded-host behaviors. Rollout: `docs/rollouts/2026-07-12-app-wide-audit-draining-fixes.md`.
 - **Consolidate usage telemetry clients in consumer apps (AG) — ✅ COMPLETED 2026-07-06 (PR #1005).** Replaced `postBatch` telemetry sending logic with `@jaywedgeworth22/congress-trading-shared` in Socratic.Trade.
 - **Fix mobile "Settings" crash inside Sheet (AG, S)** — Fixed "Maximum call stack size exceeded" bug caused by a focus trap race condition when navigating to settings from the More sheet menu on mobile. PR pending.
