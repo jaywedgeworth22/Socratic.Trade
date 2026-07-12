@@ -5,6 +5,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-11 - Trading-framework doc + public /framework page + AI-scrape hardening (CLAUDE).**
+> No trading-behavior change; documentation + one new public marketing surface + edge/app
+> anti-extraction hardening. New `docs/trading-framework.md` (net-new, framework-level map of the
+> whole pipeline: 8-stage summary, per-layer detail, invariants, honest weaknesses; explicitly does
+> not supersede strategic-framework/phase-7/single-adversary docs). New human-eyes-only page at
+> `/framework` (how-it-works page pattern, three themed SVG diagrams) whose prose is served only via
+> a gated content API — never present in HTML or client chunks; UA gates in page+API, robots/noai/
+> TDMRep directives, no-store, sitemap-excluded, unlinked. Cloudflare zone: `ai_bots_protection=block`
+> + a `/framework*`+`/api/framework*` WAF UA-block rule (live already; Bot Fight Mode deliberately NOT
+> enabled — webhook/ops traffic risk). Middleware change is two PUBLIC_PREFIXES lines. 9 new focused
+> tests. See `docs/rollouts/2026-07-11-framework-page.md`.
 > **2026-07-11 - Whole-app audit and prioritized correctness fixes (CODEX, in progress).** No roadmap
 > phase change. The current-main audit added 34 reproducible findings to both effort boards (8 P0,
 > 18 P1, 8 P2). The first P0 account-scope slice is implemented: account switching passes through the
