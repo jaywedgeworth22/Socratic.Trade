@@ -3,7 +3,7 @@ import { audit, insertFillEvent } from "./db";
 import { applyPaperExitCost } from "./execution-cost";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { isActiveBrokerOrderState } from "./broker-held-orders";
+import { isActiveBrokerOrderState, isRejectedOrCanceledState } from "./broker-held-orders";
 import { listStaleLimitOrders } from "./stale-limit-orders";
 import { normalizeSymbol } from "./money";
 import type { BrokerGateway, ConnectedAccount, EquityOrder, EquityOrderInput, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
@@ -287,6 +287,9 @@ async function executeMarketReplace(input: MarketReplaceInput): Promise<MarketRe
   let execution;
   try {
     execution = await input.gateway.placeEquityOrder({ ...marketOrder, refId });
+    if (isRejectedOrCanceledState(execution.state) || !execution.orderId) {
+      throw new Error(`Broker immediately rejected or failed to return an order ID for the replacement order (state: ${execution.state})`);
+    }
   } catch (error) {
     audit(
       "order_replace_market_failed",

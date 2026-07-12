@@ -1485,6 +1485,18 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE learned_context_pending ADD COLUMN review_note TEXT");
   }
 
+  // Risk cap fix: track when orders were actually placed, not just proposed.
+  const tradeProposalColumns = database.prepare("PRAGMA table_info(trade_proposals)").all() as Array<{ name: string }>;
+  if (!tradeProposalColumns.some((c) => c.name === "placed_at")) {
+    database.exec("ALTER TABLE trade_proposals ADD COLUMN placed_at TEXT");
+  }
+
+  // Account deletion race condition: require a draining state to clear broker lock/fills first.
+  const connectedAccountDrainingColumns = database.prepare("PRAGMA table_info(connected_accounts)").all() as Array<{ name: string }>;
+  if (!connectedAccountDrainingColumns.some((c) => c.name === "is_draining")) {
+    database.exec("ALTER TABLE connected_accounts ADD COLUMN is_draining INTEGER DEFAULT 0");
+  }
+
   const now = new Date().toISOString();
   // NOTE: We no longer seed global settings rows for 'policy' and 'strategyPrompt'.
   // These global rows are never read at runtime (all reads go through user_settings and

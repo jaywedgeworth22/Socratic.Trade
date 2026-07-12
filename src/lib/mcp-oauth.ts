@@ -1,4 +1,4 @@
-import { decryptValue, deleteInternalSetting, encryptValue, findInternalSettingByKeyLike, getDb, getInternalSetting, setInternalSetting } from "./db";
+import { decryptValue, deleteInternalSetting, encryptValue, getDb, getInternalSetting, setInternalSetting } from "./db";
 import { isLoopbackUrl, resolvePublicAppOrigin } from "./public-origin";
 export { resolvePublicAppOrigin } from "./public-origin";
 
@@ -8,16 +8,19 @@ export const ROBINHOOD_MCP_CALLBACK_PATH = "/api/auth/robinhood/callback";
 const LOCAL_DEFAULT_REDIRECT_URI = `http://localhost:3000${ROBINHOOD_MCP_CALLBACK_PATH}`;
 const DEFAULT_ROBINHOOD_MCP_RESOURCE = "https://agent.robinhood.com/mcp/trading";
 const DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26";
+const STATE_SETTING_PREFIX = "robinhood_mcp_oauth_state:";
+const STATE_RANDOM_BYTES = 32;
 
-// Per-user key builders.  The state key embeds the random part last so LIKE
-// queries can scan by prefix without exposing userId in the OAuth redirect URL.
+// Per-user key builders. The state key embeds the random part last without exposing userId in the
+// OAuth redirect URL. Callback recovery compares the canonical random value stored in the JSON blob
+// exactly; it never interprets state characters as a SQL pattern.
 //   token:  robinhood_mcp_oauth_token:<userId>
 //   state:  robinhood_mcp_oauth_state:<userId>:<randomPart>
 function tokenSettingKey(userId: string): string {
   return `robinhood_mcp_oauth_token:${userId}`;
 }
 function stateSettingKey(userId: string, randomPart: string): string {
-  return `robinhood_mcp_oauth_state:${userId}:${randomPart}`;
+  return `${STATE_SETTING_PREFIX}${userId}:${randomPart}`;
 }
 
 export interface McpOAuthClient {
@@ -105,7 +108,7 @@ function allowConfiguredLoopbackRedirect(): boolean {
 export async function buildMcpAuthorizationUrl(userId: string, options: BuildMcpAuthorizationUrlOptions = {}): Promise<string> {
   const config = await requireOAuthConfig(options);
   const client = await getOrRegisterClient(config);
-  const randomPart = randomBase64Url(32);
+  const randomPart = randomBase64Url(STATE_RANDOM_BYTES);
   const codeVerifier = randomBase64Url(64);
   const codeChallenge = await sha256Base64Url(codeVerifier);
 
@@ -129,35 +132,33 @@ export async function buildMcpAuthorizationUrl(userId: string, options: BuildMcp
   return url.toString();
 }
 
-/**
- * Recover a stored McpOAuthState by scanning for a settings row whose key
- * matches `robinhood_mcp_oauth_state:%:<randomPart>`.  The callback route
- * receives only `state` (the random part) with no session context, so we
- * scan by the random suffix which has 32 bytes of entropy.
- */
+/** Recover a state by exact stored-value equality. The callback carries no userId, so the small
+ * state namespace is scanned, but attacker-controlled `%`/`_` characters never become patterns. */
 export function findMcpOAuthStateByRandom(randomPart: string): { key: string; value: McpOAuthState } | undefined {
-  return findInternalSettingByKeyLike<McpOAuthState>(`robinhood_mcp_oauth_state:%:${randomPart}`);
+  if (!isCanonicalOAuthState(randomPart)) return undefined;
+  return findExactMcpOAuthState(randomPart);
 }
 
 export async function completeMcpOAuthCallback(input: {
   code: string;
   state: string;
-  /**
-   * The userId resolved from the browser session that hit the callback. When provided, it
-   * must match the userId the flow was initiated under (`stateBlob.userId`). This stops an
-   * attacker-initiated flow (state bound to the attacker) from being completed in a victim's
-   * session — i.e. binding a freshly-minted broker token under the wrong userId. OAuth
-   * provider callbacks may arrive without app-session identity, so callers can omit this
-   * and bind by the one-time server-side state row alone.
-   */
+  /** The userId from a separately verified app session cookie, when the callback browser has one. */
   expectedUserId?: string;
 }): Promise<McpOAuthTokens> {
-  // Recover the state blob by scanning on the random suffix — the redirect carries only the
-  // random `state`, not the userId (the userId is never placed in the OAuth redirect URL).
-  const found = findMcpOAuthStateByRandom(input.state);
+  // Validate before any DB work, then atomically claim the exact state row. The immediate
+  // transaction serializes concurrent callback attempts across SQLite connections; only one can
+  // observe and delete the row. State remains the primary binding when no app session cookie is
+  // present, which OAuth provider callbacks must support.
+  if (!isCanonicalOAuthState(input.state)) {
+    throw new Error("Robinhood MCP OAuth state was not found or already used.");
+  }
+  const found = consumeExactMcpOAuthState(input.state);
   if (!found) throw new Error("Robinhood MCP OAuth state was not found or already used.");
-  const { key: stateKey, value: stateBlob } = found;
-  deleteInternalSetting(stateKey);
+  const { value: stateBlob } = found;
+
+  if (stateBlob.state !== input.state) {
+    throw new Error("Robinhood MCP OAuth state was not found or already used.");
+  }
 
   // Cross-check the completing session against the initiating session. The state row is
   // consumed above regardless, so a mismatched attempt can't be retried with the same state.
@@ -298,16 +299,18 @@ export function clearMcpOAuthTokens(userId: string): void {
   deleteInternalSetting(tokenSettingKey(userId));
 }
 
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
-}
-
 export function clearMcpOAuthForUser(userId: string): { tokenDeleted: number; stateDeleted: number } {
   const db = getDb();
   const tokenDeleted = db.prepare("DELETE FROM settings WHERE key = ?").run(tokenSettingKey(userId)).changes;
-  const stateDeleted = db
-    .prepare("DELETE FROM settings WHERE key LIKE ? ESCAPE '\\'")
-    .run(`robinhood_mcp_oauth_state:${escapeLike(userId)}:%`).changes;
+  const stateDeleted = db.transaction(() => {
+    const deleteRow = db.prepare("DELETE FROM settings WHERE key = ?");
+    let deleted = 0;
+    for (const row of listMcpOAuthStateRows()) {
+      const parsed = parseMcpOAuthStateRow(row);
+      if (parsed?.value.userId === userId) deleted += deleteRow.run(parsed.key).changes;
+    }
+    return deleted;
+  }).immediate();
   return { tokenDeleted, stateDeleted };
 }
 
@@ -547,4 +550,69 @@ function base64Url(input: Uint8Array): string {
   let binary = "";
   for (const byte of input) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+interface StoredSettingRow {
+  key: string;
+  value: string;
+}
+
+function listMcpOAuthStateRows(): StoredSettingRow[] {
+  // `substr = prefix` is an exact comparison, not a wildcard pattern. OAuth state volume is tiny
+  // and short-lived, so scanning this namespace avoids putting the userId in the redirect URL or
+  // maintaining a second lookup row that could drift from the state blob.
+  return getDb()
+    .prepare("SELECT key, value FROM settings WHERE substr(key, 1, ?) = ?")
+    .all(STATE_SETTING_PREFIX.length, STATE_SETTING_PREFIX) as StoredSettingRow[];
+}
+
+function parseMcpOAuthStateRow(row: StoredSettingRow): { key: string; value: McpOAuthState } | undefined {
+  try {
+    const value = JSON.parse(row.value) as Partial<McpOAuthState>;
+    if (
+      typeof value.state !== "string" ||
+      typeof value.userId !== "string" ||
+      typeof value.codeVerifier !== "string" ||
+      typeof value.redirectUri !== "string" ||
+      typeof value.createdAt !== "string" ||
+      row.key !== stateSettingKey(value.userId, value.state)
+    ) {
+      return undefined;
+    }
+    return { key: row.key, value: value as McpOAuthState };
+  } catch {
+    return undefined;
+  }
+}
+
+function findExactMcpOAuthState(randomPart: string): { key: string; value: McpOAuthState } | undefined {
+  const matches = listMcpOAuthStateRows()
+    .map(parseMcpOAuthStateRow)
+    .filter((row): row is { key: string; value: McpOAuthState } => row?.value.state === randomPart);
+  // A collision should be cryptographically infeasible. Fail closed rather than selecting an
+  // arbitrary owner if the DB is corrupt or manually seeded with duplicate state values.
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function consumeExactMcpOAuthState(randomPart: string): { key: string; value: McpOAuthState } | undefined {
+  const db = getDb();
+  return db.transaction(() => {
+    const found = findExactMcpOAuthState(randomPart);
+    if (!found) return undefined;
+    if (db.prepare("DELETE FROM settings WHERE key = ?").run(found.key).changes !== 1) return undefined;
+    return found;
+  }).immediate();
+}
+
+function isCanonicalOAuthState(value: string): boolean {
+  const expectedLength = Math.ceil((STATE_RANDOM_BYTES * 8) / 6);
+  if (value.length !== expectedLength || !/^[A-Za-z0-9_-]+$/.test(value)) return false;
+  try {
+    const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return bytes.length === STATE_RANDOM_BYTES && base64Url(bytes) === value;
+  } catch {
+    return false;
+  }
 }

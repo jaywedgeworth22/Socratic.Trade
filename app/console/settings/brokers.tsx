@@ -223,14 +223,15 @@ export function BrokerAccountsCard() {
                 title="Load this account — the whole console rescopes to it."
                 onClick={async () => {
                   setBusy(account.id);
+                  let reloading = false;
                   try {
                     await activateAccount(account.id);
-                    await refresh();
-                    toast.push("info", "Account loaded", `Switched to ${account.label || brokerName(account.broker)}.`);
+                    reloading = true;
+                    window.location.reload();
                   } catch (error) {
                     toast.push("neg", "Could not load", error instanceof ConsoleApiError ? error.message : String(error));
                   } finally {
-                    setBusy(null);
+                    if (!reloading) setBusy(null);
                   }
                 }}
               >

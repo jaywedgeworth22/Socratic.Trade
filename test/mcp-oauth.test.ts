@@ -119,12 +119,39 @@ describe("mcp oauth", () => {
     expect(resolveMcpOAuthRedirectUri(request)).toBe("https://broker.example.test/api/auth/robinhood/callback");
   });
 
-  it("derives a public https callback from x-forwarded-host when the app sees localhost internally", async () => {
+  it("keeps the local callback in development instead of trusting x-forwarded-host", async () => {
     vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "http://localhost:4000/api/auth/robinhood/callback");
     const { resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
 
     const request = new Request("http://localhost:4000/api/auth/robinhood/start", {
       headers: { "x-forwarded-host": "socratictrade.com" }
+    });
+
+    expect(resolveMcpOAuthRedirectUri(request)).toBe("http://localhost:4000/api/auth/robinhood/callback");
+  });
+
+  it("does not let an untrusted forwarded host choose the OAuth callback origin", async () => {
+    const { resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
+    const request = new Request("http://localhost:4000/api/auth/robinhood/start", {
+      headers: {
+        host: "localhost:4000",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "https"
+      }
+    });
+
+    expect(resolveMcpOAuthRedirectUri(request)).toBe("http://localhost:4000/api/auth/robinhood/callback");
+  });
+
+  it("uses the canonical production fallback when forwarded host is untrusted", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
+    const request = new Request("http://localhost:4000/api/auth/robinhood/start", {
+      headers: {
+        host: "localhost:4000",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "https"
+      }
     });
 
     expect(resolveMcpOAuthRedirectUri(request)).toBe("https://socratictrade.com/api/auth/robinhood/callback");
@@ -323,6 +350,50 @@ describe("mcp oauth", () => {
     expect(found).toBeTruthy();
     expect(found!.value.userId).toBe("user-a");
     expect(found!.key).toMatch(/^robinhood_mcp_oauth_state:user-a:/);
+  });
+
+  it("treats base64url underscore as data, never as a SQL wildcard", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    const { buildMcpAuthorizationUrl, findMcpOAuthStateByRandom } = await import("../src/lib/mcp-oauth");
+
+    const urlStr = await buildMcpAuthorizationUrl("user-a");
+    const state = new URL(urlStr).searchParams.get("state")!;
+    const replacementIndex = [...state.slice(0, -1)].findIndex((character) => character !== "_");
+    expect(replacementIndex).toBeGreaterThanOrEqual(0);
+    const wildcardLookalike = `${state.slice(0, replacementIndex)}_${state.slice(replacementIndex + 1)}`;
+
+    expect(wildcardLookalike).not.toBe(state);
+    expect(findMcpOAuthStateByRandom(wildcardLookalike)).toBeUndefined();
+    expect(findMcpOAuthStateByRandom(`%${state.slice(1)}`)).toBeUndefined();
+    expect(findMcpOAuthStateByRandom(state)?.value.userId).toBe("user-a");
+  });
+
+  it("atomically consumes state so concurrent callbacks exchange only one code", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://auth.example.test/authorize");
+    vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
+    vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
+    let exchanges = 0;
+    vi.stubGlobal("fetch", async () => {
+      exchanges += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(JSON.stringify({ access_token: "once", token_type: "Bearer" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const { buildMcpAuthorizationUrl, completeMcpOAuthCallback, getStoredMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    const state = new URL(await buildMcpAuthorizationUrl("user-a")).searchParams.get("state")!;
+
+    const results = await Promise.allSettled([
+      completeMcpOAuthCallback({ code: "code-a", state }),
+      completeMcpOAuthCallback({ code: "code-b", state })
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(exchanges).toBe(1);
+    expect(getStoredMcpOAuthTokens("user-a")?.accessToken).toBe("once");
   });
 
   it("isolates tokens per user — user-b cannot read user-a token", async () => {
