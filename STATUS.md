@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-11 — Fleet-procedure skills: land-lane/unstick-pr/codex-triage/pickup-seat/deploy-verify (CLAUDE, branch `claude/fleet-skills`)
+
+Owner-directed: encoded five pickup-era fleet procedures as on-demand Claude Code skills under
+`.claude/skills/` (`land-lane`, `unstick-pr`, `codex-triage`, `pickup-seat`, `deploy-verify`)
+instead of re-spelling them per-prompt. `.gitignore` now carves out `!.claude/skills/` from the
+otherwise-ignored `.claude/` directory (per-agent local settings/hooks stay ignored) so these five
+files are tracked. Skills are Claude Code-only — cross-agent rules remain in `AGENTS.md`, which
+every skill cites as canon alongside the relevant rollout notes. Rollout:
+`docs/rollouts/2026-07-10-fleet-procedure-skills.md`.
+
 ## 2026-07-11 — Team display names back to Green Team / Red Team (CLAUDE, branch `claude/team-names-green-red`)
 
 Owner-directed copy rename: console UI had drifted to "Proposer"/"Reviewer" for the two team
