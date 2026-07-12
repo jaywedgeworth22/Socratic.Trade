@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-12 — Merge origin/main, resolve .gitignore conflict (CLAUDE, branch `claude/fleet-skills`)
+
+Merged latest `origin/main` to resolve CONFLICTING merge state on PR #1470. Only conflict was
+`.gitignore` (PR branch tracks `!.claude/skills/`, main had the old blanket `.claude/` ignore —
+kept PR branch version). All Codex review threads were already resolved; no new findings to
+address. Verify trio: tsc clean, 349 files / 3896 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-12-codex-triage-fleet-skills.md`.
+
 ## 2026-07-11 — Fleet-procedure skills: land-lane/unstick-pr/codex-triage/pickup-seat/deploy-verify (CLAUDE, branch `claude/fleet-skills`)
 
 Owner-directed: encoded five pickup-era fleet procedures as on-demand Claude Code skills under
