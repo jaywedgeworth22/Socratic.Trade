@@ -256,10 +256,10 @@ async function validatePolicy(
   // which control to change.
   if (options.enforceInteractiveReasoningRule ?? true) {
     if (isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort)) {
-      return "Proposer (green team): gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
+      return "Green Team: gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
     }
     if (isDisallowedInteractiveStrategyReasoningConfig(policy.redTeamLlmModel, resolveReviewerReasoningEffort(policy))) {
-      return "Reviewer (red team): gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
+      return "Red Team: gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
     }
   }
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";

@@ -95,15 +95,15 @@ const GLOSSARY: GlossaryGroup[] = [
       },
       {
         term: "Green team (strategist)",
-        aliases: "proposer bull llmModel",
+        aliases: "proposer bull llmModel green team",
         definition:
-          "The LLM that writes trade proposals from the scan evidence and your written strategy instructions. Its model is the 'Proposer' pick under Framework → Models."
+          "The LLM that writes trade proposals from the scan evidence and your written strategy instructions. Its model is the 'Green Team' pick under Framework → Models."
       },
       {
         term: "Red team (reviewer)",
-        aliases: "bear reviewer redTeamLlmModel debate",
+        aliases: "bear reviewer redTeamLlmModel debate red team",
         definition:
-          "An adversarial second model that argues against high-conviction ideas before they reach you (or the broker). A veto or downgrade is recorded with the proposal. Optional — blank means the strategist model reviews itself."
+          "An adversarial second model that reviews every risk-adding opening at its final size, fact-checking the rationale against the same evidence the Green Team saw. A veto or half-size downgrade is recorded with the proposal. Blank = not configured — openings route to human approval instead of auto-executing (it never silently self-reviews)."
       },
       {
         term: "Conviction",
