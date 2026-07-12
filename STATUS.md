@@ -11,6 +11,23 @@ Tested via `vitest` (3896 tests) and `next build`. Rollout: `docs/rollouts/2026-
 
 Resolved test regressions in `test/dashboard-feed.test.ts` and `test/connection-health-routing.test.ts` by correctly accounting for feed-storm coalescing (using distinct ticker symbols to prevent identical rows from being grouped) and the new `storage_warning` skip-set logic (which intentionally suppresses duplicate `notification_events` when handled directly by the audit logger). Additionally, completed a full sweep of `broker-protective-stops.ts` to ensure `connectedAccountId` is properly provided to all remaining `audit()` calls, fixing the attribution bugs identified in the activity log review. Verified via a full test suite run. Rollout: `docs/rollouts/2026-07-12-bug-fixes.md`.
 
+## 2026-07-12 — Merge origin/main, resolve .gitignore conflict (CLAUDE, branch `claude/fleet-skills`)
+
+Merged latest `origin/main` to resolve CONFLICTING merge state on PR #1470. Only conflict was
+`.gitignore` (PR branch tracks `!.claude/skills/`, main had the old blanket `.claude/` ignore —
+kept PR branch version). All Codex review threads were already resolved; no new findings to
+address. Verify trio: tsc clean, 349 files / 3896 tests passed, build clean.
+Rollout: `docs/rollouts/2026-07-12-codex-triage-fleet-skills.md`.
+
+## 2026-07-11 — Fleet-procedure skills: land-lane/unstick-pr/codex-triage/pickup-seat/deploy-verify (CLAUDE, branch `claude/fleet-skills`)
+
+Owner-directed: encoded five pickup-era fleet procedures as on-demand Claude Code skills under
+`.claude/skills/` (`land-lane`, `unstick-pr`, `codex-triage`, `pickup-seat`, `deploy-verify`)
+instead of re-spelling them per-prompt. `.gitignore` now carves out `!.claude/skills/` from the
+otherwise-ignored `.claude/` directory (per-agent local settings/hooks stay ignored) so these five
+files are tracked. Skills are Claude Code-only — cross-agent rules remain in `AGENTS.md`, which
+every skill cites as canon alongside the relevant rollout notes. Rollout:
+`docs/rollouts/2026-07-10-fleet-procedure-skills.md`.
 ## 2026-07-11 — Native iOS App Overhaul (Antigravity, branch `agent/antigravity`)
 
 Completely replaced the legacy iOS starter app with a modern SwiftUI application (`ios/`). Initialized via `xcodegen`. Built `AuthenticationView` for OAuth via `ASWebAuthenticationSession` with secure token handoff via the `/api/mobile/auth-redirect` route and `socratictrade://` URL scheme. Implemented `MobileStore` and `MobileAPIClient` for persistence and cookie injection. Built tabbed views: Dashboard, Proposals, and Watchlist. Assessed Cloudflare hosting for the mobile backend vs. Hetzner, deciding to keep it on Hetzner to avoid database splitting. Verified via `xcodebuild`. Ready to land. Rollout: `docs/rollouts/2026-07-11-native-ios-app.md`.
