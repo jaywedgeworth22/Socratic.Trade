@@ -32,8 +32,8 @@ export function EquityChart({ points, label }: { points: EquityCurvePoint[]; lab
 
   const tMin = data[0].t;
   const tMax = data[data.length - 1].t;
-  let vMin = Math.min(...data.map((d) => d.v));
-  let vMax = Math.max(...data.map((d) => d.v));
+  let vMin = data.reduce((min, d) => (d.v < min ? d.v : min), Infinity);
+  let vMax = data.reduce((max, d) => (d.v > max ? d.v : max), -Infinity);
   // A near-flat curve (e.g. equity barely moved) would otherwise fill the whole
   // vertical range with noise, making a trivial wiggle look like a big swing.
   // Enforce a floor of ±0.5% around the data's own midpoint — real values are

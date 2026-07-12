@@ -742,12 +742,27 @@ function brokerOrderTitle(order: EquityOrder): string {
   const side = order.side.toUpperCase();
   const symbol = normalizeSymbol(order.symbol);
   if (order.state === "filled") return `Order Filled: ${side} ${symbol}`;
+
   if (order.state === "partially_filled") return `Order Partially Filled: ${side} ${symbol}`;
   if (isTerminalBrokerState(order.state)) return `Order ${readableBrokerState(order.state)}: ${side} ${symbol}`;
   return `Order Submitted: ${side} ${symbol}`;
 }
 
 import { feedStatusLabel, formatNotificationDisplay, notificationStatusLabel, notificationTypeLabel } from "./dashboard-ui";
+
+const KNOWN_GLOBAL_AUDIT_KINDS = new Set([
+  "vector_store",
+  "notify.sent",
+  "notify.error",
+  "congress_share_daily",
+  "market_scan_failed",
+  "regime_flip",
+  "storage_warning_alert",
+  "connection_health_alert",
+  "consent",
+  "prefs",
+  "daily_cleanup"
+]);
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -763,6 +778,7 @@ export interface UnifiedActivitySubEvent {
   status?: string;
   error?: string;
   raw?: unknown;
+  count?: number;
 }
 
 export interface UnifiedActivityGroup {
@@ -781,6 +797,7 @@ export interface UnifiedActivityGroup {
   events: UnifiedActivitySubEvent[];
   connectedAccountId?: string;
   accountLabel?: string;
+  count?: number;
 }
 
 /** Source-level cap on the PROPOSAL-LESS unified-feed tail (fills with no proposal + notifications),
@@ -888,7 +905,22 @@ export function buildUnifiedFeed(input: {
     if (side) sideByGroupId.set(groupId, side);
     if (event.connectedAccountId) accountIdByGroupId.set(groupId, event.connectedAccountId);
 
-    addSubEvent(groupId, subEvent);
+    // P3 #1: Coalesce consecutive identical audit events (feed storm resilience)
+    const existingGroup = groupEvents[groupId];
+    const lastSubEvent = existingGroup ? existingGroup[existingGroup.length - 1] : undefined;
+    if (
+      lastSubEvent &&
+      lastSubEvent.type === "audit" &&
+      (lastSubEvent.raw as any)?.kind === event.kind &&
+      lastSubEvent.detail === feed.detail
+    ) {
+      lastSubEvent.count = (lastSubEvent.count ?? 1) + 1;
+      // Bring timestamp forward to most recent
+      lastSubEvent.createdAt = event.createdAt;
+      lastSubEvent.id = event.id;
+    } else {
+      addSubEvent(groupId, subEvent);
+    }
   }
 
   // 2. Process Notification Events
@@ -1005,13 +1037,19 @@ export function buildUnifiedFeed(input: {
     const side = sideByGroupId.get(groupId);
     const companyName = symbol ? symbolMetaBySymbol[symbol]?.companyName : undefined;
     const connectedAccountId = accountIdByGroupId.get(groupId);
-    const accountLabel = connectedAccountId ? accountLabelById[connectedAccountId] : undefined;
+    let accountLabel = connectedAccountId ? accountLabelById[connectedAccountId] : undefined;
 
     const tagsSet = new Set<string>();
     for (const ev of events) {
+      if (ev.count && ev.count > 1) {
+        ev.title = `${ev.title} (x${ev.count})`;
+      }
       if (ev.type === "audit") {
         const rawAud = asRecord(ev.raw);
         const audKind = stringValue(rawAud.kind) ?? "";
+        if (!accountLabel && KNOWN_GLOBAL_AUDIT_KINDS.has(audKind)) {
+          accountLabel = "System-wide";
+        }
         if (audKind === "policy_change" || audKind === "profile_change") {
           tagsSet.add("policy change");
         }
@@ -1194,16 +1232,37 @@ export function buildUnifiedFeed(input: {
     });
   }
 
-  // Bound the shipped payload WITHOUT changing observable output. The client uses this feed two ways:
-  // (1) it renders only the newest 50 (`feed.slice(0, 50)`), and (2) `decisionLedgerItems` reconciles
-  // fill/order-derived statuses for up to 100 recent proposals from it. So we keep EVERY
-  // proposal-bearing group (reconciliation must stay complete) and cap only the proposal-less tail
-  // (fills without a proposal + notifications), which is render-only. Because any proposal-less group
-  // in the newest 50 is necessarily within the newest 60 proposal-less groups, the rendered newest-50
-  // is unchanged; only the far, render-invisible tail is trimmed.
+  // Bound the shipped payload WITHOUT changing observable output.
   const sorted = unifiedGroups.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const withProposal = sorted.filter((g) => g.proposalId);
-  const withoutProposal = sorted.filter((g) => !g.proposalId).slice(0, UNIFIED_FEED_MAX_GROUPS);
+
+  // Feed-storm coalescing: merge adjacent identical proposal-less groups
+  const coalesced: UnifiedActivityGroup[] = [];
+  for (const group of sorted) {
+    const prev = coalesced[coalesced.length - 1];
+    if (
+      prev &&
+      !prev.proposalId &&
+      !group.proposalId &&
+      prev.title === group.title &&
+      prev.status === group.status &&
+      prev.accountLabel === group.accountLabel &&
+      Math.abs(new Date(prev.updatedAt).getTime() - new Date(group.updatedAt).getTime()) < 24 * 60 * 60 * 1000
+    ) {
+      prev.count = (prev.count || 1) + 1;
+      prev.events.push(...group.events);
+    } else {
+      coalesced.push(group);
+    }
+  }
+
+  for (const group of coalesced) {
+    if (group.count && group.count > 1) {
+      group.title = `${group.title} (x${group.count})`;
+    }
+  }
+
+  const withProposal = coalesced.filter((g) => g.proposalId);
+  const withoutProposal = coalesced.filter((g) => !g.proposalId).slice(0, UNIFIED_FEED_MAX_GROUPS);
   return [...withProposal, ...withoutProposal].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
