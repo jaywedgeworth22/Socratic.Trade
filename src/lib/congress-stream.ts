@@ -185,9 +185,19 @@ export async function connectOnce(): Promise<void> {
     if (res.status === 429) {
       const retryAfter = res.headers.get("retry-after");
       if (retryAfter) {
+        // RFC 7231 §7.1.3: Retry-After can be delta-seconds or HTTP-date
         const parsed = parseInt(retryAfter, 10);
         if (!isNaN(parsed) && parsed > 0) {
           retryMsg = ` (Retry-After: ${parsed})`;
+        } else {
+          // Try HTTP-date format, e.g. "Wed, 21 Oct 2015 07:28:00 GMT"
+          const httpDate = Date.parse(retryAfter);
+          if (!isNaN(httpDate)) {
+            const seconds = Math.ceil((httpDate - Date.now()) / 1000);
+            if (seconds > 0) {
+              retryMsg = ` (Retry-After: ${seconds})`;
+            }
+          }
         }
       }
     }
