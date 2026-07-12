@@ -1,5 +1,16 @@
 # Current Status
 
+## 2026-07-11 — Team display names back to Green Team / Red Team (CLAUDE, branch `claude/team-names-green-red`)
+
+Owner-directed copy rename: console UI had drifted to "Proposer"/"Reviewer" for the two team
+seats; all user-visible labels now lead with Green Team / Red Team (Framework page model pickers +
+hints + fallback field + provider line + save-error titles, model-stats drawer, results veto
+columns, policy-route rejection copy, llm-required message, approval-card trigger title, settings
+help). Display strings only — internal identifiers/API fields/LLM prompts untouched. Rode along:
+fixed the help definition that still claimed a blank Red Team "reviews itself" (wrong since the
+single-adversary consolidation — blank fails closed to human approval). tsc clean; focused tests
+green. Rollout: `docs/rollouts/2026-07-11-team-names-green-red.md`.
+
 ## 2026-07-11 — Metadata routes were auth-gated in prod (CLAUDE, follow-up to /framework page)
 
 Live verification of the deployed /framework hardening (PR #1460, `0f894d16` — edge WAF 403s
