@@ -170,8 +170,8 @@ export function logApiHealth(opts: {
       // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.
       const lane = getLaneHealth(opts.service, keySource, opts.userId ?? null);
       const isRateLimit = /429|rate limit/i.test(opts.errorText);
-      if (lane.stoppedWorking && !isRateLimit) {
-        void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText);
+      if (lane.stoppedWorking) {
+        void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText, { skipSentry: isRateLimit });
       }
     }
   } catch {
@@ -428,7 +428,8 @@ export async function alertConnectionFailure(
   service: string,
   keySource: string | null,
   userId: string | null,
-  errorText: string
+  errorText: string,
+  opts?: { skipSentry?: boolean }
 ): Promise<void> {
   try {
     const targetUserId = userId || "local";
@@ -464,12 +465,14 @@ export async function alertConnectionFailure(
     audit("connection_health_alert", payload, targetUserId);
 
     // Send Sentry event
-    await captureHealthSentryMessage(isGlobal ? "error" : "warning", title, {
-      service,
-      keySource: actualKeySource,
-      userSpecific: !isGlobal,
-      reason: errorText
-    });
+    if (!opts?.skipSentry) {
+      await captureHealthSentryMessage(isGlobal ? "error" : "warning", title, {
+        service,
+        keySource: actualKeySource,
+        userSpecific: !isGlobal,
+        reason: errorText
+      });
+    }
 
     if (isGlobal) {
       // Global failures: Route to admin email and health.
