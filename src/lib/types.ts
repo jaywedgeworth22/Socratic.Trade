@@ -1483,6 +1483,16 @@ export interface MarketQuote {
   targetHigh?: number;
   targetLow?: number;
   targetMedian?: number;
+  returnOnEquity?: number;
+  returnOnAssets?: number;
+  revenueGrowth?: number;
+  freeCashFlowYield?: number;
+  grossProfitMargin?: number;
+  congressTradesQuiver?: number;
+  insiderTradesQuiver?: number;
+  govContractsQuiver?: number;
+  lobbyingQuiver?: number;
+  patentsQuiver?: number;
   /** Cross-sectional: this name's intraday % move minus the average move of its sector among
    *  the scan candidates. >0 = outperforming its sector today (relative strength). Computed in-house. */
   sectorRelStrength?: number;
@@ -1624,6 +1634,16 @@ export interface MarketQuoteSummary {
   targetHigh?: number;
   targetLow?: number;
   targetMedian?: number;
+  congressTradesQuiver?: number;
+  insiderTradesQuiver?: number;
+  govContractsQuiver?: number;
+  lobbyingQuiver?: number;
+  patentsQuiver?: number;
+  returnOnEquity?: number;
+  returnOnAssets?: number;
+  revenueGrowth?: number;
+  freeCashFlowYield?: number;
+  grossProfitMargin?: number;
   syntheticBid?: boolean;
   syntheticAsk?: boolean;
   evidenceBulletins?: string[];
