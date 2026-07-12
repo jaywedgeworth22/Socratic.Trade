@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-11 — Metadata routes were auth-gated in prod (CLAUDE, follow-up to /framework page)
+
+Live verification of the deployed /framework hardening (PR #1460, `0f894d16` — edge WAF 403s
+scraper UAs, prose absent from HTML, noai/TDMRep headers live, content API gated) surfaced a
+pre-existing production gap: `middleware.ts` auth-gated `/robots.txt`, `/sitemap.xml`, and
+`/manifest.webmanifest` (anonymous 307 → /login), so robots/noai rules never reached crawlers —
+a redirected robots.txt parses as "no rules". Fix: the three metadata paths added to
+PUBLIC_PREFIXES + regression test (auth armed → 200). Rollout (appended):
+`docs/rollouts/2026-07-11-framework-page.md`.
+
 ## 2026-07-11 — Trading-framework doc + public /framework page + AI-scrape hardening (CLAUDE, branch `claude/trading-framework-docs-713061`)
 
 Owner-requested framework explainer shipped three ways: (1) `docs/trading-framework.md` — net-new
