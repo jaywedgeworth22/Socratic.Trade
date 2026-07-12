@@ -6,12 +6,13 @@
  *  header repeats the scope. Presets are copy-not-link and can never arm or
  *  disarm anything (server-enforced). */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Lock, Unlock } from "lucide-react";
 import type { LlmReasoningEffort, ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
 import { isDisallowedInteractiveStrategyReasoningConfig, reasoningCapabilityForModel } from "@/lib/llm-request";
 import { reasoningAdviceForModel } from "@/lib/model-reasoning-recommendations";
+import type { DashboardSnapshot } from "../../dashboard-types";
 import {
   normalizeReasoningValueForControl,
   reasoningControlForModels,
@@ -25,6 +26,9 @@ import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED, 
 import {
   activateProfile,
   copyProfileToAccount,
+  fetchLatestTuneReview,
+  importAccountSettings,
+  resolveTuneReview,
   savePolicy,
   tuneStrategy,
   ConsoleApiError,
@@ -44,6 +48,7 @@ import { TaxSettingsCard } from "./tax-settings";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput, Tooltip } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
+import { Sheet } from "../ui/sheet";
 
 /** Shipped default weights (src/lib/defaults.ts) — shown as ghost reference. */
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -515,6 +520,9 @@ function AccountScopedStrategyPage() {
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           for {reality.account?.label ?? "no connected account"} — each account has its own strategy
         </span>
+        <div className="ml-auto">
+          <ImportFromAccountControl snapshot={snapshot} policy={policy} currentLabel={reality.account?.label} />
+        </div>
       </div>
 
       {/* Prompt */}
@@ -668,15 +676,17 @@ function AccountScopedStrategyPage() {
             hint="Comma-separated model IDs. If the primary Green Team model hits a transient error (e.g. rate limit, timeout), these models are tried in order. Does not apply to the Red Team."
             htmlFor="llm-fallback-models"
           >
-            <div className="flex items-center gap-3 max-w-xl">
-              <TextInput
-                id="llm-fallback-models"
-                value={localFallbackModels ?? (policy.llmFallbackModels || []).join(", ")}
-                placeholder="e.g. gpt-4o, claude-3-5-sonnet-20240620"
-                onChange={(e) => setLocalFallbackModels(e.target.value)}
-                onBlur={commitFallbackModels}
-                disabled={autoSaveFallback.saving}
-              />
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <TextInput
+                  id="llm-fallback-models"
+                  value={localFallbackModels ?? (policy.llmFallbackModels || []).join(", ")}
+                  placeholder="e.g. gpt-4o, claude-3-5-sonnet-20240620"
+                  onChange={(e) => setLocalFallbackModels(e.target.value)}
+                  onBlur={commitFallbackModels}
+                  disabled={autoSaveFallback.saving}
+                />
+              </div>
               <SaveStatus status={autoSaveFallback.status} />
             </div>
           </Field>
@@ -827,6 +837,94 @@ function AccountScopedStrategyPage() {
   );
 }
 
+// ── Import settings from another account ────────────────────────────────────
+
+/** Header affordance: copy this account's ENTIRE strategy config (models, prompt, guardrails,
+ *  weights, watchlist, tax treatment) from any other connected account. Any->any — never
+ *  paper-only — and never touches broker connection, credentials, or run state (server-enforced,
+ *  see importAccountSettings). Hidden entirely when there's no other account to copy from. */
+function ImportFromAccountControl({
+  snapshot,
+  policy,
+  currentLabel
+}: {
+  snapshot: DashboardSnapshot;
+  policy: TradingPolicy;
+  currentLabel?: string;
+}) {
+  const { refresh } = useConsoleData();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [sourceId, setSourceId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const otherAccounts = snapshot.connectedAccounts.filter((a) => a.id !== policy.connectedAccountId);
+  if (otherAccounts.length === 0) return null;
+
+  const source = otherAccounts.find((a) => a.id === sourceId) ?? null;
+  const closeSheet = () => {
+    setOpen(false);
+    setSourceId("");
+  };
+
+  const doImport = async () => {
+    if (!source || !policy.connectedAccountId) return;
+    setBusy(true);
+    try {
+      await importAccountSettings(policy.connectedAccountId, source.id);
+      await refresh();
+      toast.push("pos", "Settings imported", `Copied strategy settings from “${source.label}” onto this account.`);
+      closeSheet();
+    } catch (error) {
+      toast.push("neg", "Import failed", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Btn size="sm" onClick={() => setOpen(true)} title="Copy strategy settings from another connected account onto this one.">
+        Import from account…
+      </Btn>
+      <Sheet open={open} onClose={closeSheet} title="Import settings from another account">
+        <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+          Copies strategy settings — models, prompt, guardrails, weights, watchlist, tax treatment — from another
+          connected account onto {currentLabel ? `“${currentLabel}”` : "this account"}. Does not touch broker
+          connection, credentials, or run state.
+        </p>
+        <Field label="Source account" htmlFor="import-source-account">
+          <Select id="import-source-account" value={sourceId} onChange={(e) => setSourceId(e.target.value)} disabled={busy}>
+            <option value="">Choose an account…</option>
+            {otherAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.label} ({account.broker} · {account.environment})
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {source && (
+          <div className="mt-4 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3">
+            <p className="mb-2 text-[length:var(--con-fs-xs)] leading-relaxed">
+              Copies strategy settings — models, prompt, guardrails, weights, watchlist, tax treatment — from
+              “{source.label}” onto {currentLabel ? `“${currentLabel}”` : "this account"}. Does not touch broker
+              connection, credentials, or run state.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" size="sm" disabled={busy} onClick={() => setSourceId("")}>
+                Cancel
+              </Btn>
+              <Btn variant="primary" size="sm" disabled={busy} onClick={() => void doImport()}>
+                {busy ? "Importing…" : "Import settings"}
+              </Btn>
+            </div>
+          </div>
+        )}
+      </Sheet>
+    </>
+  );
+}
+
 // ── AI review (#12) ──────────────────────────────────────────────────────────
 
 interface ReviewChange {
@@ -941,8 +1039,39 @@ function AiReviewPanel({
   const [reviewReasoning, setReviewReasoning] = useState<LlmReasoningEffort | undefined>(undefined);
   const [busy, setBusy] = useState<"review" | "apply" | null>(null);
   const [review, setReview] = useState<StrategyTuneResult | null>(null);
+  // Id of the persisted review row (from the POST response or a restored review) — passed to
+  // resolveTuneReview so Apply/Discard/dismiss keep the server's record in sync. Null for a review
+  // this session generated but the server hasn't (yet) told us an id for, or once resolved.
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  // Set only when `review` came from fetchLatestTuneReview (not a fresh generate() in this
+  // session) — drives the "Restored unapplied review…" banner. Cleared on dismiss/apply/discard.
+  const [restoredBanner, setRestoredBanner] = useState<{ createdAt: string; model: string } | null>(null);
   const [typed, setTyped] = useState("");
   useUnsavedChanges(review !== null);
+
+  // Restore an unapplied review on mount (e.g. after a reload or lost connection before Apply) —
+  // scoped to THIS account. Resilient by construction: fetchLatestTuneReview swallows its own
+  // errors and resolves null (the server contract may not exist yet / this is a nice-to-have, never
+  // a blocking requirement), and the `reviewRef` guard skips restoring over a review the user
+  // already started generating in the brief window before this resolves.
+  const reviewRef = useRef(review);
+  useEffect(() => {
+    reviewRef.current = review;
+  }, [review]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchLatestTuneReview(policy.connectedAccountId).then((restored) => {
+      if (cancelled || !restored || reviewRef.current !== null) return;
+      setReview(restored.result);
+      setReviewId(restored.id);
+      setModel(restored.model ?? "");
+      if (restored.reasoningEffort) setReviewReasoning(restored.reasoningEffort);
+      setRestoredBanner({ createdAt: restored.createdAt, model: restored.model || "local rules (no LLM)" });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [policy.connectedAccountId]);
 
   // The rotation sentinel is not a callable model — when a rotating seat would be inherited,
   // fall through to the next concrete choice (AI review runs once, outside the per-run rotation).
@@ -973,11 +1102,28 @@ function AiReviewPanel({
   const hasLooser = changes.some((c) => c.direction === "looser");
   const needsTyped = reality.tone === "live" && hasLooser && policy.requireTypedConfirmation !== false;
 
+  // Best-effort server-side resolve — never blocks or throws into the caller. A failed resolve
+  // just means the review may resurface as "restored" on next load, which is a safe (non-destructive)
+  // fallback rather than a reason to hold up the UI the user is actively dismissing/applying.
+  const resolveReviewSilently = (id: string, status: "applied" | "dismissed") => {
+    resolveTuneReview(id, status).catch(() => {});
+  };
+
+  const discard = () => {
+    if (reviewId) resolveReviewSilently(reviewId, "dismissed");
+    setReview(null);
+    setReviewId(null);
+    setRestoredBanner(null);
+    setTyped("");
+  };
+
   const generate = async () => {
     setBusy("review");
     try {
-      const result = await tuneStrategy(model || undefined, reviewerReasoningValue);
+      const result = await tuneStrategy(model || undefined, reviewerReasoningValue, policy.connectedAccountId);
       setReview(result);
+      setReviewId(result.reviewId ?? null);
+      setRestoredBanner(null);
       setTyped("");
     } catch (error) {
       toast.push("neg", "Review failed", error instanceof ConsoleApiError ? error.message : String(error));
@@ -1003,7 +1149,10 @@ function AiReviewPanel({
         ...(patch.prompt ? { strategyPrompt: patch.prompt } : {})
       }, policy.connectedAccountId);
       await refresh();
+      if (reviewId) resolveReviewSilently(reviewId, "applied");
       setReview(null);
+      setReviewId(null);
+      setRestoredBanner(null);
       setTyped("");
       toast.push("pos", "Review changes applied", "Takes effect on the next run.");
     } catch (error) {
@@ -1018,7 +1167,7 @@ function AiReviewPanel({
       title="AI review"
       action={
         review ? (
-          <Btn variant="ghost" size="sm" disabled={busy !== null} onClick={() => { setReview(null); setTyped(""); }}>
+          <Btn variant="ghost" size="sm" disabled={busy !== null} onClick={discard}>
             Discard
           </Btn>
         ) : undefined
@@ -1030,9 +1179,31 @@ function AiReviewPanel({
         diff and commit it — the same rules as editing by hand, including a typed word for LIVE authority expansion.
       </p>
 
+      {review && restoredBanner && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+          <span>
+            Restored unapplied review from <Ago iso={restoredBanner.createdAt} /> ({restoredBanner.model}).
+          </span>
+          <Btn
+            variant="ghost"
+            size="sm"
+            disabled={busy !== null}
+            onClick={() => {
+              if (reviewId) resolveReviewSilently(reviewId, "dismissed");
+              setReview(null);
+              setReviewId(null);
+              setRestoredBanner(null);
+              setTyped("");
+            }}
+          >
+            Dismiss
+          </Btn>
+        </div>
+      )}
+
       {!review ? (
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="w-64">
+        <div className="flex flex-col gap-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field
               label="Strategist"
               hint={
@@ -1042,24 +1213,27 @@ function AiReviewPanel({
               }
               htmlFor="ai-review-model"
             >
-              <Select id="ai-review-model" value={model} onChange={(e) => { setModel(e.target.value); setReviewReasoning(undefined); }}>
-                <option value="">
-                  {rotationBlocksInheritance ? "No model — local rules (no LLM)" : `Same As ${inheritedReviewerLabel}`}
-                </option>
-                {CURATED_LLM_MODEL_GROUPS.map((group) => (
-                  <optgroup key={group.provider} label={group.label}>
-                    {group.options.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <Select id="ai-review-model" value={model} onChange={(e) => { setModel(e.target.value); setReviewReasoning(undefined); }}>
+                    <option value="">
+                      {rotationBlocksInheritance ? "No model — local rules (no LLM)" : `Same As ${inheritedReviewerLabel}`}
+                    </option>
+                    {CURATED_LLM_MODEL_GROUPS.map((group) => (
+                      <optgroup key={group.provider} label={group.label}>
+                        {group.options.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
-                  </optgroup>
-                ))}
-              </Select>
+                  </Select>
+                </div>
+                <ModelStatsButton role="strategist" />
+              </div>
             </Field>
-          </div>
-          {reviewerReasoningControl && reviewerReasoningValue && (
-            <div className="w-56">
+            {reviewerReasoningControl && reviewerReasoningValue && (
               <Field label={reviewerReasoningControl.label} hint={reviewerReasoningControl.hint} htmlFor="ai-review-effort">
                 <Select
                   id="ai-review-effort"
@@ -1073,11 +1247,13 @@ function AiReviewPanel({
                   ))}
                 </Select>
               </Field>
-            </div>
-          )}
-          <Btn variant="primary" disabled={busy !== null} onClick={() => void generate()}>
-            {busy === "review" ? "Reviewing…" : "Generate review"}
-          </Btn>
+            )}
+          </div>
+          <div className="flex justify-end">
+            <Btn variant="primary" disabled={busy !== null} onClick={() => void generate()}>
+              {busy === "review" ? "Reviewing…" : "Generate review"}
+            </Btn>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
@@ -1161,7 +1337,7 @@ function AiReviewPanel({
               />
             ) : (
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" disabled={busy !== null} onClick={() => { setReview(null); setTyped(""); }}>
+                <Btn variant="ghost" disabled={busy !== null} onClick={discard}>
                   Discard
                 </Btn>
                 <Btn variant="primary" disabled={busy !== null} onClick={() => void apply()}>
