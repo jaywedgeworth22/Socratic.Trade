@@ -18,9 +18,22 @@ Codex review flagged two P2 issues:
 
 2. **Unnormalized symbols**: The raw request-body symbols were used directly. Since `refreshFilingBodiesUnlocked` silently skips tickers not in the CIK map (e.g. lowercase "aapl"), an invalid/typo ticker could clear unrelated cache entries without repopulating. Added `normalizeSymbol()` (`.trim().toUpperCase()`) and dedup (Set) when parsing the `symbols` array.
 
+## Second codex-autofix round (2026-07-12, three more P2 threads)
+
+Codex review flagged three more P2 issues after the first autofix round:
+
+1. **Use chunk canonicalization when clearing chunks** — `normalizeSymbol` keeps hyphens (`BRK-B`), but `canonicalTicker` strips them (`BRKB`), and `insertDocumentChunks` stores the canonical form. `DELETE WHERE symbol IN ('BRK-B')` missed rows stored under `BRKB`. Fix: also include the hyphen-free (canonical) form when deleting from `document_chunks`.
+
+2. **Restrict clearCache deletes to 10-K/10-Q artifacts** — the deletes were symbol-scoped but not doc-type/source-scoped, so `clearCache: true` on `AAPL` also purged `8-K-body` accessions and `sec-8k` chunks. Fix: add `AND (doc_type = '10-K' OR doc_type = '10-Q')` on `ingested_accessions` and scope `document_chunks` to `source = 'sec-edgar'`.
+
+3. **Clear globally owned content hashes for the target filing** — `document_chunks` is dedup-keyed by `content_hash` globally. A content_hash first recorded under another symbol's filing (e.g. shared boilerplate) survived a symbol-scoped DELETE, so `filterNewDocumentChunks` skipped the chunk on reindex after a Pinecone reset. Fix: use a subquery — find all content_hashes belonging to the target symbols' sec-edgar chunks, then delete every `document_chunks` row with those hashes regardless of the symbol on the individual row.
+
+### Files
+- `app/api/admin/reindex-10k/route.ts` [MODIFY]
+
 ### Verification
 - `npx tsc --noEmit`: clean
 - `npm test`: 350 files, 3927 tests passed
 - `npm run build`: clean
-- Auto-merge enabled on PR #1493
-- Both Codex threads resolved
+- `npm run lint`: 0 errors
+- All three Codex threads resolved
