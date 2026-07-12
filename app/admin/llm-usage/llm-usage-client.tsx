@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Card } from "../../ui/primitives";
+import { llmUsageContextLabel } from "../../ui/llm-usage-labels";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -47,20 +48,6 @@ function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
-}
-
-function contextLabel(ctx: string | null): string {
-  if (!ctx) return "unknown";
-  const map: Record<string, string> = {
-    chat: "Chat",
-    strategy: "Strategy",
-    "strategy-bear": "Strategy (bear)",
-    "strategy-tuning": "Tuning",
-    "red-team": "Red-team",
-    "post-mortem": "Post-mortem",
-    "proposal-revalidation": "Revalidation",
-  };
-  return map[ctx] ?? ctx;
 }
 
 function providerLabel(provider: string): string {
@@ -197,7 +184,7 @@ function UsageGroupCard({ groupRows: rows }: { groupRows: UsageRow[] }) {
               <div className="flex items-center gap-2 text-muted">
                 <span className="font-mono text-fg/80">{r.model ?? "—"}</span>
                 <span className="text-muted/75">·</span>
-                <span>{contextLabel(r.context)}</span>
+                <span title={r.context ?? "unknown"}>{llmUsageContextLabel(r.context ?? "unknown")}</span>
                 <span className="text-muted/60">·</span>
                 <span>{r.calls} call{r.calls !== 1 ? "s" : ""}</span>
               </div>

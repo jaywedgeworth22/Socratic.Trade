@@ -28,7 +28,16 @@ vi.mock("@/lib/strategy-tuning", () => ({
 }));
 
 vi.mock("@/lib/db", () => ({
-  getPolicy: mocks.getPolicy
+  getPolicy: mocks.getPolicy,
+  // These rate-limit/single-flight tests never pass targetConnectedAccountId or hit GET/PATCH, so
+  // plain no-op stubs are enough — they exist only so the route's unconditional
+  // insertStrategyTuningReview call (and the optional-target ownership check) don't throw on an
+  // undefined mock export.
+  getActiveConnectedAccount: () => undefined,
+  getConnectedAccount: () => undefined,
+  getLatestOpenStrategyTuningReview: () => undefined,
+  insertStrategyTuningReview: () => "mock-review-id",
+  setStrategyTuningReviewStatus: () => true
 }));
 
 vi.mock("@/lib/tuning-invariants", () => ({

@@ -4,8 +4,12 @@ import {
   getStrategyPrompt,
   getConnectedAccount,
   latestAuditByKind,
+  listAuditByKind,
+  listConnectedAccounts,
   listFillEvents,
   listLearningMutations,
+  listLearningMutationsSince,
+  listSocraticDecisionCases,
   listStrategyRuns,
   normalizeScoringWeights,
   setPolicy
@@ -19,7 +23,24 @@ import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
-import { calculatePnl, getClosedLotCount, getFactorScorecard, getMissedOpportunityCoverage, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
+import {
+  calculatePnl,
+  getClosedLotCount,
+  getFactorScorecard,
+  getMissedOpportunityCoverage,
+  getPerformanceSummary,
+  getRegimeScorecard,
+  getSectorScorecard,
+  getSkippedCandidateReturns,
+  getThesisScorecard,
+  MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT,
+  type FactorScorecardStat,
+  type RegimeStat,
+  type SectorStat,
+  type ThesisStat
+} from "./performance";
+import { getReflectionSummary } from "./post-mortem";
+import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import { runWalkForwardOOS, buildSpyReturnToNowMap } from "./backtest";
 import { validateTuningInvariants } from "./tuning-invariants";
@@ -412,6 +433,134 @@ export async function proposeStrategyTuning(
       })()
     : [];
 
+  // ── Evidence-pack widening (owner-directed, 2026-07-11): the review should draw on everything the
+  // system has learned, not just this one account's realized outcomes — cross-account performance,
+  // global decision memory, learned-context lessons, learning-ledger mutations, and regime history.
+  // Every section below is INDEPENDENTLY try/catch-guarded: a failing store is OMITTED, never
+  // thrown — a paid LLM review must still be produced even when a peripheral learning store errors.
+  let lessons: Array<{ subject: string; text: string; confidence?: number; scope?: string; symbol?: string }> | undefined;
+  try {
+    // No symbol filter (global facts, not tied to any specific ticker) — this review is about the
+    // strategy/account as a whole, not one symbol.
+    const detailed = retrieveLearnedContextDetailed(userId, [], undefined, { limit: 12 });
+    lessons = detailed.rows.length > 0
+      ? detailed.rows.map((row) => ({
+          subject: row.subject,
+          text: row.value,
+          confidence: row.confidence,
+          scope: row.scope,
+          ...(row.symbol ? { symbol: row.symbol } : {})
+        }))
+      : undefined;
+  } catch {
+    lessons = undefined;
+  }
+
+  let reflection: { summary?: string; regimeOutcomes?: RegimeStat[] } | undefined;
+  try {
+    if (accountNumber) {
+      const summary = getReflectionSummary(userId, accountNumber);
+      // Thesis rows are NOT duplicated here — they already ship in the thesisScorecard section
+      // below (same table, same account); repeating them doubled the prompt payload for no signal.
+      const regimeOutcomes = getRegimeScorecard(accountNumber, source, {}, userId);
+      if (summary || regimeOutcomes.length > 0) {
+        reflection = {
+          ...(summary ? { summary } : {}),
+          ...(regimeOutcomes.length > 0 ? { regimeOutcomes: regimeOutcomes.slice(0, 12) } : {})
+        };
+      }
+    }
+  } catch {
+    reflection = undefined;
+  }
+
+  let decisionMemory:
+    | Array<{ symbol?: string; action: string; createdAt: string; thesis: string; outcome?: string; lessons?: string[] }>
+    | undefined;
+  try {
+    // Global across this user's accounts (no connectedAccountId filter) — the owner wants the review
+    // to see the system's whole decision history, not just the reviewed account's slice of it.
+    const cases = listSocraticDecisionCases(userId, { limit: 10 });
+    decisionMemory = cases.length > 0
+      ? cases.map((c) => ({
+          ...(c.symbol ? { symbol: c.symbol } : {}),
+          action: c.action,
+          createdAt: c.createdAt,
+          thesis: c.thesis.length > 200 ? `${c.thesis.slice(0, 200)}…` : c.thesis,
+          ...(c.outcome
+            ? { outcome: `${c.outcome.status}${typeof c.outcome.returnPct === "number" ? ` ${c.outcome.returnPct.toFixed(2)}%` : ""}` }
+            : {}),
+          ...(c.lessons.length > 0 ? { lessons: c.lessons.slice(0, 3) } : {})
+        }))
+      : undefined;
+  } catch {
+    decisionMemory = undefined;
+  }
+
+  let thesisScorecard: ThesisStat[] | undefined;
+  let sectorScorecard: SectorStat[] | undefined;
+  try {
+    if (accountNumber) {
+      const thesisRows = getThesisScorecard(accountNumber, source, {}, userId);
+      const sectorRows = getSectorScorecard(accountNumber, source, {}, userId);
+      thesisScorecard = thesisRows.length > 0 ? thesisRows.slice(0, 12) : undefined;
+      sectorScorecard = sectorRows.length > 0 ? sectorRows.slice(0, 12) : undefined;
+    }
+  } catch {
+    thesisScorecard = undefined;
+    sectorScorecard = undefined;
+  }
+
+  let crossAccountPerformance:
+    | Array<{ label: string; broker: string; environment: string; performance: NonNullable<ReturnType<typeof compactPerformance>> }>
+    | undefined;
+  try {
+    // The user's OTHER connected accounts (never the one under review), capped at 4 — advisory
+    // context on what has worked elsewhere, answering "not only the outcomes of the one account".
+    const others = listConnectedAccounts(userId).filter((a) => a.id !== accountId && a.accountNumber);
+    const rows = others.slice(0, 4).map((a) => {
+      const perf = getPerformanceSummary(a.accountNumber as string, {}, userId);
+      return {
+        label: a.label,
+        broker: a.broker,
+        environment: a.environment,
+        // getPerformanceSummary always returns a defined summary, so compactPerformance(defined, ...)
+        // never actually returns undefined here — the `!` reflects that runtime guarantee to TS.
+        performance: compactPerformance(perf, a.environment === "paper")!
+      };
+    });
+    crossAccountPerformance = rows.length > 0 ? rows : undefined;
+  } catch {
+    crossAccountPerformance = undefined;
+  }
+
+  let learningMutations: Array<{ subsystem: string; description: string; createdAt: string }> | undefined;
+  try {
+    const sinceIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const mutations = listLearningMutationsSince(userId, sinceIso, 20);
+    learningMutations = mutations.length > 0
+      ? mutations.map((m) => ({ subsystem: m.subsystem, description: m.trigger ?? m.subsystem, createdAt: m.createdAt }))
+      : undefined;
+  } catch {
+    learningMutations = undefined;
+  }
+
+  let regimeContext: { current?: string; recentFlips?: Array<{ createdAt: string; from?: string; to?: string; escalation?: boolean }> } | undefined;
+  try {
+    const recentFlips = listAuditByKind("regime_flip", 5, userId).map((event) => {
+      const payload = event.payload as { from?: string; to?: string; escalation?: boolean } | undefined;
+      return { createdAt: event.createdAt, from: payload?.from, to: payload?.to, escalation: payload?.escalation };
+    });
+    if (currentRegime || recentFlips.length > 0) {
+      regimeContext = {
+        ...(currentRegime ? { current: currentRegime } : {}),
+        ...(recentFlips.length > 0 ? { recentFlips } : {})
+      };
+    }
+  } catch {
+    regimeContext = undefined;
+  }
+
   const executionMode = llmExecutionMode(executionState);
   const context = {
     currentDate: new Date().toISOString(),
@@ -448,6 +597,14 @@ export async function proposeStrategyTuning(
       : undefined,
     ...(missedOpportunities.count > 0 ? { missedOpportunities } : {}),
     ...(factorScorecard.length > 0 ? { factorScorecard } : {}),
+    ...(lessons ? { lessons } : {}),
+    ...(reflection ? { reflection } : {}),
+    ...(decisionMemory ? { decisionMemory } : {}),
+    ...(thesisScorecard ? { thesisScorecard } : {}),
+    ...(sectorScorecard ? { sectorScorecard } : {}),
+    ...(crossAccountPerformance ? { crossAccountPerformance } : {}),
+    ...(learningMutations ? { learningMutations } : {}),
+    ...(regimeContext ? { regime: regimeContext } : {}),
     macro
   };
 
@@ -676,6 +833,12 @@ async function requestLlmTuning(
     "Do not propose placing trades. Do not remove explicit safety controls.",
     `Sample-size guardrail: only propose scoringWeights (factor weight) changes when closedLotCount >= minClosedLotsForWeightShift (${MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT} closed lots). Below that the realized sample is too thin to attribute P&L to factors; return null for every scoringWeights JSON field, but describe that to the user as "no scoring-weight changes until there is enough closed-lot evidence" and focus on prompt clarity and risk sizing.`,
     "`missedOpportunities` (when present): high-scoring candidates the strategy SKIPPED that then rose over their horizon — each with realized returnPct, score, sector, regime, and dominantFactor; `recurringFactor` flags a factor that dominated multiple missed winners. If it appears, weigh whether scoringWeights under-weight that factor, but still obey the sample-size guardrail above before changing any weight.",
+    "The following sections widen the evidence pack beyond this one account's own outcomes — treat them as ADVISORY CONTEXT for producing a better recommendation on the REVIEWED account, never as that account's own realized track record:",
+    "`lessons` (when present): learned-context facts (this user's own plus, when shared, other contributors') with a `confidence` score and `scope` — weigh higher-confidence, more specific facts more heavily; they are advisory and vary in reliability, not guaranteed truths.",
+    "`reflection` (when present): the post-mortem reflection engine's latest summary for the reviewed account plus its thesis/regime realized-outcome breakdown. `thesisScorecard` / `sectorScorecard` (when present): the reviewed account's realized win-rate and avg-return grouped by thesis tag / sector. `decisionMemory` (when present): recent Socratic decision cases GLOBAL across this user's accounts (not only the reviewed one) with thesis, action, and outcome/lessons when matured.",
+    "`crossAccountPerformance` (when present): compact performance from this user's OTHER connected accounts (never the one under review) — context for judging what has worked elsewhere. Do not conflate a different account's P&L, win rate, or sample size with the reviewed account's own.",
+    "`learningMutations` (when present): recent autonomous learning-ledger changes (any account, last 30 days) — useful context on what has already been auto-tuned recently, so you don't recommend re-doing it.",
+    "`regime` (when present): the current market-regime label plus recent regime flips — macro context, not a standalone trading signal.",
     "Return strict JSON only."
   ].join("\n");
 

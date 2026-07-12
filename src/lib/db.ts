@@ -1241,6 +1241,25 @@ function migrate(database: Database.Database): void {
       origin TEXT NOT NULL DEFAULT 'app-a',
       updated_at TEXT NOT NULL
     );
+
+    -- Server-side persistence for a POST /api/strategy/tune review (the paid LLM
+    -- proposeStrategyTuning output): previously lived only in client React state, so a closed
+    -- browser (or a disconnect before Apply) silently lost it. 'result' is the FULL response JSON
+    -- (StrategyTuningProposal plus any appended tuning-invariant warnings). See db-tuning-reviews.ts.
+    CREATE TABLE IF NOT EXISTS strategy_tuning_reviews (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT,
+      model TEXT,
+      reasoning_effort TEXT,
+      generated_by TEXT NOT NULL,
+      result TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','applied','dismissed')),
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_strategy_tuning_reviews_user_account_status
+      ON strategy_tuning_reviews (user_id, connected_account_id, status);
   `);
 
   // Migrate tables to include user_id
@@ -1687,3 +1706,4 @@ export * from "./db-health";
 export * from "./db-securities-import";
 export * from "./db-socratic";
 export * from "./db-jobs";
+export * from "./db-tuning-reviews";
