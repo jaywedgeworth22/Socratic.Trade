@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-11 — Settings + LLM telemetry sweep (CLAUDE, branch `claude/settings-llm-usage-sweep`)
+
+Implementation complete: 7-item owner batch delivering unified LLM usage labels, strategy
+reviews persisted server-side with unapplied-restore on mount, account-attribution fix
+(root cause: multi-account review costs were filed under `is_active` account not the
+initiating account — explains owner's "missing" Fable Roth-IRA cost), cross-account
+settings import with lineage tracking, framework-page grid layout fixes, strategist
+model-cost drawer, and telemetry coverage closure (benchmark, eval, salience now all
+recording). All gates passing (tsc, lint, focused suites 10/10+8/8+21/21+118/118),
+full gate running at doc-write time. PR opening. Rollout: `docs/rollouts/2026-07-11-settings-llm-usage-sweep.md`.
 ## 2026-07-11 — Team display names back to Green Team / Red Team (CLAUDE, branch `claude/team-names-green-red`)
 
 Owner-directed copy rename: console UI had drifted to "Proposer"/"Reviewer" for the two team

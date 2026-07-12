@@ -14,8 +14,11 @@
 // portfolio snapshot. The Red role reviews 1-2 recent trade_proposals rows (or fixtures). A bundled
 // fixture pack covers DBs without history.
 //
-// SAFETY: LLM calls only — NO broker interaction, NO writes to the app DB, NO audit writes. The app
-// DB is opened strictly READ-ONLY (better-sqlite3 { readonly: true }). Because the app's own
+// SAFETY: LLM calls only — NO broker interaction, NO audit writes, and no MIGRATIONS/other-table
+// writes to the app DB. The one exception is the llm_usage ledger row + external usage-telemetry
+// push, written unconditionally for every real call via a dedicated connection (see "Writable
+// ledger connection" below) — never through getDb() or the readonly realDb. The realDb handle
+// itself is still opened strictly READ-ONLY (better-sqlite3 { readonly: true }). Because the app's own
 // credential resolution (resolveLlmCredential inside resolveLlmEndpoint) goes through getDb() —
 // which runs migrations — DATABASE_URL is repointed at a throwaway SCRATCH SQLite file before any
 // app module can open a DB, and the user's LLM keys (decrypted from the read-only real DB, plus env
@@ -29,12 +32,15 @@
 // Flags: --models a,b,c (default: every curated catalog model) | --rounds N (default 3)
 //        --role green|red|both (default both) | --out <basePath> (default ./llm-benchmark-<ts>)
 //        --timeout-ms N (soft-timeout override) | --user <id> (default local) | --dry-run
-//        --record-usage (opt-in: log each real call into the REAL app's llm_usage table, tagged
-//          under a pretend account "benchmark:<user>" / context "benchmark:<role>" — so a run's
-//          spend shows up in /admin/llm-usage as its OWN category instead of vanishing from the
-//          ledger. Off by default: this is the one exception to the "no writes to the app DB"
-//          safety rule above, and only touches llm_usage via a dedicated connection — never the
-//          scratch-DB-bound getDb() the rest of the script uses, and never migrations/other tables.
+//        --record-usage (DEPRECATED no-op, kept only so existing invocations don't break: usage is
+//          ALWAYS recorded now — every real call is logged into the REAL app's llm_usage table,
+//          tagged under a pretend account "benchmark:<user>" / context "benchmark:<role>", AND
+//          pushed to the external API Usage Monitor via recordLlmUsage (owner directive: every
+//          single LLM call is hardwired into the ledger + external telemetry, unconditionally — no
+//          opt-in flag gates it anymore). This remains the one exception to the "no writes to the
+//          app DB" safety rule above, and only touches llm_usage via a dedicated connection — never
+//          the scratch-DB-bound getDb() the rest of the script uses, and never migrations/other
+//          tables.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -58,6 +64,8 @@ const CLI = {
   timeoutMs: Number(argValue("--timeout-ms")) || undefined,
   user: argValue("--user") ?? "local",
   dryRun: hasFlag("--dry-run"),
+  // DEPRECATED no-op — accepted so pre-existing invocations don't break. Usage is now ALWAYS
+  // recorded (ledger + external telemetry) regardless of this flag; see the header comment above.
   recordUsage: hasFlag("--record-usage"),
   // --effort <none|minimal|low|medium|high|xhigh|max|omit>: request a specific reasoning effort
   // instead of the app's default resolution. Still normalized per model by the app's own
@@ -95,7 +103,7 @@ const { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation
 const { llmFetchCapturing, strategyLlmTimeoutMs, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, interactiveStrategyReasoningEffort } = await import(
   "../src/lib/llm-request"
 );
-const { extractLlmUsage, estimateLlmCostUsd } = await import("../src/lib/llm-usage");
+const { extractLlmUsage, estimateLlmCostUsd, recordLlmUsage } = await import("../src/lib/llm-usage");
 // PR #1086 (cache-aware usage pricing) extends extractLlmUsage with cachedPromptTokens /
 // cacheCreationTokens and estimateLlmCostUsd with optional 4th/5th args (cache-reads at 0.1x input,
 // Anthropic cache-writes at 1.25x). Guarded optionally so this script runs on branches with either
@@ -126,10 +134,21 @@ try {
   console.warn(`[benchmark] app DB not readable at ${realDbPath} (${err instanceof Error ? err.message : String(err)}) — using bundled fixtures + env keys only.`);
 }
 
-// ── Optional writable ledger connection (--record-usage only) ───────────────
+// ── Writable ledger connection (usage is ALWAYS recorded, unconditionally) ──
 // Deliberately SEPARATE from realDb (readonly) and from getDb() (bound to the scratch DB for the
 // rest of this script) — this connection ONLY ever runs the single INSERT below, never migrations
 // or any other table, so it can't reproduce the corruption risk the readonly design guards against.
+//
+// Why a raw INSERT instead of calling recordLlmUsage's OWN insert: recordLlmUsage (src/lib/
+// llm-usage.ts) writes through getDb(), and getDb() is a first-call-wins singleton that this
+// script already bound to the throwaway SCRATCH db above (resolveLlmEndpoint -> resolveLlmCredential
+// -> getDb(), forced during the credential-seeding step before any LLM call runs) — there is no way
+// to redirect it back to the real DB mid-process. So the durable ledger row is written HERE, directly
+// against the real DB, mirroring recordLlmUsage's own INSERT shape. recordLlmUsage is still called
+// below for every real call anyway — its local-DB write lands harmlessly in the scratch DB (deleted
+// at exit), but its OTHER effect, firing external usage telemetry (pushLlmUsage) via the exact same
+// code path every other LLM call site in the app uses, is the whole point (owner directive: every
+// LLM use is hardwired into telemetry, not just the ones that happen to run through a fresh getDb()).
 const USAGE_PSEUDO_USER = `benchmark:${CLI.user}`;
 function prepareInsertUsageStmt(db: InstanceType<typeof Database>) {
   return db.prepare<unknown[]>(
@@ -139,16 +158,19 @@ function prepareInsertUsageStmt(db: InstanceType<typeof Database>) {
 }
 let usageDb: InstanceType<typeof Database> | undefined;
 let insertUsageStmt: ReturnType<typeof prepareInsertUsageStmt> | undefined;
-if (CLI.recordUsage && !CLI.dryRun) {
+if (CLI.recordUsage) {
+  console.warn('[benchmark] --record-usage is now a no-op: usage is ALWAYS recorded (ledger + external telemetry), unconditionally.');
+}
+if (!CLI.dryRun) {
   try {
     usageDb = new Database(realDbPath, { fileMustExist: true });
     usageDb.pragma("journal_mode = WAL");
     usageDb.pragma("busy_timeout = 5000");
     usageDb.pragma("foreign_keys = ON");
     insertUsageStmt = prepareInsertUsageStmt(usageDb);
-    console.log(`[benchmark] --record-usage: logging to llm_usage as user_id="${USAGE_PSEUDO_USER}" (context "benchmark:<role>")`);
+    console.log(`[benchmark] logging to llm_usage as user_id="${USAGE_PSEUDO_USER}" (context "benchmark:<role>") + pushing to external usage telemetry (when configured).`);
   } catch (err) {
-    console.warn(`[benchmark] --record-usage requested but ${realDbPath} isn't writable (${err instanceof Error ? err.message : String(err)}) — usage will NOT be logged.`);
+    console.warn(`[benchmark] ${realDbPath} isn't writable for usage logging (${err instanceof Error ? err.message : String(err)}) — the local ledger row will be skipped, but external telemetry (if configured) still fires via recordLlmUsage.`);
   }
 }
 
@@ -727,6 +749,25 @@ async function runOne(model: string, role: Role, round: number): Promise<void> {
     }
   } finally {
     records.push(record);
+    if (record.promptTokens !== undefined || record.completionTokens !== undefined) {
+      // recordLlmUsage is the ONE function that also fires external usage telemetry
+      // (pushLlmUsage) — call it unconditionally so every benchmark call reaches the API Usage
+      // Monitor exactly like every other LLM call site in the app. It never throws. Its own
+      // local-ledger INSERT lands in this script's throwaway SCRATCH db (see the comment on
+      // `usageDb` above) so it's harmless/discarded there; the REAL, persistent ledger row is
+      // written separately below via the dedicated writable `usageDb` connection.
+      recordLlmUsage({
+        userId: USAGE_PSEUDO_USER,
+        provider: record.provider,
+        model: record.model,
+        context: `benchmark:${role}`,
+        keySource: record.keySource === "operator" ? "operator" : "user",
+        promptTokens: record.promptTokens,
+        completionTokens: record.completionTokens,
+        cachedPromptTokens: record.cachedPromptTokens,
+        cacheCreationTokens: record.cacheCreationTokens
+      });
+    }
     if (insertUsageStmt && (record.promptTokens !== undefined || record.completionTokens !== undefined)) {
       try {
         insertUsageStmt.run(
@@ -876,7 +917,7 @@ function consoleTable(summaries: Summary[]): void {
 
 /** Grand total + per-provider breakdown of what this run actually spent (est.), across ALL calls
  *  that returned usable token usage — regardless of role/model, so the script can self-report the
- *  real cost of a run even though (absent --record-usage) none of it lands in the app's own ledger. */
+ *  real cost of a run in addition to the row it now always writes to the app's own ledger. */
 interface SpendBreakdown {
   totalUsd: number;
   totalCalls: number;
@@ -899,7 +940,7 @@ function computeSpend(): SpendBreakdown {
 function printSpend(spend: SpendBreakdown): void {
   console.log(`\n[benchmark] est. total spend this run: $${spend.totalUsd.toFixed(4)} across ${spend.totalCalls} priced call(s)`);
   for (const p of spend.byProvider) console.log(`  ${p.provider.padEnd(12)} $${p.usd.toFixed(4)}  (${p.calls} call${p.calls === 1 ? "" : "s"})`);
-  if (!CLI.recordUsage) console.log("  (not logged to /admin/llm-usage — pass --record-usage to log it under a pretend account)");
+  if (!CLI.dryRun) console.log(`  (logged to /admin/llm-usage as user_id="${USAGE_PSEUDO_USER}" + pushed to external usage telemetry, when configured)`);
 }
 
 function markdownReport(summaries: Summary[], spend: SpendBreakdown): string {
@@ -910,7 +951,7 @@ function markdownReport(summaries: Summary[], spend: SpendBreakdown): string {
   lines.push(
     `- **Est. total spend this run: $${spend.totalUsd.toFixed(4)}** across ${spend.totalCalls} priced call(s)` +
       (spend.byProvider.length ? ` — ${spend.byProvider.map((p) => `${p.provider} $${p.usd.toFixed(4)} (${p.calls})`).join(", ")}` : "") +
-      (CLI.recordUsage ? ` — logged to llm_usage as user_id="${USAGE_PSEUDO_USER}"` : " — NOT logged to /admin/llm-usage (pass --record-usage to log it under a pretend account)")
+      (CLI.dryRun ? "" : ` — logged to llm_usage as user_id="${USAGE_PSEUDO_USER}" + pushed to external usage telemetry (when configured)`)
   );
   lines.push(`- Input pack: candidates from ${evidence.source}; macro from ${macro.source}; portfolio from ${holdings.source}; Bear reviews ${bearReview.source}.`);
   lines.push("- Request path: resolveLlmEndpoint -> buildLlmRequestBody (real strategy schemas + prompts) -> llmFetchCapturing (soft timeout = strategyLlmTimeoutMs).");
@@ -978,7 +1019,7 @@ fs.writeFileSync(
       dryRun: CLI.dryRun,
       inputPack: { candidates: evidence.source, macro: macro.source, portfolio: holdings.source, bearProposals: bearReview.source },
       spend,
-      recordedToLedger: CLI.recordUsage,
+      recordedToLedger: !CLI.dryRun,
       summaries,
       records
     },

@@ -205,15 +205,72 @@ export function savePolicy(patch: PolicyPatchBody, targetConnectedAccountId?: st
  *  the evidence pack (performance, missed opportunities, factor scorecard,
  *  macro) and returns a reviewed proposal; nothing is applied until the user
  *  commits it through savePolicy. `tuningConfigWarnings` piggybacks on the
- *  manual path as cautions (never blocks). */
+ *  manual path as cautions (never blocks). The server now ALSO persists every
+ *  generated review (so an unapplied one can be restored after a reload/crash —
+ *  see fetchLatestTuneReview/resolveTuneReview below) and returns its id as
+ *  `reviewId`. */
 export interface StrategyTuneResult extends StrategyTuningProposal {
   tuningConfigWarnings?: Array<{ message: string }>;
+  /** Id of the persisted review row — pass to resolveTuneReview once the user applies or
+   *  dismisses it (including a review restored via fetchLatestTuneReview). */
+  /** Present on fresh POST /api/strategy/tune responses; ABSENT inside the persisted `result`
+   *  blob returned by GET (the row id is `LatestTuneReview.id` there). */
+  reviewId?: string;
 }
 
-export function tuneStrategy(model?: string, reasoningEffort?: LlmReasoningEffort): Promise<StrategyTuneResult> {
+/** `targetConnectedAccountId` pins the review to the account it was actually generated for — the
+ *  same evidence/cost/account-scoping every other strategy write already applies (savePolicy,
+ *  copyProfileToAccount, etc.). Without it the server used to default to whichever account was
+ *  globally active, which could silently attribute cost/evidence to the wrong account. */
+export function tuneStrategy(
+  model?: string,
+  reasoningEffort?: LlmReasoningEffort,
+  targetConnectedAccountId?: string
+): Promise<StrategyTuneResult> {
   return request<StrategyTuneResult>("/api/strategy/tune", {
     method: "POST",
-    body: JSON.stringify({ ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}) })
+    body: JSON.stringify({
+      ...(model ? { model } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      ...(targetConnectedAccountId ? { targetConnectedAccountId } : {})
+    })
+  });
+}
+
+/** One persisted-but-not-yet-resolved (or just-resolved) AI review row, as returned by
+ *  GET /api/strategy/tune. `result` is the exact same shape tuneStrategy's POST resolves with. */
+export interface LatestTuneReview {
+  id: string;
+  createdAt: string;
+  model: string;
+  reasoningEffort?: LlmReasoningEffort;
+  generatedBy: StrategyTuneResult["generatedBy"];
+  status: string;
+  result: StrategyTuneResult;
+}
+
+/** Fetch the latest OPEN (unapplied, undismissed) AI review for an account, if any — used to
+ *  restore an in-progress review after a reload/crash so it isn't silently lost. Resilient by
+ *  design: the server side of this contract may not exist yet / may be mid-rollout, and a restore
+ *  is a nice-to-have, not a blocking requirement — any failure (network, 404, 500) resolves to
+ *  `null` rather than throwing, so callers never need their own try/catch for this. */
+export async function fetchLatestTuneReview(connectedAccountId?: string): Promise<LatestTuneReview | null> {
+  try {
+    const qs = connectedAccountId ? `?connectedAccountId=${encodeURIComponent(connectedAccountId)}` : "";
+    const { review } = await request<{ review: LatestTuneReview | null }>(`/api/strategy/tune${qs}`);
+    return review ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Mark a persisted AI review applied or dismissed (Discard, or dismissing the "restored review"
+ *  banner). Best-effort from the caller's perspective — see page.tsx, which never blocks the UI
+ *  on this resolving. */
+export function resolveTuneReview(reviewId: string, status: "applied" | "dismissed"): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/strategy/tune", {
+    method: "PATCH",
+    body: JSON.stringify({ reviewId, status })
   });
 }
 
@@ -304,6 +361,20 @@ export interface AccountPerformanceResult {
  *  sends an accountNumber from the client. */
 export function fetchAccountPerformance(id: string): Promise<AccountPerformanceResult> {
   return request<AccountPerformanceResult>(`/api/connected-accounts/${encodeURIComponent(id)}/performance`);
+}
+
+/** "Import settings from another account" (Strategy page): copies strategy settings — models,
+ *  prompt, guardrails, weights, watchlist, tax treatment — from `sourceConnectedAccountId` onto
+ *  `targetConnectedAccountId`. Any->any (not paper-only); never touches broker connection,
+ *  credentials, or run state. Both accounts are resolved/ownership-checked server-side. */
+export function importAccountSettings(
+  targetConnectedAccountId: string,
+  sourceConnectedAccountId: string
+): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`/api/connected-accounts/${encodeURIComponent(targetConnectedAccountId)}/import-settings`, {
+    method: "POST",
+    body: JSON.stringify({ sourceConnectedAccountId })
+  });
 }
 
 /** Library-activate a preset (flips the library's active flag and writes the
