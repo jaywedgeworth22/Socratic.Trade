@@ -1,5 +1,10 @@
 # Current Status
 
+## 2026-07-11 — Native iOS App Overhaul (Antigravity, branch `agent/antigravity`)
+
+Completely replaced the legacy iOS starter app with a modern SwiftUI application (`ios/`). Initialized via `xcodegen`. Built `AuthenticationView` for OAuth via `ASWebAuthenticationSession` with secure token handoff via the `/api/mobile/auth-redirect` route and `socratictrade://` URL scheme. Implemented `MobileStore` and `MobileAPIClient` for persistence and cookie injection. Built tabbed views: Dashboard, Proposals, and Watchlist. Assessed Cloudflare hosting for the mobile backend vs. Hetzner, deciding to keep it on Hetzner to avoid database splitting. Verified via `xcodebuild`. Ready to land. Rollout: `docs/rollouts/2026-07-11-native-ios-app.md`.
+
+
 ## 2026-07-11 — Team display names back to Green Team / Red Team (CLAUDE, branch `claude/team-names-green-red`)
 
 Owner-directed copy rename: console UI had drifted to "Proposer"/"Reviewer" for the two team
