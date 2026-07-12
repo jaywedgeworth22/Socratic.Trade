@@ -17,6 +17,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-12 - SEC/RAG 1,000-stock high-yield backfill architecture (CODEX).** The approved planning
+> direction is “archive broadly, embed selectively”: catalog all SEC filings; preserve selected immutable
+> originals; keep XBRL, insider, ownership, and financing facts structured; embed sectioned narrative, tables,
+> and material exhibits with occurrence-level provenance; and expose derived summaries only as cited children.
+> The current recent-10-K/10-Q scheduler is not the bulk runner. Before a 1,000-issuer write, fix global
+> content-hash occurrence loss, artifact/job state, historical/exhibit discovery, DOM/iXBRL tables, PIT dates,
+> true lexical recall, real-corpus evaluation, coverage truth, and config drift. Then use a shadow corpus and
+> gated 10 -> 25 -> 100 -> 300 -> 1,000 breadth-first waves. See
+> `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` and
+> `docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`.
+
 > **2026-07-11 - Team names back to Green Team / Red Team (CLAUDE).** Copy-only rename: console
 > surfaces that had drifted to "Proposer"/"Reviewer" seat labels now lead with Green Team / Red
 > Team everywhere user-visible; internal identifiers and prompts untouched. Also fixed stale help
