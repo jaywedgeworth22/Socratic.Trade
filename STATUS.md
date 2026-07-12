@@ -1,5 +1,10 @@
 # Current Status
 
+## 2026-07-12 — Add clearCache option to admin reindex route (Antigravity, branch `ag/troubleshoot-sentry`)
+
+Added a `clearCache: true` option to the `POST /api/admin/reindex-10k` body to truncate local `document_chunks` and `ingested_accessions` tables. This enables a clean backfill of filings into the empty `socratic-trade` Pinecone index without the local cache incorrectly skipping filings. Flipped `WEB_SOURCE_SEC8K_FULL_BODY` to `on` in Infisical so that both summaries and full text are embedded for 8-Ks.
+Rollout: `docs/rollouts/2026-07-12-admin-reindex-clearcache.md`.
+
 ## 2026-07-12 — [codex-autofix] Honor HTTP-date Retry-After in 429 handling (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 
 Codex review (P2) flagged that the existing 429 Retry-After handling only parses delta-seconds via

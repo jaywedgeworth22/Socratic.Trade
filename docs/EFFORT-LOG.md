@@ -517,7 +517,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
-- **Raise RAG Ingestion Limits and Deepen Filing Lookback (AG, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Raised `RAG_INGEST_MAX_TEXTS_PER_DAY` to 1M and `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10M to allow massive ingestion. Deepened historical 10-K/10-Q filing lookback to 10 each per ticker and raised `DEFAULT_PAID_MAX_FILINGS_PER_RUN` to 200.
+- **Raise RAG Ingestion Limits and Deepen Filing Lookback (AG, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Raised `RAG_INGEST_MAX_TEXTS_PER_DAY` to 1M and `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10M to allow massive ingestion. Deepened historical 10-K/10-Q filing lookback to 10 each per ticker, raised `DEFAULT_PAID_MAX_FILINGS_PER_RUN` to 200, and added a `clearCache` option to `/api/admin/reindex-10k` to reset SQLite caches.
 
 - **Native iOS App Overhaul (Antigravity, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Replaced the legacy iOS starter app with a native SwiftUI application (`ios/`) using `xcodegen`. Includes tabbed navigation (Dashboard, Proposals, Watchlist), `MobileStore` persistence, and `MobileAPIClient`. Assessed Cloudflare hosting vs current Hetzner server and decided to keep it on Hetzner to avoid splitting the database. Verified build via `xcodebuild`. Ready to merge.
 

@@ -33,19 +33,28 @@ export async function POST(request: Request) {
 
   let symbols: string[] = [];
   let limit: number | undefined;
+  let clearCache = false;
   try {
-    const body = (await request.json()) as { symbols?: string[]; limit?: number };
+    const body = (await request.json()) as { symbols?: string[]; limit?: number; clearCache?: boolean };
     if (Array.isArray(body?.symbols)) symbols = body.symbols.filter((s) => typeof s === "string" && s.length > 0);
     if (Number.isFinite(Number(body?.limit))) limit = Number(body.limit);
+    if (body?.clearCache === true) clearCache = true;
   } catch {
     // no body / not JSON → empty symbols (will return error)
   }
 
   if (symbols.length === 0) {
-    return NextResponse.json({ ok: false, error: "Provide { symbols: string[], limit?: number } in the request body." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Provide { symbols: string[], limit?: number, clearCache?: boolean } in the request body." }, { status: 400 });
   }
 
   return withAdminOperationGuard(request, "reindex-10k", async (operationLeaseClaim) => {
+    if (clearCache) {
+      const { getDb } = await import("@/lib/db");
+      getDb().prepare("DELETE FROM ingested_accessions").run();
+      getDb().prepare("DELETE FROM document_chunks").run();
+      console.log("[reindex-10k] Cleared local RAG metadata cache tables (ingested_accessions, document_chunks).");
+    }
+
     // force: this is the operator explicitly asking for a backfill — it must not silently no-op
     // behind the scheduler's ingest TTL stamp (it did until 2026-07-09, returning {attempted: 0}
     // for up to a week after any scheduler attempt). An explicit `limit` also overrides the
@@ -54,6 +63,6 @@ export async function POST(request: Request) {
     const busy = getOperationLeaseBusy(result);
     if (busy) return operationLeaseBusyResponse("reindex-10k", busy);
     const stats = await getVectorStoreStats();
-    return NextResponse.json({ ok: result.errors.length === 0, result, vectorStore: stats });
+    return NextResponse.json({ ok: result.errors.length === 0, result, vectorStore: stats, clearedCache: clearCache });
   });
 }
