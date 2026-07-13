@@ -18,7 +18,41 @@ Addressed the final 4 remaining Codex P2 threads (third review batch):
 - **Backfill ordering vs reads** — moved `CONGRESS_TRADE_READS_ENABLED` into a new post-backfill step (step 4) so the backfill runs first; documented that enabling reads before the backfill could cause `fetchDailyOHLC` to short-circuit on App A's own partial series.
 - **Current-feed verification** — added a prerequisite note on `CONGRESS_TRADE_AS_CONGRESS_SOURCE` requiring verification that App A's `/api/transactions` feed carries current disclosures before flipping (avoids replacing working scrapers with stale data).
 
-## Why
+### Autofix Round 4
+Addressed the 3 remaining open Codex P2 threads (fourth review batch):
+- **Shared lane for local fallback keys** (`src/lib/db-api-keys.ts:343`) — the shared-operator-infra fallback to the `local` user's stored key was returning `source: "user"`, which caused downstream cache-scoping code to treat it as a per-user credential with private cache scope. Changed to `source: "env"` so it's recognized as an operator-level fallback with shared cache scope.
+- **Alpha Vantage local fallback** (`src/lib/db-api-keys.ts`) — `resolveAlphaVantageKeyPool` was missing the `local` user fallback that `resolveApiKeyWithSource` had. Added the same shared-operator-infra fallback pattern so that when no env var is set, the `local` user's stored Alpha Vantage key serves tenants/background callers.
+- **Infisical activation contradiction** (`STATUS.md`) — resolved the contradictory statements where line 8 claimed flags were "applied across dev, staging, and prod" while line 11 said prod access was unavailable. Changed dev/staging/prod to dev/staging only, consistent with the "manual owner action needed for prod" note.
+
+### Updated files
+- `src/lib/db-api-keys.ts` (2 changes: local fallback source + Alpha Vantage local fallback)
+- `test/key-resolution-tiering.test.ts` (updated test expectations for new source classification)
+- `STATUS.md` (fixed prod contradiction)
+- `docs/rollouts/2026-07-13-congress-trade-integration.md` (this entry)
+
+## Verification
+Three required gates (all passed):
+```bash
+npx tsc --noEmit
+npm test
+npm run build
+```
+Each autofix round ran the full gate trio. Round 1 and 2 had lint skipped as doc-only; Round 3 confirms lint passes:
+
+```bash
+npm run lint      # ESLint: 0 errors, 447 warnings (all grandfathered)
+npx tsc --noEmit  # clean (no output)
+npm test          # 3934/3934 pass
+npm run build     # clean
+```
+
+Round 4 verification:
+```bash
+npm run lint      # 0 errors, 448 warnings (all grandfathered)
+npx tsc --noEmit  # clean
+npm test          # 3934/3934 pass
+npm run build     # clean
+```
 App B already contained the infrastructure to share (EOD, insider, etc.) and consume (congress trades, scores, analytics) data from App A, but they were gated behind feature flags. The goal of this rollout is to turn these flags on in the production environment. We also fixed a documentation mismatch in `.env.example`.
 
 ## Files Touched

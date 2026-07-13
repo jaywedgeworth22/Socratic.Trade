@@ -340,7 +340,7 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
     // jobs and global operations run off these keys.
     if (userId !== "local") {
       const localKey = getUserApiKey("local", canonical);
-      if (localKey?.apiKey) return { key: localKey.apiKey, source: "user", envVar, service: canonical };
+      if (localKey?.apiKey) return { key: localKey.apiKey, source: "env", envVar, service: canonical };
     }
 
     if (envKey) return { key: envKey, source: "env", envVar, service: canonical };
@@ -383,6 +383,13 @@ export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; s
   if (userId) {
     const userKey = getUserApiKey(userId, "alphavantage");
     if (userKey?.apiKey) return { keys: [userKey.apiKey], source: "user", envVar: "ALPHAVANTAGE_API_KEY" };
+  }
+
+  // 1b. shared-operator-infra fallback: use the `local` user's stored key if available,
+  // before falling to env. Mirror of the pattern in resolveApiKeyWithSource.
+  if (userId !== "local") {
+    const localKey = getUserApiKey("local", "alphavantage");
+    if (localKey?.apiKey) return { keys: [localKey.apiKey], source: "env", envVar: "ALPHAVANTAGE_API_KEY" };
   }
 
   const singular = process.env.ALPHAVANTAGE_API_KEY?.trim();
