@@ -53,44 +53,64 @@ export async function POST(request: Request) {
   return withAdminOperationGuard(request, "reindex-10k", async (operationLeaseClaim) => {
     if (clearCache) {
       const { getDb } = await import("@/lib/db");
-      // Scope to 10-K/10-Q accessions only — this endpoint re-indexes those forms via
-      // refreshFilingBodies and must not purge 8-K-body or other doc type ledgers.
-      const acnPlaceholders = symbols.map(() => "?").join(",");
-      getDb().prepare(
-        `DELETE FROM ingested_accessions WHERE ticker IN (${acnPlaceholders}) AND (doc_type = '10-K' OR doc_type = '10-Q')`
-      ).run(...symbols);
 
-      // Build the canonical (hyphen-free) form of each symbol too.
-      // normalizeSymbol keeps hyphens (BRK-B), while canonicalTicker (in rag/chunk.ts) strips them
-      // (BRK-B → BRKB) and that is what insertDocumentChunks stores as document_chunks.symbol
-      // via storeDocument (src/lib/vector-db.ts:1386, 1436). A DELETE on the hyphenated form alone
-      // would miss rows stored under the canonical form.
-      const canonicalSymbols = symbols.map((s) => s.replace(/-/g, ""));
-      const allChunkSymbols = [...new Set([...symbols, ...canonicalSymbols])];
-      const chunkPlaceholders = allChunkSymbols.map(() => "?").join(",");
+      const accessionsToClear = new Set<string>();
+      for (const symbol of symbols) {
+        // Query ingested_accessions (legacy)
+        const legacyRows = getDb().prepare(`
+          SELECT accession FROM (
+            SELECT accession FROM ingested_accessions WHERE ticker = ? AND doc_type = '10-K'
+            ORDER BY indexed_at DESC LIMIT 10
+          )
+          UNION
+          SELECT accession FROM (
+            SELECT accession FROM ingested_accessions WHERE ticker = ? AND doc_type = '10-Q'
+            ORDER BY indexed_at DESC LIMIT 10
+          )
+        `).all(symbol, symbol) as { accession: string }[];
+        for (const r of legacyRows) accessionsToClear.add(r.accession);
 
-      // document_chunks is dedup-keyed by content_hash globally. A content hash first recorded
-      // under one ticker's filing (e.g. boilerplate shared across issuers) would survive a
-      // symbol-scoped DELETE, leaving filterNewDocumentChunks to skip the chunk on reindex even
-      // after a full Pinecone reset.  Use a subquery to find ALL content_hashes belonging to the
-      // target symbols' SEC-EDGAR chunks, then delete every row with those hashes regardless of
-      // the symbol on the individual row.
-      // Scope to sec-edgar source (10-K/10-Q chunks); 8-K body chunks use source = 'sec-8k'.
-      getDb().prepare(
-        `DELETE FROM document_chunks WHERE content_hash IN (
-          SELECT content_hash FROM document_chunks WHERE symbol IN (${chunkPlaceholders}) AND source = 'sec-edgar'
-        )`
-      ).run(...allChunkSymbols);
+        // Query sec_filings (new schema)
+        const filingRows = getDb().prepare(`
+          SELECT accession FROM (
+            SELECT accession FROM sec_filings WHERE ticker = ? AND form = '10-K'
+            ORDER BY filed_at DESC LIMIT 10
+          )
+          UNION
+          SELECT accession FROM (
+            SELECT accession FROM sec_filings WHERE ticker = ? AND form = '10-Q'
+            ORDER BY filed_at DESC LIMIT 10
+          )
+        `).all(symbol, symbol) as { accession: string }[];
+        for (const r of filingRows) accessionsToClear.add(r.accession);
+      }
 
-      // Also downgrade sec_filings completion rows: hasIngestedAccession checks
-      // `sec_filings WHERE status = 'complete'` first, so after a Pinecone reset the
-      // operator cannot reindex filings whose sec_filings rows are still marked complete.
-      // Set them back to 'discovered' so the next run treats them as un-ingested.
-      getDb().prepare(
-        `UPDATE sec_filings SET status = 'discovered', updated_at = ? WHERE ticker IN (${acnPlaceholders}) AND form IN ('10-K', '10-Q') AND status = 'complete'`
-      ).run(new Date().toISOString(), ...symbols);
+      if (accessionsToClear.size > 0) {
+        const acns = Array.from(accessionsToClear);
+        const acnPlaceholders = acns.map(() => "?").join(",");
 
-      console.log(`[reindex-10k] Cleared local RAG metadata cache for ${symbols.length} symbol(s): ${symbols.join(", ")}.`);
+        // Delete from ingested_accessions
+        getDb().prepare(
+          `DELETE FROM ingested_accessions WHERE accession IN (${acnPlaceholders})`
+        ).run(...acns);
+
+        // Delete from document_chunks using a chunk_id LIKE pattern for precise scoping
+        const chunkQueries = acns.map(() => "chunk_id LIKE '%:' || ? || ':%'").join(" OR ");
+        getDb().prepare(
+          `DELETE FROM document_chunks WHERE content_hash IN (
+            SELECT content_hash FROM document_chunks WHERE (${chunkQueries}) AND source = 'sec-edgar'
+          )`
+        ).run(...acns);
+
+        // Update in sec_filings
+        getDb().prepare(
+          `UPDATE sec_filings SET status = 'discovered', updated_at = ? WHERE accession IN (${acnPlaceholders}) AND status = 'complete'`
+        ).run(new Date().toISOString(), ...acns);
+
+        console.log(`[reindex-10k] Cleared local RAG metadata cache for ${acns.length} accession(s) across ${symbols.length} symbol(s): ${symbols.join(", ")}.`);
+      } else {
+        console.log(`[reindex-10k] No cached accessions found to clear for symbol(s): ${symbols.join(", ")}.`);
+      }
     }
 
     // force: this is the operator explicitly asking for a backfill — it must not silently no-op

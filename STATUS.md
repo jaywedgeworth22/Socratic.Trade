@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Round 6: Restrict sec_filings reset to refetched filings (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 1 P2 finding on the clearCache logic (round 5 of autofix):
+1. **Restrict sec_filings reset to refetched filings** — Previously, `clearCache` cleared all local cache and document chunks for the symbols. However, since `refreshFilingBodies` only retrieves the latest 10 filings per type, any older completed filings would remain downgraded to `discovered` but never re-ingested. We updated the logic to identify and target only the latest 10 filings of each type per symbol.
+Verify trio passes (tsc clean, new clear-cache tests pass, lint clean).
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round6.md`.
+
 ## 2026-07-13 — [codex-autofix] Round 5: Count marketCap + skip empty without error (PR #1493 `ag/troubleshoot-sentry`)
 
 Codex review flagged 2 more P2 findings on the round-4 fix:
