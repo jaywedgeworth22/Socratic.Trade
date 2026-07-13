@@ -806,13 +806,17 @@ function vectorUserIdFor(userId: string | undefined): string {
   return sanitizeUserId(userId);
 }
 
+export function sanitizeVectorId(id: string): string {
+  return id.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 512);
+}
+
 function contextId(document: ContextDocument, fallbackIndex: number): string {
   if (document.metadata?.vector_id) {
-    return String(document.metadata.vector_id);
+    return sanitizeVectorId(String(document.metadata.vector_id));
   }
   const { symbol, source, accession, timestamp } = document.metadata;
   const raw = [source, symbol, accession, timestamp].filter(Boolean).join(":") || `${symbol}:${source}:${fallbackIndex}`;
-  return raw.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 512);
+  return sanitizeVectorId(raw);
 }
 
 function estimatePineconeWriteUnitsForDocument(document: ContextDocument, vectorUserId: string): number {
@@ -1416,7 +1420,7 @@ export async function storeDocument(
       const ordinal = originalIndex + 1;
       const cleanSection = (c.section || "body").replace(/:/g, "-");
       const occurrenceId = `${accession}:${sequence}:${documentName}:${cleanSection}:${ordinal}:${parserRev}`;
-      const vectorId = `${corpusRev}:${occurrenceId}:${embedRev}`;
+      const vectorId = sanitizeVectorId(`${corpusRev}:${occurrenceId}:${embedRev}`);
 
       return {
         text: `${c.context_header}\n\n${c.text}`,
@@ -1478,7 +1482,7 @@ export async function storeDocument(
       const ordinal = i + 1;
       const cleanSection = (c.section || "body").replace(/:/g, "-");
       const occurrenceId = `${accession}:${sequence}:${documentName}:${cleanSection}:${ordinal}:${parserRev}`;
-      const vectorId = `${corpusRev}:${occurrenceId}:${embedRev}`;
+      const vectorId = sanitizeVectorId(`${corpusRev}:${occurrenceId}:${embedRev}`);
 
       occurrencesToRecord.push({
         vectorId,
