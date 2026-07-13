@@ -6,7 +6,9 @@ Drafted the implementation plan for enabling the bidirectional App A <-> App B C
 Fixed a documentation mismatch in `.env.example` (`CONGRESS_TRADE_AUTOFORWARD` -> `CONGRESS_SHARE_ENABLED`).
 Identified the specific Infisical variables (`CONGRESS_SHARE_ENABLED`, `CONGRESS_TRADE_READS_ENABLED`, etc.) that need to be flipped `on` in production.
 Since the production secrets are managed in Infisical and we don't have autonomous access to the project `prod` environment here, the remaining flag flips and the subsequent `fullHistory` backfill must be performed manually by the owner, as noted in the rollout note.
-Addressed 4 Codex P2 threads on Codex review: added missing `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` flag, documented stream subscription prerequisites, clarified backfill universe scope, and reordered price-adjustment resolution before backfill.
+Addressed 8 Codex P2 threads across two autofix rounds:
+- Round 1 (4 threads): added missing `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` flag, documented stream subscription prerequisites, clarified backfill universe scope, reordered price-adjustment resolution before backfill.
+- Round 2 (4 threads): mirrored all activation prerequisites in the effort row (added missing `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` + stream subscription prerequisites), listed all touched files in the rollout doc, recorded actual verification commands in the rollout doc, reordered price-adjustment resolution before enabling `CONGRESS_SHARE_ENABLED` (not just before backfill).
 Rollout: `docs/rollouts/2026-07-13-congress-trade-integration.md`.
 Auto-merge enabled.
 

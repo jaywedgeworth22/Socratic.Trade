@@ -9,13 +9,22 @@ App B already contained the infrastructure to share (EOD, insider, etc.) and con
 
 ## Files Touched
 - `.env.example`
+- `STATUS.md`
+- `docs/EFFORT-LOG.md`
+- `docs/rollouts/2026-07-13-congress-trade-integration.md` (this file)
 
 ## Verification
-- Checked `infisical` CLI version and identified missing permissions/project context for autonomous secret injection.
-- Verified that the source code accurately checks for `CONGRESS_SHARE_ENABLED` rather than the old documented name.
+Three required gates (all passed):
+```bash
+npx tsc --noEmit
+npm test
+npm run build
+```
+- `npm run lint` was skipped for this purely doc/env change (no product source touched).
 
 ## Follow-ups
-1. **Infisical Updates:** The owner must manually set the following variables to `on` in Infisical:
+1. **Price Adjustments:** Resolve the outstanding price-adjustment discrepancy between App A (FMP-adjusted closes) and App B (raw closes) before enabling any flags that trigger automatic data sharing. The current data plan (`docs/congress-trade-data-plan.md`) marks this as a prerequisite: mixing adjusted and raw closes corrupts return math across splits/dividends. Decide whether to consume App A's adjusted data as-is, apply a fallback, or use a dedicated import mode that avoids the mismatch. **This must be resolved first** because `CONGRESS_SHARE_ENABLED` activates the nightly scheduler that posts closes to App A — running it with unresolved price modes seeds wrong prices through the automatic path, not just the explicit backfill.
+2. **Infisical Updates:** Once the price-adjustment decision is settled, the owner must manually set the following variables to `on` in Infisical:
    - `CONGRESS_SHARE_ENABLED`
    - `CONGRESS_TRADE_READS_ENABLED`
    - `CONGRESS_TRADE_AS_CONGRESS_SOURCE`
@@ -28,5 +37,4 @@ App B already contained the infrastructure to share (EOD, insider, etc.) and con
      - Set `CONGRESS_STREAM_SUBSCRIPTION_ID` + `CONGRESS_STREAM_SUBSCRIPTION_TOKEN` (e.g. a pre-arranged webhook secret pair), **or**
      - Set `CONGRESS_STREAM_AUTO_SUBSCRIBE=on` to auto-discover via the App A API.
      Without one of these, `resolveSubscription` returns null and the stream never activates.
-2. **Price Adjustments:** Resolve the outstanding price-adjustment discrepancy between App A (FMP-adjusted closes) and App B (raw closes) before running any backfill. The current data plan (`docs/congress-trade-data-plan.md`) marks this as a prerequisite: mixing adjusted and raw closes corrupts return math across splits/dividends. Decide whether to consume App A's adjusted data as-is, apply a fallback, or use a dedicated import mode that avoids the mismatch.
-3. **Backfill:** Once the flags are flipped and the price-adjustment decision is settled, seed App A's database. Note that `POST /api/admin/congress-share {"fullHistory": true}` only backfills `collectMonitoredSymbols()` (the app's monitored universe), which may miss some congressional tickers not in the watchlist. For full coverage, specify an explicit `symbols` array or pass `"allIndexes": true` to also include major-index members:
+3. **Backfill:** Once the flags are flipped, seed App A's database. Note that `POST /api/admin/congress-share {"fullHistory": true}` only backfills `collectMonitoredSymbols()` (the app's monitored universe), which may miss some congressional tickers not in the watchlist. For full coverage, specify an explicit `symbols` array or pass `"allIndexes": true` to also include major-index members:
