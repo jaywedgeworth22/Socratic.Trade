@@ -68,6 +68,8 @@ The discovery and parser lane files will be appended after adversarial integrati
   then reran the entire ordered Node 24 gate: lint 0 errors / 447 warnings, TypeScript clean, 352 files / 3,950
   tests passed, and production build passed.
 - `#agent-sync` receipts: posted `gating now` before the full gate and `gate clear` only after the green rerun.
+- Merged `origin/main@1a90281b`, then `scripts/land.sh` repeated clean TypeScript, 352 files / 3,950 tests, and
+  production build; ready PR #1543 was opened. Hosted checks and review remain; nothing is merged or deployed.
 
 ## Follow-ups
 

@@ -528,7 +528,8 @@ As of 2026-07-08 (assignment-rule update).
   ALL NINE PACKAGES.** Inherits merged AG baselines #1495 (census/universe), #1496
   (filing/artifact/occurrence schema), #1520 (temporary limits), and #1527 (ASCII vector IDs); each is being
   audited against the plan's acceptance criteria before deeper work. The first validator/durable-state slice is
-  **LOCAL FULL-GATE GREEN / PR PENDING** (Node 24 lint 0 errors, tsc, 3,950 tests, production build). Parallel lanes: manifest/worker
+  **READY PR [#1543](https://github.com/jaywedgeworth22/Socratic.Trade/pull/1543) / LOCAL FULL-GATE GREEN**
+  (Node 24 lint 0 errors, tsc, 3,950 tests, production build; not merged/deployed). Parallel lanes: manifest/worker
   correctness, historical discovery/archive/aggregate SEC pacing, DOM/iXBRL parser+chunker, then structured
   facts, retrieval/eval/coverage, and gated shadow canaries. **Acceptance audit findings:** P0's generated
   universe treats SEC ticker-file order as market-cap/prominence, lacks a dated selection/eligibility snapshot,
@@ -2676,7 +2677,7 @@ As of 2026-07-08 (assignment-rule update).
   class aliases, selection snapshot/reasons, and coverage by issuer/form/period/artifact/parser/embed revision.
   Dependency and acceptance detail: `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` P0.
 - **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07, claimed 2026-07-13) —
-  IN PROGRESS / DURABLE JOB CORE IMPLEMENTED; BASELINE #1496 MERGED.** Migration v23 plus `db-rag-ingest`
+  READY IN PR #1543 / DURABLE JOB CORE IMPLEMENTED; BASELINE #1496 MERGED.** Migration v23 plus `db-rag-ingest`
   now provide deterministic replay keys, sealed jobs, ordered stage checkpoints, atomic fenced leases/heartbeats,
   bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion; 12 focused adversarial
   tests and Node 24 typecheck pass. Remaining: wire artifacts/sections/facts, exact accepted timestamps,

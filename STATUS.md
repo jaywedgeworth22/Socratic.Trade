@@ -11,13 +11,14 @@ receipts. The current ingestion path also remains recent-only and regex/whitespa
 
 The first local slice now implements the versioned/checksummed universe acceptance gate and durable job/task
 state with leases, strict stage transitions, bounded retries, DLQ/quarantine, verification receipts, and replay
-identity. This first slice is locally ready for PR: 16 focused tests pass, then the required Node 24 gate passed
+identity. This first slice is ready in PR #1543: 16 focused tests pass, then the required Node 24 gate passed
 with lint at 0 errors / 447 inherited warnings, clean TypeScript, 352 files / 3,950 tests, and a production build.
 The build first caught and then verified the fix for a `node:crypto` Edge import trace. Expert lanes are still
 being hardened independently: the corrected universe/census is under adversarial review, while first discovery/
 pacing and parser/chunker drafts were rejected at review and are being corrected. No live provider, object-store,
 vector-corpus, or production backfill write will run before fixture tests and the real-corpus gates pass. Open AG
-PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled.
+PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled. PR #1543 is code-
+complete and awaits hosted checks/review; it has not merged or deployed.
 
 Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
 but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.
