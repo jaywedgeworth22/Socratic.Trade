@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash } from "crypto";
 
 /** Versioned, self-contained contract for evidence passed to both Green and Red. */
 export const EVIDENCE_CONTRACT_VERSION = "evidence-contract/v1";

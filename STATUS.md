@@ -16,8 +16,9 @@ compatibility. Focused verification is green: lint (0 errors); TypeScript; 224 i
 LLM/evidence/learning tests; and 41 migration/account/model tests. Current `origin/main` at
 `1a90281b` is now reconciled: its Red Team fallback UI/runtime and exit-replacement migrations
 20–22 are preserved, while account learning and Test Account removal remain migrations 23–24.
-Post-merge TypeScript and 205 high-risk migration/fallback/evidence tests pass. The full
-lint/type/test/build gate remains before opening a ready PR. This is local only: not pushed, merged,
+Post-merge TypeScript and 205 high-risk migration/fallback/evidence tests pass. The final full gate is
+green: lint 0 errors (448 grandfathered warnings), TypeScript clean, 3,980/3,980 tests, and production
+build. Next: commit the verified handoff and open a ready PR. This is local only: not pushed, merged,
 deployed, or production-verified. Audit:
 `docs/reviews/2026-07-13-decision-evidence-architecture.md`.
 ## 2026-07-13 — Red Team Fallover, UI updates, and Episodic Memory defensive fix (Antigravity, branch `agent/ag-red-team-fallback`)

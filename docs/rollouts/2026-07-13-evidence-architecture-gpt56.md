@@ -3,8 +3,8 @@
 Date: 2026-07-13  
 Owner: CODEX  
 Branch: `codex/evidence-architecture-program`  
-State at this checkpoint: local implementation and current-main reconciliation complete; post-merge
-verification and a ready PR remain; not pushed, merged, deployed, or production-verified.
+State at this checkpoint: local implementation, current-main reconciliation, and the full gate are
+complete; opening a ready PR remains; not pushed, merged, deployed, or production-verified.
 
 ## Summary
 
@@ -97,6 +97,7 @@ Tests:
 
 - `test/chat-injection.test.ts`
 - `test/chat-llm.test.ts`
+- `test/congress-share.test.ts`
 - `test/connected-accounts-route.test.ts`
 - `test/data-providers.test.ts`
 - `test/evidence-pack.test.ts`
@@ -111,7 +112,9 @@ Tests:
 - `test/llm-request.test.ts`
 - `test/market-preselection.test.ts`
 - `test/model-rotation.test.ts`
+- `test/outcome-engine.test.ts`
 - `test/persistence-hardening.test.ts`
+- `test/persistence-notification.test.ts`
 - `test/prompt-safety.test.ts`
 - `test/rag-doc-type-coverage.test.ts`
 - `test/source-value.test.ts`
@@ -169,17 +172,25 @@ Current-main reconciliation:
 - `npx tsc --noEmit` — pass after reconciliation.
 - `npx vitest run test/persistence-hardening.test.ts test/connected-accounts-route.test.ts test/model-rotation.test.ts test/strategy-tuning-reviews.test.ts test/chat-injection.test.ts test/source-value.test.ts test/data-providers.test.ts test/red-team.test.ts test/order-replacement.test.ts` — 9 files, 205 tests pass after reconciliation.
 
-Required final gate after reconciliation:
+Full required gate after reconciliation and final fixes:
 
-- `npm run lint`
-- `npx tsc --noEmit`
-- `npm test`
-- `npm run build`
+- `npm run lint` — pass, 0 errors (448 grandfathered warnings).
+- `npx tsc --noEmit` — pass.
+- `npm test` — 355 files, 3,980 tests pass.
+- `npm run build` — pass; Next.js generated all routes successfully.
+- `git diff --check` — pass.
+
+The first full-suite attempt exposed seven integration-test failures: five Congress sharing tests
+were leaking real Yahoo/Stooq calls because `importOriginal(history)` traversed the DB/history cycle;
+the test now supplies a cycle-free history mock. The outcome lesson fixture now carries an exact
+internal test-infrastructure account and asserts account-scoped persistence. The strategy prompt
+fixture now expects the accurate “deterministic fills / not a product account” description. The first
+build also rejected `node:crypto` on the scheduler bundle path; the evidence pack now uses the
+project-supported bare `crypto` import. Focused fixes (66 tests), the full suite, and the build pass.
 
 ## Follow-ups / risks
 
-- Current `origin/main` is integrated. Re-run migration and Red Team tests after the combined schema
-  and fallback controls before treating the branch as PR-ready.
+- Current `origin/main` is integrated and the combined migration/Red Team paths are verified.
 - Source/provider recommendation quality starts with priors. Re-adjudicate from account-scoped
   realized outcomes after enough data accrues.
 - Add an operator source-value dashboard only after enough directional outcomes exist.

@@ -10,8 +10,8 @@
 > product Test Account and purge its simulated outcomes, while retaining real broker paper accounts
 > only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
 > effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
-> custom IDs. Implementation and current-main reconciliation are locally complete; post-merge
-> verification, the full gate, and a ready PR remain. See
+> custom IDs. Implementation, current-main reconciliation, and the full verification gate are
+> complete locally; opening a ready PR remains. See
 > `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
 > `docs/rollouts/2026-07-13-evidence-architecture-gpt56.md`.
 
