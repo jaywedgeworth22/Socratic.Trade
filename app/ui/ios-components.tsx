@@ -16,8 +16,8 @@ export function ListSection({ title, footer, action, children, className }: { ti
   return (
     <section className={cn("flex flex-col", className)}>
       {(title || action) && (
-        <div className="flex items-end justify-between px-4 pb-1.5">
-          {title && <h2 className="text-[13px] font-semibold tracking-wide text-muted uppercase">{title}</h2>}
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 px-4 pb-1.5">
+          {title && <h2 className="text-[13px] font-semibold tracking-wide text-muted uppercase shrink-0">{title}</h2>}
           {action && <div className="text-[13px]">{action}</div>}
         </div>
       )}

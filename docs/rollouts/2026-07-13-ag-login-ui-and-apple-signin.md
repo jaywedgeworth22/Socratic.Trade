@@ -20,3 +20,8 @@
 ## Verification
 - Local build, lint, typecheck and test passed.
 - Pushed and PR opened.
+## 2026-07-13: UI Overlap Fixes
+- Addressed overlapping text in the "Broker Connections" section by allowing the buttons to wrap with `flex-wrap` and making the title shrink/wrap properly.
+- Wrapped the "Currently Loaded Account" and "Other Accounts" elements in `flex-col` so they do not overlap their labels.
+- Reduced the height of the `HeaderLogo` on the login page slightly and enabled it to shrink proportionally using `max-width` and `object-fit: contain`.
+

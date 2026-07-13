@@ -21,9 +21,9 @@ const anyProviderConfigured = googleConfigured || githubConfigured || appleConfi
 export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center bg-bg px-6 text-center">
-      <div className="max-w-md space-y-6">
-        <div className="flex justify-center mb-8">
-          <HeaderLogo height={24} />
+      <div className="w-full max-w-md space-y-6">
+        <div className="flex justify-center mb-8 px-4 overflow-hidden">
+          <HeaderLogo height={20} />
         </div>
 
         {anyProviderConfigured ? (
