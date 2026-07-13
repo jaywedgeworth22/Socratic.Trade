@@ -369,7 +369,7 @@ export default function OperatorDashboard() {
               <div className="border-t border-line/20 pt-3 flex items-center justify-between text-xs">
                 <span className="text-muted">Docker Containers</span>
                 <span className="font-mono text-fg font-semibold">
-                  {server?.resources?.filter((c: any) => c.status?.includes("running") || c.status?.includes("healthy")).length ?? 0} Running
+                  {server?.resources?.filter((c: any) => { const s = c.status ?? ""; return (s.includes("running") || s.includes("healthy")) && !s.includes("unhealthy"); }).length ?? 0} Running
                 </span>
               </div>
             </div>
