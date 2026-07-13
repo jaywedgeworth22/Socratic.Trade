@@ -11,6 +11,13 @@ Addressed 4 additional Codex P2 threads:
 - **Verification commands** — replaced narrative verification with actual `tsc --noEmit` / `npm test` / `npm run build` commands run and their results.
 - **Price mode ordering** — moved price-adjustment resolution to step 1 of the follow-up list (before `CONGRESS_SHARE_ENABLED`), because the nightly share job activates with the flag and would seed wrong prices without the price-mode decision settled.
 
+### Autofix Round 3
+Addressed the final 4 remaining Codex P2 threads (third review batch):
+- **`.env.example` fundamentals flag** — added `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` env var alongside `CONGRESS_SHARE_ENABLED` with doc comment explaining the separate gate for fundamentals/analyst arrays in the outbound scan-hook push.
+- **Bearer token prerequisite** — added `CONGRESS_TRADE_TOKEN` as an explicit prerequisite at the top of the Infisical activation list (step 2), noting that without it both automatic sharing and the manual backfill are no-ops.
+- **Backfill ordering vs reads** — moved `CONGRESS_TRADE_READS_ENABLED` into a new post-backfill step (step 4) so the backfill runs first; documented that enabling reads before the backfill could cause `fetchDailyOHLC` to short-circuit on App A's own partial series.
+- **Current-feed verification** — added a prerequisite note on `CONGRESS_TRADE_AS_CONGRESS_SOURCE` requiring verification that App A's `/api/transactions` feed carries current disclosures before flipping (avoids replacing working scrapers with stale data).
+
 ## Why
 App B already contained the infrastructure to share (EOD, insider, etc.) and consume (congress trades, scores, analytics) data from App A, but they were gated behind feature flags. The goal of this rollout is to turn these flags on in the production environment. We also fixed a documentation mismatch in `.env.example`.
 
@@ -27,14 +34,20 @@ npx tsc --noEmit
 npm test
 npm run build
 ```
-- `npm run lint` was skipped for this purely doc/env change (no product source touched).
+Each autofix round ran the full gate trio. Round 1 and 2 had lint skipped as doc-only; Round 3 confirms lint passes:
+
+```bash
+npm run lint      # ESLint: 0 errors, 447 warnings (all grandfathered)
+npx tsc --noEmit  # clean (no output)
+npm test          # 3934/3934 pass
+npm run build     # clean
+```
 
 ## Follow-ups
 1. **Price Adjustments:** Resolve the outstanding price-adjustment discrepancy between App A (FMP-adjusted closes) and App B (raw closes) before enabling any flags that trigger automatic data sharing. The current data plan (`docs/congress-trade-data-plan.md`) marks this as a prerequisite: mixing adjusted and raw closes corrupts return math across splits/dividends. Decide whether to consume App A's adjusted data as-is, apply a fallback, or use a dedicated import mode that avoids the mismatch. **This must be resolved first** because `CONGRESS_SHARE_ENABLED` activates the nightly scheduler that posts closes to App A — running it with unresolved price modes seeds wrong prices through the automatic path, not just the explicit backfill.
-2. **Infisical Updates:** Once the price-adjustment decision is settled, the owner must manually set the following variables to `on` in Infisical:
+2. **Infisical Updates (pre-backfill):** Once the price-adjustment decision is settled, set the following variables to `on` in Infisical. **Prerequisite:** Ensure `CONGRESS_TRADE_TOKEN` (the App A bearer token) is set first — without it, both automatic sharing and the manual backfill are no-ops (`isCongressShareAutoEnabled` and the admin route both gate on the token).
    - `CONGRESS_SHARE_ENABLED`
-   - `CONGRESS_TRADE_READS_ENABLED`
-   - `CONGRESS_TRADE_AS_CONGRESS_SOURCE`
+   - `CONGRESS_TRADE_AS_CONGRESS_SOURCE` — **prerequisite:** verify App A's `/api/transactions` feed carries current congressional disclosures before flipping; otherwise this replaces the working Senate/Apify/Capitol scrapers with App A's data, which may be stale or seed-only until the backfill runs.
    - `CONGRESS_ANALYTICS_ENABLED`
    - `CONGRESS_TRADE_FUNDAMENTALS_ENABLED` (ensure App A PR #46 is merged first)
    - `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` (also requires App A PR #46 — enables fundamentals/analyst in the outbound scan-hook push; without this, `shareScanRefs` skips the fundamentals/analyst arrays even when the share master switch is on)
@@ -44,4 +57,6 @@ npm run build
      - Set `CONGRESS_STREAM_SUBSCRIPTION_ID` + `CONGRESS_STREAM_SUBSCRIPTION_TOKEN` (e.g. a pre-arranged webhook secret pair), **or**
      - Set `CONGRESS_STREAM_AUTO_SUBSCRIBE=on` to auto-discover via the App A API.
      Without one of these, `resolveSubscription` returns null and the stream never activates.
-3. **Backfill:** Once the flags are flipped, seed App A's database. Note that `POST /api/admin/congress-share {"fullHistory": true}` only backfills `collectMonitoredSymbols()` (the app's monitored universe), which may miss some congressional tickers not in the watchlist. For full coverage, specify an explicit `symbols` array or pass `"allIndexes": true` to also include major-index members:
+3. **Backfill:** With the pre-backfill flags above active, seed App A's database. **Important:** run the backfill before enabling `CONGRESS_TRADE_READS_ENABLED` — if App A reads are on, `fetchDailyOHLC` may short-circuit on App A's own partial series (even 2 closes) and post those back instead of using App B's deeper providers to fill gaps. Note that `POST /api/admin/congress-share {"fullHistory": true}` only backfills `collectMonitoredSymbols()` (the app's monitored universe), which may miss some congressional tickers not in the watchlist. For full coverage, specify an explicit `symbols` array or pass `"allIndexes": true` to also include major-index members.
+4. **Post-backfill:** After the backfill completes, enable the remaining flags:
+   - `CONGRESS_TRADE_READS_ENABLED` — turn this on after the backfill to avoid read-tier short-circuit issues. With the backfill complete and the read tier active, App A can serve price history directly for future scan candidates without re-fetching from upstream providers.
