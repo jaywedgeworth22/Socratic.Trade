@@ -57,4 +57,19 @@ describe("connections-health API route", () => {
     expect(canonicalLanes[0]?.lastSuccessTs).not.toBeNull();
     expect(body.services.some((lane) => lane.service === "alphavantage")).toBe(false);
   });
+
+  it("expects env lane for shared-operator-infra even when local user has a key", async () => {
+    const { db, route } = await load();
+    db.upsertUserApiKey("local", "alphavantage", "local-av-key");
+
+    const response = await route.GET(authenticatedAdminRequest());
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      services: Array<{ service: string; keySource: string | null }>;
+    };
+    const avLanes = body.services.filter((lane) => lane.service === "alpha-vantage");
+    // It should have the env lane (keySource: "env"), not user lane (keySource: "user")
+    expect(avLanes).toHaveLength(1);
+    expect(avLanes[0]?.keySource).toBe("env");
+  });
 });
