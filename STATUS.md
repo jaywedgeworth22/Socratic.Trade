@@ -1,12 +1,12 @@
 # Current Status
 
-## 2026-07-13 — [codex-autofix] Fix unhealthy container status check on PR #1533 (agent/ag-unified-admin-console)
+## 2026-07-13 — [codex-autofix] Query chunk_occurrences instead of document_chunks for admin corpus coverage (PR #1533)
 
-Codex review flagged a P2 finding on the admin dashboard: the container health filter used `c.status.includes("healthy")`, which incorrectly matches `"unhealthy"` or `"running:unhealthy"`. Added `&& !s.includes("unhealthy")` guard so degraded containers aren't counted as running.
+Codex review flagged a P2 finding: `getChunkCoverage()` and `getChunkSourceBreakdown()` queried the content-hash dedup table (`document_chunks`, one row per unique chunk). When a later filing/source contained boilerplate whose `content_hash` was already embedded, the admin UI showed 0 new chunks for that source/symbol. Switched both queries to `chunk_occurrences` (one row per actual occurrence) so the Corpus Composition and per-ticker source chips reflect true document coverage.
 
-Verify trio: tsc clean, 350 suites / 3934 tests pass, build clean.
+Verify trio: tsc clean, npm test pass, build clean, lint 0 errors.
 Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
-All 4 remaining unresolved Codex threads resolved. Auto-merge enabled.
+All 10 Codex threads resolved. Auto-merge enabled.
 
 ## 2026-07-13 — [codex-autofix] Address 3 Codex P2 review findings on PR #1533 (agent/ag-unified-admin-console)
 

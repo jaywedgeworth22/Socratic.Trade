@@ -33,6 +33,17 @@ Comprehensively unified the operator admin panels under a shared responsive side
 ### Verification
 All four checks passed: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test` (350 suites / 3,934 tests), `npm run build` (clean).
 
+## 2026-07-13 Codex Autofix Round 3 (1 P2 Finding)
+
+### Changes
+1. **Build source coverage from occurrences, not dedupe rows** (`src/lib/db-learning.ts`): `getChunkCoverage()` and `getChunkSourceBreakdown()` queried `document_chunks` (the content-hash dedup table, one row per unique chunk text). When a later filing/source contained boilerplate whose `content_hash` was already embedded, the admin UI showed 0 new chunks for that source/symbol, dramatically undercounting coverage. Switched both queries to `chunk_occurrences`, which records one row per actual occurrence — every filing path that produced a chunk, even if another filing's chunk shared the same `content_hash`.
+
+### Files Touched
+* `src/lib/db-learning.ts` (2 lines — table name in `getChunkCoverage` and `getChunkSourceBreakdown` queries)
+
+### Verification
+All four checks passed: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test` (clean), `npm run build` (clean).
+
 ## 2026-07-13 Codex Autofix Round 2 (1 P2 Finding)
 
 ### Changes
@@ -43,3 +54,14 @@ All four checks passed: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `
 
 ### Verification
 All four checks passed: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test` (350 suites / 3,934 tests), `npm run build` (clean).
+
+## 2026-07-13 Codex Autofix Round 3 (1 P2 Finding)
+
+### Changes
+1. **Build source coverage from occurrences, not dedupe rows** (`src/lib/db-learning.ts`): `getChunkCoverage()` and `getChunkSourceBreakdown()` queried `document_chunks` (the content-hash dedup table, one row per unique chunk text). When a later filing/source contained boilerplate whose `content_hash` was already embedded, the admin UI showed 0 new chunks for that source/symbol, dramatically undercounting coverage. Switched both queries to `chunk_occurrences`, which records one row per actual occurrence — every filing path that produced a chunk, even if another filing's chunk shared the same `content_hash`.
+
+### Files Touched
+* `src/lib/db-learning.ts` (2 lines — table name in `getChunkCoverage` and `getChunkSourceBreakdown` queries)
+
+### Verification
+All four checks passed: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test` (clean), `npm run build` (clean).
