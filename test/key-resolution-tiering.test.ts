@@ -37,12 +37,28 @@ describe("credential tiering — generic resolver", () => {
     expect(resolveApiKeyWithSource("alpaca_paper_api_key", "u_tenant")).toMatchObject({ key: "tenant-key", source: "user" });
   });
 
-  it("shared-operator-infra (market data): env serves ANY user", async () => {
+  it("shared-operator-infra (market data): local user key serves ANY user before env fallback", async () => {
     vi.stubEnv("FINNHUB_API_KEY", "env-finnhub");
-    const { resolveApiKeyWithSource } = await import("../src/lib/db");
+    const { resolveApiKeyWithSource, upsertUserApiKey } = await import("../src/lib/db");
+    
+    // Without a local key, it falls back to env
     expect(resolveApiKeyWithSource("finnhub", "local").source).toBe("env");
     expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "env-finnhub", source: "env" });
     expect(resolveApiKeyWithSource("finnhub", undefined).source).toBe("env");
+
+    // With a local key, the local user's own key still wins for them (returns "user" source)
+    upsertUserApiKey("local", "finnhub", "local-finnhub");
+    expect(resolveApiKeyWithSource("finnhub", "local")).toMatchObject({ key: "local-finnhub", source: "user" });
+
+    // But for a tenant/background caller, the configured env key still takes precedence over local fallback
+    expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "env-finnhub", source: "env" });
+    expect(resolveApiKeyWithSource("finnhub", undefined)).toMatchObject({ key: "env-finnhub", source: "env" });
+
+    // When the env key is absent, they fall back to the local database key (source "env")
+    vi.unstubAllEnvs();
+    delete process.env.FINNHUB_API_KEY;
+    expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "local-finnhub", source: "env" });
+    expect(resolveApiKeyWithSource("finnhub", undefined)).toMatchObject({ key: "local-finnhub", source: "env" });
   });
 
   it("an unlisted service defaults to per-user-only (fail closed for a tenant)", async () => {
