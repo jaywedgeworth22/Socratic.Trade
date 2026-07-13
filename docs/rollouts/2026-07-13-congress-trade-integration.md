@@ -4,6 +4,13 @@
 Updated `.env.example` to fix the `CONGRESS_TRADE_AUTOFORWARD` to `CONGRESS_SHARE_ENABLED` variable mismatch, reflecting the true environment variable name used in the codebase.
 Prepared Infisical flag changes to enable the bidirectional Congress.Trade (App A) <-> Socratic.Trade (App B) integration.
 
+### Autofix Round 2
+Addressed 4 additional Codex P2 threads:
+- **EFFORT-LOG.md completeness** — added missing `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` variable and stream subscription prerequisites (`CONGRESS_STREAM_SUBSCRIPTION_ID`+`_TOKEN` or `CONGRESS_STREAM_AUTO_SUBSCRIBE`) to the effort row.
+- **Files touched** — updated rollout doc to list all 4 files changed, not just `.env.example`.
+- **Verification commands** — replaced narrative verification with actual `tsc --noEmit` / `npm test` / `npm run build` commands run and their results.
+- **Price mode ordering** — moved price-adjustment resolution to step 1 of the follow-up list (before `CONGRESS_SHARE_ENABLED`), because the nightly share job activates with the flag and would seed wrong prices without the price-mode decision settled.
+
 ## Why
 App B already contained the infrastructure to share (EOD, insider, etc.) and consume (congress trades, scores, analytics) data from App A, but they were gated behind feature flags. The goal of this rollout is to turn these flags on in the production environment. We also fixed a documentation mismatch in `.env.example`.
 
