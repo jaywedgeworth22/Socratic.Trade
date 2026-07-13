@@ -333,8 +333,16 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
 
   const envKey = envVar ? process.env[envVar] : undefined;
 
-  // 2. shared-operator-infra: env is a global fallback for ANY user (incl. no-userId background).
+  // 2. shared-operator-infra: fallback to `local` user's key, then global env fallback.
   if (credTierForService(canonical) === "shared-operator-infra") {
+    // If we're here, the caller either had no userId, or their userId didn't have a stored key.
+    // Use the Socratic.Trade owner's ('local') key as the system default, since background
+    // jobs and global operations run off these keys.
+    if (userId !== "local") {
+      const localKey = getUserApiKey("local", canonical);
+      if (localKey?.apiKey) return { key: localKey.apiKey, source: "user", envVar, service: canonical };
+    }
+
     if (envKey) return { key: envKey, source: "env", envVar, service: canonical };
     return { source: "none", envVar, service: canonical };
   }
