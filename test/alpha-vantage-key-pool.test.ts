@@ -299,6 +299,19 @@ describe("resolveAlphaVantageKeyPool", () => {
     const resolved = resolveAlphaVantageKeyPool();
     expect(resolved).toEqual({ keys: ["single-key-value"], source: "env", envVar: "ALPHAVANTAGE_API_KEY" });
   });
+
+  it("prefers ALPHAVANTAGE_API_KEY env over local key fallback, and falls back to local when env is absent", async () => {
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey("local", "alphavantage", "local-av-key");
+
+    // With env set, it prefers env over local fallback
+    process.env.ALPHAVANTAGE_API_KEY = "env-av-key";
+    expect(resolveAlphaVantageKeyPool("u_tenant")).toEqual({ keys: ["env-av-key"], source: "env", envVar: "ALPHAVANTAGE_API_KEY" });
+
+    // With env absent, it falls back to local key
+    delete process.env.ALPHAVANTAGE_API_KEY;
+    expect(resolveAlphaVantageKeyPool("u_tenant")).toEqual({ keys: ["local-av-key"], source: "env", envVar: "ALPHAVANTAGE_API_KEY" });
+  });
 });
 
 // ── AlphaVantageEnrichmentProvider integration: rotation, scrub, all-exhausted fast-fail ──

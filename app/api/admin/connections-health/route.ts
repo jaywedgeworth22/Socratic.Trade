@@ -6,7 +6,7 @@ import {
   type ServiceHealthSummary,
 } from "@/lib/db-health";
 import { requireAdmin } from "@/lib/auth/admin";
-import { listUserApiKeys, LOCAL_USER } from "@/lib/db-api-keys";
+import { listUserApiKeys, LOCAL_USER, credTierForService } from "@/lib/db-api-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +43,11 @@ function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHeal
   const loggedUserLanes = new Set(services.filter((s) => s.keySource === "user").map((s) => s.service));
 
   function hasUserKey(service: string) {
-    return servicesWithUserKeys.has(toCanonicalService(service)) || loggedUserLanes.has(service);
+    const canonical = toCanonicalService(service);
+    if (credTierForService(canonical) === "shared-operator-infra") {
+      return false;
+    }
+    return servicesWithUserKeys.has(canonical) || loggedUserLanes.has(service);
   }
 
   const filteredServices = services.filter((s) => !(s.keySource === "env" && hasUserKey(s.service)));
