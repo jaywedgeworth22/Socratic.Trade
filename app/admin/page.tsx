@@ -20,7 +20,7 @@ import { Card, Chip, Dot, Button } from "../ui/primitives";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ConnectionSummary {
-  services: Array<{ service: string; stoppedWorking: boolean; callsLast24h: number }>;
+  services: Array<{ service: string; keySource: string | null; stoppedWorking: boolean; callsLast24h: number }>;
 }
 
 interface LlmSummary {
@@ -57,9 +57,11 @@ export default function OperatorDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [probeErrors, setProbeErrors] = useState<Record<string, string>>({});
 
   const fetchDashboardData = async () => {
     setError(null);
+    setProbeErrors({});
     try {
       const results = await Promise.allSettled([
         fetch("/api/admin/connections-health"),
@@ -70,12 +72,34 @@ export default function OperatorDashboard() {
       ]);
 
       const [resConn, resLlm, resRag, resServ, resTrans] = results;
+      const errs: Record<string, string> = {};
 
-      if (resConn.status === "fulfilled" && resConn.value.ok) setConnections(await resConn.value.json());
-      if (resLlm.status === "fulfilled" && resLlm.value.ok) setLlm(await resLlm.value.json());
-      if (resRag.status === "fulfilled" && resRag.value.ok) setRag(await resRag.value.json());
-      if (resServ.status === "fulfilled" && resServ.value.ok) setServer(await resServ.value.json());
-      if (resTrans.status === "fulfilled" && resTrans.value.ok) setTranscript(await resTrans.value.json());
+      if (resConn.status === "fulfilled") {
+        if (resConn.value.ok) setConnections(await resConn.value.json());
+        else errs.connections = `HTTP ${resConn.value.status}`;
+      } else errs.connections = "Request failed";
+
+      if (resLlm.status === "fulfilled") {
+        if (resLlm.value.ok) setLlm(await resLlm.value.json());
+        else errs.llm = `HTTP ${resLlm.value.status}`;
+      } else errs.llm = "Request failed";
+
+      if (resRag.status === "fulfilled") {
+        if (resRag.value.ok) setRag(await resRag.value.json());
+        else errs.rag = `HTTP ${resRag.value.status}`;
+      } else errs.rag = "Request failed";
+
+      if (resServ.status === "fulfilled") {
+        if (resServ.value.ok) setServer(await resServ.value.json());
+        else errs.server = `HTTP ${resServ.value.status}`;
+      } else errs.server = "Request failed";
+
+      if (resTrans.status === "fulfilled") {
+        if (resTrans.value.ok) setTranscript(await resTrans.value.json());
+        else errs.transcript = `HTTP ${resTrans.value.status}`;
+      } else errs.transcript = "Request failed";
+
+      setProbeErrors(errs);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load dashboard data");
     } finally {
@@ -175,15 +199,17 @@ export default function OperatorDashboard() {
             <div className="p-5 flex-1 space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted">Overall Health</span>
-                <Chip tone={failedConnections.length > 0 ? "neg" : "pos"}>
-                  {failedConnections.length > 0 ? `${failedConnections.length} Offline` : "All Operations Online"}
+                <Chip tone={failedConnections.length > 0 ? "neg" : probeErrors.connections ? "warn" : "pos"}>
+                  {failedConnections.length > 0 ? `${failedConnections.length} Offline` :
+                   probeErrors.connections ? `Probe error (${probeErrors.connections})` : "All Operations Online"}
                 </Chip>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {connections?.services.slice(0, 6).map((srv) => (
-                  <div key={srv.service} className="bg-surface-2/40 border border-line/20 rounded-xl p-3 flex items-center justify-between">
-                    <span className="text-xs font-medium font-mono truncate mr-2" title={srv.service}>
+                  <div key={`${srv.service}:${srv.keySource ?? ""}`} className="bg-surface-2/40 border border-line/20 rounded-xl p-3 flex items-center justify-between">
+                    <span className="text-xs font-medium font-mono truncate mr-2" title={`${srv.service}${srv.keySource ? ` (${srv.keySource})` : ""}`}>
                       {srv.service}
+                      {srv.keySource && <span className="text-faint ml-1">({srv.keySource})</span>}
                     </span>
                     <Dot tone={srv.stoppedWorking ? "neg" : srv.callsLast24h > 0 ? "pos" : "neutral"} pulse={srv.stoppedWorking} />
                   </div>
@@ -206,23 +232,37 @@ export default function OperatorDashboard() {
             <div className="p-5 flex-1 flex flex-col justify-between">
               <div className="flex items-baseline justify-between mb-4">
                 <span className="text-xs text-muted">Last 30 Days Spend</span>
-                <span className="text-3xl font-extrabold tracking-tight text-fg">
-                  {llm ? fmtCost(llm.totalCostUsd) : "$0.00"}
-                </span>
+                {probeErrors.llm ? (
+                  <span className="text-sm text-warn">Probe error ({probeErrors.llm})</span>
+                ) : (
+                  <span className="text-3xl font-extrabold tracking-tight text-fg">
+                    {llm ? fmtCost(llm.totalCostUsd) : "$0.00"}
+                  </span>
+                )}
               </div>
               <div className="space-y-2 border-t border-line/20 pt-4 flex-1">
-                <span className="text-[11px] uppercase tracking-wider text-muted block mb-2">Cost By Model</span>
-                {llm?.rows
-                  .slice(0, 3)
-                  .sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0))
-                  .map((row, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs">
-                      <span className="font-mono text-muted truncate max-w-[180px]" title={row.model ?? "Unknown"}>
-                        {row.model ?? "Unknown"}
-                      </span>
-                      <span className="font-semibold text-fg">{fmtCost(row.costUsd || 0)}</span>
-                    </div>
-                  ))}
+                <span className="text-[11px] uppercase tracking-wider text-muted block mb-2">
+                  Cost By Model
+                  {probeErrors.llm && <span className="ml-1.5 text-warn font-normal normal-case">(unavailable)</span>}
+                </span>
+                {(() => {
+                  const agg = (llm?.rows ?? []).reduce<Record<string, number>>((acc, row) => {
+                    const model = row.model ?? "Unknown";
+                    acc[model] = (acc[model] || 0) + (row.costUsd || 0);
+                    return acc;
+                  }, {});
+                  return Object.entries(agg)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 3)
+                    .map(([model, cost]) => (
+                      <div key={model} className="flex items-center justify-between text-xs">
+                        <span className="font-mono text-muted truncate max-w-[180px]" title={model}>
+                          {model}
+                        </span>
+                        <span className="font-semibold text-fg">{fmtCost(cost)}</span>
+                      </div>
+                    ));
+                })()}
               </div>
             </div>
           </Card>
@@ -239,6 +279,12 @@ export default function OperatorDashboard() {
               </Link>
             </div>
             <div className="p-5 flex-1 space-y-4">
+              {probeErrors.rag && (
+                <div className="text-xs text-warn flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Probe error ({probeErrors.rag})
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="bg-surface-2/40 border border-line/20 rounded-xl p-2.5">
                   <div className="text-[11px] text-muted">Tickers</div>
@@ -283,6 +329,12 @@ export default function OperatorDashboard() {
               </Link>
             </div>
             <div className="p-5 flex-1 space-y-4">
+              {probeErrors.server && (
+                <div className="text-xs text-warn flex items-center gap-1.5 mb-2">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Probe error ({probeErrors.server})
+                </div>
+              )}
               <div className="space-y-3">
                 {/* CPU Progress */}
                 <div>
@@ -335,6 +387,12 @@ export default function OperatorDashboard() {
               </Link>
             </div>
             <div className="p-5 flex-1 divide-y divide-line/20">
+              {probeErrors.transcript && (
+                <div className="pb-3 text-xs text-warn flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Probe error ({probeErrors.transcript})
+                </div>
+              )}
               {transcript?.turns.filter((t) => t.role === "assistant").reverse().slice(0, 2).map((t, i) => (
                 <div key={t.id} className={`${i > 0 ? "pt-3.5" : ""} pb-3.5 flex flex-col gap-1.5`}>
                   <div className="flex items-center justify-between text-xs">
