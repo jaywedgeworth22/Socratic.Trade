@@ -1,26 +1,22 @@
-# 2026-07-13 — Native Apple Sign-In and Login UI Updates (AG, branch `agent/ag-safety-exit-replacement`)
+# 2026-07-13: Login UI updates and Apple Sign-in, Model Stats Drawer
 
 ## Summary
-Completed the native iOS app integration for Apple Sign-In and implemented backend verification logic. Also implemented a UI refresh for the login page, stripping out unnecessary text and introducing the candlestick logo, as well as fixing a display issue in the Model Stats drawer to drop redundant provider labels.
-
-## Why
-The iOS native app required a mechanism for secure authentication via Apple's native `AuthenticationServices`. The backend required an endpoint to mint Auth.js session cookies from Apple's JWTs. The user also requested a cleaner, logo-first login screen for the web app, and shorter provider labels in the LLM model drawer for better readability on mobile.
+- Replaced the text in the login page with Socratic.Trade Candlestick logo.
+- Adjusted the UI to only show the logo and the sign-in buttons.
+- Implemented a Drawer UX for the Model Stats.
+- Grouped Model Stats by provider with vertically aligned row labels on mobile devices.
+- Removed parenthetical model names for Anthropic, Google, and xAI.
 
 ## Files
-- `ios/SocraticTrade/LoginView.swift`
-- `ios/SocraticTrade/MobileAPIClient.swift`
-- `ios/SocraticTrade/MobileControlView.swift`
-- `ios/SocraticTrade/MobileStore.swift`
-- `ios/SocraticTrade/SocraticTradeApp.swift`
-- `app/api/mobile/auth/apple/route.ts`
 - `app/login/page.tsx`
 - `app/ui/llm-model-catalog.ts`
+- `app/api/mobile/auth/apple/route.ts`
+- `ios/SocraticTrade/LoginView.swift`
+- `ios/SocraticTrade/MobileStore.swift`
+- `ios/SocraticTrade/MobileAPIClient.swift`
+- `app/console/components/model-stats-drawer.tsx`
+- `app/console/ui/usage-monitor.tsx`
 
 ## Verification
-- Swift compilation / Xcode verified (Swift files structurally complete).
-- Backend compiled cleanly (`npx tsc --noEmit`).
-- Verified via `npm run build` and `npm run lint`.
-
-## Next Steps
-- Merge to `main`.
-- Deploy to production (Auto-deploy on `main` push).
+- Local build, lint, typecheck and test passed.
+- Pushed and PR opened.
