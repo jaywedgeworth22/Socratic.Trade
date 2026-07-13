@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Address 3 residual PR 1543 RAG review items (branch `codex/autofix-1543-residual`)
+
+Final Codex review on PR #1543 before merge left 3 unresolved P2 threads. All 3 addressed:
+
+1. **Require nonblank failure reasons (P2)**: `failSecIngestTask` now validates `errorType`/`error` are non-blank strings before persisting, matching the `requiredTerminalReason` guard in `terminalizeSecIngestTask`. Blank failure reasons previously produced `dead_letter` tasks with no meaningful cause, defeating the fail-closed audit trail.
+2. **Preserve existing artifact checksums (P2)**: `advanceSecIngestTask` changed `COALESCE(?, raw_sha256)` to `CASE WHEN raw_sha256 IS NOT NULL THEN raw_sha256 ELSE ? END` so a previously-set checksum is never overwritten by a later checkpoint with a different hash.
+3. **Sanitize lease duration before computing expiry (P2)**: `boundedLeaseMs` now guards `NaN`/`Infinity` with `Number.isFinite` before applying floor/clamp, preventing `new Date(now + NaN).toISOString()` from crashing the worker.
+
+Verify trio: lint 0 errors, 352 files / 3,960 tests pass, build clean. All 3 Codex threads resolved. PR from `codex/autofix-1543-residual` -> `main` needs manual creation (Actions runner lacks PR creation perms).
+
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1543-residual.md`.
+
 ## 2026-07-13 — SEC/RAG implementation program (CODEX, branch `codex/sec-rag-program`)
 
 Owner-directed implementation of all nine packages in the 1,000-stock SEC/RAG plan is in progress. The
