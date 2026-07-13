@@ -13,6 +13,29 @@ Verified empirically in Chromium (primed cache → assembly at bar level ~51 vs 
 an independent multi-agent design review that converged on the same approach. Gate green (tsc 0, lint
 0 errors, 3927 tests pass, build exit 0). Rollout: `docs/rollouts/2026-07-13-intro-desktop-banner-offset.md`.
 
+## 2026-07-13 — Infisical Secrets and Machine Identity Audit (Antigravity/AG, branch `agent/ag-infisical-sole-truth-audit`)
+
+Audited the Coolify production environment variables for `socratic-trade-prod` and matched them exactly with local Universal Auth machine identities. Moved the remaining operational configuration variables (`DB_BOOTSTRAP`, `NODE_ENV`, `REQUIRE_SECRETS_MANAGER`) and Alpaca streams settings (`STREAMS_ALPACA_*`, `TRIGGER_ENGINE`) into Infisical across all environments (dev, staging, prod), making Infisical the absolute, sole source of truth for app operations. Cleaned up and deleted these redundant variables from Coolify to leave only bootstrap connector keys and Nixpacks builder configurations.
+
+## 2026-07-13 — GPT-5.6 Benchmark Run (Antigravity, branch `agent/ag-gpt-5-6-benchmark`)
+
+Ran the benchmark suite against the new `gpt-5.6-terra`, `-sol`, and `-luna` models. Confirmed 100% valid schemas for Green and Red roles on `terra` and `luna`. Recorded latency and token usage. Output saved to `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`. All verification checks passed. State: **Completed (merged to main)**.
+
+## 2026-07-12 — Add clearCache option to admin reindex route (Antigravity, branch `ag/troubleshoot-sentry`)
+
+Added a `clearCache: true` option to the `POST /api/admin/reindex-10k` body to truncate local `document_chunks` and `ingested_accessions` tables. This enables a clean backfill of filings into the empty `socratic-trade` Pinecone index without the local cache incorrectly skipping filings. Flipped `WEB_SOURCE_SEC8K_FULL_BODY` to `on` in Infisical so that both summaries and full text are embedded for 8-Ks.
+Rollout: `docs/rollouts/2026-07-12-admin-reindex-clearcache.md`.
+
+## 2026-07-12 — [codex-autofix] Scope clearCache to 10-K/10-Q, use canonical symbols, clear by content_hash (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 3 more P2 findings on the clearCache fix (round 2 of autofix):
+1. Use chunk canonicalization (hyphen-free form) when clearing document_chunks — `normalizeSymbol` keeps hyphens, `canonicalTicker` strips them, so `WHERE symbol IN ('BRK-B')` missed rows stored under `BRKB`.
+2. Restrict deletes to 10-K/10-Q artifacts — the symbol-scoped DELETE was also purging 8-K-body accessions and sec-8k chunks. Added `doc_type` filter on ingested_accessions and `source` filter on document_chunks.
+3. Clear globally owned content hashes — a content_hash first recorded under another symbol's filing survived symbol-scoped DELETE. Now uses a subquery to find all hashes belonging to the target symbols' sec-edgar chunks and deletes every row with those hashes regardless of recorded symbol.
+Verify trio passes (tsc clean, 350 files / 3927 tests, build clean). Auto-merge enabled. All three Codex threads resolved.
+Rollout: `docs/rollouts/2026-07-12-admin-reindex-clearcache.md`.
+
+## 2026-07-12 — [codex-autofix] Honor HTTP-date Retry-After in 429 handling (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 ## 2026-07-12 — SEC/RAG 1,000-stock high-yield backfill plan (CODEX, branch `codex/rag-1000-stock-backfill-plan`)
 
 Three read-only expert lanes audited SEC discovery, parsing/chunking, vector/retrieval design, and backfill
@@ -70,6 +93,8 @@ green: tsc 0, lint 0 errors, 3927 tests pass, build exit 0. Rollout:
 ## 2026-07-13 — SEC/RAG 1,000-Stock Backfill: P1 — Identity and Manifest (Antigravity/AG, branch `agent/ag-rag-backfill-p1`)
 
 Completed RAG Backfill P1: added version 19 database migration creating relational tables `sec_filings`, `sec_artifacts`, and `chunk_occurrences`, backfilled legacy RAG ingested accessions and document chunks, updated `storeDocument` in `src/lib/vector-db.ts` to map stable unique vector/occurrence IDs and record chunk occurrences correctly (skipped and fresh), and integrated `sec_filings` discovery and `sec_artifacts` HTML logging into `sec-filings.ts` and `sec8k.ts`. Verified with tests, types, and lints. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p1.md`.
+
+*Infisical Settings & Plan*: Updated production/dev/staging RAG limits to intermediate values (`RAG_INGEST_MAX_TEXTS_PER_DAY=200000` and `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY=2000000`) for the backfill duration. Configured `DEFAULT_INGEST_MAX_TEXTS_PER_DAY=20_000` (20k) and `DEFAULT_PINECONE_WRITE_UNITS_PER_DAY=200_000` (200k) as safe code-fallback defaults. Once the 1,000-stock backfill finishes, the Infisical limits will be shifted back to these conservative 20k/200k safety gates. Changed `RAG_EMBED_DISCLOSURES=on` and `SEC_FILING_RAG_MAX_PER_RUN=25` across all environments. Triggers Coolify auto-redeploy to activate.
 
 ## 2026-07-13 — SEC/RAG 1,000-Stock Backfill: P0 — Truth and Census (Antigravity/AG, branch `agent/ag-rag-backfill-p0`)
 
