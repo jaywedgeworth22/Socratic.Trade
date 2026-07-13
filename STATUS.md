@@ -23,8 +23,9 @@ additional P2 contract gaps: offset timestamps, normalized quarantine identifier
 terminal reasons. A third review pass then found four durable-state gaps: immutable task revisions, authoritative
 receipt checkpoints, sealed-job replay, and non-finite retry configuration. All eleven findings are now fixed
 locally with 26 focused manifest/worker tests green. The final Node 24 gate on the latest four fixes is also
-green: lint has 0 errors / 448 inherited warnings, TypeScript is clean, all 352 files / 3,960 tests pass, and the
-production build succeeds. Refreshed hosted checks and review-thread triage remain before merge.
+green after merging current `origin/main`: lint has 0 errors / 452 inherited warnings, TypeScript is clean, all
+352 files / 3,960 tests pass, and the production build succeeds. Refreshed hosted checks and review-thread triage
+remain before merge.
 
 Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
 but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.

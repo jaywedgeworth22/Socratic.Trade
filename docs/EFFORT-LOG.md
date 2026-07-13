@@ -2682,20 +2682,21 @@ As of 2026-07-08 (assignment-rule update).
   now provide deterministic replay keys, sealed jobs, ordered stage checkpoints, atomic fenced leases/heartbeats,
   bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion. All three PR review
   findings across three review passes are fixed and covered; 26 focused tests pass under Node 24. The final Node
-  24 gate is green (lint 0 errors / 448 inherited warnings, TypeScript clean, 352 files / 3,960 tests, production
-  build). Remaining: refreshed hosted checks, review-thread triage, merge/live
+  24 gate is green after merging current `origin/main` (lint 0 errors / 452 inherited warnings, TypeScript clean,
+  352 files / 3,960 tests, production build). Remaining: refreshed hosted checks, review-thread triage, merge/live
   verification, then wire artifacts/sections/facts, exact accepted timestamps,
   amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.
 - **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (CODEX program; RAG-B01/B02/B08/B09/
-  B17, claimed 2026-07-13) — IN PROGRESS / HARDENED DRAFT AWAITS INDEPENDENT RE-REVIEW.** History-shard discovery,
-  aggregate SQLite pacing, and bulk planning now pass 50 focused plus 42 existing SEC tests after the first draft's
-  adversarial blockers were corrected. No SEC fetch/archive write is authorized. Remaining: independent hostile
-  acceptance, integration, primary/exhibit resolution, immutable object writes, checksums, and worker wiring.
+  B17, claimed 2026-07-13) — IN PROGRESS / HOSTILE RE-REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed missing
+  migration integration, header-only body deadlines/permits, process-local concurrency, stale-slot pacing collapse,
+  SEC-host/redirect/abort/Retry-After bypasses, fail-open PIT receipts, order-dependent conflicts, and unbounded
+  bodies/rows/diagnostics. No SEC fetch/archive write is authorized before independent acceptance.
 - **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05, claimed 2026-07-13)
-  — IN PROGRESS / ADVERSARIAL RESET UNDER FINAL GATE.** The reset adds bounded iterative traversal/table expansion,
-  namespace-aware iXBRL validation/transforms, occurrence-safe identities, verified tokenizer receipts, and strict
-  resource/metadata gates; 42 focused tests pass. Independent hostile re-review is still required before integration.
+  — IN PROGRESS / HOSTILE REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed forgeable tokenizer/provenance gates,
+  mutable payload-unbound eligibility, timezone-dependent identities, non-interruptible/pre-allocation bounds,
+  malformed or missing structured XBRL evidence, stylesheet-hidden poisoning, nested-table loss, and amplification
+  paths. No corpus write is authorized before independent acceptance.
 - **SEC/RAG P1 structured facts/events (CODEX program; RAG-B10, claimed 2026-07-13) — CLAIMED.** Persist XBRL,
   Forms 3/4/5/144, 13D/G, 13F-derived deltas, offerings, and other exact facts/events structurally; render cited
   evidence cards instead of embedding raw XML/JSON/rows.

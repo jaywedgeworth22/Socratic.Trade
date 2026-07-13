@@ -30,6 +30,7 @@ Addressed all 11 Codex review findings across three review rounds on PR #1543 (`
 - `git diff --check`: clean
 - Second full gate after review round 2: lint 0 errors / 448 inherited warnings; TypeScript clean; 352 files / 3,957 tests; production build clean with only the same known non-fatal Tailwind prose-scan warning
 - Final full gate after review round 3: lint 0 errors / 448 inherited warnings; TypeScript clean; 352 files / 3,960 tests; production build clean with only the same known non-fatal Tailwind prose-scan warning
+- Post-`origin/main` merge gate: lint 0 errors / 452 inherited warnings; TypeScript clean; 352 files / 3,960 tests; production build clean with only the same known non-fatal Tailwind prose-scan warning
 
 ## Follow-ups
 - All 11 Codex findings are addressed and regression-covered. Auto-merge remains enabled; refreshed hosted checks, review-thread triage, and merge/deploy verification remain.
