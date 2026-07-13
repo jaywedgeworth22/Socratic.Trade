@@ -265,6 +265,7 @@ describe("evaluateTradeProposal", () => {
   it("blocks daily notional overflow", () => {
     const decision = evaluateTradeProposal(proposal, {
       ...context(),
+      policy: { ...enabledPolicy, maxDailyNotional: 500, maxDailyPctOfNav: undefined },
       dailyNotionalUsed: 495
     });
     expect(decision.approved).toBe(false);

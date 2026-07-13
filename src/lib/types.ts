@@ -891,11 +891,13 @@ export interface TradingPolicy {
   holdingHorizon?: HoldingHorizon;
   maxOrderNotional?: number;
   maxOrderPctOfNav?: number;
+  /** Daily opening-order ceiling in fixed dollars. Mutually exclusive with maxDailyPctOfNav. */
   maxDailyNotional?: number;
   /** Hard ceiling on total order notional executed within any rolling 60-minute window. On breach the account auto-reverts strategyAuthority to "propose" and the order is rejected. */
   maxHourlyNotional?: number;
   /** Allow synthetic trailing-stop monitoring to act during extended hours. Default false (regular hours only). */
   allowExtendedHoursSyntheticStops?: boolean;
+  /** Daily opening-order ceiling as a percentage of current portfolio value. Mutually exclusive with maxDailyNotional. */
   maxDailyPctOfNav?: number;
   maxSymbolExposurePct?: number;
   maxSymbolExposureNotional?: number;
@@ -1102,6 +1104,20 @@ export interface TradingPolicy {
   maxFundamentalsAgeSec?: number;
 }
 
+export interface ProposalSizingSnapshot {
+  portfolioValue: number;
+  estimatedNotional: number;
+  estimatedPctOfNav?: number;
+  dailyOpeningCap?: {
+    mode: "pct_nav" | "dollar";
+    configuredValue: number;
+    effectiveNotional: number;
+    pctOfNav?: number;
+  };
+  dailyNotionalUsed?: number;
+  remainingDailyNotional?: number;
+}
+
 export interface TradeProposal {
   symbol: string;
   side: OrderSide;
@@ -1113,6 +1129,14 @@ export interface TradeProposal {
   timeInForce: TimeInForce;
   marketHours: MarketHours;
   rationale: string;
+  /**
+   * The Green Team's original rationale before deterministic sizing/risk receipts and Red Team text
+   * are appended to the legacy `rationale` string. Optional for persisted proposals created before
+   * the narrative split; readers fall back to the pre-Red portion of `rationale`.
+   */
+  greenTeamRationale?: string;
+  /** App-computed sizing arithmetic captured before Red Team review; never model-authored. */
+  sizingSnapshot?: ProposalSizingSnapshot;
   tradeThesisTag: string;
   entryMarketRegime: string;
   /**
@@ -1345,6 +1369,10 @@ export interface SocraticDecisionCase {
   authority: StrategyAuthority;
   thesis: string;
   rationale: string;
+  /** Green Team rationale before deterministic receipts and Red Team review text were appended. */
+  greenTeamRationale?: string;
+  /** App-computed sizing arithmetic captured with the proposal. */
+  sizingSnapshot?: ProposalSizingSnapshot;
   action: string;
   thesisTag?: string;
   regime?: string;
@@ -2063,7 +2091,9 @@ export interface StrategyTuningPatch {
     Pick<
       TradingPolicy,
       | "maxOrderNotional"
+      | "maxOrderPctOfNav"
       | "maxDailyNotional"
+      | "maxDailyPctOfNav"
       | "maxHourlyNotional"
       | "maxSymbolExposurePct"
       | "maxDailyOrders"

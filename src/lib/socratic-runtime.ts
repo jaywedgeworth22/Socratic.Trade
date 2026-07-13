@@ -325,6 +325,8 @@ export function buildSocraticDecisionCase(input: {
     authority: input.authority,
     thesis: input.proposal.tradeThesisTag,
     rationale: input.proposal.rationale,
+    ...(input.proposal.greenTeamRationale ? { greenTeamRationale: input.proposal.greenTeamRationale } : {}),
+    ...(input.proposal.sizingSnapshot ? { sizingSnapshot: input.proposal.sizingSnapshot } : {}),
     action: formatAction(input.proposal, notional),
     thesisTag: input.proposal.tradeThesisTag,
     regime: input.proposal.entryMarketRegime,

@@ -1,5 +1,31 @@
 # Current Status
 
+## 2026-07-13 — Account-relative risk limits and Green/Red decision clarity (CODEX, branch `codex/account-relative-risk-clarity`)
+
+Implemented locally from current `origin/main@60703dfe`. Daily opening spend now has one canonical
+dollar-or-percent mode, defaults to 20% of current NAV, and migrates only the exact former $500
+default; explicit dollar choices such as the Roth IRA account's displayed $1,000 remain unchanged
+until the owner switches that account to percent mode. Guardrails, capital posture, approval cards,
+mobile snapshot data, deterministic policy/approval paths, Green prompts, Red prompts, and AI
+strategy review all use the same resolved cap.
+
+The EXE contradiction is fixed at its execution boundary: an Alpaca fractional dollar order that
+cannot fund one whole-share bracket now has every bracket field cleared before broker submission,
+matching the existing "native bracket skipped" receipt. Future decisions persist app-computed
+notional/NAV arithmetic for Red Team and UI use. Live Thesis now renders distinct Green Team,
+deterministic sizing/risk, Red Team, and final deterministic-outcome sections; "review survived"
+is replaced by explicit approved/rejected/unavailable wording; non-placed action rows use intent
+verbs ("Buy"), reserving "Bought" for confirmed placement.
+
+Focused verification is green (8 files / 63 tests, then 5 files / 39 tests and 2 files / 111 tests).
+Repository lint passed with 0 errors / 452 inherited warnings; TypeScript and the native Swift
+snapshot model are clean. After documenting and isolating earlier host-contention timeouts, the
+canonical Node 24 `scripts/land.sh` gate passed completely: 359 files / 4,021 tests and the production
+build. Commit `2cfd7ca8` is pushed in ready PR #1561; hosted CI/security/smoke checks, merge/autodeploy,
+and production verification remain.
+
+Rollout: `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
+
 ## 2026-07-13 — Evidence architecture, account-scoped learning, and GPT-5.6 program (CODEX, branch `codex/evidence-architecture-program`)
 
 Implemented locally in the isolated Codex worktree: exact-account relational/vector learning;
@@ -18,9 +44,8 @@ LLM/evidence/learning tests; and 41 migration/account/model tests. Current `orig
 20–22 are preserved, while account learning and Test Account removal remain migrations 23–24.
 Post-merge TypeScript and 205 high-risk migration/fallback/evidence tests pass. The final full gate is
 green: lint 0 errors (448 grandfathered warnings), TypeScript clean, 3,980/3,980 tests, and production
-build. Ready PR #1544 is open at
-`https://github.com/jaywedgeworth22/Socratic.Trade/pull/1544`; all required checks are green. The
-branch is pushed but not merged, deployed, or production-verified. Audit:
+build. PR #1544 merged as `60703dfe`; production `/api/health` reports that exact release healthy.
+Audit:
 `docs/reviews/2026-07-13-decision-evidence-architecture.md`.
 ## 2026-07-13 — SEC/RAG implementation program (CODEX, branch `codex/sec-rag-program`)
 

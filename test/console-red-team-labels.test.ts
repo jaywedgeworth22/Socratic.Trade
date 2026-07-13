@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, type RedTeamVerdict } from "../app/console/lib/red-team";
+import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel, type RedTeamVerdict } from "../app/console/lib/red-team";
 
 function verdict(overrides: Partial<RedTeamVerdict>): RedTeamVerdict {
   return { rejected: false, available: false, reason: "Red Team evaluation failed.", ...overrides };
@@ -19,6 +19,16 @@ describe("redTeamFailureMeta", () => {
     for (const kind of ["not_configured", "timeout", "provider_error", "rate_limited", "malformed_response", undefined] as const) {
       expect(redTeamFailureMeta(kind).title.length).toBeGreaterThan(20);
     }
+  });
+});
+
+describe("redTeamVerdictLabel", () => {
+  it("names the review result without implying the order executed", () => {
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "approve" }))).toBe("Approved at full size");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "approve-at-half" }))).toBe("Approved at half size");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true }))).toBe("Rejected — blocked");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }))).toBe("Objection overridden");
+    expect(redTeamVerdictLabel(verdict({ available: false }))).toBe("Review unavailable — held for human approval");
   });
 });
 

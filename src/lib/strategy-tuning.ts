@@ -88,6 +88,7 @@ type LlmTuningPayload = {
     maxOrderNotional: number | null;
     maxOrderPctOfNav: number | null;
     maxDailyNotional: number | null;
+    maxDailyPctOfNav: number | null;
     maxSymbolExposurePct: number | null;
     maxGrossExposurePct: number | null;
     maxNetExposurePct: number | null;
@@ -739,7 +740,9 @@ function compactPolicy(policy: TradingPolicy, executionState: ExecutionState) {
     marketScanOutlierReserve: policy.marketScanOutlierReserve,
     strategyAuthority: policy.strategyAuthority,
     maxOrderNotional: policy.maxOrderNotional,
+    maxOrderPctOfNav: policy.maxOrderPctOfNav,
     maxDailyNotional: policy.maxDailyNotional,
+    maxDailyPctOfNav: policy.maxDailyPctOfNav,
     maxSymbolExposurePct: policy.maxSymbolExposurePct,
     maxDailyOrders: policy.maxDailyOrders,
     maxProposalsPerRun: policy.maxProposalsPerRun,
@@ -824,6 +827,7 @@ async function requestLlmTuning(
     "Review the selected account's realized and counterfactual performance, latest market scan context, macro context, current risk policy, scoring weights, and current strategy prompt.",
     "Suggest conservative improvements that can be manually reviewed before being applied.",
     "Do not propose placing trades. Do not remove explicit safety controls.",
+    "Daily and per-order caps each have mutually exclusive dollar and percent-of-NAV modes. Recommend at most one field in each pair (set the other to null); prefer percent-of-NAV when the intent should scale with account size.",
     `Sample-size guardrail: only propose scoringWeights (factor weight) changes when closedLotCount >= minClosedLotsForWeightShift (${MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT} closed lots). Below that the realized sample is too thin to attribute P&L to factors; return null for every scoringWeights JSON field, but describe that to the user as "no scoring-weight changes until there is enough closed-lot evidence" and focus on prompt clarity and risk sizing.`,
     "`missedOpportunities` (when present): high-scoring candidates the strategy SKIPPED that then rose over their horizon — each with realized returnPct, score, sector, regime, and dominantFactor; `recurringFactor` flags a factor that dominated multiple missed winners. If it appears, weigh whether scoringWeights under-weight that factor, but still obey the sample-size guardrail above before changing any weight.",
     "The following sections are account-scoped unless explicitly labeled validated research; never treat another account's paper or live outcomes as this account's evidence.",
@@ -1004,7 +1008,9 @@ function tuningSchema() {
         additionalProperties: false,
         required: [
           "maxOrderNotional",
+          "maxOrderPctOfNav",
           "maxDailyNotional",
+          "maxDailyPctOfNav",
           "maxSymbolExposurePct",
           "maxDailyOrders",
           "maxProposalsPerRun",
@@ -1014,7 +1020,9 @@ function tuningSchema() {
         ],
         properties: {
           maxOrderNotional: nullableNumber,
+          maxOrderPctOfNav: nullableNumber,
           maxDailyNotional: nullableNumber,
+          maxDailyPctOfNav: nullableNumber,
           maxSymbolExposurePct: nullableNumber,
           maxDailyOrders: nullableNumber,
           maxProposalsPerRun: nullableNumber,
@@ -1075,7 +1083,9 @@ function prunePolicy(value: LlmTuningPayload["policy"] | null | undefined): NonN
   const patch: NonNullable<StrategyTuningPatch["policy"]> = {};
   for (const key of [
     "maxOrderNotional",
+    "maxOrderPctOfNav",
     "maxDailyNotional",
+    "maxDailyPctOfNav",
     "maxSymbolExposurePct",
     "maxDailyOrders",
     "maxProposalsPerRun",
@@ -1083,6 +1093,11 @@ function prunePolicy(value: LlmTuningPayload["policy"] | null | undefined): NonN
   ] as const) {
     if (typeof value[key] === "number" && Number.isFinite(value[key])) patch[key] = value[key];
   }
+
+  // The UI/runtime exposes one expression per cap. A valid percent recommendation must not leave
+  // a competing hidden dollar value in the same AI-review patch.
+  if (patch.maxOrderPctOfNav != null) delete patch.maxOrderNotional;
+  if (patch.maxDailyPctOfNav != null) delete patch.maxDailyNotional;
 
   if (value.strategyAuthority) patch.strategyAuthority = value.strategyAuthority;
   if (typeof value.runDuringExtendedHours === "boolean") patch.runDuringExtendedHours = value.runDuringExtendedHours;

@@ -17,6 +17,7 @@ import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
 import { recordFillFromProposal } from "./performance";
 import { allowedSymbolsForPolicy, estimateNotional, applyOpeningOrderHeadroom, evaluateTradeProposal } from "./policy";
+import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { repriceStoredProtectiveExit, assessProtectiveExitRepriceDrift } from "./protective-exit-routing";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
@@ -248,9 +249,9 @@ export async function executeProposal(
       // Same composed cap as the run loop: policy's headroomed per-order cap ∧ remaining
       // daily/hourly budget ∧ available buying power — a bump past any of these would be
       // policy-rejected (and a cap breach can demote authority via autoRevertOnCapBreach).
-      const effectiveMaxDailyNotional = Math.min(
-        policy.maxDailyNotional ?? Infinity,
-        policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * account.portfolio.totalMarketValue : Infinity
+      const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+        policy,
+        account.portfolio.totalMarketValue
       );
       const openingCapNotional = Math.min(
         applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, account.portfolio)),

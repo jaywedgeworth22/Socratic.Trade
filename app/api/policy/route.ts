@@ -146,7 +146,11 @@ export async function PUT(request: Request) {
     return new NextResponse("learningReviewModel must be a non-empty model id.", { status: 400 });
   }
   stripNullsDeep(policy as unknown as Record<string, unknown>);
-  normalizeExclusivePolicyCaps(policy);
+  const capFields = ["maxOrderNotional", "maxOrderPctOfNav", "maxDailyNotional", "maxDailyPctOfNav"] as const;
+  const capPreference = capFields.some((key) => Object.prototype.hasOwnProperty.call(body, key))
+    ? body as Partial<TradingPolicy>
+    : current;
+  normalizeExclusivePolicyCaps(policy, capPreference);
   // Only enforce the interactive gpt-5.5/high-reasoning rejection when THIS request actually
   // changes the model/effort combination. validatePolicy runs against the MERGED policy, so a
   // stored gpt-5.5+high config used to fail EVERY unrelated save (notification prefs, short
@@ -268,7 +272,10 @@ async function validatePolicy(
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";
+  if (policy.maxDailyNotional !== undefined && policy.maxDailyNotional <= 0) return "maxDailyNotional must be positive.";
+  if (policy.maxDailyPctOfNav !== undefined && (policy.maxDailyPctOfNav <= 0 || policy.maxDailyPctOfNav > 100)) return "maxDailyPctOfNav must be between 0 and 100.";
   if (policy.maxDailyNotional !== undefined && policy.maxOrderNotional !== undefined && policy.maxDailyNotional < policy.maxOrderNotional) return "maxDailyNotional must be at least maxOrderNotional.";
+  if (policy.maxDailyPctOfNav !== undefined && policy.maxOrderPctOfNav !== undefined && policy.maxDailyPctOfNav < policy.maxOrderPctOfNav) return "maxDailyPctOfNav must be at least maxOrderPctOfNav.";
   if (policy.maxSymbolExposurePct !== undefined && (policy.maxSymbolExposurePct <= 0 || policy.maxSymbolExposurePct > 100)) return "maxSymbolExposurePct must be between 0 and 100.";
   if (policy.maxPortfolioBeta !== undefined && (!Number.isFinite(policy.maxPortfolioBeta) || policy.maxPortfolioBeta <= 0 || policy.maxPortfolioBeta > 10)) return "maxPortfolioBeta must be a positive number (≤ 10).";
   if (policy.maxAvgCorrelation !== undefined && (!Number.isFinite(policy.maxAvgCorrelation) || policy.maxAvgCorrelation <= 0 || policy.maxAvgCorrelation > 1)) return "maxAvgCorrelation must be between 0 (off) and 1.";

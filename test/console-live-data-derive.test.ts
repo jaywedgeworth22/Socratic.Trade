@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DashboardSnapshot } from "../app/dashboard-types";
 import type { EquityCurvePoint, EquityPosition, Portfolio, TradingPolicy } from "../src/lib/types";
-import { deriveMarkToMarket, deriveProtection, deriveRiskUtilization, selectEquityWindow } from "../app/console/lib/derive";
+import { deriveMarkToMarket, deriveProtection, deriveRiskUtilization, deriveSpend, selectEquityWindow } from "../app/console/lib/derive";
 import type { EquityOrder } from "../src/lib/types";
 
 function snapshotWith(input: {
@@ -56,6 +56,30 @@ describe("console live-data derivations", () => {
       dailyNotional: { used: 2_500, limit: 5_000, pct: 50 },
       dailyOrders: { used: 2, limit: 8, pct: 25 },
       investedCapital: { used: 1_200, limit: 2_000, pct: 60 }
+    });
+  });
+
+  it("resolves a percent daily cap against current NAV and exposes fixed-cap scale", () => {
+    const percent = snapshotWith({
+      portfolio: { totalMarketValue: 100 } satisfies Partial<Portfolio>,
+      policy: { maxDailyNotional: undefined, maxDailyPctOfNav: 20 }
+    });
+    expect(deriveSpend(percent)).toMatchObject({
+      capMode: "pct_nav",
+      capConfiguredValue: 20,
+      capNotional: 20,
+      capPctOfNav: 20
+    });
+
+    const fixed = snapshotWith({
+      portfolio: { totalMarketValue: 100 } satisfies Partial<Portfolio>,
+      policy: { maxDailyNotional: 1_000, maxDailyPctOfNav: undefined }
+    });
+    expect(deriveSpend(fixed)).toMatchObject({
+      capMode: "dollar",
+      capConfiguredValue: 1_000,
+      capNotional: 1_000,
+      capPctOfNav: 1_000
     });
   });
 

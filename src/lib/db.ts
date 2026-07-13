@@ -935,6 +935,41 @@ const MIGRATIONS: Migration[] = [
         database.prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${account.user_id}:${account.id}`);
       }
     }
+  },
+  {
+    // The former $500 value was a product default, not an account-relative risk posture. Convert
+    // only that exact legacy default to the new 20%-of-NAV mode. Other dollar values (including a
+    // user's explicit $1,000 setting) remain untouched and visible as dollar mode.
+    version: 26,
+    name: "daily_opening_cap_percent_default",
+    up: (database) => {
+      const targets = [
+        { table: "account_strategy_state", column: "policy", where: "1=1" },
+        { table: "strategy_profiles", column: "policy", where: "1=1" },
+        { table: "user_settings", column: "value", where: "key = 'policy'" }
+      ] as const;
+      let changed = 0;
+      for (const target of targets) {
+        const rows = database
+          .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
+          .all() as Array<{ rowid: number; json: string }>;
+        const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
+        for (const row of rows) {
+          try {
+            const policy = JSON.parse(row.json) as Record<string, unknown>;
+            if (policy.maxDailyNotional !== 500 || (typeof policy.maxDailyPctOfNav === "number" && policy.maxDailyPctOfNav > 0)) continue;
+            delete policy.maxDailyNotional;
+            policy.maxDailyPctOfNav = 20;
+            update.run(JSON.stringify(policy), row.rowid);
+            changed += 1;
+          } catch {
+            // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
+            // make the database unbootable while trying to repair an unrelated row.
+          }
+        }
+      }
+      if (changed > 0) console.log(`[db] migration 26: moved ${changed} legacy $500 daily cap row(s) to 20% of NAV`);
+    }
   }
 ];
 
@@ -2157,8 +2192,13 @@ function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
         policy.notificationSettings?.enabledEvents ?? DEFAULT_POLICY.notificationSettings.enabledEvents
     }
   };
+  const explicitDailyPct = typeof policyWithoutLegacyFields.maxDailyPctOfNav === "number" && policyWithoutLegacyFields.maxDailyPctOfNav > 0;
+  const explicitDailyNotional = typeof policyWithoutLegacyFields.maxDailyNotional === "number" && policyWithoutLegacyFields.maxDailyNotional > 0;
+  if (explicitDailyPct) delete merged.maxDailyNotional;
+  else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
   if ((merged.maxDailyNotional ?? 0) >= 500_000) {
-    merged.maxDailyNotional = DEFAULT_POLICY.maxDailyNotional;
+    delete merged.maxDailyNotional;
+    merged.maxDailyPctOfNav = DEFAULT_POLICY.maxDailyPctOfNav;
     if (merged.maxDailyOrders > DEFAULT_POLICY.maxDailyOrders) merged.maxDailyOrders = DEFAULT_POLICY.maxDailyOrders;
   }
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
