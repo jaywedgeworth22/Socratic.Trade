@@ -24,6 +24,11 @@ but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no N
 
 Rollout: `docs/rollouts/2026-07-13-sec-rag-program.md`.
 
+## 2026-07-13 — Red Team Fallover, UI updates, and Episodic Memory defensive fix (Antigravity, branch `agent/ag-red-team-fallback`)
+
+Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. 
+
+Also added critical defensive safeguards in `src/lib/strategy.ts` for the episodic decision memory retrieval block to prevent a minified server crash (`TypeError: a.filter is not a function`) when the `injected` array is undefined or unaligned. Verified with tsc, lint, tests, and build. Next step: land.
 ## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Claude, branch `agent/ag-safety-exit-replacement`)
 
 Addressed 4 of the final 6 unresolved Codex threads from PR #1492 (2 P1, 2 P2), asked about 2 remaining:
