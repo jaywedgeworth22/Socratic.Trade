@@ -13,6 +13,14 @@ Addressed 4 of the final 6 unresolved Codex threads from PR #1492 (2 P1, 2 P2), 
 All gates pass: tsc clean, 350 suites/3934 tests pass, build clean.
 Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
 Auto-merge enabled. Deployed on next push.
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Antigravity/AG, branch `agent/ag-safety-exit-replacement`)
+
+Addressed the final two P1 Codex findings on PR #1492:
+1. **Migration 21 Deduplication**: Updated the deduplication logic to prioritize row retention by state progress rather than strictly `rowid`. Uses a SQLite window function to rank rows based on progression status, preventing advanced state machine rows from being wrongly discarded.
+2. **Distinct Claiming State**: Introduced a new `replacement_claiming` state between `cancel_confirmed` and `replacement_submitted`. This fixes an architectural gap where a crash immediately prior to placing the broker order left the row in a permanently unrecoverable state. `autoRemediateStaleExitOrders` will now correctly revert stale `claiming` rows back to `cancel_confirmed`.
+
+All 3934 tests, types, and lints pass. Code pushed.
+Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes-round5.md`.
 
 ## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 4 (Claude, branch `agent/ag-safety-exit-replacement`)
 

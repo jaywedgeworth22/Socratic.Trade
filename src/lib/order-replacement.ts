@@ -24,7 +24,7 @@ export interface OrderReplacementRow {
   original_quantity: number | null;
   original_filled_quantity: number | null;
   replacement_ref_id: string;
-  status: "cancel_requested" | "cancel_confirmed" | "replacement_submitted" | "replacement_confirmed" | "failed" | "aborted";
+  status: "cancel_requested" | "cancel_confirmed" | "replacement_claiming" | "replacement_submitted" | "replacement_confirmed" | "failed" | "aborted";
   remaining_quantity: number | null;
   cancel_result: string | null;
   replacement_order_id: string | null;
@@ -419,7 +419,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       };
       
       const review = await input.gateway.reviewEquityOrder(marketOrder);
-      const casResult = db.prepare(`UPDATE order_replacements SET status = 'replacement_submitted', remaining_quantity = ?, updated_at = ? WHERE id = ? AND status = 'cancel_confirmed'`)
+      const casResult = db.prepare(`UPDATE order_replacements SET status = 'replacement_claiming', remaining_quantity = ?, updated_at = ? WHERE id = ? AND status = 'cancel_confirmed'`)
         .run(remainingQuantity, new Date().toISOString(), row.id);
       if (casResult.changes !== 1) {
         audit(
@@ -431,12 +431,12 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         return;
       }
 
-      // We placed it, transition immediately
+      // We claimed it, transition immediately
       let execution;
       try {
         execution = await input.gateway.placeEquityOrder({ ...marketOrder, refId: row.replacement_ref_id });
       } catch (error) {
-        // Stay in replacement_submitted instead of failing — the broker may have
+        // Transition to replacement_submitted instead of failing — the broker may have
         // accepted the market order before our connection dropped or timed out.
         // The replacement_submitted reconciliation branch looks up the broker
         // order by replacement_ref_id on the next tick; only if too much time
@@ -447,7 +447,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
           userId,
           input.policy.connectedAccountId
         );
-        db.prepare(`UPDATE order_replacements SET error = ?, updated_at = ? WHERE id = ? AND status = 'replacement_submitted'`)
+        db.prepare(`UPDATE order_replacements SET status = 'replacement_submitted', error = ?, updated_at = ? WHERE id = ? AND status = 'replacement_claiming'`)
           .run(error instanceof Error ? error.message : String(error), new Date().toISOString(), row.id);
         return;
       }
@@ -519,7 +519,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       );
     }
 
-    if (row.status === 'replacement_submitted') {
+    if (row.status === 'replacement_submitted' || row.status === 'replacement_claiming') {
       const isExit = originalOrder.side === "sell" || originalOrder.side === "cover";
       const orders = await input.gateway.getEquityOrders(input.policy.accountNumber);
       const found = orders.find((o) => o.clientOrderId === row.replacement_ref_id || o.id === row.replacement_order_id);
@@ -580,16 +580,22 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
           return;
         }
 
-        // If not found and no fill exists, and it's been in 'replacement_submitted' status for some time (e.g. > 5 minutes),
-        // we assume the submission failed to reach the broker, and mark it failed.
+        // If not found and no fill exists, and it's been in this status for some time (e.g. > 5 minutes),
+        // we assume the submission failed to reach the broker.
         const ageMs = Date.now() - new Date(row.updated_at).getTime();
         if (ageMs > 5 * 60_000) {
-          const errStr = "Replacement order submission timed out or failed to reach the broker.";
-          // Only fail if the row is still in replacement_submitted — a peer may have
-          // already reconciled it to replacement_confirmed.
-          db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status = 'replacement_submitted'`)
-            .run(errStr, new Date().toISOString(), row.id);
-          audit("stale_exit_replacement_submission_failed", { orderId: originalOrder.id, symbol, refId: row.replacement_ref_id }, userId, input.policy.connectedAccountId);
+          if (row.status === 'replacement_claiming') {
+            audit("stale_exit_replacement_claiming_reverted", { orderId: originalOrder.id, symbol, refId: row.replacement_ref_id }, userId, input.policy.connectedAccountId);
+            db.prepare(`UPDATE order_replacements SET status = 'cancel_confirmed', updated_at = ? WHERE id = ? AND status = 'replacement_claiming'`)
+              .run(new Date().toISOString(), row.id);
+          } else {
+            const errStr = "Replacement order submission timed out or failed to reach the broker.";
+            // Only fail if the row is still in replacement_submitted — a peer may have
+            // already reconciled it to replacement_confirmed.
+            db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status = 'replacement_submitted'`)
+              .run(errStr, new Date().toISOString(), row.id);
+            audit("stale_exit_replacement_submission_failed", { orderId: originalOrder.id, symbol, refId: row.replacement_ref_id }, userId, input.policy.connectedAccountId);
+          }
         }
         return;
       }
@@ -692,7 +698,7 @@ export async function autoRemediateStaleExitOrders(input: {
   }
 
   // Pump all active state machines for this account
-  const activeReplacements = db.prepare(`SELECT * FROM order_replacements WHERE user_id = ? AND account_number = ? AND status IN ('cancel_requested', 'cancel_confirmed', 'replacement_submitted')`)
+  const activeReplacements = db.prepare(`SELECT * FROM order_replacements WHERE user_id = ? AND account_number = ? AND status IN ('cancel_requested', 'cancel_confirmed', 'replacement_claiming', 'replacement_submitted')`)
     .all(userId, input.policy.accountNumber) as OrderReplacementRow[];
 
   for (const row of activeReplacements) {

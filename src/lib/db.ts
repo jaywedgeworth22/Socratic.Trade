@@ -608,16 +608,32 @@ const MIGRATIONS: Migration[] = [
     name: "order_replacements_indexes_reapply",
     up: (database) => {
       // Before creating the UNIQUE partial index, collapse any duplicate active
-      // rows that could already exist (the previous deployed schema had no unique
-      // constraint on (account_number, original_order_id) for non-terminal rows).
-      // Keep the earliest row by rowid; terminalize the rest as 'failed'.
+      // rows that could already exist. Prioritize keeping the most progressed
+      // row in the state machine (favoring rows with a replacement_order_id).
       const dupGroups = database
         .prepare(
-          `SELECT account_number, original_order_id, COUNT(*) AS c, MIN(rowid) AS keep_rowid
-           FROM order_replacements
-           WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+          `WITH ranked AS (
+             SELECT rowid, account_number, original_order_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY account_number, original_order_id
+                      ORDER BY
+                        CASE status
+                          WHEN 'replacement_submitted' THEN 1
+                          WHEN 'replacement_claiming' THEN 2
+                          WHEN 'cancel_confirmed' THEN 3
+                          WHEN 'cancel_requested' THEN 4
+                          ELSE 5
+                        END ASC,
+                        CASE WHEN replacement_order_id IS NOT NULL THEN 0 ELSE 1 END ASC,
+                        rowid DESC
+                    ) as rn
+             FROM order_replacements
+             WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+           )
+           SELECT account_number, original_order_id, COUNT(*) AS c, MAX(CASE WHEN rn = 1 THEN rowid END) AS keep_rowid
+           FROM ranked
            GROUP BY account_number, original_order_id
-           HAVING c > 1`
+           HAVING COUNT(*) > 1`
         )
         .all() as Array<{ account_number: string; original_order_id: string; c: number; keep_rowid: number }>;
       const terminalizeExtras = database.prepare(
@@ -635,6 +651,42 @@ const MIGRATIONS: Migration[] = [
       }
       database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
       database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
+    }
+  },
+  {
+    version: 22,
+    name: "order_replacements_claiming_state_schema",
+    up: (database) => {
+      // SQLite does not support ALTER TABLE DROP CONSTRAINT. To expand the CHECK
+      // constraint on status to include 'replacement_claiming', we recreate the table.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS order_replacements_v22 (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          original_order_id TEXT NOT NULL,
+          symbol TEXT,
+          side TEXT,
+          original_type TEXT,
+          original_quantity REAL,
+          original_filled_quantity REAL,
+          replacement_ref_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_claiming', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
+          remaining_quantity REAL,
+          cancel_result TEXT,
+          replacement_order_id TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO order_replacements_v22 SELECT * FROM order_replacements;
+        DROP TABLE order_replacements;
+        ALTER TABLE order_replacements_v22 RENAME TO order_replacements;
+        
+        CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted');
+      `);
     }
   }
 ];
@@ -916,7 +968,7 @@ function migrate(database: Database.Database): void {
       original_quantity REAL,
       original_filled_quantity REAL,
       replacement_ref_id TEXT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
+      status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_claiming', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
       remaining_quantity REAL,
       cancel_result TEXT,
       replacement_order_id TEXT,
