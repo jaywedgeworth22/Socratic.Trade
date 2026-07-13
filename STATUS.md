@@ -1,5 +1,26 @@
 # Current Status
 
+## 2026-07-13 — Autonomous-action row clarity: tense-matched verbs + de-collided authority labels + ticker logo (CLAUDE/Fable, branch `claude/autonomous-action-row-clarity`)
+
+Display-only console trust fix, three parts, no logic touched. (1) The Home "Autonomous actions" feed
+(`app/console/page.tsx`) rendered each row as `{SYMBOL} {verb} [status-chip]` where `verb` was always
+PAST TENSE (`SIDE_LABEL[side]` = "Bought"/"Sold"/"Shorted"/"Covered"), derived purely from order side
+regardless of whether anything executed. So a merely-proposed or BLOCKED decision read "AAPL Bought
+[Proposed]" / "AAPL Bought [Blocked]" — falsely claiming a completed purchase (owner's exact confusion:
+"Bought + Blocked — did it really buy it?"). Fix: extracted pure helpers to
+`app/console/lib/action-verbs.ts` — `sideVerb(side,status)` returns past tense ONLY when
+`isExecutedStatus` (`/^(placed|filled|executed)$/i`), else infinitive intent ("Buy"/"Sell"), falls back
+to raw side, no-side → "Observed"; `DecisionRow` also renders a muted "· not placed" cue when
+`isNotPlacedStatus` (blocked/rejected/error/failed). Net: proposed/blocked rows now say "Buy AAPL",
+executed rows still say "Bought AAPL". (2) Trace-header (`decisions/[id]/page.tsx`) authority chip
+relabeled in `labels.ts` `AUTHORITY_LABELS` from "Propose"/"Decide" → "Ask-first"/"Autopilot" (tooltips
+unchanged) so it no longer collides with the adjacent "Proposed" status chip; matches the app-wide
+vocabulary (`derive.ts` `authorityWord`), and `authorityLabel` is used only there. (3) Ticker company
+logo now shows before the symbol on those rows (removed `showLogo={false}`; Portfolio pseudo-symbol
+stays logo-less). New test `test/console-action-rows.test.ts`. Rollout:
+`docs/rollouts/2026-07-13-autonomous-action-row-clarity.md`. Next action: gate via `scripts/land.sh`,
+arm `gh pr merge <N> --squash --auto` (auto-deploys on merge; display-only, safe).
+
 ## 2026-07-13 — Console theme token-mixing regression fix from #1476 (CLAUDE, branch `claude/console-theme-token-fix`)
 
 Confirmed UI regression from the iOS-settings migration PR #1476. `app/ui/ios-components.tsx` mixed two
