@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-13 — Infisical Secrets and Machine Identity Audit (Antigravity/AG, branch `agent/ag-infisical-sole-truth-audit`)
+
+Audited the Coolify production environment variables for `socratic-trade-prod` and matched them exactly with local Universal Auth machine identities. Moved the remaining operational configuration variables (`DB_BOOTSTRAP`, `NODE_ENV`, `REQUIRE_SECRETS_MANAGER`) and Alpaca streams settings (`STREAMS_ALPACA_*`, `TRIGGER_ENGINE`) into Infisical across all environments (dev, staging, prod), making Infisical the absolute, sole source of truth for app operations. Cleaned up and deleted these redundant variables from Coolify to leave only bootstrap connector keys and Nixpacks builder configurations.
+
 ## 2026-07-13 — GPT-5.6 Benchmark Run (Antigravity, branch `agent/ag-gpt-5-6-benchmark`)
 
 Ran the benchmark suite against the new `gpt-5.6-terra`, `-sol`, and `-luna` models. Confirmed 100% valid schemas for Green and Red roles on `terra` and `luna`. Recorded latency and token usage. Output saved to `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`. All verification checks passed. State: **Completed (merged to main)**.
