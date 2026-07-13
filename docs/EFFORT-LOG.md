@@ -522,6 +522,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **Fix console theme token-mixing regression from #1476 — ios-components used legacy .dark-keyed text classes on console data-theme surfaces, making Settings secondary text illegible in dark mode (CLAUDE, branch `claude/console-theme-token-fix`) — GATING/LANDING 2026-07-13.** `app/ui/ios-components.tsx` (added by the iOS-settings migration PR #1476) painted backgrounds from the console token system (`--con-*`, keyed to `data-theme` on `.console-root`) but text from the LEGACY app utilities (`text-muted`/`text-faint`/`text-fg`, keyed to `.dark` on `<html>`). The same PR's Light/Dark/System picker flips ONLY the console system, so the two diverged — in console dark mode muted text stayed dark slate on a dark card (near-invisible). Fix: 6 class swaps to the `text-[color:var(--con-*)]` arbitrary-value form the same file already uses elsewhere, plus 2 typo fixes in `app/console/components/chrome.tsx` (`--con-text` → `--con-fg`; `--con-text` is undefined). Display-only CSS-class fix. Rollout: `docs/rollouts/2026-07-13-console-theme-token-fix.md`.
 - **1,000-stock SEC/RAG high-yield backfill plan (CODEX, branch
   `codex/rag-1000-stock-backfill-plan`, worktree
   `/Users/jay/.codex/worktrees/socratic-rag-1000-plan`, 2026-07-12) — DESIGN COMPLETE / READY PR
