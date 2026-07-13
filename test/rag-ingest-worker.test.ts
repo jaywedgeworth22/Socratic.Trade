@@ -237,7 +237,7 @@ describe("SEC/RAG durable ingest worker state", () => {
       advanceSecIngestTask({
         ...base,
         nextCheckpoint: "fetched",
-        rawSha256: "abc123",
+        rawSha256: "a".repeat(64),
         observations: { bytes: 100, tokens: 25, costUsd: 0.01 },
         receipt: { source: "fixture" }
       })
@@ -247,12 +247,33 @@ describe("SEC/RAG durable ingest worker state", () => {
     expect(stored).toMatchObject({
       checkpoint: "fetched",
       status: "pending",
-      rawSha256: "abc123",
+      rawSha256: "a".repeat(64),
       observedBytes: 100,
       observedTokens: 25,
       observedCostUsd: 0.01,
       stageAttempts: 0
     });
+  });
+
+  it("rejects malformed artifact checksums before advancing durable ingest state", async () => {
+    const { advanceSecIngestTask, claimSecIngestTasks, enqueueSecIngestTask, getSecIngestTask } = await import("../src/lib/db");
+    const job = await createJob(`hash-validation-${randomUUID()}`);
+    const task = enqueueSecIngestTask({ jobId: job.id, accession: "hash-validation-accession" }).task;
+    const now = new Date("2026-07-13T13:30:00.000Z");
+    const [claim] = claimSecIngestTasks(job.id, { owner: "worker", now });
+    const base = {
+      taskId: task.id,
+      owner: "worker",
+      leaseToken: claim.leaseToken!,
+      expectedCheckpoint: "discovered" as const,
+      nextCheckpoint: "fetched" as const,
+      now
+    };
+
+    expect(() => advanceSecIngestTask({ ...base, rawSha256: "abc123" })).toThrow("rawSha256");
+    expect(() => advanceSecIngestTask({ ...base, normalizedSha256: "A".repeat(64) })).toThrow("normalizedSha256");
+    expect(getSecIngestTask(task.id)).toMatchObject({ checkpoint: "discovered", status: "leased" });
+    expect(advanceSecIngestTask({ ...base, rawSha256: "a".repeat(64) })).toBe(true);
   });
 
   it("schedules bounded retry backoff, then dead-letters when the stage budget is exhausted", async () => {
@@ -394,6 +415,29 @@ describe("SEC/RAG durable ingest worker state", () => {
     ).toBe(true);
     expect(reconcileSecIngestJob(job.id)).toBe("complete_with_errors");
     expect(getSecIngestJob(job.id)).toMatchObject({ status: "complete_with_errors" });
+  });
+
+  it("rejects blank terminal reasons before changing the leased task", async () => {
+    const { claimSecIngestTasks, enqueueSecIngestTask, getSecIngestTask, terminalizeSecIngestTask } = await import("../src/lib/db");
+    const job = await createJob(`terminal-reason-${randomUUID()}`);
+    const task = enqueueSecIngestTask({ jobId: job.id, accession: "terminal-reason-accession" }).task;
+    const [claim] = claimSecIngestTasks(job.id, { owner: "worker" });
+    const base = {
+      taskId: task.id,
+      owner: "worker",
+      leaseToken: claim.leaseToken!,
+      status: "quarantined" as const
+    };
+
+    expect(() => terminalizeSecIngestTask({ ...base, reasonType: " ", reason: "missing type" })).toThrow("reasonType");
+    expect(() => terminalizeSecIngestTask({ ...base, reasonType: "parse_shape", reason: "\t" })).toThrow("reason");
+    expect(getSecIngestTask(task.id)).toMatchObject({ status: "leased", checkpoint: "discovered" });
+    expect(terminalizeSecIngestTask({ ...base, reasonType: " parse_shape ", reason: " malformed fixture " })).toBe(true);
+    expect(getSecIngestTask(task.id)).toMatchObject({
+      status: "quarantined",
+      lastErrorType: "parse_shape",
+      lastError: "malformed fixture"
+    });
   });
 
   it("never lets sealing rewrite a predeclared expected-task contract", async () => {

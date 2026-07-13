@@ -98,6 +98,17 @@ describe("SEC/RAG frozen universe acceptance", () => {
     ]));
   });
 
+  it("accepts valid timezone offsets even when their UTC instant crosses a calendar boundary", () => {
+    const value = manifest([issuer(1, "0000000001", "AAA")]);
+    value.effectiveAt = "2026-07-13T00:00:00+02:00";
+    value.generatedAt = "2026-07-13T23:30:00-05:00";
+    value.sources[0]!.asOf = "2026-07-13T00:00:00+14:00";
+    value.issuers[0]!.aliasesVerifiedAt = "2026-07-13T00:00:00-12:00";
+    value.issuerSha256 = hashSecUniverseIssuers(value.issuers);
+
+    expect(validateSecUniverseManifest(value, { expectedIssuerCount: 1 })).toEqual([]);
+  });
+
   it("requires every quarantine entry to retain an auditable reason and valid optional identity", () => {
     const value = manifest([issuer(1, "0000000001", "AAA")]) as unknown as Record<string, unknown>;
     value.quarantined = [null, {}, { reason: "" }, { reason: "debt security", ticker: "", cik: "" }];
@@ -109,5 +120,16 @@ describe("SEC/RAG frozen universe acceptance", () => {
       "quarantine_ticker",
       "quarantine_cik"
     ]));
+  });
+
+  it("requires normalized quarantine identifiers so exclusions remain joinable", () => {
+    const value = manifest([issuer(1, "0000000001", "AAA")]);
+    value.quarantined = [
+      { reason: "ambiguous", ticker: "abc" },
+      { reason: "ambiguous", cik: "123" }
+    ];
+
+    const codes = validateSecUniverseManifest(value, { expectedIssuerCount: 1 }).map((issue) => issue.code);
+    expect(codes).toEqual(expect.arrayContaining(["quarantine_ticker", "quarantine_cik"]));
   });
 });

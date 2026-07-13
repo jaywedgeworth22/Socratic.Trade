@@ -57,7 +57,8 @@ export interface UniverseValidationIssue {
 const CIK_RE = /^\d{10}$/;
 const TICKER_RE = /^[A-Z][A-Z0-9.-]{0,9}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}(?:T.*)?$/;
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATE_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|([+-])(\d{2}):(\d{2}))$/i;
 const SECURITY_TYPES = new Set<string>(SEC_UNIVERSE_SECURITY_TYPES);
 const INCLUSION_REASONS = new Set<string>(SEC_UNIVERSE_INCLUSION_REASONS);
 
@@ -70,12 +71,36 @@ function nonEmptyString(value: unknown): value is string {
 }
 
 function validDate(value: unknown): value is string {
-  if (!nonEmptyString(value) || !DATE_RE.test(value)) return false;
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return false;
-  // Reject impossible dates (e.g. Feb 31) that Date.parse silently normalizes.
-  // Check that the ISO 8601 round-trip preserves the calendar date components.
-  return new Date(parsed).toISOString().slice(0, 10) === value.slice(0, 10);
+  if (!nonEmptyString(value)) return false;
+  const dateOnly = value.match(DATE_ONLY_RE);
+  const dateTime = value.match(DATE_TIME_RE);
+  const match = dateOnly ?? dateTime;
+  if (!match) return false;
+
+  // Validate the calendar components in the ORIGINAL offset-local timestamp. Comparing the
+  // date to toISOString() would incorrectly reject a valid offset that crosses a UTC day.
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const calendar = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendar.getUTCFullYear() !== year ||
+    calendar.getUTCMonth() !== month - 1 ||
+    calendar.getUTCDate() !== day
+  ) return false;
+  if (!dateTime) return true;
+
+  const hour = Number(dateTime[4]);
+  const minute = Number(dateTime[5]);
+  const second = Number(dateTime[6]);
+  const offsetHour = Number(dateTime[9] ?? 0);
+  const offsetMinute = Number(dateTime[10] ?? 0);
+  if (
+    hour > 23 || minute > 59 || second > 59 ||
+    offsetHour > 14 || offsetMinute > 59 ||
+    (offsetHour === 14 && offsetMinute !== 0)
+  ) return false;
+  return Number.isFinite(Date.parse(value));
 }
 
 function canonicalJson(value: unknown): string {
@@ -143,11 +168,11 @@ export function validateSecUniverseManifest(
       if (!nonEmptyString(entry.reason)) {
         add("quarantine_reason", `${path}.reason`, "reason is required and must be non-empty");
       }
-      if (entry.ticker !== undefined && !nonEmptyString(entry.ticker)) {
-        add("quarantine_ticker", `${path}.ticker`, "ticker must be a non-empty string when present");
+      if (entry.ticker !== undefined && (typeof entry.ticker !== "string" || !TICKER_RE.test(entry.ticker))) {
+        add("quarantine_ticker", `${path}.ticker`, "ticker must be normalized uppercase when present");
       }
-      if (entry.cik !== undefined && !nonEmptyString(entry.cik)) {
-        add("quarantine_cik", `${path}.cik`, "cik must be a non-empty string when present");
+      if (entry.cik !== undefined && (typeof entry.cik !== "string" || !CIK_RE.test(entry.cik))) {
+        add("quarantine_cik", `${path}.cik`, "cik must be exactly 10 digits when present");
       }
     });
   }

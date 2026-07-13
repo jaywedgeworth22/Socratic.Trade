@@ -2677,10 +2677,11 @@ As of 2026-07-08 (assignment-rule update).
   class aliases, selection snapshot/reasons, and coverage by issuer/form/period/artifact/parser/embed revision.
   Dependency and acceptance detail: `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` P0.
 - **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07, claimed 2026-07-13) —
-  READY IN PR #1543 / REVIEW FIXES REGRESSION-COVERED; HOSTED GATE REFRESHING.** Migration v23 plus `db-rag-ingest`
+  READY IN PR #1543 / SEVEN REVIEW FIXES REGRESSION-COVERED; SECOND FULL GATE GREEN.** Migration v23 plus `db-rag-ingest`
   now provide deterministic replay keys, sealed jobs, ordered stage checkpoints, atomic fenced leases/heartbeats,
   bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion. All three PR review
-  findings are fixed and covered; 19 focused tests pass under Node 24. Remaining: refreshed hosted gate, merge/live
+  findings plus four refreshed-review P2 gaps are fixed and covered; 23 focused tests pass under Node 24. Remaining:
+  refreshed hosted gate, merge/live
   verification, then wire artifacts/sections/facts, exact accepted timestamps,
   amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.

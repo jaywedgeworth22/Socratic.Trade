@@ -717,6 +717,23 @@ type StageObservations = {
   costUsd?: number;
 };
 
+const SEC_INGEST_SHA256_RE = /^[a-f0-9]{64}$/;
+
+function optionalSha256(value: string | undefined, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (!SEC_INGEST_SHA256_RE.test(value)) {
+    throw new Error(`SEC ingest ${field} must be 64 lowercase hexadecimal characters`);
+  }
+  return value;
+}
+
+function requiredTerminalReason(value: string, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`SEC ingest terminal ${field} must be non-empty`);
+  }
+  return value.trim();
+}
+
 function nonNegativeNumber(value: number | undefined, field: string, integer: boolean): number {
   const resolved = value ?? 0;
   if (!Number.isFinite(resolved) || resolved < 0 || (integer && !Number.isInteger(resolved))) {
@@ -755,6 +772,8 @@ export function advanceSecIngestTask(input: {
   const vectors = nonNegativeNumber(observations.vectors, "observed vectors", true);
   const writeUnits = nonNegativeNumber(observations.writeUnits, "observed write units", true);
   const costUsd = nonNegativeNumber(observations.costUsd, "observed cost", false);
+  const rawSha256 = optionalSha256(input.rawSha256, "rawSha256");
+  const normalizedSha256 = optionalSha256(input.normalizedSha256, "normalizedSha256");
   const database = getDb();
   const nowIso = (input.now ?? new Date()).toISOString();
   const nextStatus: SecIngestTaskStatus = input.nextCheckpoint === "complete" ? "complete" : "pending";
@@ -786,8 +805,8 @@ export function advanceSecIngestTask(input: {
       .run(
         input.nextCheckpoint,
         nextStatus,
-        input.rawSha256 ?? null,
-        input.normalizedSha256 ?? null,
+        rawSha256 ?? null,
+        normalizedSha256 ?? null,
         input.parserRevision ?? null,
         input.chunkerRevision ?? null,
         input.embedModel ?? null,
@@ -950,6 +969,8 @@ export function terminalizeSecIngestTask(input: {
   receipt?: Record<string, unknown>;
   now?: Date;
 }): boolean {
+  const reasonType = requiredTerminalReason(input.reasonType, "reasonType");
+  const reason = requiredTerminalReason(input.reason, "reason");
   const database = getDb();
   const nowIso = (input.now ?? new Date()).toISOString();
   const terminalize = database.transaction(() => {
@@ -967,8 +988,8 @@ export function terminalizeSecIngestTask(input: {
       )
       .run(
         input.status,
-        input.reasonType,
-        input.reason,
+        reasonType,
+        reason,
         input.details === undefined ? null : stableSecIngestJson(input.details),
         nowIso,
         input.taskId,
@@ -986,8 +1007,8 @@ export function terminalizeSecIngestTask(input: {
       .run(
         input.status,
         nowIso,
-        input.reasonType,
-        input.reason,
+        reasonType,
+        reason,
         input.receipt === undefined ? null : stableSecIngestJson(input.receipt),
         input.taskId,
         input.leaseToken,

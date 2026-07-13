@@ -7,8 +7,8 @@
 - **[~] Wave A — prerequisite truth:** the versioned/checksummed universe acceptance contract and durable
   job/task state with leases, strict transitions, retries, dead-letter/quarantine, verification receipts, and
   replay invariants are implemented locally and pass focused/type gates. Corrected universe selection, census
-  truth, and adversarial integration remain in progress. PR #1543's three review fixes now have explicit
-  regression coverage; its refreshed hosted gate is pending.
+  truth, and adversarial integration remain in progress. PR #1543's seven review findings now have explicit
+  regression coverage; its second full local gate is green and the refreshed hosted gate is pending.
 - **[~] Wave B — source correctness:** discover recent plus historical submission shards and filing exhibits;
   archive immutable raw artifacts; enforce one aggregate SEC limiter; parse DOM/iXBRL sections, tables, units,
   contexts, and footnotes; chunk against provider token budgets.
