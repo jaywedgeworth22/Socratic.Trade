@@ -537,7 +537,9 @@ export function enqueueSecIngestTask(input: {
 }
 
 function boundedLeaseMs(value: number | undefined): number {
-  const parsed = Math.floor(value ?? 5 * 60_000);
+  const resolved = value ?? 5 * 60_000;
+  if (!Number.isFinite(resolved)) return 5 * 60_000;
+  const parsed = Math.floor(resolved);
   return Math.max(1_000, Math.min(60 * 60_000, parsed));
 }
 
@@ -799,8 +801,8 @@ export function advanceSecIngestTask(input: {
         `UPDATE sec_ingest_tasks SET
            checkpoint = ?, status = ?, stage_attempts = 0, next_retry_at = NULL,
            lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
-           raw_sha256 = COALESCE(?, raw_sha256),
-           normalized_sha256 = COALESCE(?, normalized_sha256),
+           raw_sha256 = CASE WHEN raw_sha256 IS NOT NULL THEN raw_sha256 ELSE ? END,
+           normalized_sha256 = CASE WHEN normalized_sha256 IS NOT NULL THEN normalized_sha256 ELSE ? END,
            index_name = COALESCE(?, index_name), namespace = COALESCE(?, namespace),
            observed_bytes = observed_bytes + ?, observed_tokens = observed_tokens + ?,
            observed_chunks = observed_chunks + ?, observed_vectors = observed_vectors + ?,
@@ -904,6 +906,12 @@ export function failSecIngestTask(input: {
   random?: () => number;
   now?: Date;
 }): SecIngestFailureResult {
+  if (typeof input.errorType !== "string" || input.errorType.trim().length === 0) {
+    throw new Error("SEC ingest failure errorType must be non-empty");
+  }
+  if (typeof input.error !== "string" || input.error.trim().length === 0) {
+    throw new Error("SEC ingest failure error must be non-empty");
+  }
   const database = getDb();
   const now = input.now ?? new Date();
   const nowIso = now.toISOString();
