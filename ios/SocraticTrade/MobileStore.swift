@@ -92,6 +92,7 @@ final class MobileStore: ObservableObject {
             error = nil
             isAuthenticated = true
             await load()
+            startEvents()
         } catch {
             self.error = "Apple Sign-In failed: \(error.localizedDescription)"
         }

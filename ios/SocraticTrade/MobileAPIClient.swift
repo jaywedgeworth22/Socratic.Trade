@@ -52,7 +52,7 @@ struct MobileAPIClient {
         return try await send(request)
     }
 
-    func loginWithApple(identityToken: String, name: String?) async throws -> [String: String] {
+    func loginWithApple(identityToken: String, name: String?) async throws -> AppleLoginResponse {
         var request = URLRequest(url: baseURL.appending(path: "/api/mobile/auth/apple"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
@@ -90,6 +90,11 @@ struct MobileAPIClient {
         }
         return try JSONDecoder().decode(T.self, from: data)
     }
+}
+
+struct AppleLoginResponse: Decodable {
+    let success: Bool
+    let email: String?
 }
 
 private extension Bundle {

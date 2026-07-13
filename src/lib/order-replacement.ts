@@ -184,11 +184,16 @@ export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput
     throw err;
   }
 
-  assertLivePreflight({
-    mode: executionState.mode,
-    symbol: original.symbol,
-    side: original.side
-  });
+  try {
+    assertLivePreflight({
+      mode: executionState.mode,
+      symbol: original.symbol,
+      side: original.side
+    });
+  } catch (err: any) {
+    await markReplacementError(id, err.message);
+    throw err;
+  }
   
   let row = getReplacementRecord(id);
   const maxLoops = 10;
