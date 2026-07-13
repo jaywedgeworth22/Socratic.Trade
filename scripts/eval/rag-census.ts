@@ -85,11 +85,23 @@ async function performParityCheck() {
   console.log(`  Total ingested accession markers: ${accessions.length}`);
   console.log(`  Total document chunk records: ${chunks.length}`);
 
+  // Doc types whose ingestion path does NOT embed the accession in the chunk_id.
+  // The missing-chunks substring check would FALSE-flag these, so we skip them.
+  // See ingestEightKBody: no doc_id passed to storeDocument → chunk_id is UUID-based.
+  const NON_ACCESSION_BEARING_DOC_TYPES = new Set(["8-K-body"]);
+
+  // Build O(1) lookup sets to avoid quadratic nested scans.
+  const accessionSet = new Set(accessions.map(a => a.accession));
+  const accessionInChunkIds = new Set<string>();
+  for (const chunk of chunks) {
+    const match = chunk.chunk_id.match(/(\d{10}-\d{2}-\d{6})/);
+    if (match) accessionInChunkIds.add(match[1]!);
+  }
+
   let missingChunks = 0;
   for (const acc of accessions) {
-    // Check if there is any chunk that maps to this accession.
-    // contextId format: source:symbol:accession:timestamp (or fallback with symbol:source:fallbackIndex)
-    const hasChunk = chunks.some(c => c.chunk_id.includes(acc.accession));
+    if (NON_ACCESSION_BEARING_DOC_TYPES.has(acc.doc_type)) continue;
+    const hasChunk = accessionInChunkIds.has(acc.accession);
     if (!hasChunk && acc.chunk_count > 0) {
       console.log(`  ⚠️  [Missing Chunks] Accession ${acc.accession} (${acc.doc_type}) for ${acc.ticker} has 0 local chunks recorded.`);
       missingChunks++;
@@ -98,12 +110,10 @@ async function performParityCheck() {
 
   let orphans = 0;
   for (const chunk of chunks) {
-    // Try to extract accession-like string from chunk_id (e.g. 0001193125-24-123456)
     const match = chunk.chunk_id.match(/(\d{10}-\d{2}-\d{6})/);
     if (match) {
       const accession = match[1]!;
-      const hasAccession = accessions.some(a => a.accession === accession);
-      if (!hasAccession) {
+      if (!accessionSet.has(accession)) {
         console.log(`  ⚠️  [Orphan Chunk] Chunk "${chunk.chunk_id}" (${chunk.symbol}) has no matching ingested_accessions marker.`);
         orphans++;
       }

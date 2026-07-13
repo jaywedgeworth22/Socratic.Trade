@@ -110,7 +110,11 @@ async function main() {
     const cik = secTickerToCik[sym];
     if (cik) {
       const title = secCikToTitle[cik] ?? "";
-      if (addIssuer(cik, sym, title, "held-history")) {
+      // NOTE: we use "top-prominence" here rather than "held-history" so the
+      // frozen manifest never leaks which symbols come from the owner's real
+      // trade/watch history. The DB is the selection mechanism; the manifest
+      // is a neutral reference file tracked in the public repo.
+      if (addIssuer(cik, sym, title, "top-prominence")) {
         dbAdded++;
       }
     } else {
