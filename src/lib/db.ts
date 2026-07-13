@@ -607,6 +607,32 @@ const MIGRATIONS: Migration[] = [
     version: 21,
     name: "order_replacements_indexes_reapply",
     up: (database) => {
+      // Before creating the UNIQUE partial index, collapse any duplicate active
+      // rows that could already exist (the previous deployed schema had no unique
+      // constraint on (account_number, original_order_id) for non-terminal rows).
+      // Keep the earliest row by rowid; terminalize the rest as 'failed'.
+      const dupGroups = database
+        .prepare(
+          `SELECT account_number, original_order_id, COUNT(*) AS c, MIN(rowid) AS keep_rowid
+           FROM order_replacements
+           WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+           GROUP BY account_number, original_order_id
+           HAVING c > 1`
+        )
+        .all() as Array<{ account_number: string; original_order_id: string; c: number; keep_rowid: number }>;
+      const terminalizeExtras = database.prepare(
+        `UPDATE order_replacements SET status = 'failed', error = 'superseded by duplicate active replacement', updated_at = ?
+         WHERE account_number = ? AND original_order_id = ? AND rowid != ?
+         AND status NOT IN ('replacement_confirmed', 'failed', 'aborted')`
+      );
+      const now = new Date().toISOString();
+      for (const g of dupGroups) {
+        const info = terminalizeExtras.run(now, g.account_number, g.original_order_id, g.keep_rowid);
+        console.warn(
+          `[db] migration 21: terminalized ${info.changes} duplicate order_replacements row(s) ` +
+          `for (account_number=${g.account_number}, original_order_id=${g.original_order_id}) — kept rowid ${g.keep_rowid}.`
+        );
+      }
       database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
       database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
     }

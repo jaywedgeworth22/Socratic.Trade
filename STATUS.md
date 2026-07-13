@@ -1,6 +1,15 @@
 # Current Status
 
-## 2026-07-13 — P2.4 Congress Share Daily Retry Storm Fix (Antigravity, branch `agent/ag-safety-exit-replacement`)
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 4 (Claude, branch `agent/ag-safety-exit-replacement`)
+
+Addressed 4 remaining Codex review threads (3 P1, 1 P2) from the final reviews on PR #1492:
+1. **Advance recovered canceled rows before retrying cancel (P1)** — `order-replacement.ts`: When a `cancel_requested` row is reconstructed from persisted data after a crash (state: "canceled"), skip the broker `cancelEquityOrder` call and advance directly to `cancel_confirmed`. Re-canceling an already-canceled order would fail and the error handler would mark the row `failed`, losing the market replacement.
+2. **Collapse duplicate active replacements before indexing (P1)** — `db.ts` migration v21: Added deduplication logic before the `CREATE UNIQUE INDEX` to terminalize duplicate active rows, preventing startup failure on databases where duplicates accumulated before the unique constraint existed.
+3. **Scope recovered fill checks to the replacement account (P2)** — `order-replacement.ts`: The fill-event existence check in `replacement_submitted` reconciliation now scopes to `account_number` and `user_id` so another user's fill with the same `broker_order_id` doesn't suppress this fill.
+4. **Fail the row when live preflight blocks (P1)** — `order-replacement.ts`: Wrapped the `assertLivePreflight` call in a try-catch so a throw (e.g. `ALLOW_LIVE_TRADING=false`) marks the row failed instead of leaving it orphaned in `cancel_requested`.
+
+All gates pass: tsc clean (via build), 350 suites/3933 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
 
 Implemented P2.4 to prevent duplicate daily data sharing runs and retry storms in the same process:
 - Added a module-level `activeDailySharePromise` in `src/lib/congress-share.ts` to cache and return the active in-flight promise if `runCongressDailyShare` is called concurrently/subsequently while still executing.

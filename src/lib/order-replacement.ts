@@ -184,11 +184,16 @@ export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput
     throw err;
   }
 
-  assertLivePreflight({
-    mode: executionState.mode,
-    symbol: original.symbol,
-    side: original.side
-  });
+  try {
+    assertLivePreflight({
+      mode: executionState.mode,
+      symbol: original.symbol,
+      side: original.side
+    });
+  } catch (err: any) {
+    await markReplacementError(id, err.message);
+    throw err;
+  }
   
   let row = getReplacementRecord(id);
   const maxLoops = 10;
@@ -314,10 +319,21 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         }
       }
 
-      const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, originalOrder.id);
-      db.prepare(`UPDATE order_replacements SET cancel_result = ?, status = 'cancel_confirmed', updated_at = ? WHERE id = ?`)
-        .run(JSON.stringify(cancelResult), new Date().toISOString(), row.id);
-      await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
+      // When the order was reconstructed from persisted data (state === "canceled") after a crash
+      // that struck after cancelEquityOrder succeeded but before the row advanced to cancel_confirmed,
+      // skip the broker cancel — the order is already canceled at the broker. Re-canceling it would
+      // fail (already-canceled / not-found) and the error handler would mark the row failed, losing
+      // the market replacement entirely.
+      if (String(originalOrder.state ?? "").trim().toLowerCase() === "canceled") {
+        db.prepare(`UPDATE order_replacements SET cancel_result = '{}', status = 'cancel_confirmed', updated_at = ? WHERE id = ?`)
+          .run(new Date().toISOString(), row.id);
+        await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
+      } else {
+        const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, originalOrder.id);
+        db.prepare(`UPDATE order_replacements SET cancel_result = ?, status = 'cancel_confirmed', updated_at = ? WHERE id = ?`)
+          .run(JSON.stringify(cancelResult), new Date().toISOString(), row.id);
+        await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
+      }
     }
     
     // Reload row in case it changed
@@ -527,9 +543,11 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         }
         return;
       } else {
-        // Not found at broker. Check if a fill event exists for this replacement_ref_id or replacement_order_id.
-        const fillExists = db.prepare(`SELECT 1 FROM fill_events WHERE broker_order_id = ? OR raw LIKE ?`)
-          .get(row.replacement_order_id, `%${row.replacement_ref_id}%`);
+        // Not found at broker. Check if a fill event exists for this replacement_ref_id or replacement_order_id —
+        // scoped to the replacement's user/account so another user's fill with the same broker_order_id
+        // doesn't incorrectly suppress this fill's event (broker order ids are not globally unique).
+        const fillExists = db.prepare(`SELECT 1 FROM fill_events WHERE account_number = ? AND user_id = ? AND (broker_order_id = ? OR raw LIKE ?)`)
+          .get(row.account_number, row.user_id, row.replacement_order_id, `%${row.replacement_ref_id}%`);
         if (fillExists) {
           db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', updated_at = ? WHERE id = ?`)
             .run(new Date().toISOString(), row.id);

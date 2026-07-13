@@ -42,3 +42,16 @@ Addressed 4 additional Codex findings (2 P1, 2 P2) and asked about 1 (P2):
 - `src/lib/db-api-keys.ts` — Added `order_replacements` to purge table list
 
 Verification: all four gates pass at each round boundary.
+
+### Round 4 (2026-07-13)
+Addressed the final 4 unresolved Codex review threads (3 P1, 1 P2):
+- **Advance recovered canceled rows before retrying cancel (P1)**: When a crash strikes after `cancelEquityOrder` succeeds but before the row updates to `cancel_confirmed`, the restarted pump reconstructs the original order from DB with `state: "canceled"`. The `cancel_requested` branch now checks for this case and advances directly to `cancel_confirmed` without calling `cancelEquityOrder` again — re-canceling an already-canceled order would fail and mark the row `failed`, losing the market replacement.
+- **Collapse duplicate active replacements before indexing (P1)**: Migration v21's `CREATE UNIQUE INDEX` on `(account_number, original_order_id)` for non-terminal rows would fail on databases with duplicates accumulated before the constraint existed. Added pre-index deduplication: selects groups with >1 active row, keeps the earliest by `rowid`, terminalizes the rest to `'failed'` — following the same pattern as migration v16's fill_events deduplication.
+- **Scope recovered fill checks to the replacement account (P2)**: The `replacement_submitted` reconciliation fill-existence check (`SELECT 1 FROM fill_events WHERE broker_order_id = ?`) now scopes to `account_number` and `user_id` so another user's/account's fill with the same broker_order_id doesn't incorrectly suppress the replacement's fill event (broker order ids are not globally unique).
+- **Fail the row when live preflight blocks (P1)**: `assertLivePreflight` in `replaceStaleLimitOrderWithMarket` was not wrapped in try-catch, so a throw (e.g. `ALLOW_LIVE_TRADING=false`) left the row stranded in `cancel_requested` — it would remain active and could be resumed by the background pump later if live trading was re-enabled. Wrapped in try-catch that marks the row `failed` on throw.
+
+### Files changed (Round 4)
+- `src/lib/order-replacement.ts` — Pre-cancel reconstruction check, live-preflight try-catch, account-scoped fill lookup
+- `src/lib/db.ts` — Deduplication logic in migration v21
+
+Verification: `npm test` → 350 suites/3933 tests passed, `npm run build` → clean, 0 errors.
