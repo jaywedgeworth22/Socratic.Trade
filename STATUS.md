@@ -1,5 +1,27 @@
 # Current Status
 
+## 2026-07-13 — Evidence architecture, account-scoped learning, and GPT-5.6 program (CODEX, branch `codex/evidence-architecture-program`)
+
+Implemented locally in the isolated Codex worktree: exact-account relational/vector learning;
+sample-gated paper-to-live research transfer; product Test Account create/UI/read removal plus a
+production purge migration; wider pre-enrichment candidate selection; field-level provenance,
+freshness, arbitration, conflict and provider-failure receipts; exact opening-candidate enforcement;
+one immutable Green/Red evidence manifest; point-in-time RAG, global context budgets and prompt-data
+containment; source coverage/shadow ablation/outcome value telemetry; and shared evidence handling
+for strategy tuning, Framework review, learning review, and Coach/chat.
+
+GPT-5.6 Luna/Terra/Sol are available across all model surfaces with role-specific reasoning controls.
+The curated OpenAI list drops full GPT-5.4/5.5 while retaining Mini/Nano and legacy custom-ID
+compatibility. Focused verification is green: lint (0 errors); TypeScript; 224 integrated
+LLM/evidence/learning tests; and 41 migration/account/model tests. Current `origin/main` at
+`1a90281b` is now reconciled: its Red Team fallback UI/runtime and exit-replacement migrations
+20–22 are preserved, while account learning and Test Account removal remain migrations 23–24.
+Post-merge TypeScript and 205 high-risk migration/fallback/evidence tests pass. The final full gate is
+green: lint 0 errors (448 grandfathered warnings), TypeScript clean, 3,980/3,980 tests, and production
+build. Ready PR #1544 is open at
+`https://github.com/jaywedgeworth22/Socratic.Trade/pull/1544`; all required checks are green. The
+branch is pushed but not merged, deployed, or production-verified. Audit:
+`docs/reviews/2026-07-13-decision-evidence-architecture.md`.
 ## 2026-07-13 — SEC/RAG implementation program (CODEX, branch `codex/sec-rag-program`)
 
 Owner-directed implementation of all nine packages in the 1,000-stock SEC/RAG plan is in progress. The

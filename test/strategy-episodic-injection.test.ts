@@ -86,7 +86,7 @@ describe("strategy.ts episodic analogs + owner coaching injection", () => {
             }
           ];
         }
-        // Filings pass (docType 10-k/10-q/8-k/…): nothing retrieved in this test.
+        // Filings pass (docType 10-k/10-q/8-k/fundamentals): nothing retrieved in this test.
         return [];
       }
     );

@@ -224,6 +224,9 @@ async function validatePolicy(
   if (policy.learningReviewMode !== undefined && !["annotate", "decide"].includes(policy.learningReviewMode)) return "learningReviewMode must be annotate or decide.";
   if (policy.brokerMinimumHandling !== undefined && !["bump", "skip"].includes(policy.brokerMinimumHandling)) return "brokerMinimumHandling must be bump or skip.";
   if (policy.learningReviewModel !== undefined && (typeof policy.learningReviewModel !== "string" || policy.learningReviewModel.trim().length === 0 || policy.learningReviewModel.length > 64)) return "learningReviewModel must be a non-empty model id.";
+  if (policy.learningReviewReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.learningReviewReasoningEffort)) {
+    return "learningReviewReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
+  }
   if (policy.learningReviewMinNewLessons !== undefined && (!Number.isInteger(policy.learningReviewMinNewLessons) || policy.learningReviewMinNewLessons < 1 || policy.learningReviewMinNewLessons > 1000)) return "learningReviewMinNewLessons must be an integer between 1 and 1000.";
   if (policy.learningReviewMaxWaitDays !== undefined && (!Number.isInteger(policy.learningReviewMaxWaitDays) || policy.learningReviewMaxWaitDays < 1 || policy.learningReviewMaxWaitDays > 365)) return "learningReviewMaxWaitDays must be an integer between 1 and 365.";
   // Owner directive 2026-07-07: a chosen model must belong to a provider the user holds a key for

@@ -29,6 +29,7 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   "learningReviewEnabled",
   "learningReviewMode",
   "learningReviewModel",
+  "learningReviewReasoningEffort",
   "learningReviewMinNewLessons",
   "learningReviewMaxWaitDays",
   // Typed confirmation for high-impact live actions is an OWNER preference, not a
@@ -48,6 +49,7 @@ const LEARNING_REVIEW_POLICY_FIELDS: Array<keyof TradingPolicy> = [
   "learningReviewEnabled",
   "learningReviewMode",
   "learningReviewModel",
+  "learningReviewReasoningEffort",
   "learningReviewMinNewLessons",
   "learningReviewMaxWaitDays"
 ];

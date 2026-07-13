@@ -19,6 +19,14 @@ describe("buildExtraFilters", () => {
     expect(buildExtraFilters({ section: "risk_factors" })).toEqual({ section: { $eq: "risk_factors" } });
     expect(buildExtraFilters({ source: "sec-8k" })).toEqual({ source: { $eq: "sec-8k" } });
   });
+  it("builds an exact connected-account memory filter and fails closed when its id is absent", () => {
+    expect(buildExtraFilters({ accountScope: "exact", connectedAccountId: "account-a" })).toEqual({
+      connected_account_id: { $eq: "account-a" }
+    });
+    expect(buildExtraFilters({ accountScope: "exact" })).toEqual({
+      connected_account_id: { $eq: "__missing_connected_account__" }
+    });
+  });
   it("ignores an empty docType array", () => {
     expect(buildExtraFilters({ docType: [] })).toEqual({});
   });

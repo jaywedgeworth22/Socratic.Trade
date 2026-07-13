@@ -1,7 +1,9 @@
-import { clearStopPlans, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
+import { clearStopPlans, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listRecentMaturedSkippedCounterfactuals, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
+import { aggregateSourceValue, type SourceValueObservation } from "./source-value";
 import type {
+  CandidateEvidence,
   EquityPosition,
   ExecutedOrder,
   ExecutionMode,
@@ -14,6 +16,7 @@ import type {
   Portfolio,
   ReviewedOrder,
   RunAttribution,
+  SourceValueStat,
   OrderSide,
   TradeProposal
 } from "./types";
@@ -154,6 +157,7 @@ export function recordPortfolioSnapshot(input: {
 
 export function recordFillFromProposal(input: {
   userId?: string;
+  connectedAccountId?: string;
   accountNumber: string;
   proposalId?: string;
   runId?: string;
@@ -349,6 +353,7 @@ export function recordFillFromProposal(input: {
       .then((experienceMemory) =>
         experienceMemory.recordClosedLotExperience({
           userId: input.userId,
+          connectedAccountId: input.connectedAccountId,
           accountNumber: input.accountNumber,
           source: input.source,
           closingFill: fill,
@@ -772,6 +777,67 @@ export function getSignalEfficacy(
       avgReturnPct: Number((b.returnSum / b.trades).toFixed(2))
     }))
     .sort((a, b) => b.trades - a.trades);
+}
+
+/**
+ * Provider-level outcome scorecard built from decision-time source-ablation receipts. Closed lots
+ * and skipped-candidate counterfactuals are joined to the exact signal snapshot by run+symbol.
+ * Results remain observational/selection-biased and are disclosed as such in SourceValueStat;
+ * automatic weight mutation is deliberately out of scope.
+ */
+export function getSourceValueScorecard(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {},
+  userId: string = "local",
+  prefetched?: PrefetchedFills,
+  options: { connectedAccountId?: string; auditLimit?: number; counterfactualLimit?: number } = {}
+): SourceValueStat[] {
+  const snapshots = new Map<string, CandidateEvidence>();
+  for (const event of listAuditByKind("signal_snapshot", options.auditLimit ?? 2_000, userId, options.connectedAccountId)) {
+    const payload = event.payload as { runId?: string; signals?: CandidateEvidence[] } | undefined;
+    if (!payload?.runId || !Array.isArray(payload.signals)) continue;
+    for (const signal of payload.signals) {
+      if (!signal?.symbol) continue;
+      const key = `${payload.runId}|${normalizeSymbol(signal.symbol)}`;
+      if (!snapshots.has(key)) snapshots.set(key, signal);
+    }
+  }
+
+  const observations: SourceValueObservation[] = [];
+  const add = (candidate: CandidateEvidence | undefined, returnPct: number, chosen: boolean) => {
+    if (!candidate || !Number.isFinite(returnPct)) return;
+    for (const ablation of candidate.sourceAblations ?? []) {
+      observations.push({
+        provider: ablation.provider,
+        fields: ablation.affectedFields,
+        scoreDelta: ablation.scoreDelta,
+        returnPct,
+        chosen
+      });
+    }
+  };
+
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  for (const lot of closedLots) {
+    if (!lot.entryRunId || !lot.symbol) continue;
+    add(snapshots.get(`${lot.entryRunId}|${normalizeSymbol(lot.symbol)}`), lot.returnPct, true);
+  }
+
+  const seenSkipped = new Set<string>();
+  for (const row of listRecentMaturedSkippedCounterfactuals(
+    userId,
+    options.counterfactualLimit ?? 1_000,
+    options.connectedAccountId
+  )) {
+    if (row.returnPct === undefined) continue;
+    const key = `${row.runId}|${normalizeSymbol(row.symbol)}`;
+    if (seenSkipped.has(key)) continue;
+    seenSkipped.add(key); // rows are horizon-ascending within newest decision time
+    add(snapshots.get(key), row.returnPct, false);
+  }
+
+  return aggregateSourceValue(observations);
 }
 
 /** Realized-outcome stats grouped by the dominant deterministic factor at entry. */

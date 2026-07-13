@@ -204,7 +204,7 @@ const MIGRATIONS: Migration[] = [
       // 3. Composite indices for capping and sorting listPending/listRecent
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_status_created ON trade_proposals (user_id, account_number, status, created_at DESC)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_created ON trade_proposals (user_id, account_number, created_at DESC)");
-      
+
       database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
       database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
 
@@ -683,7 +683,7 @@ const MIGRATIONS: Migration[] = [
         INSERT INTO order_replacements_v22 SELECT * FROM order_replacements;
         DROP TABLE order_replacements;
         ALTER TABLE order_replacements_v22 RENAME TO order_replacements;
-        
+
         CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted');
       `);
@@ -836,6 +836,105 @@ const MIGRATIONS: Migration[] = [
           ON sec_ingest_task_attempts(task_id, attempt_no);
       `);
     }
+  },
+  {
+    // Account-bound learning: autonomous outcomes from one broker account must not silently enter a
+    // sibling account's prompt. Paper-derived rows are candidates until a separate transfer check
+    // corroborates them; pre-migration autonomous rows are quarantined as `legacy` because their
+    // originating account cannot be reconstructed reliably.
+    version: 24,
+    name: "learned_context_account_scope",
+    up: (database) => {
+      const addColumns = (table: "learned_context" | "learned_context_pending") => {
+        const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "connected_account_id")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN connected_account_id TEXT`);
+        }
+        if (!cols.some((c) => c.name === "account_environment")) {
+          database.exec(
+            `ALTER TABLE ${table} ADD COLUMN account_environment TEXT CHECK(account_environment IS NULL OR account_environment IN ('paper','live'))`
+          );
+        }
+        if (!cols.some((c) => c.name === "learning_scope")) {
+          database.exec(
+            `ALTER TABLE ${table} ADD COLUMN learning_scope TEXT NOT NULL DEFAULT 'legacy' CHECK(learning_scope IN ('account','portfolio','research','legacy'))`
+          );
+        }
+        if (!cols.some((c) => c.name === "transfer_state")) {
+          database.exec(
+            `ALTER TABLE ${table} ADD COLUMN transfer_state TEXT NOT NULL DEFAULT 'not_applicable' CHECK(transfer_state IN ('not_applicable','candidate','validated','rejected'))`
+          );
+        }
+      };
+
+      addColumns("learned_context");
+      addColumns("learned_context_pending");
+
+      // User-authored and explicitly ingested context was intentionally account-agnostic before this
+      // migration, so retain it as portfolio context. Autonomous rows lack enough provenance to know
+      // which account produced them; keep them quarantined as legacy rather than guessing.
+      database.exec(`
+        UPDATE learned_context
+        SET learning_scope = CASE WHEN origin IN ('chat','ingest') THEN 'portfolio' ELSE 'legacy' END
+        WHERE connected_account_id IS NULL;
+
+        UPDATE learned_context_pending
+        SET learning_scope = CASE WHEN origin IN ('chat','ingest') THEN 'portfolio' ELSE 'legacy' END
+        WHERE connected_account_id IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_learned_context_account_scope
+          ON learned_context (user_id, connected_account_id, learning_scope, transfer_state, superseded_by);
+        CREATE INDEX IF NOT EXISTS idx_learned_context_pending_account_scope
+          ON learned_context_pending (user_id, connected_account_id, learning_scope, status, created_at);
+      `);
+    }
+  },
+  {
+    // Remove the old user-creatable local simulator. The `broker='test'` adapter remains available
+    // only to tests that insert their fixture account after migrations have run; production boot
+    // purges any legacy Test Account and its simulated outcomes so they cannot train real decisions.
+    version: 25,
+    name: "remove_product_test_accounts",
+    up: (database) => {
+      const accounts = database
+        .prepare("SELECT id, user_id, account_number FROM connected_accounts WHERE broker = 'test'")
+        .all() as Array<{ id: string; user_id: string; account_number: string | null }>;
+      for (const account of accounts) {
+        if (account.account_number) {
+          for (const table of [
+            "fill_events",
+            "portfolio_snapshots",
+            "trade_proposals",
+            "synthetic_trailing_stops",
+            "broker_protective_stops",
+            "position_stop_plans",
+            "order_replacements"
+          ]) {
+            database
+              .prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`)
+              .run(account.account_number, account.user_id);
+          }
+        }
+        for (const table of [
+          "account_strategy_state",
+          "strategy_runs",
+          "skipped_candidate_counterfactuals",
+          "counterfactual_learning_watermarks",
+          "learning_mutations",
+          "audit_events",
+          "notification_events",
+          "socratic_decisions",
+          "learned_context",
+          "learned_context_pending"
+        ]) {
+          database
+            .prepare(`DELETE FROM ${table} WHERE connected_account_id = ? AND user_id = ?`)
+            .run(account.id, account.user_id);
+        }
+        database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(account.id, account.user_id);
+        database.prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${account.user_id}:${account.id}`);
+      }
+    }
   }
 ];
 
@@ -952,7 +1051,8 @@ export function runMigrations(database: Database.Database, migrations: Migration
   return current;
 }
 
-function applyVersionedMigrations(database: Database.Database): number {
+/** Apply the application's concrete migration list. Exported for migration regression tests. */
+export function applyVersionedMigrations(database: Database.Database): number {
   return runMigrations(database, MIGRATIONS, SCHEMA_BASELINE);
 }
 

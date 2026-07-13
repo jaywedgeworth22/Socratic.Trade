@@ -65,7 +65,11 @@ function seedLearnedRow(userId: string, overrides: Partial<LearnedContextRow> = 
     assertedAt: new Date(NOW - 2 * 86_400_000).toISOString(),
     supersededBy: null,
     expiresAt: null,
-    ...overrides
+    ...overrides,
+    connectedAccountId: overrides.connectedAccountId ?? null,
+    accountEnvironment: overrides.accountEnvironment ?? null,
+    learningScope: overrides.learningScope ?? "portfolio",
+    transferState: overrides.transferState ?? "not_applicable"
   };
   insertLearnedContext(row);
   return row;
@@ -87,7 +91,11 @@ function seedPendingRow(userId: string, overrides: Partial<LearnedContextPending
     createdAt: new Date(NOW - 86_400_000).toISOString(),
     status: "pending",
     resolvedAt: null,
-    ...overrides
+    ...overrides,
+    connectedAccountId: overrides.connectedAccountId ?? null,
+    accountEnvironment: overrides.accountEnvironment ?? null,
+    learningScope: overrides.learningScope ?? "portfolio",
+    transferState: overrides.transferState ?? "not_applicable"
   };
   insertPendingLearnedContext(row);
   return row;
@@ -391,6 +399,13 @@ describe("skip unchanged sets", () => {
     const day3 = await runDailyLearningReview(userId, { now: NOW + 2 * 86_400_000, llm });
     expect(day3.reason).not.toBe("unchanged");
     expect(calls).toBe(3);
+
+    // Same model, different reasoning effort is also a materially different review config.
+    setPolicy({ ...getPolicy(userId), learningReviewReasoningEffort: "high" }, userId);
+    const day4 = await runDailyLearningReview(userId, { now: NOW + 3 * 86_400_000, llm });
+    expect(day4.reason).not.toBe("unchanged");
+    expect(day4.reasoningEffort).toBe("high");
+    expect(calls).toBe(4);
   });
 
   it("does not cache the fingerprint when some shown items received no verdict (partial coverage)", async () => {

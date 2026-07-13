@@ -74,10 +74,7 @@ export function deriveReality(snapshot: DashboardSnapshot): RealityInfo {
   return { ...realityForMode(mode), account };
 }
 
-/** Reality of a specific account ROW (switcher, connections list), derived from the
- *  account's own `environment` — an account is an account, whatever its broker. The
- *  Test Account is just a paper account here: it reads "PAPER · NOT real money" like
- *  any other, rather than getting its own mock-labeled row. */
+/** Reality of a specific product account row, derived solely from its broker environment. */
 export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, "mode" | "tone" | "word" | "phrase" | "clarification"> {
   return realityForMode(account.environment === "paper" ? "broker/paper" : "broker/live");
 }

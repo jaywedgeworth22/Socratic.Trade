@@ -2,6 +2,26 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-07-13 evidence-contract and learning-boundary update
+
+The implemented decision path now treats evidence routing as a first-class contract:
+
+- a wider cheap preselection is enriched before the final candidate rank;
+- enriched fields carry availability, timestamp, provenance, disagreement, and provider-failure
+  receipts while preserving scalar consumers;
+- buy/short openings are deterministically limited to the exact final candidate set;
+- Green and Red receive one content-addressed evidence manifest and the complete same evidence
+  object, with a parity hash recorded in the run audit;
+- SEC/RAG, learned prose, reflections, and episodic memories share one run-wide context budget and
+  instruction-like external text is quarantined as data;
+- realized and skipped outcomes join to decision-time source ablations, producing explicitly
+  observational source-value telemetry; and
+- relational/vector account-derived learning is exact-account scoped. Broker-paper lessons transfer
+  only after independent live corroboration; the product Test Account is removed and purged.
+
+See `docs/reviews/2026-07-13-decision-evidence-architecture.md` for the source-by-source audit,
+invariants, and residual gaps.
+
 ## 1. Strategy Architecture: Evaluation Lenses
 
 To ensure balanced and resilient trade proposals, the LLM evaluates candidates

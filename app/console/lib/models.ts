@@ -54,6 +54,10 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "gpt-5.4-mini": "GPT-5.4 mini",
   "gpt-5.4": "GPT-5.4",
   "gpt-5.5": "GPT-5.5",
+  "gpt-5.6": "GPT-5.6 Sol",
+  "gpt-5.6-luna": "GPT-5.6 Luna",
+  "gpt-5.6-terra": "GPT-5.6 Terra",
+  "gpt-5.6-sol": "GPT-5.6 Sol",
   // Anthropic
   "claude-haiku-4-5": "Claude Haiku 4.5",
   "claude-sonnet-4-6": "Claude Sonnet 4.6",

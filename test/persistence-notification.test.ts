@@ -538,7 +538,8 @@ describe("persistence and notifications", () => {
       const userContent = JSON.parse(bullBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
       expect(systemContent).toContain('Current executionMode is "broker/paper"');
       expect(userContent.executionMode).toBe("broker/paper");
-      expect(userContent.executionModeClarification).toContain("simulated fills");
+      expect(userContent.executionModeClarification).toContain("deterministic fills");
+      expect(userContent.executionModeClarification).toContain("not a product account");
       expect(systemContent).toContain("`retrievedFinancialContext`");
       expect(systemContent).not.toContain("Item 2.02 Results of Operations");
       expect(userContent.retrievedFinancialContext).toContain("Item 2.02 Results of Operations");
