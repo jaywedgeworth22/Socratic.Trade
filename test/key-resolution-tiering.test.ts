@@ -46,11 +46,14 @@ describe("credential tiering — generic resolver", () => {
     expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "env-finnhub", source: "env" });
     expect(resolveApiKeyWithSource("finnhub", undefined).source).toBe("env");
 
-    // With a local key, the local key wins for everyone
+    // With a local key, the local key wins for everyone (returns "env" source
+    // for non-local callers because it's an operator-level fallback, not a per-user credential)
     upsertUserApiKey("local", "finnhub", "local-finnhub");
+    // local user's own stored key → source "user" (their personal key)
     expect(resolveApiKeyWithSource("finnhub", "local")).toMatchObject({ key: "local-finnhub", source: "user" });
-    expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "local-finnhub", source: "user" });
-    expect(resolveApiKeyWithSource("finnhub", undefined)).toMatchObject({ key: "local-finnhub", source: "user" });
+    // tenant/background fall through to the local key as an operator-level fallback → source "env"
+    expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "local-finnhub", source: "env" });
+    expect(resolveApiKeyWithSource("finnhub", undefined)).toMatchObject({ key: "local-finnhub", source: "env" });
   });
 
   it("an unlisted service defaults to per-user-only (fail closed for a tenant)", async () => {
