@@ -3,6 +3,10 @@
 ## 2026-07-13 — Red Team Fallover and UI updates (Antigravity, branch `agent/antigravity`)
 
 Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. Verified with tsc, lint, tests, and build. Next step: land.
+## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
+
+Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes. Fixed a tail-truncation bug (Codex P2) where `.slice(0, 512)` could drop unique suffixes when document names/sections shared long common prefixes — now uses a head+tail-preserving clamp with `".."` marker. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
+
 ## 2026-07-13 — Console theme token-mixing regression fix from #1476 (CLAUDE, branch `claude/console-theme-token-fix`)
 
 Confirmed UI regression from the iOS-settings migration PR #1476. `app/ui/ios-components.tsx` mixed two
