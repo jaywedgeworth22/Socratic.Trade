@@ -859,8 +859,8 @@ export function UserMenu({
                         className={cx(
                           "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[length:var(--con-fs-xs)] transition-colors",
                           active
-                            ? "bg-[color:var(--con-surface)] text-[color:var(--con-text)] font-medium shadow-sm border border-[color:var(--con-line)]"
-                            : "text-[color:var(--con-muted)] hover:text-[color:var(--con-text)] border border-transparent"
+                            ? "bg-[color:var(--con-surface)] text-[color:var(--con-fg)] font-medium shadow-sm border border-[color:var(--con-line)]"
+                            : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)] border border-transparent"
                         )}
                       >
                         <Icon size={13} />
