@@ -284,6 +284,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
             <table className="con-table w-full">
               <thead>
                 <tr>
+                  <th className="text-left">Provider</th>
                   <th className="text-left">Model</th>
                   <th className="text-left">Cost / call</th>
                   {isStrategist ? (
@@ -349,15 +350,20 @@ function ProviderRows({
 }) {
   return (
     <>
-      <tr>
-        <td colSpan={4} className="pt-2 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]">
-          {label}
-        </td>
-      </tr>
-      {models.map((model) => {
+      {models.map((model, idx) => {
         const s = byModel.get(model);
         return (
-          <tr key={model}>
+          <tr key={model} className={idx === 0 ? "border-t border-[color:var(--con-border)]" : ""}>
+            {idx === 0 && (
+              <td
+                rowSpan={models.length}
+                className="align-middle pr-4 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]"
+              >
+                <div className="max-sm:[writing-mode:vertical-rl] max-sm:rotate-180 sm:whitespace-nowrap flex items-center justify-center min-h-[4rem] sm:min-h-0 sm:block sm:h-auto">
+                  {label}
+                </div>
+              </td>
+            )}
             <td className="whitespace-nowrap font-medium">{model}</td>
             <td>
               <CostCell s={s} />
