@@ -629,17 +629,36 @@ export async function ingestFundamentalsCard(
       return { skipped: true, error: `No enrichment data found for symbol: ${symbol}` };
     }
 
-    // Skip empty fundamentals cards: if no core identity or metric field has a real
-    // value (e.g. the enrichment cascade returned an empty object for an unsupported
-    // ticker or all providers were skipped by quota/circuit breaker), embedding an
-    // all-"N/A" card wastes budget and pollutes RAG with empty factual content.
+    // Skip empty fundamentals cards: if every field rendered by
+    // buildFundamentalsContext is null/undefined, embedding an all-"N/A" card
+    // wastes budget and pollutes RAG with empty factual content (e.g. when the
+    // enrichment cascade returned an empty object for an unsupported ticker or
+    // all providers were skipped by quota/circuit breaker). Check every field the
+    // card renders so a provider that returns only debtToEquity (for example via
+    // SEC_XBRL_ENRICHMENT_ENABLED=on) is not incorrectly dropped.
     const hasRealField =
       data.companyName != null ||
       data.sector != null ||
       data.industry != null ||
+      data.price != null ||
       data.peRatio != null ||
+      data.pbRatio != null ||
       data.eps != null ||
-      data.price != null;
+      data.fcfYield != null ||
+      data.debtToEquity != null ||
+      data.returnOnEquity != null ||
+      data.returnOnAssets != null ||
+      data.grossProfitMargin != null ||
+      data.freeCashFlowYield != null ||
+      data.revenueGrowth != null ||
+      data.epsGrowth != null ||
+      data.shortPercentOfFloat != null ||
+      data.analystRating != null ||
+      data.analystScore != null ||
+      data.daysToEarnings != null ||
+      data.institutionOwnershipPct != null ||
+      data.dividendYield != null ||
+      data.beta != null;
     if (!hasRealField) {
       return { skipped: true, error: `Empty fundamentals data (all metrics N/A) for symbol: ${symbol}` };
     }

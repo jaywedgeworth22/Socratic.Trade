@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Round 4: Recognize all rendered metrics before skipping cards (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged the `hasRealField` emptiness check in `ingestFundamentalsCard` as too narrow — only checking 6 of the ~22 fields that `buildFundamentalsContext` renders. A provider that returns only `debtToEquity` (e.g. SEC XBRL only, no paid/Yahoo tiers) would be incorrectly skipped. Expanded the check to cover every field the card renders.
+Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round4.md`.
+
 ## 2026-07-13 — [codex-autofix] Skip empty fundamentals cards + clear sec_filings completion rows (PR #1493 `ag/troubleshoot-sentry`)
 
 Codex review flagged 2 P2 findings on the clearCache + fundamentals-ingest code (round 3 of autofix):
