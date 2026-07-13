@@ -304,7 +304,13 @@ export function ConsoleIntro() {
       // Solid backdrop holds until the first candle lifts off, then dissolves so the
       // console/page reveals behind the rising candles (the canvas stays opaque).
       if (!dissolved && t >= model.LIFT) { dissolved = true; if (bg) bg.style.opacity = "0"; }
-      if (!headerBox) measureHeader();      // the top bar may mount after the intro starts
+      // Re-measure the real logo EVERY frame (not just once) so the eased landing tracks its
+      // FINAL geometry. The mobile brand row mounts its logo at a placeholder height and then
+      // resizes to a width-scaled clamp (up to ~40% taller on wider phones/tablets); freezing
+      // the first, smaller measurement made the assembled wordmark land narrow and then POP to
+      // the larger real logo at handoff. measureHeader() keeps the previous box when no visible
+      // logo is found, so this stays safe before the top bar has mounted.
+      measureHeader();
       const target = headerBox ?? L.header; // real logo box, else viewport-matched fallback
       let cur: { x: number; y: number; w: number; h: number };
       if (introCurHeader) {
