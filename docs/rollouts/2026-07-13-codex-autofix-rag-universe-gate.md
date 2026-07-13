@@ -9,12 +9,17 @@ Addressed all 3 Codex review findings on PR #1543 (`codex/sec-rag-program`):
 ## Files touched
 - `src/lib/db-rag-ingest.ts` — added guard against mismatched expected_tasks when job.expected_tasks is non-null
 - `src/lib/rag/universe-manifest.ts` — hardened `validDate()` with ISO round-trip check; added quarantined entry validation
+- `test/rag-ingest-worker.test.ts` — proves a smaller observed count cannot rewrite/seal a predeclared contract
+- `test/rag-universe-manifest.test.ts` — covers impossible calendar dates and malformed quarantine rows
 
 ## Verification
-- `npm run lint`: 0 errors (448 warnings — inherited)
-- `npx tsc --noEmit`: clean
-- `npm test`: 352 suites / 3,950 tests passed
-- `npm run build`: clean
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint`: 0 errors / 448 inherited warnings
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit`: clean
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test`: 352 files / 3,953 tests passed
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build`: clean; known non-fatal Tailwind prose-scan warning recorded separately
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/rag-ingest-worker.test.ts test/rag-universe-manifest.test.ts`: 2 files / 19 tests passed after the regression additions
+- `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx eslint test/rag-ingest-worker.test.ts test/rag-universe-manifest.test.ts`: 0 errors
+- `git diff --check`: clean
 
 ## Follow-ups
-- All 3 Codex threads resolved. Auto-merge enabled.
+- All 3 Codex findings are addressed and regression-covered. Auto-merge remains enabled; refreshed hosted checks and merge/deploy verification remain.

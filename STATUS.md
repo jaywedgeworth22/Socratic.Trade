@@ -19,7 +19,9 @@ pacing and parser/chunker drafts were rejected at review and are being corrected
 vector-corpus, or production backfill write will run before fixture tests and the real-corpus gates pass. Open AG
 PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled. PR #1543 received
 a Codex review (3 items: P1 freeze expected task count, P2 reject impossible dates, P2 validate quarantined
-entries); all three addressed in commit 523828bc — verify trio remains clean (352 suites / 3,950 tests).
+entries); all three addressed in commit 523828bc. Three focused regression cases now lock those fixes (19
+focused tests across the manifest/worker files). The refreshed Node 24 gate is green: lint 0 errors / 448
+inherited warnings, clean TypeScript, 352 files / 3,953 tests, and production build. Fresh hosted checks remain.
 
 Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
 but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.

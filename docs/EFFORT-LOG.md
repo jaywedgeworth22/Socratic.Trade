@@ -2677,20 +2677,22 @@ As of 2026-07-08 (assignment-rule update).
   class aliases, selection snapshot/reasons, and coverage by issuer/form/period/artifact/parser/embed revision.
   Dependency and acceptance detail: `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` P0.
 - **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07, claimed 2026-07-13) —
-  READY IN PR #1543 / DURABLE JOB CORE IMPLEMENTED; BASELINE #1496 MERGED.** Migration v23 plus `db-rag-ingest`
+  READY IN PR #1543 / REVIEW FIXES REGRESSION-COVERED; HOSTED GATE REFRESHING.** Migration v23 plus `db-rag-ingest`
   now provide deterministic replay keys, sealed jobs, ordered stage checkpoints, atomic fenced leases/heartbeats,
-  bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion; 12 focused adversarial
-  tests and Node 24 typecheck pass. Remaining: wire artifacts/sections/facts, exact accepted timestamps,
+  bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion. All three PR review
+  findings are fixed and covered; 19 focused tests pass under Node 24. Remaining: refreshed hosted gate, merge/live
+  verification, then wire artifacts/sections/facts, exact accepted timestamps,
   amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.
 - **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (CODEX program; RAG-B01/B02/B08/B09/
-  B17, claimed 2026-07-13) — IN PROGRESS / DISCOVERY+PACING LANE READY FOR INTEGRATION.** History-shard discovery,
-  amendments/form families, PIT acceptance timestamps, aggregate SQLite SEC pacing, Retry-After/circuit state,
-  abort propagation, and a bulk-archive planner pass 26 focused tests plus Node 24 typecheck. Remaining: adversarial
-  integration review, primary/exhibit resolution, immutable object writes, checksums, and breadth-first worker wiring.
+  B17, claimed 2026-07-13) — IN PROGRESS / HARDENED DRAFT AWAITS INDEPENDENT RE-REVIEW.** History-shard discovery,
+  aggregate SQLite pacing, and bulk planning now pass 50 focused plus 42 existing SEC tests after the first draft's
+  adversarial blockers were corrected. No SEC fetch/archive write is authorized. Remaining: independent hostile
+  acceptance, integration, primary/exhibit resolution, immutable object writes, checksums, and worker wiring.
 - **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05, claimed 2026-07-13)
-  — CLAIMED.** Preserve SEC Items, source anchors, table cells/headers/units/footnotes, bounded row-group chunks,
-  actual tokenizer counts, revisioned normalization, and filing-to-filing deltas.
+  — IN PROGRESS / ADVERSARIAL RESET UNDER FINAL GATE.** The reset adds bounded iterative traversal/table expansion,
+  namespace-aware iXBRL validation/transforms, occurrence-safe identities, verified tokenizer receipts, and strict
+  resource/metadata gates; 42 focused tests pass. Independent hostile re-review is still required before integration.
 - **SEC/RAG P1 structured facts/events (CODEX program; RAG-B10, claimed 2026-07-13) — CLAIMED.** Persist XBRL,
   Forms 3/4/5/144, 13D/G, 13F-derived deltas, offerings, and other exact facts/events structurally; render cited
   evidence cards instead of embedding raw XML/JSON/rows.
@@ -2700,7 +2702,9 @@ As of 2026-07-08 (assignment-rule update).
   adapters, breaker enforcement, token-aware
   Voyage batching, Pinecone import/upsert benchmark, reconciliation, dual-write, cutover pointer, and rollback.
 - **SEC/RAG P1 retrieval/strategy consumption redesign (CODEX program; RAG-B11/B12/B13/B18, claimed 2026-07-13) —
-  CLAIMED.** Intent routing, true corpus-wide lexical recall plus dense fusion, wide rerank, MMR/diversity,
+  IN PROGRESS / LEXICAL SLICE STACKED ON #1543; ADVERSARIAL REVIEW RUNNING.** Occurrence-level FTS5 with verified
+  public timestamps, immutable replay, PIT/revision filters, corpus-wide lexical plus dense RRF, and wide rerank
+  pass 107 related tests and TypeScript. Remaining: hostile acceptance, integration, intent routing, MMR/diversity,
   embedding-revision isolation, structured issuer dossiers, deep retrieval for finalists/holdings, and verified
   `evidenceRefs`; remove nonexistent transcript coverage claims.
 - **SEC/RAG P1 real-EDGAR evaluation + truthful coverage (CODEX program; RAG-B14/B15, claimed 2026-07-13) — CLAIMED.**

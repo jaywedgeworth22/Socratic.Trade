@@ -396,6 +396,30 @@ describe("SEC/RAG durable ingest worker state", () => {
     expect(getSecIngestJob(job.id)).toMatchObject({ status: "complete_with_errors" });
   });
 
+  it("never lets sealing rewrite a predeclared expected-task contract", async () => {
+    const {
+      createSecIngestJob,
+      enqueueSecIngestTask,
+      getSecIngestJob,
+      sealSecIngestJobIntake,
+      transitionSecIngestJob
+    } = await import("../src/lib/db");
+    const job = createSecIngestJob({
+      idempotencyKey: `fixed-count-${randomUUID()}`,
+      corpusRevision: "sec-v2",
+      expectedTasks: 2
+    });
+    expect(transitionSecIngestJob(job.id, "running", { expected: "pending" })).toBe(true);
+    enqueueSecIngestTask({ jobId: job.id, accession: "fixed-count-a" });
+
+    expect(sealSecIngestJobIntake(job.id, 1)).toBe(false);
+    expect(getSecIngestJob(job.id)).toMatchObject({ expectedTasks: 2, intakeClosedAt: undefined });
+
+    enqueueSecIngestTask({ jobId: job.id, accession: "fixed-count-b" });
+    expect(sealSecIngestJobIntake(job.id, 2)).toBe(true);
+    expect(getSecIngestJob(job.id)).toMatchObject({ expectedTasks: 2 });
+  });
+
   it("enforces job transition and row-level CHECK constraints even for direct SQL callers", async () => {
     const { enqueueSecIngestTask, getDb, transitionSecIngestJob } = await import("../src/lib/db");
     const job = await createJob(`checks-${randomUUID()}`);

@@ -83,4 +83,31 @@ describe("SEC/RAG frozen universe acceptance", () => {
     const codes = validateSecUniverseManifest(value, { expectedIssuerCount: 1 }).map((issue) => issue.code);
     expect(codes).toEqual(expect.arrayContaining(["exchange", "security_type", "aliases"]));
   });
+
+  it("rejects impossible calendar dates that Date.parse would otherwise normalize", () => {
+    const value = manifest([issuer(1, "0000000001", "AAA")]);
+    value.effectiveAt = "2026-02-31T00:00:00.000Z";
+    value.sources[0]!.asOf = "2026-04-31T00:00:00.000Z";
+    value.issuers[0]!.aliasesVerifiedAt = "2026-06-31T00:00:00.000Z";
+
+    const paths = validateSecUniverseManifest(value, { expectedIssuerCount: 1 }).map((issue) => issue.path);
+    expect(paths).toEqual(expect.arrayContaining([
+      "$.effectiveAt",
+      "$.sources[0].asOf",
+      "$.issuers[0].aliasesVerifiedAt"
+    ]));
+  });
+
+  it("requires every quarantine entry to retain an auditable reason and valid optional identity", () => {
+    const value = manifest([issuer(1, "0000000001", "AAA")]) as unknown as Record<string, unknown>;
+    value.quarantined = [null, {}, { reason: "" }, { reason: "debt security", ticker: "", cik: "" }];
+
+    const codes = validateSecUniverseManifest(value, { expectedIssuerCount: 1 }).map((issue) => issue.code);
+    expect(codes).toEqual(expect.arrayContaining([
+      "quarantine_entry_shape",
+      "quarantine_reason",
+      "quarantine_ticker",
+      "quarantine_cik"
+    ]));
+  });
 });
