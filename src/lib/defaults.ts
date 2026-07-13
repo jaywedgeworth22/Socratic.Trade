@@ -88,7 +88,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   learningReviewMaxWaitDays: 7,
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
-  maxDailyNotional: 500,
+  // Account-relative by default: four full-sized 5%-of-NAV openings can fit in one day. A user can
+  // switch this to a fixed dollar ceiling in Guardrails when that better matches the mandate.
+  maxDailyPctOfNav: 20,
   maxSymbolExposurePct: 25,
   maxGrossExposurePct: 80,  // keep ≥20% cash buffer by default; users can raise in policy settings
   maxNetExposurePct: 80,    // consistent with gross; net > gross is impossible for long-only anyway

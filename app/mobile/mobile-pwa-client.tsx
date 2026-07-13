@@ -19,7 +19,7 @@ import {
   X
 } from "lucide-react";
 import { modelDisplayName } from "../console/lib/models";
-import { redTeamFailureMeta } from "../console/lib/red-team";
+import { redTeamFailureMeta, redTeamVerdictLabel } from "../console/lib/red-team";
 
 type CommandStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 type MobileCommand = {
@@ -45,9 +45,12 @@ type PendingProposal = {
     rationale?: string;
     proposedByModel?: string;
     redTeamVerdict?: {
+      verdict?: "approve" | "approve-at-half" | "reject";
       rejected: boolean;
       available: boolean;
+      reason: string;
       model?: string;
+      overridden?: boolean;
       failureKind?: "not_configured" | "timeout" | "provider_error" | "rate_limited" | "malformed_response";
     };
   };
@@ -68,7 +71,9 @@ export type MobileSnapshot = {
     strategyAuthority: string;
     holdingHorizon?: string;
     maxOrderNotional?: number;
+    maxOrderPctOfNav?: number;
     maxDailyNotional?: number;
+    maxDailyPctOfNav?: number;
     maxDailyOrders?: number;
     requireTypedConfirmation?: boolean;
   };
@@ -124,7 +129,7 @@ function modelAttributionLine(proposal: PendingProposal["proposal"]): string | n
   const verdict = proposal.redTeamVerdict;
   if (verdict?.available) {
     const reviewer = verdict.model ? ` — ${modelDisplayName(verdict.model)}` : "";
-    parts.push(`Red team: ${verdict.rejected ? "rejected" : "survived"}${reviewer}`);
+    parts.push(`Red team: ${redTeamVerdictLabel(verdict)}${reviewer}`);
   } else if (verdict) {
     const reviewer = verdict.model ? ` — ${modelDisplayName(verdict.model)}` : "";
     parts.push(`Red team FAILED (${redTeamFailureMeta(verdict.failureKind).label})${reviewer}`);

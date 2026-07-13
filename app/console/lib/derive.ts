@@ -15,6 +15,7 @@ import type {
   SystemState,
   TradingPolicy
 } from "@/lib/types";
+import { resolveDailyOpeningCap, type DailyOpeningCapMode } from "@/lib/policy-caps";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
@@ -429,14 +430,21 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
 export interface SpendInfo {
   usedNotional: number;
   capNotional?: number;
+  capMode?: DailyOpeningCapMode;
+  capConfiguredValue?: number;
+  capPctOfNav?: number;
   usedOrders: number;
   capOrders: number;
 }
 
 export function deriveSpend(snapshot: DashboardSnapshot): SpendInfo {
+  const cap = resolveDailyOpeningCap(snapshot.policy, snapshot.portfolio?.totalMarketValue);
   return {
     usedNotional: snapshot.dailyStats?.notional ?? 0,
-    capNotional: snapshot.policy.maxDailyNotional,
+    capNotional: cap?.notional,
+    capMode: cap?.mode,
+    capConfiguredValue: cap?.configuredValue,
+    capPctOfNav: cap?.pctOfNav,
     usedOrders: snapshot.dailyStats?.openingOrderCount ?? snapshot.dailyStats?.orderCount ?? 0,
     capOrders: snapshot.policy.maxDailyOrders
   };

@@ -1,5 +1,17 @@
 # Active Implementation Plan
 
+> **2026-07-13 - Account-relative daily risk and decision clarity (CODEX).** Replace the fixed $500
+> daily-opening default with one canonical dollar-or-percent mode (20% NAV default), preserve
+> explicit legacy dollar choices, and route the resolved value through policy gates, approval-time
+> rechecks, prompts, capital posture, mobile data, and AI strategy review. Persist app-computed
+> notional/NAV arithmetic; clear impossible Alpaca whole-share bracket fields before fractional
+> submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
+> sections with explicit verdict wording. Implementation, lint, TypeScript, focused checks, and the
+> production build are complete. Canonical local full-suite attempts are documented with unrelated
+> host-contention timeouts whose files pass in isolation; landing, clean-environment hosted
+> acceptance, and production verification remain. See
+> `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
+
 > **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
 > complete source-to-decision boundary before adding more feeds: wider bounded enrichment;
 > field-level provenance/freshness/failures and upstream-family arbitration; exact candidate
@@ -11,7 +23,7 @@
 > only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
 > effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
 > custom IDs. Implementation, current-main reconciliation, and the full verification gate are
-> complete; ready PR #1544 is open and CI is green. Review and owner-approved merge remain. See
+> complete; PR #1544 merged as `60703dfe` and that exact release is healthy in production. See
 > `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
 > `docs/rollouts/2026-07-13-evidence-architecture-gpt56.md`.
 ## SEC/RAG 1,000-stock implementation train

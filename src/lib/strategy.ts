@@ -82,6 +82,7 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { effectiveDailyOpeningNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
 import { assessProtectiveExitRepriceDrift, extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
 import type { ProtectiveExitQuote } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
@@ -1540,11 +1541,33 @@ export async function runStrategyOnce(
         // Pass the run-scoped `runPolicy` explicitly (R17 — rather than letting debateProposal
         // re-read the user-level getPolicy) so the account-scoped Red model/reasoning AND any
         // usage-budget Phase 2 downgrade actually reach the reviewer's model resolution.
+        const finalizedNotional = estimateNotional(proposal);
+        const dailyCap = resolveDailyOpeningCap(policy, workingPortfolio.totalMarketValue);
+        proposal.sizingSnapshot = {
+          portfolioValue: workingPortfolio.totalMarketValue,
+          estimatedNotional: finalizedNotional,
+          estimatedPctOfNav:
+            workingPortfolio.totalMarketValue > 0
+              ? Number(((finalizedNotional / workingPortfolio.totalMarketValue) * 100).toFixed(4))
+              : undefined,
+          dailyOpeningCap: dailyCap
+            ? {
+                mode: dailyCap.mode,
+                configuredValue: dailyCap.configuredValue,
+                effectiveNotional: Number(dailyCap.notional.toFixed(2)),
+                pctOfNav: dailyCap.pctOfNav != null ? Number(dailyCap.pctOfNav.toFixed(2)) : undefined
+              }
+            : undefined,
+          dailyNotionalUsed: Number(daily.notional.toFixed(2)),
+          remainingDailyNotional: dailyCap
+            ? Number(Math.max(0, dailyCap.notional - daily.notional).toFixed(2))
+            : undefined
+        };
         const result = await debateProposal(proposal, quote, userId, runPolicy, {
           context: adversaryContext,
           sizing: {
-            estimatedNotional: estimateNotional(proposal),
-            sizeBasis: typeof proposal.quantity === "number" && proposal.quantity > 0 ? "quantity" : "notional"
+            sizeBasis: typeof proposal.quantity === "number" && proposal.quantity > 0 ? "quantity" : "notional",
+            ...proposal.sizingSnapshot
           }
         });
         reviewResults.set(proposal, result);
@@ -1720,7 +1743,18 @@ export async function runStrategyOnce(
           // at a size larger than the reviewer approved, never up-sized.
           const haircut = applyRedTeamHalfSize(proposal);
           if (haircut.applied) {
-            proposal.rationale += `\n\nRed Team verdict: approve-at-half — ${redTeamResult.reason} [${haircut.note}]`;
+            if (proposal.sizingSnapshot) {
+              const finalNotional = estimateNotional(proposal);
+              proposal.sizingSnapshot = {
+                ...proposal.sizingSnapshot,
+                estimatedNotional: finalNotional,
+                estimatedPctOfNav:
+                  proposal.sizingSnapshot.portfolioValue > 0
+                    ? Number(((finalNotional / proposal.sizingSnapshot.portfolioValue) * 100).toFixed(4))
+                    : undefined
+              };
+            }
+            proposal.rationale += `\n\nRed Team review — approved at half size: ${redTeamResult.reason} [${haircut.note}]`;
             audit(
               "red_team_approved_at_half",
               { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model, haircut: haircut.note },
@@ -1728,7 +1762,7 @@ export async function runStrategyOnce(
               connectedAccountId
             );
           } else {
-            proposal.rationale += `\n\nRed Team verdict: approve-at-half — ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
+            proposal.rationale += `\n\nRed Team review — approved at half size: ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
             requiresHumanReview.add(proposal);
             audit(
               "red_team_half_size_unplaceable",
@@ -1738,7 +1772,7 @@ export async function runStrategyOnce(
             );
           }
         } else {
-          proposal.rationale += `\n\nRed Team Review Survived: ${redTeamResult.reason}`;
+          proposal.rationale += `\n\nRed Team review — approved at full size: ${redTeamResult.reason}`;
         }
       }
       debatedProposals.push(proposal);
@@ -2002,9 +2036,9 @@ export async function runStrategyOnce(
         // the remaining daily/hourly budget. Anything the planner bumps past this would be
         // policy-rejected every run — and a cap breach can demote authority via
         // autoRevertOnCapBreach, which the app must never self-inflict with its own up-sizing.
-        const effectiveMaxDailyNotional = Math.min(
-          policy.maxDailyNotional ?? Infinity,
-          policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * workingPortfolio.totalMarketValue : Infinity
+        const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+          policy,
+          workingPortfolio.totalMarketValue
         );
         const openingCapNotional = Math.min(
           applyOpeningOrderHeadroom(openingPolicyNotionalCap(normalizedProposal, policy, workingPortfolio)),
@@ -3120,7 +3154,8 @@ async function proposeTrades(input: {
   if (!resolvedModel) throw new LlmCredentialRequiredError(LLM_MODEL_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
-  const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
+  const dailyOpeningCap = resolveDailyOpeningCap(input.policy, input.portfolio.totalMarketValue);
+  const remainingNotional = Math.max(0, (dailyOpeningCap?.notional ?? Infinity) - input.dailyNotionalUsed);
   const remainingOrders = Math.max(0, input.policy.maxDailyOrders - input.dailyOrderCount);
 
   // Phase 2 fix: build a full symbol→sector map from ALL scan candidates (not just
@@ -3664,6 +3699,14 @@ async function proposeTrades(input: {
       maxOrderNotional: Number.isFinite(effectiveMaxOrderNotional) ? Number(effectiveMaxOrderNotional.toFixed(2)) : undefined,
       preferredMaxOrderNotional: Number.isFinite(preferredMaxOrderNotional) ? Number(preferredMaxOrderNotional.toFixed(2)) : undefined,
       maxOrderPctOfNav: input.policy.maxOrderPctOfNav,
+      dailyOpeningCap: dailyOpeningCap
+        ? {
+            mode: dailyOpeningCap.mode,
+            configuredValue: dailyOpeningCap.configuredValue,
+            effectiveNotional: Number(dailyOpeningCap.notional.toFixed(2)),
+            pctOfNav: dailyOpeningCap.pctOfNav != null ? Number(dailyOpeningCap.pctOfNav.toFixed(2)) : undefined
+          }
+        : undefined,
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
@@ -4118,6 +4161,9 @@ async function proposeTrades(input: {
   }
   const rawBullProposals = candidateBoundBullProposals.map(p => ({
     ...p,
+    // Preserve the proposing model's own thesis before deterministic sizing/risk receipts and the
+    // Red Team review are appended to the legacy all-in-one rationale string.
+    greenTeamRationale: p.rationale,
     entryMarketRegime: currentMarketRegime,
     ...(regimeSeverity ? { entryRegimeSeverity: Number(regimeSeverity.severity.toFixed(2)) } : {}),
     // FAILOVER-AWARE attribution: the model that actually served this run (not necessarily
@@ -4650,6 +4696,12 @@ export function enrichOpeningProposal(
   } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
     next = {
       ...next,
+      // The execution contract must match the receipt. Leaving any LLM-supplied bracket field on
+      // the proposal makes Alpaca route it as a whole-share bracket and reject the fractional
+      // dollar order, even though the rationale says the native bracket was skipped.
+      bracketStopLoss: undefined,
+      bracketTakeProfit: undefined,
+      bracketStopLimit: undefined,
       rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry price; this avoids a broker rejection for sub-share brackets.`
     };
   } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {

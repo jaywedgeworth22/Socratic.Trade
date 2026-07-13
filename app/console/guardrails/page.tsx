@@ -158,7 +158,12 @@ function CapUtilization({
 }
 
 const DEF_BY_PATH = new Map(ALL_DEFS.map((def) => [def.path, def]));
-const ESSENTIAL_FIELD_PATHS = new Set(["maxOrderNotional", "maxOrderPctOfNav"]);
+const ESSENTIAL_FIELD_PATHS = new Set([
+  "maxOrderNotional",
+  "maxOrderPctOfNav",
+  "maxDailyNotional",
+  "maxDailyPctOfNav"
+]);
 const EXPOSURE_FIELD_PATHS = new Set(["maxSymbolExposureNotional", "maxSymbolExposurePct"]);
 
 export default function GuardrailsPage() {
@@ -242,10 +247,20 @@ function AccountScopedGuardrailsPage() {
               note="Per-order caps apply to each order individually — no cumulative usage is tracked against this limit."
             />
           </div>
+          <div>
+            <PolicyDualModeRow
+              label="Max Spend Per Day"
+              moneyDef={DEF_BY_PATH.get("maxDailyNotional")!}
+              pctDef={DEF_BY_PATH.get("maxDailyPctOfNav")!}
+              policy={policy}
+              draft={draft}
+              hint="Choose one daily opening budget. Percent is the account-relative default; switching modes clears the other value before save."
+            />
+            <CapUtilization band={risk.dailyNotional} kind="money" daily />
+          </div>
           {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path)).map((def) => (
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />
-              {def.path === "maxDailyNotional" && <CapUtilization band={risk.dailyNotional} kind="money" daily />}
               {def.path === "maxDailyOrders" && <CapUtilization band={risk.dailyOrders} kind="count" daily />}
             </div>
           ))}
