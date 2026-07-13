@@ -3,6 +3,19 @@
 ## 2026-07-13 — Red Team Fallover and UI updates (Antigravity, branch `agent/antigravity`)
 
 Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. Verified with tsc, lint, tests, and build. Next step: land.
+## 2026-07-13 — Intro wordmark banner-offset fix — desktop drop (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+
+Desktop follow-up to the mobile intro fix. On desktop the wordmark assembled ~37px too high and then
+dropped when the page loaded. Measured cause: the real header logo sits below a `RealityBanner`
+(~31.75px, shown for non-live/paper/no-account accounts) that the loading screen can't predict (no
+snapshot yet), plus a desktop within-bar error (~20.7px offset, not the assumed 15). Fix
+(`intro-canvas.tsx` only): persist the real logo's measured top to `localStorage` per breakpoint and
+prime `layout()`'s fallback `y` from it, so a returning session assembles the wordmark exactly where
+it ends up — no drop; cold default corrected 15→20; every-frame tracking self-heals a stale cache.
+Verified empirically in Chromium (primed cache → assembly at bar level ~51 vs real logo 52.4) and by
+an independent multi-agent design review that converged on the same approach. Gate green (tsc 0, lint
+0 errors, 3927 tests pass, build exit 0). Rollout: `docs/rollouts/2026-07-13-intro-desktop-banner-offset.md`.
+
 ## 2026-07-13 — Infisical Secrets and Machine Identity Audit (Antigravity/AG, branch `agent/ag-infisical-sole-truth-audit`)
 
 Audited the Coolify production environment variables for `socratic-trade-prod` and matched them exactly with local Universal Auth machine identities. Moved the remaining operational configuration variables (`DB_BOOTSTRAP`, `NODE_ENV`, `REQUIRE_SECRETS_MANAGER`) and Alpaca streams settings (`STREAMS_ALPACA_*`, `TRIGGER_ENGINE`) into Infisical across all environments (dev, staging, prod), making Infisical the absolute, sole source of truth for app operations. Cleaned up and deleted these redundant variables from Coolify to leave only bootstrap connector keys and Nixpacks builder configurations.
