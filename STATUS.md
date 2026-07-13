@@ -77,6 +77,8 @@ green: tsc 0, lint 0 errors, 3927 tests pass, build exit 0. Rollout:
 
 Completed RAG Backfill P1: added version 19 database migration creating relational tables `sec_filings`, `sec_artifacts`, and `chunk_occurrences`, backfilled legacy RAG ingested accessions and document chunks, updated `storeDocument` in `src/lib/vector-db.ts` to map stable unique vector/occurrence IDs and record chunk occurrences correctly (skipped and fresh), and integrated `sec_filings` discovery and `sec_artifacts` HTML logging into `sec-filings.ts` and `sec8k.ts`. Verified with tests, types, and lints. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p1.md`.
 
+*Infisical Settings & Plan*: Updated production/dev/staging RAG limits to intermediate values (`RAG_INGEST_MAX_TEXTS_PER_DAY=200000` and `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY=2000000`) for the backfill duration. Configured `DEFAULT_INGEST_MAX_TEXTS_PER_DAY=20_000` (20k) and `DEFAULT_PINECONE_WRITE_UNITS_PER_DAY=200_000` (200k) as safe code-fallback defaults. Once the 1,000-stock backfill finishes, the Infisical limits will be shifted back to these conservative 20k/200k safety gates. Changed `RAG_EMBED_DISCLOSURES=on` and `SEC_FILING_RAG_MAX_PER_RUN=25` across all environments. Triggers Coolify auto-redeploy to activate.
+
 ## 2026-07-13 — SEC/RAG 1,000-Stock Backfill: P0 — Truth and Census (Antigravity/AG, branch `agent/ag-rag-backfill-p0`)
 
 Completed RAG Backfill P0: reconciled `.env.example` configurations, implemented `scripts/eval/rag-census.ts` and `scripts/eval/generate-universe-manifest.ts`, generated the frozen 1,000-CIK manifest `data/rag-universe-manifest.json`, verified lengths and statistics, and passed all tests. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p0.md`.
