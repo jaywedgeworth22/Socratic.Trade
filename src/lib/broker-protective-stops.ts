@@ -84,7 +84,7 @@ export function brokerProtectiveStopsEnabled(policy: TradingPolicy, executionMod
   if ((policy.riskRules?.stopLossPct ?? 0) <= 0) return false;
   
   if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") {
-    return executionMode === "broker/live" || executionMode === "broker/paper";
+    return (executionMode === "broker/live" || executionMode === "broker/paper") && policy.brokerBracketsEnabled !== false;
   }
   
   if (policy.activeBroker === "robinhood") {
@@ -454,7 +454,7 @@ export async function reconcileBrokerProtectiveStops(args: {
   const desiredStopQuantity = (pos: EquityPosition, sym: string, forKind: "fixed" | "trailing", excludeOrderId?: string): number | null => {
     const qty = uncoveredQuantity(pos, sym, excludeOrderId);
     if (qty === null) return null;
-    return forKind === "trailing" && isAlpacaFamily ? Math.floor(qty) : qty;
+    return isAlpacaFamily ? Math.floor(qty) : qty;
   };
 
   // Trailing trigger for the ratcheted (non-native) lane: trailingStopPct below the high-water
