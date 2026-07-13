@@ -3,6 +3,45 @@
 ## 2026-07-13 — Red Team Fallover and UI updates (Antigravity, branch `agent/antigravity`)
 
 Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. Verified with tsc, lint, tests, and build. Next step: land.
+## 2026-07-13 — Console theme token-mixing regression fix from #1476 (CLAUDE, branch `claude/console-theme-token-fix`)
+
+Confirmed UI regression from the iOS-settings migration PR #1476. `app/ui/ios-components.tsx` mixed two
+independent theme systems: backgrounds used the console token system (`--con-*` vars, keyed to `data-theme`
+on `.console-root`) while secondary text used the LEGACY app utility classes (`text-muted`/`text-faint`/
+`text-fg`, keyed to a `.dark` class on `<html>`). The same PR shipped a Light/Dark/System picker that flips
+ONLY the console system, so the two diverged — in console dark mode, muted text stayed dark slate
+(rgb(63,79,96)) on a dark card = nearly invisible; in html-dark + console-light it was washed-out light text
+on white. Every migrated Settings page was affected. Fix: 6 class swaps in `ios-components.tsx` to the
+`text-[color:var(--con-*)]` arbitrary-value form the same file already uses at its other call sites, plus 2
+typo fixes in `app/console/components/chrome.tsx` (theme-picker active state used `var(--con-text)`, an
+undefined token → corrected to `var(--con-fg)`). Display-only CSS-class change, no logic touched. Grep
+confirms 0 standalone legacy classes and 0 `con-text` remaining. Rollout:
+`docs/rollouts/2026-07-13-console-theme-token-fix.md`. Next action: land via `scripts/land.sh`, arm
+`gh pr merge <N> --squash --auto` (auto-deploys on merge). Follow-up (NOT fixed here): `/console/usage`
+uses the fully-legacy design system and is a separate pre-existing issue.
+
+## 2026-07-12 — shared-package-pin-check: resolve refs to commit SHAs before comparing (CLAUDE, branch `claude/check-pin-ref-resolve`)
+
+Hardened `.github/workflows/shared-package-pin-check.yml` so it compares the two consumer
+repos' `congress-trading-shared` pins at the commit level, not the raw ref string. When the
+normalized refs differ but both specs are git-style, each ref is now resolved to a commit SHA
+against the shared package's own (public) repo before declaring a divergence — a tag pin
+(`#v1.6.0`) and the equivalent raw-SHA pin now compare EQUAL; genuinely different commits
+still fail loudly. If exactly one side resolves and the other errors, the check fails loudly
+instead of silently falling back to a string compare. Why it matters: this exact false
+positive fired on every Socratic.Trade PR earlier today when Congress.Trade re-pinned to a
+raw SHA equal to what tag `v1.6.0` resolves to; `main` self-healed by moving its own pin to
+the SHA form, but the bug was untouched and would recur the instant CODEX's pending
+`v1.7.0` tag bump lands on one side while the other still uses a different ref form.
+Replay-tested the resolve-and-compare logic directly against the live (public,
+unauthenticated) GitHub API: tag `v1.6.0` vs its equivalent raw SHA -> resolves EQUAL, exit 0;
+tag `v1.6.0` vs the `v1.7.0` SHA -> resolves UNEQUAL, exit 1 (DIVERGED). CI-config only, no
+app code touched. Correction to an initial assumption: verified directly against PR #1507's
+own `check-pin` run that GitHub Actions used the PR BRANCH's workflow file (not `main`'s) for
+this same-repo `pull_request` trigger — the job log echoed this diff's new `resolve_ref`/
+`is_git_spec`/`SHARED_REPO` logic. So this PR's `check-pin` already exercised the new logic
+(and passed on the fast path, since both pins matched). Rollout:
+`docs/rollouts/2026-07-12-check-pin-ref-resolve.md`.
 ## 2026-07-13 — Intro wordmark banner-offset fix — desktop drop (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`)
 
 Desktop follow-up to the mobile intro fix. On desktop the wordmark assembled ~37px too high and then
