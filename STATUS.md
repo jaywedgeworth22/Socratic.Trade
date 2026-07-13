@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes (Antigravity, branch `agent/ag-safety-exit-replacement`)
+
+Resolved the three Codex review findings on PR #1492 (Exit Replacement State Machine):
+1. **Auto Mode Off Continuation (P2)**: Modified `autoRemediateStaleExitOrders` to skip enqueuing new stale exits when `autoRemediateStaleExits === false`, while still allowing the pump to process/advance existing cancel-replacement state machines.
+2. **Canceled Order Detail Persistence (P1)**: Added a database migration (`version 19`) to add `symbol`, `side`, `original_type`, `original_quantity`, and `original_filled_quantity` columns to the `order_replacements` table. Persisted these fields at enqueue time (or updated them after manual checks) and reconstructed a minimal `EquityOrder` object from them when the broker no longer returns the canceled order in `getEquityOrders`.
+3. **Reconcile `replacement_submitted` rows (P1)**: Implemented full reconciliation logic in `stepReplacementState` for rows left in `replacement_submitted` (due to process crashes or network issues). Checks `getEquityOrders` by `clientOrderId` (matching `replacement_ref_id`) to confirm placement, inserts missing `fill_events`, verifies webhook-created fill events, and timeouts/fails rows stuck for > 5 minutes.
+Added comprehensive unit tests inside `test/order-replacement.test.ts` verifying both reconstruction and reconciliation recovery paths. All typechecks, lints, builds, and 3929 tests passed cleanly.
+Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
+
 ## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 
 Codex review (P2) flagged that the existing 429 Retry-After handling only parses delta-seconds via

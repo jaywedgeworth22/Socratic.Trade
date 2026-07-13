@@ -475,6 +475,29 @@ const MIGRATIONS: Migration[] = [
         database.exec("ALTER TABLE position_stop_plans ADD COLUMN side TEXT NOT NULL DEFAULT 'long'");
       }
     }
+  },
+  {
+    // Persist original order details for stale exit replacements (PR 2 follow-up)
+    version: 19,
+    name: "order_replacements_original_order_columns",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(order_replacements)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "symbol")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN symbol TEXT");
+      }
+      if (!cols.some((c) => c.name === "side")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN side TEXT");
+      }
+      if (!cols.some((c) => c.name === "original_type")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_type TEXT");
+      }
+      if (!cols.some((c) => c.name === "original_quantity")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_quantity REAL");
+      }
+      if (!cols.some((c) => c.name === "original_filled_quantity")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_filled_quantity REAL");
+      }
+    }
   }
 ];
 
@@ -749,6 +772,11 @@ function migrate(database: Database.Database): void {
       user_id TEXT NOT NULL,
       account_number TEXT NOT NULL,
       original_order_id TEXT NOT NULL,
+      symbol TEXT,
+      side TEXT,
+      original_type TEXT,
+      original_quantity REAL,
+      original_filled_quantity REAL,
       replacement_ref_id TEXT NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
       remaining_quantity REAL,

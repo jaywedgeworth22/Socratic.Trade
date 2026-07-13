@@ -18,6 +18,11 @@ export interface OrderReplacementRow {
   user_id: string;
   account_number: string;
   original_order_id: string;
+  symbol: string | null;
+  side: string | null;
+  original_type: string | null;
+  original_quantity: number | null;
+  original_filled_quantity: number | null;
   replacement_ref_id: string;
   status: "cancel_requested" | "cancel_confirmed" | "replacement_submitted" | "replacement_confirmed" | "failed" | "aborted";
   remaining_quantity: number | null;
@@ -129,6 +134,11 @@ export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput
     await markReplacementError(id, "Order was not found at the broker.");
     throw new MarketReplacePreconditionError("Order was not found at the broker.", 404);
   }
+  db.prepare(`
+    UPDATE order_replacements 
+    SET symbol = ?, side = ?, original_type = ?, original_quantity = ?, original_filled_quantity = ?
+    WHERE id = ?
+  `).run(original.symbol, original.side, original.type, original.quantity, original.filledQuantity ?? 0, id);
   if (!stale) {
     await markReplacementError(id, "Order is not an active stale limit order.");
     throw new MarketReplacePreconditionError("Order is not an active stale limit order. Refresh Activity before replacing it.", 409);
@@ -229,16 +239,32 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
   const db = getDb();
   const userId = input.userId ?? "local";
 
-  if (!original) {
+  let originalOrder: EquityOrder;
+  if (original) {
+    originalOrder = original;
+  } else {
     const orders = await input.gateway.getEquityOrders(input.policy.accountNumber);
-    original = orders.find((o) => o.id === row.original_order_id);
-    if (!original) {
+    const found = orders.find((o) => o.id === row.original_order_id);
+    if (found) {
+      originalOrder = found;
+    } else if (row.symbol && row.side && row.original_type && row.original_quantity !== null && row.original_filled_quantity !== null) {
+      originalOrder = {
+        id: row.original_order_id,
+        symbol: row.symbol,
+        side: row.side as any,
+        type: row.original_type as any,
+        quantity: row.original_quantity,
+        filledQuantity: row.original_filled_quantity,
+        state: "canceled",
+        createdAt: row.created_at
+      };
+    } else {
       await markReplacementError(row.id, "Original order not found at broker during state step");
       return;
     }
   }
 
-  const symbol = normalizeSymbol(original.symbol);
+  const symbol = normalizeSymbol(originalOrder.symbol);
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   const executionMode: ExecutionMode = executionState.mode!;
 
@@ -248,39 +274,39 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
     // changed (e.g. ALLOW_LIVE_TRADING set to false after the row was inserted) or
     // that was created through a path where preflight was already passed (the manual
     // wrapper) but whose execution is now being handled by the pump.
-    assertLivePreflight({ mode: executionMode, symbol, side: original.side });
+    assertLivePreflight({ mode: executionMode, symbol, side: originalOrder.side });
 
     if (row.status === 'cancel_requested') {
       // Re-check eligibility — order type and broker-held state may have changed
       // between enqueue time and the pump processing this row, and the pump should
       // not blindly cancel an order that is no longer eligible for replacement.
-      if (!MARKET_REPLACE_TYPES.has(String(original.type ?? "").toLowerCase())) {
-        const errStr = `${symbol} order type (${original.type}) is no longer eligible for market replacement.`;
+      if (!MARKET_REPLACE_TYPES.has(String(originalOrder.type ?? "").toLowerCase())) {
+        const errStr = `${symbol} order type (${originalOrder.type}) is no longer eligible for market replacement.`;
         db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, updated_at = ? WHERE id = ?`)
           .run(errStr, new Date().toISOString(), row.id);
-        audit("stale_exit_remediation_skipped_type_changed", { orderId: original.id, symbol, side: original.side, type: original.type }, userId, input.policy.connectedAccountId);
+        audit("stale_exit_remediation_skipped_type_changed", { orderId: originalOrder.id, symbol, side: originalOrder.side, type: originalOrder.type }, userId, input.policy.connectedAccountId);
         throw new MarketReplacePreconditionError(errStr, 409);
       }
-      if (String(original.state ?? "").trim().toLowerCase() === "held") {
-        const errStr = `${symbol} ${original.side} order is broker-held — cannot be cancel-replaced.`;
+      if (String(originalOrder.state ?? "").trim().toLowerCase() === "held") {
+        const errStr = `${symbol} ${originalOrder.side} order is broker-held — cannot be cancel-replaced.`;
         db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, updated_at = ? WHERE id = ?`)
           .run(errStr, new Date().toISOString(), row.id);
-        audit("stale_exit_remediation_skipped_held", { orderId: original.id, symbol, side: original.side, state: original.state }, userId, input.policy.connectedAccountId);
+        audit("stale_exit_remediation_skipped_held", { orderId: originalOrder.id, symbol, side: originalOrder.side, state: originalOrder.state }, userId, input.policy.connectedAccountId);
         throw new MarketReplacePreconditionError(errStr, 409);
       }
 
-      const isExit = original.side === "sell" || original.side === "cover";
+      const isExit = originalOrder.side === "sell" || originalOrder.side === "cover";
       if (isExit) {
         const positions = await input.gateway.getEquityPositions(input.policy.accountNumber);
-        const { signedQuantity, backingQuantity } = exitBackingQuantity(positions, symbol, original.side);
-        const remainingQuantity = remainingAfterCancel(original);
+        const { signedQuantity, backingQuantity } = exitBackingQuantity(positions, symbol, originalOrder.side);
+        const remainingQuantity = remainingAfterCancel(originalOrder);
         if (backingQuantity + POSITION_EPSILON < remainingQuantity) {
-          const errStr = `${symbol} ${original.side} order is not backed by the broker position (position ${signedQuantity}, order remaining ${remainingQuantity}). Market replacement skipped; the original order was left untouched.`;
+          const errStr = `${symbol} ${originalOrder.side} order is not backed by the broker position (position ${signedQuantity}, order remaining ${remainingQuantity}). Market replacement skipped; the original order was left untouched.`;
           db.prepare(`UPDATE order_replacements SET status = 'aborted', updated_at = ?, error = ? WHERE id = ?`)
             .run(new Date().toISOString(), errStr, row.id);
           audit(
             "stale_exit_remediation_skipped_no_position",
-            { orderId: original.id, symbol, side: original.side, remainingQuantity, positionQuantity: signedQuantity, backingQuantity, reason: backingQuantity === 0 ? "no_position" : "position_smaller_than_order" },
+            { orderId: originalOrder.id, symbol, side: originalOrder.side, remainingQuantity, positionQuantity: signedQuantity, backingQuantity, reason: backingQuantity === 0 ? "no_position" : "position_smaller_than_order" },
             userId,
             input.policy.connectedAccountId
           );
@@ -288,7 +314,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         }
       }
 
-      const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, original.id);
+      const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, originalOrder.id);
       db.prepare(`UPDATE order_replacements SET cancel_result = ?, status = 'cancel_confirmed', updated_at = ? WHERE id = ?`)
         .run(JSON.stringify(cancelResult), new Date().toISOString(), row.id);
       await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
@@ -299,15 +325,15 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
     
     if (row.status === 'cancel_confirmed') {
       const afterCancelOrders = await input.gateway.getEquityOrders(input.policy.accountNumber);
-      const afterCancel = afterCancelOrders.find((order) => order.id === original.id);
+      const afterCancel = afterCancelOrders.find((order) => order.id === originalOrder.id);
       
       const staleOrders = listStaleLimitOrders(afterCancelOrders, input.policy);
-      const remainingQuantity = remainingAfterCancel(original, afterCancel);
+      const remainingQuantity = remainingAfterCancel(originalOrder, afterCancel);
 
       if (afterCancel && isPostCancelActiveState(afterCancel.state)) {
         audit(
           "order_replace_market_deferred_pending_cancel",
-          { orderId: original.id, symbol, state: afterCancel.state, reason: "original_order_still_active_after_cancel", cancelResult: row.cancel_result },
+          { orderId: originalOrder.id, symbol, state: afterCancel.state, reason: "original_order_still_active_after_cancel", cancelResult: row.cancel_result },
           userId,
           input.policy.connectedAccountId
         );
@@ -318,7 +344,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       if (remainingQuantity <= 0) {
         audit(
           "order_replace_market_skipped",
-          { orderId: original.id, symbol, state: afterCancel?.state, reason: "no_remaining_quantity", cancelResult: row.cancel_result },
+          { orderId: originalOrder.id, symbol, state: afterCancel?.state, reason: "no_remaining_quantity", cancelResult: row.cancel_result },
           userId,
           input.policy.connectedAccountId
         );
@@ -328,17 +354,17 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       }
 
       // Re-verify backing position
-      const isExit = original.side === "sell" || original.side === "cover";
+      const isExit = originalOrder.side === "sell" || originalOrder.side === "cover";
       if (isExit) {
         const positionsNow = await input.gateway.getEquityPositions(input.policy.accountNumber);
-        const { signedQuantity, backingQuantity } = exitBackingQuantity(positionsNow, symbol, original.side);
+        const { signedQuantity, backingQuantity } = exitBackingQuantity(positionsNow, symbol, originalOrder.side);
         if (backingQuantity + POSITION_EPSILON < remainingQuantity) {
           const reason = backingQuantity <= POSITION_EPSILON ? "no_position_after_cancel" : "position_shrank_below_remaining";
-          const errStr = `${symbol} ${original.side} replacement aborted after cancel: the backing position shrank to ${signedQuantity} before the market order could be placed (order remaining ${remainingQuantity}). The original order is now CANCELED and was NOT replaced — no market order was placed. Review the position and place a fresh exit manually if one is still needed.`;
+          const errStr = `${symbol} ${originalOrder.side} replacement aborted after cancel: the backing position shrank to ${signedQuantity} before the market order could be placed (order remaining ${remainingQuantity}). The original order is now CANCELED and was NOT replaced — no market order was placed. Review the position and place a fresh exit manually if one is still needed.`;
           
           audit(
             "stale_exit_replacement_aborted_post_cancel",
-            { orderId: original.id, symbol, side: original.side, remainingQuantity, positionQuantity: signedQuantity, backingQuantity, cancelResult: row.cancel_result, reason },
+            { orderId: originalOrder.id, symbol, side: originalOrder.side, remainingQuantity, positionQuantity: signedQuantity, backingQuantity, cancelResult: row.cancel_result, reason },
             userId,
             input.policy.connectedAccountId
           );
@@ -351,7 +377,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       const marketOrder: EquityOrderInput = {
         accountNumber: input.policy.accountNumber,
         symbol: symbol,
-        side: original.side,
+        side: originalOrder.side,
         type: "market",
         quantity: remainingQuantity,
         timeInForce: "gfd",
@@ -364,7 +390,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       if (casResult.changes !== 1) {
         audit(
           "order_replace_market_claimed_by_another",
-          { orderId: original.id, symbol, remainingQuantity, cancelResult: row.cancel_result, reason: "CAS update affected 0 rows — another instance claimed this cancel_confirmed row" },
+          { orderId: originalOrder.id, symbol, remainingQuantity, cancelResult: row.cancel_result, reason: "CAS update affected 0 rows — another instance claimed this cancel_confirmed row" },
           userId,
           input.policy.connectedAccountId
         );
@@ -384,14 +410,14 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         const source = fillSourceForExecutionMode(executionState);
         const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
         const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
-        const price = isExit ? applyPaperExitCost(rawPrice, original.side, source) : rawPrice;
+        const price = isExit ? applyPaperExitCost(rawPrice, originalOrder.side, source) : rawPrice;
         insertFillEvent({
           userId,
           accountNumber: input.policy.accountNumber,
           source,
           executionMode,
           symbol,
-          side: original.side,
+          side: originalOrder.side,
           quantity: remainingQuantity,
           price,
           notional: Math.abs(price * remainingQuantity),
@@ -399,7 +425,7 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
           brokerOrderId: execution.orderId,
           raw: {
             source: "market_replace",
-            replacedOrderId: original.id,
+            replacedOrderId: originalOrder.id,
             cancel: row.cancel_result,
             review,
             execution
@@ -409,10 +435,10 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         audit(
           "order_replace_market",
           {
-            replacedOrderId: original.id,
+            replacedOrderId: originalOrder.id,
             replacementOrderId: execution.orderId,
             symbol,
-            side: original.side,
+            side: originalOrder.side,
             remainingQuantity,
             brokerState: execution.state,
             fillStatus
@@ -428,12 +454,72 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         // or we mark it failed.
         audit(
           "order_replace_market_failed",
-          { orderId: original.id, symbol, remainingQuantity, cancelResult: row.cancel_result, error: error instanceof Error ? error.message : String(error) },
+          { orderId: originalOrder.id, symbol, remainingQuantity, cancelResult: row.cancel_result, error: error instanceof Error ? error.message : String(error) },
           userId,
           input.policy.connectedAccountId
         );
         db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
           .run(error instanceof Error ? error.message : String(error), new Date().toISOString(), row.id);
+      }
+    }
+
+    if (row.status === 'replacement_submitted') {
+      const isExit = originalOrder.side === "sell" || originalOrder.side === "cover";
+      const orders = await input.gateway.getEquityOrders(input.policy.accountNumber);
+      const found = orders.find((o) => o.clientOrderId === row.replacement_ref_id || o.id === row.replacement_order_id);
+      if (found) {
+        // Already placed, confirm it
+        db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
+          .run(found.id, new Date().toISOString(), row.id);
+        
+        // Check if fill event exists for this order
+        const fillExists = db.prepare(`SELECT 1 FROM fill_events WHERE broker_order_id = ?`).get(found.id);
+        if (!fillExists) {
+          const source = fillSourceForExecutionMode(executionState);
+          const fillStatus = found.state === "filled" ? "filled" : "pending_reconciliation";
+          const rawPrice = found.averagePrice ?? 0;
+          const price = isExit ? applyPaperExitCost(rawPrice, originalOrder.side, source) : rawPrice;
+          insertFillEvent({
+            userId,
+            accountNumber: input.policy.accountNumber,
+            source,
+            executionMode,
+            symbol,
+            side: originalOrder.side,
+            quantity: row.remaining_quantity!,
+            price,
+            notional: Math.abs(price * row.remaining_quantity!),
+            status: fillStatus,
+            brokerOrderId: found.id,
+            raw: {
+              source: "market_replace_reconciliation",
+              replacedOrderId: originalOrder.id,
+              cancel: row.cancel_result,
+              order: found
+            }
+          });
+        }
+        return;
+      } else {
+        // Not found at broker. Check if a fill event exists for this replacement_ref_id or replacement_order_id.
+        const fillExists = db.prepare(`SELECT 1 FROM fill_events WHERE broker_order_id = ? OR raw LIKE ?`)
+          .get(row.replacement_order_id, `%${row.replacement_ref_id}%`);
+        if (fillExists) {
+          db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', updated_at = ? WHERE id = ?`)
+            .run(new Date().toISOString(), row.id);
+          return;
+        }
+
+        // If not found and no fill exists, and it's been in 'replacement_submitted' status for some time (e.g. > 5 minutes),
+        // we assume the submission failed to reach the broker, and mark it failed.
+        const ageMs = Date.now() - new Date(row.updated_at).getTime();
+        if (ageMs > 5 * 60_000) {
+          const errStr = "Replacement order submission timed out or failed to reach the broker.";
+          db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+            .run(errStr, new Date().toISOString(), row.id);
+          audit("stale_exit_replacement_submission_failed", { orderId: originalOrder.id, symbol, refId: row.replacement_ref_id }, userId, input.policy.connectedAccountId);
+        }
+        return;
       }
     }
   } catch (e: any) {
@@ -453,63 +539,64 @@ export async function autoRemediateStaleExitOrders(input: {
 }): Promise<{ remediated: number; attempted: number; deferred: number }> {
   const userId = input.userId ?? "local";
   const out = { remediated: 0, attempted: 0, deferred: 0 };
-  if (input.policy.autoRemediateStaleExits === false) return out;
+  const db = getDb();
 
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   if (!executionState.submitsBrokerOrders || !executionState.mode) return out;
   const liveNeedsHuman = executionState.mode === "broker/live" && input.policy.requireTypedConfirmation !== false;
 
-  const orders = input.orders ?? (await input.gateway.getEquityOrders(input.policy.accountNumber));
-  const stale = listStaleLimitOrders(orders, input.policy, input.now ?? new Date());
-  const db = getDb();
+  // Enqueue new replacements only if auto mode is enabled
+  if (input.policy.autoRemediateStaleExits !== false) {
+    const orders = input.orders ?? (await input.gateway.getEquityOrders(input.policy.accountNumber));
+    const stale = listStaleLimitOrders(orders, input.policy, input.now ?? new Date());
 
-  // Enqueue new replacements
-  for (const item of stale) {
-    const side = String(item.order.side ?? "").toLowerCase();
-    if (side !== "sell" && side !== "cover") continue;
-    if (String(item.order.state ?? "").trim().toLowerCase() === "held") continue;
-    
-    const symbol = normalizeSymbol(item.order.symbol);
-    if (liveNeedsHuman) {
-      out.deferred++;
-      audit(
-        "stale_exit_auto_remediation_deferred",
-        { orderId: item.order.id, symbol, side, ageMinutes: item.ageMinutes, reason: "live account with requireTypedConfirmation on — human replace required" },
-        userId,
-        input.policy.connectedAccountId
-      );
-      continue;
-    }
-    
-    // Use a transaction for check-and-insert
-    const insertTx = db.transaction(() => {
-      const fiveMinsAgo = new Date(Date.now() - 5 * 60_000).toISOString();
-      const activeOrRecent = db.prepare(`
-        SELECT 1 FROM order_replacements
-        WHERE account_number = ? AND original_order_id = ?
-        AND (
-          status NOT IN ('replacement_confirmed', 'failed', 'aborted')
-          OR updated_at > ?
-        )
-      `).get(input.policy.accountNumber, item.order.id, fiveMinsAgo);
-
-      if (!activeOrRecent) {
-        const id = crypto.randomUUID();
-        const refId = crypto.randomUUID();
-        const now = new Date().toISOString();
-        return db.prepare(`
-          INSERT INTO order_replacements 
-          (id, user_id, account_number, original_order_id, replacement_ref_id, status, created_at, updated_at) 
-          VALUES (?, ?, ?, ?, ?, 'cancel_requested', ?, ?)
-        `).run(id, userId, input.policy.accountNumber, item.order.id, refId, now, now);
+    for (const item of stale) {
+      const side = String(item.order.side ?? "").toLowerCase();
+      if (side !== "sell" && side !== "cover") continue;
+      if (String(item.order.state ?? "").trim().toLowerCase() === "held") continue;
+      
+      const symbol = normalizeSymbol(item.order.symbol);
+      if (liveNeedsHuman) {
+        out.deferred++;
+        audit(
+          "stale_exit_auto_remediation_deferred",
+          { orderId: item.order.id, symbol, side, ageMinutes: item.ageMinutes, reason: "live account with requireTypedConfirmation on — human replace required" },
+          userId,
+          input.policy.connectedAccountId
+        );
+        continue;
       }
-      return { changes: 0 };
-    });
-    
-    const result = insertTx();
-    
-    if (result.changes > 0) {
-      out.attempted++;
+      
+      // Use a transaction for check-and-insert
+      const insertTx = db.transaction(() => {
+        const fiveMinsAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+        const activeOrRecent = db.prepare(`
+          SELECT 1 FROM order_replacements
+          WHERE account_number = ? AND original_order_id = ?
+          AND (
+            status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+            OR updated_at > ?
+          )
+        `).get(input.policy.accountNumber, item.order.id, fiveMinsAgo);
+
+        if (!activeOrRecent) {
+          const id = crypto.randomUUID();
+          const refId = crypto.randomUUID();
+          const now = new Date().toISOString();
+          return db.prepare(`
+            INSERT INTO order_replacements 
+            (id, user_id, account_number, original_order_id, symbol, side, original_type, original_quantity, original_filled_quantity, replacement_ref_id, status, created_at, updated_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cancel_requested', ?, ?)
+          `).run(id, userId, input.policy.accountNumber, item.order.id, item.order.symbol, item.order.side, item.order.type, item.order.quantity, item.order.filledQuantity ?? 0, refId, now, now);
+        }
+        return { changes: 0 };
+      });
+      
+      const result = insertTx();
+      
+      if (result.changes > 0) {
+        out.attempted++;
+      }
     }
   }
 
@@ -537,10 +624,9 @@ export async function autoRemediateStaleExitOrders(input: {
     const after = getReplacementRecord(row.id);
     if (after && after.status === 'replacement_confirmed') {
       out.remediated++;
-      const orig = orders.find(o => o.id === row.original_order_id);
       audit(
         "stale_exit_auto_remediated",
-        { orderId: row.original_order_id, symbol: orig?.symbol ?? "unknown", side: orig?.side ?? "unknown", status: "replaced", replacementOrderId: after.replacement_order_id },
+        { orderId: row.original_order_id, symbol: row.symbol ?? "unknown", side: row.side ?? "unknown", status: "replaced", replacementOrderId: after.replacement_order_id },
         userId,
         input.policy.connectedAccountId
       );
