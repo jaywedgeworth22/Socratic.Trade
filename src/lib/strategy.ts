@@ -10,6 +10,7 @@ import {
   finishStrategyRun,
   getConnectedAccount,
   getPolicy,
+  getActiveStrategyProfile,
   getProposal,
   getStrategyPrompt,
   ingestedAccessionCountsByDocType,
@@ -146,6 +147,7 @@ import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
 import { reconcilePendingFills, flagStalePlacingIntents, reconcilePlacementError, LiveApprovalConfirmation, LiveApprovalConfirmationError, coerceProtectiveExitToMarket } from "./strategy-execution";
+import { runSafetyMaintenance } from "./safety-maintenance";
 import { shouldSkipNegativeExpectancy, applyDeterministicSizing, isRiskAddingOpening, applyRedTeamHalfSize, applyEarningsBlackoutTag, applyCorrelationClusterGate, applyRiskReceipts, shouldEscalateDecision, allowedProposalSides, deterministicBearFilter, mapWithConcurrency } from "./strategy-risk";
 
 /**
@@ -336,8 +338,10 @@ export async function runStrategyOnce(
   try {
     // Keep all post-acquire setup inside the protected region. If the run receipt cannot be
     // inserted, the finally block must still stop the heartbeat and release this owner token.
-    insertStrategyRun(runId, userId, connectedAccountId);
+    const activeProfile = getActiveStrategyProfile(userId);
+    const policyRevision = activeProfile ? `${activeProfile.id}@${activeProfile.updatedAt}` : undefined;
     const savedPolicy = getPolicy(userId, connectedAccountId);
+    insertStrategyRun(runId, userId, connectedAccountId, savedPolicy.accountNumber, policyRevision);
     const accountNumber = savedPolicy.accountNumber;
     if (!accountNumber) throw new Error("No account selected.");
     if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
@@ -428,11 +432,11 @@ export async function runStrategyOnce(
 
     const gateway = getBrokerGateway(policy, userId);
     lockGuard.assertOwned();
-    await reconcilePendingFills(gateway, policy.accountNumber, userId, connectedAccountId);
-    lockGuard.assertOwned();
-    // Broker-truth reconcile any order-placement intent left "placing" by a prior run that crashed
-    // mid-call: match it against the broker by clientOrderId and recover or abandon it.
-    await flagStalePlacingIntents(gateway, policy.accountNumber, userId, connectedAccountId);
+    
+    // --- Safety Maintenance Coordinator ---
+    // Run fill reconciliation, stale placing-intent recovery, stale-exit handling,
+    // synthetic/broker stops, and expiry sequentially with strict broker-read timeouts.
+    await runSafetyMaintenance(userId, policy as RunnablePolicy, activeAccount!, gateway);
     lockGuard.assertOwned();
 
     // Check broker health before making LLM calls.
@@ -502,7 +506,6 @@ export async function runStrategyOnce(
     const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
     const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     lockGuard.assertOwned();
-    await notifyStaleLimitOrders({ userId, policy, orders });
 
     // Re-prove ownership before entering the first stateful maintenance phase. The awaited setup
     // above takes real wall time; if its heartbeat failed, snapshots and breaker mutations must not
