@@ -1701,6 +1701,22 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **shared-package-pin-check: resolve refs to commit SHAs before comparing (CLAUDE, branch
+  `claude/check-pin-ref-resolve`) — IN PROGRESS 2026-07-12, landing.** Hardens
+  `.github/workflows/shared-package-pin-check.yml`: when the two consumer repos' normalized
+  `congress-trading-shared` refs differ but both are git-style pins, each ref is now resolved
+  to a commit SHA against the shared package's own public repo (dereferencing annotated tags)
+  before declaring a divergence, so a tag pin (`#v1.6.0`) and the equivalent raw-SHA pin
+  compare EQUAL while genuinely different commits still fail loudly; if exactly one side
+  resolves and the other errors, fails loudly instead of silently falling back to a string
+  compare. Fixes a real false-positive that failed every Socratic.Trade PR earlier today
+  (Congress.Trade re-pinned to a raw SHA equal to what `v1.6.0` resolves to) and would recur
+  the instant CODEX's pending `v1.7.0` tag bump lands asymmetrically. Replay-tested against
+  the live public GitHub API: tag `v1.6.0` vs its SHA -> EQUAL/exit 0; tag `v1.6.0` vs the
+  `v1.7.0` SHA -> DIVERGED/exit 1. CI-config only, no app code touched. Caveat: this PR's own
+  required `check-pin` status runs from `main`'s (old) workflow per GitHub Actions
+  `pull_request`-trigger semantics, so the fix only takes effect for PRs opened after it lands.
+  Rollout: `docs/rollouts/2026-07-12-check-pin-ref-resolve.md`.
 - **Kalshi event-data fetcher — capability program lane K1 (CLAUDE subagent, branch
   `claude/kalshi-data-fetcher`, detached scratchpad worktree) — IN PROGRESS 2026-07-12
   (codex-triage fixes applied; PR #1481 review threads pending resolution).** New-files-only dormant
