@@ -1247,7 +1247,8 @@ export type SocraticDecisionStatus =
   | "blocked"
   | "rejected"
   | "error"
-  | "observed";
+  | "observed"
+  | "not_placed";
 
 /** Forward-return measurement horizons for decision outcomes. 15m/1h resolve only when a live-quote
  * sampling window was actually hit (no intraday history source exists); 1d/1w resolve from daily

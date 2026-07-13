@@ -28,7 +28,7 @@ export function isExecutedStatus(status: string): boolean {
 /** Terminal states where nothing reached the broker — the row must make it
  *  unambiguous that no order was placed. */
 export function isNotPlacedStatus(status: string): boolean {
-  return /^(blocked|rejected|failed)$/i.test(status);
+  return /^(blocked|rejected|failed|not_placed)$/i.test(status);
 }
 
 /** The verb for an autonomous-action row, tense-matched to lifecycle status.

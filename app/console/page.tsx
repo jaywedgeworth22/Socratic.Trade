@@ -713,7 +713,7 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
               non-ticker pseudo-symbol, so it stays logo-less. */}
           {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} />}
           <span>{row.verb}</span>
-          <Chip tone={row.status === "blocked" || row.status === "failed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>
+          <Chip tone={row.status === "blocked" || row.status === "failed" || row.status === "not_placed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>
             {decisionStatusLabel(row.status)}
           </Chip>
           {/* When nothing reached the broker, say so plainly — the tense-matched

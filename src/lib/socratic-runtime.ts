@@ -411,6 +411,7 @@ export function socraticStatusFromProposalStatus(status: string): SocraticDecisi
   if (status === "proposed") return "proposed";
   if (status === "blocked") return "blocked";
   if (status === "rejected" || status === "rejected_by_broker") return "rejected";
+  if (status === "not_placed") return "not_placed";
   if (status === "error" || status === "placing_failed") return "error";
   return "planned";
 }

@@ -56,8 +56,8 @@ describe("isExecutedStatus — only 'filled'/'executed' mean an order actually e
 });
 
 describe("isNotPlacedStatus — terminal 'nothing reached the broker' states", () => {
-  it("is true for blocked/rejected/failed", () => {
-    for (const s of ["blocked", "rejected", "failed", "Blocked", "REJECTED"]) {
+  it("is true for blocked/rejected/failed/not_placed", () => {
+    for (const s of ["blocked", "rejected", "failed", "not_placed", "Blocked", "REJECTED", "Not_Placed"]) {
       expect(isNotPlacedStatus(s)).toBe(true);
     }
   });

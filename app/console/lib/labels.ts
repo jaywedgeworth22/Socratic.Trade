@@ -63,7 +63,8 @@ const DECISION_STATUS_LABELS: Record<SocraticDecisionStatus, string> = {
   blocked: "Blocked",
   rejected: "Rejected",
   error: "Failed",
-  observed: "Observed (no action)"
+  observed: "Observed (no action)",
+  not_placed: "Not Placed"
 };
 
 /** Decision-case status. `DecisionRowData.status` on the home page is a mixed
