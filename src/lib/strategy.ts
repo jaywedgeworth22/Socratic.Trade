@@ -2561,7 +2561,7 @@ export async function runStrategyOnce(
       }
 
       updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
-      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
+      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: execution.state === "filled" ? "filled" : "placed", review, overrideResolution });
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
       auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const preFillPosition = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));

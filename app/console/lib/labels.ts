@@ -60,6 +60,7 @@ const DECISION_STATUS_LABELS: Record<SocraticDecisionStatus, string> = {
   planned: "Planned",
   proposed: "Proposed",
   placed: "Placed",
+  filled: "Filled",
   blocked: "Blocked",
   rejected: "Rejected",
   error: "Failed",

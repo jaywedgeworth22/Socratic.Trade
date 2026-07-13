@@ -1244,6 +1244,7 @@ export type SocraticDecisionStatus =
   | "planned"
   | "proposed"
   | "placed"
+  | "filled"
   | "blocked"
   | "rejected"
   | "error"
