@@ -862,6 +862,11 @@ export interface TradingPolicy {
    */
   llmFallbackModels?: string[];
   /**
+   * Optional ordered list of failover models (e.g. `["gemini-2.5-flash", "claude-3-5-haiku-20241022"]`)
+   * to try if the primary `redTeamLlmModel` fails (timeout, rate limit, or 5xx).
+   */
+  redTeamFallbackModels?: string[];
+  /**
    * The Green Team / proposer's provider-specific reasoning/thinking effort, for models that
    * support it (ignored by models without that knob). Per-team split 2026-07-10: this legacy
    * field is the PROPOSER's; the reviewer has its own `redTeamReasoningEffort` below.
