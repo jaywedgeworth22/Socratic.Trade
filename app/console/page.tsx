@@ -38,8 +38,7 @@ import { useConsoleData } from "./lib/useConsoleData";
 import { RunOnceButton } from "./components/chrome";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
 import { SymbolButton } from "./ui/symbol-drilldown";
-
-const SIDE_LABEL: Record<string, string> = { buy: "Bought", sell: "Sold", short: "Shorted", cover: "Covered" };
+import { isNotPlacedStatus, sideVerb } from "./lib/action-verbs";
 
 export default function ConsoleHomePage() {
   const { snapshot, refresh } = useConsoleData();
@@ -506,7 +505,7 @@ function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
   return {
     id: decision.id,
     symbol: decision.symbol ?? "Portfolio",
-    verb: decision.side ? SIDE_LABEL[decision.side] ?? decision.side : "Observed",
+    verb: sideVerb(decision.side, decision.status),
     size: decision.notional ? fmtMoney(decision.notional) : EM_DASH,
     status: decision.status,
     rationale: withBlockReasons(rationale, decision.status, reasons),
@@ -521,7 +520,7 @@ function decisionFromProposal(id: string, proposal: TradeProposal, status: strin
   return {
     id,
     symbol: proposal.symbol,
-    verb: SIDE_LABEL[proposal.side] ?? proposal.side,
+    verb: sideVerb(proposal.side, status),
     size: proposal.dollarAmount ? fmtMoney(proposal.dollarAmount) : proposal.quantity ? `${proposal.quantity} sh` : EM_DASH,
     status,
     rationale: withBlockReasons(proposal.rationale, status, reasons),
@@ -709,11 +708,20 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
     <article className="con-decision-row" title={row.title}>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} showLogo={false} />}
+          {/* Show the company logo (default showLogo=true, logoSize="sm") right
+              before the ticker on autonomous-action rows. Portfolio is a
+              non-ticker pseudo-symbol, so it stays logo-less. */}
+          {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} />}
           <span>{row.verb}</span>
           <Chip tone={row.status === "blocked" || row.status === "failed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>
             {decisionStatusLabel(row.status)}
           </Chip>
+          {/* When nothing reached the broker, say so plainly — the tense-matched
+              verb already reads "Buy" (not "Bought"), and this removes any last
+              doubt about whether an order was actually placed. */}
+          {isNotPlacedStatus(row.status) && (
+            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">· not placed</span>
+          )}
         </div>
         <p>{row.rationale}</p>
       </div>

@@ -1703,6 +1703,18 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Autonomous-action row clarity: tense-matched verbs + de-collided authority labels + ticker
+  logo (CLAUDE/Fable, branch `claude/autonomous-action-row-clarity`) — IN PROGRESS 2026-07-13,
+  landing.** Display-only console trust fix. (1) Home "Autonomous actions" rows used a PAST-TENSE
+  side verb ("Bought"/"Sold") regardless of execution, so a proposed/blocked decision read "AAPL
+  Bought [Blocked]" — falsely asserting a purchase; now `sideVerb(side,status)` uses past tense
+  only when `placed`/`filled`/`executed`, infinitive intent ("Buy") otherwise, plus a muted
+  "· not placed" cue on blocked/rejected/error/failed rows. (2) Trace-header authority chip
+  relabeled "Propose"/"Decide" → "Ask-first"/"Autopilot" (matches `derive.ts` `authorityWord`;
+  `authorityLabel` used only there) so it stops colliding with the "Proposed" status chip. (3)
+  Ticker logo now shows before the symbol on those rows (dropped `showLogo={false}`). New pure
+  module `app/console/lib/action-verbs.ts` + `test/console-action-rows.test.ts`. Rollout:
+  `docs/rollouts/2026-07-13-autonomous-action-row-clarity.md`.
 - **shared-package-pin-check: resolve refs to commit SHAs before comparing (CLAUDE, branch
   `claude/check-pin-ref-resolve`) — IN PROGRESS 2026-07-12, landing.** Hardens
   `.github/workflows/shared-package-pin-check.yml`: when the two consumer repos' normalized
