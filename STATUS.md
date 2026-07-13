@@ -21,6 +21,21 @@ app code touched. Caveat: the required `check-pin` status on this PR itself runs
 this PR's new logic — the fix only takes effect for PRs opened after it lands on `main`.
 Rollout: `docs/rollouts/2026-07-12-check-pin-ref-resolve.md`.
 
+## 2026-07-12 — SEC/RAG 1,000-stock high-yield backfill plan (CODEX, branch `codex/rag-1000-stock-backfill-plan`)
+
+Three read-only expert lanes audited SEC discovery, parsing/chunking, vector/retrieval design, and backfill
+economics against `origin/main@c9023ea6`; production reported the same release with healthy Pinecone/Voyage.
+The resulting plan catalogs/archives broadly, stores XBRL/ownership/transaction data structurally, and embeds
+only retrieval-worthy narrative, tables, and material exhibits. It sequences a 10 -> 25 -> 100 -> 300 ->
+1,000 issuer shadow backfill with explicit quality, point-in-time, cost, and rollback gates.
+
+Bulk ingestion is intentionally **not started**. The current cap/lookback increase is baseline capacity, not a
+backfill architecture. Blocking fixes are occurrence-level provenance (global content hashes currently erase
+later filing instances), durable artifact/job state, DOM/iXBRL table parsing, exact acceptance-time safety,
+historical/exhibit discovery, real-corpus evaluation, and truthful coverage/config reporting. Plan:
+`docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. Rollout:
+`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete; ready
+PR #1494; unmerged; production unchanged**.
 ## 2026-07-12 — Capability & Platform Program: Phase 1 plan + iOS status-doc truth-fix (CLAUDE, branch `claude/capability-program-docs`)
 
 Phase 1 (recon + design + feasibility + synthesis) of the owner-directed capability/platform
