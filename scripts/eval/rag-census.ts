@@ -1,6 +1,6 @@
 import { getDb } from "../../src/lib/db";
 import { envFlagOn } from "../../src/lib/rag/env-flag";
-import { getVectorStoreStats } from "../../src/lib/vector-db";
+import { getVectorStoreStats, numericEnv } from "../../src/lib/vector-db";
 import { eightKRagLimit } from "../../src/lib/web-sources/sec8k";
 import { disclosureRagEnabled } from "../../src/lib/web-sources/disclosure-rag";
 
@@ -75,12 +75,14 @@ function getConfigurationSummary() {
       ? `${envFlagOn("RAG_INGEST_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_INGEST_BUDGET_ENABLED})`
       : "on (default)",
     RAG_INGEST_MAX_TEXTS_PER_DAY: process.env.RAG_INGEST_MAX_TEXTS_PER_DAY
-      ?? "1,000,000 (default)",
+      ? `${numericEnv("RAG_INGEST_MAX_TEXTS_PER_DAY", 1_000_000, 1).toLocaleString()}  (raw env: ${process.env.RAG_INGEST_MAX_TEXTS_PER_DAY})`
+      : "1,000,000 (default)",
     RAG_PINECONE_WRITE_BUDGET_ENABLED: process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED
       ? `${envFlagOn("RAG_PINECONE_WRITE_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED})`
       : "on (default)",
     RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY: process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY
-      ?? "10,000,000 (default)",
+      ? `${numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", 10_000_000, 1).toLocaleString()}  (raw env: ${process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY})`
+      : "10,000,000 (default)",
     VECTOR_STORECONTEXTS_DEDUP: process.env.VECTOR_STORECONTEXTS_DEDUP
       ? `${envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true) ? "on" : "off"}  (env: ${process.env.VECTOR_STORECONTEXTS_DEDUP})`
       : "on (default)",

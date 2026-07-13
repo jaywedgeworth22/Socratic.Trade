@@ -125,7 +125,7 @@ function indexReadyWaitMs(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5000;
 }
 
-function numericEnv(name: string, fallback: number, min = 0, max = Number.POSITIVE_INFINITY): number {
+export function numericEnv(name: string, fallback: number, min = 0, max = Number.POSITIVE_INFINITY): number {
   const parsed = Number(process.env[name] ?? fallback);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));

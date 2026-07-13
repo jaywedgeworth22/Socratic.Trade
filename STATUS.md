@@ -66,6 +66,17 @@ Completed RAG Backfill P0: reconciled `.env.example` configurations, implemented
 
 Codex P2 review flagged 4 items. Fixed 3: (1) stripped `"held-history"` provenance label from the frozen manifest + generator to avoid committing trade/watch history to the public repo; (2) excluded `"8-K-body"` accesions from the missing-chunks parity check (8-K body chunk_ids are UUID-based, so the accession-substring check always false-flagged them); (3) replaced nested in-memory scans with `Set`-based O(1) lookups in the parity check. Item 4 (GOOG/GOOGL ticker alias handling for shared-CIK issuers) left open — architecturally significant, question posted. Verify trio passes (350 files, 3927 tests, build clean). Rollout: `docs/rollouts/2026-07-13-codex-autofix-rag-backfill.md`. Auto-merge enabled.
 
+## 2026-07-13 — [codex-autofix] Parse numeric budget envs before reporting in census (PR #1495)
+
+Codex P2 finding: `rag-census.ts` reported raw env values for `RAG_INGEST_MAX_TEXTS_PER_DAY` and
+`RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` while the ingest path sanitizes them via `numericEnv(..., min=1)`.
+If a backfill operator set `RAG_INGEST_MAX_TEXTS_PER_DAY=0` or a typo, the census would claim the fuse
+is `0`/the typo even though ingest uses `1` or the default. Fixed by exporting `numericEnv` from
+`vector-db.ts` and applying it in the census — reported value now matches what ingest actually uses
+(raw env shown alongside). Resolved the Codex thread. Gate green: tsc 0, lint 0 errors, 3927 tests, build exit 0.
+
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-census-env.md`. Auto-merge enabled.
+
 ## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 
 Codex review (P2) flagged that the existing 429 Retry-After handling only parses delta-seconds via
