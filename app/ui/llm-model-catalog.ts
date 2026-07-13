@@ -84,7 +84,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   },
   {
     provider: "anthropic",
-    label: "Anthropic (Claude)",
+    label: "Anthropic",
     options: [
       { value: "claude-haiku-4-5", label: "claude-haiku-4-5 - fast low-cost Claude", tier: "$", recommendedGreen: true },
       { value: "claude-sonnet-5", label: "claude-sonnet-5 - balanced Claude analysis", tier: "$$", recommendedRed: true },
@@ -94,7 +94,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   },
   {
     provider: "xai",
-    label: "xAI (Grok)",
+    label: "xAI",
     options: [
       { value: "grok-build-0.1", label: "grok-build-0.1 - coding specialist", tier: "$" },
       { value: "grok-4.3", label: "grok-4.3 - default Grok analysis", tier: "$$" }
@@ -102,7 +102,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   },
   {
     provider: "gemini",
-    label: "Google (Gemini)",
+    label: "Google",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
       { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true },
