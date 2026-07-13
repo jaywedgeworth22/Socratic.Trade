@@ -3,8 +3,8 @@
 Date: 2026-07-13  
 Owner: CODEX  
 Branch: `codex/evidence-architecture-program`  
-State at this checkpoint: implementation, current-main reconciliation, and the full gate are
-complete; ready PR #1544 is open and checks are running. Not merged, deployed, or production-verified.
+State at this checkpoint: implementation, current-main reconciliation, local/landing verification,
+and PR checks are complete; ready PR #1544 is open. Not merged, deployed, or production-verified.
 
 ## Summary
 
@@ -181,6 +181,8 @@ Full required gate after reconciliation and final fixes:
 - `git diff --check` — pass.
 - `bash scripts/land.sh` — fetched current `origin/main` (already current), reran TypeScript, all
   3,980 tests, and the production build, pushed the branch, and opened ready PR #1544.
+- PR #1544 checks — hosted lint/type/3,980-test/build gate, Playwright smoke, gitleaks, and aggregate
+  `verify` all passed on commit `5734c13c`.
 
 The first full-suite attempt exposed seven integration-test failures: five Congress sharing tests
 were leaking real Yahoo/Stooq calls because `importOriginal(history)` traversed the DB/history cycle;

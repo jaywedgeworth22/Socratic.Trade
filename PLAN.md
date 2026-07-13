@@ -11,7 +11,7 @@
 > only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
 > effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
 > custom IDs. Implementation, current-main reconciliation, and the full verification gate are
-> complete; ready PR #1544 is open. Review, required CI, and owner-approved merge remain. See
+> complete; ready PR #1544 is open and CI is green. Review and owner-approved merge remain. See
 > `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
 > `docs/rollouts/2026-07-13-evidence-architecture-gpt56.md`.
 
