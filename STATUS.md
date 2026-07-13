@@ -22,15 +22,28 @@ a Codex review whose first three findings were addressed in commit 523828bc. A r
 additional P2 contract gaps: offset timestamps, normalized quarantine identifiers, checksum validation, and blank
 terminal reasons. A third review pass then found four durable-state gaps: immutable task revisions, authoritative
 receipt checkpoints, sealed-job replay, and non-finite retry configuration. All eleven findings are now fixed
-locally with 26 focused manifest/worker tests green. The final Node 24 gate on the latest four fixes is also
-green after merging current `origin/main`: lint has 0 errors / 452 inherited warnings, TypeScript is clean, all
-352 files / 3,960 tests pass, and the production build succeeds. Refreshed hosted checks and review-thread triage
-remain before merge.
+locally with 26 focused manifest/worker tests green. The final Node 24 and hosted gates passed, and PR #1543
+merged as `cbe3e532`. A review posted seconds after merge found three more P2 durability gaps: blank failure
+reasons, overwritable artifact checksums, and non-finite lease durations. Production now reports exact release
+`cbe3e532` with healthy database, scheduler, storage, and Litestream checks; the only degraded dependency is the
+pre-existing Alpha Vantage quota state. Their follow-up fixes are verified on
+`codex/sec-rag-foundation-postmerge` in ready PR #1559; hosted gates and refreshed review are running.
 
 Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
 but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.
 
 Rollout: `docs/rollouts/2026-07-13-sec-rag-program.md`.
+
+## 2026-07-13 — SEC/RAG foundation post-merge durability follow-up (CODEX, branch `codex/sec-rag-foundation-postmerge`)
+
+PR #1543 merged with all required checks green, then received three new Codex P2 findings after merge. The
+follow-up now validates/falls back malformed lease durations before date arithmetic, requires trimmed nonblank
+failure reasons, and preserves the first accepted raw/normalized SHA-256 values across later checkpoints. Focused
+regressions pass (2 files / 29 tests). The full Node 24 gate is green: lint 0 errors / 452 inherited warnings,
+TypeScript clean, 352 files / 3,963 tests, production build, and diff-check. No provider, object-store, vector, or
+corpus writes ran. Ready PR #1559 is open with auto-merge pending hosted acceptance.
+
+Rollout: `docs/rollouts/2026-07-13-sec-rag-foundation-postmerge.md`.
 
 ## 2026-07-13 — [codex-autofix] Query chunk_occurrences instead of document_chunks for admin corpus coverage (PR #1533)
 

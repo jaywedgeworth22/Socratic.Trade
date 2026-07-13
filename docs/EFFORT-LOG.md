@@ -2678,13 +2678,15 @@ As of 2026-07-08 (assignment-rule update).
   class aliases, selection snapshot/reasons, and coverage by issuer/form/period/artifact/parser/embed revision.
   Dependency and acceptance detail: `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` P0.
 - **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07, claimed 2026-07-13) —
-  READY IN PR #1543 / ELEVEN REVIEW FIXES REGRESSION-COVERED; FINAL LOCAL GATE GREEN.** Migration v23 plus `db-rag-ingest`
+  MERGED IN PR #1543 / POST-MERGE P2 FOLLOW-UP IN PROGRESS.** Migration v23 plus `db-rag-ingest`
   now provide deterministic replay keys, sealed jobs, ordered stage checkpoints, atomic fenced leases/heartbeats,
   bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion. All three PR review
-  findings across three review passes are fixed and covered; 26 focused tests pass under Node 24. The final Node
-  24 gate is green after merging current `origin/main` (lint 0 errors / 452 inherited warnings, TypeScript clean,
-  352 files / 3,960 tests, production build). Remaining: refreshed hosted checks, review-thread triage, merge/live
-  verification, then wire artifacts/sections/facts, exact accepted timestamps,
+  findings across three pre-merge review passes are fixed and covered; PR #1543 merged as `cbe3e532` after all
+  hosted gates passed. Three findings posted after merge (blank failure reasons, checksum overwrites, non-finite
+  leases) are fixed and locally green on `codex/sec-rag-foundation-postmerge` (focused 29/29; lint 0 errors;
+  TypeScript; full 3,963/3,963; build; diff-check) in ready PR #1559. Production reports exact
+  foundation release `cbe3e532` with core health checks green. Then wire
+  artifacts/sections/facts, exact accepted timestamps,
   amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.
 - **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (CODEX program; RAG-B01/B02/B08/B09/
