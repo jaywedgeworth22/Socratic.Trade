@@ -59,6 +59,7 @@ const REARM_CONFIRM_GRACE_MS = 15 * 60_000;
 // Share-count tolerance for coverage comparisons (mirrors the position-size epsilon used below).
 const QTY_EPSILON = 0.000001;
 
+
 // P2.8: Per-(stopId, fingerprint) emission cooldown for synthetic-stop failures.
 const SYNTHETIC_ERROR_COOLDOWN_MS = 60 * 60_000;
 const errorCooldownHost = globalThis as unknown as { __syntheticStopErrors?: Map<string, number> };

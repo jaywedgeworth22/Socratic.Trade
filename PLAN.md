@@ -1,3 +1,15 @@
+# Active Implementation Plan
+
+## Codex Audit Wave 0: Base Guardrails
+**Status: In Progress**
+
+- **[x] PR 1: X0.1 & X0.2 Safety Maintenance & Draining Fence**
+  - X0.1 Safety Maintenance Coordinator: Run all side-effecting sweeps (fill reconciliation, stale intents, stale exits, synthetic stops) strictly before strategy admission, with strict network deadlines (15s). Ensures side effects execute exactly once per tick and never hang the singleflight guard.
+  - X0.2 Draining Fence: Hard pre-placement veto if the account's state is `draining` or `deleted`. Capture `accountNumber` and `policyRevision` onto the `strategy_runs` snapshot.
+  *(Completed 2026-07-12)*
+- **[ ] PR 2: X0.3 Exit Replacement State Machine**
+- **[ ] PR 3: X0.4 Strict P&L Fence**
+
 # Improvement Plan - Socratic Trade
 
 Eight-phase roadmap to make the dashboard genuinely autonomous, more accurate,

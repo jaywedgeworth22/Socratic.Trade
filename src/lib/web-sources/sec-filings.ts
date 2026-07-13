@@ -282,6 +282,26 @@ export async function ingestFiling(
     return { skipped: false, chunks: 0, error: "extracted text too short (possible XBRL viewer redirect)" };
   }
 
+  // Insert into sec_artifacts
+  try {
+    const { createHash } = await import("crypto");
+    const sha256 = createHash("sha256").update(html).digest("hex");
+    const byteCount = Buffer.byteLength(html, "utf8");
+    const { insertSecArtifact } = await import("../db");
+    insertSecArtifact({
+      accession: filingRef.accession,
+      sequence: 1,
+      documentName: filingRef.primaryDoc || "main.html",
+      sha256,
+      type: "html",
+      byteCount,
+      rawUri: filingRef.url,
+      parserVersion: "v1"
+    });
+  } catch (err) {
+    console.warn(`[sec-filings] insertSecArtifact failed for ${filingRef.accession} (non-fatal):`, err instanceof Error ? err.message : String(err));
+  }
+
   const { storeDocument } = await import("../vector-db");
   const result = await storeDocument(
     {
@@ -476,7 +496,25 @@ async function refreshFilingBodiesUnlocked(
     try {
       const filings = await fetchRecentFilings(cik, ["10-K", "10-Q"], 10);
       throwIfOperationLeaseCancelled(operationLeaseSignal);
+      const { insertSecFiling, getSecFiling } = await import("../db");
       for (const ref of filings) {
+        try {
+          if (!getSecFiling(ref.accession)) {
+            insertSecFiling({
+              accession: ref.accession,
+              cik,
+              ticker: symbol,
+              form: ref.docType,
+              filedAt: ref.filedAt,
+              acceptedAt: ref.acceptanceDateTime,
+              status: "discovered",
+              chunkCount: 0
+            });
+          }
+        } catch (err) {
+          console.warn(`[sec-filings] insertSecFiling failed for ${ref.accession} (non-fatal):`, err instanceof Error ? err.message : String(err));
+        }
+
         if (!hasIngestedAccession(ref.accession, ref.docType)) {
           pending.push({ ticker: symbol, ref });
         }

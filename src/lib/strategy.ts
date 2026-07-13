@@ -288,6 +288,9 @@ export function preVetoTaggedOpeningWillPlace(
     !!p.autonomyOverride.thesis?.trim()
   );
 }
+// LRU deduplication cache for evidence_age_anomaly emissions.
+// Prevents flooding the DB with identical audits on every run cycle.
+const evidenceAgeAnomalyDedup = new Map<string, number>();
 
 export async function runStrategyOnce(
   userId: string = "local",
@@ -999,22 +1002,44 @@ export async function runStrategyOnce(
     }
 
     // ── Evidence-age anomaly receipt (advisory only) ───────────────────────
-    // ONE aggregated audit + ONE kind-'safety' evidence item when same-day evidence (a fresh,
-    // high-relevance RAG chunk or a fact asserted today) entered this run's prompts. No text is
-    // changed, nothing is dropped or blocked — the receipt IS the control.
-    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
+    // Collect ALL anomalies for the prompt safety receipt first — no dedup
+    // filter, so every piece of same-day evidence that entered this run's
+    // prompts is recorded regardless of recent audit history.
+    const allAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
+
+    // Audit emission: apply the LRU dedup cache BEFORE the 12-item cap so
+    // already-audited items don't consume slots, then cache only the items
+    // actually emitted (items beyond index 12 are NOT cached, so they can be
+    // picked up on the next run).
+    const uncachedInputs = evidenceAgeInputs.filter((input) => {
+      if (evidenceAgeAnomalyDedup.size > 1000) evidenceAgeAnomalyDedup.clear();
+      const key = `${userId}:${connectedAccountId ?? "global"}:${input.id}`;
+      const now = Date.now();
+      const last = evidenceAgeAnomalyDedup.get(key);
+      return !(last && now - last < 6 * 60 * 60 * 1000);
+    });
+    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(uncachedInputs);
+    // Cache only items the cap allowed through, so capped-off items can
+    // still reach the audit on the next run.
+    for (const item of evidenceAgeAnomalies) {
+      const key = `${userId}:${connectedAccountId ?? "global"}:${item.id}`;
+      evidenceAgeAnomalyDedup.set(key, Date.now());
+    }
+
     if (evidenceAgeAnomalies.length > 0) {
       audit("evidence_age_anomaly", { runId, items: evidenceAgeAnomalies }, userId, connectedAccountId);
+    }
+    if (allAnomalies.length > 0) {
       promptSafetyEvidence.push({
         kind: "safety",
         tone: "warning",
         title: "Same-day evidence entered this run",
         summary:
-          `${evidenceAgeAnomalies.length} evidence item(s) first seen <24h before this run: ` +
-          `${evidenceAgeAnomalies.map((i) => `${i.label} (${i.kind}, ${i.ageHours}h old)`).join("; ").slice(0, 400)}. ` +
+          `${allAnomalies.length} evidence item(s) first seen <24h before this run: ` +
+          `${allAnomalies.map((i) => `${i.label} (${i.kind}, ${i.ageHours}h old)`).join("; ").slice(0, 400)}. ` +
           "Advisory receipt only — nothing was altered or blocked.",
         source: "prompt-safety",
-        data: evidenceAgeAnomalies
+        data: allAnomalies
       });
     }
 

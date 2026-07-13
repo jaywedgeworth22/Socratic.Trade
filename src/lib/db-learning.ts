@@ -897,18 +897,35 @@ export interface IngestedAccessionRow {
 /** Return true if this (accession, docType) pair has already been embedded. */
 export function hasIngestedAccession(accession: string, docType: string): boolean {
   const row = getDb()
+    .prepare("SELECT 1 FROM sec_filings WHERE accession = ? AND form = ? AND status = 'complete'")
+    .get(accession, docType);
+  if (row != null) return true;
+
+  const legacyRow = getDb()
     .prepare("SELECT 1 FROM ingested_accessions WHERE accession = ? AND doc_type = ?")
     .get(accession, docType);
-  return row != null;
+  return legacyRow != null;
 }
 
 /** Record a successfully-ingested accession so it is never re-embedded. */
 export function insertIngestedAccession(accession: string, docType: string, ticker: string, chunkCount: number): void {
+  const now = new Date().toISOString();
   getDb()
     .prepare(
       "INSERT OR IGNORE INTO ingested_accessions (accession, doc_type, ticker, indexed_at, chunk_count) VALUES (?, ?, ?, ?, ?)"
     )
-    .run(accession, docType, ticker, new Date().toISOString(), chunkCount);
+    .run(accession, docType, ticker, now, chunkCount);
+
+  insertSecFiling({
+    accession,
+    cik: "",
+    ticker,
+    form: docType,
+    filedAt: now,
+    acceptedAt: now,
+    status: "complete",
+    chunkCount,
+  });
 }
 
 /** List all ingested accessions (admin/diagnostic). */
@@ -1142,4 +1159,208 @@ export function setPendingLearnedContextReviewNote(id: string, userId: string, n
     .prepare("UPDATE learned_context_pending SET review_note = ? WHERE id = ? AND user_id = ?")
     .run(note, id, userId);
   return result.changes > 0;
+}
+
+// ── RAG Backfill P1 (Identity and Manifest) Types & CRUD ──
+
+export interface SecFiling {
+  accession: string;
+  cik: string;
+  ticker: string;
+  form: string;
+  filedAt: string;
+  acceptedAt: string;
+  reportPeriod?: string;
+  fy?: string;
+  fp?: string;
+  amendmentParent?: string;
+  supersededBy?: string;
+  status: string;
+  chunkCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecArtifact {
+  accession: string;
+  sequence: number;
+  documentName: string;
+  sha256: string;
+  type: string;
+  byteCount: number;
+  rawUri: string;
+  parserVersion: string;
+  createdAt: string;
+}
+
+export interface ChunkOccurrence {
+  vectorId: string;
+  contentHash: string;
+  symbol: string;
+  source: string;
+  accession: string;
+  sequence?: number;
+  documentName?: string;
+  section: string;
+  ordinal: number;
+  acceptedAt: string;
+  createdAt: string;
+}
+
+export function insertSecFiling(filing: Omit<SecFiling, "createdAt" | "updatedAt">): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(`
+      INSERT INTO sec_filings (
+        accession, cik, ticker, form, filed_at, accepted_at, report_period, fy, fp,
+        amendment_parent, superseded_by, status, chunk_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(accession) DO UPDATE SET
+        cik = excluded.cik,
+        ticker = excluded.ticker,
+        form = excluded.form,
+        filed_at = excluded.filed_at,
+        accepted_at = excluded.accepted_at,
+        report_period = excluded.report_period,
+        fy = excluded.fy,
+        fp = excluded.fp,
+        amendment_parent = excluded.amendment_parent,
+        superseded_by = excluded.superseded_by,
+        status = excluded.status,
+        chunk_count = excluded.chunk_count,
+        updated_at = ?
+    `)
+    .run(
+      filing.accession,
+      filing.cik,
+      filing.ticker,
+      filing.form,
+      filing.filedAt,
+      filing.acceptedAt,
+      filing.reportPeriod || null,
+      filing.fy || null,
+      filing.fp || null,
+      filing.amendmentParent || null,
+      filing.supersededBy || null,
+      filing.status,
+      filing.chunkCount,
+      now,
+      now,
+      now
+    );
+}
+
+export function getSecFiling(accession: string): SecFiling | null {
+  const row = getDb()
+    .prepare(`
+      SELECT accession, cik, ticker, form, filed_at, accepted_at, report_period, fy, fp,
+             amendment_parent, superseded_by, status, chunk_count, created_at, updated_at
+      FROM sec_filings WHERE accession = ?
+    `)
+    .get(accession) as any;
+  if (!row) return null;
+  return {
+    accession: row.accession,
+    cik: row.cik,
+    ticker: row.ticker,
+    form: row.form,
+    filedAt: row.filed_at,
+    acceptedAt: row.accepted_at,
+    reportPeriod: row.report_period || undefined,
+    fy: row.fy || undefined,
+    fp: row.fp || undefined,
+    amendmentParent: row.amendment_parent || undefined,
+    supersededBy: row.superseded_by || undefined,
+    status: row.status,
+    chunkCount: row.chunk_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function updateSecFilingStatus(accession: string, status: string, chunkCount?: number): void {
+  const now = new Date().toISOString();
+  if (chunkCount !== undefined) {
+    getDb()
+      .prepare("UPDATE sec_filings SET status = ?, chunk_count = ?, updated_at = ? WHERE accession = ?")
+      .run(status, chunkCount, now, accession);
+  } else {
+    getDb()
+      .prepare("UPDATE sec_filings SET status = ?, updated_at = ? WHERE accession = ?")
+      .run(status, now, accession);
+  }
+}
+
+export function insertSecArtifact(artifact: Omit<SecArtifact, "createdAt">): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(`
+      INSERT INTO sec_artifacts (
+        accession, sequence, document_name, sha256, type, byte_count, raw_uri, parser_version, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(accession, sequence, document_name) DO UPDATE SET
+        sha256 = excluded.sha256,
+        type = excluded.type,
+        byte_count = excluded.byte_count,
+        raw_uri = excluded.raw_uri,
+        parser_version = excluded.parser_version
+    `)
+    .run(
+      artifact.accession,
+      artifact.sequence,
+      artifact.documentName,
+      artifact.sha256,
+      artifact.type,
+      artifact.byteCount,
+      artifact.rawUri,
+      artifact.parserVersion,
+      now
+    );
+}
+
+export function listSecArtifacts(accession: string): SecArtifact[] {
+  const rows = getDb()
+    .prepare(`
+      SELECT accession, sequence, document_name, sha256, type, byte_count, raw_uri, parser_version, created_at
+      FROM sec_artifacts WHERE accession = ? ORDER BY sequence ASC
+    `)
+    .all(accession) as any[];
+  return rows.map((r) => ({
+    accession: r.accession,
+    sequence: r.sequence,
+    documentName: r.document_name,
+    sha256: r.sha256,
+    type: r.type,
+    byteCount: r.byte_count,
+    rawUri: r.raw_uri,
+    parserVersion: r.parser_version,
+    createdAt: r.created_at,
+  }));
+}
+
+export function insertChunkOccurrences(occurrences: ChunkOccurrence[]): void {
+  if (occurrences.length === 0) return;
+  const stmt = getDb().prepare(`
+    INSERT OR IGNORE INTO chunk_occurrences (
+      vector_id, content_hash, symbol, source, accession, sequence, document_name, section, ordinal, accepted_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertMany = getDb().transaction((rows: ChunkOccurrence[]) => {
+    for (const o of rows) {
+      stmt.run(
+        o.vectorId,
+        o.contentHash,
+        o.symbol,
+        o.source,
+        o.accession,
+        o.sequence ?? null,
+        o.documentName ?? null,
+        o.section,
+        o.ordinal,
+        o.acceptedAt,
+        o.createdAt
+      );
+    }
+  });
+  insertMany(occurrences);
 }

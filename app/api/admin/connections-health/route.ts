@@ -6,6 +6,7 @@ import {
   type ServiceHealthSummary,
 } from "@/lib/db-health";
 import { requireAdmin } from "@/lib/auth/admin";
+import { listUserApiKeys, LOCAL_USER } from "@/lib/db-api-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -28,14 +29,33 @@ const EXPECTED_BACKEND_LANES: Array<{ service: string; keySource: string | null 
   { service: "usage-monitor", keySource: null }
 ];
 
+function toCanonicalService(service: string): string {
+  if (service === "alpha-vantage") return "alphavantage";
+  if (service === "alpaca-broker") return "alpaca_paper_api_key";
+  if (service === "robinhood-broker") return "robinhood";
+  if (service === "voyage-rerank") return "voyage";
+  return service;
+}
+
 function withExpectedBackendLanes(services: ServiceHealthSummary[]): ServiceHealthSummary[] {
-  const byLane = new Map(services.map((service) => [`${service.service}:${service.keySource ?? ""}`, service]));
+  const userKeys = listUserApiKeys(LOCAL_USER);
+  const servicesWithUserKeys = new Set(userKeys.map((k) => k.service));
+  const loggedUserLanes = new Set(services.filter((s) => s.keySource === "user").map((s) => s.service));
+
+  function hasUserKey(service: string) {
+    return servicesWithUserKeys.has(toCanonicalService(service)) || loggedUserLanes.has(service);
+  }
+
+  const filteredServices = services.filter((s) => !(s.keySource === "env" && hasUserKey(s.service)));
+  const byLane = new Map(filteredServices.map((service) => [`${service.service}:${service.keySource ?? ""}`, service]));
+
   for (const lane of EXPECTED_BACKEND_LANES) {
-    const key = `${lane.service}:${lane.keySource ?? ""}`;
+    const expectedKeySource = (lane.keySource === "env" && hasUserKey(lane.service)) ? "user" : lane.keySource;
+    const key = `${lane.service}:${expectedKeySource ?? ""}`;
     if (byLane.has(key)) continue;
     byLane.set(key, {
       service: lane.service,
-      keySource: lane.keySource,
+      keySource: expectedKeySource,
       lastSuccessTs: null,
       lastSuccessLatencyMs: null,
       lastFailureTs: null,
