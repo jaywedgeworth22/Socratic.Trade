@@ -371,6 +371,30 @@ describe("runCongressDailyShare", () => {
     expect(res).toMatchObject({ ok: false, skipped: true, reason: "not-due" });
     expect(mockedFetchDailyOHLC).not.toHaveBeenCalled();
   });
+
+  it("deduplicates concurrent runs via a shared in-flight promise", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    const bars: OHLCBar[] = [
+      { time: "2026-06-15", close: 100 }
+    ];
+    mockedFetchDailyOHLC.mockResolvedValue(bars);
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => {
+      await new Promise(r => setTimeout(r, 50));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const now = Date.UTC(2026, 5, 22, 13, 0, 0);
+    setInternalSetting("congress-share:lastDailyRunDate", "2026-06-20");
+
+    const [res1, res2] = await Promise.all([
+      runCongressDailyShare({ now, force: true, symbols: ["AAPL"] }),
+      runCongressDailyShare({ now, force: true, symbols: ["AAPL"] })
+    ]);
+
+    expect(res1).toBe(res2); // Should return the exact same promise/result reference
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // Should only execute one run (which POSTs SPX and prices payload separately)
+  });
 });
 
 describe("runCongressDailyShareIfDue", () => {

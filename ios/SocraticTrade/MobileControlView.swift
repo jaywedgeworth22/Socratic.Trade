@@ -135,10 +135,6 @@ struct MobileControlView: View {
             .toolbar {
                 Button("Refresh") { Task { await store.load() } }
             }
-            .task {
-                await store.load()
-                store.startEvents()
-            }
         }
     }
 

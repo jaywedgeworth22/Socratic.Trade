@@ -24,6 +24,48 @@ Codex review flagged 2 P2 findings on the clearCache + fundamentals-ingest code 
 2. **Clear sec_filings completion rows too** (`app/api/admin/reindex-10k/route.ts`): `clearCache` was only deleting from `ingested_accessions` and `document_chunks`, but `hasIngestedAccession` checks `sec_filings WHERE status = 'complete'` first — so after a Pinecone reset the operator could not reindex filings whose `sec_filings` rows were still marked complete. Now `UPDATE sec_filings SET status = 'discovered'` runs for the affected symbols' 10-K/10-Q rows.
 Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
 Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round3.md`.
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Claude, branch `agent/ag-safety-exit-replacement`)
+
+Addressed 4 of the final 6 unresolved Codex threads from PR #1492 (2 P1, 2 P2), asked about 2 remaining:
+
+1. **Don't synthesize cancellations for uncanceled rows (P1)** — `order-replacement.ts`: In the reconstruction path, when a `cancel_requested` row has no `cancel_result`, abort the row instead of reconstructing as `state: "canceled"` — reconstructing would skip the broker cancel and place a market replacement without knowing the order's actual fate.
+2. **Reflect active replacement blockers in the client (P2)** — `danger.tsx`: Added `activeReplacements` to the client-side `DeletionBlockers` type, `blockerCount`, and warning banner text.
+3. **Make replacement fill insertion idempotent (P2)** — `order-replacement.ts`: Check for existing fill by `(user_id, account_number, broker_order_id)` before inserting, preventing double-booking in multi-process deployments.
+4. **Honor auto-remediation opt-out for queued rows (P2)** — `order-replacement.ts`: When `autoRemediateStaleExits` is off, the pump aborts `cancel_requested` rows that haven't had a cancel attempted.
+5. **Asked maintainer about 2 remaining items**: Migration 21 dedup (keep by state progress not rowid) and separate claim state (new state between cancel_confirmed and replacement_submitted).
+
+All gates pass: tsc clean, 350 suites/3934 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
+Auto-merge enabled. Deployed on next push.
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Antigravity/AG, branch `agent/ag-safety-exit-replacement`)
+
+Addressed the final two P1 Codex findings on PR #1492:
+1. **Migration 21 Deduplication**: Updated the deduplication logic to prioritize row retention by state progress rather than strictly `rowid`. Uses a SQLite window function to rank rows based on progression status, preventing advanced state machine rows from being wrongly discarded.
+2. **Distinct Claiming State**: Introduced a new `replacement_claiming` state between `cancel_confirmed` and `replacement_submitted`. This fixes an architectural gap where a crash immediately prior to placing the broker order left the row in a permanently unrecoverable state. `autoRemediateStaleExitOrders` will now correctly revert stale `claiming` rows back to `cancel_confirmed`.
+
+All 3934 tests, types, and lints pass. Code pushed.
+Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes-round5.md`.
+
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 4 (Claude, branch `agent/ag-safety-exit-replacement`)
+
+Addressed 4 remaining Codex review threads (3 P1, 1 P2) from the final reviews on PR #1492:
+1. **Advance recovered canceled rows before retrying cancel (P1)** — `order-replacement.ts`: When a `cancel_requested` row is reconstructed from persisted data after a crash (state: "canceled"), skip the broker `cancelEquityOrder` call and advance directly to `cancel_confirmed`. Re-canceling an already-canceled order would fail and the error handler would mark the row `failed`, losing the market replacement.
+2. **Collapse duplicate active replacements before indexing (P1)** — `db.ts` migration v21: Added deduplication logic before the `CREATE UNIQUE INDEX` to terminalize duplicate active rows, preventing startup failure on databases where duplicates accumulated before the unique constraint existed.
+3. **Scope recovered fill checks to the replacement account (P2)** — `order-replacement.ts`: The fill-event existence check in `replacement_submitted` reconciliation now scopes to `account_number` and `user_id` so another user's fill with the same `broker_order_id` doesn't suppress this fill.
+4. **Fail the row when live preflight blocks (P1)** — `order-replacement.ts`: Wrapped the `assertLivePreflight` call in a try-catch so a throw (e.g. `ALLOW_LIVE_TRADING=false`) marks the row failed instead of leaving it orphaned in `cancel_requested`.
+
+All gates pass: tsc clean (via build), 350 suites/3933 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
+## 2026-07-13 — [codex-autofix] Address 4 Codex review findings on PR #1526 (agent/ag-update-status-effort-log)
+
+Codex review flagged 4 remaining findings on the X0.3 Exit Replacement State Machine PR:
+1. **Thread 1 (P1)**: `/api/mobile/auth/apple` missing from middleware public allowlist — mobile Apple Sign-In got 401 before handler ran. Added to PUBLIC_PREFIXES.
+2. **Thread 4 (P1)**: `loginWithApple` decoded server response as `[String: String]` but `success` is a Bool — created `AppleLoginResponse` struct with proper types.
+3. **Thread 2 (P2)**: `startEvents()` SSE subscription never called after successful Apple sign-in — added call in login success path.
+4. **Thread 5 (P2)**: `assertLivePreflight` at line 187 didn't mark replacement row as `failed` on throw (unlike all other precondition checks) — wrapped in try-catch with `markReplacementError`.
+
+15 remaining threads (all P2) left open — architecturally significant items in order-replacement.ts state machine, congress-share single-flight, and Apple email persistence. Comment posted asking maintainer how to proceed. Verify trio passes (tsc clean, 3934 tests, build clean). Rollout: `docs/rollouts/2026-07-13-codex-autofix-replacement-state-machine.md`.
+
 ## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
 
 Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes. Fixed a tail-truncation bug (Codex P2) where `.slice(0, 512)` could drop unique suffixes when document names/sections shared long common prefixes — now uses a head+tail-preserving clamp with `".."` marker. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
@@ -376,11 +418,11 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 ## What was just completed
-- Fixed `web-sources-sec.test.ts` dynamic dating issue which was causing the 30-day cutoff to fail once the static `2026-06-12` date aged out.
-- Fixed `order-replacement.test.ts` to expect `pending_cancel` logic.
-- Fixed TS2345 in `congress-analytics.ts` where `null` symbols could cause crashes.
-- Verified completion of P1 items: Roth IRA truncation token cap raised to 4000+, `tradeThesisTag` coalescing in DB queries, and reflection dedupe signatures scoped per account.
-- Implemented and verified LLM Failover UI and architecture.
+- Native iOS App: Implemented Apple Sign-in with backend verification and token validation.
+- UI Updates: Updated the Login page to use the Socratic.Trade candlestick logo and stripped unnecessary text. Reduced the height of the HeaderLogo and prevented it from overflowing on small mobile screens.
+- Console UI: Changed the Model Stats UI from a Sheet to a Drawer, formatting model row labels to display grouped company names vertically on mobile devices, and removing redundant parenthetical names.
+- Settings UI: Addressed overlapping text in the "Broker Connections" section by allowing the action buttons to wrap on mobile, and wrapping the account subtitle in a flex-col layout.
+- PR opened and waiting for review/merge.
 
 ## Current Status
 
@@ -388,4 +430,4 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - Applied an IPv6 DNS force-ipv4 fix to `congress-scout.mjs` on Congress.Trade to fix its own scrape failures.
 
 ## Next Action
-- Land changes to main via `land.sh`.
+- Land branch `agent/ag-update-status-effort-log` and await production auto-deploy.
