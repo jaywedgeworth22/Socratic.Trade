@@ -153,6 +153,23 @@ describe("SEC/RAG durable ingest worker state", () => {
     ).toThrow("UNIQUE constraint failed");
   });
 
+  it("allows an omitted expected count to replay after discovered intake is sealed", async () => {
+    const { createSecIngestJob, enqueueSecIngestTask, sealSecIngestJobIntake, transitionSecIngestJob } = await import("../src/lib/db");
+    const idempotencyKey = `sealed-replay-${randomUUID()}`;
+    const first = createSecIngestJob({ idempotencyKey, corpusRevision: "sec-v2" });
+    expect(transitionSecIngestJob(first.id, "running")).toBe(true);
+    enqueueSecIngestTask({ jobId: first.id, accession: "sealed-replay-accession" });
+    expect(sealSecIngestJobIntake(first.id)).toBe(true);
+
+    expect(createSecIngestJob({ idempotencyKey, corpusRevision: "sec-v2" })).toMatchObject({
+      id: first.id,
+      expectedTasks: 1
+    });
+    expect(() => createSecIngestJob({ idempotencyKey, corpusRevision: "sec-v2", expectedTasks: 2 })).toThrow(
+      "replay conflict"
+    );
+  });
+
   it("atomically reclaims an expired lease and fences the stale worker's heartbeat and transition", async () => {
     const {
       advanceSecIngestTask,
@@ -255,6 +272,52 @@ describe("SEC/RAG durable ingest worker state", () => {
     });
   });
 
+  it("preserves task-key revisions and keeps the actual checkpoint authoritative in receipts", async () => {
+    const { advanceSecIngestTask, claimSecIngestTasks, enqueueSecIngestTask, getDb, getSecIngestTask } = await import("../src/lib/db");
+    const job = await createJob(`identity-${randomUUID()}`);
+    const task = enqueueSecIngestTask({
+      jobId: job.id,
+      accession: "identity-accession",
+      parserRevision: "dom-v1",
+      chunkerRevision: "chunks-v1",
+      embedModel: "voyage-finance-2",
+      embedRevision: "1"
+    }).task;
+    const now = new Date("2026-07-13T13:15:00.000Z");
+    const [claim] = claimSecIngestTasks(job.id, { owner: "worker", now });
+    const base = {
+      taskId: task.id,
+      owner: "worker",
+      leaseToken: claim.leaseToken!,
+      expectedCheckpoint: "discovered" as const,
+      nextCheckpoint: "fetched" as const,
+      now
+    };
+
+    expect(advanceSecIngestTask({ ...base, parserRevision: "dom-v2" })).toBe(false);
+    expect(getSecIngestTask(task.id)).toMatchObject({ status: "leased", parserRevision: "dom-v1" });
+    expect(
+      advanceSecIngestTask({
+        ...base,
+        parserRevision: "dom-v1",
+        chunkerRevision: "chunks-v1",
+        embedModel: "voyage-finance-2",
+        embedRevision: "1",
+        receipt: { checkpoint: "spoofed", source: "fixture" }
+      })
+    ).toBe(true);
+    expect(getSecIngestTask(task.id)).toMatchObject({
+      parserRevision: "dom-v1",
+      chunkerRevision: "chunks-v1",
+      embedModel: "voyage-finance-2",
+      embedRevision: "1"
+    });
+    const attempt = getDb()
+      .prepare("SELECT receipt_json FROM sec_ingest_task_attempts WHERE task_id = ?")
+      .get(task.id) as { receipt_json: string };
+    expect(JSON.parse(attempt.receipt_json)).toEqual({ checkpoint: "fetched", source: "fixture" });
+  });
+
   it("rejects malformed artifact checksums before advancing durable ingest state", async () => {
     const { advanceSecIngestTask, claimSecIngestTasks, enqueueSecIngestTask, getSecIngestTask } = await import("../src/lib/db");
     const job = await createJob(`hash-validation-${randomUUID()}`);
@@ -327,6 +390,27 @@ describe("SEC/RAG durable ingest worker state", () => {
       .prepare("SELECT outcome FROM sec_ingest_task_attempts WHERE task_id = ? ORDER BY attempt_no")
       .all(task.id) as Array<{ outcome: string }>;
     expect(outcomes.map((row) => row.outcome)).toEqual(["retry_wait", "dead_letter"]);
+  });
+
+  it("sanitizes non-finite and extreme retry settings into a finite date-safe delay", async () => {
+    const { computeSecIngestRetryDelayMs } = await import("../src/lib/db");
+    const fallback = computeSecIngestRetryDelayMs(Number.NaN, {
+      baseBackoffMs: Number.NaN,
+      maxBackoffMs: Number.POSITIVE_INFINITY,
+      jitterRatio: Number.NaN,
+      random: () => Number.NaN
+    });
+    expect(fallback).toBe(30_000);
+    expect(Number.isFinite(fallback)).toBe(true);
+
+    const capped = computeSecIngestRetryDelayMs(Number.POSITIVE_INFINITY, {
+      baseBackoffMs: Number.MAX_VALUE,
+      maxBackoffMs: Number.MAX_VALUE,
+      retryAfterMs: Number.MAX_VALUE,
+      jitterRatio: 0
+    });
+    expect(capped).toBe(30 * 24 * 60 * 60_000);
+    expect(() => new Date(Date.now() + capped).toISOString()).not.toThrow();
   });
 
   it("dead-letters repeated worker crashes when an expired lease exhausts the stage budget", async () => {

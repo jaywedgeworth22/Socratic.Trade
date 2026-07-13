@@ -336,7 +336,7 @@ export function createSecIngestJob(input: {
     row.corpus_revision === input.corpusRevision &&
     row.universe_snapshot_id === (input.universeSnapshotId ?? null) &&
     row.config_json === configJson &&
-    row.expected_tasks === (input.expectedTasks ?? null);
+    (input.expectedTasks === undefined || row.expected_tasks === input.expectedTasks);
   if (!immutableMatch) {
     throw new Error(`SEC ingest job replay conflict for idempotency key ${input.idempotencyKey}`);
   }
@@ -777,8 +777,23 @@ export function advanceSecIngestTask(input: {
   const database = getDb();
   const nowIso = (input.now ?? new Date()).toISOString();
   const nextStatus: SecIngestTaskStatus = input.nextCheckpoint === "complete" ? "complete" : "pending";
-  const receiptJson = stableSecIngestJson({ checkpoint: input.nextCheckpoint, ...(input.receipt ?? {}) });
+  // The checkpoint is authoritative state, never caller metadata. Spread the caller receipt first
+  // so a reserved `checkpoint` key cannot falsify the durable attempt receipt.
+  const receiptJson = stableSecIngestJson({ ...(input.receipt ?? {}), checkpoint: input.nextCheckpoint });
   const advance = database.transaction(() => {
+    const identity = database
+      .prepare(
+        `SELECT parser_revision, chunker_revision, embed_model, embed_revision
+         FROM sec_ingest_tasks WHERE id = ?`
+      )
+      .get(input.taskId) as Pick<RawTaskRow, "parser_revision" | "chunker_revision" | "embed_model" | "embed_revision"> | undefined;
+    if (!identity) return false;
+    const identityMatches =
+      (input.parserRevision === undefined || input.parserRevision === identity.parser_revision) &&
+      (input.chunkerRevision === undefined || input.chunkerRevision === identity.chunker_revision) &&
+      (input.embedModel === undefined || input.embedModel === identity.embed_model) &&
+      (input.embedRevision === undefined || input.embedRevision === identity.embed_revision);
+    if (!identityMatches) return false;
     const info = database
       .prepare(
         `UPDATE sec_ingest_tasks SET
@@ -786,9 +801,6 @@ export function advanceSecIngestTask(input: {
            lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
            raw_sha256 = COALESCE(?, raw_sha256),
            normalized_sha256 = COALESCE(?, normalized_sha256),
-           parser_revision = COALESCE(?, parser_revision),
-           chunker_revision = COALESCE(?, chunker_revision),
-           embed_model = COALESCE(?, embed_model), embed_revision = COALESCE(?, embed_revision),
            index_name = COALESCE(?, index_name), namespace = COALESCE(?, namespace),
            observed_bytes = observed_bytes + ?, observed_tokens = observed_tokens + ?,
            observed_chunks = observed_chunks + ?, observed_vectors = observed_vectors + ?,
@@ -807,10 +819,6 @@ export function advanceSecIngestTask(input: {
         nextStatus,
         rawSha256 ?? null,
         normalizedSha256 ?? null,
-        input.parserRevision ?? null,
-        input.chunkerRevision ?? null,
-        input.embedModel ?? null,
-        input.embedRevision ?? null,
         input.indexName ?? null,
         input.namespace ?? null,
         bytes,
@@ -852,19 +860,25 @@ export function computeSecIngestRetryDelayMs(
     random?: () => number;
   } = {}
 ): number {
-  const base = Math.max(1_000, Math.floor(options.baseBackoffMs ?? 30_000));
-  const max = Math.max(base, Math.floor(options.maxBackoffMs ?? 6 * 60 * 60_000));
-  const exponent = Math.max(0, Math.min(20, Math.floor(stageAttempts) - 1));
+  const maxSafeDelayMs = 30 * 24 * 60 * 60_000;
+  const rawBase = options.baseBackoffMs;
+  const rawMax = options.maxBackoffMs;
+  const base = Math.max(1_000, Math.min(maxSafeDelayMs, Math.floor(Number.isFinite(rawBase) ? rawBase! : 30_000)));
+  const max = Math.max(base, Math.min(maxSafeDelayMs, Math.floor(Number.isFinite(rawMax) ? rawMax! : 6 * 60 * 60_000)));
+  const safeAttempts = Number.isFinite(stageAttempts) ? Math.floor(stageAttempts) : 1;
+  const exponent = Math.max(0, Math.min(20, safeAttempts - 1));
   const exponential = Math.min(max, base * 2 ** exponent);
-  const jitterRatio = Math.max(0, Math.min(1, options.jitterRatio ?? 0.2));
-  const random = Math.max(0, Math.min(1, (options.random ?? Math.random)()));
+  const rawJitterRatio = options.jitterRatio;
+  const jitterRatio = Math.max(0, Math.min(1, Number.isFinite(rawJitterRatio) ? rawJitterRatio! : 0.2));
+  const randomSample = (options.random ?? Math.random)();
+  const random = Math.max(0, Math.min(1, Number.isFinite(randomSample) ? randomSample : 0.5));
   const jittered = exponential * (1 - jitterRatio + 2 * jitterRatio * random);
   const retryAfter =
     options.retryAfterMs !== undefined && Number.isFinite(options.retryAfterMs) && options.retryAfterMs > 0
-      ? Math.floor(options.retryAfterMs)
+      ? Math.min(maxSafeDelayMs, Math.floor(options.retryAfterMs))
       : 0;
-  // The exponential cap controls our own backoff, not an upstream's explicit Retry-After. Sleeping
-  // less than the provider requested would immediately violate the throttle contract.
+  // The exponential cap controls our own backoff. Retry-After can exceed that config cap, but an
+  // operational 30-day ceiling prevents malformed/extreme finite values from overflowing Date.
   return Math.max(retryAfter, Math.min(max, Math.round(jittered)));
 }
 
