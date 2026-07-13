@@ -1,5 +1,30 @@
 # Active Implementation Plan
 
+## SEC/RAG 1,000-stock implementation train
+
+**Status: In progress; corpus writes gated**
+
+- **[~] Wave A — prerequisite truth:** the versioned/checksummed universe acceptance contract and durable
+  job/task state with leases, strict transitions, retries, dead-letter/quarantine, verification receipts, and
+  replay invariants are implemented locally and pass focused/type gates. Corrected universe selection, census
+  truth, and adversarial integration remain in progress. PR #1543's eleven review findings now have explicit
+  regression coverage; its final full Node 24 local gate is green, while refreshed hosted checks and review-thread
+  triage remain pending.
+- **[~] Wave B — source correctness:** discover recent plus historical submission shards and filing exhibits;
+  archive immutable raw artifacts; enforce one aggregate SEC limiter; parse DOM/iXBRL sections, tables, units,
+  contexts, and footnotes; chunk against provider token budgets.
+- **[ ] Wave C — structured and searchable evidence:** normalize XBRL, insider, ownership, offering, and event
+  facts; add a true corpus-wide lexical index; fuse dense/lexical recall, rerank wide, diversify, and return
+  typed evidence packets with strict point-in-time filtering.
+- **[ ] Wave D — evaluation and consumption:** build real-EDGAR parser/fact/retrieval/grounding fixtures and
+  metrics; replace the generic three-chunk strategy blob with issuer-scoped scout/deep dossiers and verified
+  evidence references.
+- **[ ] Wave E — controlled operations:** only after gates, run shadow 10 -> 25 -> 100 -> 300 -> 1,000 breadth-
+  first waves with cost/rate/failure breakers, reconciliation, dual-read/write, rollback, and freshness SLOs.
+
+Node 24 remains the supported runtime. Node 26 is installed on the host but is not adopted while `.nvmrc`, CI,
+production, and the `better-sqlite3` native ABI are pinned to 24.
+
 ## Codex Audit Wave 0: Base Guardrails
 **Status: In Progress**
 

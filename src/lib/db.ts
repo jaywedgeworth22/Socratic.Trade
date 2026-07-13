@@ -688,6 +688,154 @@ const MIGRATIONS: Migration[] = [
         CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted');
       `);
     }
+  },
+  {
+    // Durable, stage-aware SEC/RAG backfill substrate. A generic due_job is not enough here:
+    // ingestion must retain an immutable artifact identity, a resumable stage checkpoint, fenced
+    // leases/heartbeats, per-stage attempts, typed failures, verification receipts, and measured
+    // provider cost. No scheduler or production writer is wired by this migration; it only creates
+    // the local durable state that a separately gated worker can use.
+    version: 23,
+    name: "sec_rag_ingest_jobs",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_ingest_jobs (
+          id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          corpus_revision TEXT NOT NULL,
+          universe_snapshot_id TEXT,
+          status TEXT NOT NULL CHECK(status IN (
+            'pending', 'running', 'paused', 'complete', 'complete_with_errors',
+            'failed_terminal', 'canceled'
+          )),
+          config_json TEXT NOT NULL DEFAULT '{}',
+          expected_tasks INTEGER CHECK(expected_tasks IS NULL OR expected_tasks >= 0),
+          last_error_type TEXT,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          intake_closed_at TEXT,
+          completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS sec_ingest_tasks (
+          id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL,
+          task_key TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          cik TEXT NOT NULL DEFAULT '',
+          symbol TEXT NOT NULL DEFAULT '',
+          sequence INTEGER,
+          document_name TEXT,
+          checkpoint TEXT NOT NULL CHECK(checkpoint IN (
+            'discovered', 'fetched', 'validated', 'parsed', 'facts_extracted', 'chunked',
+            'embed_queued', 'embedded', 'index_queued', 'indexed', 'verified', 'complete'
+          )),
+          status TEXT NOT NULL CHECK(status IN (
+            'pending', 'leased', 'retry_wait', 'complete', 'dead_letter',
+            'quarantined', 'superseded'
+          )),
+          priority INTEGER NOT NULL DEFAULT 0,
+          ordinal INTEGER NOT NULL DEFAULT 0,
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          total_attempts INTEGER NOT NULL DEFAULT 0 CHECK(total_attempts >= 0),
+          stage_attempts INTEGER NOT NULL DEFAULT 0 CHECK(stage_attempts >= 0),
+          max_stage_attempts INTEGER NOT NULL DEFAULT 6 CHECK(max_stage_attempts >= 1),
+          next_retry_at TEXT,
+          lease_owner TEXT,
+          lease_token TEXT,
+          lease_expires_at TEXT,
+          heartbeat_at TEXT,
+          raw_sha256 TEXT,
+          normalized_sha256 TEXT,
+          parser_revision TEXT,
+          chunker_revision TEXT,
+          embed_model TEXT,
+          embed_revision TEXT,
+          index_name TEXT,
+          namespace TEXT,
+          observed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(observed_bytes >= 0),
+          observed_tokens INTEGER NOT NULL DEFAULT 0 CHECK(observed_tokens >= 0),
+          observed_chunks INTEGER NOT NULL DEFAULT 0 CHECK(observed_chunks >= 0),
+          observed_vectors INTEGER NOT NULL DEFAULT 0 CHECK(observed_vectors >= 0),
+          observed_write_units INTEGER NOT NULL DEFAULT 0 CHECK(observed_write_units >= 0),
+          observed_cost_usd REAL NOT NULL DEFAULT 0 CHECK(observed_cost_usd >= 0),
+          verification_json TEXT,
+          last_error_type TEXT,
+          last_error TEXT,
+          last_error_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(job_id) REFERENCES sec_ingest_jobs(id) ON DELETE CASCADE,
+          UNIQUE(job_id, task_key),
+          CHECK(
+            (status = 'leased' AND lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+            OR
+            (status != 'leased' AND lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
+          ),
+          CHECK((status = 'retry_wait' AND next_retry_at IS NOT NULL) OR status != 'retry_wait'),
+          CHECK((status = 'complete' AND checkpoint = 'complete') OR status != 'complete'),
+          CHECK(checkpoint != 'complete' OR (status = 'complete' AND verification_json IS NOT NULL))
+        );
+
+        CREATE TABLE IF NOT EXISTS sec_ingest_task_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id TEXT NOT NULL,
+          attempt_no INTEGER NOT NULL CHECK(attempt_no >= 1),
+          checkpoint TEXT NOT NULL,
+          lease_owner TEXT NOT NULL,
+          lease_token TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          heartbeat_at TEXT NOT NULL,
+          finished_at TEXT,
+          outcome TEXT NOT NULL CHECK(outcome IN (
+            'claimed', 'advanced', 'retry_wait', 'dead_letter', 'quarantined',
+            'superseded', 'lease_expired'
+          )),
+          error_type TEXT,
+          error TEXT,
+          receipt_json TEXT,
+          FOREIGN KEY(task_id) REFERENCES sec_ingest_tasks(id) ON DELETE CASCADE,
+          UNIQUE(task_id, attempt_no),
+          UNIQUE(task_id, lease_token)
+        );
+
+        -- Shared, cross-process SEC host coordination. Request policy and mutation logic live in
+        -- the discovery/limiter module; the durable row belongs in this same SEC/RAG migration so
+        -- every consumer coordinates against one host clock/circuit instead of per-process timers.
+        CREATE TABLE IF NOT EXISTS sec_request_coordination (
+          host TEXT PRIMARY KEY,
+          next_allowed_at INTEGER NOT NULL DEFAULT 0,
+          paused_until INTEGER NOT NULL DEFAULT 0,
+          circuit_open_until INTEGER NOT NULL DEFAULT 0,
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          reservations INTEGER NOT NULL DEFAULT 0,
+          responses INTEGER NOT NULL DEFAULT 0,
+          successes INTEGER NOT NULL DEFAULT 0,
+          client_errors INTEGER NOT NULL DEFAULT 0,
+          rate_limited INTEGER NOT NULL DEFAULT 0,
+          server_errors INTEGER NOT NULL DEFAULT 0,
+          network_errors INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          total_wait_ms INTEGER NOT NULL DEFAULT 0,
+          last_request_at INTEGER,
+          last_response_at INTEGER,
+          last_status INTEGER,
+          last_429_at INTEGER,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sec_ingest_jobs_status
+          ON sec_ingest_jobs(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_sec_ingest_tasks_claim
+          ON sec_ingest_tasks(job_id, status, next_retry_at, lease_expires_at, priority DESC, ordinal ASC);
+        CREATE INDEX IF NOT EXISTS idx_sec_ingest_tasks_accession
+          ON sec_ingest_tasks(accession, document_name);
+        CREATE INDEX IF NOT EXISTS idx_sec_ingest_attempts_task
+          ON sec_ingest_task_attempts(task_id, attempt_no);
+      `);
+    }
   }
 ];
 
@@ -1942,4 +2090,5 @@ export * from "./db-health";
 export * from "./db-securities-import";
 export * from "./db-socratic";
 export * from "./db-jobs";
+export * from "./db-rag-ingest";
 export * from "./db-tuning-reviews";

@@ -1,5 +1,37 @@
 # Current Status
 
+## 2026-07-13 — SEC/RAG implementation program (CODEX, branch `codex/sec-rag-program`)
+
+Owner-directed implementation of all nine packages in the 1,000-stock SEC/RAG plan is in progress. The
+branch inherits merged PRs #1495, #1496, #1520, and #1527, but the acceptance audit does not treat P0/P1 as
+complete: the committed universe uses SEC ticker-file order as a false prominence proxy and lacks a dated
+eligibility/selection receipt; the census does not certify target-slot, revision, provenance, or PIT coverage;
+and the manifest still lacks durable jobs, immutable raw objects, sections/tables, and verified-complete
+receipts. The current ingestion path also remains recent-only and regex/whitespace based.
+
+The first local slice now implements the versioned/checksummed universe acceptance gate and durable job/task
+state with leases, strict stage transitions, bounded retries, DLQ/quarantine, verification receipts, and replay
+identity. This first slice is ready in PR #1543: 16 focused tests pass, then the required Node 24 gate passed
+with lint at 0 errors / 447 inherited warnings, clean TypeScript, 352 files / 3,950 tests, and a production build.
+The build first caught and then verified the fix for a `node:crypto` Edge import trace. Expert lanes are still
+being hardened independently: the corrected universe/census is under adversarial review, while first discovery/
+pacing and parser/chunker drafts were rejected at review and are being corrected. No live provider, object-store,
+vector-corpus, or production backfill write will run before fixture tests and the real-corpus gates pass. Open AG
+PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled. PR #1543 received
+a Codex review whose first three findings were addressed in commit 523828bc. A refreshed review then found four
+additional P2 contract gaps: offset timestamps, normalized quarantine identifiers, checksum validation, and blank
+terminal reasons. A third review pass then found four durable-state gaps: immutable task revisions, authoritative
+receipt checkpoints, sealed-job replay, and non-finite retry configuration. All eleven findings are now fixed
+locally with 26 focused manifest/worker tests green. The final Node 24 gate on the latest four fixes is also
+green after merging current `origin/main`: lint has 0 errors / 452 inherited warnings, TypeScript is clean, all
+352 files / 3,960 tests pass, and the production build succeeds. Refreshed hosted checks and review-thread triage
+remain before merge.
+
+Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
+but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.
+
+Rollout: `docs/rollouts/2026-07-13-sec-rag-program.md`.
+
 ## 2026-07-13 — [codex-autofix] Query chunk_occurrences instead of document_chunks for admin corpus coverage (PR #1533)
 
 Codex review flagged a P2 finding: `getChunkCoverage()` and `getChunkSourceBreakdown()` queried the content-hash dedup table (`document_chunks`, one row per unique chunk). When a later filing/source contained boilerplate whose `content_hash` was already embedded, the admin UI showed 0 new chunks for that source/symbol. Switched both queries to `chunk_occurrences` (one row per actual occurrence) so the Corpus Composition and per-ticker source chips reflect true document coverage.
