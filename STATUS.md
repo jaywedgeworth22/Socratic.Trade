@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Address 4 Codex review findings on PR #1526 (agent/ag-update-status-effort-log)
+
+Codex review flagged 4 remaining findings on the X0.3 Exit Replacement State Machine PR:
+1. **Thread 1 (P1)**: `/api/mobile/auth/apple` missing from middleware public allowlist — mobile Apple Sign-In got 401 before handler ran. Added to PUBLIC_PREFIXES.
+2. **Thread 4 (P1)**: `loginWithApple` decoded server response as `[String: String]` but `success` is a Bool — created `AppleLoginResponse` struct with proper types.
+3. **Thread 2 (P2)**: `startEvents()` SSE subscription never called after successful Apple sign-in — added call in login success path.
+4. **Thread 5 (P2)**: `assertLivePreflight` at line 187 didn't mark replacement row as `failed` on throw (unlike all other precondition checks) — wrapped in try-catch with `markReplacementError`.
+
+15 remaining threads (all P2) left open — architecturally significant items in order-replacement.ts state machine, congress-share single-flight, and Apple email persistence. Comment posted asking maintainer how to proceed. Verify trio passes (tsc clean, 3934 tests, build clean). Rollout: `docs/rollouts/2026-07-13-codex-autofix-replacement-state-machine.md`.
+
 ## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
 
 Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes. Fixed a tail-truncation bug (Codex P2) where `.slice(0, 512)` could drop unique suffixes when document names/sections shared long common prefixes — now uses a head+tail-preserving clamp with `".."` marker. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
