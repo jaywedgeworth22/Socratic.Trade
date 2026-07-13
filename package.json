@@ -25,6 +25,8 @@
     "eval:strategy-offline": "tsx scripts/eval/run-strategy-offline.ts",
     "eval:faithfulness": "tsx scripts/eval/run-faithfulness.ts",
     "eval:corpus-coverage": "tsx scripts/eval/corpus-coverage.ts",
+    "eval:rag-census": "tsx scripts/eval/rag-census.ts",
+    "eval:generate-universe": "tsx scripts/eval/generate-universe-manifest.ts",
     "ops:snapshot": "bash scripts/fetch-prod-ops-snapshot.sh"
   },
   "dependencies": {

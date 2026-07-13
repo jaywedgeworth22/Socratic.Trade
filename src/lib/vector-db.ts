@@ -2,7 +2,7 @@ import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-da
 import { VoyageAIClient } from "voyageai";
 import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
-import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
+import { filterNewDocumentChunks, insertDocumentChunks, insertChunkOccurrences } from "./db";
 import { logApiHealth } from "./db-health";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { envFlagOn } from "./rag/env-flag";
@@ -807,6 +807,9 @@ function vectorUserIdFor(userId: string | undefined): string {
 }
 
 function contextId(document: ContextDocument, fallbackIndex: number): string {
+  if (document.metadata?.vector_id) {
+    return String(document.metadata.vector_id);
+  }
   const { symbol, source, accession, timestamp } = document.metadata;
   const raw = [source, symbol, accession, timestamp].filter(Boolean).join(":") || `${symbol}:${source}:${fallbackIndex}`;
   return raw.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 512);
@@ -1379,7 +1382,7 @@ export async function storeDocument(
   const source = doc.source || "sec-edgar";
 
   // Dedup by content_hash: skip chunks whose text byte sequence has already been embedded.
-  // The document_chunks table is keyed on content_hash (SHA-256, first 16 hex chars) so a
+  // The document_chunks table is keyed on content_hash (SHA-256, first 32 hex chars) so a
   // re-run of the same filing text never pays Voyage tokens for unchanged chunks.
   const chunkHashes = chunked.map((c) => ({
     content_hash: c.content_hash,
@@ -1396,55 +1399,111 @@ export async function storeDocument(
       `[vector-db] Content-hash dedup: ${chunked.length - freshChunks.length}/${chunked.length} chunks already indexed, skipping.`
     );
   }
-  if (freshChunks.length === 0) {
-    return { attempted: chunked.length, indexed: 0, skipped: true, dedupComplete: true };
+
+  const corpusRev = "v1";
+  const embedRev = "v1";
+  const parserRev = "v1";
+  const accession = doc.doc_id || "unknown_accession";
+  const sequence = 1;
+  const documentName = doc.title || "main.html";
+  const now = new Date().toISOString();
+
+  let result: StoreContextsResult = { attempted: chunked.length, indexed: 0 };
+
+  if (freshChunks.length > 0) {
+    const documents: ContextDocument[] = freshChunks.map((c) => {
+      const originalIndex = chunked.indexOf(c);
+      const ordinal = originalIndex + 1;
+      const cleanSection = (c.section || "body").replace(/:/g, "-");
+      const occurrenceId = `${accession}:${sequence}:${documentName}:${cleanSection}:${ordinal}:${parserRev}`;
+      const vectorId = `${corpusRev}:${occurrenceId}:${embedRev}`;
+
+      return {
+        text: `${c.context_header}\n\n${c.text}`,
+        metadata: {
+          symbol: c.ticker[0] ?? fallbackSymbol,
+          source: c.source,
+          timestamp: c.published_at,
+          accession: c.chunk_id,
+          acceptance_datetime: c.acceptance_datetime,
+          section: c.section,
+          doc_type: c.doc_type,
+          is_table: c.is_table,
+          ticker: c.ticker,
+          content_hash: c.content_hash,
+          vector_id: vectorId,
+          ...(doc.url ? { url: doc.url } : {})
+        }
+      };
+    });
+
+    // Align the storeContexts trim cap with the ACTUAL token budget chunkDocument used (plus the
+    // context_header prefix), rather than the fixed 2400-char default — otherwise a structure-aware
+    // chunk that chunkDocument deliberately kept atomic (e.g. a table) can be silently truncated a
+    // second time downstream. Generous chars-per-token ceiling covers long words/table padding.
+    const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS;
+    const headerAllowance = 512; // context_header is short, deterministic prose — generous fixed budget
+    const chunkAlignedMaxChars = Math.max(contextMaxChars(), maxTokens * CHARS_PER_TOKEN_CEILING + headerAllowance);
+
+    result = await storeContexts(documents, userId, { maxChars: chunkAlignedMaxChars });
+
+    // Record fresh chunks in document_chunks so the dedup gate works on subsequent runs.
+    if (result.indexed > 0) {
+      const indexedHashes = freshChunks.slice(0, result.indexed).map((c) => ({
+        content_hash: c.content_hash,
+        symbol: c.ticker[0] ?? fallbackSymbol,
+        source: c.source,
+        chunk_id: c.chunk_id
+      }));
+      try {
+        insertDocumentChunks(indexedHashes);
+      } catch (err) {
+        console.warn("[vector-db] insertDocumentChunks failed (non-fatal):", err instanceof Error ? err.message : String(err));
+      }
+    }
+  } else {
+    result = { attempted: chunked.length, indexed: 0, skipped: true, dedupComplete: true };
   }
 
-  const documents: ContextDocument[] = freshChunks.map((c) => ({
-    text: `${c.context_header}\n\n${c.text}`,
-    metadata: {
-      symbol: c.ticker[0] ?? fallbackSymbol,
-      source: c.source,
-      timestamp: c.published_at,
-      accession: c.chunk_id,
-      acceptance_datetime: c.acceptance_datetime,
-      section: c.section,
-      doc_type: c.doc_type,
-      is_table: c.is_table,
-      ticker: c.ticker,
-      content_hash: c.content_hash,
-      ...(doc.url ? { url: doc.url } : {})
+  // Record occurrences for all chunks that are either:
+  // - skipped (already deduped) OR
+  // - successfully indexed fresh chunks
+  const occurrencesToRecord: any[] = [];
+  for (let i = 0; i < chunked.length; i++) {
+    const c = chunked[i];
+    const isFresh = newHashSet.has(c.content_hash);
+    const isIndexed = !isFresh || (isFresh && freshChunks.indexOf(c) < result.indexed);
+
+    if (isIndexed) {
+      const ordinal = i + 1;
+      const cleanSection = (c.section || "body").replace(/:/g, "-");
+      const occurrenceId = `${accession}:${sequence}:${documentName}:${cleanSection}:${ordinal}:${parserRev}`;
+      const vectorId = `${corpusRev}:${occurrenceId}:${embedRev}`;
+
+      occurrencesToRecord.push({
+        vectorId,
+        contentHash: c.content_hash,
+        symbol: c.ticker[0] || fallbackSymbol,
+        source,
+        accession,
+        sequence,
+        documentName,
+        section: c.section || "body",
+        ordinal,
+        acceptedAt: c.acceptance_datetime || now,
+        createdAt: now
+      });
     }
-  }));
+  }
 
-  // Align the storeContexts trim cap with the ACTUAL token budget chunkDocument used (plus the
-  // context_header prefix), rather than the fixed 2400-char default — otherwise a structure-aware
-  // chunk that chunkDocument deliberately kept atomic (e.g. a table) can be silently truncated a
-  // second time downstream. Generous chars-per-token ceiling covers long words/table padding.
-  const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS;
-  const headerAllowance = 512; // context_header is short, deterministic prose — generous fixed budget
-  const chunkAlignedMaxChars = Math.max(contextMaxChars(), maxTokens * CHARS_PER_TOKEN_CEILING + headerAllowance);
-
-  const result = await storeContexts(documents, userId, { maxChars: chunkAlignedMaxChars });
-
-  // Record fresh chunks in document_chunks so the dedup gate works on subsequent runs.
-  // Do this even on partial success — the table is INSERT OR IGNORE so double-writes are harmless,
-  // and failing to record a chunk means it gets re-embedded next time.
-  if (result.indexed > 0) {
-    const indexedHashes = freshChunks.slice(0, result.indexed).map((c) => ({
-      content_hash: c.content_hash,
-      symbol: c.ticker[0] ?? fallbackSymbol,
-      source: c.source,
-      chunk_id: c.chunk_id
-    }));
+  if (occurrencesToRecord.length > 0) {
     try {
-      insertDocumentChunks(indexedHashes);
+      insertChunkOccurrences(occurrencesToRecord);
     } catch (err) {
-      console.warn("[vector-db] insertDocumentChunks failed (non-fatal):", err instanceof Error ? err.message : String(err));
+      console.warn("[vector-db] insertChunkOccurrences failed (non-fatal):", err instanceof Error ? err.message : String(err));
     }
   }
 
-  // Restore the full attempted count so callers see the truth about how many chunks exist.
   return { ...result, attempted: chunked.length };
 }
 
