@@ -26,6 +26,7 @@ interface DeletionBlockers {
   placingProposals: number;
   pendingReconciliationFills: number;
   activeMobileCommands: number;
+  activeReplacements: number;
 }
 
 interface DeletionPreview {
@@ -48,7 +49,7 @@ const ACK_ITEMS: Array<{ key: string; label: string }> = [
 ];
 
 function blockerCount(b: DeletionBlockers): number {
-  return b.runningStrategyRuns + b.placingProposals + b.pendingReconciliationFills + b.activeMobileCommands;
+  return b.runningStrategyRuns + b.placingProposals + b.pendingReconciliationFills + b.activeMobileCommands + b.activeReplacements;
 }
 
 function recordTotal(preview: DeletionPreview): number {
@@ -219,9 +220,10 @@ export function AccountDeletionCard() {
               <p className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-warn)]">
                 Deletion is blocked until trading activity settles: {preview.blockers.runningStrategyRuns} running
                 strategy run(s), {preview.blockers.placingProposals} placing proposal(s),{" "}
-                {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation, and{" "}
-                {preview.blockers.activeMobileCommands} in-flight mobile command(s). Preparing (below) stops the strategy;
-                in-flight work must drain on its own.
+                {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation,{" "}
+                {preview.blockers.activeMobileCommands} in-flight mobile command(s), and{" "}
+                {preview.blockers.activeReplacements} active order replacement(s). Preparing (below)
+                stops the strategy; in-flight work must drain on its own.
               </p>
             </div>
           )}

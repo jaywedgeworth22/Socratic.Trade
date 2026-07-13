@@ -204,6 +204,9 @@ const MIGRATIONS: Migration[] = [
       // 3. Composite indices for capping and sorting listPending/listRecent
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_status_created ON trade_proposals (user_id, account_number, status, created_at DESC)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_created ON trade_proposals (user_id, account_number, created_at DESC)");
+      
+      database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
+      database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
 
       // 4. Composite index for day-trade counting and excursions
       database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_user_account_symbol_filled ON fill_events (user_id, account_number, symbol, filled_at DESC)");
@@ -571,6 +574,120 @@ const MIGRATIONS: Migration[] = [
         }
       }
     }
+  },
+  {
+    // Persist original order details for stale exit replacements (PR 2 follow-up)
+    version: 20,
+    name: "order_replacements_original_order_columns",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(order_replacements)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "symbol")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN symbol TEXT");
+      }
+      if (!cols.some((c) => c.name === "side")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN side TEXT");
+      }
+      if (!cols.some((c) => c.name === "original_type")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_type TEXT");
+      }
+      if (!cols.some((c) => c.name === "original_quantity")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_quantity REAL");
+      }
+      if (!cols.some((c) => c.name === "original_filled_quantity")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_filled_quantity REAL");
+      }
+    }
+  },
+  {
+    // Order-replacements indexes for the exit-replacement state machine (PR 2 follow-up).
+    // These were originally added inside migration v6, but deployed databases already
+    // have PRAGMA user_version past 6, so runMigrations skips that block and never
+    // creates the indexes. Every database — fresh and existing — needs the UNIQUE
+    // partial index as the concurrency guard against duplicate replacements.
+    version: 21,
+    name: "order_replacements_indexes_reapply",
+    up: (database) => {
+      // Before creating the UNIQUE partial index, collapse any duplicate active
+      // rows that could already exist. Prioritize keeping the most progressed
+      // row in the state machine (favoring rows with a replacement_order_id).
+      const dupGroups = database
+        .prepare(
+          `WITH ranked AS (
+             SELECT rowid, account_number, original_order_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY account_number, original_order_id
+                      ORDER BY
+                        CASE status
+                          WHEN 'replacement_submitted' THEN 1
+                          WHEN 'replacement_claiming' THEN 2
+                          WHEN 'cancel_confirmed' THEN 3
+                          WHEN 'cancel_requested' THEN 4
+                          ELSE 5
+                        END ASC,
+                        CASE WHEN replacement_order_id IS NOT NULL THEN 0 ELSE 1 END ASC,
+                        rowid DESC
+                    ) as rn
+             FROM order_replacements
+             WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+           )
+           SELECT account_number, original_order_id, COUNT(*) AS c, MAX(CASE WHEN rn = 1 THEN rowid END) AS keep_rowid
+           FROM ranked
+           GROUP BY account_number, original_order_id
+           HAVING COUNT(*) > 1`
+        )
+        .all() as Array<{ account_number: string; original_order_id: string; c: number; keep_rowid: number }>;
+      const terminalizeExtras = database.prepare(
+        `UPDATE order_replacements SET status = 'failed', error = 'superseded by duplicate active replacement', updated_at = ?
+         WHERE account_number = ? AND original_order_id = ? AND rowid != ?
+         AND status NOT IN ('replacement_confirmed', 'failed', 'aborted')`
+      );
+      const now = new Date().toISOString();
+      for (const g of dupGroups) {
+        const info = terminalizeExtras.run(now, g.account_number, g.original_order_id, g.keep_rowid);
+        console.warn(
+          `[db] migration 21: terminalized ${info.changes} duplicate order_replacements row(s) ` +
+          `for (account_number=${g.account_number}, original_order_id=${g.original_order_id}) — kept rowid ${g.keep_rowid}.`
+        );
+      }
+      database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
+      database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
+    }
+  },
+  {
+    version: 22,
+    name: "order_replacements_claiming_state_schema",
+    up: (database) => {
+      // SQLite does not support ALTER TABLE DROP CONSTRAINT. To expand the CHECK
+      // constraint on status to include 'replacement_claiming', we recreate the table.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS order_replacements_v22 (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          original_order_id TEXT NOT NULL,
+          symbol TEXT,
+          side TEXT,
+          original_type TEXT,
+          original_quantity REAL,
+          original_filled_quantity REAL,
+          replacement_ref_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_claiming', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
+          remaining_quantity REAL,
+          cancel_result TEXT,
+          replacement_order_id TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO order_replacements_v22 SELECT * FROM order_replacements;
+        DROP TABLE order_replacements;
+        ALTER TABLE order_replacements_v22 RENAME TO order_replacements;
+        
+        CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted');
+      `);
+    }
   }
 ];
 
@@ -838,6 +955,26 @@ function migrate(database: Database.Database): void {
       positions TEXT NOT NULL,
       created_at TEXT NOT NULL,
       execution_mode TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS order_replacements (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      original_order_id TEXT NOT NULL,
+      symbol TEXT,
+      side TEXT,
+      original_type TEXT,
+      original_quantity REAL,
+      original_filled_quantity REAL,
+      replacement_ref_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_claiming', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
+      remaining_quantity REAL,
+      cancel_result TEXT,
+      replacement_order_id TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS fill_events (

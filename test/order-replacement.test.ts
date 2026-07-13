@@ -550,3 +550,81 @@ function gatewayMock(input: {
     }))
   };
 }
+
+describe("reconciliation and reconstruction recovery", () => {
+  it("reconstructs original order from persisted DB columns if not returned by broker", async () => {
+    const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
+    const { getDb } = await import("../src/lib/db");
+    
+    const db = getDb();
+    const id = randomUUID();
+    const refId = randomUUID();
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO order_replacements 
+      (id, user_id, account_number, original_order_id, symbol, side, original_type, original_quantity, original_filled_quantity, replacement_ref_id, status, created_at, updated_at) 
+      VALUES (?, 'local', 'APCA-PAPER', 'missing-order-1', 'AAPL', 'sell', 'limit', 10, 2, ?, 'cancel_confirmed', ?, ?)
+    `).run(id, refId, now, now);
+
+    const gateway = gatewayMock({
+      orders: [[]],
+      positions: [position({ symbol: "AAPL", quantity: 10 })],
+      execution: { orderId: "replacement-market-1", refId, state: "accepted", raw: {} }
+    });
+
+    const out = await autoRemediateStaleExitOrders({
+      userId: "local",
+      policy: paperPolicy(),
+      activeAccount: account("paper"),
+      gateway,
+      orders: []
+    });
+
+    expect(out).toMatchObject({ remediated: 1 });
+    expect(gateway.placeEquityOrder).toHaveBeenCalledWith(expect.objectContaining({
+      symbol: "AAPL",
+      side: "sell",
+      type: "market",
+      quantity: 8
+    }));
+
+    const record = db.prepare("SELECT status, replacement_order_id FROM order_replacements WHERE id = ?").get(id) as any;
+    expect(record.status).toBe("replacement_confirmed");
+    expect(record.replacement_order_id).toBe("replacement-market-1");
+  });
+
+  it("reconciles replacement_submitted rows by locating the order via clientOrderId at the broker", async () => {
+    const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
+    const { getDb } = await import("../src/lib/db");
+
+    const db = getDb();
+    const id = randomUUID();
+    const refId = "submitted-ref-1";
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO order_replacements 
+      (id, user_id, account_number, original_order_id, symbol, side, original_type, original_quantity, original_filled_quantity, remaining_quantity, replacement_ref_id, status, created_at, updated_at) 
+      VALUES (?, 'local', 'APCA-PAPER', 'limit-2', 'AAPL', 'sell', 'limit', 10, 0, 10, ?, 'replacement_submitted', ?, ?)
+    `).run(id, refId, now, now);
+
+    const submittedOrder = order({ id: "broker-market-2", type: "market", side: "sell", clientOrderId: refId, state: "filled", quantity: 10 });
+    const gateway = gatewayMock({
+      orders: [[submittedOrder]]
+    });
+
+    const out = await autoRemediateStaleExitOrders({
+      userId: "local",
+      policy: paperPolicy(),
+      activeAccount: account("paper"),
+      gateway,
+      orders: []
+    });
+
+    const record = db.prepare("SELECT status, replacement_order_id FROM order_replacements WHERE id = ?").get(id) as any;
+    expect(record.status).toBe("replacement_confirmed");
+    expect(record.replacement_order_id).toBe("broker-market-2");
+
+    const fillExists = db.prepare("SELECT 1 FROM fill_events WHERE broker_order_id = 'broker-market-2'").get();
+    expect(fillExists).toBeDefined();
+  });
+});
