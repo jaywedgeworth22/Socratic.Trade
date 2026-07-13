@@ -124,6 +124,14 @@ Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) ca
 Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. 
 
 Also added critical defensive safeguards in `src/lib/strategy.ts` for the episodic decision memory retrieval block to prevent a minified server crash (`TypeError: a.filter is not a function`) when the `injected` array is undefined or unaligned. Verified with tsc, lint, tests, and build. Next step: land.
+## 2026-07-13 — Congress.Trade Integration Prep (Antigravity/AG, branch `agent/ag-congress-trade-integration`)
+
+Drafted the implementation plan for enabling the bidirectional App A <-> App B Congress.Trade integration. 
+Fixed a documentation mismatch in `.env.example` (`CONGRESS_TRADE_AUTOFORWARD` -> `CONGRESS_SHARE_ENABLED`).
+Identified the specific Infisical variables (`CONGRESS_SHARE_ENABLED`, `CONGRESS_TRADE_READS_ENABLED`, etc.) that need to be flipped `on` in production.
+Since the production secrets are managed in Infisical and we don't have autonomous access to the project `prod` environment here, the remaining flag flips and the subsequent `fullHistory` backfill must be performed manually by the owner, as noted in the rollout note.
+Rollout: `docs/rollouts/2026-07-13-congress-trade-integration.md`.
+
 ## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Claude, branch `agent/ag-safety-exit-replacement`)
 
 Addressed 4 of the final 6 unresolved Codex threads from PR #1492 (2 P1, 2 P2), asked about 2 remaining:
