@@ -24,7 +24,7 @@ interface ConnectionSummary {
 }
 
 interface LlmSummary {
-  rows: Array<{ model: string | null; costEstUsd: number }>;
+  rows: Array<{ model: string | null; costUsd: number }>;
   totalCostUsd: number;
 }
 
@@ -36,9 +36,11 @@ interface RagSummary {
 }
 
 interface ServerSummary {
-  hostInfo: { cpuCount: number; ramTotalGb: number };
-  resources: { cpuPct: number; ramUsedGb: number; diskFreeGb: number; diskTotalGb: number };
-  containers: Array<{ name: string; status: string; state: string }>;
+  hostInfo?: { cpuCount?: number; ramTotalGb?: number; memoryTotalBytes?: number };
+  resources?: Array<{ status?: string; state?: string; name?: string }>;
+  metrics?: {
+    cpu?: Array<{ value: number }>;
+  };
 }
 
 interface TranscriptSummary {
