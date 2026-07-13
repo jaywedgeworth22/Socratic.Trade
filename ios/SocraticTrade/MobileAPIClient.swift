@@ -52,6 +52,19 @@ struct MobileAPIClient {
         return try await send(request)
     }
 
+    func loginWithApple(identityToken: String, name: String?) async throws -> [String: String] {
+        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/auth/apple"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        var bodyParams: [String: Any] = ["identityToken": identityToken]
+        if let name = name {
+            bodyParams["name"] = name
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: bodyParams)
+        // URLSession will automatically store the set-cookie header in its HTTPCookieStorage.
+        return try await send(request)
+    }
+
     func events(onEvent: @escaping () -> Void) async throws {
         let request = URLRequest(url: baseURL.appending(path: "/api/mobile/events"))
         let (bytes, response) = try await session.bytes(for: request)
