@@ -6,10 +6,9 @@
 > rechecks, prompts, capital posture, mobile data, and AI strategy review. Persist app-computed
 > notional/NAV arithmetic; clear impossible Alpaca whole-share bracket fields before fractional
 > submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
-> sections with explicit verdict wording. Implementation, lint, TypeScript, focused checks, and the
-> production build are complete. Canonical local full-suite attempts are documented with unrelated
-> host-contention timeouts whose files pass in isolation; landing, clean-environment hosted
-> acceptance, and production verification remain. See
+> sections with explicit verdict wording. Implementation, lint, TypeScript, Swift contract checking,
+> 4,021/4,021 tests, and the production build are complete. Ready PR #1561 is open; hosted acceptance,
+> merge/autodeploy, and production verification remain. See
 > `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
 
 > **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the

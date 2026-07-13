@@ -18,13 +18,11 @@ is replaced by explicit approved/rejected/unavailable wording; non-placed action
 verbs ("Buy"), reserving "Bought" for confirmed placement.
 
 Focused verification is green (8 files / 63 tests, then 5 files / 39 tests and 2 files / 111 tests).
-Repository lint passed with 0 errors / 452 inherited warnings; TypeScript is clean; and the
-production build passes with inherited middleware/CSS warnings. The first full suite exposed two
-invalid dual-mode fixtures, both corrected and focused-green. Two subsequent canonical full runs
-reached 4,003 and 4,019 passing tests but timed out in unrelated DB/import-heavy tests under current
-host contention; every timed-out file passed immediately in isolation (3 files / 25 tests, then 2
-files / 4 tests). Commit, `scripts/land.sh`, clean-environment hosted verification, merge/deploy, and
-production verification remain.
+Repository lint passed with 0 errors / 452 inherited warnings; TypeScript and the native Swift
+snapshot model are clean. After documenting and isolating earlier host-contention timeouts, the
+canonical Node 24 `scripts/land.sh` gate passed completely: 359 files / 4,021 tests and the production
+build. Commit `2cfd7ca8` is pushed in ready PR #1561; hosted CI/security/smoke checks, merge/autodeploy,
+and production verification remain.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
 

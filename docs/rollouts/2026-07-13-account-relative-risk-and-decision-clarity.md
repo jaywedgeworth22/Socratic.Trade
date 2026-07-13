@@ -163,6 +163,13 @@ npm run build
 
 xcrun swiftc -typecheck ios/SocraticTrade/MobileModels.swift
 # passed
+
+PATH="/opt/homebrew/opt/node@24/bin:$PATH" bash scripts/land.sh \
+  --pr-title "Make daily risk account-relative and clarify Green/Red decisions"
+# TypeScript passed
+# 359 test files, 4,021 tests passed
+# production build passed with the same inherited middleware/CSS warnings
+# pushed commit 2cfd7ca8 and opened ready PR #1561
 ```
 
 No timeout threshold or unrelated test infrastructure was weakened. The hosted `verify` job remains
@@ -175,5 +182,5 @@ the required clean-environment full-suite acceptance gate before merge.
 - Existing persisted EXE prose retains its historical `0.04%` error. New decisions carry the
   app-computed percentage and use it in both Red Team and Live Thesis.
 - PR #1548 remains the separate owner of post-fill Alpaca broker protective-stop work.
-- No production configuration, account policy, broker order, merge, or deploy was changed in this
-  local implementation step.
+- No production configuration, account policy, broker order, merge, or deploy has been changed;
+  PR #1561 is awaiting hosted checks.
