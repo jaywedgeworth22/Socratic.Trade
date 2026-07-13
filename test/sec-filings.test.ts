@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // ── Set up an isolated per-run SQLite DB before anything else ─────────────────
 beforeAll(() => {
@@ -29,6 +29,18 @@ const mocks = vi.hoisted(() => ({
   ),
   loadCikMap: vi.fn<() => Promise<Record<string, string>>>(),
   storeDocument: vi.fn(),
+  storeContexts: vi.fn().mockResolvedValue({ attempted: 1, indexed: 1 }),
+  getEnrichmentProvider: vi.fn(() => ({
+    name: "test",
+    configured: true,
+    enrich: vi.fn(async (symbols: string[]) => {
+      const res: Record<string, unknown> = {};
+      for (const s of symbols) {
+        res[s] = { companyName: `${s} Inc.`, sector: "Technology", asOf: "2024-10-01" };
+      }
+      return res;
+    })
+  })),
   hasIngestTextBudget: vi.fn(() => true),
   audit: vi.fn(),
   setInternalSetting: vi.fn(),
@@ -46,6 +58,14 @@ vi.mock("../src/lib/web-sources/sec8k", () => ({
   loadCikMap: mocks.loadCikMap
 }));
 
+vi.mock("../src/lib/data-providers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/data-providers")>();
+  return {
+    ...actual,
+    getEnrichmentProvider: mocks.getEnrichmentProvider
+  };
+});
+
 // We do NOT mock db here — we use the real SQLite via DATABASE_URL
 // so hasIngestedAccession / insertIngestedAccession go through the real schema.
 
@@ -56,6 +76,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   return {
     ...actual,
     storeDocument: mocks.storeDocument,
+    storeContexts: mocks.storeContexts,
     hasIngestTextBudget: mocks.hasIngestTextBudget
   };
 });
@@ -577,5 +598,92 @@ describe("isWithinAsOf point-in-time guard (vector-db)", () => {
         "2024-10-01T00:00:00.000Z"
       )
     ).toBe(false);
+  });
+});
+
+describe("Blended Fundamentals Profile Card Ingest", () => {
+  it("builds a formatted fundamentals card correctly", async () => {
+    const { buildFundamentalsContext } = await import("../src/lib/web-sources/sec-filings");
+    const data = {
+      companyName: "Apple Inc.",
+      sector: "Technology",
+      industry: "Consumer Electronics",
+      marketCap: 3000000000000,
+      price: 190.5,
+      peRatio: 30.2,
+      pbRatio: 45.1,
+      eps: 6.3,
+      fcfYield: 4.2,
+      debtToEquity: 1.5,
+      returnOnEquity: 150.5,
+      returnOnAssets: 25.3,
+      grossProfitMargin: 44.5,
+      freeCashFlowYield: 3.8,
+      revenueGrowth: 5.2,
+      epsGrowth: 8.5,
+      shortPercentOfFloat: 0.8,
+      analystRating: "Buy",
+      analystScore: 78,
+      daysToEarnings: 15,
+      institutionOwnershipPct: 58.2,
+      dividendYield: 0.5,
+      beta: 1.2,
+      asOf: "2024-10-01"
+    };
+
+    const text = buildFundamentalsContext("AAPL", data);
+    expect(text).toContain("Blended Corporate Fundamentals and Profile for AAPL (Apple Inc.).");
+    expect(text).toContain("Sector: Technology. Industry: Consumer Electronics.");
+    expect(text).toContain("Market Cap: $3,000B. Current Share Price: 190.5 USD.");
+    expect(text).toContain("P/E Ratio: 30.2. P/B Ratio: 45.1. EPS (TTM): 6.3 USD.");
+    expect(text).toContain("FCF Yield: 4.2%. Debt-to-Equity: 1.5.");
+    expect(text).toContain("ROE: 150.5%. ROA: 25.3%.");
+    expect(text).toContain("Gross Margin: 44.5%. Free Cash Flow Yield: 3.8%.");
+    expect(text).toContain("Revenue Growth (YoY): 5.2%. EPS Growth (YoY): 8.5%.");
+    expect(text).toContain("Short Interest (% of Float): 0.8%.");
+    expect(text).toContain("Analyst Consensus Rating: Buy (Consensus Score: 78/100).");
+    expect(text).toContain("Days to Next Earnings: 15. Institutional Ownership: 58.2%.");
+    expect(text).toContain("Dividend Yield: 0.5%. Beta: 1.2.");
+    expect(text).toContain("As of: 2024-10-01.");
+  });
+
+  it("handles empty/null/NaN data gracefully in card formatting", async () => {
+    const { buildFundamentalsContext } = await import("../src/lib/web-sources/sec-filings");
+    const text = buildFundamentalsContext("MSFT", {});
+    expect(text).toContain("Blended Corporate Fundamentals and Profile for MSFT.");
+    expect(text).toContain("Sector: N/A. Industry: N/A.");
+    expect(text).toContain("Market Cap: N/A. Current Share Price: N/A.");
+  });
+
+  it("ingestFundamentalsCard calls storeContexts with correct data and dedup prefix", async () => {
+    mocks.getEnrichmentProvider.mockReturnValue({
+      name: "test",
+      configured: true,
+      enrich: vi.fn().mockResolvedValue({
+        AAPL: { companyName: "Apple Inc.", sector: "Technology", asOf: "2024-10-01" }
+      })
+    });
+    mocks.storeContexts.mockResolvedValue({ attempted: 1, indexed: 1 });
+
+    const { ingestFundamentalsCard } = await import("../src/lib/web-sources/sec-filings");
+    const res = await ingestFundamentalsCard("AAPL");
+
+    expect(res).toEqual({ skipped: false });
+    expect(mocks.getEnrichmentProvider).toHaveBeenCalled();
+    expect(mocks.storeContexts).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          text: expect.stringContaining("Apple Inc."),
+          metadata: expect.objectContaining({
+            symbol: "AAPL",
+            source: "blended-fundamentals",
+            section: "Fundamentals",
+            doc_type: "fundamentals"
+          })
+        })
+      ],
+      "local",
+      { dedupKeyPrefix: "fundamentals" }
+    );
   });
 });
