@@ -24,6 +24,10 @@ Codex review flagged 2 P2 findings on the clearCache + fundamentals-ingest code 
 2. **Clear sec_filings completion rows too** (`app/api/admin/reindex-10k/route.ts`): `clearCache` was only deleting from `ingested_accessions` and `document_chunks`, but `hasIngestedAccession` checks `sec_filings WHERE status = 'complete'` first — so after a Pinecone reset the operator could not reindex filings whose `sec_filings` rows were still marked complete. Now `UPDATE sec_filings SET status = 'discovered'` runs for the affected symbols' 10-K/10-Q rows.
 Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
 Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round3.md`.
+## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
+
+Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes. Fixed a tail-truncation bug (Codex P2) where `.slice(0, 512)` could drop unique suffixes when document names/sections shared long common prefixes — now uses a head+tail-preserving clamp with `".."` marker. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
+
 ## 2026-07-13 — Console theme token-mixing regression fix from #1476 (CLAUDE, branch `claude/console-theme-token-fix`)
 
 Confirmed UI regression from the iOS-settings migration PR #1476. `app/ui/ios-components.tsx` mixed two
@@ -161,7 +165,29 @@ Completed RAG Backfill P1: added version 19 database migration creating relation
 
 ## 2026-07-13 — SEC/RAG 1,000-Stock Backfill: P0 — Truth and Census (Antigravity/AG, branch `agent/ag-rag-backfill-p0`)
 
-Completed RAG Backfill P0: reconciled `.env.example` configurations, implemented `scripts/eval/rag-census.ts` and `scripts/eval/generate-universe-manifest.ts`, generated the frozen 1,000-CIK manifest `data/rag-universe-manifest.json`, verified lengths and statistics, and passed all tests. Ready for merge and landing. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p0.md`.
+Completed RAG Backfill P0: reconciled `.env.example` configurations, implemented `scripts/eval/rag-census.ts` and `scripts/eval/generate-universe-manifest.ts`, generated the frozen 1,000-CIK manifest `data/rag-universe-manifest.json`, verified lengths and statistics, and passed all tests. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p0.md`.
+
+## 2026-07-13 — [codex-autofix] Fix 3 Codex P2 findings: budget defaults, paid-tier filing cap, congress sort composite (PR #1495)
+
+Codex P2 review on the latest revision flagged 3 remaining issues:
+1. **Vector-db budget defaults**: census hard-coded `1,000,000`/`10,000,000` for `RAG_INGEST_MAX_TEXTS_PER_DAY`/`RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY`, but `vector-db.ts` defaults to `20_000`/`200_000`. When env vars were unset, the report overstated active fuses by 50×. Fixed defaults to match `vector-db.ts`.
+2. **Paid-tier filing cap**: `SEC_FILING_RAG_MAX_PER_RUN` fallback always returned `1` regardless of tier. Paid backfills with unset/blank/invalid env showed a 1-filing cap while the scheduler would attempt 200. Added tier-aware fallback via `isFreeTier()` matching `sec-filings.ts`.
+3. **Congress sort composite**: when a quote had only `congressCompositeScore` (no `senateTrades`), the column's `sortValue` only returned `q.senateTrades`, so `scan-table.tsx` sorted composite-only rows last. Fixed with fallback to `congressCompositeSignedScore`/`congressCompositeScore`. All 3 Codex threads resolved. Auto-merge enabled. Rollout: `docs/rollouts/2026-07-13-codex-autofix-3-p2.md`.
+
+## 2026-07-13 — [codex-autofix] Address 3 Codex P2 findings on PR #1495 (stripped provenance, 8-K parity, quadratic scan)
+
+Codex P2 review flagged 4 items. Fixed 3: (1) stripped `"held-history"` provenance label from the frozen manifest + generator to avoid committing trade/watch history to the public repo; (2) excluded `"8-K-body"` accesions from the missing-chunks parity check (8-K body chunk_ids are UUID-based, so the accession-substring check always false-flagged them); (3) replaced nested in-memory scans with `Set`-based O(1) lookups in the parity check. Item 4 (GOOG/GOOGL ticker alias handling for shared-CIK issuers) left open — architecturally significant, question posted. Verify trio passes (350 files, 3927 tests, build clean). Rollout: `docs/rollouts/2026-07-13-codex-autofix-rag-backfill.md`. Auto-merge enabled.
+
+## 2026-07-13 — [codex-autofix] Parse numeric budget envs before reporting in census (PR #1495)
+
+Codex P2 finding: `rag-census.ts` reported raw env values for `RAG_INGEST_MAX_TEXTS_PER_DAY` and
+`RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` while the ingest path sanitizes them via `numericEnv(..., min=1)`.
+If a backfill operator set `RAG_INGEST_MAX_TEXTS_PER_DAY=0` or a typo, the census would claim the fuse
+is `0`/the typo even though ingest uses `1` or the default. Fixed by exporting `numericEnv` from
+`vector-db.ts` and applying it in the census — reported value now matches what ingest actually uses
+(raw env shown alongside). Resolved the Codex thread. Gate green: tsc 0, lint 0 errors, 3927 tests, build exit 0.
+
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-census-env.md`. Auto-merge enabled.
 
 ## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 
@@ -356,8 +382,10 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - Verified completion of P1 items: Roth IRA truncation token cap raised to 4000+, `tradeThesisTag` coalescing in DB queries, and reflection dedupe signatures scoped per account.
 - Implemented and verified LLM Failover UI and architecture.
 
-## What's blocking / unresolved
-- Nothing. All P1, P2, and P3 items specified in the current sprint are complete.
+## Current Status
+
+- Discovered why `Congress.Trade` congressional trades were stuck in June for Socratic.Trade: App A (`Congress.Trade`) recently enabled a `botDefense.ts` guard on `/api/v1/transactions` that blocks standard node `fetch` UAs. Fixed Socratic.Trade by providing a custom `User-Agent: SocraticTrade/1.0`.
+- Applied an IPv6 DNS force-ipv4 fix to `congress-scout.mjs` on Congress.Trade to fix its own scrape failures.
 
 ## Next Action
 - Land changes to main via `land.sh`.

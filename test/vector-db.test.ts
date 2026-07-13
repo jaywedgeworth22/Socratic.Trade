@@ -362,4 +362,15 @@ describe("vector-db", () => {
     ]);
     expect(mocks.embed.mock.calls[mocks.embed.mock.calls.length - 1][0].input[0]).toBe("[Published: 2026-06-18] AAPL document 3");
   });
+
+  it("sanitizeVectorId replaces non-ASCII and special characters with underscores and slices to 512 chars", async () => {
+    const { sanitizeVectorId } = await import("../src/lib/vector-db");
+    const input = "v1:CB:0000896159-26-000011:10-Q:1:CB 10-Q (2026-04-28):ITEM\xa03. Quantitative and Qualitative Disclosures about Market Risk:88:v1:v1";
+    const sanitized = sanitizeVectorId(input);
+    expect(sanitized).toBe("v1:CB:0000896159-26-000011:10-Q:1:CB_10-Q__2026-04-28_:ITEM_3._Quantitative_and_Qualitative_Disclosures_about_Market_Risk:88:v1:v1");
+    
+    // Check that long string is truncated to 512
+    const longInput = "a".repeat(600);
+    expect(sanitizeVectorId(longInput).length).toBe(512);
+  });
 });
