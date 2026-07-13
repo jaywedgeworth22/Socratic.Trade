@@ -8,7 +8,8 @@ Pinecone's API restricts Vector IDs to ASCII characters (alphanumeric, plus stan
 
 ## Files Changed
 * [vector-db.ts](file:///Users/jay/apps/trading-ag-rag/src/lib/vector-db.ts):
-  * Added `sanitizeVectorId` helper to replace non-ASCII / special characters with `_` and slice to 512 bytes limit.
+  * Added `sanitizeVectorId` helper to replace non-ASCII / special characters with `_` and limit to 512 bytes.
+  * **Fixed tail-truncation (Codex autofix):** The initial `.slice(0, 512)` dropped unique suffixes (ordinal, parserRev, embedRev) when documentName/section had long common prefixes, causing multiple chunks to share truncated IDs. Replaced with tail-preserving clamp: first 384 chars + `".."` + last 126 chars.
   * Sanitized `vectorId` inside `storeDocument` for both document metadata mapping and database occurrences record insertion.
   * Ensured `contextId` sanitizes custom `vector_id` metadata.
 * [vector-db.test.ts](file:///Users/jay/apps/trading-ag-rag/test/vector-db.test.ts):
