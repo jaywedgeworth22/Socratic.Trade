@@ -41,6 +41,7 @@ export type UsageMonitorEvent = UsageTelemetryEvent;
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
 const SOURCE_APP = "socratic-trade";
+const PROJECT = "socratic-trade";
 const HEALTH_SERVICE = "usage-monitor";
 const MAX_BATCH = 100; // monitor ingest caps each POST at 100 events
 
@@ -148,7 +149,7 @@ if (
  * Cost + token totals are passed in (already computed by the caller) so this module never imports
  * `llm-usage.ts` — avoids a circular import and re-computation.
  */
-export function pushLlmUsage(entry: {
+export interface LlmUsageMonitorEntry {
   /** Stable ID of the local llm_usage row backing this delivery. */
   sourceEventId?: string;
   /** Stable timestamp persisted on the same local ledger row. */
@@ -163,44 +164,61 @@ export function pushLlmUsage(entry: {
   completionTokens?: number;
   totalTokens?: number;
   costUsd?: number;
-}): void {
+}
+
+function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
+  const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
+  return {
+    sourceApp: SOURCE_APP,
+    environment: usageMonitorEnv(),
+    provider: entry.provider,
+    service: "llm",
+    project: PROJECT,
+    label: entry.context,
+    keyRef: entry.keyRef,
+    billingMode: "estimated",
+    metricType: hasCost ? "cost" : "usage",
+    quantity: entry.totalTokens,
+    unit: "token",
+    costUsd: hasCost ? entry.costUsd : undefined,
+    requests: 1,
+    confidence: "estimated",
+    occurredAt: entry.occurredAt ?? new Date().toISOString(),
+    metadata: cleanMetadata({
+      model: entry.model ?? null,
+      context: entry.context ?? null,
+      userId: entry.userId,
+      keySource: entry.keySource,
+      promptTokens: entry.promptTokens ?? null,
+      completionTokens: entry.completionTokens ?? null,
+    }),
+  };
+}
+
+export function pushLlmUsage(entry: LlmUsageMonitorEntry): void {
   if (!usageMonitorEnabled()) return;
   try {
-    const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
-    enqueuePending({
-      sourceApp: SOURCE_APP,
-      environment: usageMonitorEnv(),
-      provider: entry.provider,
-      service: "llm",
-      label: entry.context,
-      keyRef: entry.keyRef,
-      billingMode: "estimated",
-      metricType: hasCost ? "cost" : "usage",
-      quantity: entry.totalTokens,
-      unit: "token",
-      costUsd: hasCost ? entry.costUsd : undefined,
-      requests: 1,
-      confidence: "estimated",
-      occurredAt: entry.occurredAt ?? new Date().toISOString(),
-      metadata: cleanMetadata({
-        model: entry.model ?? null,
-        context: entry.context ?? null,
-        userId: entry.userId,
-        keySource: entry.keySource,
-        promptTokens: entry.promptTokens ?? null,
-        completionTokens: entry.completionTokens ?? null,
-      }),
-    }, "llm", entry.sourceEventId);
+    enqueuePending(llmUsageEvent(entry), "llm", entry.sourceEventId);
   } catch {
     /* telemetry must never break the caller */
   }
+}
+
+/** Build the exact deterministic event used to replay one persisted llm_usage row. */
+export async function createLlmUsageMonitorEvent(
+  entry: LlmUsageMonitorEntry & { sourceEventId: string; occurredAt: string }
+): Promise<UsageMonitorEvent> {
+  return {
+    ...llmUsageEvent(entry),
+    idempotencyKey: await telemetryIdempotencyKey("llm", entry.sourceEventId),
+  };
 }
 
 /**
  * Record one RAG (Voyage / Pinecone) op's usage/cost. Called from `recordRagUsage` after the local
  * ledger write. Cost is passed in (already computed by the caller).
  */
-export function pushRagUsage(entry: {
+export interface RagUsageMonitorEntry {
   /** Stable ID of the local rag_usage row backing this delivery. */
   sourceEventId?: string;
   /** Stable timestamp persisted on the same local ledger row. */
@@ -213,41 +231,60 @@ export function pushRagUsage(entry: {
   tokensOut?: number;
   batchCount?: number;
   costUsd?: number;
-}): void {
+}
+
+function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
+  const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
+  const isPinecone = entry.provider === "pinecone";
+  const quantity = isPinecone
+    ? (entry.tokensIn ?? 0)
+    : (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
+  // Voyage embed/rerank quantities are token estimates. Pinecone query/upsert quantities are
+  // Read/Write Units in tokensIn, with records kept separately in metadata.
+  const unit: UsageUnit = isPinecone ? "credit" : "token";
+  return {
+    sourceApp: SOURCE_APP,
+    environment: usageMonitorEnv(),
+    provider: entry.provider,
+    service: "rag",
+    project: PROJECT,
+    label: entry.operation,
+    keyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
+    billingMode: "estimated",
+    metricType: hasCost ? "cost" : "usage",
+    quantity: quantity > 0 ? quantity : undefined,
+    unit,
+    costUsd: hasCost ? entry.costUsd : undefined,
+    requests: 1,
+    confidence: "estimated",
+    occurredAt: entry.occurredAt ?? new Date().toISOString(),
+    metadata: cleanMetadata({
+      model: entry.model ?? null,
+      operation: entry.operation,
+      userId: entry.userId,
+      batchCount: entry.batchCount ?? null,
+      recordCount: isPinecone ? entry.tokensOut ?? null : null,
+    }),
+  };
+}
+
+export function pushRagUsage(entry: RagUsageMonitorEntry): void {
   if (!usageMonitorEnabled()) return;
   try {
-    const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
-    const isPinecone = entry.provider === "pinecone";
-    const quantity = isPinecone ? (entry.tokensIn ?? 0) : (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
-    // Voyage embed/rerank quantities are token estimates. Pinecone query/upsert quantities are
-    // Read/Write Units in tokensIn, with records kept separately in metadata.
-    const unit: UsageUnit = isPinecone ? "credit" : "token";
-    enqueuePending({
-      sourceApp: SOURCE_APP,
-      environment: usageMonitorEnv(),
-      provider: entry.provider,
-      service: "rag",
-      label: entry.operation,
-      keyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
-      billingMode: "estimated",
-      metricType: hasCost ? "cost" : "usage",
-      quantity: quantity > 0 ? quantity : undefined,
-      unit,
-      costUsd: hasCost ? entry.costUsd : undefined,
-      requests: 1,
-      confidence: "estimated",
-      occurredAt: entry.occurredAt ?? new Date().toISOString(),
-      metadata: cleanMetadata({
-        model: entry.model ?? null,
-        operation: entry.operation,
-        userId: entry.userId,
-        batchCount: entry.batchCount ?? null,
-        recordCount: isPinecone ? entry.tokensOut ?? null : null,
-      }),
-    }, "rag", entry.sourceEventId);
+    enqueuePending(ragUsageEvent(entry), "rag", entry.sourceEventId);
   } catch {
     /* telemetry must never break the caller */
   }
+}
+
+/** Build the exact deterministic event used to replay one persisted rag_usage row. */
+export async function createRagUsageMonitorEvent(
+  entry: RagUsageMonitorEntry & { sourceEventId: string; occurredAt: string }
+): Promise<UsageMonitorEvent> {
+  return {
+    ...ragUsageEvent(entry),
+    idempotencyKey: await telemetryIdempotencyKey("rag", entry.sourceEventId),
+  };
 }
 
 function maskAccountNumber(acc: string): string {
@@ -278,6 +315,7 @@ export function pushBrokerBalance(entry: {
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        project: PROJECT,
         keyRef: `${maskedAcc}:cash`,
         billingMode: "actual",
         metricType: "balance",
@@ -298,6 +336,7 @@ export function pushBrokerBalance(entry: {
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        project: PROJECT,
         keyRef: `${maskedAcc}:buyingPower`,
         billingMode: "actual",
         metricType: "limit",
@@ -318,6 +357,7 @@ export function pushBrokerBalance(entry: {
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        project: PROJECT,
         keyRef: `${maskedAcc}:equity`,
         billingMode: "actual",
         metricType: "balance",
@@ -417,6 +457,7 @@ function drainCallVolume(now: string): PendingUsageEvent[] {
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: entry.service,
+        project: PROJECT,
         billingMode: "actual",
         metricType: "usage",
         unit: "request",
@@ -503,7 +544,8 @@ export async function flushUsageMonitor(): Promise<void> {
 async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
-  if (!baseUrl || !token || events.length === 0) return true;
+  if (events.length === 0) return true;
+  if (!baseUrl || !token) return false;
 
   const fetchImpl = state.fetchImpl ?? fetch;
   const start = Date.now();
@@ -527,6 +569,19 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   }
 }
 
+/**
+ * Send a caller-owned batch and report whether the monitor acknowledged it. Unlike the live
+ * in-memory queue, this does not retain failed events: durable callers keep their ledger cursor
+ * unchanged and reconstruct the exact same idempotent payload on the next pass.
+ */
+export async function sendUsageMonitorBatch(
+  events: UsageMonitorEvent[]
+): Promise<boolean> {
+  if (events.length === 0) return true;
+  if (!usageMonitorEnabled()) return false;
+  return postBatch(events);
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** Drop null/undefined-ish values so the monitor's 50-key/500-char metadata cap isn't wasted. */
@@ -548,9 +603,9 @@ function cleanMetadata(
  */
 async function telemetryIdempotencyKey(
   kind: string,
-  sourceId: string = randomDeliveryId()
+  sourceId: string | undefined = randomDeliveryId()
 ): Promise<string> {
-  const normalizedSourceId = sourceId.trim() || randomDeliveryId();
+  const normalizedSourceId = sourceId?.trim() || randomDeliveryId();
   const encoded = new TextEncoder().encode(`${kind}\0${normalizedSourceId}`);
   const bytes = new Uint8Array(
     await globalThis.crypto.subtle.digest("SHA-256", encoded)

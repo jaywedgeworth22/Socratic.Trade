@@ -524,6 +524,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **Crash-durable Socratic.Trade usage telemetry replay (CODEX, branch `codex/socratic-usage-replay`, worktree `/Users/jay/apps/socratic-usage-telemetry-replay`, owner-directed 2026-07-13) — IN PROGRESS; LOCAL IMPLEMENTATION/GATES GREEN.** New events carry top-level `project: "socratic-trade"` without rewriting raw provider names. Historical/new `llm_usage` and `rag_usage` rows replay through deterministic existing IDs using ordered, overlap-safe, monotonic watermarks in internal settings; startup + one-minute bounded replay require no schema change. Node 24 focused 16/16, scoped ESLint, TypeScript, diff-check, and production webpack build pass. No commit/merge/deploy; receiver backfill must land in API Usage Monitor before this producer lane merges or deploys.
 - **SEC/RAG 1,000-stock implementation program (CODEX, branch `codex/sec-rag-program`, worktree
   `/Users/jay/.codex/worktrees/socratic-sec-rag-program`, 2026-07-13) — IN PROGRESS / OWNER-DIRECTED
   ALL NINE PACKAGES.** Inherits merged AG baselines #1495 (census/universe), #1496

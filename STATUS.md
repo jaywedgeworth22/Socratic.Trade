@@ -1,5 +1,21 @@
 # Current Status
 
+## 2026-07-13 — Crash-durable Usage Monitor ledger replay (CODEX, branch `codex/socratic-usage-replay`)
+
+Implemented and verified in an isolated worktree from current `origin/main@3e105e17`. All new
+usage-monitor events now carry `project:"socratic-trade"` without rewriting raw provider names.
+Persisted `llm_usage` and `rag_usage` rows replay on startup and every minute using their existing
+row IDs/timestamps, ordered per-ledger settings watermarks, acknowledged-batch advancement, one-row
+safe overlap, and monotonic `BEGIN IMMEDIATE` updates. No schema, `db.ts`, or env-var change was
+needed.
+
+Node 24 verification is green: focused 16/16 tests, scoped ESLint, TypeScript, diff-check, and the
+production webpack build. This is a checkpoint only: no merge/deploy is authorized, and the paired
+API Usage Monitor receiver backfill must deploy first so deterministic replays can attach canonical
+provider/project identity to already-accepted rows.
+
+Rollout: `docs/rollouts/2026-07-13-usage-monitor-durable-replay.md`.
+
 ## 2026-07-13 — Account-relative risk limits and Green/Red decision clarity (CODEX, branch `codex/account-relative-risk-clarity`)
 
 Implemented locally from current `origin/main@60703dfe`. Daily opening spend now has one canonical
