@@ -42,11 +42,22 @@ const NOW = Date.parse("2026-06-20T00:00:00.000Z");
 describe("outcome engine — the outcome writer", () => {
   it("matures a PLACED decision: joins the fill + closed lot, writes multi-horizon outcome, receipts, re-indexes", async () => {
     const userId = `oe-placed-${randomUUID()}`;
-    const { insertFillEvent, listAudit, upsertSocraticDecisionCase, getSocraticDecisionCase } = await import("../src/lib/db");
+    const { insertFillEvent, listAudit, upsertConnectedAccount, upsertSocraticDecisionCase, getSocraticDecisionCase } = await import("../src/lib/db");
     const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
+    const connectedAccountId = randomUUID();
+    upsertConnectedAccount({
+      id: connectedAccountId,
+      userId,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "acct",
+      label: "Outcome fixture",
+      isActive: true
+    });
 
     upsertSocraticDecisionCase({
       userId,
+      connectedAccountId,
       runId: "run-1",
       proposalId: "prop-1",
       accountNumber: "acct",
@@ -158,7 +169,11 @@ describe("outcome engine — the outcome writer", () => {
     // Lesson routed through ingestLearned (origin 'autonomous'): lands as a live fact row or,
     // if the fail-closed classifier escalates, as a pending approval row — never silently dropped.
     const { listLearnedContext, listPendingLearnedContext } = await import("../src/lib/db");
-    const learned = listLearnedContext(userId).some((row) => row.subject.startsWith("decision_lesson:AAPL"));
+    const learned = listLearnedContext(userId).some(
+      (row) => row.subject.startsWith("decision_lesson:AAPL") &&
+        row.connectedAccountId === connectedAccountId &&
+        row.learningScope === "account"
+    );
     const pending = listPendingLearnedContext(userId).length > 0;
     expect(learned || pending).toBe(true);
 

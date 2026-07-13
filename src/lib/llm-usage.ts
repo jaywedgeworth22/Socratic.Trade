@@ -65,6 +65,10 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "gpt-5.4": [2.5, 15],
   "gpt-5.4-mini": [0.75, 4.5],
   "gpt-5.4-nano": [0.2, 1.25],
+  "gpt-5.6": [5, 30],
+  "gpt-5.6-sol": [5, 30],
+  "gpt-5.6-terra": [2.5, 15],
+  "gpt-5.6-luna": [1, 6],
   "grok-build-0.1": [1, 2],
   "grok-4.3": [1.25, 2.5],
   "claude-fable-5": [10, 50],
@@ -104,7 +108,11 @@ function priceForModel(model: string | undefined): [number, number] {
   const m = model.toLowerCase();
   if (MODEL_PRICE_PER_M[m]) return MODEL_PRICE_PER_M[m];
   // Prefix match (e.g. dated suffixes like claude-haiku-4-5-20251001).
-  const hit = Object.keys(MODEL_PRICE_PER_M).find((k) => m.startsWith(k));
+  // Longest-prefix wins so family aliases cannot shadow a more specific tier snapshot
+  // (e.g. gpt-5.6 must not price gpt-5.6-terra-* as Sol).
+  const hit = Object.keys(MODEL_PRICE_PER_M)
+    .sort((left, right) => right.length - left.length)
+    .find((k) => m.startsWith(k));
   return hit ? MODEL_PRICE_PER_M[hit] : defaultModelPricePerM();
 }
 

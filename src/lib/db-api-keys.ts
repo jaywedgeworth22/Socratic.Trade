@@ -630,28 +630,6 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   }));
 }
 
-const TEST_ACCOUNT_LABEL = "Test Account";
-
-// Creates a connected "Test" broker account (broker: "test", environment: "paper") backed by
-// TestBrokerGateway (real quotes, deterministic simulated fills). This is TEST INFRASTRUCTURE for
-// the unit-test suite to exercise the normal broker execution path without hitting real Alpaca/
-// Robinhood — call it from test setup. The production app does NOT call this: an account is an
-// account, and with none connected the app correctly reports "no account" rather than defaulting
-// to a fake broker.
-export function ensureTestAccount(userId: string = "local"): void {
-  const accounts = listConnectedAccounts(userId);
-  if (accounts.some((a) => a.broker === "test")) return;
-  upsertConnectedAccount({
-    id: `test-${userId}`,
-    userId,
-    broker: "test",
-    environment: "paper",
-    accountNumber: "TEST",
-    label: TEST_ACCOUNT_LABEL,
-    isActive: false
-  });
-}
-
 export function getActiveConnectedAccount(userId: string = "local"): ConnectedAccount | undefined {
   const row = getDb()
     .prepare("SELECT * FROM connected_accounts WHERE user_id = ? AND is_active = 1 LIMIT 1")

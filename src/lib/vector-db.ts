@@ -1940,6 +1940,12 @@ export interface RetrieveOptions {
   /** The account being run, so the RAG budget guard resolves THAT account's ceiling (not the active
    *  account's) in a multi-account scheduler run. Omit for the active-account default (unchanged). */
   connectedAccountId?: string;
+  /**
+   * Restrict account-derived vector memory to the exact connected account. This is deliberately
+   * opt-in so public filings/fundamentals remain cross-account; episodic decision memory opts in.
+   * Missing connectedAccountId under `exact` fails closed to an impossible sentinel match.
+   */
+  accountScope?: "exact";
   /** Restrict to these document types (metadata.doc_type), e.g. ["10-k","10-q"]. */
   docType?: string[];
   /**
@@ -2036,6 +2042,9 @@ export function buildExtraFilters(options?: RetrieveOptions): Record<string, unk
   }
   if (options?.section) extra.section = { $eq: options.section };
   if (options?.source) extra.source = { $eq: options.source };
+  if (options?.accountScope === "exact") {
+    extra.connected_account_id = { $eq: options.connectedAccountId ?? "__missing_connected_account__" };
+  }
   return extra;
 }
 

@@ -82,6 +82,7 @@ function policyWith(overrides: Partial<TradingPolicy> = {}): TradingPolicy {
     maxOrderNotional: 50_000,
     maxOrderPctOfNav: undefined,
     maxDailyNotional: 50_000,
+    maxDailyPctOfNav: undefined,
     taxSettings: taxSettings(),
     ...overrides
   };

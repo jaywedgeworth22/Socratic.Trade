@@ -15,6 +15,7 @@ import type {
   SystemState,
   TradingPolicy
 } from "@/lib/types";
+import { resolveDailyOpeningCap, type DailyOpeningCapMode } from "@/lib/policy-caps";
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
@@ -74,10 +75,7 @@ export function deriveReality(snapshot: DashboardSnapshot): RealityInfo {
   return { ...realityForMode(mode), account };
 }
 
-/** Reality of a specific account ROW (switcher, connections list), derived from the
- *  account's own `environment` — an account is an account, whatever its broker. The
- *  Test Account is just a paper account here: it reads "PAPER · NOT real money" like
- *  any other, rather than getting its own mock-labeled row. */
+/** Reality of a specific product account row, derived solely from its broker environment. */
 export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, "mode" | "tone" | "word" | "phrase" | "clarification"> {
   return realityForMode(account.environment === "paper" ? "broker/paper" : "broker/live");
 }
@@ -432,14 +430,21 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
 export interface SpendInfo {
   usedNotional: number;
   capNotional?: number;
+  capMode?: DailyOpeningCapMode;
+  capConfiguredValue?: number;
+  capPctOfNav?: number;
   usedOrders: number;
   capOrders: number;
 }
 
 export function deriveSpend(snapshot: DashboardSnapshot): SpendInfo {
+  const cap = resolveDailyOpeningCap(snapshot.policy, snapshot.portfolio?.totalMarketValue);
   return {
     usedNotional: snapshot.dailyStats?.notional ?? 0,
-    capNotional: snapshot.policy.maxDailyNotional,
+    capNotional: cap?.notional,
+    capMode: cap?.mode,
+    capConfiguredValue: cap?.configuredValue,
+    capPctOfNav: cap?.pctOfNav,
     usedOrders: snapshot.dailyStats?.openingOrderCount ?? snapshot.dailyStats?.orderCount ?? 0,
     capOrders: snapshot.policy.maxDailyOrders
   };

@@ -9,7 +9,8 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
-import { llmFetch, isReasoningModel } from "../llm-request";
+import { llmFetch, reasoningCapabilityForModel, withLlmRequestBounds } from "../llm-request";
+import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
@@ -340,7 +341,13 @@ async function defaultTransport(body: any, apiKey: string): Promise<any> {
 
 /** Real Anthropic Messages API tool loop (server-side only). */
 export class AnthropicLLM implements ChatLLM {
-  constructor(private apiKey: string, private model: string, private transport: Transport = defaultTransport, private usage: LlmUsageOpts = {}) {}
+  constructor(
+    private apiKey: string,
+    private model: string,
+    private transport: Transport = defaultTransport,
+    private usage: LlmUsageOpts = {},
+    private reasoningEffort?: LlmReasoningEffort
+  ) {}
 
   get modelName(): string {
     return this.model;
@@ -378,10 +385,15 @@ export class AnthropicLLM implements ChatLLM {
             [{ type: "text", text: system }];
 
     for (let step = 0; step < MAX_STEPS; step++) {
-      const resp = await this.transport(
-        { model: this.model, max_tokens: 1024, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) },
-        this.apiKey
-      );
+      const baseBody = { model: this.model, system: anthropicSystem, messages, ...(tools?.length ? { tools } : {}) };
+      const requestBody = reasoningCapabilityForModel(this.model)
+        ? withLlmRequestBounds(baseBody, "anthropic-messages", {
+            model: this.model,
+            maxOutputTokens: 1024,
+            reasoningEffort: this.reasoningEffort
+          })
+        : { ...baseBody, max_tokens: 1024 };
+      const resp = await this.transport(requestBody, this.apiKey);
       const u = extractLlmUsage(resp);
       if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
         sawUsage = true;
@@ -452,7 +464,8 @@ export class OpenAILLM implements ChatLLM {
     private usage: LlmUsageOpts = {},
     // OpenAI-compatible provider serving this model (xAI/Gemini/Mistral/DeepSeek all share this tool loop),
     // recorded on the usage ledger so cost is attributed to the right provider, not always "openai".
-    private provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek" = "openai"
+    private provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek" = "openai",
+    private reasoningEffort?: LlmReasoningEffort
   ) {}
 
   get modelName(): string {
@@ -490,24 +503,21 @@ export class OpenAILLM implements ChatLLM {
     const toolCalls: ToolCall[] = [];
     let text = "";
 
-    // OpenAI's reasoning models (gpt-5 / o-series) REJECT `max_tokens` ("use max_completion_tokens
-    // instead") and spend part of the budget on hidden reasoning, so they need both the renamed
-    // param and a higher cap to leave room for a visible answer. Other providers (and OpenAI's
-    // classic models) keep `max_tokens`. Gated on provider too so we never send the OpenAI-only param
-    // to an OpenAI-compatible endpoint (xAI/Gemini/Mistral).
-    const tokenCap =
-      this.provider === "openai" && isReasoningModel(this.model)
-        ? { max_completion_tokens: 4096 }
-        : { max_tokens: 1024 };
-
     for (let step = 0; step < MAX_STEPS; step++) {
+      const baseBody = {
+        model: this.model,
+        messages,
+        ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
+      };
+      const requestBody = reasoningCapabilityForModel(this.model)
+        ? withLlmRequestBounds(baseBody, "chat-completions", {
+            model: this.model,
+            maxOutputTokens: 1024,
+            reasoningEffort: this.reasoningEffort
+          })
+        : { ...baseBody, max_tokens: 1024 };
       const resp = await this.transport(
-        {
-          model: this.model,
-          ...tokenCap,
-          messages,
-          ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
-        },
+        requestBody,
         this.apiKey
       );
 
@@ -612,7 +622,7 @@ function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenA
 export function llmForModel(
   model: string,
   userId?: string,
-  opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}
+  opts: { transport?: Transport; openAITransport?: OpenAITransport; reasoningEffort?: LlmReasoningEffort } = {}
 ): ChatLLM {
   const trimmed = model?.trim();
   if (!trimmed || trimmed.toLowerCase() === "mock") return new MockLLM();
@@ -621,10 +631,10 @@ export function llmForModel(
   if (!key) return new MockLLM();
   const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
   if (provider === "anthropic") {
-    return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage);
+    return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
   }
   const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider), provider);
-  return new OpenAILLM(key, trimmed, transport, usage, provider);
+  return new OpenAILLM(key, trimmed, transport, usage, provider, opts.reasoningEffort);
 }
 
 /**
@@ -632,7 +642,7 @@ export function llmForModel(
  * env key as a flag-gated failover (see resolveLlmCredential), and usage is attributed to `userId`.
  * Passing no userId resolves the operator (`local`) key — preserves single-operator behaviour.
  */
-export function getLLM(userId?: string, opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}): ChatLLM {
+export function getLLM(userId?: string, opts: { transport?: Transport; openAITransport?: OpenAITransport; reasoningEffort?: LlmReasoningEffort } = {}): ChatLLM {
   const chatLlm = process.env.CHAT_LLM;
   // No hardcoded chat model default (owner 2026-07-07): the env-default chat path requires an
   // explicit CHAT_LLM_MODEL. Without it, fall through to MockLLM rather than silently pick a model.
@@ -641,14 +651,14 @@ export function getLLM(userId?: string, opts: { transport?: Transport; openAITra
     const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);
     if (key) {
       const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
-      return new AnthropicLLM(key, chatModel, opts.transport ?? defaultTransport, usage);
+      return new AnthropicLLM(key, chatModel, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
     }
   }
   if (chatLlm === "openai" && chatModel) {
     const { key, source, keyRef } = resolveLlmCredential("openai", userId);
     if (key) {
       const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
-      return new OpenAILLM(key, chatModel, opts.openAITransport ?? defaultOpenAITransport, usage);
+      return new OpenAILLM(key, chatModel, opts.openAITransport ?? defaultOpenAITransport, usage, "openai", opts.reasoningEffort);
     }
   }
   return new MockLLM();

@@ -332,6 +332,7 @@ describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
     const result = await retrieveDecisionExperiences({
       userId: "local",
       runId,
+      connectedAccountId: "account-a",
       regime: "Risk-On",
       candidates: [{ symbol: "NVDA", sector: "Technology", dominantFactor: "momentum" }],
       asOf
@@ -343,12 +344,14 @@ describe("decision-time retrieval (retrieveDecisionExperiences)", () => {
       string,
       number,
       string,
-      { docType?: string[]; matchAllSymbols?: boolean; asOf?: string }
+      { docType?: string[]; matchAllSymbols?: boolean; asOf?: string; connectedAccountId?: string; accountScope?: string }
     ];
     expect(query).toContain("market regime Risk-On");
     expect(options.docType).toEqual(["socratic-decision", "coach-note", "lesson"]);
     expect(options.matchAllSymbols).toBe(true);
     expect(options.asOf).toBe(asOf);
+    expect(options.connectedAccountId).toBe("account-a");
+    expect(options.accountScope).toBe("exact");
 
     // Same-run neighbors (entry OR exit side) are excluded — no self-retrieval, no lookahead.
     const injectedIds = result.injected.map((ref) => ref.id);

@@ -1,15 +1,40 @@
 # Active Implementation Plan
 
+> **2026-07-13 - Account-relative daily risk and decision clarity (CODEX).** Replace the fixed $500
+> daily-opening default with one canonical dollar-or-percent mode (20% NAV default), preserve
+> explicit legacy dollar choices, and route the resolved value through policy gates, approval-time
+> rechecks, prompts, capital posture, mobile data, and AI strategy review. Persist app-computed
+> notional/NAV arithmetic; clear impossible Alpaca whole-share bracket fields before fractional
+> submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
+> sections with explicit verdict wording. Implementation, lint, TypeScript, Swift contract checking,
+> 4,021/4,021 tests, and the production build are complete. Ready PR #1561 is open; hosted acceptance,
+> merge/autodeploy, and production verification remain. See
+> `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
+
+> **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
+> complete source-to-decision boundary before adding more feeds: wider bounded enrichment;
+> field-level provenance/freshness/failures and upstream-family arbitration; exact candidate
+> enforcement; immutable Green/Red evidence parity; point-in-time RAG, prompt-data containment and
+> global context budgets; account-scoped relational/vector learning with independently validated
+> paper-to-live transfer; source coverage, shadow ablation and outcome-linked value telemetry; and
+> the same evidence contract for strategy review, learning review, Framework, and Coach. Remove the
+> product Test Account and purge its simulated outcomes, while retaining real broker paper accounts
+> only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
+> effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
+> custom IDs. Implementation, current-main reconciliation, and the full verification gate are
+> complete; PR #1544 merged as `60703dfe` and that exact release is healthy in production. See
+> `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
+> `docs/rollouts/2026-07-13-evidence-architecture-gpt56.md`.
 ## SEC/RAG 1,000-stock implementation train
 
 **Status: In progress; corpus writes gated**
 
 - **[~] Wave A — prerequisite truth:** the versioned/checksummed universe acceptance contract and durable
   job/task state with leases, strict transitions, retries, dead-letter/quarantine, verification receipts, and
-  replay invariants are implemented locally and pass focused/type gates. Corrected universe selection, census
-  truth, and adversarial integration remain in progress. PR #1543's eleven review findings now have explicit
-  regression coverage; its final full Node 24 local gate is green, while refreshed hosted checks and review-thread
-  triage remain pending.
+  replay invariants merged in PR #1543 after local/hosted gates. Corrected universe selection, census truth, and
+  adversarial integration remain in progress. Three post-merge P2 durability findings (failure reasons, checksum
+  immutability, lease config) are locally green on `codex/sec-rag-foundation-postmerge` in ready PR #1559.
+  Production is verified on foundation release `cbe3e532`; hosted follow-up acceptance and corpus gates remain.
 - **[~] Wave B — source correctness:** discover recent plus historical submission shards and filing exhibits;
   archive immutable raw artifacts; enforce one aggregate SEC limiter; parse DOM/iXBRL sections, tables, units,
   contexts, and footnotes; chunk against provider token budgets.

@@ -48,6 +48,56 @@ describe("runMigrations — versioned schema migrations", () => {
     expect(ran).toBe(1); // only v4 ran
     db.close();
   });
+
+  it("purges legacy product Test Accounts through the concrete v25 migration", async () => {
+    const {
+      applyVersionedMigrations,
+      getDb,
+      getSchemaVersion,
+      listConnectedAccounts,
+      upsertConnectedAccount
+    } = await import("../src/lib/db");
+    const db = getDb();
+    expect(getSchemaVersion(db)).toBe(26);
+    upsertConnectedAccount({
+      id: "legacy-product-test",
+      userId: "local",
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Test Account",
+      isActive: true
+    });
+
+    // DELETE catches missing account/user columns as well as proving the account itself is removed.
+    db.pragma("user_version = 24");
+    expect(() => applyVersionedMigrations(db)).not.toThrow();
+    expect(getSchemaVersion(db)).toBe(26);
+    expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
+  });
+
+  it("migrates only the legacy $500 daily default to 20% of NAV", async () => {
+    const { applyVersionedMigrations, getDb, getSchemaVersion } = await import("../src/lib/db");
+    const db = getDb();
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT OR REPLACE INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, 'policy', ?, ?)"
+    ).run("cap-default", "cap-default-user", JSON.stringify({ maxDailyNotional: 500 }), now);
+    db.prepare(
+      "INSERT OR REPLACE INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, 'policy', ?, ?)"
+    ).run("cap-explicit", "cap-explicit-user", JSON.stringify({ maxDailyNotional: 1_000 }), now);
+
+    db.pragma("user_version = 25");
+    applyVersionedMigrations(db);
+    expect(getSchemaVersion(db)).toBe(26);
+
+    const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
+    const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);
+    expect(migrated).toMatchObject({ maxDailyPctOfNav: 20 });
+    expect(migrated.maxDailyNotional).toBeUndefined();
+    expect(preserved).toMatchObject({ maxDailyNotional: 1_000 });
+    expect(preserved.maxDailyPctOfNav).toBeUndefined();
+  });
 });
 
 // ── ENCRYPTION_KEY fail-fast ─────────────────────────────────────────────────

@@ -6,7 +6,7 @@
  * BOTH not retrieved this run AND has zero ever-ingested producer rows.
  *
  * Ground truth: strategy.ts's filings-RAG pass (retrieveContextDetailed(..., { docType: ["10-k",
- * "10-q", "8-k", "earnings-transcript"] })) is the only doc-type-requesting call site.
+ * "10-q", "8-k", "fundamentals"] })) requests only document types with real producers.
  * ingested_accessions is a COMPLETE producer ledger for 10-K/10-Q (src/lib/web-sources/sec-filings.ts
  * writes an accession row for every 10-K/10-Q ingest) but INCOMPLETE for 8-K (the default-ON
  * summary writer in sec8k.ts writes retrievable doc_type:"8-k" chunks but no accession row; only
@@ -233,7 +233,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
 
     const payload = coverageAudits[0]!.payload as { emptyDocTypes?: string[]; requestedDocTypes?: string[] };
     expect(payload.emptyDocTypes).toEqual(["10-k"]);
-    expect(payload.requestedDocTypes).toEqual(["10-k", "10-q", "8-k", "earnings-transcript"]);
+    expect(payload.requestedDocTypes).toEqual(["10-k", "10-q", "8-k", "fundamentals"]);
 
     const cases = listSocraticDecisionCases("local", { runId: result.runId });
     expect(cases.length).toBeGreaterThanOrEqual(1);
