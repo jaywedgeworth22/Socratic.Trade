@@ -17,8 +17,9 @@ The build first caught and then verified the fix for a `node:crypto` Edge import
 being hardened independently: the corrected universe/census is under adversarial review, while first discovery/
 pacing and parser/chunker drafts were rejected at review and are being corrected. No live provider, object-store,
 vector-corpus, or production backfill write will run before fixture tests and the real-corpus gates pass. Open AG
-PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled. PR #1543 is code-
-complete and awaits hosted checks/review; it has not merged or deployed.
+PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled. PR #1543 received
+a Codex review (3 items: P1 freeze expected task count, P2 reject impossible dates, P2 validate quarantined
+entries); all three addressed in commit 523828bc — verify trio remains clean (352 suites / 3,950 tests).
 
 Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
 but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.
