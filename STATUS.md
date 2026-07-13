@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-13 — Red Team Fallover and UI updates (Antigravity, branch `agent/antigravity`)
+
+Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. Verified with tsc, lint, tests, and build. Next step: land.
+
 ## 2026-07-13 — GPT-5.6 Benchmark Run (Antigravity, branch `agent/ag-gpt-5-6-benchmark`)
 
 Ran the benchmark suite against the new `gpt-5.6-terra`, `-sol`, and `-luna` models. Confirmed 100% valid schemas for Green and Red roles on `terra` and `luna`. Recorded latency and token usage. Output saved to `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`. All verification checks passed. State: **Completed (merged to main)**.
