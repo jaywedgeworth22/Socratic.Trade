@@ -6,10 +6,10 @@
 
 - **[~] Wave A — prerequisite truth:** the versioned/checksummed universe acceptance contract and durable
   job/task state with leases, strict transitions, retries, dead-letter/quarantine, verification receipts, and
-  replay invariants are implemented locally and pass focused/type gates. Corrected universe selection, census
-  truth, and adversarial integration remain in progress. PR #1543's eleven review findings now have explicit
-  regression coverage; its final full Node 24 local gate is green, while refreshed hosted checks and review-thread
-  triage remain pending.
+  replay invariants merged in PR #1543 after local/hosted gates. Corrected universe selection, census truth, and
+  adversarial integration remain in progress. Three post-merge P2 durability findings (failure reasons, checksum
+  immutability, lease config) are locally green on `codex/sec-rag-foundation-postmerge` and are being opened as a
+  ready follow-up PR. Production is verified on foundation release `cbe3e532`; corpus writes remain gated.
 - **[~] Wave B — source correctness:** discover recent plus historical submission shards and filing exhibits;
   archive immutable raw artifacts; enforce one aggregate SEC limiter; parse DOM/iXBRL sections, tables, units,
   contexts, and footnotes; chunk against provider token budgets.
