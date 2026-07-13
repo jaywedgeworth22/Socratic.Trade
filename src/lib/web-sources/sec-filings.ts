@@ -662,7 +662,6 @@ export async function ingestFundamentalsCard(
     if (!hasRealField) {
       return { skipped: true, error: `Empty fundamentals data (all metrics N/A) for symbol: ${symbol}` };
     }
-
     const text = buildFundamentalsContext(symbol, data);
     const publishedAt = data.asOf || new Date().toISOString().slice(0, 10);
     const acceptanceDatetime = new Date().toISOString();
