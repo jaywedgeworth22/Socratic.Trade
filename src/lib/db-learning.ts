@@ -1042,6 +1042,21 @@ export function getChunkCoverage(): ChunkCoverageRow[] {
   return rows.map((r) => ({ symbol: r.symbol, chunkCount: r.chunk_count, latestAt: r.latest_at }));
 }
 
+export interface ChunkSourceBreakdownRow {
+  symbol: string;
+  source: string;
+  chunkCount: number;
+}
+
+export function getChunkSourceBreakdown(): ChunkSourceBreakdownRow[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT symbol, source, COUNT(*) as chunk_count FROM document_chunks GROUP BY symbol, source"
+    )
+    .all() as Array<{ symbol: string; source: string; chunk_count: number }>;
+  return rows.map((r) => ({ symbol: r.symbol, source: r.source, chunkCount: r.chunk_count }));
+}
+
 // ── learned_context_pending CRUD (risk-tier confirmation queue; userId-scoped) ──
 // Every helper is ownership-scoped (WHERE user_id = ?). A queued row is a risk-tier candidate that is
 // NOT in the brain — it only ever influences anything via the explicit human approve path, which

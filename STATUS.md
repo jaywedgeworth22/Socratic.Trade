@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-13 — Unified Operator Admin Console & RAG Chunk Details (Antigravity/AG, branch `agent/ag-unified-admin-console`)
+
+Comprehensively unified the path-based admin pages into a single cohesive console with a shared sidebar layout (`layout.tsx`), redesigned `/admin` page as a live metrics and diagnostics dashboard, and enhanced the RAG coverage page to group and display the counts/sources of all document chunk types (blended fundamentals, disclosures, coach memories) instead of leaving them under "0 filings". Verified with passing lint, compiler, build, and 3,931 vitest tests. Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+
 ## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
 
 Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes, ensuring 100% compliance with Pinecone's ID constraints. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.

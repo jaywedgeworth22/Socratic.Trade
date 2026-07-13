@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getChunkCoverage, getInternalSetting, listIngestedAccessions } from "@/lib/db";
+import { getChunkCoverage, getChunkSourceBreakdown, getInternalSetting, listIngestedAccessions } from "@/lib/db";
 import { getRagUsageSummary } from "@/lib/rag-metering";
 import { getAllVectorStoreStats, getVectorStoreStats, type VectorIndexStats, type VectorStoreStats } from "@/lib/vector-db";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -47,8 +47,9 @@ export async function GET(request: Request) {
   const sinceDays = Number(url.searchParams.get("sinceDays")) || 30;
   const sinceIso = new Date(Date.now() - sinceDays * 24 * 60 * 60_000).toISOString();
 
-  const [chunkCoverage, ingested, vectorStats, allVectorIndexes, ragUsage] = await Promise.all([
+  const [chunkCoverage, chunkBreakdown, ingested, vectorStats, allVectorIndexes, ragUsage] = await Promise.all([
     Promise.resolve(getChunkCoverage()),
+    Promise.resolve(getChunkSourceBreakdown()),
     Promise.resolve(listIngestedAccessions(200)),
     getVectorStoreStats(),
     getAllVectorStoreStats(),
@@ -69,12 +70,24 @@ export async function GET(request: Request) {
     filingCounts[r.ticker] = (filingCounts[r.ticker] ?? 0) + 1;
   }
 
+  // Compile breakdowns
+  const globalBreakdown: Record<string, number> = {};
+  const tickerBreakdown: Record<string, Record<string, number>> = {};
+  for (const row of chunkBreakdown) {
+    globalBreakdown[row.source] = (globalBreakdown[row.source] ?? 0) + row.chunkCount;
+    if (!tickerBreakdown[row.symbol]) {
+      tickerBreakdown[row.symbol] = {};
+    }
+    tickerBreakdown[row.symbol][row.source] = row.chunkCount;
+  }
+
   const perTicker = [...new Set([...ingestedSymbols, ...chunkSymbols])]
     .map((symbol) => ({
       symbol,
       filings: filingCounts[symbol] ?? 0,
       chunks: chunkCoverage.find((c) => c.symbol === symbol)?.chunkCount ?? 0,
-      latestChunkAt: chunkCoverage.find((c) => c.symbol === symbol)?.latestAt ?? null
+      latestChunkAt: chunkCoverage.find((c) => c.symbol === symbol)?.latestAt ?? null,
+      breakdown: tickerBreakdown[symbol] ?? {}
     }))
     .sort((a, b) => b.chunks - a.chunks);
 
@@ -84,6 +97,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     sinceDays,
     perTicker,
+    globalBreakdown,
     totalTickers: perTicker.length,
     totalChunks: perTicker.reduce((s, t) => s + t.chunks, 0),
     totalFilings: ingested.length,
