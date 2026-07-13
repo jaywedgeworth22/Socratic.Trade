@@ -20,7 +20,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, RotateCcw, Send, Sparkles, Trash2 } from "lucide-react";
 import type { ChatDraft } from "@/lib/chat/types";
+import type { LlmReasoningEffort } from "@/lib/types";
 import { humanizeLlmError } from "@/lib/llm-errors";
+import { ALL_LLM_REASONING_EFFORTS, normalizeReasoningEffortForModel, reasoningCapabilityForModel } from "@/lib/llm-request";
+import { reasoningAdviceForModel, recommendedReasoningEffortForModel } from "@/lib/model-reasoning-recommendations";
 import { deriveReality } from "../lib/derive";
 import { cx, fmtExact } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -32,8 +35,8 @@ import { AssistantMarkdown } from "./markdown";
 import {
   CATALOG_MODEL_IDS,
   CHAT_MODEL_STORAGE_KEY,
+  CHAT_REASONING_STORAGE_KEY,
   CUSTOM_MODEL_VALUE,
-  DEFAULT_CHAT_MODEL,
   MODEL_GROUPS,
   providerDisplayName,
   providerForModel
@@ -112,7 +115,8 @@ export function AssistantChat() {
   const [historyState, setHistoryState] = useState<"loading" | "ready" | "failed">("loading");
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [model, setModel] = useState(DEFAULT_CHAT_MODEL);
+  const [model, setModel] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState<LlmReasoningEffort>("medium");
   /** Per-provider key availability ({} until loaded — treated as available so
    *  the gate never flashes before the check resolves). */
   const [providerStatus, setProviderStatus] = useState<Partial<Record<string, boolean>>>({});
@@ -136,11 +140,25 @@ export function AssistantChat() {
   // ── Sticky model choice ────────────────────────────────────────────────────
   useEffect(() => {
     const saved = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY);
+    const selected = saved || "";
     if (saved) setModel(saved);
+    const savedEffort = window.localStorage.getItem(CHAT_REASONING_STORAGE_KEY) as LlmReasoningEffort | null;
+    setReasoningEffort(
+      savedEffort && ALL_LLM_REASONING_EFFORTS.includes(savedEffort)
+        ? savedEffort
+        : recommendedReasoningEffortForModel(selected, "chat")
+    );
   }, []);
   const pickModel = (m: string) => {
     setModel(m);
     window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, m);
+    const recommended = recommendedReasoningEffortForModel(m, "chat");
+    setReasoningEffort(recommended);
+    window.localStorage.setItem(CHAT_REASONING_STORAGE_KEY, recommended);
+  };
+  const pickReasoningEffort = (effort: LlmReasoningEffort) => {
+    setReasoningEffort(effort);
+    window.localStorage.setItem(CHAT_REASONING_STORAGE_KEY, effort);
   };
 
   // ── Server-persisted transcript ────────────────────────────────────────────
@@ -215,7 +233,8 @@ export function AssistantChat() {
   }, [messages, sending, historyState]);
 
   // ── Gate: does the SELECTED model's provider have a usable key? ────────────
-  const provider = providerForModel(model);
+  const modelUnselected = !model;
+  const provider = modelUnselected ? "mock" : providerForModel(model);
   const statusLoaded = Object.keys(providerStatus).length > 0;
   const keyMissing = provider !== "mock" && statusLoaded && providerStatus[provider] === false;
   const customPending = model === CUSTOM_MODEL_VALUE;
@@ -224,6 +243,10 @@ export function AssistantChat() {
     async (override?: string, retryId?: string) => {
       const text = (override ?? input).trim();
       if (!text || sending || clearing || keyMissing) return;
+      if (modelUnselected) {
+        toast.push("warn", "Choose a model", "Coach has no hidden model default. Pick the model you want to answer.");
+        return;
+      }
       if (customPending) {
         toast.push("warn", "Enter a model id", "Type a model id next to the picker, or choose a listed model.");
         return;
@@ -251,7 +274,14 @@ export function AssistantChat() {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ message: text, model, clientTurnId })
+          body: JSON.stringify({
+            message: text,
+            model,
+            clientTurnId,
+            ...(reasoningCapabilityForModel(model)
+              ? { reasoningEffort: normalizeReasoningEffortForModel(model, reasoningEffort) }
+              : {})
+          })
         });
         if (!res.ok) throw new Error(await apiErrorMessage(res, "Chat request failed"));
         const reply = (await res.json()) as LiveReply;
@@ -279,7 +309,7 @@ export function AssistantChat() {
         setSending(false);
       }
     },
-    [input, sending, clearing, keyMissing, customPending, model, toast]
+    [input, sending, clearing, keyMissing, customPending, modelUnselected, model, reasoningEffort, toast]
   );
 
   const clearConversation = async () => {
@@ -319,7 +349,7 @@ export function AssistantChat() {
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   };
 
-  const canSend = !sending && !clearing && !keyMissing && !customPending && input.trim().length > 0;
+  const canSend = !sending && !clearing && !keyMissing && !customPending && !modelUnselected && input.trim().length > 0;
 
   return (
     <section className="con-card flex h-[calc(100dvh-14rem)] min-h-[24rem] flex-col overflow-hidden lg:h-[calc(100dvh-12rem)]">
@@ -335,11 +365,28 @@ export function AssistantChat() {
           </span>
         </Tooltip>
         <div className="ml-auto flex items-center gap-2">
-          {customPending || !CATALOG_MODEL_IDS.has(model) ? (
+          {reasoningCapabilityForModel(model) && (
+            <div className="w-24 sm:w-28">
+              <Select
+                value={normalizeReasoningEffortForModel(model, reasoningEffort) ?? "medium"}
+                onChange={(event) => pickReasoningEffort(event.target.value as LlmReasoningEffort)}
+                style={{ padding: "3px 8px", fontSize: "var(--con-fs-xs)" }}
+                title={reasoningAdviceForModel(model) ?? "Provider-side reasoning effort for this Coach response."}
+                aria-label="Chat reasoning effort"
+              >
+                {reasoningCapabilityForModel(model)!.options.map((option) => (
+                  <option key={option.value} value={option.value} title={option.hint}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          {customPending || (model.length > 0 && !CATALOG_MODEL_IDS.has(model)) ? (
             <div className="w-36">
               <TextInput
                 value={customPending ? "" : model}
-                placeholder="model id, e.g. gpt-5.5"
+                placeholder="model id, e.g. gpt-5.6-terra"
                 className="con-mono"
                 style={{ padding: "3px 8px", fontSize: "var(--con-fs-xs)" }}
                 title="Type any model id your provider serves. It is routed by name: claude-* to Anthropic, grok-* to xAI, gemini-* to Gemini, mistral-* to Mistral, deepseek-* to DeepSeek, anything else to OpenAI."
@@ -349,7 +396,7 @@ export function AssistantChat() {
           ) : null}
           <div className="w-40 sm:w-56">
             <Select
-              value={CATALOG_MODEL_IDS.has(model) ? model : CUSTOM_MODEL_VALUE}
+              value={modelUnselected ? "" : CATALOG_MODEL_IDS.has(model) ? model : CUSTOM_MODEL_VALUE}
               onChange={(e) => {
                 pickModel(e.target.value);
                 inputRef.current?.focus();
@@ -358,6 +405,7 @@ export function AssistantChat() {
               title="Which AI model answers. $ signs are relative cost within the provider. 'no key' means that provider has no key in Settings; Mock is a deterministic offline model that needs no key."
               aria-label="Chat model"
             >
+              <option value="" disabled>Choose a model…</option>
               {MODEL_GROUPS.map((g) => {
                 const noKey = g.provider !== "offline" && statusLoaded && providerStatus[g.provider] === false;
                 return (
@@ -540,7 +588,7 @@ export function AssistantChat() {
                 void send();
               }
             }}
-            placeholder={keyMissing ? "Pick a model with a key to chat…" : "Ask a question, or describe an order to draft…"}
+            placeholder={modelUnselected ? "Choose a model above to chat…" : keyMissing ? "Pick a model with a key to chat…" : "Ask a question, or describe an order to draft…"}
             disabled={keyMissing}
             className="con-textarea flex-1 leading-normal"
             style={{ resize: "none", minHeight: "2.25rem", maxHeight: "9rem" }}
@@ -551,6 +599,8 @@ export function AssistantChat() {
             content={
               keyMissing
                 ? "Connect a key for this model's provider, or pick another model."
+                : modelUnselected
+                  ? "Choose a model first; Coach has no hidden default."
                 : customPending
                   ? "Type a model id next to the picker first."
                   : "Send the message (Enter)."

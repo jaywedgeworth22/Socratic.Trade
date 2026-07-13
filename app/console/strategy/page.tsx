@@ -11,7 +11,7 @@ import Link from "next/link";
 import { ArrowRight, Lock, Unlock } from "lucide-react";
 import type { LlmReasoningEffort, ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
 import { isDisallowedInteractiveStrategyReasoningConfig, reasoningCapabilityForModel } from "@/lib/llm-request";
-import { reasoningAdviceForModel } from "@/lib/model-reasoning-recommendations";
+import { reasoningAdviceForModel, recommendedReasoningEffortForModel } from "@/lib/model-reasoning-recommendations";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
   normalizeReasoningValueForControl,
@@ -145,7 +145,7 @@ function ModelSelect({
   /** Render the blank option as an unselectable placeholder (native "choose one" pattern) — for a
    *  seat where blank is NOT a valid choice to actively pick (the Proposer), only a display state
    *  for "unconfigured." Without this, a `<select value="">` with no matching `<option value="">`
-   *  falls back to visually showing its FIRST rendered option ("Rotate all models (testing)"),
+   *  falls back to visually showing its FIRST rendered option (the comparative rotation),
    *  making an unconfigured seat look like rotation is on even though nothing was ever chosen. */
   blankDisabled?: boolean;
   role: "proposer" | "red-team";
@@ -177,7 +177,7 @@ function ModelSelect({
         )}
         <option
           value={ROTATE_ALL_MODELS_ID}
-          title="Round-robins every curated model with a resolvable key — a different model each run, so comparative history accrues across models. Intended for paper/test accounts."
+          title="Round-robins every curated model with a resolvable key so attributed comparative history accrues. Use only where model-to-model variation is acceptable."
         >
           {ROTATE_ALL_MODELS_LABEL}
         </option>
@@ -705,7 +705,7 @@ function AccountScopedStrategyPage() {
           <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
             Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
             audited). Every proposal records the concrete model that wrote it, so per-model history accrues
-            automatically. Intended for paper/test accounts.
+            automatically. Use only where model-to-model variation is acceptable for that account.
           </div>
         )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
@@ -1094,8 +1094,13 @@ function AiReviewPanel({
       ? (policy.redTeamReasoningEffort ?? policy.llmReasoningEffort)
       : policy.llmReasoningEffort;
   const reviewerReasoningValue = reviewerReasoningControl
-    ? normalizeReasoningValueForControl([reviewerModel], reviewerReasoningControl, reviewReasoning ?? inheritedEffort)
+    ? normalizeReasoningValueForControl(
+        [reviewerModel],
+        reviewerReasoningControl,
+        reviewReasoning ?? (model ? recommendedReasoningEffortForModel(reviewerModel, "review") : inheritedEffort)
+      )
     : undefined;
+  const reviewerAdvice = reasoningAdviceForModel(reviewerModel);
   const changes = useMemo(() => (review ? reviewChanges(review.proposedPatch, policy) : []), [review, policy]);
   const promptChanged = Boolean(review?.proposedPatch.prompt && review.proposedPatch.prompt !== strategyPrompt);
   const hasAnyChange = changes.length > 0 || promptChanged;
@@ -1215,7 +1220,15 @@ function AiReviewPanel({
             >
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <Select id="ai-review-model" value={model} onChange={(e) => { setModel(e.target.value); setReviewReasoning(undefined); }}>
+                  <Select
+                    id="ai-review-model"
+                    value={model}
+                    onChange={(e) => {
+                      const nextModel = e.target.value;
+                      setModel(nextModel);
+                      setReviewReasoning(nextModel ? recommendedReasoningEffortForModel(nextModel, "review") : undefined);
+                    }}
+                  >
                     <option value="">
                       {rotationBlocksInheritance ? "No model — local rules (no LLM)" : `Same As ${inheritedReviewerLabel}`}
                     </option>
@@ -1234,19 +1247,25 @@ function AiReviewPanel({
               </div>
             </Field>
             {reviewerReasoningControl && reviewerReasoningValue && (
-              <Field label={reviewerReasoningControl.label} hint={reviewerReasoningControl.hint} htmlFor="ai-review-effort">
-                <Select
-                  id="ai-review-effort"
-                  value={reviewerReasoningValue}
-                  onChange={(e) => setReviewReasoning(e.target.value as LlmReasoningEffort)}
-                >
-                  {reviewerReasoningControl.options.map((option) => (
-                    <option key={option.value} value={option.value} title={option.hint}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
+              <div>
+                <Field label={reviewerReasoningControl.label} hint={reviewerReasoningControl.hint} htmlFor="ai-review-effort">
+                  <Select
+                    id="ai-review-effort"
+                    value={reviewerReasoningValue}
+                    onChange={(e) => setReviewReasoning(e.target.value as LlmReasoningEffort)}
+                  >
+                    {reviewerReasoningControl.options.map((option) => (
+                      <option key={option.value} value={option.value} title={option.hint}>
+                        {option.label}
+                        {option.value === recommendedReasoningEffortForModel(reviewerModel, "review") ? " — recommended" : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                {reviewerAdvice && (
+                  <p className="mt-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{reviewerAdvice}</p>
+                )}
+              </div>
             )}
           </div>
           <div className="flex justify-end">

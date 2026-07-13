@@ -55,6 +55,9 @@ describe("llm-request — model resolution", () => {
   });
 
   it("maps provider-specific reasoning controls by model family", () => {
+    expect(reasoningCapabilityForModel("gpt-5.6-sol")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    expect(reasoningCapabilityForModel("gpt-5.6-terra")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    expect(reasoningCapabilityForModel("gpt-5.6-luna")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("gpt-5.4-mini")?.options.map((o) => o.value)).toEqual(["low", "medium", "high"]);
     expect(reasoningCapabilityForModel("claude-fable-5")?.options.map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("grok-4.3")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high"]);
@@ -71,6 +74,8 @@ describe("llm-request — model resolution", () => {
   });
 
   it("normalizes unsupported effort values to the nearest provider-supported setting", () => {
+    expect(normalizeReasoningEffortForModel("gpt-5.6-sol", "max")).toBe("max");
+    expect(normalizeReasoningEffortForModel("gpt-5.6-luna", "minimal")).toBe("none");
     expect(normalizeReasoningEffortForModel("gpt-5.4-mini", "xhigh")).toBe("high");
     expect(normalizeReasoningEffortForModel("gemini-3.1-pro-preview", "none")).toBe("minimal");
     expect(normalizeReasoningEffortForModel("claude-opus-4-8", undefined)).toBe("medium");

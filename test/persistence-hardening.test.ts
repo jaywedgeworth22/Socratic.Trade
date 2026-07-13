@@ -48,6 +48,34 @@ describe("runMigrations — versioned schema migrations", () => {
     expect(ran).toBe(1); // only v4 ran
     db.close();
   });
+
+  it("purges legacy product Test Accounts through the concrete v24 migration", async () => {
+    const {
+      applyVersionedMigrations,
+      getDb,
+      getSchemaVersion,
+      listConnectedAccounts,
+      upsertConnectedAccount
+    } = await import("../src/lib/db");
+    const db = getDb();
+    expect(getSchemaVersion(db)).toBe(24);
+    upsertConnectedAccount({
+      id: "legacy-product-test",
+      userId: "local",
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Test Account",
+      isActive: true
+    });
+
+    // Re-run only the concrete removal migration over a production-shaped schema. Executing every
+    // DELETE catches missing account/user columns as well as proving the account itself is removed.
+    db.pragma("user_version = 23");
+    expect(() => applyVersionedMigrations(db)).not.toThrow();
+    expect(getSchemaVersion(db)).toBe(24);
+    expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
+  });
 });
 
 // ── ENCRYPTION_KEY fail-fast ─────────────────────────────────────────────────

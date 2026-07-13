@@ -27,10 +27,44 @@ import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
 import { extractLearnedCandidatesLLM } from "../memory/salience-llm";
 import { ingestLearned, retrieveLearnedContext } from "../learned-context/store";
+import { applyEvidenceBudget } from "../evidence-budget";
+import { createEvidencePack, createEvidenceRef, type EvidenceSourceFamily } from "../evidence-pack";
+import { containPromptText, type PromptContainmentResult, type PromptTextSource } from "../prompt-safety";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
 import type { ChatDraft, ChatLLM, ChatQuote, ChatReply, ToolSchema } from "./types";
+
+function toolEvidenceFamily(name: string): EvidenceSourceFamily {
+  if (name === "kb_search") return "filings";
+  if (name === "get_quote" || name === "get_market_signals") return "market";
+  if (name === "get_fundamentals") return "fundamentals";
+  if (name === "get_positions" || name === "get_portfolio" || name === "get_portfolio_pnl") return "portfolio";
+  if (name === "get_performance_summary") return "learning";
+  return "other";
+}
+
+function containPromptData(
+  value: unknown,
+  source: PromptTextSource,
+  path: string,
+  receipts: Array<{ path: string; result: PromptContainmentResult }>,
+  depth = 0
+): unknown {
+  if (typeof value === "string") {
+    const result = containPromptText({ source, text: value });
+    if (result.status !== "clean" && result.status !== "trusted") receipts.push({ path, result });
+    return result.sanitizedText;
+  }
+  if (depth >= 8 || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((item, index) => containPromptData(item, source, `${path}[${index}]`, receipts, depth + 1));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      containPromptData(item, source, `${path}.${key}`, receipts, depth + 1)
+    ])
+  );
+}
 
 export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
   const tools = buildTools();
@@ -42,10 +76,13 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
 
   return async function handleTurn(args: { userId: string; message: string; clientTurnId?: string }): Promise<ChatReply> {
     const { userId, message, clientTurnId } = args;
+    const policy = getPolicy(userId);
+    const connectedAccountId = policy.connectedAccountId;
+    const turnKey = `chat:${userId}:${clientTurnId ?? globalThis.crypto.randomUUID()}`;
     // Per-user model: an injected llm (already user-scoped by the route) or one resolved for THIS
     // user — so the per-user key, operator failover, and usage attribution always apply.
     const model = llm ?? getLLM(userId);
-    audit("chat.turn", { userId, message_len: message.length, prompt_version: PROMPT_VERSION }, userId);
+    audit("chat.turn", { userId, message_len: message.length, prompt_version: PROMPT_VERSION, turnKey }, userId, connectedAccountId);
     // Prior turns (redacted) for multi-turn context — fetched BEFORE appending the current message.
     const history = listTurns(userId, 10).map((t) => ({ role: t.role, text: t.text }));
     // Idempotent user-turn recording: a Retry reuses the same clientTurnId, so when that id is
@@ -73,25 +110,154 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     // Read path: inject already-stored facts for symbols mentioned in this message so the model
     // sees prior advisory context it (or the strategy loop) has learned.
     const learnedSymbols = learnedCandidates.map((c) => c.symbol).filter((s): s is string => s != null);
-    const learnedFacts = learnedSymbols.length > 0 ? retrieveLearnedContext(userId, learnedSymbols) : [];
-    const learnedContextSummary = learnedFacts.join("\n");
+    const learnedFacts = learnedSymbols.length > 0
+      ? retrieveLearnedContext(userId, learnedSymbols, undefined, {
+          connectedAccountId
+        })
+      : [];
     const memories = retrieve(userId);
-    const memorySummary = memories.map((m) => `- ${m.hard ? "[HARD] " : ""}${m.subject}: ${m.value}`).join("\n");
+    const contextContainment: Array<{ path: string; result: PromptContainmentResult }> = [];
+    const memorySummary = memories
+      .map((m, index) =>
+        containPromptData(
+          `- ${m.hard ? "[HARD] " : ""}${m.subject}: ${m.value}`,
+          "learned",
+          `memory[${index}]`,
+          contextContainment
+        )
+      )
+      .join("\n");
+    const learnedContextSummary = learnedFacts
+      .map((fact, index) => containPromptData(fact, "learned", `learned[${index}]`, contextContainment))
+      .join("\n");
+    const contextRefs = [
+      createEvidenceRef({
+        kind: "chat-memory",
+        subject: connectedAccountId ?? userId,
+        source: {
+          family: "learning",
+          name: "salience-memory",
+          status: memorySummary ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: new Date().toISOString(),
+          provenance: { provider: "chat-memory", locator: connectedAccountId ?? null, upstreamHash: null, lineage: ["memory-store"] }
+        },
+        content: memorySummary
+      }),
+      createEvidenceRef({
+        kind: "chat-learned-context",
+        subject: connectedAccountId ?? userId,
+        source: {
+          family: "learning",
+          name: "relational-learning",
+          status: learnedContextSummary ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: new Date().toISOString(),
+          provenance: { provider: "learned-context", locator: connectedAccountId ?? null, upstreamHash: null, lineage: ["account-scoped-learning"] }
+        },
+        content: learnedContextSummary
+      })
+    ];
+    const contextBudget = applyEvidenceBudget(
+      [
+        { ref: contextRefs[0]!, text: memorySummary, priority: 100 },
+        { ref: contextRefs[1]!, text: learnedContextSummary, priority: 90 }
+      ],
+      { maxCharacters: 12_000, maxTokenEstimate: 3_000, familyQuotas: { learning: { maxCharacters: 12_000, maxTokenEstimate: 3_000 } } }
+    );
+    const boundedById = new Map(contextBudget.included.map((item) => [item.evidenceId, item.text]));
+    const boundedMemory = boundedById.get(contextRefs[0]!.id) ?? "";
+    const boundedLearned = boundedById.get(contextRefs[1]!.id) ?? "";
+    const contextPack = createEvidencePack({ decisionKey: turnKey, evidence: contextRefs });
+    const contextManifest = {
+      contractVersion: contextPack.contractVersion,
+      packHash: contextPack.packHash,
+      refs: contextPack.evidence.map((ref) => ({
+        id: ref.id,
+        contentHash: ref.contentHash,
+        kind: ref.kind,
+        source: ref.source.name,
+        status: ref.source.status
+      }))
+    };
+    audit(
+      "chat.evidence_pack",
+      {
+        turnKey,
+        ...contextManifest,
+        budget: {
+          usedCharacters: contextBudget.usedCharacters,
+          usedTokenEstimate: contextBudget.usedTokenEstimate,
+          receipts: contextBudget.receipts.filter((receipt) => receipt.originalCharacters > 0)
+        },
+        containment: contextContainment.map(({ path, result }) => ({
+          path,
+          status: result.status,
+          patterns: result.findings.map((finding) => finding.pattern)
+        }))
+      },
+      userId,
+      connectedAccountId
+    );
 
     // The only path to a tool — it has no execution capability.
     const executeTool = async (name: string, input: unknown) => {
       const tool = tools[name];
       if (!tool) return { error: "UNKNOWN_TOOL", name };
-      audit("tool.call", { userId, tool: name }, userId);
-      return tool.execute(input, { userId, deps });
+      audit("tool.call", { userId, tool: name, turnKey }, userId, connectedAccountId);
+      const raw = await tool.execute(input, { userId, deps });
+      const containment: Array<{ path: string; result: PromptContainmentResult }> = [];
+      const source: PromptTextSource = name === "kb_search" ? "rag" : "unknown";
+      const sanitized = containPromptData(raw, source, `tool.${name}`, containment);
+      const failed = Boolean(
+        sanitized && typeof sanitized === "object" && !Array.isArray(sanitized) && "error" in sanitized
+      );
+      const retrievedAt = new Date().toISOString();
+      const ref = createEvidenceRef({
+        kind: `chat-tool-result:${name}`,
+        subject: connectedAccountId ?? userId,
+        source: {
+          family: toolEvidenceFamily(name),
+          name,
+          status: failed ? "failed" : "success",
+          observedAt: null,
+          asOf: null,
+          retrievedAt,
+          provenance: { provider: "chat-tool", locator: name, upstreamHash: null, lineage: ["chat", "tool-loop"] }
+        },
+        content: JSON.stringify(sanitized)
+      });
+      const pack = createEvidencePack({ decisionKey: `${turnKey}:tool:${name}:${retrievedAt}`, evidence: [ref] });
+      audit(
+        "chat.tool_evidence_pack",
+        {
+          turnKey,
+          tool: name,
+          packHash: pack.packHash,
+          ref: { id: ref.id, contentHash: ref.contentHash, family: ref.source.family, status: ref.source.status },
+          containment: containment.map(({ path, result }) => ({
+            path,
+            status: result.status,
+            patterns: result.findings.map((finding) => finding.pattern)
+          }))
+        },
+        userId,
+        connectedAccountId
+      );
+      return sanitized;
     };
 
     const result = await model.run({
-      system: buildSystem(memorySummary, learnedContextSummary),
+      system: buildSystem(boundedMemory, boundedLearned, {
+        manifest: contextManifest,
+        budgetReceipts: contextBudget.receipts.filter((receipt) => receipt.originalCharacters > 0)
+      }),
       message,
       tools: toolSchemas,
       executeTool,
-      context: { memorySummary },
+      context: { memorySummary: boundedMemory },
       history
     });
 
@@ -121,7 +287,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       intent: reply.intent,
       model: usedModel
     });
-    audit("chat.reply", { userId, has_draft: !!draft, citations: reply.citations.length }, userId);
+    audit("chat.reply", { userId, turnKey, has_draft: !!draft, citations: reply.citations.length }, userId, connectedAccountId);
     return reply;
   };
 }

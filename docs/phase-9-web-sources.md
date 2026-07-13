@@ -1,7 +1,20 @@
 # Phase 9 - Backend Web Sources (scraped / no-free-API signals)
 
-Status: implemented 2026-06-16 (branch `web-sources`). Paper mode unchanged; these
-are read-only data ingests. No trading behavior changed.
+Status: implemented 2026-06-16 (branch `web-sources`). These are read-only data ingests; broker
+paper/live execution remains intrinsic to the connected account.
+
+## 2026-07-13 consumption update
+
+Web-source presence is no longer treated as proof of decision value. The enrichment/strategy path
+now retains per-field provenance and availability, provider failures, upstream-family deduplication,
+per-run source coverage, and decision-time leave-one-winning-provider-out score receipts. Those
+receipts join to matured realized/skipped outcomes as observational source-value telemetry. A failed
+source remains distinguishable from a neutral or no-match result.
+
+The same run timestamp is passed into filing retrieval, retrieved text is treated as untrusted data,
+and Green/Red receive the same evidence manifest. This does not make source-value estimates causal
+or complete the separate SEC corpus backfill; limitations are cataloged in
+`docs/reviews/2026-07-13-decision-evidence-architecture.md`.
 
 ## Goal
 

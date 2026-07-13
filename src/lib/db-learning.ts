@@ -708,6 +708,39 @@ export function listMaturedSkippedCounterfactuals(
 }
 
 /**
+ * Unbiased recent matured counterfactuals for source/factor evaluation. Unlike the dashboard helper
+ * above, this orders by decision time rather than return, so negative outcomes cannot fall out of a
+ * top-return slice and make a provider look better than it was. Multiple horizons remain explicit;
+ * analysis callers choose one deterministically for each (run, symbol).
+ */
+export function listRecentMaturedSkippedCounterfactuals(
+  userId: string = "local",
+  limit = 500,
+  connectedAccountId?: string
+): SkippedCounterfactualRow[] {
+  const rows = (connectedAccountId
+    ? getDb()
+        .prepare(
+          `SELECT *
+           FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND status = 'matured' AND connected_account_id = ?
+           ORDER BY snapshot_at DESC, horizon_days ASC
+           LIMIT ?`
+        )
+        .all(userId, connectedAccountId, limit)
+    : getDb()
+        .prepare(
+          `SELECT *
+           FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND status = 'matured'
+           ORDER BY snapshot_at DESC, horizon_days ASC
+           LIMIT ?`
+        )
+        .all(userId, limit)) as RawSkippedCounterfactualRow[];
+  return rows.map(toSkippedCounterfactualRow);
+}
+
+/**
  * The MATURED counterfactual row for one (runId, symbol) veto key — the precise join input
  * for the Red Team efficacy scorecard. Unlike joining against `listMaturedSkippedCounterfactuals`
  * (a return_pct-DESC top slice), a keyed lookup can never drop the low/negative-return rows —
@@ -746,6 +779,10 @@ interface RawLearnedContextRow {
   risk_tier: string;
   confidence: number;
   contributor_user_id: string | null;
+  connected_account_id: string | null;
+  account_environment: string | null;
+  learning_scope: string;
+  transfer_state: string;
   asserted_at: string;
   superseded_by: string | null;
   expires_at: string | null;
@@ -765,6 +802,10 @@ export function mapLearnedContext(row: RawLearnedContextRow): LearnedContextRow 
     riskTier: row.risk_tier as LearnedContextRow["riskTier"],
     confidence: row.confidence,
     contributorUserId: row.contributor_user_id,
+    connectedAccountId: row.connected_account_id,
+    accountEnvironment: row.account_environment as LearnedContextRow["accountEnvironment"],
+    learningScope: row.learning_scope as LearnedContextRow["learningScope"],
+    transferState: row.transfer_state as LearnedContextRow["transferState"],
     assertedAt: row.asserted_at,
     supersededBy: row.superseded_by,
     expiresAt: row.expires_at
@@ -775,8 +816,9 @@ export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow 
   getDb()
     .prepare(
       `INSERT INTO learned_context
-        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id, asserted_at, superseded_by, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id,
+         connected_account_id, account_environment, learning_scope, transfer_state, asserted_at, superseded_by, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       row.id,
@@ -791,6 +833,10 @@ export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow 
       row.riskTier,
       row.confidence,
       row.contributorUserId,
+      row.connectedAccountId,
+      row.accountEnvironment,
+      row.learningScope,
+      row.transferState,
       row.assertedAt,
       row.supersededBy,
       row.expiresAt
@@ -802,16 +848,22 @@ export function findLiveLearnedContextBySubject(
   userId: string,
   kind: string,
   subject: string,
-  symbol: string | null
+  symbol: string | null,
+  connectedAccountId: string | null = null,
+  learningScope: LearnedContextRow["learningScope"] = "portfolio"
 ): LearnedContextRow | null {
   const row = getDb()
     .prepare(
       `SELECT * FROM learned_context
        WHERE user_id = ? AND kind = ? AND subject = ? AND ((symbol IS NULL AND ? IS NULL) OR symbol = ?)
+         AND learning_scope = ?
+         AND ((connected_account_id IS NULL AND ? IS NULL) OR connected_account_id = ?)
          AND superseded_by IS NULL
        ORDER BY asserted_at DESC LIMIT 1`
     )
-    .get(userId, kind, subject, symbol, symbol) as RawLearnedContextRow | undefined;
+    .get(userId, kind, subject, symbol, symbol, learningScope, connectedAccountId, connectedAccountId) as
+      | RawLearnedContextRow
+      | undefined;
   return row ? mapLearnedContext(row) : null;
 }
 
@@ -823,7 +875,8 @@ export function findLiveLearnedContextBySubject(
 export function listLearnedContextForDecision(
   userId: string,
   symbols: string[],
-  includeShared = false
+  includeShared = false,
+  connectedAccountId?: string
 ): LearnedContextRow[] {
   const nowIso = new Date().toISOString();
   const normalizedSymbols = new Set(symbols.map((s) => s.toUpperCase()));
@@ -843,6 +896,19 @@ export function listLearnedContextForDecision(
         .all(userId) as RawLearnedContextRow[]);
   return rows
     .map(mapLearnedContext)
+    .filter((r) => {
+      if (r.learningScope === "legacy") return false;
+      if (r.userId === userId) {
+        if (r.learningScope === "portfolio") return true;
+        if (r.learningScope === "research") return r.transferState === "validated";
+        return Boolean(connectedAccountId) && r.connectedAccountId === connectedAccountId;
+      }
+      if (!includeShared || r.scope !== "shared") return false;
+      // Shared portfolio facts retain the user's explicit sharing behavior. Account-derived rows
+      // never cross a user/account boundary; shared research must pass transfer validation first.
+      return r.learningScope === "portfolio" ||
+        (r.learningScope === "research" && r.transferState === "validated");
+    })
     .filter((r) => r.expiresAt === null || r.expiresAt > nowIso)
     .filter((r) => r.symbol === null || normalizedSymbols.has(r.symbol.toUpperCase()));
 }
@@ -1057,6 +1123,10 @@ interface RawLearnedContextPendingRow {
   source: string;
   origin: string;
   risk_tier: string;
+  connected_account_id: string | null;
+  account_environment: string | null;
+  learning_scope: string;
+  transfer_state: string;
   classifier_reason: string | null;
   created_at: string;
   status: string;
@@ -1076,6 +1146,10 @@ function mapLearnedContextPending(row: RawLearnedContextPendingRow): LearnedCont
     source: row.source,
     origin: row.origin as LearnedContextPendingRow["origin"],
     riskTier: row.risk_tier as LearnedContextPendingRow["riskTier"],
+    connectedAccountId: row.connected_account_id,
+    accountEnvironment: row.account_environment as LearnedContextPendingRow["accountEnvironment"],
+    learningScope: row.learning_scope as LearnedContextPendingRow["learningScope"],
+    transferState: row.transfer_state as LearnedContextPendingRow["transferState"],
     classifierReason: row.classifier_reason,
     createdAt: row.created_at,
     status: row.status as LearnedContextPendingRow["status"],
@@ -1088,8 +1162,10 @@ export function insertPendingLearnedContext(row: LearnedContextPendingRow): Lear
   getDb()
     .prepare(
       `INSERT INTO learned_context_pending
-        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, classifier_reason, created_at, status, resolved_at, review_note)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier,
+         connected_account_id, account_environment, learning_scope, transfer_state,
+         classifier_reason, created_at, status, resolved_at, review_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       row.id,
@@ -1102,6 +1178,10 @@ export function insertPendingLearnedContext(row: LearnedContextPendingRow): Lear
       row.source,
       row.origin,
       row.riskTier,
+      row.connectedAccountId,
+      row.accountEnvironment,
+      row.learningScope,
+      row.transferState,
       row.classifierReason,
       row.createdAt,
       row.status,

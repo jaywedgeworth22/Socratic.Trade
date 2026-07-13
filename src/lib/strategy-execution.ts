@@ -584,6 +584,7 @@ export async function executeProposal(
         gateway,
         accountNumber: row.accountNumber,
         userId,
+        connectedAccountId: policy.connectedAccountId,
         proposalId,
         refId,
         proposal,
@@ -655,6 +656,7 @@ export async function executeProposal(
     const preFillPosition = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
     const fill = recordFillFromProposal({
       userId,
+      connectedAccountId: policy.connectedAccountId,
       accountNumber: row.accountNumber,
       proposalId,
       runId: row.runId,
@@ -823,6 +825,7 @@ export async function reconcilePlacementError(p: {
   gateway: BrokerGateway;
   accountNumber: string;
   userId: string;
+  connectedAccountId?: string;
   proposalId: string;
   refId: string;
   proposal: TradeProposal;
@@ -867,6 +870,7 @@ export async function reconcilePlacementError(p: {
     const source: FillSource = p.executionMode === "broker/live" ? "live" : "paper";
     const fill = recordFillFromProposal({
       userId: p.userId,
+      connectedAccountId: p.connectedAccountId,
       accountNumber: p.accountNumber,
       proposalId: p.proposalId,
       runId: p.runId,
@@ -957,6 +961,7 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
           const existingAvgCost = p.stopPlan ? await liveBasisFor(p.symbol) : undefined;
           recordFillFromProposal({
             userId,
+            connectedAccountId,
             accountNumber,
             proposalId: row.id,
             source: recoveredSource,

@@ -1,5 +1,25 @@
 # Current Status
 
+## 2026-07-13 — Evidence architecture, account-scoped learning, and GPT-5.6 program (CODEX, branch `codex/evidence-architecture-program`)
+
+Implemented locally in the isolated Codex worktree: exact-account relational/vector learning;
+sample-gated paper-to-live research transfer; product Test Account create/UI/read removal plus a
+production purge migration; wider pre-enrichment candidate selection; field-level provenance,
+freshness, arbitration, conflict and provider-failure receipts; exact opening-candidate enforcement;
+one immutable Green/Red evidence manifest; point-in-time RAG, global context budgets and prompt-data
+containment; source coverage/shadow ablation/outcome value telemetry; and shared evidence handling
+for strategy tuning, Framework review, learning review, and Coach/chat.
+
+GPT-5.6 Luna/Terra/Sol are available across all model surfaces with role-specific reasoning controls.
+The curated OpenAI list drops full GPT-5.4/5.5 while retaining Mini/Nano and legacy custom-ID
+compatibility. Focused verification is green: lint (0 errors); TypeScript; 224 integrated
+LLM/evidence/learning tests; and 41 migration/account/model tests. `origin/main` advanced by three commits during implementation,
+including schema migrations 20–22 and Red Team fallback UI. The local migrations are reserved at
+23–24. Next: commit this documented checkpoint, merge current `origin/main`, reconcile the fallback
+UI and schema, run the full lint/type/test/build gate, then open a ready PR. This is local only: not
+pushed, merged, deployed, or production-verified. Audit:
+`docs/reviews/2026-07-13-decision-evidence-architecture.md`.
+
 ## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
 
 Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes. Fixed a tail-truncation bug (Codex P2) where `.slice(0, 512)` could drop unique suffixes when document names/sections shared long common prefixes — now uses a head+tail-preserving clamp with `".."` marker. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.

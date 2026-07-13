@@ -1,5 +1,19 @@
 # Active Implementation Plan
 
+> **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
+> complete source-to-decision boundary before adding more feeds: wider bounded enrichment;
+> field-level provenance/freshness/failures and upstream-family arbitration; exact candidate
+> enforcement; immutable Green/Red evidence parity; point-in-time RAG, prompt-data containment and
+> global context budgets; account-scoped relational/vector learning with independently validated
+> paper-to-live transfer; source coverage, shadow ablation and outcome-linked value telemetry; and
+> the same evidence contract for strategy review, learning review, Framework, and Coach. Remove the
+> product Test Account and purge its simulated outcomes, while retaining real broker paper accounts
+> only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
+> effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
+> custom IDs. Implementation is locally complete; current-main reconciliation, the full gate, and a
+> ready PR remain. See `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
+> `docs/rollouts/2026-07-13-evidence-architecture-gpt56.md`.
+
 ## Codex Audit Wave 0: Base Guardrails
 **Status: In Progress**
 

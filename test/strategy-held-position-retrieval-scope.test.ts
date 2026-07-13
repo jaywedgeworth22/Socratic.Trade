@@ -170,7 +170,9 @@ describe("strategy.ts held-position retrieval scope", () => {
 
     // ── Regression: BUY-candidate top-N scan set is unchanged (score-sorted, held symbol NOT
     // reordered into it — it stays outside because it genuinely scores lowest). ──
-    const learnedCallArgs = mocks.retrieveLearnedContextDetailed.mock.calls[0] as [string, string[]] | undefined;
+    const learnedCallArgs = mocks.retrieveLearnedContextDetailed.mock.calls[0] as
+      | [string, string[], undefined, { connectedAccountId?: string }]
+      | undefined;
     expect(learnedCallArgs).toBeDefined();
     const [, learnedSymbols] = learnedCallArgs!;
     const top8 = SCAN_SYMBOLS.slice(0, 8);
@@ -178,6 +180,7 @@ describe("strategy.ts held-position retrieval scope", () => {
     // Held symbol is unioned in ADDITIONALLY, not swapped in place of a top-8 name.
     expect(learnedSymbols).toContain(HELD_SYMBOL);
     expect(learnedSymbols.length).toBe(top8.length + 1);
+    expect(learnedCallArgs?.[3]).toEqual({ connectedAccountId: accountId });
 
     // ── 1. Filings RAG: retrieveContextDetailed was called for the held symbol. ──
     const filingsSymbolsQueried = mocks.retrieveContextDetailed.mock.calls.map((call) => call[1] as string);
