@@ -283,10 +283,10 @@ export function releaseStrategyLock(owner: string, userId: string = "local", con
   }).immediate();
 }
 
-export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string): void {
+export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string, accountNumber?: string, policyRevision?: string): void {
   getDb()
-    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, started_at, status) VALUES (?, ?, ?, ?, 'running')")
-    .run(id, userId, connectedAccountId ?? null, new Date().toISOString());
+    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, account_number, policy_revision, started_at, status) VALUES (?, ?, ?, ?, ?, ?, 'running')")
+    .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());
 }
 
 export function finishStrategyRun(id: string, status: "completed" | "failed", summary: string, userId: string = "local"): void {
