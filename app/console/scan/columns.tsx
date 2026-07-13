@@ -238,16 +238,22 @@ export const SCAN_COLUMNS: ScanColumn[] = [
     sortValue: (q) => q.senateTrades,
     render: (q) =>
       typeof q.senateTrades === "number" ? (
-        <SignedText value={q.senateTrades}>{q.senateTrades > 0 ? `+${q.senateTrades}` : String(q.senateTrades)}</SignedText>
+        <div className="flex flex-col">
+          <SignedText value={q.senateTrades}>{q.senateTrades > 0 ? `+${q.senateTrades}` : String(q.senateTrades)}</SignedText>
+          {q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 && (
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap">Score: {q.congressCompositeScore}</span>
+          )}
+        </div>
       ) : (
         <Dash />
       ),
     cellTitle: (q) => {
       if (typeof q.senateTrades !== "number") return "No recent congressional disclosures for this symbol.";
       const header = `Net congressional activity ${q.senateTrades > 0 ? "+" : ""}${q.senateTrades} (distinct members buying minus selling, ~60 days).`;
+      const scoreNote = q.congressCompositeScore ? `Composite Score: ${q.congressCompositeScore} (Conviction, Consensus, Skill, Flow, Freshness)` : undefined;
       const bulletins = q.evidenceBulletins?.length ? q.evidenceBulletins.join("\n") : undefined;
       const source = q.sources?.senateTrades ? `Source: ${friendlySource(q.sources.senateTrades)}` : undefined;
-      return [header, bulletins, source].filter(Boolean).join("\n");
+      return [header, scoreNote, bulletins, source].filter(Boolean).join("\n");
     }
   },
   {
