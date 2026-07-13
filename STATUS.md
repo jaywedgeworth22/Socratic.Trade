@@ -1,5 +1,26 @@
 # Current Status
 
+## 2026-07-12 — shared-package-pin-check: resolve refs to commit SHAs before comparing (CLAUDE, branch `claude/check-pin-ref-resolve`)
+
+Hardened `.github/workflows/shared-package-pin-check.yml` so it compares the two consumer
+repos' `congress-trading-shared` pins at the commit level, not the raw ref string. When the
+normalized refs differ but both specs are git-style, each ref is now resolved to a commit SHA
+against the shared package's own (public) repo before declaring a divergence — a tag pin
+(`#v1.6.0`) and the equivalent raw-SHA pin now compare EQUAL; genuinely different commits
+still fail loudly. If exactly one side resolves and the other errors, the check fails loudly
+instead of silently falling back to a string compare. Why it matters: this exact false
+positive fired on every Socratic.Trade PR earlier today when Congress.Trade re-pinned to a
+raw SHA equal to what tag `v1.6.0` resolves to; `main` self-healed by moving its own pin to
+the SHA form, but the bug was untouched and would recur the instant CODEX's pending
+`v1.7.0` tag bump lands on one side while the other still uses a different ref form.
+Replay-tested the resolve-and-compare logic directly against the live (public,
+unauthenticated) GitHub API: tag `v1.6.0` vs its equivalent raw SHA -> resolves EQUAL, exit 0;
+tag `v1.6.0` vs the `v1.7.0` SHA -> resolves UNEQUAL, exit 1 (DIVERGED). CI-config only, no
+app code touched. Caveat: the required `check-pin` status on this PR itself runs from
+`main`'s (old) workflow definition per GitHub Actions' `pull_request`-trigger semantics, not
+this PR's new logic — the fix only takes effect for PRs opened after it lands on `main`.
+Rollout: `docs/rollouts/2026-07-12-check-pin-ref-resolve.md`.
+
 ## 2026-07-12 — Capability & Platform Program: Phase 1 plan + iOS status-doc truth-fix (CLAUDE, branch `claude/capability-program-docs`)
 
 Phase 1 (recon + design + feasibility + synthesis) of the owner-directed capability/platform
