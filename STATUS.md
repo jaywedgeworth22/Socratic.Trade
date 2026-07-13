@@ -1,5 +1,29 @@
 # Current Status
 
+## 2026-07-13 — SEC/RAG implementation program (CODEX, branch `codex/sec-rag-program`)
+
+Owner-directed implementation of all nine packages in the 1,000-stock SEC/RAG plan is in progress. The
+branch inherits merged PRs #1495, #1496, #1520, and #1527, but the acceptance audit does not treat P0/P1 as
+complete: the committed universe uses SEC ticker-file order as a false prominence proxy and lacks a dated
+eligibility/selection receipt; the census does not certify target-slot, revision, provenance, or PIT coverage;
+and the manifest still lacks durable jobs, immutable raw objects, sections/tables, and verified-complete
+receipts. The current ingestion path also remains recent-only and regex/whitespace based.
+
+The first local slice now implements the versioned/checksummed universe acceptance gate and durable job/task
+state with leases, strict stage transitions, bounded retries, DLQ/quarantine, verification receipts, and replay
+identity. This first slice is locally ready for PR: 16 focused tests pass, then the required Node 24 gate passed
+with lint at 0 errors / 447 inherited warnings, clean TypeScript, 352 files / 3,950 tests, and a production build.
+The build first caught and then verified the fix for a `node:crypto` Edge import trace. Expert lanes are still
+being hardened independently: the corrected universe/census is under adversarial review, while first discovery/
+pacing and parser/chunker drafts were rejected at review and are being corrected. No live provider, object-store,
+vector-corpus, or production backfill write will run before fixture tests and the real-corpus gates pass. Open AG
+PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled.
+
+Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
+but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.
+
+Rollout: `docs/rollouts/2026-07-13-sec-rag-program.md`.
+
 ## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Claude, branch `agent/ag-safety-exit-replacement`)
 
 Addressed 4 of the final 6 unresolved Codex threads from PR #1492 (2 P1, 2 P2), asked about 2 remaining:

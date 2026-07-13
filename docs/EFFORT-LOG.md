@@ -523,11 +523,28 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **SEC/RAG 1,000-stock implementation program (CODEX, branch `codex/sec-rag-program`, worktree
+  `/Users/jay/.codex/worktrees/socratic-sec-rag-program`, 2026-07-13) — IN PROGRESS / OWNER-DIRECTED
+  ALL NINE PACKAGES.** Inherits merged AG baselines #1495 (census/universe), #1496
+  (filing/artifact/occurrence schema), #1520 (temporary limits), and #1527 (ASCII vector IDs); each is being
+  audited against the plan's acceptance criteria before deeper work. The first validator/durable-state slice is
+  **LOCAL FULL-GATE GREEN / PR PENDING** (Node 24 lint 0 errors, tsc, 3,950 tests, production build). Parallel lanes: manifest/worker
+  correctness, historical discovery/archive/aggregate SEC pacing, DOM/iXBRL parser+chunker, then structured
+  facts, retrieval/eval/coverage, and gated shadow canaries. **Acceptance audit findings:** P0's generated
+  universe treats SEC ticker-file order as market-cap/prominence, lacks a dated selection/eligibility snapshot,
+  and does not prove 1,000 operating issuers; its census does not certify target-slot, revision, provenance, or
+  PIT completeness. A versioned/checksummed fail-closed validator is now implemented on this branch and the
+  legacy bare-array manifest correctly fails it. Durable job/task state and verification-required completion now
+  exist locally; immutable raw archive and section/table manifest still do not, while the live ingest path remains
+  recent-only + regex/word chunking. Adversarial review rejected the initial discovery/pacing and parser/chunker
+  drafts; fixes are in progress rather than being integrated as false-complete work. **No
+  provider/corpus write or backfill is authorized
+  until the prerequisite gates pass.** KEEPOUT: AG open PR #1533 admin coverage/db-learning delta until reconciled.
 - **Fix console theme token-mixing regression from #1476 — ios-components used legacy .dark-keyed text classes on console data-theme surfaces, making Settings secondary text illegible in dark mode (CLAUDE, branch `claude/console-theme-token-fix`) — GATING/LANDING 2026-07-13.** `app/ui/ios-components.tsx` (added by the iOS-settings migration PR #1476) painted backgrounds from the console token system (`--con-*`, keyed to `data-theme` on `.console-root`) but text from the LEGACY app utilities (`text-muted`/`text-faint`/`text-fg`, keyed to `.dark` on `<html>`). The same PR's Light/Dark/System picker flips ONLY the console system, so the two diverged — in console dark mode muted text stayed dark slate on a dark card (near-invisible). Fix: 6 class swaps to the `text-[color:var(--con-*)]` arbitrary-value form the same file already uses elsewhere, plus 2 typo fixes in `app/console/components/chrome.tsx` (`--con-text` → `--con-fg`; `--con-text` is undefined). Display-only CSS-class fix. Rollout: `docs/rollouts/2026-07-13-console-theme-token-fix.md`.
 - **1,000-stock SEC/RAG high-yield backfill plan (CODEX, branch
   `codex/rag-1000-stock-backfill-plan`, worktree
-  `/Users/jay/.codex/worktrees/socratic-rag-1000-plan`, 2026-07-12) — DESIGN COMPLETE / READY PR
-  [#1494](https://github.com/jaywedgeworth22/Socratic.Trade/pull/1494), UNMERGED.** Three read-only expert lanes audited EDGAR coverage, RAG architecture, and
+  `/Users/jay/.codex/worktrees/socratic-rag-1000-plan`, 2026-07-12) — MOVED TO COMPLETED: PR
+  [#1494](https://github.com/jaywedgeworth22/Socratic.Trade/pull/1494) MERGED 2026-07-13; implementation is tracked by the CODEX program row above.** Three read-only expert lanes audited EDGAR coverage, RAG architecture, and
   backfill economics against `main@c9023ea6`; no product source or production data changed. The plan
   specifies archive-vs-structure-vs-embed rules, form/section yield, occurrence-safe provenance,
   durable jobs, DOM/iXBRL tables, intent-routed hybrid retrieval, real-EDGAR evaluation, cost breakers,
@@ -2652,35 +2669,43 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
-- **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (unassigned; RAG-B14/B16, 2026-07-12) —
-  PLANNED.** Authenticated production corpus census, exact runtime/config reconciliation, stable issuer/share-
+- **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (CODEX program; RAG-B14/B16, claimed 2026-07-13) —
+  IN PROGRESS / BASELINE #1495 MERGED; ACCEPTANCE CURRENTLY FAILS.** A new schema-v2 validator requires a dated,
+  checksummed 1,000-operating-issuer snapshot with explicit exchange/security classification, alias verification,
+  liquidity dimensions, source receipts, and quarantine; the legacy bare array fails closed. Remaining: authenticated production corpus census, exact runtime/config reconciliation, stable issuer/share-
   class aliases, selection snapshot/reasons, and coverage by issuer/form/period/artifact/parser/embed revision.
   Dependency and acceptance detail: `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` P0.
-- **SEC/RAG P0 occurrence identity + durable manifest/job state (unassigned; RAG-B03/B06/B07, 2026-07-12) —
-  PLANNED.** Separate embedding-cache dedup from filing evidence occurrences; add filings/artifacts/sections/
-  chunks/facts/jobs, exact accepted timestamps, amendments/supersession, partial-state verification, and PIT-
+- **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07, claimed 2026-07-13) —
+  IN PROGRESS / DURABLE JOB CORE IMPLEMENTED; BASELINE #1496 MERGED.** Migration v23 plus `db-rag-ingest`
+  now provide deterministic replay keys, sealed jobs, ordered stage checkpoints, atomic fenced leases/heartbeats,
+  bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion; 12 focused adversarial
+  tests and Node 24 typecheck pass. Remaining: wire artifacts/sections/facts, exact accepted timestamps,
+  amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.
-- **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (unassigned; RAG-B01/B02/B08/B09/
-  B17, 2026-07-12) — PLANNED.** Bulk submissions/companyfacts and master indexes, history shards, primary/
-  exhibit resolution, immutable object storage, shared fair-access token bucket, cache, Retry-After, and
-  breadth-first discovery.
-- **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (unassigned; RAG-B04/B05, 2026-07-12)
-  — PLANNED.** Preserve SEC Items, source anchors, table cells/headers/units/footnotes, bounded row-group chunks,
+- **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (CODEX program; RAG-B01/B02/B08/B09/
+  B17, claimed 2026-07-13) — IN PROGRESS / DISCOVERY+PACING LANE READY FOR INTEGRATION.** History-shard discovery,
+  amendments/form families, PIT acceptance timestamps, aggregate SQLite SEC pacing, Retry-After/circuit state,
+  abort propagation, and a bulk-archive planner pass 26 focused tests plus Node 24 typecheck. Remaining: adversarial
+  integration review, primary/exhibit resolution, immutable object writes, checksums, and breadth-first worker wiring.
+- **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05, claimed 2026-07-13)
+  — CLAIMED.** Preserve SEC Items, source anchors, table cells/headers/units/footnotes, bounded row-group chunks,
   actual tokenizer counts, revisioned normalization, and filing-to-filing deltas.
-- **SEC/RAG P1 structured facts/events (unassigned; RAG-B10, 2026-07-12) — PLANNED.** Persist XBRL,
+- **SEC/RAG P1 structured facts/events (CODEX program; RAG-B10, claimed 2026-07-13) — CLAIMED.** Persist XBRL,
   Forms 3/4/5/144, 13D/G, 13F-derived deltas, offerings, and other exact facts/events structurally; render cited
   evidence cards instead of embedding raw XML/JSON/rows.
-- **SEC/RAG P1 resumable worker + shadow corpus (unassigned; RAG-B06/B08/B09/B16/B17, 2026-07-12) —
-  PLANNED.** Dedicated database-backed worker, leases/retries/DLQ, observed token/WU/dollar receipts, token-aware
+- **SEC/RAG P1 resumable worker + shadow corpus (CODEX program; RAG-B06/B08/B09/B16/B17, claimed 2026-07-13) —
+  IN PROGRESS / PERSISTENCE CORE BUILT; EXECUTION UNWIRED.** Dedicated database-backed job/task substrate now has
+  leases/retries/DLQ and observed byte/token/chunk/vector/WU/dollar receipts. Remaining: worker process, stage
+  adapters, breaker enforcement, token-aware
   Voyage batching, Pinecone import/upsert benchmark, reconciliation, dual-write, cutover pointer, and rollback.
-- **SEC/RAG P1 retrieval/strategy consumption redesign (unassigned; RAG-B11/B12/B13/B18, 2026-07-12) —
-  PLANNED.** Intent routing, true corpus-wide lexical recall plus dense fusion, wide rerank, MMR/diversity,
+- **SEC/RAG P1 retrieval/strategy consumption redesign (CODEX program; RAG-B11/B12/B13/B18, claimed 2026-07-13) —
+  CLAIMED.** Intent routing, true corpus-wide lexical recall plus dense fusion, wide rerank, MMR/diversity,
   embedding-revision isolation, structured issuer dossiers, deep retrieval for finalists/holdings, and verified
   `evidenceRefs`; remove nonexistent transcript coverage claims.
-- **SEC/RAG P1 real-EDGAR evaluation + truthful coverage (unassigned; RAG-B14/B15, 2026-07-12) — PLANNED.**
+- **SEC/RAG P1 real-EDGAR evaluation + truthful coverage (CODEX program; RAG-B14/B15, claimed 2026-07-13) — CLAIMED.**
   Build 250-500 labeled real-corpus questions plus parser/table/fact/grounding/PIT/idempotency metrics; replace
   the 200-accession coverage proxy with manifest-to-index reconciliation and gate every corpus expansion.
-- **SEC/RAG P1 controlled backfill + freshness operations (unassigned, 2026-07-12) — PLANNED.** Run shadow
+- **SEC/RAG P1 controlled backfill + freshness operations (CODEX program, claimed 2026-07-13) — CLAIMED / GATED.** Run shadow
   waves 10 -> 25 -> 100 -> 300 -> 1,000 only after upstream gates, with spend/rate/failure breakers, daily
   reconciliation, material-event freshness SLOs, selective top-100/250 depth, and ablation before long-tail
   embedding. No production write is authorized by the planning row.

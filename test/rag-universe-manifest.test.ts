@@ -1,0 +1,86 @@
+import { describe, expect, it } from "vitest";
+import {
+  hashSecUniverseIssuers,
+  validateSecUniverseManifest,
+  type FrozenSecUniverseManifest,
+  type SecUniverseIssuer
+} from "../src/lib/rag/universe-manifest";
+
+function issuer(rank: number, cik: string, ticker: string, aliases: string[] = []): SecUniverseIssuer {
+  return {
+    rank,
+    cik,
+    ticker,
+    aliases,
+    aliasesVerifiedAt: "2026-07-13T00:00:00.000Z",
+    title: `${ticker} Corp`,
+    exchange: "NASDAQ",
+    securityType: "operating-company",
+    sector: "Technology",
+    industry: "Software",
+    marketCapUsd: 1_000_000_000,
+    dollarVolumeUsd: 10_000_000,
+    inclusionReason: "market-cap-liquidity",
+    sourceRefs: ["sec-tickers", "nasdaq-screener"]
+  };
+}
+
+function manifest(issuers: SecUniverseIssuer[]): FrozenSecUniverseManifest {
+  return {
+    schemaVersion: 2,
+    snapshotId: "sec-rag-2026-07-13",
+    effectiveAt: "2026-07-13T00:00:00.000Z",
+    generatedAt: "2026-07-13T00:05:00.000Z",
+    issuerSha256: hashSecUniverseIssuers(issuers),
+    selectionMethod: "priority, then index, then market-cap and dollar-volume rank",
+    sources: [
+      { name: "sec-tickers", asOf: "2026-07-13T00:00:00.000Z", sha256: "a".repeat(64) },
+      { name: "nasdaq-screener", asOf: "2026-07-13T00:00:00.000Z", sha256: "b".repeat(64) }
+    ],
+    issuers,
+    quarantined: []
+  };
+}
+
+describe("SEC/RAG frozen universe acceptance", () => {
+  it("accepts a complete, checksummed issuer snapshot", () => {
+    const value = manifest([
+      issuer(1, "0000000001", "AAA", ["AAA.A"]),
+      issuer(2, "0000000002", "BBB")
+    ]);
+
+    expect(validateSecUniverseManifest(value, { expectedIssuerCount: 2 })).toEqual([]);
+  });
+
+  it("rejects the legacy bare-array manifest instead of treating length as completeness", () => {
+    const issues = validateSecUniverseManifest([{ cik: "0000000001", ticker: "AAA" }], { expectedIssuerCount: 1 });
+    expect(issues).toEqual([
+      expect.objectContaining({ code: "manifest_shape", path: "$" })
+    ]);
+  });
+
+  it("rejects cross-CIK aliases and a stale checksum", () => {
+    const issuers = [
+      issuer(1, "0000000001", "AAA", ["SHARED"]),
+      issuer(2, "0000000002", "BBB", ["SHARED"])
+    ];
+    const value = manifest(issuers);
+    value.issuerSha256 = "c".repeat(64);
+
+    const codes = validateSecUniverseManifest(value, { expectedIssuerCount: 2 }).map((issue) => issue.code);
+    expect(codes).toContain("ticker_cross_cik");
+    expect(codes).toContain("issuer_sha256_mismatch");
+  });
+
+  it("requires operating-company classification and exact coverage dimensions", () => {
+    const value = manifest([issuer(1, "0000000001", "AAA")]) as unknown as Record<string, unknown>;
+    const entries = value.issuers as Array<Record<string, unknown>>;
+    delete entries[0]!.exchange;
+    delete entries[0]!.aliases;
+    entries[0]!.securityType = "fund";
+    value.issuerSha256 = hashSecUniverseIssuers(entries);
+
+    const codes = validateSecUniverseManifest(value, { expectedIssuerCount: 1 }).map((issue) => issue.code);
+    expect(codes).toEqual(expect.arrayContaining(["exchange", "security_type", "aliases"]));
+  });
+});
