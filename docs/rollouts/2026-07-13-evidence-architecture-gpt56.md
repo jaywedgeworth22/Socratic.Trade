@@ -3,8 +3,8 @@
 Date: 2026-07-13  
 Owner: CODEX  
 Branch: `codex/evidence-architecture-program`  
-State at this checkpoint: local implementation, current-main reconciliation, and the full gate are
-complete; opening a ready PR remains; not pushed, merged, deployed, or production-verified.
+State at this checkpoint: implementation, current-main reconciliation, and the full gate are
+complete; ready PR #1544 is open and checks are running. Not merged, deployed, or production-verified.
 
 ## Summary
 
@@ -179,6 +179,8 @@ Full required gate after reconciliation and final fixes:
 - `npm test` — 355 files, 3,980 tests pass.
 - `npm run build` — pass; Next.js generated all routes successfully.
 - `git diff --check` — pass.
+- `bash scripts/land.sh` — fetched current `origin/main` (already current), reran TypeScript, all
+  3,980 tests, and the production build, pushed the branch, and opened ready PR #1544.
 
 The first full-suite attempt exposed seven integration-test failures: five Congress sharing tests
 were leaking real Yahoo/Stooq calls because `importOriginal(history)` traversed the DB/history cycle;
