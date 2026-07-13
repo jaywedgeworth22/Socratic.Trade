@@ -498,6 +498,19 @@ const MIGRATIONS: Migration[] = [
         database.exec("ALTER TABLE order_replacements ADD COLUMN original_filled_quantity REAL");
       }
     }
+  },
+  {
+    // Order-replacements indexes for the exit-replacement state machine (PR 2 follow-up).
+    // These were originally added inside migration v6, but deployed databases already
+    // have PRAGMA user_version past 6, so runMigrations skips that block and never
+    // creates the indexes. Every database — fresh and existing — needs the UNIQUE
+    // partial index as the concurrency guard against duplicate replacements.
+    version: 20,
+    name: "order_replacements_indexes_reapply",
+    up: (database) => {
+      database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
+      database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
+    }
   }
 ];
 

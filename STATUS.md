@@ -8,13 +8,16 @@ Implemented P2.4 to prevent duplicate daily data sharing runs and retry storms i
 - Added unit test in `test/congress-share.test.ts` verifying concurrent deduplication via a shared in-flight promise. All 3930 tests and typechecks passed successfully.
 Rollout: `docs/rollouts/2026-07-13-congress-share-retry-storm.md`.
 
-## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes (Antigravity, branch `agent/ag-safety-exit-replacement`)
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 2 (Claude, branch `agent/ag-safety-exit-replacement`)
 
-Resolved the three Codex review findings on PR #1492 (Exit Replacement State Machine):
-1. **Auto Mode Off Continuation (P2)**: Modified `autoRemediateStaleExitOrders` to skip enqueuing new stale exits when `autoRemediateStaleExits === false`, while still allowing the pump to process/advance existing cancel-replacement state machines.
-2. **Canceled Order Detail Persistence (P1)**: Added a database migration (`version 19`) to add `symbol`, `side`, `original_type`, `original_quantity`, and `original_filled_quantity` columns to the `order_replacements` table. Persisted these fields at enqueue time (or updated them after manual checks) and reconstructed a minimal `EquityOrder` object from them when the broker no longer returns the canceled order in `getEquityOrders`.
-3. **Reconcile `replacement_submitted` rows (P1)**: Implemented full reconciliation logic in `stepReplacementState` for rows left in `replacement_submitted` (due to process crashes or network issues). Checks `getEquityOrders` by `clientOrderId` (matching `replacement_ref_id`) to confirm placement, inserts missing `fill_events`, verifies webhook-created fill events, and timeouts/fails rows stuck for > 5 minutes.
-Added comprehensive unit tests inside `test/order-replacement.test.ts` verifying both reconstruction and reconciliation recovery paths. All typechecks, lints, builds, and 3929 tests passed cleanly.
+Addressed 5 remaining P1 findings from Codex review 2 on PR #1492 (commit 32d047da):
+1. **Persist ambiguous submissions (P1)**: After `placeEquityOrder` throws (timeout/dropped connection), the row stays in `replacement_submitted` instead of being permanently failed. The reconciliation branch retries lookup by `replacement_ref_id` on the next tick. Explicit broker rejections (`isRejectedOrCanceledState`) still fail the row immediately.
+2. **Terminal broker states (P1)**: `replacement_submitted` reconciliation now checks `isRejectedOrCanceledState(found.state)` before confirming — a broker-canceled or rejected replacement order is marked as failed rather than spuriously confirmed.
+3. **Cancel-confirmed rows retriable (P1)**: The outer catch block keeps `cancel_confirmed` rows in their current state on transient errors (network blip, broker timeout), so the pump retries the market replacement on the next tick instead of permanently failing.
+4. **Cancel-requested conditional failure (P1)**: The catch block's `WHERE status = 'cancel_requested'` guard prevents a redundant cancel error from a peer scheduler from permanently failing a row that another instance already advanced to `cancel_confirmed`.
+5. **Migration v20 for indexes (P1)**: Added new versioned migration (v20) creating `idx_order_replacements_active_unique` and `idx_order_replacements_user_account_status` for databases whose `PRAGMA user_version` already exceeds v6 (where these indexes were originally declared but never applied to deployed DBs).
+
+All gates pass: tsc clean, 350 suites/3930 tests pass, build clean.
 Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
 
 ## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)

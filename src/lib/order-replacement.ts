@@ -401,66 +401,78 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       let execution;
       try {
         execution = await input.gateway.placeEquityOrder({ ...marketOrder, refId: row.replacement_ref_id });
-        if (isRejectedOrCanceledState(execution.state) || !execution.orderId) {
-          throw new Error(`Broker immediately rejected or failed to return an order ID for the replacement order (state: ${execution.state})`);
-        }
-        db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
-          .run(execution.orderId, new Date().toISOString(), row.id);
-
-        const source = fillSourceForExecutionMode(executionState);
-        const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
-        const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
-        const price = isExit ? applyPaperExitCost(rawPrice, originalOrder.side, source) : rawPrice;
-        insertFillEvent({
-          userId,
-          accountNumber: input.policy.accountNumber,
-          source,
-          executionMode,
-          symbol,
-          side: originalOrder.side,
-          quantity: remainingQuantity,
-          price,
-          notional: Math.abs(price * remainingQuantity),
-          status: fillStatus,
-          brokerOrderId: execution.orderId,
-          raw: {
-            source: "market_replace",
-            replacedOrderId: originalOrder.id,
-            cancel: row.cancel_result,
-            review,
-            execution
-          }
-        });
-
-        audit(
-          "order_replace_market",
-          {
-            replacedOrderId: originalOrder.id,
-            replacementOrderId: execution.orderId,
-            symbol,
-            side: originalOrder.side,
-            remainingQuantity,
-            brokerState: execution.state,
-            fillStatus
-          },
-          userId,
-          input.policy.connectedAccountId
-        );
-
       } catch (error) {
-        // We failed after submission. Stay in replacement_submitted, or fail?
-        // Since the broker might have received the order but our connection dropped,
-        // we can leave it in replacement_submitted and it can be recovered by reconciliation later,
-        // or we mark it failed.
+        // Stay in replacement_submitted instead of failing — the broker may have
+        // accepted the market order before our connection dropped or timed out.
+        // The replacement_submitted reconciliation branch looks up the broker
+        // order by replacement_ref_id on the next tick; only if too much time
+        // passes without finding the order will it be failed.
         audit(
-          "order_replace_market_failed",
+          "order_replace_market_submission_ambiguous",
           { orderId: originalOrder.id, symbol, remainingQuantity, cancelResult: row.cancel_result, error: error instanceof Error ? error.message : String(error) },
           userId,
           input.policy.connectedAccountId
         );
-        db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+        db.prepare(`UPDATE order_replacements SET error = ?, updated_at = ? WHERE id = ? AND status = 'replacement_submitted'`)
           .run(error instanceof Error ? error.message : String(error), new Date().toISOString(), row.id);
+        return;
       }
+      // placeEquityOrder returned without throwing, but the broker may have rejected it.
+      if (isRejectedOrCanceledState(execution.state) || !execution.orderId) {
+        const rejectStr = `Broker rejected the replacement order (state: ${execution.state})`;
+        db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+          .run(rejectStr, new Date().toISOString(), row.id);
+        audit(
+          "order_replace_market_rejected",
+          { orderId: originalOrder.id, symbol, remainingQuantity, cancelResult: row.cancel_result, brokerState: execution.state },
+          userId,
+          input.policy.connectedAccountId
+        );
+        return;
+      }
+
+      db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
+        .run(execution.orderId, new Date().toISOString(), row.id);
+
+      const source = fillSourceForExecutionMode(executionState);
+      const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
+      const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
+      const price = isExit ? applyPaperExitCost(rawPrice, originalOrder.side, source) : rawPrice;
+      insertFillEvent({
+        userId,
+        accountNumber: input.policy.accountNumber,
+        source,
+        executionMode,
+        symbol,
+        side: originalOrder.side,
+        quantity: remainingQuantity,
+        price,
+        notional: Math.abs(price * remainingQuantity),
+        status: fillStatus,
+        brokerOrderId: execution.orderId,
+        raw: {
+          source: "market_replace",
+          replacedOrderId: originalOrder.id,
+          cancel: row.cancel_result,
+          review,
+          execution
+        }
+      });
+
+      audit(
+        "order_replace_market",
+        {
+          replacedOrderId: originalOrder.id,
+          replacementOrderId: execution.orderId,
+          symbol,
+          side: originalOrder.side,
+          remainingQuantity,
+          brokerState: execution.state,
+          fillStatus
+        },
+        userId,
+        input.policy.connectedAccountId
+      );
     }
 
     if (row.status === 'replacement_submitted') {
@@ -468,10 +480,18 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       const orders = await input.gateway.getEquityOrders(input.policy.accountNumber);
       const found = orders.find((o) => o.clientOrderId === row.replacement_ref_id || o.id === row.replacement_order_id);
       if (found) {
+        // Treat terminal (rejected/canceled) broker states as failures so the
+        // state machine stops retrying and the original exit remains canceled
+        // with no replacement — the caller will see a failed row and can alert.
+        if (isRejectedOrCanceledState(found.state)) {
+          db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+            .run(`Replacement order was ${found.state} by the broker`, new Date().toISOString(), row.id);
+          return;
+        }
         // Already placed, confirm it
         db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
           .run(found.id, new Date().toISOString(), row.id);
-        
+
         // Check if fill event exists for this order
         const fillExists = db.prepare(`SELECT 1 FROM fill_events WHERE broker_order_id = ?`).get(found.id);
         if (!fillExists) {
@@ -524,8 +544,25 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
     }
   } catch (e: any) {
      if (e instanceof MarketReplacePreconditionError) throw e;
-     db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
-       .run(e.message, new Date().toISOString(), row.id);
+     switch (row.status) {
+       case 'cancel_requested':
+         // Conditionally fail only if we still own the state. If a peer already
+         // transitioned us to cancel_confirmed, the conditional WHERE clause
+         // means the update hits 0 rows and the row stays in its advanced state.
+         db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status = 'cancel_requested'`)
+           .run(e.message, new Date().toISOString(), row.id);
+         break;
+       case 'cancel_confirmed':
+         // Keep retriable — the order is already canceled; a transient error
+         // (network blip, broker timeout) after the cancel shouldn't lose the
+         // replacement. The pump will retry on the next tick.
+         db.prepare(`UPDATE order_replacements SET error = ?, updated_at = ? WHERE id = ?`)
+           .run(e.message, new Date().toISOString(), row.id);
+         break;
+       default:
+         db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+           .run(e.message, new Date().toISOString(), row.id);
+     }
   }
 }
 
