@@ -338,6 +338,9 @@ async function validatePolicy(
   if (policy.llmFallbackModels !== undefined && (!Array.isArray(policy.llmFallbackModels) || policy.llmFallbackModels.some((m) => typeof m !== "string"))) {
     return "llmFallbackModels must be an array of model-id strings.";
   }
+  if (policy.redTeamFallbackModels !== undefined && (!Array.isArray(policy.redTeamFallbackModels) || policy.redTeamFallbackModels.some((m) => typeof m !== "string"))) {
+    return "redTeamFallbackModels must be an array of model-id strings.";
+  }
   if (policy.tuning) {
     // tuning.redTeamConvictionThreshold was removed 2026-07-07 (single-adversary consolidation O2:
     // the Red Team reviews EVERY risk-adding opening — no conviction gate). Stale values in stored
