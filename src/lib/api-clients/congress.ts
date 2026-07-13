@@ -53,6 +53,10 @@ export function getCongressTradeClient(): CongressTradeClient {
         try {
           const res = await fetch(input, {
             ...init,
+            headers: {
+              ...(init?.headers || {}),
+              "User-Agent": "SocraticTrade/1.0"
+            },
             signal: controller.signal,
             cache: "no-store"
           });
