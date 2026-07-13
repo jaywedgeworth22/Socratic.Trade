@@ -1,5 +1,22 @@
 # Current Status
 
+## 2026-07-13 — Console theme token-mixing regression fix from #1476 (CLAUDE, branch `claude/console-theme-token-fix`)
+
+Confirmed UI regression from the iOS-settings migration PR #1476. `app/ui/ios-components.tsx` mixed two
+independent theme systems: backgrounds used the console token system (`--con-*` vars, keyed to `data-theme`
+on `.console-root`) while secondary text used the LEGACY app utility classes (`text-muted`/`text-faint`/
+`text-fg`, keyed to a `.dark` class on `<html>`). The same PR shipped a Light/Dark/System picker that flips
+ONLY the console system, so the two diverged — in console dark mode, muted text stayed dark slate
+(rgb(63,79,96)) on a dark card = nearly invisible; in html-dark + console-light it was washed-out light text
+on white. Every migrated Settings page was affected. Fix: 6 class swaps in `ios-components.tsx` to the
+`text-[color:var(--con-*)]` arbitrary-value form the same file already uses at its other call sites, plus 2
+typo fixes in `app/console/components/chrome.tsx` (theme-picker active state used `var(--con-text)`, an
+undefined token → corrected to `var(--con-fg)`). Display-only CSS-class change, no logic touched. Grep
+confirms 0 standalone legacy classes and 0 `con-text` remaining. Rollout:
+`docs/rollouts/2026-07-13-console-theme-token-fix.md`. Next action: land via `scripts/land.sh`, arm
+`gh pr merge <N> --squash --auto` (auto-deploys on merge). Follow-up (NOT fixed here): `/console/usage`
+uses the fully-legacy design system and is a separate pre-existing issue.
+
 ## 2026-07-12 — shared-package-pin-check: resolve refs to commit SHAs before comparing (CLAUDE, branch `claude/check-pin-ref-resolve`)
 
 Hardened `.github/workflows/shared-package-pin-check.yml` so it compares the two consumer
