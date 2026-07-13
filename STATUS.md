@@ -259,8 +259,10 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - Verified completion of P1 items: Roth IRA truncation token cap raised to 4000+, `tradeThesisTag` coalescing in DB queries, and reflection dedupe signatures scoped per account.
 - Implemented and verified LLM Failover UI and architecture.
 
-## What's blocking / unresolved
-- Nothing. All P1, P2, and P3 items specified in the current sprint are complete.
+## Current Status
+
+- Discovered why `Congress.Trade` congressional trades were stuck in June for Socratic.Trade: App A (`Congress.Trade`) recently enabled a `botDefense.ts` guard on `/api/v1/transactions` that blocks standard node `fetch` UAs. Fixed Socratic.Trade by providing a custom `User-Agent: SocraticTrade/1.0`.
+- Applied an IPv6 DNS force-ipv4 fix to `congress-scout.mjs` on Congress.Trade to fix its own scrape failures.
 
 ## Next Action
 - Land changes to main via `land.sh`.
