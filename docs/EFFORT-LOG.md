@@ -527,6 +527,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+
 - **SEC/RAG 1,000-stock implementation program (CODEX, branch `codex/sec-rag-program`, worktree
   `/Users/jay/.codex/worktrees/socratic-sec-rag-program`, 2026-07-13) — IN PROGRESS / OWNER-DIRECTED
   ALL NINE PACKAGES.** Inherits merged AG baselines #1495 (census/universe), #1496
