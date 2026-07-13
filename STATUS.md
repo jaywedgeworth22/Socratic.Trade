@@ -20,6 +20,65 @@ Addressed 15 Codex P2 threads across four autofix rounds:
 Rollout: `docs/rollouts/2026-07-13-congress-trade-integration.md`.
 Auto-merge enabled.
 
+## 2026-07-13 — SEC/RAG implementation program (CODEX, branch `codex/sec-rag-program`)
+
+Owner-directed implementation of all nine packages in the 1,000-stock SEC/RAG plan is in progress. The
+branch inherits merged PRs #1495, #1496, #1520, and #1527, but the acceptance audit does not treat P0/P1 as
+complete: the committed universe uses SEC ticker-file order as a false prominence proxy and lacks a dated
+eligibility/selection receipt; the census does not certify target-slot, revision, provenance, or PIT coverage;
+and the manifest still lacks durable jobs, immutable raw objects, sections/tables, and verified-complete
+receipts. The current ingestion path also remains recent-only and regex/whitespace based.
+
+The first local slice now implements the versioned/checksummed universe acceptance gate and durable job/task
+state with leases, strict stage transitions, bounded retries, DLQ/quarantine, verification receipts, and replay
+identity. This first slice is ready in PR #1543: 16 focused tests pass, then the required Node 24 gate passed
+with lint at 0 errors / 447 inherited warnings, clean TypeScript, 352 files / 3,950 tests, and a production build.
+The build first caught and then verified the fix for a `node:crypto` Edge import trace. Expert lanes are still
+being hardened independently: the corrected universe/census is under adversarial review, while first discovery/
+pacing and parser/chunker drafts were rejected at review and are being corrected. No live provider, object-store,
+vector-corpus, or production backfill write will run before fixture tests and the real-corpus gates pass. Open AG
+PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled. PR #1543 received
+a Codex review whose first three findings were addressed in commit 523828bc. A refreshed review then found four
+additional P2 contract gaps: offset timestamps, normalized quarantine identifiers, checksum validation, and blank
+terminal reasons. A third review pass then found four durable-state gaps: immutable task revisions, authoritative
+receipt checkpoints, sealed-job replay, and non-finite retry configuration. All eleven findings are now fixed
+locally with 26 focused manifest/worker tests green. The final Node 24 gate on the latest four fixes is also
+green after merging current `origin/main`: lint has 0 errors / 452 inherited warnings, TypeScript is clean, all
+352 files / 3,960 tests pass, and the production build succeeds. Refreshed hosted checks and review-thread triage
+remain before merge.
+
+Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
+but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.
+
+Rollout: `docs/rollouts/2026-07-13-sec-rag-program.md`.
+
+## 2026-07-13 — [codex-autofix] Query chunk_occurrences instead of document_chunks for admin corpus coverage (PR #1533)
+
+Codex review flagged a P2 finding: `getChunkCoverage()` and `getChunkSourceBreakdown()` queried the content-hash dedup table (`document_chunks`, one row per unique chunk). When a later filing/source contained boilerplate whose `content_hash` was already embedded, the admin UI showed 0 new chunks for that source/symbol. Switched both queries to `chunk_occurrences` (one row per actual occurrence) so the Corpus Composition and per-ticker source chips reflect true document coverage.
+
+Verify trio: tsc clean, npm test pass, build clean, lint 0 errors.
+Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+All 10 Codex threads resolved. Auto-merge enabled.
+
+## 2026-07-13 — [codex-autofix] Address 3 Codex P2 review findings on PR #1533 (agent/ag-unified-admin-console)
+
+Codex review on the unified admin console PR flagged 3 P2 findings on the dashboard. All 3 addressed:
+
+1. **Surface failed admin probes (P2)**: Added per-probe error tracking (`probeErrors` state) to the `Promise.allSettled` fetch pattern. When a probe fails (rejected or non-2xx), the error message is surfaced on the relevant card instead of silently falling back to healthy defaults like "All Operations Online" or "$0.00".
+2. **Aggregate LLM rows by model (P2)**: The "Cost By Model" list aggregated rows by `(user, provider, context, key_source)` — not by model. Now aggregates client-side by model name before displaying the top 3. Also fixed `slice(0,3)` before `sort()` (wrong order) and `costEstUsd` type mismatch.
+3. **Key connection cards by credential lane (P2)**: Connection card keys and labels now include `keySource` so multi-lane services (e.g. user+env credentials) are correctly reconciled by React and distinguishable to operators.
+
+Verify trio: tsc clean, 350 suites / 3934 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+Auto-merge enabled.
+
+## 2026-07-13 — Unified Operator Admin Console & RAG Chunk Details (Antigravity/AG, branch `agent/ag-unified-admin-console`)
+
+Comprehensively unified the path-based admin pages into a single cohesive console with a shared sidebar layout (`layout.tsx`), redesigned `/admin` page as a live metrics and diagnostics dashboard, and enhanced the RAG coverage page to group and display the counts/sources of all document chunk types (blended fundamentals, disclosures, coach memories) instead of leaving them under "0 filings". Verified with passing lint, compiler, build, and 3,931 vitest tests. Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+
+## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
+
+Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes, ensuring 100% compliance with Pinecone's ID constraints. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
 ## 2026-07-13 — Red Team Fallover, UI updates, and Episodic Memory defensive fix (Antigravity, branch `agent/ag-red-team-fallback`)
 
 Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. 
