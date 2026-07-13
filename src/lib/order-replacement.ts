@@ -253,6 +253,24 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
     if (found) {
       originalOrder = found;
     } else if (row.symbol && row.side && row.original_type && row.original_quantity !== null && row.original_filled_quantity !== null) {
+      // If the row is still cancel_requested with no recorded cancel_result,
+      // we cannot safely assume the order was canceled at the broker — it may
+      // have filled, expired, or simply be omitted from the broker order list
+      // (many brokers do not return terminal orders). Reconstructing it as
+      // "canceled" would bypass the broker cancel and proceed to place a
+      // market replacement, potentially over-trading the position.
+      if (row.status === 'cancel_requested' && !row.cancel_result) {
+        db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, updated_at = ? WHERE id = ?`)
+          .run(
+            "Original order not found at broker and no cancel was recorded. " +
+            "Cannot safely proceed without knowing the order's fate — it may have " +
+            "filled, expired, or been removed from the broker order list. Review " +
+            "the position and retry manually if a market replacement is still needed.",
+            new Date().toISOString(),
+            row.id
+          );
+        return;
+      }
       originalOrder = {
         id: row.original_order_id,
         symbol: row.symbol,
@@ -451,26 +469,34 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
       const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
       const price = isExit ? applyPaperExitCost(rawPrice, originalOrder.side, source) : rawPrice;
-      insertFillEvent({
-        userId,
-        accountNumber: input.policy.accountNumber,
-        source,
-        executionMode,
-        symbol,
-        side: originalOrder.side,
-        quantity: remainingQuantity,
-        price,
-        notional: Math.abs(price * remainingQuantity),
-        status: fillStatus,
-        brokerOrderId: execution.orderId,
-        raw: {
-          source: "market_replace",
-          replacedOrderId: originalOrder.id,
-          cancel: row.cancel_result,
-          review,
-          execution
-        }
-      });
+      // Check for existing fill before inserting — in multi-process deployments the
+      // replacement_submitted reconciliation branch may have already recorded this
+      // fill before we reach this point. Replacement fills have no proposal_id, so
+      // the (proposal_id, broker_order_id) uniqueness guard in insertFillEvent does
+      // not apply.
+      const existingFill = db.prepare(`SELECT 1 FROM fill_events WHERE user_id = ? AND account_number = ? AND broker_order_id = ?`).get(userId, input.policy.accountNumber, execution.orderId);
+      if (!existingFill) {
+        insertFillEvent({
+          userId,
+          accountNumber: input.policy.accountNumber,
+          source,
+          executionMode,
+          symbol,
+          side: originalOrder.side,
+          quantity: remainingQuantity,
+          price,
+          notional: Math.abs(price * remainingQuantity),
+          status: fillStatus,
+          brokerOrderId: execution.orderId,
+          raw: {
+            source: "market_replace",
+            replacedOrderId: originalOrder.id,
+            cancel: row.cancel_result,
+            review,
+            execution
+          }
+        });
+      }
 
       // Mark the row terminal AFTER the fill is recorded so a crash between the
       // status update and fill insertion doesn't leave a terminal row with no fill.
@@ -670,6 +696,22 @@ export async function autoRemediateStaleExitOrders(input: {
     .all(userId, input.policy.accountNumber) as OrderReplacementRow[];
 
   for (const row of activeReplacements) {
+    // If auto-remediation was turned off after a cancel_requested row was enqueued
+    // (e.g. by the previous auto-remediation pass before the toggle), skip/abort
+    // those rows rather than continuing to cancel/place the market replacement.
+    // cancel_confirmed and replacement_submitted rows still need to complete their
+    // lifecycle (the order may already be canceled), so only skip cancel_requested
+    // rows that haven't had a cancel attempted yet.
+    if (input.policy.autoRemediateStaleExits === false && row.status === 'cancel_requested' && !row.cancel_result) {
+      db.prepare(`UPDATE order_replacements SET status = 'aborted', error = ?, updated_at = ? WHERE id = ? AND status = 'cancel_requested'`)
+        .run(
+          "Auto-remediation is disabled — this replacement was cancelled. " +
+          "Use the manual replacement API if a market exit is still needed.",
+          new Date().toISOString(),
+          row.id
+        );
+      continue;
+    }
     try {
       await stepReplacementState(row, {
         userId,
