@@ -37,7 +37,7 @@
     "@opentelemetry/instrumentation": "^0.220.0",
     "@opentelemetry/sdk-trace-node": "^2.9.0",
     "@pinecone-database/pinecone": "^8.0.0",
-    "@sentry/nextjs": "^10.63.0",
+    "@sentry/nextjs": "^10.65.0",
     "@xyflow/react": "^12.11.2",
     "better-sqlite3": "^12.11.1",
     "clsx": "^2.1.1",
