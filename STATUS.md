@@ -16,10 +16,12 @@ the SHA form, but the bug was untouched and would recur the instant CODEX's pend
 Replay-tested the resolve-and-compare logic directly against the live (public,
 unauthenticated) GitHub API: tag `v1.6.0` vs its equivalent raw SHA -> resolves EQUAL, exit 0;
 tag `v1.6.0` vs the `v1.7.0` SHA -> resolves UNEQUAL, exit 1 (DIVERGED). CI-config only, no
-app code touched. Caveat: the required `check-pin` status on this PR itself runs from
-`main`'s (old) workflow definition per GitHub Actions' `pull_request`-trigger semantics, not
-this PR's new logic — the fix only takes effect for PRs opened after it lands on `main`.
-Rollout: `docs/rollouts/2026-07-12-check-pin-ref-resolve.md`.
+app code touched. Correction to an initial assumption: verified directly against PR #1507's
+own `check-pin` run that GitHub Actions used the PR BRANCH's workflow file (not `main`'s) for
+this same-repo `pull_request` trigger — the job log echoed this diff's new `resolve_ref`/
+`is_git_spec`/`SHARED_REPO` logic. So this PR's `check-pin` already exercised the new logic
+(and passed on the fast path, since both pins matched). Rollout:
+`docs/rollouts/2026-07-12-check-pin-ref-resolve.md`.
 
 ## 2026-07-12 — SEC/RAG 1,000-stock high-yield backfill plan (CODEX, branch `codex/rag-1000-stock-backfill-plan`)
 

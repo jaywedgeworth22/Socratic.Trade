@@ -56,20 +56,30 @@ instead of coincidentally-passing on today's specific pin state.
     exit 1** (matches expected: genuinely different commits still fail).
   - Full output of both replays is in the PR discussion / session transcript; both matched the
     required outcomes exactly.
-- Confirmed `package.json`'s own pin is unchanged (`github:jaywedgeworth22/congress-trading-shared#c4fcfb4423a11318bda8486ecf3dd6ab1783e87a`),
-  so this PR's own required `check-pin` status (which — see Follow-ups — runs from `main`'s
-  workflow definition on `pull_request` events, not this PR's) is unaffected by this change.
+- Confirmed `package.json`'s own pin is unchanged
+  (`github:jaywedgeworth22/congress-trading-shared#c4fcfb4423a11318bda8486ecf3dd6ab1783e87a`).
+  **Correction to an assumption in the task brief:** the brief for this work asserted that the
+  required `check-pin` status on `pull_request` events runs from `main`'s workflow definition,
+  not the PR's. Verified directly against PR #1507's own `check-pin` run
+  (`actions/runs/29223136804/job/86732042154`): the job log's line-by-line echo of the executed
+  `run:` script contains this diff's new function names (`is_git_spec`, `resolve_ref`,
+  `git_ref`, the `SHARED_REPO` env var) 8 times, and the run's `head_branch` is
+  `claude/check-pin-ref-resolve` — i.e. GitHub Actions ran the **PR branch's** workflow file,
+  not `main`'s. This matches documented GitHub Actions behavior for same-repo (non-fork)
+  `pull_request` triggers (as opposed to `pull_request_target`, which does pin to the base
+  branch's workflow for security). So this PR's own `check-pin` status already exercised the
+  NEW ref-resolution logic, took the fast normalized-string-match path (both pins identical),
+  and passed (`OK: both consumers pin ...`) — see Follow-ups for what this means in practice.
 - Full verify gate run via `scripts/land.sh` (Node 24 PATH gate): `npx tsc --noEmit`,
   `npm test`, `npm run build` — see the landing commit's CI run for exact pass/fail; command
   outputs not duplicated here since `land.sh` re-runs them as part of the gate.
 
 ## Follow-ups / caveats
-- **The required `check-pin` status that gates PR merges runs from `main`'s workflow
-  definition on `pull_request` events, not the PR branch's** — a well-known GitHub Actions
-  behavior for `pull_request`-triggered required checks. This means THIS PR's own `check-pin`
-  run used the OLD (string-compare-only) logic, not the fix in this diff. Since `main` and
-  this PR's `package.json` pin were identical and already in raw-SHA form, the old check
-  passed anyway. The new ref-resolution logic only takes effect for PRs opened AFTER this
-  change lands on `main`.
+- **Correction, not a caveat:** the required `check-pin` status DOES run from the PR branch's
+  own workflow definition (verified above), not `main`'s — this repo's `pull_request` trigger
+  is same-repo, so it isn't subject to the `pull_request_target`-style base-branch pin. This
+  PR's `check-pin` run already used the new ref-resolution logic. Net effect is the same either
+  way for this specific PR (both pins matched, so it passed on the fast path regardless of
+  which logic ran) but the mechanism differs from what was assumed going in.
 - No app code changed; this is CI-config only. `PLAN.md` was not touched (no scope/timeline/
   approach change to the product).
