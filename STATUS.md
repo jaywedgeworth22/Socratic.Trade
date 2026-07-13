@@ -101,6 +101,9 @@ an independent multi-agent design review that converged on the same approach. Ga
 ## 2026-07-13 — Infisical Secrets and Machine Identity Audit (Antigravity/AG, branch `agent/ag-infisical-sole-truth-audit`)
 
 Audited the Coolify production environment variables for `socratic-trade-prod` and matched them exactly with local Universal Auth machine identities. Moved the remaining operational configuration variables (`DB_BOOTSTRAP`, `NODE_ENV`, `REQUIRE_SECRETS_MANAGER`) and Alpaca streams settings (`STREAMS_ALPACA_*`, `TRIGGER_ENGINE`) into Infisical across all environments (dev, staging, prod), making Infisical the absolute, sole source of truth for app operations. Cleaned up and deleted these redundant variables from Coolify to leave only bootstrap connector keys and Nixpacks builder configurations.
+## 2026-07-13 — Red Team Fallover and UI updates (Antigravity, branch `agent/antigravity`)
+
+Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. Verified with tsc, lint, tests, and build. Next step: land.
 
 ## 2026-07-13 — GPT-5.6 Benchmark Run (Antigravity, branch `agent/ag-gpt-5-6-benchmark`)
 
