@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-13 — P2.4 Congress Share Daily Retry Storm Fix (Antigravity, branch `agent/ag-safety-exit-replacement`)
+
+Implemented P2.4 to prevent duplicate daily data sharing runs and retry storms in the same process:
+- Added a module-level `activeDailySharePromise` in `src/lib/congress-share.ts` to cache and return the active in-flight promise if `runCongressDailyShare` is called concurrently/subsequently while still executing.
+- Verified that the 60-minute failure backoff in `isCongressDailyShareDue` is active and correctly logs `congress_share_last_failure_ms`.
+- Added unit test in `test/congress-share.test.ts` verifying concurrent deduplication via a shared in-flight promise. All 3930 tests and typechecks passed successfully.
+Rollout: `docs/rollouts/2026-07-13-congress-share-retry-storm.md`.
+
 ## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes (Antigravity, branch `agent/ag-safety-exit-replacement`)
 
 Resolved the three Codex review findings on PR #1492 (Exit Replacement State Machine):
