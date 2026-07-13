@@ -1,5 +1,8 @@
 import { getDb } from "../../src/lib/db";
-import { getVectorStoreStats } from "../../src/lib/vector-db";
+import { envFlagOn } from "../../src/lib/rag/env-flag";
+import { getVectorStoreStats, numericEnv } from "../../src/lib/vector-db";
+import { eightKRagLimit } from "../../src/lib/web-sources/sec8k";
+import { disclosureRagEnabled } from "../../src/lib/web-sources/disclosure-rag";
 
 interface DocTypeRow {
   doc_type: string;
@@ -57,18 +60,57 @@ function reportBySymbol(topN = 50): SymbolCoverageRow[] {
     .all(topN) as SymbolCoverageRow[];
 }
 
+/** Matches isFreeTier() in src/lib/web-sources/sec-filings.ts — paid tier
+ *  (VECTOR_EMBED_BATCH_DELAY_MS ≤ 5000) uses higher filing caps. */
+function isFreeTier(): boolean {
+  const delay = Number(process.env.VECTOR_EMBED_BATCH_DELAY_MS ?? 21_000);
+  return !Number.isFinite(delay) || delay > 5000;
+}
+
 function getConfigurationSummary() {
+  // Resolve effective configuration matching the ingest path's defaults
+  // rather than printing "unset" when a default is silently in effect.
+  // Defaults sourced from:
+  //   vector-db.ts:  RAG_INGEST_BUDGET_ENABLED → true,  RAG_PINECONE_WRITE_BUDGET_ENABLED → true
+  //                   RAG_INGEST_MAX_TEXTS_PER_DAY → 20,000,  RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY → 200,000
+  //   sec-filings.ts: SEC_FILING_RAG_MAX_PER_RUN → 1 (free) / 200 (paid),  SEC_FILING_INGEST_TTL_HOURS → 168
+  //   sec8k.ts:       VECTOR_STORECONTEXTS_DEDUP → true,  WEB_SOURCE_SEC8K_RAG_LIMIT → 16,
+  //                   WEB_SOURCE_SEC8K_FULL_BODY → off
+  //   disclosure-rag.ts: RAG_EMBED_DISCLOSURES → false
   return {
-    RAG_INGEST_BUDGET_ENABLED: process.env.RAG_INGEST_BUDGET_ENABLED ?? "unset",
-    RAG_INGEST_MAX_TEXTS_PER_DAY: process.env.RAG_INGEST_MAX_TEXTS_PER_DAY ?? "unset",
-    RAG_PINECONE_WRITE_BUDGET_ENABLED: process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED ?? "unset",
-    RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY: process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY ?? "unset",
-    VECTOR_STORECONTEXTS_DEDUP: process.env.VECTOR_STORECONTEXTS_DEDUP ?? "unset",
-    SEC_FILING_RAG_MAX_PER_RUN: process.env.SEC_FILING_RAG_MAX_PER_RUN ?? "unset",
-    SEC_FILING_INGEST_TTL_HOURS: process.env.SEC_FILING_INGEST_TTL_HOURS ?? "unset",
-    WEB_SOURCE_SEC8K_RAG_LIMIT: process.env.WEB_SOURCE_SEC8K_RAG_LIMIT ?? "unset",
-    WEB_SOURCE_SEC8K_FULL_BODY: process.env.WEB_SOURCE_SEC8K_FULL_BODY ?? "unset",
-    RAG_EMBED_DISCLOSURES: process.env.RAG_EMBED_DISCLOSURES ?? "unset"
+    // Use == null (not truthiness) so that a blank env var (e.g. RAG_INGEST_MAX_TEXTS_PER_DAY=)
+    // is NOT treated as "unset" — it goes through the resolver, which parses and clamps
+    // to match what the ingest path actually uses.
+    RAG_INGEST_BUDGET_ENABLED: process.env.RAG_INGEST_BUDGET_ENABLED == null
+      ? "on (default)"
+      : `${envFlagOn("RAG_INGEST_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_INGEST_BUDGET_ENABLED})`,
+    RAG_INGEST_MAX_TEXTS_PER_DAY: process.env.RAG_INGEST_MAX_TEXTS_PER_DAY == null
+      ? "20,000 (default)"
+      : `${numericEnv("RAG_INGEST_MAX_TEXTS_PER_DAY", 20_000, 1).toLocaleString()}  (raw env: "${process.env.RAG_INGEST_MAX_TEXTS_PER_DAY}")`,
+    RAG_PINECONE_WRITE_BUDGET_ENABLED: process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED == null
+      ? "on (default)"
+      : `${envFlagOn("RAG_PINECONE_WRITE_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED})`,
+    RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY: process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY == null
+      ? "200,000 (default)"
+      : `${numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", 200_000, 1).toLocaleString()}  (raw env: "${process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY}")`,
+    VECTOR_STORECONTEXTS_DEDUP: process.env.VECTOR_STORECONTEXTS_DEDUP == null
+      ? "on (default)"
+      : `${envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true) ? "on" : "off"}  (env: ${process.env.VECTOR_STORECONTEXTS_DEDUP})`,
+    SEC_FILING_RAG_MAX_PER_RUN: process.env.SEC_FILING_RAG_MAX_PER_RUN == null
+      ? "1 (free-tier default, 200 paid)"
+      : `${numericEnv("SEC_FILING_RAG_MAX_PER_RUN", isFreeTier() ? 1 : 200, 1).toLocaleString()}  (raw env: "${process.env.SEC_FILING_RAG_MAX_PER_RUN}")`,
+    SEC_FILING_INGEST_TTL_HOURS: process.env.SEC_FILING_INGEST_TTL_HOURS == null
+      ? "168 (default, 7 days)"
+      : `${numericEnv("SEC_FILING_INGEST_TTL_HOURS", 168, 1).toLocaleString()} h  (raw env: "${process.env.SEC_FILING_INGEST_TTL_HOURS}")`,
+    WEB_SOURCE_SEC8K_RAG_LIMIT: process.env.WEB_SOURCE_SEC8K_RAG_LIMIT == null
+      ? `${eightKRagLimit()} (default)`
+      : `${process.env.WEB_SOURCE_SEC8K_RAG_LIMIT} (raw)`,
+    WEB_SOURCE_SEC8K_FULL_BODY: process.env.WEB_SOURCE_SEC8K_FULL_BODY == null
+      ? "off (default)"
+      : `${process.env.WEB_SOURCE_SEC8K_FULL_BODY} (raw)`,
+    RAG_EMBED_DISCLOSURES: process.env.RAG_EMBED_DISCLOSURES == null
+      ? "off (default)"
+      : `${disclosureRagEnabled() ? "on" : "off"}  (raw env: "${process.env.RAG_EMBED_DISCLOSURES}")`
   };
 }
 
@@ -85,32 +127,55 @@ async function performParityCheck() {
   console.log(`  Total ingested accession markers: ${accessions.length}`);
   console.log(`  Total document chunk records: ${chunks.length}`);
 
+  // Doc types whose ingestion path does NOT embed the accession in the chunk_id.
+  // The missing-chunks substring check would FALSE-flag these, so we skip them.
+  // See ingestEightKBody: no doc_id passed to storeDocument → chunk_id is UUID-based.
+  const NON_ACCESSION_BEARING_DOC_TYPES = new Set(["8-K-body"]);
+
+  // Chunk sources that intentionally have no ingested_accessions marker.
+  // sec8k-summary chunks embed the SEC accession in chunk_id but the summary
+  // path never inserts an accession ledger row, so the orphan check would
+  // false-flag every valid summary chunk.
+  const ORPHAN_EXEMPT_SOURCES = new Set(["sec8k-summary:sec-8k"]);
+
+  // Build O(1) lookup sets to avoid quadratic nested scans.
+  const accessionSet = new Set(accessions.map(a => a.accession));
+  const accessionInChunkIds = new Set<string>();
+  for (const chunk of chunks) {
+    const match = chunk.chunk_id.match(/(\d{10}-\d{2}-\d{6})/);
+    if (match) accessionInChunkIds.add(match[1]!);
+  }
+
   let missingChunks = 0;
+  let zeroChunkAccessions = 0;
   for (const acc of accessions) {
-    // Check if there is any chunk that maps to this accession.
-    // contextId format: source:symbol:accession:timestamp (or fallback with symbol:source:fallbackIndex)
-    const hasChunk = chunks.some(c => c.chunk_id.includes(acc.accession));
-    if (!hasChunk && acc.chunk_count > 0) {
-      console.log(`  ⚠️  [Missing Chunks] Accession ${acc.accession} (${acc.doc_type}) for ${acc.ticker} has 0 local chunks recorded.`);
-      missingChunks++;
+    if (NON_ACCESSION_BEARING_DOC_TYPES.has(acc.doc_type)) continue;
+    const hasChunk = accessionInChunkIds.has(acc.accession);
+    if (!hasChunk) {
+      if (acc.chunk_count > 0) {
+        console.log(`  ⚠️  [Missing Chunks] Accession ${acc.accession} (${acc.doc_type}) for ${acc.ticker} has 0 local chunks recorded.`);
+        missingChunks++;
+      } else {
+        zeroChunkAccessions++;
+      }
     }
   }
 
   let orphans = 0;
   for (const chunk of chunks) {
-    // Try to extract accession-like string from chunk_id (e.g. 0001193125-24-123456)
+    if (ORPHAN_EXEMPT_SOURCES.has(chunk.source)) continue;
     const match = chunk.chunk_id.match(/(\d{10}-\d{2}-\d{6})/);
     if (match) {
       const accession = match[1]!;
-      const hasAccession = accessions.some(a => a.accession === accession);
-      if (!hasAccession) {
+      if (!accessionSet.has(accession)) {
         console.log(`  ⚠️  [Orphan Chunk] Chunk "${chunk.chunk_id}" (${chunk.symbol}) has no matching ingested_accessions marker.`);
         orphans++;
       }
     }
   }
 
-  console.log(`  Manifest-to-chunk parity: ${missingChunks} accessions missing chunks, ${orphans} orphan chunks.`);
+  const zeroChunkNote = zeroChunkAccessions > 0 ? `, ${zeroChunkAccessions} zero-chunk accessions (retry suppressed)` : "0 zero-chunk accessions";
+  console.log(`  Manifest-to-chunk parity: ${missingChunks} accessions missing chunks, ${orphans} orphan chunks, ${zeroChunkNote}.`);
 }
 
 async function main(): Promise<void> {
