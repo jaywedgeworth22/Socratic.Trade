@@ -32,3 +32,14 @@ Comprehensively unified the operator admin panels under a shared responsive side
 
 ### Verification
 All four checks passed: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test` (350 suites / 3,934 tests), `npm run build` (clean).
+
+## 2026-07-13 Codex Autofix Round 2 (1 P2 Finding)
+
+### Changes
+1. **Don't count unhealthy containers as running** (`app/admin/page.tsx` L372): The filter predicate `c.status.includes("healthy")` incorrectly matched `"unhealthy"` or `"running:unhealthy"` statuses, counting degraded containers as running. Added `&& !s.includes("unhealthy")` guard so only containers whose status explicitly excludes the unhealthy token are counted.
+
+### Files Touched
+* `app/admin/page.tsx` (1 line — container health filter guard)
+
+### Verification
+All four checks passed: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test` (350 suites / 3,934 tests), `npm run build` (clean).

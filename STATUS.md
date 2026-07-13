@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Fix unhealthy container status check on PR #1533 (agent/ag-unified-admin-console)
+
+Codex review flagged a P2 finding on the admin dashboard: the container health filter used `c.status.includes("healthy")`, which incorrectly matches `"unhealthy"` or `"running:unhealthy"`. Added `&& !s.includes("unhealthy")` guard so degraded containers aren't counted as running.
+
+Verify trio: tsc clean, 350 suites / 3934 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+All 4 remaining unresolved Codex threads resolved. Auto-merge enabled.
+
 ## 2026-07-13 — [codex-autofix] Address 3 Codex P2 review findings on PR #1533 (agent/ag-unified-admin-console)
 
 Codex review on the unified admin console PR flagged 3 P2 findings on the dashboard. All 3 addressed:
