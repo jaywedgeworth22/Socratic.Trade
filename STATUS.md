@@ -322,14 +322,13 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 ## What was just completed
-- Fixed `web-sources-sec.test.ts` dynamic dating issue which was causing the 30-day cutoff to fail once the static `2026-06-12` date aged out.
-- Fixed `order-replacement.test.ts` to expect `pending_cancel` logic.
-- Fixed TS2345 in `congress-analytics.ts` where `null` symbols could cause crashes.
-- Verified completion of P1 items: Roth IRA truncation token cap raised to 4000+, `tradeThesisTag` coalescing in DB queries, and reflection dedupe signatures scoped per account.
-- Implemented and verified LLM Failover UI and architecture.
+- Native iOS App: Implemented Apple Sign-in with backend verification and token validation.
+- UI Updates: Updated the Login page to use the Socratic.Trade candlestick logo and stripped unnecessary text.
+- Console UI: Changed the Model Stats UI from a Sheet to a Drawer, formatting model row labels to display grouped company names vertically on mobile devices, and removing redundant parenthetical names.
+- PR #1525 created and merged with admin privileges. Waiting for auto-deploy.
 
 ## What's blocking / unresolved
 - Nothing. All P1, P2, and P3 items specified in the current sprint are complete.
 
 ## Next Action
-- Land changes to main via `land.sh`.
+- Await production CI / auto-deploy for PR #1525.
