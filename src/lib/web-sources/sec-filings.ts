@@ -640,6 +640,9 @@ export async function ingestFundamentalsCard(
       data.companyName != null ||
       data.sector != null ||
       data.industry != null ||
+      // marketCap is on MarketQuote (types.ts), not SymbolEnrichment; the card renders it
+      // via buildFundamentalsContext which takes `data: any`, so check with a safe cast.
+      (data as any).marketCap != null ||
       data.price != null ||
       data.peRatio != null ||
       data.pbRatio != null ||
@@ -660,7 +663,7 @@ export async function ingestFundamentalsCard(
       data.dividendYield != null ||
       data.beta != null;
     if (!hasRealField) {
-      return { skipped: true, error: `Empty fundamentals data (all metrics N/A) for symbol: ${symbol}` };
+      return { skipped: true };
     }
     const text = buildFundamentalsContext(symbol, data);
     const publishedAt = data.asOf || new Date().toISOString().slice(0, 10);

@@ -1,5 +1,16 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Round 5: Count marketCap + skip empty without error (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 2 more P2 findings on the round-4 fix:
+
+1. **Count market cap before skipping cards** — `buildFundamentalsContext` renders Market Cap via `data.marketCap` but the `hasRealField` guard didn't check it. Added `(data as any).marketCap != null` to the guard.
+
+2. **Treat empty fundamentals as a skip** — Empty-card return included `error`, which the caller pushed to `result.errors`, falsely failing the admin route. Changed to `{ skipped: true }` without `error` field.
+
+Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round5.md`.
+
 ## 2026-07-13 — [codex-autofix] Round 4: Recognize all rendered metrics before skipping cards (PR #1493 `ag/troubleshoot-sentry`)
 
 Codex review flagged the `hasRealField` emptiness check in `ingestFundamentalsCard` as too narrow — only checking 6 of the ~22 fields that `buildFundamentalsContext` renders. A provider that returns only `debtToEquity` (e.g. SEC XBRL only, no paid/Yahoo tiers) would be incorrectly skipped. Expanded the check to cover every field the card renders.
