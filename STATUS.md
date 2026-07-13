@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-07-13 — Codex Autofixes Round 6 (Claude, branch `ag/codex-autofix-1541`)
+
+Addressed 5 Codex review findings from the now-merged PR #1541 (`agent/ag-red-team-fallback`):
+
+1. **(P2) Pass account target when saving fallback models** — Both `commitFallbackModels` (Green) and `commitRedTeamFallbackModels` (Red) omitted `policy.connectedAccountId` from their `savePolicy()` calls, so a concurrent account switch could persist the fallback list onto the wrong account. Fixed by passing the explicit account ID like all nearby writes.
+
+2. **(P2) Avoid logging FMP URLs with API keys** — `fetchFmpJson` logged the full request URL on non-ok responses, leaking `FMP_API_KEY` into server logs. Fixed by sanitizing the URL before logging (strips `apikey` param). Added `sanitizeFmpUrl` helper.
+
+3. **(P3) Update the attempted model before transport failures** — `finalModel` was only reassigned after a successful payload parse, so a timeout/transport error on a fallback still reported the primary model. Fixed by moving `finalModel = attempt.model` to the top of each iteration.
+
+4. **(P3) Commit fallback edits when focus leaves** — `FallbackModelSelect` saved on Enter and mouse-outside clicks but not on keyboard-driven blur (Tab). Fixed by adding an `onBlur` handler with deferred commit via `setTimeout(0)`.
+
+5. **(P3) Degrade unavailable FMP endpoints instead of throwing** — `fetchFmpJson` threw on every 403/5xx, but all callers expect array returns. Fixed by returning `[]` as the degraded fallback on non-ok responses.
+
 ## 2026-07-13 — Red Team Fallover, UI updates, and Episodic Memory defensive fix (Antigravity, branch `agent/ag-red-team-fallback`)
 
 Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. 

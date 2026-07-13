@@ -67,12 +67,25 @@ function getApiKey(): string {
   return key;
 }
 
+function sanitizeFmpUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.delete("apikey");
+    return u.toString();
+  } catch {
+    return url.replace(/apikey=[^&]+/g, "apikey=***");
+  }
+}
+
 async function fetchFmpJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) {
     const text = await res.text();
-    console.error(`FMP Error fetching ${url}: ${res.status} - ${text}`);
-    throw new Error(`FMP API Error: ${res.status}`);
+    console.error(`FMP Error fetching ${sanitizeFmpUrl(url)}: ${res.status} - ${text}`);
+    // Return empty array as degraded fallback rather than throwing, since every
+    // caller is an array-returning endpoint. This prevents callers from needing
+    // to wrap each call in a try/catch for transient 403/5xx responses.
+    return ([] as unknown) as T;
   }
   return res.json() as Promise<T>;
 }

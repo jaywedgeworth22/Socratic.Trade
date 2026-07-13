@@ -312,6 +312,7 @@ export async function debateProposal(
           const attempt = redAttempts[i];
           const isLast = i === redAttempts.length - 1;
           const next = redAttempts[i + 1];
+          finalModel = attempt.model;
 
           try {
             // Bounded same-model retry on transient failures (§4.3): 2 attempts total, fresh
