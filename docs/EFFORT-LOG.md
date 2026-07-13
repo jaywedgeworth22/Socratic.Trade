@@ -570,14 +570,26 @@ As of 2026-07-08 (assignment-rule update).
   `app/console/page.tsx`. Merged latest `origin/main` (incl. Tradier broker #1425) clean 2026-07-11;
   full gate green (tsc 0, lint 0 errors, **3745 tests pass**, build exit 0). All 11 Codex review threads
   resolved. Awaiting CI + owner merge. See `docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
+- **Intro wordmark height/banner-offset fix — desktop drop (CLAUDE cloud, branch
+  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-13, PR pending.** On desktop the intro
+  assembled "SOCRATIC TRADE" ~37px too HIGH, then it dropped when the page loaded. Measured cause:
+  the real logo sits below a `RealityBanner` (~31.75px, shown for non-live/paper/no-account) that the
+  loading screen can't predict (no snapshot yet), plus a desktop within-bar error (control row ~43px,
+  so the logo centers ~20.7px down, not the assumed 15). Fix (`intro-canvas.tsx` only): persist the
+  real logo's measured top to `localStorage` per breakpoint and prime `layout()`'s fallback `y` from
+  it, so a returning session assembles the wordmark exactly where it ends up (no drop); cold default
+  corrected 15→20; every-frame tracking self-heals a stale cache. Empirically verified in Chromium
+  (primed cache → assembly at real bar level ~51 vs real 52). Gate green (tsc 0, lint 0 errors, 3927
+  tests pass, build exit 0). Independent multi-agent design review converged on the same approach.
+  See `docs/rollouts/2026-07-13-intro-desktop-banner-offset.md`.
 - **Mobile intro-animation size-jerk fix (CLAUDE cloud, branch
-  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-13, PR pending.** On mobile the intro
-  reassembled the "SOCRATIC TRADE" wordmark at a narrow size, then popped larger just before sliding
-  away. Cause: `intro-canvas.tsx` froze the header-logo measurement on first find, but the mobile
-  brand row mounts its logo at a placeholder height and resizes to a width-scaled clamp (up to ~40%
-  taller) — so the landing used the stale small box and the real logo popped in at handoff. Fix:
-  re-measure the real logo every frame so the eased landing tracks its final geometry. Gate green
-  (tsc 0, lint 0 errors, 3927 tests pass, build exit 0). See
+  `claude/socratic-trade-logos-p0hxk7`) — ✅ COMPLETED 2026-07-13: PR #1499 merged to `main` (squash,
+  verify green; auto-deploys to production).** On mobile the intro reassembled the "SOCRATIC TRADE"
+  wordmark at a narrow size, then popped larger just before sliding away. Cause: `intro-canvas.tsx`
+  froze the header-logo measurement on first find, but the mobile brand row mounts its logo at a
+  placeholder height and resizes to a width-scaled clamp (up to ~40% taller) — so the landing used
+  the stale small box and the real logo popped in at handoff. Fix: re-measure the real logo every
+  frame so the eased landing tracks its final geometry. See
   `docs/rollouts/2026-07-13-mobile-intro-size-jerk.md`.
 - **Public auth + paid-route rate-limit hardening (CODEX, branch
   `codex/public-auth-rate-limit-hardening`) — MERGED TO `main` 2026-07-11 at `97152c25`; live deploy not independently verified.** Bounded security batch from

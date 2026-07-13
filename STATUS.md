@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-13 — Intro wordmark banner-offset fix — desktop drop (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+
+Desktop follow-up to the mobile intro fix. On desktop the wordmark assembled ~37px too high and then
+dropped when the page loaded. Measured cause: the real header logo sits below a `RealityBanner`
+(~31.75px, shown for non-live/paper/no-account accounts) that the loading screen can't predict (no
+snapshot yet), plus a desktop within-bar error (~20.7px offset, not the assumed 15). Fix
+(`intro-canvas.tsx` only): persist the real logo's measured top to `localStorage` per breakpoint and
+prime `layout()`'s fallback `y` from it, so a returning session assembles the wordmark exactly where
+it ends up — no drop; cold default corrected 15→20; every-frame tracking self-heals a stale cache.
+Verified empirically in Chromium (primed cache → assembly at bar level ~51 vs real logo 52.4) and by
+an independent multi-agent design review that converged on the same approach. Gate green (tsc 0, lint
+0 errors, 3927 tests pass, build exit 0). Rollout: `docs/rollouts/2026-07-13-intro-desktop-banner-offset.md`.
+
 ## 2026-07-12 — SEC/RAG 1,000-stock high-yield backfill plan (CODEX, branch `codex/rag-1000-stock-backfill-plan`)
 
 Three read-only expert lanes audited SEC discovery, parsing/chunking, vector/retrieval design, and backfill
