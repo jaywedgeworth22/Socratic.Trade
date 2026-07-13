@@ -58,7 +58,7 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -69,11 +69,10 @@ describe("runMigrations — versioned schema migrations", () => {
       isActive: true
     });
 
-    // Re-run only the concrete removal migration over a production-shaped schema. Executing every
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
-    db.pragma("user_version = 23");
+    db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 });

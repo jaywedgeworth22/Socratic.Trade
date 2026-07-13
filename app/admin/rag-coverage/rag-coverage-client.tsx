@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Card } from "../../ui/primitives";
+import { Card, Chip } from "../../ui/primitives";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -10,6 +10,7 @@ interface TickerCoverage {
   filings: number;
   chunks: number;
   latestChunkAt: string | null;
+  breakdown?: Record<string, number>;
 }
 
 interface VectorStoreHealth {
@@ -54,6 +55,7 @@ interface VectorIndexStats {
 interface CoverageData {
   sinceDays: number;
   perTicker: TickerCoverage[];
+  globalBreakdown?: Record<string, number>;
   totalTickers: number;
   totalChunks: number;
   totalFilings: number;
@@ -140,6 +142,26 @@ function providerLabel(provider: string): string {
   return map[provider] ?? provider;
 }
 
+function getSourceLabel(src: string): string {
+  if (src === "sec-edgar") return "SEC";
+  if (src.startsWith("fundamentals:")) return "Fund Card";
+  if (src.startsWith("disclosure:congress")) return "Congress";
+  if (src.startsWith("disclosure:insider")) return "Insider";
+  if (src.includes("socratic-memory")) return "Coach";
+  if (src.startsWith("sec8k-summary")) return "8-K Summary";
+  return src.split(":").pop() || src;
+}
+
+function getSourceTone(src: string): "neutral" | "pos" | "neg" | "warn" | "info" | "accent" {
+  if (src === "sec-edgar") return "accent";
+  if (src.startsWith("fundamentals:")) return "info";
+  if (src.startsWith("disclosure:congress")) return "warn";
+  if (src.startsWith("disclosure:insider")) return "neutral";
+  if (src.includes("socratic-memory")) return "pos";
+  if (src.startsWith("sec8k-summary")) return "neg";
+  return "neutral";
+}
+
 // ── Components ────────────────────────────────────────────────────────────────
 
 function SummaryCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -179,10 +201,18 @@ function TickerRow({ coverage }: { coverage: TickerCoverage }) {
             style={{ width: `${barPct}%` }}
           />
         </div>
-        <div className="flex items-center gap-3 mt-1 text-xs text-muted">
-          <span>{coverage.chunks} chunks</span>
+        <div className="flex items-center gap-3 mt-1.5 text-xs text-muted flex-wrap">
+          <span className="font-semibold text-fg/80">{coverage.chunks} chunks</span>
           <span>{coverage.filings} filing{coverage.filings !== 1 ? "s" : ""}</span>
-          <span>{fmtRelDate(coverage.latestChunkAt)}</span>
+          {coverage.breakdown && Object.entries(coverage.breakdown).map(([src, count]) => {
+            if (count === 0) return null;
+            return (
+              <Chip key={src} tone={getSourceTone(src)} className="text-[10px] px-1.5 py-0.5 font-mono">
+                {count} {getSourceLabel(src)}
+              </Chip>
+            );
+          })}
+          <span className="ml-auto text-faint">{fmtRelDate(coverage.latestChunkAt)}</span>
         </div>
       </div>
     </div>
@@ -313,6 +343,23 @@ export function RagCoverageClient() {
               sub={`estimated Voyage cost, last ${data.sinceDays}d`}
             />
           </div>
+
+          {/* Global breakdown badges */}
+          {data.globalBreakdown && Object.keys(data.globalBreakdown).length > 0 && (
+            <Card className="p-4 mb-6">
+              <div className="text-xs text-muted uppercase tracking-wide mb-3">Corpus Composition</div>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(data.globalBreakdown)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([src, count]) => (
+                    <Chip key={src} tone={getSourceTone(src)} className="text-xs px-2.5 py-1 font-mono">
+                      <span className="font-semibold text-fg mr-1">{count.toLocaleString()}</span>
+                      <span className="opacity-80 font-sans">{getSourceLabel(src)}</span>
+                    </Chip>
+                  ))}
+              </div>
+            </Card>
+          )}
 
           {(data.providerUsage?.pinecone || data.providerUsage?.voyage) && (
             <StatusNotice tone="info" title="Provider Usage Cross-Check">
