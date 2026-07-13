@@ -9,6 +9,7 @@
 import { useMemo, useState } from "react";
 import { Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
 import { isModelRotationSentinel } from "@/lib/llm-request";
+import { resolveDailyOpeningCap } from "@/lib/policy-caps";
 import type { PendingProposal, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
@@ -21,7 +22,7 @@ import {
 import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
-import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel } from "../lib/red-team";
+import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel } from "../lib/red-team";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
@@ -143,7 +144,8 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   // other — no "APPROVE LIVE <SYMBOL>" phrase. The server honors the same flag (assertLiveApprovalConfirmation).
   const willPromptTyped = live && policy?.requireTypedConfirmation !== false;
   const dailyUsed = finite(pending.decision.dailyNotionalUsed) ? pending.decision.dailyNotionalUsed : snapshot?.dailyStats.notional;
-  const dailyRemaining = finite(policy?.maxDailyNotional) && finite(dailyUsed) ? Math.max(0, policy.maxDailyNotional - dailyUsed) : undefined;
+  const dailyCap = policy ? resolveDailyOpeningCap(policy, snapshot?.portfolio?.totalMarketValue) : undefined;
+  const dailyRemaining = dailyCap && finite(dailyUsed) ? Math.max(0, dailyCap.notional - dailyUsed) : undefined;
   const referencePrice = p.referencePrice ?? pending.proposalReferencePrice;
   const currentDrift =
     finite(referencePrice) && finite(pending.proposalCurrentPrice) && referencePrice > 0
@@ -331,11 +333,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
               {p.redTeamVerdict.available ? (
                 <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
-                  {p.redTeamVerdict.verdict === "approve-at-half"
-                    ? "Verdict: approved at HALF size"
-                    : p.redTeamVerdict.rejected
-                      ? "Verdict: rejected"
-                      : "Verdict: survived review"}
+                  Verdict: {redTeamVerdictLabel(p.redTeamVerdict)}
                 </span>
               ) : (
                 <span className="font-semibold" style={{ color: "var(--con-warn)" }} title={redFailure.title}>
@@ -394,7 +392,10 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
               <dt className="text-[color:var(--con-faint)]">Per-order cap</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtMoney(policy?.maxOrderNotional)}</dd>
               <dt className="text-[color:var(--con-faint)]">Daily cap remaining</dt>
-              <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtMoney(dailyRemaining)}</dd>
+              <dd className="con-num text-right text-[color:var(--con-fg)]">
+                {fmtMoney(dailyRemaining)}
+                {dailyCap?.mode === "pct_nav" ? ` (${fmtPct(dailyCap.configuredValue, 1)} NAV cap)` : ""}
+              </dd>
               <dt className="text-[color:var(--con-faint)]">Projected symbol exposure</dt>
               <dd className="con-num text-right text-[color:var(--con-fg)]">{fmtPct(pending.decision.projectedSymbolExposurePct, 1)}</dd>
               <dt className="text-[color:var(--con-faint)]">ADV cap</dt>

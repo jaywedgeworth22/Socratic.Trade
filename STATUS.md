@@ -31,6 +31,131 @@ Codex review flagged 2 P2 findings on the clearCache + fundamentals-ingest code 
 2. **Clear sec_filings completion rows too** (`app/api/admin/reindex-10k/route.ts`): `clearCache` was only deleting from `ingested_accessions` and `document_chunks`, but `hasIngestedAccession` checks `sec_filings WHERE status = 'complete'` first — so after a Pinecone reset the operator could not reindex filings whose `sec_filings` rows were still marked complete. Now `UPDATE sec_filings SET status = 'discovered'` runs for the affected symbols' 10-K/10-Q rows.
 Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
 Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round3.md`.
+## 2026-07-13 — Account-relative risk limits and Green/Red decision clarity (CODEX, branch `codex/account-relative-risk-clarity`)
+
+Implemented locally from current `origin/main@60703dfe`. Daily opening spend now has one canonical
+dollar-or-percent mode, defaults to 20% of current NAV, and migrates only the exact former $500
+default; explicit dollar choices such as the Roth IRA account's displayed $1,000 remain unchanged
+until the owner switches that account to percent mode. Guardrails, capital posture, approval cards,
+mobile snapshot data, deterministic policy/approval paths, Green prompts, Red prompts, and AI
+strategy review all use the same resolved cap.
+
+The EXE contradiction is fixed at its execution boundary: an Alpaca fractional dollar order that
+cannot fund one whole-share bracket now has every bracket field cleared before broker submission,
+matching the existing "native bracket skipped" receipt. Future decisions persist app-computed
+notional/NAV arithmetic for Red Team and UI use. Live Thesis now renders distinct Green Team,
+deterministic sizing/risk, Red Team, and final deterministic-outcome sections; "review survived"
+is replaced by explicit approved/rejected/unavailable wording; non-placed action rows use intent
+verbs ("Buy"), reserving "Bought" for confirmed placement.
+
+Focused verification is green (8 files / 63 tests, then 5 files / 39 tests and 2 files / 111 tests).
+Repository lint passed with 0 errors / 452 inherited warnings; TypeScript and the native Swift
+snapshot model are clean. After documenting and isolating earlier host-contention timeouts, the
+canonical Node 24 `scripts/land.sh` gate passed completely: 359 files / 4,021 tests and the production
+build. Commit `2cfd7ca8` is pushed in ready PR #1561; hosted CI/security/smoke checks, merge/autodeploy,
+and production verification remain.
+
+Rollout: `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
+
+## 2026-07-13 — Evidence architecture, account-scoped learning, and GPT-5.6 program (CODEX, branch `codex/evidence-architecture-program`)
+
+Implemented locally in the isolated Codex worktree: exact-account relational/vector learning;
+sample-gated paper-to-live research transfer; product Test Account create/UI/read removal plus a
+production purge migration; wider pre-enrichment candidate selection; field-level provenance,
+freshness, arbitration, conflict and provider-failure receipts; exact opening-candidate enforcement;
+one immutable Green/Red evidence manifest; point-in-time RAG, global context budgets and prompt-data
+containment; source coverage/shadow ablation/outcome value telemetry; and shared evidence handling
+for strategy tuning, Framework review, learning review, and Coach/chat.
+
+GPT-5.6 Luna/Terra/Sol are available across all model surfaces with role-specific reasoning controls.
+The curated OpenAI list drops full GPT-5.4/5.5 while retaining Mini/Nano and legacy custom-ID
+compatibility. Focused verification is green: lint (0 errors); TypeScript; 224 integrated
+LLM/evidence/learning tests; and 41 migration/account/model tests. Current `origin/main` at
+`1a90281b` is now reconciled: its Red Team fallback UI/runtime and exit-replacement migrations
+20–22 are preserved, while account learning and Test Account removal remain migrations 23–24.
+Post-merge TypeScript and 205 high-risk migration/fallback/evidence tests pass. The final full gate is
+green: lint 0 errors (448 grandfathered warnings), TypeScript clean, 3,980/3,980 tests, and production
+build. PR #1544 merged as `60703dfe`; production `/api/health` reports that exact release healthy.
+Audit:
+`docs/reviews/2026-07-13-decision-evidence-architecture.md`.
+## 2026-07-13 — SEC/RAG implementation program (CODEX, branch `codex/sec-rag-program`)
+
+Owner-directed implementation of all nine packages in the 1,000-stock SEC/RAG plan is in progress. The
+branch inherits merged PRs #1495, #1496, #1520, and #1527, but the acceptance audit does not treat P0/P1 as
+complete: the committed universe uses SEC ticker-file order as a false prominence proxy and lacks a dated
+eligibility/selection receipt; the census does not certify target-slot, revision, provenance, or PIT coverage;
+and the manifest still lacks durable jobs, immutable raw objects, sections/tables, and verified-complete
+receipts. The current ingestion path also remains recent-only and regex/whitespace based.
+
+The first local slice now implements the versioned/checksummed universe acceptance gate and durable job/task
+state with leases, strict stage transitions, bounded retries, DLQ/quarantine, verification receipts, and replay
+identity. This first slice is ready in PR #1543: 16 focused tests pass, then the required Node 24 gate passed
+with lint at 0 errors / 447 inherited warnings, clean TypeScript, 352 files / 3,950 tests, and a production build.
+The build first caught and then verified the fix for a `node:crypto` Edge import trace. Expert lanes are still
+being hardened independently: the corrected universe/census is under adversarial review, while first discovery/
+pacing and parser/chunker drafts were rejected at review and are being corrected. No live provider, object-store,
+vector-corpus, or production backfill write will run before fixture tests and the real-corpus gates pass. Open AG
+PR #1533 owns the admin coverage and `db-learning.ts` delta and is a KEEPOUT until reconciled. PR #1543 received
+a Codex review whose first three findings were addressed in commit 523828bc. A refreshed review then found four
+additional P2 contract gaps: offset timestamps, normalized quarantine identifiers, checksum validation, and blank
+terminal reasons. A third review pass then found four durable-state gaps: immutable task revisions, authoritative
+receipt checkpoints, sealed-job replay, and non-finite retry configuration. All eleven findings are now fixed
+locally with 26 focused manifest/worker tests green. The final Node 24 and hosted gates passed, and PR #1543
+merged as `cbe3e532`. A review posted seconds after merge found three more P2 durability gaps: blank failure
+reasons, overwritable artifact checksums, and non-finite lease durations. Production now reports exact release
+`cbe3e532` with healthy database, scheduler, storage, and Litestream checks; the only degraded dependency is the
+pre-existing Alpha Vantage quota state. Their follow-up fixes are verified on
+`codex/sec-rag-foundation-postmerge` in ready PR #1559; hosted gates and refreshed review are running.
+
+Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
+but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.
+
+Rollout: `docs/rollouts/2026-07-13-sec-rag-program.md`.
+
+## 2026-07-13 — SEC/RAG foundation post-merge durability follow-up (CODEX, branch `codex/sec-rag-foundation-postmerge`)
+
+PR #1543 merged with all required checks green, then received three new Codex P2 findings after merge. The
+follow-up now validates/falls back malformed lease durations before date arithmetic, requires trimmed nonblank
+failure reasons, and preserves the first accepted raw/normalized SHA-256 values across later checkpoints. Focused
+regressions pass (2 files / 29 tests). The full Node 24 gate is green: lint 0 errors / 452 inherited warnings,
+TypeScript clean, 352 files / 3,963 tests, production build, and diff-check. No provider, object-store, vector, or
+corpus writes ran. Ready PR #1559 is open with auto-merge pending hosted acceptance.
+
+Rollout: `docs/rollouts/2026-07-13-sec-rag-foundation-postmerge.md`.
+
+## 2026-07-13 — [codex-autofix] Query chunk_occurrences instead of document_chunks for admin corpus coverage (PR #1533)
+
+Codex review flagged a P2 finding: `getChunkCoverage()` and `getChunkSourceBreakdown()` queried the content-hash dedup table (`document_chunks`, one row per unique chunk). When a later filing/source contained boilerplate whose `content_hash` was already embedded, the admin UI showed 0 new chunks for that source/symbol. Switched both queries to `chunk_occurrences` (one row per actual occurrence) so the Corpus Composition and per-ticker source chips reflect true document coverage.
+
+Verify trio: tsc clean, npm test pass, build clean, lint 0 errors.
+Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+All 10 Codex threads resolved. Auto-merge enabled.
+
+## 2026-07-13 — [codex-autofix] Address 3 Codex P2 review findings on PR #1533 (agent/ag-unified-admin-console)
+
+Codex review on the unified admin console PR flagged 3 P2 findings on the dashboard. All 3 addressed:
+
+1. **Surface failed admin probes (P2)**: Added per-probe error tracking (`probeErrors` state) to the `Promise.allSettled` fetch pattern. When a probe fails (rejected or non-2xx), the error message is surfaced on the relevant card instead of silently falling back to healthy defaults like "All Operations Online" or "$0.00".
+2. **Aggregate LLM rows by model (P2)**: The "Cost By Model" list aggregated rows by `(user, provider, context, key_source)` — not by model. Now aggregates client-side by model name before displaying the top 3. Also fixed `slice(0,3)` before `sort()` (wrong order) and `costEstUsd` type mismatch.
+3. **Key connection cards by credential lane (P2)**: Connection card keys and labels now include `keySource` so multi-lane services (e.g. user+env credentials) are correctly reconciled by React and distinguishable to operators.
+
+Verify trio: tsc clean, 350 suites / 3934 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+Auto-merge enabled.
+
+## 2026-07-13 — Unified Operator Admin Console & RAG Chunk Details (Antigravity/AG, branch `agent/ag-unified-admin-console`)
+
+Comprehensively unified the path-based admin pages into a single cohesive console with a shared sidebar layout (`layout.tsx`), redesigned `/admin` page as a live metrics and diagnostics dashboard, and enhanced the RAG coverage page to group and display the counts/sources of all document chunk types (blended fundamentals, disclosures, coach memories) instead of leaving them under "0 filings". Verified with passing lint, compiler, build, and 3,931 vitest tests. Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+
+## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
+
+Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes, ensuring 100% compliance with Pinecone's ID constraints. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
+## 2026-07-13 — Red Team Fallover, UI updates, and Episodic Memory defensive fix (Antigravity, branch `agent/ag-red-team-fallback`)
+
+Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. 
+
+Also added critical defensive safeguards in `src/lib/strategy.ts` for the episodic decision memory retrieval block to prevent a minified server crash (`TypeError: a.filter is not a function`) when the `injected` array is undefined or unaligned. Verified with tsc, lint, tests, and build. Next step: land.
+## 2026-07-13 — Congress.Trade Integration Prep (Antigravity/AG, branch `agent/ag-congress-trade-integration`)
 ## 2026-07-13 — Congress.Trade Integration Prep & Middleware Fix (Antigravity/AG, branch `agent/ag-congress-trade-integration`)
 
 Drafted the implementation plan for enabling the bidirectional App A <-> App B Congress.Trade integration. 

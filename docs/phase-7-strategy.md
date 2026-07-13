@@ -2,6 +2,37 @@
 
 This document defines the comprehensive architecture for the AI Trading Strategy, including how the LLM evaluates the market, scores individual equities, and continuously learns from its own outcomes.
 
+## 2026-07-13 evidence-contract and learning-boundary update
+
+The implemented decision path now treats evidence routing as a first-class contract:
+
+- a wider cheap preselection is enriched before the final candidate rank;
+- enriched fields carry availability, timestamp, provenance, disagreement, and provider-failure
+  receipts while preserving scalar consumers;
+- buy/short openings are deterministically limited to the exact final candidate set;
+- Green and Red receive one content-addressed evidence manifest and the complete same evidence
+  object, with a parity hash recorded in the run audit;
+- SEC/RAG, learned prose, reflections, and episodic memories share one run-wide context budget and
+  instruction-like external text is quarantined as data;
+- realized and skipped outcomes join to decision-time source ablations, producing explicitly
+  observational source-value telemetry; and
+- relational/vector account-derived learning is exact-account scoped. Broker-paper lessons transfer
+  only after independent live corroboration; the product Test Account is removed and purged.
+
+See `docs/reviews/2026-07-13-decision-evidence-architecture.md` for the source-by-source audit,
+invariants, and residual gaps.
+
+## 2026-07-13 sizing-arithmetic and outcome-semantics update
+
+- The app computes and persists finalized notional, decision-time NAV, order percentage of NAV,
+  daily cap mode/effective dollars, used budget, and remaining budget before Red Team review.
+- Red Team receives those deterministic values as authoritative arithmetic, so prose such as
+  "$4 is 0.04% of a $100 account" cannot be treated as a model-derived fact.
+- A Red approval means only that the adversarial thesis review approved the stated size; policy,
+  broker preflight, and placement remain separate deterministic outcomes in data and UI.
+- Alpaca sub-share dollar entries clear whole-share bracket fields when the app declares the native
+  bracket skipped, preventing the receipt/transport contradiction that previously blocked EXE.
+
 ## 1. Strategy Architecture: Evaluation Lenses
 
 To ensure balanced and resilient trade proposals, the LLM evaluates candidates

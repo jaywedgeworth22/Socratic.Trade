@@ -96,6 +96,19 @@ export interface RedTeamFinalizedSizing {
   estimatedNotional?: number;
   /** Whether the finalized order is dollar-routed or quantity-routed (marketable-limit). */
   sizeBasis: "notional" | "quantity";
+  /** Account NAV used by deterministic sizing. */
+  portfolioValue?: number;
+  /** App-computed order size as a percentage of NAV; models must not redo this arithmetic. */
+  estimatedPctOfNav?: number;
+  /** Canonical daily opening ceiling after resolving the user's dollar/percent mode. */
+  dailyOpeningCap?: {
+    mode: "pct_nav" | "dollar";
+    configuredValue: number;
+    effectiveNotional: number;
+    pctOfNav?: number;
+  };
+  dailyNotionalUsed?: number;
+  remainingDailyNotional?: number;
 }
 
 /** True when `error` looks like an AbortSignal.timeout()-triggered abort (vs some other thrown
@@ -220,6 +233,7 @@ export async function debateProposal(
       holdingHorizon: policy.holdingHorizon,
       maxOrderNotional: policy.maxOrderNotional,
       maxDailyNotional: policy.maxDailyNotional,
+      maxDailyPctOfNav: policy.maxDailyPctOfNav,
       scoringWeights: policy.scoringWeights
     },
     ...(review?.context ?? {}),
@@ -443,4 +457,3 @@ export async function debateProposal(
     );
   }
 }
-

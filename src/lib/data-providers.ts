@@ -31,6 +31,14 @@ import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
 import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
 import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
+import {
+  arbitrateFieldObservation,
+  dedupeUpstreamFamilies,
+  type FieldObservation,
+  type FieldObservationCandidate,
+  type ProviderFailureReceipt,
+  type UpstreamFamilyCandidate
+} from "./evidence-facts";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -96,6 +104,8 @@ export interface AnalystRatingDetail {
   label: string;   // Strong Buy / Buy / Hold / Sell / Strong Sell
   counts?: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number };
   mean?: number;   // analyst mean (1–5) when the source reports one instead of counts
+  /** Canonical upstream source family, so re-published consensus is blended once. */
+  upstreamFamily?: string;
 }
 
 export interface SymbolEnrichment {
@@ -164,6 +174,10 @@ export interface SymbolEnrichment {
   sources?: Partial<Record<EnrichmentSourcedField, string>>;
   // Each provider's own analyst read, keyed by provider name (for the Rating tooltip).
   analystBySource?: Record<string, AnalystRatingDetail>;
+  /** Per-field evidence receipts; scalar fields above remain the compatibility surface. */
+  fieldObservations?: EnrichmentFieldObservations;
+  /** Provider failures retained alongside successful fields instead of collapsed to empty output. */
+  providerFailures?: Record<string, ProviderFailureReceipt>;
 }
 
 export type EnrichmentSourcedField =
@@ -210,6 +224,10 @@ export type EnrichmentSourcedField =
   | "govContractsQuiver"
   | "lobbyingQuiver"
   | "patentsQuiver";
+
+export type EnrichmentFieldObservations = Partial<
+  Record<EnrichmentSourcedField, FieldObservation<unknown>>
+>;
 
 /** Per-run hint the cascade passes to paid providers when the short-circuit is on.
  *  `coveredFields[symbol]` is the set of `SymbolEnrichment` keys a free upstream
@@ -943,13 +961,24 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean);
     // Each provider's result set, paired with its name, kept in REGISTRATION order
     // so the first-wins merge below is unchanged regardless of how we fetched.
-    const run = (p: MarketEnrichmentProvider, syms: string[], context?: EnrichmentContext) =>
+    type ProviderRun = { name: string; data: Record<string, SymbolEnrichment>; failure?: ProviderFailureReceipt };
+    const run = (p: MarketEnrichmentProvider, syms: string[], context?: EnrichmentContext): Promise<ProviderRun> =>
       p
         .enrich(syms, context)
         .then((data) => ({ name: p.name, data }))
-        .catch(() => ({ name: p.name, data: {} as Record<string, SymbolEnrichment> }));
+        .catch((error) => ({
+          name: p.name,
+          data: {} as Record<string, SymbolEnrichment>,
+          failure: {
+            source: p.name,
+            upstreamFamily: p.name,
+            fetchedAt: new Date().toISOString(),
+            status: "failed" as const,
+            errorKind: error instanceof Error ? error.name : "unknown"
+          }
+        }));
 
-    let results: Array<{ name: string; data: Record<string, SymbolEnrichment> }>;
+    let results: ProviderRun[];
     if (enrichmentShortCircuitEnabled()) {
       // Short-circuit: ONLY the Congress.Trade tier feeds the coverage hint, so await
       // just it first, then run EVERY other provider (free AND paid) in parallel. Paid
@@ -962,7 +991,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       const congressProvider = this.providers.find((p) => p.name === "congress.trade");
       const appAResult = congressProvider
         ? await run(congressProvider, normalized)
-        : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> };
+        : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
       const appA = appAResult.data;
       const coveredFields: Record<string, ReadonlySet<string>> = {};
       const analystSource: Record<string, string> = {};
@@ -983,9 +1012,9 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         otherProviders.map((p) => run(p, normalized, p.costTier === "paid" ? context : undefined))
       );
       // Reassemble in registration order so the merge precedence is identical.
-      const byName = new Map<string, Record<string, SymbolEnrichment>>();
-      for (const r of [appAResult, ...otherResults]) byName.set(r.name, r.data);
-      results = this.providers.map((p) => ({ name: p.name, data: byName.get(p.name) ?? {} }));
+      const byName = new Map<string, ProviderRun>();
+      for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
+      results = this.providers.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
     } else {
       // Default: run every provider over every symbol in parallel.
       results = await Promise.all(this.providers.map((p) => run(p, normalized)));
@@ -995,28 +1024,57 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
     for (const symbol of normalized) {
       const base: SymbolEnrichment = {};
       const sources: Partial<Record<EnrichmentSourcedField, string>> = {};
+      const fieldObservations: EnrichmentFieldObservations = {};
+      const providerFailures: Record<string, ProviderFailureReceipt> = {};
+      const scalarCandidates: Partial<Record<EnrichmentSourcedField, FieldObservationCandidate<unknown>[]>> = {};
+      const cascadeFetchedAt = new Date().toISOString();
+      let currentRecord: SymbolEnrichment | undefined;
+      let currentRegistrationOrder = 0;
       const analystBySource: Record<string, AnalystRatingDetail> = {};
       // Which provider supplied the SURVIVING entry for each analyst source-key (last
       // writer wins, mirroring Object.assign). Used to credit contributors only after
       // de-dupe — a provider whose entry is overwritten by a same-source provider
       // supplied no final value and must not appear in MarketScan.source.
       const analystKeyOwner: Record<string, string> = {};
+      const analystKeyOrder: Record<string, number> = {};
+      let analystRegistrationOrder = 0;
 
-      const takeScalar = <K extends keyof SymbolEnrichment>(
+      const takeScalar = <K extends EnrichmentSourcedField>(
         field: K,
         sourceName: string,
         value: SymbolEnrichment[K] | undefined
       ) => {
+        const supplied = currentRecord?.fieldObservations?.[field] as FieldObservation<SymbolEnrichment[K]> | undefined;
+        if (value !== undefined || supplied) {
+          const observation: FieldObservation<unknown> = {
+            ...supplied,
+            value: value ?? supplied?.value,
+            source: supplied?.source ?? sourceName,
+            upstreamFamily: supplied?.upstreamFamily ?? sourceName,
+            observedAt: supplied?.observedAt ?? (field === "asOf" ? undefined : currentRecord?.asOf),
+            fetchedAt: supplied?.fetchedAt ?? cascadeFetchedAt,
+            status: supplied?.status ?? "ok"
+          };
+          const candidates: FieldObservationCandidate<unknown>[] = scalarCandidates[field] ?? [];
+          candidates.push({
+            observation,
+            providerName: sourceName,
+            registrationOrder: currentRegistrationOrder
+          });
+          scalarCandidates[field] = candidates;
+        }
         if (base[field] === undefined && value !== undefined) {
           base[field] = value;
-          this.contributingNames.add(sourceName);
-          if (field in EMPTY_SOURCED) sources[field as EnrichmentSourcedField] = sourceName;
+          sources[field] = sourceName;
         }
       };
 
-      for (const { name, data } of results) {
+      for (const [registrationOrder, { name, data, failure }] of results.entries()) {
+        currentRegistrationOrder = registrationOrder;
+        if (failure) providerFailures[name] = failure;
         const r = data[symbol];
         if (!r) continue;
+        currentRecord = r;
         takeScalar("price", name, r.price);
         takeScalar("bid", name, r.bid);
         takeScalar("ask", name, r.ask);
@@ -1075,8 +1133,51 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           for (const [k, v] of Object.entries(r.analystBySource)) {
             analystBySource[k] = v;
             analystKeyOwner[k] = name;
+            analystKeyOrder[k] = analystRegistrationOrder++;
           }
         }
+      }
+
+      // Preserve legacy first-wins behavior when no provider exposes metadata (the
+      // deterministic tie-breaker is registration order), while allowing explicit
+      // field receipts to prefer a fresher, more reliable, or more direct fact.
+      for (const field of Object.keys(EMPTY_SOURCED) as EnrichmentSourcedField[]) {
+        const candidates = scalarCandidates[field] ?? [];
+        const selected = arbitrateFieldObservation(field, candidates);
+        if (selected) {
+          (base as Record<string, unknown>)[field] = selected.observation.value;
+          sources[field] = selected.providerName;
+          fieldObservations[field] = selected.observation;
+          this.contributingNames.add(selected.providerName);
+          continue;
+        }
+        const unavailable = candidates.find((candidate) => candidate.observation.status !== "ok" && candidate.observation.status !== "stale");
+        fieldObservations[field] = unavailable?.observation ?? {
+          source: "enrichment-cascade",
+          upstreamFamily: "enrichment-cascade",
+          fetchedAt: cascadeFetchedAt,
+          status: Object.keys(providerFailures).length === results.length ? "failed" : "no_match"
+        };
+      }
+
+      // A source can republish the same upstream analyst consensus under a different
+      // display key. Keep one deterministic (last registered) read per upstream family
+      // before blending, so a redistribution cannot count as a second analyst vote.
+      const analystFamilyCandidates: UpstreamFamilyCandidate<{ detail: AnalystRatingDetail; owner: string }>[] =
+        Object.entries(analystBySource).map(([key, detail]) => ({
+          key,
+          upstreamFamily: detail.upstreamFamily ?? key,
+          value: { detail, owner: analystKeyOwner[key] },
+          registrationOrder: analystKeyOrder[key] ?? 0
+        }));
+      const dedupedAnalysts = dedupeUpstreamFamilies(analystFamilyCandidates);
+      for (const key of Object.keys(analystBySource)) {
+        delete analystBySource[key];
+        delete analystKeyOwner[key];
+      }
+      for (const candidate of dedupedAnalysts) {
+        analystBySource[candidate.key] = candidate.value.detail;
+        analystKeyOwner[candidate.key] = candidate.value.owner;
       }
 
       // A "congress.trade"-keyed entry is a SOURCE-UNKNOWN blended aggregate (App A's
@@ -1097,6 +1198,13 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         base.analystRating = labelFromAnalystScore(blended);
         base.analystBySource = analystBySource;
         sources.analystRating = Object.keys(analystBySource).length > 1 ? "blended" : Object.keys(analystBySource)[0];
+        fieldObservations.analystRating = {
+          value: base.analystRating,
+          source: sources.analystRating,
+          upstreamFamily: "analyst-consensus",
+          fetchedAt: cascadeFetchedAt,
+          status: "ok"
+        };
         // Credit only the providers whose analyst entry SURVIVED the de-dupe.
         for (const owner of new Set(Object.values(analystKeyOwner))) this.contributingNames.add(owner);
       }
@@ -1109,6 +1217,16 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       if (typeof avSentiment === "number") {
         base.sentiment = avSentiment;
         sources.sentiment = "alpha-vantage";
+        const avReceipt = results.find((res) => res.name === "alpha-vantage")?.data[symbol]?.fieldObservations?.sentiment;
+        fieldObservations.sentiment = {
+          ...avReceipt,
+          value: avSentiment,
+          source: avReceipt?.source ?? "alpha-vantage",
+          upstreamFamily: avReceipt?.upstreamFamily ?? "alpha-vantage",
+          observedAt: avReceipt?.observedAt,
+          fetchedAt: avReceipt?.fetchedAt ?? cascadeFetchedAt,
+          status: avReceipt?.status ?? "ok"
+        };
         this.contributingNames.add("alpha-vantage");
       }
 
@@ -1129,6 +1247,16 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           base.shortInterestDisagreement =
             `Short interest disagreement: ${primarySrc} ${base.shortPercentOfFloat.toFixed(1)}% vs ` +
             `massive ${base.shortPercentOfFloatSecondary.toFixed(1)}% (${delta.toFixed(1)}pp apart).`;
+          if (fieldObservations.shortPercentOfFloat) {
+            fieldObservations.shortPercentOfFloat = {
+              ...fieldObservations.shortPercentOfFloat,
+              conflict: {
+                kind: "value_disagreement",
+                summary: base.shortInterestDisagreement,
+                competingSources: [primarySrc, "massive"]
+              }
+            };
+          }
           this.contributingNames.add("massive");
         }
       }
@@ -1136,6 +1264,8 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       delete base.shortPercentOfFloatSecondary;
 
       base.sources = sources;
+      base.fieldObservations = fieldObservations;
+      if (Object.keys(providerFailures).length > 0) base.providerFailures = providerFailures;
       merged[symbol] = base;
     }
     return merged;

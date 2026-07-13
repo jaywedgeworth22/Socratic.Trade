@@ -86,6 +86,10 @@ function notableCongressAnalyticsScore(sig?: SymbolWebSignal): number {
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 const NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=8000&offset=0";
+const DEFAULT_ENRICHMENT_POOL_MULTIPLIER = 5;
+const DEFAULT_ENRICHMENT_POOL_CAP = 500;
+const MAX_ENRICHMENT_POOL_MULTIPLIER = 10;
+const MAX_ENRICHMENT_POOL_CAP = 1_000;
 
 type RawNasdaqRow = Record<string, unknown>;
 type NasdaqExchange = "nasdaq" | "nyse";
@@ -155,6 +159,60 @@ function tailThreshold(values: number[], sigma: number): number | undefined {
   const std = Math.sqrt(variance);
   if (!(std > 0)) return undefined;
   return mean + sigma * std;
+}
+
+/**
+ * Bounded first-stage candidate set for enrichment. Holdings and event/statistical outliers lead
+ * the list because providers with their own budgets consume first-wins; the remaining capacity is
+ * filled in initial rank order. The cap never falls below the final candidate limit, preserving the
+ * prior guarantee that every normal top-N candidate can be enriched.
+ */
+export function buildEnrichmentPreselectionPool(
+  ranked: MarketQuote[],
+  eventExtra: MarketQuote[],
+  heldSymbols: Set<string>,
+  candidateLimit: number
+): MarketQuote[] {
+  const multiplier = clampInteger(
+    envNumber("MARKET_SCAN_ENRICHMENT_POOL_MULTIPLIER", DEFAULT_ENRICHMENT_POOL_MULTIPLIER),
+    1,
+    MAX_ENRICHMENT_POOL_MULTIPLIER
+  );
+  const configuredCap = clampInteger(
+    envNumber("MARKET_SCAN_ENRICHMENT_POOL_CAP", DEFAULT_ENRICHMENT_POOL_CAP),
+    candidateLimit,
+    MAX_ENRICHMENT_POOL_CAP
+  );
+  const targetSize = Math.min(ranked.length, Math.min(candidateLimit * multiplier, configuredCap));
+  const seen = new Set<string>();
+  const add = (quote: MarketQuote, pool: MarketQuote[]) => {
+    if (pool.length >= targetSize || seen.has(quote.symbol)) return;
+    seen.add(quote.symbol);
+    pool.push(quote);
+  };
+  const pool: MarketQuote[] = [];
+
+  for (const quote of ranked) if (heldSymbols.has(quote.symbol)) add(quote, pool);
+  for (const quote of eventExtra) add(quote, pool);
+  for (const quote of ranked) add(quote, pool);
+  return pool;
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function compareMarketQuotes(a: MarketQuote, b: MarketQuote): number {
+  return b.score - a.score || a.symbol.localeCompare(b.symbol);
+}
+
+function uniqueQuotesBySymbol(quotes: MarketQuote[]): MarketQuote[] {
+  const seen = new Set<string>();
+  return quotes.filter((quote) => {
+    if (seen.has(quote.symbol)) return false;
+    seen.add(quote.symbol);
+    return true;
+  });
 }
 
 export async function scanMarket(
@@ -282,48 +340,47 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
         && (hasNotableWebSignal(allWebSignals[quote.symbol], congressMultiplier) || isStatisticalOutlier(quote)))
       .sort((a, b) => {
         const signalDelta = outlierInterestScore(allWebSignals[b.symbol], congressMultiplier) - outlierInterestScore(allWebSignals[a.symbol], congressMultiplier);
-        return signalDelta !== 0 ? signalDelta : b.score - a.score;
+        return signalDelta !== 0 ? signalDelta : compareMarketQuotes(a, b);
       })
       .slice(0, outlierReserve);
-    // Finally, force-include any current holdings that landed outside both the top-N and the outlier
-    // set, so the agent always sees (and can exit) every name it actually owns — even illiquid or
-    // low-ranked ones that would otherwise never reach the candidate set.
-    const includedSoFar = new Set<string>([...topCut, ...eventExtra.map((q) => q.symbol)]);
+    // Holdings always remain forced candidates, including if enrichment later moves a non-held name
+    // above one that initially ranked inside the top-N.
     const heldSymbols = new Set(positions.map((p) => normalizeSymbol(p.symbol)).filter(Boolean));
-    const heldExtra = ranked.filter((quote) => heldSymbols.has(quote.symbol) && !includedSoFar.has(quote.symbol));
-    let topCandidates: MarketQuote[] = [...ranked.slice(0, candidateLimit), ...eventExtra, ...heldExtra];
 
-    // Enrich the candidate set with news sentiment + fundamentals, then re-score & re-sort.
+    // Enrich a wider, bounded first-stage pool before the final top-N cut. This lets fundamentals,
+    // sentiment, and quality data promote a name that missed the initial screener-only cutoff. It is
+    // deliberately one batched provider call: widening selection must not introduce another waterfall.
     const provider = getEnrichmentProvider(options?.userId);
-    if (topCandidates.length > 0) {
+    let rescoredRanked: MarketQuote[] = ranked;
+    const preselectionPool = buildEnrichmentPreselectionPool(ranked, eventExtra, heldSymbols, candidateLimit);
+    if (preselectionPool.length > 0) {
       try {
-        // Providers enrich the whole list by default, but an explicit FMP_MAX_SYMBOLS
-        // throttle (and scarce per-scan budgets like TwelveData credits) still consume the
-        // list first-wins. EVERY held position goes first — including ones ranked inside
-        // the top-N, which `heldExtra` deliberately excludes — then event outliers, then
-        // the rest of the ranked cut: a budget shortfall must starve the ranked tail,
-        // never a name the agent owns.
-        const topCut = ranked.slice(0, candidateLimit);
-        const enrichmentOrder = [
-          ...topCut.filter((quote) => heldSymbols.has(quote.symbol)),
-          ...heldExtra,
-          ...eventExtra,
-          ...topCut.filter((quote) => !heldSymbols.has(quote.symbol))
-        ];
-        const enrichment = await provider.enrich(enrichmentOrder.map((quote) => quote.symbol));
-        topCandidates = topCandidates
-          .map((quote) => {
-            const extra = enrichment[quote.symbol];
-            if (!extra) return quote;
-            const enriched = applyEnrichment(quote, extra);
+        const enrichment = await provider.enrich(preselectionPool.map((quote) => quote.symbol));
+        const rescoredBySymbol = new Map(
+          preselectionPool.map((quote) => {
+            const enriched = enrichment[quote.symbol] ? applyEnrichment(quote, enrichment[quote.symbol]) : quote;
             const factorBreakdown = scoreFactors(enriched, weights);
-            return { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal };
+            return [quote.symbol, { ...enriched, factorBreakdown, score: factorBreakdown.weightedTotal }] as const;
           })
-          .sort((a, b) => b.score - a.score);
+        );
+        rescoredRanked = ranked
+          .map((quote) => rescoredBySymbol.get(quote.symbol) ?? quote)
+          .sort(compareMarketQuotes);
       } catch (error) {
         warnings.push(error instanceof Error ? `Enrichment failed: ${error.message}` : "Enrichment failed.");
       }
     }
+
+    // Stage two: select the re-scored top-N, then append the original event reserve and every held
+    // name that is still outside that cut. Those forced paths remain additive and are never displaced
+    // by enrichment; only the normal top-N boundary is allowed to move.
+    const rescoredBySymbol = new Map(rescoredRanked.map((quote) => [quote.symbol, quote]));
+    const finalTop = rescoredRanked.slice(0, candidateLimit);
+    let topCandidates = uniqueQuotesBySymbol([
+      ...finalTop,
+      ...eventExtra.map((quote) => rescoredBySymbol.get(quote.symbol) ?? quote),
+      ...rescoredRanked.filter((quote) => heldSymbols.has(quote.symbol))
+    ]);
 
     // Overlay backend web-source signals onto the candidates and STAMP their provenance
     // (so source attribution stays honest). senateTrades/insiderSentiment are filled only
@@ -397,7 +454,7 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       return { ...overlaid, factorBreakdown, score: factorBreakdown.weightedTotal };
     });
     // Re-sort so the positioning/technical lift actually reorders the displayed candidates.
-    topCandidates = topCandidates.sort((a, b) => b.score - a.score);
+    topCandidates = topCandidates.sort(compareMarketQuotes);
 
     // Cross-sectional sector relative strength: each name's intraday move vs the average
     // move of its sector among the candidates. Lets the agent (and UI) see who is leading
@@ -467,7 +524,7 @@ export function rankMarketQuotes(quotes: MarketQuote[], weights: ScoringWeights 
       const factorBreakdown = scoreFactors(quote, weights);
       return { ...quote, factorBreakdown, score: factorBreakdown.weightedTotal };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort(compareMarketQuotes);
 }
 
 export function scoreFactors(quote: MarketQuote, weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): MarketFactorBreakdown {

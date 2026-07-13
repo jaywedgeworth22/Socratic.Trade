@@ -45,7 +45,9 @@ struct PolicySummary: Decodable {
     let strategyAuthority: String
     let holdingHorizon: String?
     let maxOrderNotional: Double?
+    let maxOrderPctOfNav: Double?
     let maxDailyNotional: Double?
+    let maxDailyPctOfNav: Double?
     let maxDailyOrders: Int?
 }
 

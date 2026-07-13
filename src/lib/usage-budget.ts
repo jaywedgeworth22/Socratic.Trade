@@ -274,6 +274,10 @@ function providerForModel(model: string | null | undefined): string {
 // Cost-ordered downgrade within a provider family (keys/values exist in MODEL_PRICE_PER_M).
 const CHEAPER_MODEL: Record<string, string> = {
   // OpenAI
+  "gpt-5.6": "gpt-5.6-terra",
+  "gpt-5.6-sol": "gpt-5.6-terra",
+  "gpt-5.6-terra": "gpt-5.6-luna",
+  "gpt-5.6-luna": "gpt-5.4-mini",
   "gpt-5.5": "gpt-5.4-mini",
   "gpt-5.4": "gpt-5.4-mini",
   "gpt-5.4-mini": "gpt-5.4-nano",
