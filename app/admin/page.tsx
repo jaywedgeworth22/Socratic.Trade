@@ -59,7 +59,7 @@ export default function OperatorDashboard() {
   const fetchDashboardData = async () => {
     setError(null);
     try {
-      const [resConn, resLlm, resRag, resServ, resTrans] = await Promise.all([
+      const results = await Promise.allSettled([
         fetch("/api/admin/connections-health"),
         fetch("/api/admin/llm-usage?sinceDays=30"),
         fetch("/api/admin/rag-coverage?sinceDays=30"),
@@ -67,15 +67,13 @@ export default function OperatorDashboard() {
         fetch("/api/chat-history?limit=10")
       ]);
 
-      if (!resConn.ok || !resLlm.ok || !resRag.ok || !resServ.ok || !resTrans.ok) {
-        throw new Error("One or more API endpoints failed to load.");
-      }
+      const [resConn, resLlm, resRag, resServ, resTrans] = results;
 
-      setConnections(await resConn.json());
-      setLlm(await resLlm.json());
-      setRag(await resRag.json());
-      setServer(await resServ.json());
-      setTranscript(await resTrans.json());
+      if (resConn.status === "fulfilled" && resConn.value.ok) setConnections(await resConn.value.json());
+      if (resLlm.status === "fulfilled" && resLlm.value.ok) setLlm(await resLlm.value.json());
+      if (resRag.status === "fulfilled" && resRag.value.ok) setRag(await resRag.value.json());
+      if (resServ.status === "fulfilled" && resServ.value.ok) setServer(await resServ.value.json());
+      if (resTrans.status === "fulfilled" && resTrans.value.ok) setTranscript(await resTrans.value.json());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load dashboard data");
     } finally {
@@ -214,13 +212,13 @@ export default function OperatorDashboard() {
                 <span className="text-[11px] uppercase tracking-wider text-muted block mb-2">Cost By Model</span>
                 {llm?.rows
                   .slice(0, 3)
-                  .sort((a, b) => b.costEstUsd - a.costEstUsd)
+                  .sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0))
                   .map((row, i) => (
                     <div key={i} className="flex items-center justify-between text-xs">
                       <span className="font-mono text-muted truncate max-w-[180px]" title={row.model ?? "Unknown"}>
                         {row.model ?? "Unknown"}
                       </span>
-                      <span className="font-semibold text-fg">{fmtCost(row.costEstUsd)}</span>
+                      <span className="font-semibold text-fg">{fmtCost(row.costUsd || 0)}</span>
                     </div>
                   ))}
               </div>
@@ -290,12 +288,14 @@ export default function OperatorDashboard() {
                     <span className="text-muted flex items-center gap-1">
                       <Cpu className="h-3.5 w-3.5" /> CPU Load
                     </span>
-                    <span className="font-semibold text-fg">{server?.resources.cpuPct.toFixed(1) ?? 0}%</span>
+                    <span className="font-semibold text-fg">
+                      {(server?.metrics?.cpu?.slice(-1)[0]?.value ?? 0).toFixed(1)}%
+                    </span>
                   </div>
                   <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-accent transition-all duration-300"
-                      style={{ width: `${server?.resources.cpuPct ?? 0}%` }}
+                      style={{ width: `${server?.metrics?.cpu?.slice(-1)[0]?.value ?? 0}%` }}
                     />
                   </div>
                 </div>
@@ -303,16 +303,10 @@ export default function OperatorDashboard() {
                 {/* RAM Progress */}
                 <div>
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-muted">Memory (RAM)</span>
+                    <span className="text-muted">Total Memory (RAM)</span>
                     <span className="font-semibold text-fg">
-                      {server?.resources.ramUsedGb.toFixed(1) ?? 0} / {server?.hostInfo.ramTotalGb.toFixed(0) ?? 0} GB
+                      {server?.hostInfo?.memoryTotalBytes ? (server.hostInfo.memoryTotalBytes / 1024 / 1024 / 1024).toFixed(1) : 0} GB
                     </span>
-                  </div>
-                  <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-accent transition-all duration-300"
-                      style={{ width: `${((server?.resources.ramUsedGb ?? 0) / (server?.hostInfo.ramTotalGb ?? 1)) * 100}%` }}
-                    />
                   </div>
                 </div>
               </div>
@@ -321,7 +315,7 @@ export default function OperatorDashboard() {
               <div className="border-t border-line/20 pt-3 flex items-center justify-between text-xs">
                 <span className="text-muted">Docker Containers</span>
                 <span className="font-mono text-fg font-semibold">
-                  {server?.containers.filter((c) => c.state === "running").length ?? 0} Running
+                  {server?.resources?.filter((c: any) => c.status?.includes("running") || c.status?.includes("healthy")).length ?? 0} Running
                 </span>
               </div>
             </div>
@@ -339,7 +333,7 @@ export default function OperatorDashboard() {
               </Link>
             </div>
             <div className="p-5 flex-1 divide-y divide-line/20">
-              {transcript?.turns.filter((t) => t.role === "assistant").slice(0, 2).map((t, i) => (
+              {transcript?.turns.filter((t) => t.role === "assistant").reverse().slice(0, 2).map((t, i) => (
                 <div key={t.id} className={`${i > 0 ? "pt-3.5" : ""} pb-3.5 flex flex-col gap-1.5`}>
                   <div className="flex items-center justify-between text-xs">
                     <Chip tone="accent" className="font-mono text-[10px] px-2 py-0.5">
