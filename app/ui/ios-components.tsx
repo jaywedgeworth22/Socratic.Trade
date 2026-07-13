@@ -17,7 +17,7 @@ export function ListSection({ title, footer, action, children, className }: { ti
     <section className={cn("flex flex-col", className)}>
       {(title || action) && (
         <div className="flex items-end justify-between px-4 pb-1.5">
-          {title && <h2 className="text-[13px] font-semibold tracking-wide text-muted uppercase">{title}</h2>}
+          {title && <h2 className="text-[13px] font-semibold tracking-wide text-[color:var(--con-muted)] uppercase">{title}</h2>}
           {action && <div className="text-[13px]">{action}</div>}
         </div>
       )}
@@ -26,7 +26,7 @@ export function ListSection({ title, footer, action, children, className }: { ti
           {children}
         </div>
       </div>
-      {footer && <div className="px-4 pt-2 text-[13px] text-faint leading-relaxed">{footer}</div>}
+      {footer && <div className="px-4 pt-2 text-[13px] text-[color:var(--con-faint)] leading-relaxed">{footer}</div>}
     </section>
   );
 }
@@ -65,12 +65,12 @@ export function LabeledContent({ label, hint, value, icon, alignRight = true, ch
     <div className="flex w-full items-center justify-between gap-4">
       <div className="flex flex-col gap-0.5 shrink-0">
         <div className="flex items-center gap-3">
-          {icon && <span className="text-muted">{icon}</span>}
-          <span className="font-medium text-fg">{label}</span>
+          {icon && <span className="text-[color:var(--con-muted)]">{icon}</span>}
+          <span className="font-medium text-[color:var(--con-fg)]">{label}</span>
         </div>
-        {hint && <span className="text-[length:var(--con-fs-xs)] text-muted max-w-[280px] leading-relaxed">{hint}</span>}
+        {hint && <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)] max-w-[280px] leading-relaxed">{hint}</span>}
       </div>
-      <div className={cn("text-muted", alignRight ? "text-right" : "text-left")}>
+      <div className={cn("text-[color:var(--con-muted)]", alignRight ? "text-right" : "text-left")}>
         {children ?? value}
       </div>
     </div>
