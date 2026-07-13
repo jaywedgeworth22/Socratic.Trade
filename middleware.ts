@@ -65,7 +65,8 @@ const PUBLIC_PREFIXES = [
   "/how-it-works",
   "/design/socratic-trade",
   "/privacy-policy",
-  "/terms-and-conditions"
+  "/terms-and-conditions",
+  "/api/mobile/auth/apple"
 ];
 const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",

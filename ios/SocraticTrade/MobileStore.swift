@@ -7,6 +7,8 @@ final class MobileStore: ObservableObject {
     @Published var error: String?
     @Published var busy = false
     @Published var deletionRequest: AccountDeletionRequest?
+    @Published var isAuthenticated = false
+    @Published var hasInitialized = false
 
     private let client: MobileAPIClient
     private var eventTask: Task<Void, Never>?
@@ -18,9 +20,16 @@ final class MobileStore: ObservableObject {
     func load() async {
         do {
             snapshot = try await client.snapshot()
+            isAuthenticated = true
+            hasInitialized = true
             error = nil
         } catch {
             self.error = error.localizedDescription
+            if let urlError = error as? URLError, urlError.code == .badServerResponse {
+                // If it's a 401 or 403, we can assume unauthenticated
+                self.isAuthenticated = false
+            }
+            hasInitialized = true
         }
     }
 
@@ -72,6 +81,20 @@ final class MobileStore: ObservableObject {
         } catch {
             self.error = error.localizedDescription
             return nil
+        }
+    }
+
+    func loginWithApple(identityToken: String, name: String?) async {
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await client.loginWithApple(identityToken: identityToken, name: name)
+            error = nil
+            isAuthenticated = true
+            await load()
+            startEvents()
+        } catch {
+            self.error = "Apple Sign-In failed: \(error.localizedDescription)"
         }
     }
 }

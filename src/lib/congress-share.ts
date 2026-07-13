@@ -694,6 +694,8 @@ export interface CongressDailyShareSummary {
   responses?: unknown[];
 }
 
+let activeDailySharePromise: Promise<OperationLeaseAware<CongressDailyShareSummary>> | null = null;
+
 /**
  * Collect the monitored universe's daily closes + the S&P-500 (^GSPC) series and POST them to App A
  * in capped chunks. Reuses the app's history cache, so a name fetched earlier in the day is free.
@@ -703,36 +705,49 @@ export interface CongressDailyShareSummary {
 export async function runCongressDailyShare(
   options: RunCongressDailyShareOptions = {}
 ): Promise<OperationLeaseAware<CongressDailyShareSummary>> {
-  const now = options.now ?? Date.now();
-  const empty = {
-    tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
-    posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
-  };
-  if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
-
-  const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
-  if (!options.force && !customUniverse && !isCongressDailyShareDue(now)) {
-    return { ok: false, skipped: true, reason: "not-due", ...empty };
+  if (activeDailySharePromise) {
+    return activeDailySharePromise;
   }
-
-  const guarded = await runWithOperationLease(
-    {
-      group: OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
-      operation: "congress-share",
-      claim: options.operationLeaseClaim
-    },
-    async (claim, signal) => runCongressDailyShareUnlocked(options, claim, signal)
-  );
-  if (!guarded.acquired) {
-    return {
-      ok: true,
-      skipped: true,
-      reason: "operation-in-flight",
-      ...empty,
-      operationLease: guarded.busy
+  
+  const promise = (async () => {
+    const now = options.now ?? Date.now();
+    const empty = {
+      tickers: 0, priced: 0, spxRows: 0, insiderRows: 0, shortVolRows: 0,
+      posts: 0, failedPosts: 0, sent: { spx: 0, prices: 0, closes: 0, insider: 0, shortVolume: 0 }
     };
+    if (!congressTradeToken()) return { ok: false, skipped: true, reason: "no-token", ...empty };
+
+    const customUniverse = Array.isArray(options.symbols) && options.symbols.length > 0;
+    if (!options.force && !customUniverse && !isCongressDailyShareDue(now)) {
+      return { ok: false, skipped: true, reason: "not-due", ...empty };
+    }
+
+    const guarded = await runWithOperationLease(
+      {
+        group: OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
+        operation: "congress-share",
+        claim: options.operationLeaseClaim
+      },
+      async (claim, signal) => runCongressDailyShareUnlocked(options, claim, signal)
+    );
+    if (!guarded.acquired) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "operation-in-flight",
+        ...empty,
+        operationLease: guarded.busy
+      };
+    }
+    return guarded.value;
+  })();
+
+  activeDailySharePromise = promise;
+  try {
+    return await promise;
+  } finally {
+    activeDailySharePromise = null;
   }
-  return guarded.value;
 }
 
 async function runCongressDailyShareUnlocked(
