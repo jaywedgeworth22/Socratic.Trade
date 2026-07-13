@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Skip empty fundamentals cards + clear sec_filings completion rows (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 2 P2 findings on the clearCache + fundamentals-ingest code (round 3 of autofix):
+1. **Skip empty fundamentals cards before embedding** (`src/lib/web-sources/sec-filings.ts`): added a `hasRealField` check in `ingestFundamentalsCard` that verifies at least one core metric/profile field (`companyName`, `sector`, `industry`, `peRatio`, `eps`, `price`) has a real value before calling `storeContexts`. Prevents wasting embedding budget and polluting RAG with all-"N/A" factual cards for unsupported tickers or symbols where all providers were skipped by quota/circuit breaker.
+2. **Clear sec_filings completion rows too** (`app/api/admin/reindex-10k/route.ts`): `clearCache` was only deleting from `ingested_accessions` and `document_chunks`, but `hasIngestedAccession` checks `sec_filings WHERE status = 'complete'` first — so after a Pinecone reset the operator could not reindex filings whose `sec_filings` rows were still marked complete. Now `UPDATE sec_filings SET status = 'discovered'` runs for the affected symbols' 10-K/10-Q rows.
+Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round3.md`.
+
 ## 2026-07-13 — GPT-5.6 Benchmark Run (Antigravity, branch `agent/ag-gpt-5-6-benchmark`)
 
 Ran the benchmark suite against the new `gpt-5.6-terra`, `-sol`, and `-luna` models. Confirmed 100% valid schemas for Green and Red roles on `terra` and `luna`. Recorded latency and token usage. Output saved to `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`. All verification checks passed. State: **Completed (merged to main)**.

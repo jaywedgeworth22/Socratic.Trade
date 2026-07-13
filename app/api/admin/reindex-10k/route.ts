@@ -82,6 +82,14 @@ export async function POST(request: Request) {
         )`
       ).run(...allChunkSymbols);
 
+      // Also downgrade sec_filings completion rows: hasIngestedAccession checks
+      // `sec_filings WHERE status = 'complete'` first, so after a Pinecone reset the
+      // operator cannot reindex filings whose sec_filings rows are still marked complete.
+      // Set them back to 'discovered' so the next run treats them as un-ingested.
+      getDb().prepare(
+        `UPDATE sec_filings SET status = 'discovered', updated_at = ? WHERE ticker IN (${acnPlaceholders}) AND form IN ('10-K', '10-Q') AND status = 'complete'`
+      ).run(new Date().toISOString(), ...symbols);
+
       console.log(`[reindex-10k] Cleared local RAG metadata cache for ${symbols.length} symbol(s): ${symbols.join(", ")}.`);
     }
 

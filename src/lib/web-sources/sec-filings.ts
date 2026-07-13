@@ -629,6 +629,21 @@ export async function ingestFundamentalsCard(
       return { skipped: true, error: `No enrichment data found for symbol: ${symbol}` };
     }
 
+    // Skip empty fundamentals cards: if no core identity or metric field has a real
+    // value (e.g. the enrichment cascade returned an empty object for an unsupported
+    // ticker or all providers were skipped by quota/circuit breaker), embedding an
+    // all-"N/A" card wastes budget and pollutes RAG with empty factual content.
+    const hasRealField =
+      data.companyName != null ||
+      data.sector != null ||
+      data.industry != null ||
+      data.peRatio != null ||
+      data.eps != null ||
+      data.price != null;
+    if (!hasRealField) {
+      return { skipped: true, error: `Empty fundamentals data (all metrics N/A) for symbol: ${symbol}` };
+    }
+
     const text = buildFundamentalsContext(symbol, data);
     const publishedAt = data.asOf || new Date().toISOString().slice(0, 10);
     const acceptanceDatetime = new Date().toISOString();
