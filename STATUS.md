@@ -32,36 +32,16 @@ Addressed 4 remaining Codex review threads (3 P1, 1 P2) from the final reviews o
 
 All gates pass: tsc clean (via build), 350 suites/3933 tests pass, build clean.
 Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
+## 2026-07-13 — [codex-autofix] Address 4 Codex review findings on PR #1526 (agent/ag-update-status-effort-log)
 
-Implemented P2.4 to prevent duplicate daily data sharing runs and retry storms in the same process:
-- Added a module-level `activeDailySharePromise` in `src/lib/congress-share.ts` to cache and return the active in-flight promise if `runCongressDailyShare` is called concurrently/subsequently while still executing.
-- Verified that the 60-minute failure backoff in `isCongressDailyShareDue` is active and correctly logs `congress_share_last_failure_ms`.
-- Added unit test in `test/congress-share.test.ts` verifying concurrent deduplication via a shared in-flight promise. All 3930 tests and typechecks passed successfully.
-Rollout: `docs/rollouts/2026-07-13-congress-share-retry-storm.md`.
+Codex review flagged 4 remaining findings on the X0.3 Exit Replacement State Machine PR:
+1. **Thread 1 (P1)**: `/api/mobile/auth/apple` missing from middleware public allowlist — mobile Apple Sign-In got 401 before handler ran. Added to PUBLIC_PREFIXES.
+2. **Thread 4 (P1)**: `loginWithApple` decoded server response as `[String: String]` but `success` is a Bool — created `AppleLoginResponse` struct with proper types.
+3. **Thread 2 (P2)**: `startEvents()` SSE subscription never called after successful Apple sign-in — added call in login success path.
+4. **Thread 5 (P2)**: `assertLivePreflight` at line 187 didn't mark replacement row as `failed` on throw (unlike all other precondition checks) — wrapped in try-catch with `markReplacementError`.
 
-## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 2 (Claude, branch `agent/ag-safety-exit-replacement`)
+15 remaining threads (all P2) left open — architecturally significant items in order-replacement.ts state machine, congress-share single-flight, and Apple email persistence. Comment posted asking maintainer how to proceed. Verify trio passes (tsc clean, 3934 tests, build clean). Rollout: `docs/rollouts/2026-07-13-codex-autofix-replacement-state-machine.md`.
 
-Addressed 5 remaining P1 findings from Codex review 2 on PR #1492 (commit 32d047da):
-1. **Persist ambiguous submissions (P1)**: After `placeEquityOrder` throws (timeout/dropped connection), the row stays in `replacement_submitted` instead of being permanently failed. The reconciliation branch retries lookup by `replacement_ref_id` on the next tick. Explicit broker rejections (`isRejectedOrCanceledState`) still fail the row immediately.
-2. **Terminal broker states (P1)**: `replacement_submitted` reconciliation now checks `isRejectedOrCanceledState(found.state)` before confirming — a broker-canceled or rejected replacement order is marked as failed rather than spuriously confirmed.
-3. **Cancel-confirmed rows retriable (P1)**: The outer catch block keeps `cancel_confirmed` rows in their current state on transient errors (network blip, broker timeout), so the pump retries the market replacement on the next tick instead of permanently failing.
-4. **Cancel-requested conditional failure (P1)**: The catch block's `WHERE status = 'cancel_requested'` guard prevents a redundant cancel error from a peer scheduler from permanently failing a row that another instance already advanced to `cancel_confirmed`.
-5. **Migration v20 for indexes (P1)**: Added new versioned migration (v20) creating `idx_order_replacements_active_unique` and `idx_order_replacements_user_account_status` for databases whose `PRAGMA user_version` already exceeds v6 (where these indexes were originally declared but never applied to deployed DBs).
-
-All gates pass: tsc clean, 350 suites/3930 tests pass, build clean.
-Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
-
-## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 3 (Claude, branch `agent/ag-safety-exit-replacement`)
-
-Addressed 4 additional Codex findings (2 P1, 2 P2) from the latest review on PR #1492:
-1. **Record fill before terminal confirmation (P1)** — `order-replacement.ts`: Moved the `replacement_confirmed` status update after `insertFillEvent` so a crash or fill-insert failure doesn't leave a terminal row with no fill event.
-2. **Guard submitted-row failure updates with active status (P1)** — `order-replacement.ts`: Both the timeout path and the catch block's default case now filter `WHERE status = 'replacement_submitted'` to prevent a stale or erroneous failure from overwriting a peer's successful reconciliation.
-3. **Avoid booking recovered fills at zero price (P2)** — `order-replacement.ts`: When `averagePrice` is null on a filled broker order during recovery, the fill is kept as `pending_reconciliation` instead of being booked at price 0 with status `filled`, which would skew P&L and never be revisited.
-4. **Purge replacements when deleting a connected account (P2)** — `db-api-keys.ts`: Added `order_replacements` to the account-delete purge table list so replacement rows are cleaned up during connected-account removal.
-5. **Congress share in-flight work keying (P2)** — `congress-share.ts`: Asked the maintainer how to handle the caching (architecturally significant — options differ between admin and scheduler calls).
-
-All gates pass: tsc clean, 350 suites/3930 tests pass, lint 0 errors, build clean.
-Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
 ## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
 
 Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes. Fixed a tail-truncation bug (Codex P2) where `.slice(0, 512)` could drop unique suffixes when document names/sections shared long common prefixes — now uses a head+tail-preserving clamp with `".."` marker. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
@@ -235,10 +215,6 @@ parseInt, ignoring the legal HTTP-date format (RFC 7231 §7.1.3). Added Date.par
 is unchanged so runLoop()'s existing regex continues extracting the correct backoff. Verify trio
 passes (349 files, 3896 tests, build clean). Auto-merge enabled. Resolved the Codex thread.
 Rollout: `docs/rollouts/2026-07-12-codex-triage-429-retry-after.md`.
-## 2026-07-12 — X0.3 Exit Replacement State Machine (Antigravity, branch `agent/antigravity`)
-
-Completed X0.3 from the Codex audit roadmap (PR #1490 follow-up). Migrated `replaceStaleLimitOrderWithMarket` from an in-memory execution loop into a robust, database-backed state machine tracked in the `order_replacements` table. Addressed the re-entrant `UNIQUE` constraint bug by using `db.transaction` with explicit checks. Restored missing state transitions, correctly fetching the original order during background remediation, and re-wired the position-size guard to emit `MarketReplacePreconditionError` so manual replacements throw correctly while auto-remediations cleanly log a `stale_exit_auto_remediation_failed` audit. Reinstated the 5-minute cooldown for double-sells via SQLite query. All 3927 tests passing. Code is ready to land. Rollout: `docs/rollouts/2026-07-12-exit-replacement-state-machine.md`.
-
 ## 2026-07-12 — Kalshi event-data fetcher, lane K1 (CLAUDE subagent, branch `claude/kalshi-data-fetcher`)
 
 New-files-only dormant plumbing for the capability program's Kalshi lane: `src/lib/kalshi.ts`
@@ -418,11 +394,11 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 ## What was just completed
-- Fixed `web-sources-sec.test.ts` dynamic dating issue which was causing the 30-day cutoff to fail once the static `2026-06-12` date aged out.
-- Fixed `order-replacement.test.ts` to expect `pending_cancel` logic.
-- Fixed TS2345 in `congress-analytics.ts` where `null` symbols could cause crashes.
-- Verified completion of P1 items: Roth IRA truncation token cap raised to 4000+, `tradeThesisTag` coalescing in DB queries, and reflection dedupe signatures scoped per account.
-- Implemented and verified LLM Failover UI and architecture.
+- Native iOS App: Implemented Apple Sign-in with backend verification and token validation.
+- UI Updates: Updated the Login page to use the Socratic.Trade candlestick logo and stripped unnecessary text. Reduced the height of the HeaderLogo and prevented it from overflowing on small mobile screens.
+- Console UI: Changed the Model Stats UI from a Sheet to a Drawer, formatting model row labels to display grouped company names vertically on mobile devices, and removing redundant parenthetical names.
+- Settings UI: Addressed overlapping text in the "Broker Connections" section by allowing the action buttons to wrap on mobile, and wrapping the account subtitle in a flex-col layout.
+- PR opened and waiting for review/merge.
 
 ## Current Status
 
@@ -430,4 +406,4 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - Applied an IPv6 DNS force-ipv4 fix to `congress-scout.mjs` on Congress.Trade to fix its own scrape failures.
 
 ## Next Action
-- Land changes to main via `land.sh`.
+- Land branch `agent/ag-update-status-effort-log` and await production auto-deploy.
