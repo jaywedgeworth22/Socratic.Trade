@@ -24,10 +24,15 @@ Addressed the 3 remaining open Codex P2 threads (fourth review batch):
 - **Alpha Vantage local fallback** (`src/lib/db-api-keys.ts`) — `resolveAlphaVantageKeyPool` was missing the `local` user fallback that `resolveApiKeyWithSource` had. Added the same shared-operator-infra fallback pattern so that when no env var is set, the `local` user's stored Alpha Vantage key serves tenants/background callers.
 - **Infisical activation contradiction** (`STATUS.md`) — resolved the contradictory statements where line 8 claimed flags were "applied across dev, staging, and prod" while line 11 said prod access was unavailable. Changed dev/staging/prod to dev/staging only, consistent with the "manual owner action needed for prod" note.
 
+### Autofix Round 5 (Middleware Fix)
+- **`middleware.ts` 401 bug** — added a bypass for `/api/admin/` routes that carry the `x-admin-token` header, allowing ops traffic (like the backfill script) to reach the route handler's `requireAdmin()` gate instead of being blocked with a 401 Unauthorized by the fail-closed Edge middleware.
+- Ensured `x-authenticated-user-email` is explicitly cast to an empty string when `trustedEmail` is null to prevent header-setting errors.
+
 ### Updated files
 - `src/lib/db-api-keys.ts` (2 changes: local fallback source + Alpha Vantage local fallback)
 - `test/key-resolution-tiering.test.ts` (updated test expectations for new source classification)
 - `STATUS.md` (fixed prod contradiction)
+- `middleware.ts` (fixed 401 bug on admin bypass)
 - `docs/rollouts/2026-07-13-congress-trade-integration.md` (this entry)
 
 ## Verification
@@ -37,16 +42,8 @@ npx tsc --noEmit
 npm test
 npm run build
 ```
-Each autofix round ran the full gate trio. Round 1 and 2 had lint skipped as doc-only; Round 3 confirms lint passes:
-
-```bash
-npm run lint      # ESLint: 0 errors, 447 warnings (all grandfathered)
-npx tsc --noEmit  # clean (no output)
-npm test          # 3934/3934 pass
-npm run build     # clean
-```
-
-Round 4 verification:
+Each autofix round ran the full gate trio. Round 1 and 2 had lint skipped as doc-only; Round 3 confirms lint passes.
+Round 5 verification:
 ```bash
 npm run lint      # 0 errors, 448 warnings (all grandfathered)
 npx tsc --noEmit  # clean
@@ -58,24 +55,11 @@ App B already contained the infrastructure to share (EOD, insider, etc.) and con
 ## Files Touched
 - `.env.example`
 - `STATUS.md`
+- `middleware.ts`
+- `src/lib/db-api-keys.ts`
+- `test/key-resolution-tiering.test.ts`
 - `docs/EFFORT-LOG.md`
 - `docs/rollouts/2026-07-13-congress-trade-integration.md` (this file)
-
-## Verification
-Three required gates (all passed):
-```bash
-npx tsc --noEmit
-npm test
-npm run build
-```
-Each autofix round ran the full gate trio. Round 1 and 2 had lint skipped as doc-only; Round 3 confirms lint passes:
-
-```bash
-npm run lint      # ESLint: 0 errors, 447 warnings (all grandfathered)
-npx tsc --noEmit  # clean (no output)
-npm test          # 3934/3934 pass
-npm run build     # clean
-```
 
 ## Follow-ups
 1. **Price Adjustments:** Resolve the outstanding price-adjustment discrepancy between App A (FMP-adjusted closes) and App B (raw closes) before enabling any flags that trigger automatic data sharing. The current data plan (`docs/congress-trade-data-plan.md`) marks this as a prerequisite: mixing adjusted and raw closes corrupts return math across splits/dividends. Decide whether to consume App A's adjusted data as-is, apply a fallback, or use a dedicated import mode that avoids the mismatch. **This must be resolved first** because `CONGRESS_SHARE_ENABLED` activates the nightly scheduler that posts closes to App A — running it with unresolved price modes seeds wrong prices through the automatic path, not just the explicit backfill.

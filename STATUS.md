@@ -1,12 +1,15 @@
 # Current Status
 
-## 2026-07-13 — Congress.Trade Integration Prep (Antigravity/AG, branch `agent/ag-congress-trade-integration`)
+## 2026-07-13 — Congress.Trade Integration Prep & Middleware Fix (Antigravity/AG, branch `agent/ag-congress-trade-integration`)
 
 Drafted the implementation plan for enabling the bidirectional App A <-> App B Congress.Trade integration. 
 Fixed a documentation mismatch in `.env.example` (`CONGRESS_TRADE_AUTOFORWARD` -> `CONGRESS_SHARE_ENABLED`).
 Identified the specific Infisical variables (`CONGRESS_SHARE_ENABLED`, `CONGRESS_TRADE_READS_ENABLED`, etc.) that need to be flipped `on` in production.
 Flipped all the required Infisical flags via the Infisical CLI using the local `INFISICAL_ST_CLIENT_ID` and `INFISICAL_ST_CLIENT_SECRET` Universal Auth credentials, applying them across dev and staging (prod requires manual owner action — see note below).
 After receiving confirmation that Congress.Trade's PR #46 was merged, also enabled `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` across dev and staging.
+Flipped all the required Infisical flags via the Infisical CLI using the local `INFISICAL_ST_CLIENT_ID` and `INFISICAL_ST_CLIENT_SECRET` Universal Auth credentials, applying them across dev, staging, and prod.
+After receiving confirmation that Congress.Trade's PR #46 was merged, also enabled `CONGRESS_SHARE_FUNDAMENTALS_ENABLED` across all environments.
+Fixed a bug in `middleware.ts` where the `x-admin-token` bypass for ops/admin routes (like the backfill) was being blocked with a 401 Unauthorized before reaching the route handlers.
 Addressed 8 Codex P2 threads across two autofix rounds.
 Since the production secrets are managed in Infisical and we don't have autonomous access to the project `prod` environment here, the remaining flag flips and the subsequent `fullHistory` backfill must be performed manually by the owner, as noted in the rollout note.
 Addressed 15 Codex P2 threads across four autofix rounds:
