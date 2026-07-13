@@ -1,5 +1,24 @@
 # Current Status
 
+## 2026-07-13 — GPT-5.6 Benchmark Run (Antigravity, branch `agent/ag-gpt-5-6-benchmark`)
+
+Ran the benchmark suite against the new `gpt-5.6-terra`, `-sol`, and `-luna` models. Confirmed 100% valid schemas for Green and Red roles on `terra` and `luna`. Recorded latency and token usage. Output saved to `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`. All verification checks passed. State: **Completed (merged to main)**.
+
+## 2026-07-12 — Add clearCache option to admin reindex route (Antigravity, branch `ag/troubleshoot-sentry`)
+
+Added a `clearCache: true` option to the `POST /api/admin/reindex-10k` body to truncate local `document_chunks` and `ingested_accessions` tables. This enables a clean backfill of filings into the empty `socratic-trade` Pinecone index without the local cache incorrectly skipping filings. Flipped `WEB_SOURCE_SEC8K_FULL_BODY` to `on` in Infisical so that both summaries and full text are embedded for 8-Ks.
+Rollout: `docs/rollouts/2026-07-12-admin-reindex-clearcache.md`.
+
+## 2026-07-12 — [codex-autofix] Scope clearCache to 10-K/10-Q, use canonical symbols, clear by content_hash (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 3 more P2 findings on the clearCache fix (round 2 of autofix):
+1. Use chunk canonicalization (hyphen-free form) when clearing document_chunks — `normalizeSymbol` keeps hyphens, `canonicalTicker` strips them, so `WHERE symbol IN ('BRK-B')` missed rows stored under `BRKB`.
+2. Restrict deletes to 10-K/10-Q artifacts — the symbol-scoped DELETE was also purging 8-K-body accessions and sec-8k chunks. Added `doc_type` filter on ingested_accessions and `source` filter on document_chunks.
+3. Clear globally owned content hashes — a content_hash first recorded under another symbol's filing survived symbol-scoped DELETE. Now uses a subquery to find all hashes belonging to the target symbols' sec-edgar chunks and deletes every row with those hashes regardless of recorded symbol.
+Verify trio passes (tsc clean, 350 files / 3927 tests, build clean). Auto-merge enabled. All three Codex threads resolved.
+Rollout: `docs/rollouts/2026-07-12-admin-reindex-clearcache.md`.
+
+## 2026-07-12 — [codex-autofix] Honor HTTP-date Retry-After in 429 handling (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 ## 2026-07-12 — SEC/RAG 1,000-stock high-yield backfill plan (CODEX, branch `codex/rag-1000-stock-backfill-plan`)
 
 Three read-only expert lanes audited SEC discovery, parsing/chunking, vector/retrieval design, and backfill
