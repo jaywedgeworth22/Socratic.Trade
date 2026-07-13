@@ -472,6 +472,105 @@ const MIGRATIONS: Migration[] = [
         database.exec("ALTER TABLE position_stop_plans ADD COLUMN side TEXT NOT NULL DEFAULT 'long'");
       }
     }
+  },
+  {
+    version: 19,
+    name: "sec_rag_manifest_tables",
+    up: (database) => {
+      // 1. Create sec_filings
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_filings (
+          accession TEXT PRIMARY KEY,
+          cik TEXT NOT NULL DEFAULT '',
+          ticker TEXT NOT NULL DEFAULT '',
+          form TEXT NOT NULL,
+          filed_at TEXT NOT NULL,
+          accepted_at TEXT NOT NULL,
+          report_period TEXT,
+          fy TEXT,
+          fp TEXT,
+          amendment_parent TEXT,
+          superseded_by TEXT,
+          status TEXT NOT NULL DEFAULT 'discovered',
+          chunk_count INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_filings_cik ON sec_filings (cik);
+        CREATE INDEX IF NOT EXISTS idx_sec_filings_ticker ON sec_filings (ticker);
+      `);
+
+      // 2. Create sec_artifacts
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_artifacts (
+          accession TEXT NOT NULL,
+          sequence INTEGER NOT NULL,
+          document_name TEXT NOT NULL,
+          sha256 TEXT NOT NULL,
+          type TEXT NOT NULL,
+          byte_count INTEGER NOT NULL,
+          raw_uri TEXT NOT NULL,
+          parser_version TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (accession, sequence, document_name)
+        );
+      `);
+
+      // 3. Create chunk_occurrences
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS chunk_occurrences (
+          vector_id TEXT PRIMARY KEY,
+          content_hash TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          source TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          sequence INTEGER,
+          document_name TEXT,
+          section TEXT NOT NULL,
+          ordinal INTEGER NOT NULL,
+          accepted_at TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_hash ON chunk_occurrences (content_hash);
+        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_symbol ON chunk_occurrences (symbol);
+        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_accession ON chunk_occurrences (accession);
+      `);
+
+      // 4. Backfill from ingested_accessions to sec_filings
+      const hasIngested = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ingested_accessions'").get();
+      if (hasIngested) {
+        database.exec(`
+          INSERT OR IGNORE INTO sec_filings (accession, cik, ticker, form, filed_at, accepted_at, status, chunk_count, created_at, updated_at)
+          SELECT accession, '', ticker, doc_type, indexed_at, indexed_at, 'complete', chunk_count, indexed_at, indexed_at
+          FROM ingested_accessions;
+        `);
+      }
+
+      // 5. Backfill from document_chunks to chunk_occurrences
+      const hasChunks = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_chunks'").get();
+      if (hasChunks) {
+        const rows = database.prepare("SELECT content_hash, symbol, source, chunk_id, created_at FROM document_chunks").all() as Array<{
+          content_hash: string;
+          symbol: string;
+          source: string;
+          chunk_id: string;
+          created_at: string;
+        }>;
+        const insertOcc = database.prepare(`
+          INSERT OR IGNORE INTO chunk_occurrences (vector_id, content_hash, symbol, source, accession, section, ordinal, accepted_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const r of rows) {
+          const parts = r.chunk_id.split(":");
+          const source = parts[0] || r.source || "sec";
+          const symbol = parts[1] || r.symbol || "";
+          const accession = parts[2] || "";
+          const acceptedAt = parts[3] || r.created_at;
+          const vectorId = `v1:${r.chunk_id}:v1`;
+          insertOcc.run(vectorId, r.content_hash, symbol, source, accession, "body", 0, acceptedAt, r.created_at);
+        }
+      }
+    }
   }
 ];
 

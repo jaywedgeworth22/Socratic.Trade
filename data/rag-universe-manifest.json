@@ -1,0 +1,6002 @@
+[
+  {
+    "cik": "0000320193",
+    "ticker": "AAPL",
+    "title": "Apple Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001652044",
+    "ticker": "GOOG",
+    "title": "Alphabet Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000021344",
+    "ticker": "KO",
+    "title": "COCA COLA CO",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000707549",
+    "ticker": "LRCX",
+    "title": "LAM RESEARCH CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001403161",
+    "ticker": "V",
+    "title": "VISA INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000006951",
+    "ticker": "AMAT",
+    "title": "APPLIED MATERIALS INC /DE",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001707925",
+    "ticker": "LIN",
+    "title": "LINDE PLC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001327567",
+    "ticker": "PANW",
+    "title": "Palo Alto Networks Inc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000732712",
+    "ticker": "VZ",
+    "title": "VERIZON COMMUNICATIONS INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000004962",
+    "ticker": "AXP",
+    "title": "AMERICAN EXPRESS CO",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000070858",
+    "ticker": "BAC",
+    "title": "BANK OF AMERICA CORP /DE/",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000858877",
+    "ticker": "CSCO",
+    "title": "CISCO SYSTEMS, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000200406",
+    "ticker": "JNJ",
+    "title": "JOHNSON & JOHNSON",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000310158",
+    "ticker": "MRK",
+    "title": "Merck & Co., Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000723125",
+    "ticker": "MU",
+    "title": "MICRON TECHNOLOGY INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001413329",
+    "ticker": "PM",
+    "title": "Philip Morris International Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000731766",
+    "ticker": "UNH",
+    "title": "UNITEDHEALTH GROUP INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000072971",
+    "ticker": "WFC",
+    "title": "WELLS FARGO & COMPANY/MN",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000006281",
+    "ticker": "ADI",
+    "title": "ANALOG DEVICES INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000002488",
+    "ticker": "AMD",
+    "title": "ADVANCED MICRO DEVICES INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001018724",
+    "ticker": "AMZN",
+    "title": "AMAZON COM INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000820313",
+    "ticker": "APH",
+    "title": "AMPHENOL CORP /DE/",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000831001",
+    "ticker": "C",
+    "title": "CITIGROUP INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000040545",
+    "ticker": "GE",
+    "title": "GENERAL ELECTRIC CO",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000051143",
+    "ticker": "IBM",
+    "title": "INTERNATIONAL BUSINESS MACHINES CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000050863",
+    "ticker": "INTC",
+    "title": "INTEL CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000019617",
+    "ticker": "JPM",
+    "title": "JPMORGAN CHASE & CO",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001326801",
+    "ticker": "META",
+    "title": "Meta Platforms, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000789019",
+    "ticker": "MSFT",
+    "title": "MICROSOFT CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001045810",
+    "ticker": "NVDA",
+    "title": "NVIDIA CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001341439",
+    "ticker": "ORCL",
+    "title": "ORACLE CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001321655",
+    "ticker": "PLTR",
+    "title": "Palantir Technologies Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000804328",
+    "ticker": "QCOM",
+    "title": "QUALCOMM INC/DE",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000101829",
+    "ticker": "RTX",
+    "title": "RTX Corp",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001318605",
+    "ticker": "TSLA",
+    "title": "Tesla, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000106040",
+    "ticker": "WDC",
+    "title": "WESTERN DIGITAL CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000004904",
+    "ticker": "AEP",
+    "title": "AMERICAN ELECTRIC POWER CO INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000937966",
+    "ticker": "ASML",
+    "title": "ASML HOLDING NV",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001067983",
+    "ticker": "BRK-B",
+    "title": "BERKSHIRE HATHAWAY INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000811156",
+    "ticker": "CMS",
+    "title": "CMS ENERGY CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000080424",
+    "ticker": "PG",
+    "title": "PROCTER & GAMBLE Co",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000109198",
+    "ticker": "TJX",
+    "title": "TJX COMPANIES INC /DE/",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000949858",
+    "ticker": "ACHV",
+    "title": "ACHIEVE LIFE SCIENCES, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001979005",
+    "ticker": "AFJKU",
+    "title": "Aimei Health Technology Co., Ltd.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001098972",
+    "ticker": "AGEN",
+    "title": "AGENUS INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001541157",
+    "ticker": "AKTX",
+    "title": "Akari Therapeutics Plc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001534708",
+    "ticker": "BLNE",
+    "title": "Beeline Holdings, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001568385",
+    "ticker": "BMTM",
+    "title": "Bright Mountain Media, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001551047",
+    "ticker": "BPRE",
+    "title": "Bluerock Private Real Estate Fund",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001534133",
+    "ticker": "CALC",
+    "title": "CalciMedica, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0002074973",
+    "ticker": "CCXIW",
+    "title": "Churchill Capital Corp XI",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0002032545",
+    "ticker": "CJMB",
+    "title": "CALLAN JMB INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001434524",
+    "ticker": "CLIR",
+    "title": "ClearSign Technologies Corp",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001856525",
+    "ticker": "CNM",
+    "title": "Core & Main, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000928340",
+    "ticker": "CWCO",
+    "title": "Consolidated Water Co. Ltd.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001001250",
+    "ticker": "EL",
+    "title": "ESTEE LAUDER COMPANIES INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001993400",
+    "ticker": "FATN",
+    "title": "Fatpipe Inc/UT",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000798354",
+    "ticker": "FISV",
+    "title": "FISERV INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001753162",
+    "ticker": "FTHM",
+    "title": "Fathom Holdings Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001276520",
+    "ticker": "GNW",
+    "title": "GENWORTH FINANCIAL INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0002111762",
+    "ticker": "GSRVR",
+    "title": "GSR V Acquisition Corp.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000879169",
+    "ticker": "INCY",
+    "title": "INCYTE CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000807882",
+    "ticker": "JACK",
+    "title": "JACK IN THE BOX INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001811210",
+    "ticker": "LCID",
+    "title": "Lucid Group, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001005286",
+    "ticker": "LFCR",
+    "title": "LIFECORE BIOMEDICAL, INC. \\DE\\",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000814586",
+    "ticker": "LWAY",
+    "title": "Lifeway Foods, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001371782",
+    "ticker": "MVO",
+    "title": "MV Oil Trust",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001462223",
+    "ticker": "NIXXW",
+    "title": "Nixxy, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0002067627",
+    "ticker": "NKLR",
+    "title": "Terra Innovatum Global N.V.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001468929",
+    "ticker": "NXGLW",
+    "title": "NEXGEL, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001616533",
+    "ticker": "PENG",
+    "title": "Penguin Solutions, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0002030617",
+    "ticker": "PMI",
+    "title": "Picard Medical, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001641614",
+    "ticker": "PMTS",
+    "title": "CPI Card Group Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001759655",
+    "ticker": "PRVA",
+    "title": "Privia Health Group, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001377936",
+    "ticker": "SAZ",
+    "title": "SARATOGA INVESTMENT CORP.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001701756",
+    "ticker": "SDOT",
+    "title": "Sadot Group Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001726445",
+    "ticker": "SEER",
+    "title": "Seer, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000064040",
+    "ticker": "SPGI",
+    "title": "S&P Global Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001465740",
+    "ticker": "TWOD",
+    "title": "TWO HARBORS INVESTMENT CORP.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001670076",
+    "ticker": "ULCC",
+    "title": "Frontier Group Holdings, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001817229",
+    "ticker": "VOR",
+    "title": "Vor Biopharma Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001515139",
+    "ticker": "WAST",
+    "title": "WASTE ENERGY CORP.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001533615",
+    "ticker": "XRN-PB",
+    "title": "Chiron Real Estate Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001347858",
+    "ticker": "XXII",
+    "title": "22nd Century Group, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001410636",
+    "ticker": "AWK",
+    "title": "American Water Works Company, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001100682",
+    "ticker": "CRL",
+    "title": "CHARLES RIVER LABORATORIES INTERNATIONAL, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000922621",
+    "ticker": "ERIE",
+    "title": "ERIE INDEMNITY CO",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000024741",
+    "ticker": "GLW",
+    "title": "CORNING INC /NY",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000055785",
+    "ticker": "KMB",
+    "title": "KIMBERLY CLARK CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001069202",
+    "ticker": "LII",
+    "title": "LENNOX INTERNATIONAL INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001037646",
+    "ticker": "MTD",
+    "title": "METTLER TOLEDO INTERNATIONAL INC/",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001633917",
+    "ticker": "PYPL",
+    "title": "PayPal Holdings, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001075124",
+    "ticker": "TRI",
+    "title": "THOMSON REUTERS CORP /CAN/",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001551152",
+    "ticker": "ABBV",
+    "title": "AbbVie Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001730168",
+    "ticker": "AVGO",
+    "title": "Broadcom Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000886982",
+    "ticker": "GS",
+    "title": "GOLDMAN SACHS GROUP INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000059478",
+    "ticker": "LLY",
+    "title": "ELI LILLY & Co",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001141391",
+    "ticker": "MA",
+    "title": "Mastercard Inc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000895421",
+    "ticker": "MS",
+    "title": "MORGAN STANLEY",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001065280",
+    "ticker": "NFLX",
+    "title": "NETFLIX INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001063761",
+    "ticker": "SPG",
+    "title": "SIMON PROPERTY GROUP INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000097476",
+    "ticker": "TXN",
+    "title": "TEXAS INSTRUMENTS INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000104169",
+    "ticker": "WMT",
+    "title": "Walmart Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0002115436",
+    "ticker": "XOM",
+    "title": "ExxonMobil Holdings Corp",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000018230",
+    "ticker": "CAT",
+    "title": "CATERPILLAR INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001571996",
+    "ticker": "DELL",
+    "title": "Dell Technologies Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001996810",
+    "ticker": "GEV",
+    "title": "GE Vernova Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000354950",
+    "ticker": "HD",
+    "title": "HOME DEPOT, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000310764",
+    "ticker": "SYK",
+    "title": "STRYKER CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000097210",
+    "ticker": "TER",
+    "title": "TERADYNE, INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001466258",
+    "ticker": "TT",
+    "title": "Trane Technologies plc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001674101",
+    "ticker": "VRT",
+    "title": "Vertiv Holdings Co",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000093410",
+    "ticker": "CVX",
+    "title": "CHEVRON CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000075362",
+    "ticker": "PCAR",
+    "title": "PACCAR INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001973266",
+    "ticker": "TKO",
+    "title": "TKO Group Holdings, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001650107",
+    "ticker": "CCEP",
+    "title": "COCA-COLA EUROPACIFIC PARTNERS plc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001535527",
+    "ticker": "CRWD",
+    "title": "CrowdStrike Holdings, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000091142",
+    "ticker": "AOS",
+    "title": "SMITH A O CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000849399",
+    "ticker": "GEN",
+    "title": "Gen Digital Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000051253",
+    "ticker": "IFF",
+    "title": "INTERNATIONAL FLAVORS & FRAGRANCES INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001393311",
+    "ticker": "PSA",
+    "title": "Public Storage",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000882835",
+    "ticker": "ROP",
+    "title": "ROPER TECHNOLOGIES INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000093556",
+    "ticker": "SWK",
+    "title": "STANLEY BLACK & DECKER, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000860731",
+    "ticker": "TYL",
+    "title": "TYLER TECHNOLOGIES INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000884887",
+    "ticker": "RCL",
+    "title": "ROYAL CARIBBEAN CRUISES LTD",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000769397",
+    "ticker": "ADSK",
+    "title": "Autodesk, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000315189",
+    "ticker": "DE",
+    "title": "DEERE & CO",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000318154",
+    "ticker": "AMGN",
+    "title": "AMGEN INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001163165",
+    "ticker": "COP",
+    "title": "CONOCOPHILLIPS",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000064803",
+    "ticker": "CVS",
+    "title": "CVS HEALTH Corp",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001045609",
+    "ticker": "PLD",
+    "title": "Prologis, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000829224",
+    "ticker": "SBUX",
+    "title": "STARBUCKS CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001579241",
+    "ticker": "ALLE",
+    "title": "Allegion plc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001037540",
+    "ticker": "BXP",
+    "title": "BXP, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000047111",
+    "ticker": "HSY",
+    "title": "HERSHEY CO",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000100885",
+    "ticker": "UNP",
+    "title": "UNION PACIFIC CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001748790",
+    "ticker": "AMCR",
+    "title": "Amcor plc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000711404",
+    "ticker": "COO",
+    "title": "COOPER COMPANIES, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000909832",
+    "ticker": "COST",
+    "title": "COSTCO WHOLESALE CORP /NEW",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000004127",
+    "ticker": "SWKS",
+    "title": "SKYWORKS SOLUTIONS, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000753308",
+    "ticker": "NEE",
+    "title": "NEXTERA ENERGY INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000077476",
+    "ticker": "PEP",
+    "title": "PEPSICO INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001283699",
+    "ticker": "TMUS",
+    "title": "T-Mobile US, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001792789",
+    "ticker": "DASH",
+    "title": "DoorDash, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001101239",
+    "ticker": "EQIX",
+    "title": "EQUINIX INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001596532",
+    "ticker": "ANET",
+    "title": "Arista Networks, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001690820",
+    "ticker": "CVNA",
+    "title": "CARVANA CO.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001413447",
+    "ticker": "NXPI",
+    "title": "NXP Semiconductors N.V.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000316709",
+    "ticker": "SCHW",
+    "title": "SCHWAB CHARLES CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001858681",
+    "ticker": "APO",
+    "title": "Apollo Global Management, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001551182",
+    "ticker": "ETN",
+    "title": "Eaton Corp plc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001035983",
+    "ticker": "FIX",
+    "title": "COMFORT SYSTEMS USA INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001381197",
+    "ticker": "IBKR",
+    "title": "Interactive Brokers Group, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000319201",
+    "ticker": "KLAC",
+    "title": "KLA CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000080661",
+    "ticker": "PGR",
+    "title": "PROGRESSIVE CORP/OH/",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001137789",
+    "ticker": "STX",
+    "title": "Seagate Technology Holdings plc",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000875320",
+    "ticker": "VRTX",
+    "title": "VERTEX PHARMACEUTICALS INC / MA",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001069183",
+    "ticker": "AXON",
+    "title": "AXON ENTERPRISE, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000723531",
+    "ticker": "PAYX",
+    "title": "PAYCHEX INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001744489",
+    "ticker": "DIS",
+    "title": "Walt Disney Co",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001048286",
+    "ticker": "MAR",
+    "title": "MARRIOTT INTERNATIONAL INC /MD/",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000063908",
+    "ticker": "MCD",
+    "title": "MCDONALDS CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0002023554",
+    "ticker": "SNDK",
+    "title": "Sandisk Corp",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000277135",
+    "ticker": "GWW",
+    "title": "W.W. GRAINGER, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000882095",
+    "ticker": "GILD",
+    "title": "GILEAD SCIENCES, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000010456",
+    "ticker": "BAX",
+    "title": "BAXTER INTERNATIONAL INC",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000352541",
+    "ticker": "LNT",
+    "title": "ALLIANT ENERGY CORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001043277",
+    "ticker": "CHRW",
+    "title": "C. H. ROBINSON WORLDWIDE, INC.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000035527",
+    "ticker": "FITB",
+    "title": "FIFTH THIRD BANCORP",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0000740260",
+    "ticker": "VTR",
+    "title": "Ventas, Inc.",
+    "inclusionReason": "held-history"
+  },
+  {
+    "cik": "0001090872",
+    "ticker": "A",
+    "title": "AGILENT TECHNOLOGIES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001559720",
+    "ticker": "ABNB",
+    "title": "Airbnb, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000001800",
+    "ticker": "ABT",
+    "title": "ABBOTT LABORATORIES",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000947484",
+    "ticker": "ACGL",
+    "title": "ARCH CAPITAL GROUP LTD.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001467373",
+    "ticker": "ACN",
+    "title": "Accenture plc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000796343",
+    "ticker": "ADBE",
+    "title": "ADOBE INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000007084",
+    "ticker": "ADM",
+    "title": "Archer-Daniels-Midland Co",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000008670",
+    "ticker": "ADP",
+    "title": "AUTOMATIC DATA PROCESSING INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001002910",
+    "ticker": "AEE",
+    "title": "AMEREN CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000874761",
+    "ticker": "AES",
+    "title": "AES CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000004977",
+    "ticker": "AFL",
+    "title": "AFLAC INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000005272",
+    "ticker": "AIG",
+    "title": "AMERICAN INTERNATIONAL GROUP, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001267238",
+    "ticker": "AIZ",
+    "title": "ASSURANT, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000354190",
+    "ticker": "AJG",
+    "title": "Arthur J. Gallagher & Co.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001086222",
+    "ticker": "AKAM",
+    "title": "AKAMAI TECHNOLOGIES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000915913",
+    "ticker": "ALB",
+    "title": "ALBEMARLE CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001097149",
+    "ticker": "ALGN",
+    "title": "ALIGN TECHNOLOGY INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000899051",
+    "ticker": "ALL",
+    "title": "ALLSTATE CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001037868",
+    "ticker": "AME",
+    "title": "AMETEK INC/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000820027",
+    "ticker": "AMP",
+    "title": "AMERIPRISE FINANCIAL INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001053507",
+    "ticker": "AMT",
+    "title": "AMERICAN TOWER CORP /MA/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000315293",
+    "ticker": "AON",
+    "title": "Aon plc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001841666",
+    "ticker": "APA",
+    "title": "APA Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000002969",
+    "ticker": "APD",
+    "title": "Air Products & Chemicals, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001751008",
+    "ticker": "APP",
+    "title": "AppLovin Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001521332",
+    "ticker": "APTV",
+    "title": "Aptiv PLC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001035443",
+    "ticker": "ARE",
+    "title": "ALEXANDRIA REAL ESTATE EQUITIES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001176948",
+    "ticker": "ARES",
+    "title": "Ares Management Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000731802",
+    "ticker": "ATO",
+    "title": "ATMOS ENERGY CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000915912",
+    "ticker": "AVB",
+    "title": "AVALONBAY COMMUNITIES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000008818",
+    "ticker": "AVY",
+    "title": "Avery Dennison Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000866787",
+    "ticker": "AZO",
+    "title": "AUTOZONE INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000012927",
+    "ticker": "BA",
+    "title": "BOEING CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000009389",
+    "ticker": "BALL",
+    "title": "BALL Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000764478",
+    "ticker": "BBY",
+    "title": "BEST BUY CO INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000010795",
+    "ticker": "BDX",
+    "title": "BECTON DICKINSON & CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000038777",
+    "ticker": "BEN",
+    "title": "FRANKLIN RESOURCES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000014693",
+    "ticker": "BF-B",
+    "title": "BROWN FORMAN CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001996862",
+    "ticker": "BG",
+    "title": "Bunge Global SA",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000875045",
+    "ticker": "BIIB",
+    "title": "BIOGEN INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001075531",
+    "ticker": "BKNG",
+    "title": "Booking Holdings Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001701605",
+    "ticker": "BKR",
+    "title": "Baker Hughes Co",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001316835",
+    "ticker": "BLDR",
+    "title": "Builders FirstSource, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0002012383",
+    "ticker": "BLK",
+    "title": "BlackRock, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000014272",
+    "ticker": "BMY",
+    "title": "BRISTOL MYERS SQUIBB CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001390777",
+    "ticker": "BNY",
+    "title": "Bank of New York Mellon Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001383312",
+    "ticker": "BR",
+    "title": "BROADRIDGE FINANCIAL SOLUTIONS, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000079282",
+    "ticker": "BRO",
+    "title": "BROWN & BROWN, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000885725",
+    "ticker": "BSX",
+    "title": "BOSTON SCIENTIFIC CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001393818",
+    "ticker": "BX",
+    "title": "Blackstone Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000023217",
+    "ticker": "CAG",
+    "title": "CONAGRA BRANDS INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000721371",
+    "ticker": "CAH",
+    "title": "CARDINAL HEALTH INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001783180",
+    "ticker": "CARR",
+    "title": "CARRIER GLOBAL Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000726958",
+    "ticker": "CASY",
+    "title": "CASEYS GENERAL STORES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000896159",
+    "ticker": "CB",
+    "title": "Chubb Ltd",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001138118",
+    "ticker": "CBRE",
+    "title": "CBRE GROUP, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001051470",
+    "ticker": "CCI",
+    "title": "CROWN CASTLE INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000815097",
+    "ticker": "CCL",
+    "title": "Carnival Corp Ltd.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000813672",
+    "ticker": "CDNS",
+    "title": "CADENCE DESIGN SYSTEMS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001402057",
+    "ticker": "CDW",
+    "title": "CDW Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001868275",
+    "ticker": "CEG",
+    "title": "Constellation Energy Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001324404",
+    "ticker": "CF",
+    "title": "CF Industries Holdings, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000759944",
+    "ticker": "CFG",
+    "title": "CITIZENS FINANCIAL GROUP INC/RI",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000313927",
+    "ticker": "CHD",
+    "title": "CHURCH & DWIGHT CO INC /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001091667",
+    "ticker": "CHTR",
+    "title": "CHARTER COMMUNICATIONS, INC. /MO/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001739940",
+    "ticker": "CI",
+    "title": "Cigna Group",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000936395",
+    "ticker": "CIEN",
+    "title": "CIENA CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000020286",
+    "ticker": "CINF",
+    "title": "CINCINNATI FINANCIAL CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000021665",
+    "ticker": "CL",
+    "title": "COLGATE PALMOLIVE CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000021076",
+    "ticker": "CLX",
+    "title": "CLOROX CO /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001166691",
+    "ticker": "CMCSA",
+    "title": "COMCAST CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001156375",
+    "ticker": "CME",
+    "title": "CME GROUP INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001058090",
+    "ticker": "CMG",
+    "title": "CHIPOTLE MEXICAN GRILL INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000026172",
+    "ticker": "CMI",
+    "title": "CUMMINS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001071739",
+    "ticker": "CNC",
+    "title": "CENTENE CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001130310",
+    "ticker": "CNP",
+    "title": "CENTERPOINT ENERGY INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000927628",
+    "ticker": "COF",
+    "title": "CAPITAL ONE FINANCIAL CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000820318",
+    "ticker": "COHR",
+    "title": "COHERENT CORP.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001679788",
+    "ticker": "COIN",
+    "title": "Coinbase Global, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001140859",
+    "ticker": "COR",
+    "title": "Cencora, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001175454",
+    "ticker": "CPAY",
+    "title": "CORPAY, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000016732",
+    "ticker": "CPB",
+    "title": "CAMPBELL'S Co",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000900075",
+    "ticker": "CPRT",
+    "title": "COPART INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000906345",
+    "ticker": "CPT",
+    "title": "CAMDEN PROPERTY TRUST",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000849395",
+    "ticker": "CRH",
+    "title": "CRH PUBLIC LTD CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001108524",
+    "ticker": "CRM",
+    "title": "Salesforce, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001057352",
+    "ticker": "CSGP",
+    "title": "COSTAR GROUP, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000277948",
+    "ticker": "CSX",
+    "title": "CSX CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000723254",
+    "ticker": "CTAS",
+    "title": "CINTAS CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001058290",
+    "ticker": "CTSH",
+    "title": "COGNIZANT TECHNOLOGY SOLUTIONS CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001755672",
+    "ticker": "CTVA",
+    "title": "Corteva, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000715957",
+    "ticker": "D",
+    "title": "DOMINION ENERGY, INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000027904",
+    "ticker": "DAL",
+    "title": "DELTA AIR LINES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001666700",
+    "ticker": "DD",
+    "title": "DuPont de Nemours, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001561550",
+    "ticker": "DDOG",
+    "title": "Datadog, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000910521",
+    "ticker": "DECK",
+    "title": "DECKERS OUTDOOR CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000029534",
+    "ticker": "DG",
+    "title": "DOLLAR GENERAL CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001022079",
+    "ticker": "DGX",
+    "title": "QUEST DIAGNOSTICS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000882184",
+    "ticker": "DHI",
+    "title": "HORTON D R INC /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000313616",
+    "ticker": "DHR",
+    "title": "DANAHER CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001297996",
+    "ticker": "DLR",
+    "title": "DIGITAL REALTY TRUST, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000935703",
+    "ticker": "DLTR",
+    "title": "DOLLAR TREE, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000765880",
+    "ticker": "DOC",
+    "title": "HEALTHPEAK PROPERTIES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000029905",
+    "ticker": "DOV",
+    "title": "DOVER Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001751788",
+    "ticker": "DOW",
+    "title": "DOW INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001286681",
+    "ticker": "DPZ",
+    "title": "DOMINOS PIZZA INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000940944",
+    "ticker": "DRI",
+    "title": "DARDEN RESTAURANTS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000936340",
+    "ticker": "DTE",
+    "title": "DTE ENERGY CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001326160",
+    "ticker": "DUK",
+    "title": "Duke Energy CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000927066",
+    "ticker": "DVA",
+    "title": "DAVITA INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001090012",
+    "ticker": "DVN",
+    "title": "DEVON ENERGY CORP/DE",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001093557",
+    "ticker": "DXCM",
+    "title": "DEXCOM INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000712515",
+    "ticker": "EA",
+    "title": "ELECTRONIC ARTS INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001065088",
+    "ticker": "EBAY",
+    "title": "EBAY INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000031462",
+    "ticker": "ECL",
+    "title": "ECOLAB INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001047862",
+    "ticker": "ED",
+    "title": "CONSOLIDATED EDISON INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000033185",
+    "ticker": "EFX",
+    "title": "EQUIFAX INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001095073",
+    "ticker": "EG",
+    "title": "EVEREST GROUP, LTD.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000827052",
+    "ticker": "EIX",
+    "title": "EDISON INTERNATIONAL",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001156039",
+    "ticker": "ELV",
+    "title": "Elevance Health, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000105634",
+    "ticker": "EME",
+    "title": "EMCOR Group, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000032604",
+    "ticker": "EMR",
+    "title": "EMERSON ELECTRIC CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000821189",
+    "ticker": "EOG",
+    "title": "EOG RESOURCES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000906107",
+    "ticker": "EQR",
+    "title": "EQUITY RESIDENTIAL",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000033213",
+    "ticker": "EQT",
+    "title": "EQT Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000072741",
+    "ticker": "ES",
+    "title": "EVERSOURCE ENERGY",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000920522",
+    "ticker": "ESS",
+    "title": "ESSEX PROPERTY TRUST, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000065984",
+    "ticker": "ETR",
+    "title": "ENTERGY CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001711269",
+    "ticker": "EVRG",
+    "title": "Evergy, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001099800",
+    "ticker": "EW",
+    "title": "Edwards Lifesciences Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001109357",
+    "ticker": "EXC",
+    "title": "EXELON CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000895126",
+    "ticker": "EXE",
+    "title": "EXPAND ENERGY Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000746515",
+    "ticker": "EXPD",
+    "title": "EXPEDITORS INTERNATIONAL OF WASHINGTON INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001324424",
+    "ticker": "EXPE",
+    "title": "Expedia Group, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001289490",
+    "ticker": "EXR",
+    "title": "Extra Space Storage Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000037996",
+    "ticker": "F",
+    "title": "FORD MOTOR CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001539838",
+    "ticker": "FANG",
+    "title": "Diamondback Energy, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000815556",
+    "ticker": "FAST",
+    "title": "FASTENAL CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000831259",
+    "ticker": "FCX",
+    "title": "FREEPORT-MCMORAN INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001013237",
+    "ticker": "FDS",
+    "title": "FACTSET RESEARCH SYSTEMS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001048911",
+    "ticker": "FDX",
+    "title": "FEDEX CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0002082247",
+    "ticker": "FDXF",
+    "title": "FedEx Freight Holding Company, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001031296",
+    "ticker": "FE",
+    "title": "FIRSTENERGY CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001048695",
+    "ticker": "FFIV",
+    "title": "F5, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000814547",
+    "ticker": "FICO",
+    "title": "FAIR ISAAC CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001136893",
+    "ticker": "FIS",
+    "title": "Fidelity National Information Services, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001754301",
+    "ticker": "FOX",
+    "title": "Fox Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000034903",
+    "ticker": "FRT",
+    "title": "FEDERAL REALTY INVESTMENT TRUST",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001274494",
+    "ticker": "FSLR",
+    "title": "FIRST SOLAR, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001262039",
+    "ticker": "FTNT",
+    "title": "Fortinet, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001659166",
+    "ticker": "FTV",
+    "title": "Fortive Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000040533",
+    "ticker": "GD",
+    "title": "GENERAL DYNAMICS CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001609711",
+    "ticker": "GDDY",
+    "title": "GoDaddy Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001932393",
+    "ticker": "GEHC",
+    "title": "GE HealthCare Technologies Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000040704",
+    "ticker": "GIS",
+    "title": "GENERAL MILLS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000320335",
+    "ticker": "GL",
+    "title": "GLOBE LIFE INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001467858",
+    "ticker": "GM",
+    "title": "General Motors Co",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001474735",
+    "ticker": "GNRC",
+    "title": "GENERAC HOLDINGS INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000040987",
+    "ticker": "GPC",
+    "title": "GENUINE PARTS CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001123360",
+    "ticker": "GPN",
+    "title": "GLOBAL PAYMENTS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001121788",
+    "ticker": "GRMN",
+    "title": "GARMIN LTD",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000045012",
+    "ticker": "HAL",
+    "title": "HALLIBURTON CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000046080",
+    "ticker": "HAS",
+    "title": "HASBRO, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000049196",
+    "ticker": "HBAN",
+    "title": "HUNTINGTON BANCSHARES INC /MD/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000860730",
+    "ticker": "HCA",
+    "title": "HCA Healthcare, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000874766",
+    "ticker": "HIG",
+    "title": "HARTFORD INSURANCE GROUP, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001501585",
+    "ticker": "HII",
+    "title": "HUNTINGTON INGALLS INDUSTRIES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001585689",
+    "ticker": "HLT",
+    "title": "Hilton Worldwide Holdings Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000773840",
+    "ticker": "HON",
+    "title": "HONEYWELL INTERNATIONAL INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001783879",
+    "ticker": "HOOD",
+    "title": "Robinhood Markets, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001645590",
+    "ticker": "HPE",
+    "title": "Hewlett Packard Enterprise Co",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000047217",
+    "ticker": "HPQ",
+    "title": "HP INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000048465",
+    "ticker": "HRL",
+    "title": "HORMEL FOODS CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001000228",
+    "ticker": "HSIC",
+    "title": "HENRY SCHEIN INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001070750",
+    "ticker": "HST",
+    "title": "HOST HOTELS & RESORTS, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000048898",
+    "ticker": "HUBB",
+    "title": "HUBBELL INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000049071",
+    "ticker": "HUM",
+    "title": "HUMANA INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000004281",
+    "ticker": "HWM",
+    "title": "Howmet Aerospace Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001571949",
+    "ticker": "ICE",
+    "title": "Intercontinental Exchange, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000874716",
+    "ticker": "IDXX",
+    "title": "IDEXX LABORATORIES INC /DE",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000832101",
+    "ticker": "IEX",
+    "title": "IDEX CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000896878",
+    "ticker": "INTU",
+    "title": "INTUIT INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001687229",
+    "ticker": "INVH",
+    "title": "Invitation Homes Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000051434",
+    "ticker": "IP",
+    "title": "INTERNATIONAL PAPER CO /NEW/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001478242",
+    "ticker": "IQV",
+    "title": "IQVIA HOLDINGS INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001699150",
+    "ticker": "IR",
+    "title": "Ingersoll Rand Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001020569",
+    "ticker": "IRM",
+    "title": "IRON MOUNTAIN INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001035267",
+    "ticker": "ISRG",
+    "title": "INTUITIVE SURGICAL INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000749251",
+    "ticker": "IT",
+    "title": "GARTNER INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000049826",
+    "ticker": "ITW",
+    "title": "ILLINOIS TOOL WORKS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000914208",
+    "ticker": "IVZ",
+    "title": "Invesco Ltd.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000052988",
+    "ticker": "J",
+    "title": "JACOBS SOLUTIONS INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000728535",
+    "ticker": "JBHT",
+    "title": "HUNT J B TRANSPORT SERVICES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000898293",
+    "ticker": "JBL",
+    "title": "JABIL INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000833444",
+    "ticker": "JCI",
+    "title": "Johnson Controls International plc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000779152",
+    "ticker": "JKHY",
+    "title": "JACK HENRY & ASSOCIATES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001418135",
+    "ticker": "KDP",
+    "title": "Keurig Dr Pepper Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000091576",
+    "ticker": "KEY",
+    "title": "KEYCORP /NEW/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001601046",
+    "ticker": "KEYS",
+    "title": "Keysight Technologies, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001637459",
+    "ticker": "KHC",
+    "title": "Kraft Heinz Co",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000879101",
+    "ticker": "KIM",
+    "title": "KIMCO REALTY CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001404912",
+    "ticker": "KKR",
+    "title": "KKR & Co. Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001506307",
+    "ticker": "KMI",
+    "title": "KINDER MORGAN, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000056873",
+    "ticker": "KR",
+    "title": "KROGER CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001944048",
+    "ticker": "KVUE",
+    "title": "Kenvue Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000060086",
+    "ticker": "L",
+    "title": "LOEWS CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001336920",
+    "ticker": "LDOS",
+    "title": "Leidos Holdings, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000920760",
+    "ticker": "LEN",
+    "title": "LENNAR CORP /NEW/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000920148",
+    "ticker": "LH",
+    "title": "LABCORP HOLDINGS INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000202058",
+    "ticker": "LHX",
+    "title": "L3HARRIS TECHNOLOGIES, INC. /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001633978",
+    "ticker": "LITE",
+    "title": "Lumentum Holdings Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000936468",
+    "ticker": "LMT",
+    "title": "LOCKHEED MARTIN CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000060667",
+    "ticker": "LOW",
+    "title": "LOWES COMPANIES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001397187",
+    "ticker": "LULU",
+    "title": "lululemon athletica inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000092380",
+    "ticker": "LUV",
+    "title": "SOUTHWEST AIRLINES CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001300514",
+    "ticker": "LVS",
+    "title": "LAS VEGAS SANDS CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001489393",
+    "ticker": "LYB",
+    "title": "LyondellBasell Industries N.V.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001335258",
+    "ticker": "LYV",
+    "title": "Live Nation Entertainment, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000912595",
+    "ticker": "MAA",
+    "title": "MID AMERICA APARTMENT COMMUNITIES INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000062996",
+    "ticker": "MAS",
+    "title": "MASCO CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000827054",
+    "ticker": "MCHP",
+    "title": "MICROCHIP TECHNOLOGY INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000927653",
+    "ticker": "MCK",
+    "title": "MCKESSON CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001059556",
+    "ticker": "MCO",
+    "title": "MOODYS CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001103982",
+    "ticker": "MDLZ",
+    "title": "Mondelez International, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001613103",
+    "ticker": "MDT",
+    "title": "Medtronic plc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001099219",
+    "ticker": "MET",
+    "title": "METLIFE INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000789570",
+    "ticker": "MGM",
+    "title": "MGM Resorts International",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000063754",
+    "ticker": "MKC",
+    "title": "MCCORMICK & CO INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000916076",
+    "ticker": "MLM",
+    "title": "MARTIN MARIETTA MATERIALS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000066740",
+    "ticker": "MMM",
+    "title": "3M CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000865752",
+    "ticker": "MNST",
+    "title": "Monster Beverage Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000764180",
+    "ticker": "MO",
+    "title": "ALTRIA GROUP, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001285785",
+    "ticker": "MOS",
+    "title": "MOSAIC CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001510295",
+    "ticker": "MPC",
+    "title": "Marathon Petroleum Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001280452",
+    "ticker": "MPWR",
+    "title": "MONOLITHIC POWER SYSTEMS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001682852",
+    "ticker": "MRNA",
+    "title": "Moderna, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000062709",
+    "ticker": "MRSH",
+    "title": "MARSH & MCLENNAN COMPANIES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001408198",
+    "ticker": "MSCI",
+    "title": "MSCI Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000068505",
+    "ticker": "MSI",
+    "title": "Motorola Solutions, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000036270",
+    "ticker": "MTB",
+    "title": "M&T BANK CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001513761",
+    "ticker": "NCLH",
+    "title": "Norwegian Cruise Line Holdings Ltd.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001120193",
+    "ticker": "NDAQ",
+    "title": "NASDAQ, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000072331",
+    "ticker": "NDSN",
+    "title": "NORDSON CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001164727",
+    "ticker": "NEM",
+    "title": "NEWMONT Corp /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001111711",
+    "ticker": "NI",
+    "title": "NISOURCE INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000320187",
+    "ticker": "NKE",
+    "title": "NIKE, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001133421",
+    "ticker": "NOC",
+    "title": "NORTHROP GRUMMAN CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001373715",
+    "ticker": "NOW",
+    "title": "ServiceNow, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001013871",
+    "ticker": "NRG",
+    "title": "NRG ENERGY, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000702165",
+    "ticker": "NSC",
+    "title": "NORFOLK SOUTHERN CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001002047",
+    "ticker": "NTAP",
+    "title": "NetApp, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000073124",
+    "ticker": "NTRS",
+    "title": "NORTHERN TRUST CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000073309",
+    "ticker": "NUE",
+    "title": "NUCOR CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000906163",
+    "ticker": "NVR",
+    "title": "NVR INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001564708",
+    "ticker": "NWS",
+    "title": "NEWS CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000726728",
+    "ticker": "O",
+    "title": "REALTY INCOME CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000878927",
+    "ticker": "ODFL",
+    "title": "OLD DOMINION FREIGHT LINE, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001039684",
+    "ticker": "OKE",
+    "title": "ONEOK INC /NEW/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000029989",
+    "ticker": "OMC",
+    "title": "OMNICOM GROUP INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001097864",
+    "ticker": "ON",
+    "title": "ON SEMICONDUCTOR CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000898173",
+    "ticker": "ORLY",
+    "title": "O REILLY AUTOMOTIVE INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001781335",
+    "ticker": "OTIS",
+    "title": "Otis Worldwide Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000797468",
+    "ticker": "OXY",
+    "title": "OCCIDENTAL PETROLEUM CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001004980",
+    "ticker": "PCG",
+    "title": "PG&E Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000788784",
+    "ticker": "PEG",
+    "title": "PUBLIC SERVICE ENTERPRISE GROUP INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000078003",
+    "ticker": "PFE",
+    "title": "PFIZER INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001126328",
+    "ticker": "PFG",
+    "title": "PRINCIPAL FINANCIAL GROUP INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000076334",
+    "ticker": "PH",
+    "title": "Parker-Hannifin Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000822416",
+    "ticker": "PHM",
+    "title": "PULTEGROUP INC/MI/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000075677",
+    "ticker": "PKG",
+    "title": "PACKAGING CORP OF AMERICA",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000713676",
+    "ticker": "PNC",
+    "title": "PNC FINANCIAL SERVICES GROUP, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000077360",
+    "ticker": "PNR",
+    "title": "PENTAIR plc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000764622",
+    "ticker": "PNW",
+    "title": "PINNACLE WEST CAPITAL CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001145197",
+    "ticker": "PODD",
+    "title": "INSULET CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000945841",
+    "ticker": "POOL",
+    "title": "POOL CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000079879",
+    "ticker": "PPG",
+    "title": "PPG INDUSTRIES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000922224",
+    "ticker": "PPL",
+    "title": "PPL Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001137774",
+    "ticker": "PRU",
+    "title": "PRUDENTIAL FINANCIAL INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0002041610",
+    "ticker": "PSKY",
+    "title": "Paramount Skydance Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001534701",
+    "ticker": "PSX",
+    "title": "Phillips 66",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000857005",
+    "ticker": "PTC",
+    "title": "PTC INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001050915",
+    "ticker": "PWR",
+    "title": "QUANTA SERVICES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0002058873",
+    "ticker": "Q",
+    "title": "Qnity Electronics, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000910606",
+    "ticker": "REG",
+    "title": "REGENCY CENTERS CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000872589",
+    "ticker": "REGN",
+    "title": "REGENERON PHARMACEUTICALS, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001281761",
+    "ticker": "RF",
+    "title": "REGIONS FINANCIAL CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000720005",
+    "ticker": "RJF",
+    "title": "RAYMOND JAMES FINANCIAL INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001037038",
+    "ticker": "RL",
+    "title": "RALPH LAUREN CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000943819",
+    "ticker": "RMD",
+    "title": "RESMED INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001024478",
+    "ticker": "ROK",
+    "title": "ROCKWELL AUTOMATION, INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000084839",
+    "ticker": "ROL",
+    "title": "ROLLINS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000745732",
+    "ticker": "ROST",
+    "title": "ROSS STORES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001060391",
+    "ticker": "RSG",
+    "title": "REPUBLIC SERVICES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000031791",
+    "ticker": "RVTY",
+    "title": "REVVITY, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001034054",
+    "ticker": "SBAC",
+    "title": "SBA COMMUNICATIONS CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000089800",
+    "ticker": "SHW",
+    "title": "SHERWIN WILLIAMS CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000091419",
+    "ticker": "SJM",
+    "title": "J M SMUCKER Co",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000087347",
+    "ticker": "SLB",
+    "title": "SLB LIMITED/NV",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001375365",
+    "ticker": "SMCI",
+    "title": "Super Micro Computer, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000091440",
+    "ticker": "SNA",
+    "title": "Snap-on Inc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000883241",
+    "ticker": "SNPS",
+    "title": "SYNOPSYS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000092122",
+    "ticker": "SO",
+    "title": "SOUTHERN CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001964738",
+    "ticker": "SOLV",
+    "title": "Solventum Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001032208",
+    "ticker": "SRE",
+    "title": "SEMPRA",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001757898",
+    "ticker": "STE",
+    "title": "STERIS plc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001022671",
+    "ticker": "STLD",
+    "title": "STEEL DYNAMICS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000093751",
+    "ticker": "STT",
+    "title": "STATE STREET CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000016918",
+    "ticker": "STZ",
+    "title": "CONSTELLATION BRANDS, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0002005951",
+    "ticker": "SW",
+    "title": "Smurfit Westrock plc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001601712",
+    "ticker": "SYF",
+    "title": "Synchrony Financial",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000096021",
+    "ticker": "SYY",
+    "title": "SYSCO CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000732717",
+    "ticker": "T",
+    "title": "AT&T INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000024545",
+    "ticker": "TAP",
+    "title": "MOLSON COORS BEVERAGE CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001260221",
+    "ticker": "TDG",
+    "title": "TransDigm Group INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001094285",
+    "ticker": "TDY",
+    "title": "TELEDYNE TECHNOLOGIES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000842023",
+    "ticker": "TECH",
+    "title": "BIO-TECHNE Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001385157",
+    "ticker": "TEL",
+    "title": "TE Connectivity plc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000092230",
+    "ticker": "TFC",
+    "title": "TRUIST FINANCIAL CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000027419",
+    "ticker": "TGT",
+    "title": "TARGET CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000097745",
+    "ticker": "TMO",
+    "title": "THERMO FISHER SCIENTIFIC INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001811074",
+    "ticker": "TPL",
+    "title": "Texas Pacific Land Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001116132",
+    "ticker": "TPR",
+    "title": "TAPESTRY, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001389170",
+    "ticker": "TRGP",
+    "title": "Targa Resources Corp.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000864749",
+    "ticker": "TRMB",
+    "title": "TRIMBLE INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001113169",
+    "ticker": "TROW",
+    "title": "PRICE T ROWE GROUP INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000086312",
+    "ticker": "TRV",
+    "title": "TRAVELERS COMPANIES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000916365",
+    "ticker": "TSCO",
+    "title": "TRACTOR SUPPLY CO /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000100493",
+    "ticker": "TSN",
+    "title": "TYSON FOODS, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001671933",
+    "ticker": "TTD",
+    "title": "Trade Desk, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000946581",
+    "ticker": "TTWO",
+    "title": "TAKE TWO INTERACTIVE SOFTWARE INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000217346",
+    "ticker": "TXT",
+    "title": "TEXTRON INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000100517",
+    "ticker": "UAL",
+    "title": "United Airlines Holdings, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001543151",
+    "ticker": "UBER",
+    "title": "Uber Technologies, Inc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000074208",
+    "ticker": "UDR",
+    "title": "UDR, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000352915",
+    "ticker": "UHS",
+    "title": "UNIVERSAL HEALTH SERVICES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001403568",
+    "ticker": "ULTA",
+    "title": "Ulta Beauty, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001090727",
+    "ticker": "UPS",
+    "title": "UNITED PARCEL SERVICE INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001067701",
+    "ticker": "URI",
+    "title": "UNITED RENTALS, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000036104",
+    "ticker": "USB",
+    "title": "US BANCORP DE",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001393052",
+    "ticker": "VEEV",
+    "title": "VEEVA SYSTEMS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001705696",
+    "ticker": "VICI",
+    "title": "VICI PROPERTIES INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001035002",
+    "ticker": "VLO",
+    "title": "VALERO ENERGY CORP/TX",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001967680",
+    "ticker": "VLTO",
+    "title": "Veralto Corp",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001396009",
+    "ticker": "VMC",
+    "title": "Vulcan Materials CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001442145",
+    "ticker": "VRSK",
+    "title": "Verisk Analytics, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001014473",
+    "ticker": "VRSN",
+    "title": "VERISIGN INC/CA",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001692819",
+    "ticker": "VST",
+    "title": "Vistra Corp.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001792044",
+    "ticker": "VTRS",
+    "title": "Viatris Inc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000943452",
+    "ticker": "WAB",
+    "title": "WESTINGHOUSE AIR BRAKE TECHNOLOGIES CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001000697",
+    "ticker": "WAT",
+    "title": "WATERS CORP /DE/",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001437107",
+    "ticker": "WBD",
+    "title": "Warner Bros. Discovery, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001327811",
+    "ticker": "WDAY",
+    "title": "Workday, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000783325",
+    "ticker": "WEC",
+    "title": "WEC ENERGY GROUP, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000766704",
+    "ticker": "WELL",
+    "title": "WELLTOWER INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000823768",
+    "ticker": "WM",
+    "title": "WASTE MANAGEMENT INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000107263",
+    "ticker": "WMB",
+    "title": "WILLIAMS COMPANIES, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000011544",
+    "ticker": "WRB",
+    "title": "BERKLEY W R CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000719955",
+    "ticker": "WSM",
+    "title": "WILLIAMS SONOMA INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000105770",
+    "ticker": "WST",
+    "title": "WEST PHARMACEUTICAL SERVICES INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001140536",
+    "ticker": "WTW",
+    "title": "WILLIS TOWERS WATSON PLC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000106535",
+    "ticker": "WY",
+    "title": "WEYERHAEUSER CO",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001174922",
+    "ticker": "WYNN",
+    "title": "WYNN RESORTS LTD",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000072903",
+    "ticker": "XEL",
+    "title": "XCEL ENERGY INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001524472",
+    "ticker": "XYL",
+    "title": "Xylem Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001512673",
+    "ticker": "XYZ",
+    "title": "Block, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001041061",
+    "ticker": "YUM",
+    "title": "YUM BRANDS INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001136869",
+    "ticker": "ZBH",
+    "title": "ZIMMER BIOMET HOLDINGS, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0000877212",
+    "ticker": "ZBRA",
+    "title": "ZEBRA TECHNOLOGIES CORP",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001555280",
+    "ticker": "ZTS",
+    "title": "Zoetis Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001973239",
+    "ticker": "ARM",
+    "title": "ARM HOLDINGS PLC /UK",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001835632",
+    "ticker": "MRVL",
+    "title": "Marvell Technology, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001594805",
+    "ticker": "SHOP",
+    "title": "SHOPIFY INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001737806",
+    "ticker": "PDD",
+    "title": "PDD Holdings Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001099590",
+    "ticker": "MELI",
+    "title": "MERCADOLIBRE INC",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001468522",
+    "ticker": "FER",
+    "title": "Ferrovial N.V.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001050446",
+    "ticker": "MSTR",
+    "title": "Strategy Inc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001178670",
+    "ticker": "ALNY",
+    "title": "ALNYLAM PHARMACEUTICALS, INC.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001104506",
+    "ticker": "INSM",
+    "title": "INSMED Inc",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0001713683",
+    "ticker": "ZS",
+    "title": "Zscaler, Inc.",
+    "inclusionReason": "index-member"
+  },
+  {
+    "cik": "0002070829",
+    "ticker": "CYATY",
+    "title": "Contemporary Amperex Technology Co., Limited/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001089113",
+    "ticker": "HSBC",
+    "title": "HSBC HOLDINGS PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001114448",
+    "ticker": "NVS",
+    "title": "NOVARTIS AG",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001000275",
+    "ticker": "RY",
+    "title": "ROYAL BANK OF CANADA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002053383",
+    "ticker": "KXIAY",
+    "title": "Kioxia Holdings Corporation/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000901832",
+    "ticker": "AZN",
+    "title": "ASTRAZENECA PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001577552",
+    "ticker": "BABA",
+    "title": "Alibaba Group Holding Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000067088",
+    "ticker": "MUFG",
+    "title": "MITSUBISHI UFJ FINANCIAL GROUP INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001306965",
+    "ticker": "SHEL",
+    "title": "Shell plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000353278",
+    "ticker": "NVO",
+    "title": "NOVO NORDISK A S",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001094517",
+    "ticker": "TM",
+    "title": "TOYOTA MOTOR CORP/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000811809",
+    "ticker": "BHP",
+    "title": "BHP Group Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000891478",
+    "ticker": "SAN",
+    "title": "Banco Santander, S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000947263",
+    "ticker": "TD",
+    "title": "TORONTO DOMINION BANK",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001000184",
+    "ticker": "SAP",
+    "title": "SAP SE",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000887028",
+    "ticker": "RTNTF",
+    "title": "RIO TINTO LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000879764",
+    "ticker": "TTE",
+    "title": "TotalEnergies SE",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001610520",
+    "ticker": "UBS",
+    "title": "UBS Group AG",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001022837",
+    "ticker": "SMFG",
+    "title": "SUMITOMO MITSUI FINANCIAL GROUP, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001668717",
+    "ticker": "BUD",
+    "title": "Anheuser-Busch InBev SA/NV",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001830056",
+    "ticker": "SMERY",
+    "title": "Siemens Energy AG/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001001838",
+    "ticker": "SCCO",
+    "title": "SOUTHERN COPPER CORP/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000863064",
+    "ticker": "RIO",
+    "title": "RIO TINTO PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000946770",
+    "ticker": "DTEGY",
+    "title": "DEUTSCHE TELEKOM AG",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000842180",
+    "ticker": "BBVA",
+    "title": "BANCO BILBAO VIZCAYA ARGENTARIA, S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001144967",
+    "ticker": "HDB",
+    "title": "HDFC BANK LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001158838",
+    "ticker": "ATEYY",
+    "title": "ADVANTEST CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000047710",
+    "ticker": "HTHIY",
+    "title": "HITACHI LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001303523",
+    "ticker": "BTI",
+    "title": "British American Tobacco p.l.c.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000217410",
+    "ticker": "UL",
+    "title": "UNILEVER PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001335730",
+    "ticker": "MFG",
+    "title": "MIZUHO FINANCIAL GROUP INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000927971",
+    "ticker": "BMO",
+    "title": "BANK OF MONTREAL /CAN/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000313838",
+    "ticker": "SONY",
+    "title": "Sony Group Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000895728",
+    "ticker": "ENB",
+    "title": "ENBRIDGE INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001107457",
+    "ticker": "IFNNY",
+    "title": "INFINEON TECHNOLOGIES AG",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001119639",
+    "ticker": "PBR",
+    "title": "PETROBRAS - PETROLEO BRASILEIRO SA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001045520",
+    "ticker": "CM",
+    "title": "CANADIAN IMPERIAL BANK OF COMMERCE /CAN/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000009631",
+    "ticker": "BNS",
+    "title": "BANK OF NOVA SCOTIA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001131399",
+    "ticker": "GSK",
+    "title": "GSK plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001121404",
+    "ticker": "SNY",
+    "title": "Sanofi",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001103838",
+    "ticker": "IBN",
+    "title": "ICICI BANK LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002098326",
+    "ticker": "SNHIY",
+    "title": "Sany Heavy Industries Co., Ltd./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000313807",
+    "ticker": "BP",
+    "title": "BP PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001639920",
+    "ticker": "SPOT",
+    "title": "Spotify Technology S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001477333",
+    "ticker": "NET",
+    "title": "Cloudflare, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001001085",
+    "ticker": "BN",
+    "title": "BROOKFIELD Corp /ON/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001122411",
+    "ticker": "ASX",
+    "title": "ASE Technology Holding Co., Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001039765",
+    "ticker": "ING",
+    "title": "ING GROEP NV",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000312069",
+    "ticker": "BCS",
+    "title": "BARCLAYS PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001640147",
+    "ticker": "SNOW",
+    "title": "Snowflake Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001132597",
+    "ticker": "ITUB",
+    "title": "Itau Unibanco Holding S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001017413",
+    "ticker": "CNQ",
+    "title": "CANADIAN NATURAL RESOURCES Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001160106",
+    "ticker": "LYG",
+    "title": "Lloyds Banking Group plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001110646",
+    "ticker": "NTES",
+    "title": "NetEase, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002039784",
+    "ticker": "MGCLY",
+    "title": "Midea Group Co., Ltd./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001004315",
+    "ticker": "NGG",
+    "title": "NATIONAL GRID PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001061219",
+    "ticker": "EPD",
+    "title": "ENTERPRISE PRODUCTS PARTNERS L.P.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001140625",
+    "ticker": "EQNR",
+    "title": "EQUINOR ASA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000016875",
+    "ticker": "CP",
+    "title": "CANADIAN PACIFIC KANSAS CITY LTD/CN",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001129137",
+    "ticker": "AMX",
+    "title": "AMERICA MOVIL SAB DE CV/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000016868",
+    "ticker": "CNI",
+    "title": "CANADIAN NATIONAL RAILWAY CO",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000002809",
+    "ticker": "AEM",
+    "title": "AGNICO EAGLE MINES LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001664703",
+    "ticker": "BE",
+    "title": "Bloom Energy Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001937926",
+    "ticker": "BAM",
+    "title": "Brookfield Asset Management Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002046386",
+    "ticker": "MDLN",
+    "title": "Medline Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000895564",
+    "ticker": "BAESY",
+    "title": "BAE SYSTEMS PLC /FI/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000924613",
+    "ticker": "NOK",
+    "title": "NOKIA CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001736297",
+    "ticker": "ALAB",
+    "title": "Astera Labs, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001232384",
+    "ticker": "TRP",
+    "title": "TC ENERGY CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000844150",
+    "ticker": "NWG",
+    "title": "NatWest Group plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002089271",
+    "ticker": "HONA",
+    "title": "Honeywell Aerospace Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001002242",
+    "ticker": "E",
+    "title": "ENI SPA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001086888",
+    "ticker": "MFC",
+    "title": "MANULIFE FINANCIAL CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000311337",
+    "ticker": "SU",
+    "title": "SUNCOR ENERGY INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001276187",
+    "ticker": "ET",
+    "title": "Energy Transfer LP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001159508",
+    "ticker": "DB",
+    "title": "DEUTSCHE BANK AKTIENGESELLSCHAFT",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001703399",
+    "ticker": "SE",
+    "title": "Sea Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001648416",
+    "ticker": "RACE",
+    "title": "Ferrari N.V.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001691493",
+    "ticker": "NU",
+    "title": "Nu Holdings Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000932787",
+    "ticker": "STM",
+    "title": "STMicroelectronics N.V.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001033767",
+    "ticker": "UMC",
+    "title": "UNITED MICROELECTRONICS CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000756894",
+    "ticker": "B",
+    "title": "BARRICK MINING CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000917851",
+    "ticker": "VALE",
+    "title": "Vale S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000049938",
+    "ticker": "IMO",
+    "title": "IMPERIAL OIL LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000850918",
+    "ticker": "GWLIF",
+    "title": "GREAT-WEST LIFECO INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001552000",
+    "ticker": "MPLX",
+    "title": "MPLX LP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001842726",
+    "ticker": "LSEGY",
+    "title": "London Stock Exchange Group plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001136808",
+    "ticker": "EONGY",
+    "title": "E.ON SE",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001697862",
+    "ticker": "ARGX",
+    "title": "ARGENX SE",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001513845",
+    "ticker": "NBIS",
+    "title": "Nebius Group N.V.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000929869",
+    "ticker": "RELX",
+    "title": "RELX PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000003570",
+    "ticker": "LNG",
+    "title": "Cheniere Energy, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002071881",
+    "ticker": "TRMOY",
+    "title": "Tourmaline Oil Corp/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001395064",
+    "ticker": "TAK",
+    "title": "TAKEDA PHARMACEUTICAL CO LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001819994",
+    "ticker": "RKLB",
+    "title": "Rocket Lab Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000866374",
+    "ticker": "FLEX",
+    "title": "FLEX LTD.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002021390",
+    "ticker": "GALDY",
+    "title": "Galderma Group AG/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001323404",
+    "ticker": "WPM",
+    "title": "Wheaton Precious Metals Corp.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001807794",
+    "ticker": "CRDO",
+    "title": "Credo Technology Group Holding Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001769628",
+    "ticker": "CRWV",
+    "title": "CoreWeave, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000046619",
+    "ticker": "HEI",
+    "title": "HEICO CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001475260",
+    "ticker": "CVE",
+    "title": "CENOVUS ENERGY INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000095227",
+    "ticker": "SMTOY",
+    "title": "SUMITOMO ELECTRIC INDUSTRIES LTD/ADR/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001243429",
+    "ticker": "MT",
+    "title": "ArcelorMittal",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001565025",
+    "ticker": "ABEV",
+    "title": "AMBEV S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001745201",
+    "ticker": "VIK",
+    "title": "Viking Holdings Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001109262",
+    "ticker": "AGGI",
+    "title": "BILI Social International, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002071868",
+    "ticker": "JHPCY",
+    "title": "Jiangsu Hengrui Pharmaceuticals Co., Ltd./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001067491",
+    "ticker": "INFY",
+    "title": "Infosys Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000835403",
+    "ticker": "DEO",
+    "title": "DIAGEO PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002021728",
+    "ticker": "CBRS",
+    "title": "Cerebras Systems Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001097362",
+    "ticker": "SLF",
+    "title": "SUN LIFE FINANCIAL INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001070304",
+    "ticker": "IX",
+    "title": "ORIX CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002011641",
+    "ticker": "FERG",
+    "title": "Ferguson Enterprises Inc. /DE/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001318220",
+    "ticker": "WCN",
+    "title": "Waste Connections, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001061736",
+    "ticker": "FMX",
+    "title": "MEXICAN ECONOMIC DEVELOPMENT INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001900304",
+    "ticker": "HLN",
+    "title": "Haleon plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001274152",
+    "ticker": "CSLLY",
+    "title": "CSL LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001009001",
+    "ticker": "CCJ",
+    "title": "CAMECO CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001973832",
+    "ticker": "AU",
+    "title": "AngloGold Ashanti PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001030894",
+    "ticker": "CLS",
+    "title": "CELESTICA INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001628171",
+    "ticker": "RVMD",
+    "title": "Revolution Medicines, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001445930",
+    "ticker": "KB",
+    "title": "KB Financial Group Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001805284",
+    "ticker": "RKT",
+    "title": "Rocket Companies, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001446250",
+    "ticker": "BMWKY",
+    "title": "Bayerische Motoren Werke AG/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001456346",
+    "ticker": "FNV",
+    "title": "FRANCO NEVADA Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001604821",
+    "ticker": "NTRA",
+    "title": "Natera, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001329099",
+    "ticker": "BIDU",
+    "title": "Baidu, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001315098",
+    "ticker": "RBLX",
+    "title": "Roblox Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001069336",
+    "ticker": "SCMWY",
+    "title": "SWISSCOM AG",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001890126",
+    "ticker": "UNVGY",
+    "title": "Universal Music Group N.V./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001709048",
+    "ticker": "GFS",
+    "title": "GLOBALFOUNDRIES Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001791942",
+    "ticker": "JBS",
+    "title": "JBS N.V.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000717826",
+    "ticker": "ERIC",
+    "title": "ERICSSON LM TELEPHONE CO",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000818686",
+    "ticker": "TEVA",
+    "title": "TEVA PHARMACEUTICAL INDUSTRIES LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001713445",
+    "ticker": "RDDT",
+    "title": "Reddit, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000844551",
+    "ticker": "WDS",
+    "title": "WOODSIDE ENERGY GROUP LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001549802",
+    "ticker": "JD",
+    "title": "JD.com, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001160330",
+    "ticker": "BBD",
+    "title": "BANK BRADESCO",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000715153",
+    "ticker": "HMC",
+    "title": "HONDA MOTOR CO LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001027664",
+    "ticker": "ESLT",
+    "title": "ELBIT SYSTEMS LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002073893",
+    "ticker": "DLMAY",
+    "title": "Dollarama Inc./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001116578",
+    "ticker": "PUK",
+    "title": "PRUDENTIAL PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000915191",
+    "ticker": "FRFHF",
+    "title": "FAIRFAX FINANCIAL HOLDINGS LTD/ CAN",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001618756",
+    "ticker": "QSR",
+    "title": "Restaurant Brands International Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001834584",
+    "ticker": "CPNG",
+    "title": "Coupang, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001038683",
+    "ticker": "RYAAY",
+    "title": "RYANAIR HOLDINGS PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001802768",
+    "ticker": "RPRX",
+    "title": "Royalty Pharma plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001263043",
+    "ticker": "SHG",
+    "title": "SHINHAN FINANCIAL GROUP CO LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001447391",
+    "ticker": "RSHGY",
+    "title": "RESONA HOLDINGS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001447669",
+    "ticker": "TWLO",
+    "title": "TWILIO INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001511737",
+    "ticker": "UI",
+    "title": "Ubiquiti Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001167379",
+    "ticker": "ALC",
+    "title": "ALCON INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001132924",
+    "ticker": "CHT",
+    "title": "CHUNGHWA TELECOM CO LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001444406",
+    "ticker": "EC",
+    "title": "ECOPETROL S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001651308",
+    "ticker": "ONC",
+    "title": "BeOne Medicines Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001383650",
+    "ticker": "CQP",
+    "title": "Cheniere Energy Partners, L.P.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002007855",
+    "ticker": "VG",
+    "title": "Venture Global, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001725964",
+    "ticker": "NTR",
+    "title": "Nutrien Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001001290",
+    "ticker": "BAP",
+    "title": "CREDICORP LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000015615",
+    "ticker": "MTZ",
+    "title": "MASTEC INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001172724",
+    "ticker": "GFI",
+    "title": "GOLD FIELDS LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000839923",
+    "ticker": "VOD",
+    "title": "VODAFONE GROUP PUBLIC LTD CO",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002083785",
+    "ticker": "SUNB",
+    "title": "Sunbelt Rentals Holdings, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000017843",
+    "ticker": "CRS",
+    "title": "CARPENTER TECHNOLOGY CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000886986",
+    "ticker": "TECK",
+    "title": "TECK RESOURCES LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001666175",
+    "ticker": "FTS",
+    "title": "Fortis Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001780312",
+    "ticker": "ASTS",
+    "title": "AST SpaceMobile, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001441816",
+    "ticker": "MDB",
+    "title": "MongoDB, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000701818",
+    "ticker": "KGC",
+    "title": "KINROSS GOLD CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001110803",
+    "ticker": "ILMN",
+    "title": "ILLUMINA, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001415404",
+    "ticker": "ECHO",
+    "title": "EchoStar CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000026324",
+    "ticker": "CW",
+    "title": "CURTISS WRIGHT CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001535759",
+    "ticker": "KBGGY",
+    "title": "Kongsberg Gruppen ASA/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001820953",
+    "ticker": "AFRM",
+    "title": "Affirm Holdings, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001546066",
+    "ticker": "PBA",
+    "title": "PEMBINA PIPELINE CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001681459",
+    "ticker": "FTI",
+    "title": "TechnipFMC plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001163653",
+    "ticker": "NMR",
+    "title": "NOMURA HOLDINGS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002035989",
+    "ticker": "AMRZ",
+    "title": "Amrize Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001374310",
+    "ticker": "CBOE",
+    "title": "Cboe Global Markets, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001190723",
+    "ticker": "TS",
+    "title": "TENARIS SA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000928876",
+    "ticker": "TSEM",
+    "title": "TOWER SEMICONDUCTOR LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000904868",
+    "ticker": "FSNUY",
+    "title": "Fresenius SE & Co. KGaA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001474432",
+    "ticker": "P",
+    "title": "Everpure, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000313216",
+    "ticker": "PHG",
+    "title": "KONINKLIJKE PHILIPS NV",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001885110",
+    "ticker": "CHLSY",
+    "title": "Chocoladefabriken Lindt & Spruengli AG/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001635088",
+    "ticker": "ROIV",
+    "title": "Roivant Sciences Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001585521",
+    "ticker": "ZM",
+    "title": "Zoom Communications, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001269238",
+    "ticker": "TCOM",
+    "title": "Trip.com Group Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001837240",
+    "ticker": "SYM",
+    "title": "Symbotic Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001018963",
+    "ticker": "ATI",
+    "title": "ATI INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001720635",
+    "ticker": "NVT",
+    "title": "nVent Electric plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001660134",
+    "ticker": "OKTA",
+    "title": "Okta, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002109150",
+    "ticker": "INIO",
+    "title": "INNIO N.V.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001049502",
+    "ticker": "MKSI",
+    "title": "MKS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001474968",
+    "ticker": "GELHY",
+    "title": "Geely Automobile Holdings Limited/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001397911",
+    "ticker": "LPLA",
+    "title": "LPL Financial Holdings Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001874178",
+    "ticker": "RIVN",
+    "title": "Rivian Automotive, Inc. / DE",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001493594",
+    "ticker": "MTSI",
+    "title": "MACOM Technology Solutions Holdings, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001166003",
+    "ticker": "XPO",
+    "title": "XPO, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001096343",
+    "ticker": "MKL",
+    "title": "MARKEL GROUP INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000858446",
+    "ticker": "IHG",
+    "title": "INTERCONTINENTAL HOTELS GROUP PLC /NEW/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000108312",
+    "ticker": "WWD",
+    "title": "Woodward, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000798941",
+    "ticker": "FCNCA",
+    "title": "FIRST CITIZENS BANCSHARES INC /DE/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001378789",
+    "ticker": "AER",
+    "title": "AerCap Holdings N.V.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001818874",
+    "ticker": "SOFI",
+    "title": "SoFi Technologies, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001776985",
+    "ticker": "BNTX",
+    "title": "BioNTech SE",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001590364",
+    "ticker": "FTAI",
+    "title": "FTAI Aviation Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001082554",
+    "ticker": "UTHR",
+    "title": "UNITED THERAPEUTICS Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001439124",
+    "ticker": "AXIA",
+    "title": "AXIA Energia S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001101302",
+    "ticker": "ENTG",
+    "title": "ENTEGRIS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001650372",
+    "ticker": "TEAM",
+    "title": "Atlassian Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001533232",
+    "ticker": "BEP",
+    "title": "Brookfield Renewable Partners L.P.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001576280",
+    "ticker": "GH",
+    "title": "Guardant Health, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001560385",
+    "ticker": "FWONA",
+    "title": "Liberty Media Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001665918",
+    "ticker": "USFD",
+    "title": "US Foods Holding Corp.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000910631",
+    "ticker": "KOF",
+    "title": "COCA COLA FEMSA SAB DE CV",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000874238",
+    "ticker": "STRL",
+    "title": "STERLING INFRASTRUCTURE, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002004711",
+    "ticker": "BSP",
+    "title": "Bending Spoons S.p.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001142231",
+    "ticker": "HKHHY",
+    "title": "HEINEKEN HOLDING N V",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001066119",
+    "ticker": "VIV",
+    "title": "TELEFONICA BRASIL S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001642896",
+    "ticker": "IOT",
+    "title": "Samsara Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001758730",
+    "ticker": "TW",
+    "title": "Tradeweb Markets Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000909037",
+    "ticker": "SQM",
+    "title": "CHEMICAL & MINING CO OF CHILE INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001039610",
+    "ticker": "EDPFY",
+    "title": "EDP ENERGIAS DE PORTUGAL SA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001957132",
+    "ticker": "SN",
+    "title": "SharkNinja, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001428439",
+    "ticker": "ROKU",
+    "title": "ROKU, INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001046102",
+    "ticker": "RBA",
+    "title": "RB GLOBAL INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001170858",
+    "ticker": "SBS",
+    "title": "COMPANHIA DE SANEAMENTO BASICO DO ESTADO DE SAO PAULO-SABESP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001161125",
+    "ticker": "BCH",
+    "title": "BANK OF CHILE",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001177394",
+    "ticker": "SNX",
+    "title": "TD SYNNEX CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001579298",
+    "ticker": "BURL",
+    "title": "Burlington Stores, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001126113",
+    "ticker": "TELNY",
+    "title": "TELENOR ASA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001451809",
+    "ticker": "SITM",
+    "title": "SITIME Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000718940",
+    "ticker": "BCE",
+    "title": "BCE INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001988894",
+    "ticker": "AS",
+    "title": "Amer Sports, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002110105",
+    "ticker": "QNT",
+    "title": "Quantinuum Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001089063",
+    "ticker": "DKS",
+    "title": "DICK'S SPORTING GOODS, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000861884",
+    "ticker": "RS",
+    "title": "RELIANCE, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001471055",
+    "ticker": "BSBR",
+    "title": "Banco Santander (Brasil) S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000855658",
+    "ticker": "LSCC",
+    "title": "LATTICE SEMICONDUCTOR CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001635327",
+    "ticker": "FLUT",
+    "title": "Flutter Entertainment plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002058897",
+    "ticker": "CIB",
+    "title": "Grupo Cibest S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001324948",
+    "ticker": "RBC",
+    "title": "RBC Bearings INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001423902",
+    "ticker": "WES",
+    "title": "Western Midstream Partners, LP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000771992",
+    "ticker": "PAAS",
+    "title": "PAN AMERICAN SILVER CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001715801",
+    "ticker": "SOAGY",
+    "title": "Sartorius AG/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001622536",
+    "ticker": "TLN",
+    "title": "Talen Energy Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000904851",
+    "ticker": "YPF",
+    "title": "YPF SOCIEDAD ANONIMA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001123799",
+    "ticker": "WIT",
+    "title": "WIPRO LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001796209",
+    "ticker": "APG",
+    "title": "APi Group Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001434265",
+    "ticker": "GMAB",
+    "title": "GENMAB A/S",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001612042",
+    "ticker": "ASND",
+    "title": "Ascendis Pharma A/S",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002098430",
+    "ticker": "MAIR",
+    "title": "Madison Air Solutions Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001943896",
+    "ticker": "RBRK",
+    "title": "Rubrik, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001069157",
+    "ticker": "EWBC",
+    "title": "EAST WEST BANCORP INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001468174",
+    "ticker": "H",
+    "title": "Hyatt Hotels Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000914475",
+    "ticker": "NBIX",
+    "title": "NEUROCRINE BIOSCIENCES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001047127",
+    "ticker": "AMKR",
+    "title": "AMKOR TECHNOLOGY, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001743881",
+    "ticker": "BBIO",
+    "title": "BridgeBio Pharma, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001076378",
+    "ticker": "CX",
+    "title": "CEMEX SAB DE CV",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001677250",
+    "ticker": "ZTO",
+    "title": "ZTO Express (Cayman) Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000070318",
+    "ticker": "THC",
+    "title": "TENET HEALTHCARE CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001408710",
+    "ticker": "FN",
+    "title": "Fabrinet",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000733099",
+    "ticker": "RCI",
+    "title": "ROGERS COMMUNICATIONS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001901440",
+    "ticker": "ULS",
+    "title": "UL Solutions Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000749098",
+    "ticker": "MGA",
+    "title": "MAGNA INTERNATIONAL INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002093536",
+    "ticker": "ARXS",
+    "title": "Arxis, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001618673",
+    "ticker": "PFGC",
+    "title": "Performance Food Group Co",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000216228",
+    "ticker": "ITT",
+    "title": "ITT INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001852131",
+    "ticker": "NXT",
+    "title": "Nextpower Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001486957",
+    "ticker": "BWXT",
+    "title": "BWX Technologies, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001876042",
+    "ticker": "CRCL",
+    "title": "Circle Internet Group, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001824920",
+    "ticker": "IONQ",
+    "title": "IonQ, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001809587",
+    "ticker": "BEKE",
+    "title": "KE Holdings Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000085535",
+    "ticker": "RGLD",
+    "title": "ROYAL GOLD INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001985487",
+    "ticker": "KSPI",
+    "title": "Joint Stock Co Kaspi.kz",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001043219",
+    "ticker": "NLY",
+    "title": "ANNALY CAPITAL MANAGEMENT INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001650164",
+    "ticker": "TOST",
+    "title": "Toast, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001047716",
+    "ticker": "LTM",
+    "title": "LATAM AIRLINES GROUP S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000215466",
+    "ticker": "CDE",
+    "title": "Coeur Mining, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001090425",
+    "ticker": "LAMR",
+    "title": "LAMAR ADVERTISING CO/NEW",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001658566",
+    "ticker": "PR",
+    "title": "Permian Resources Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001880661",
+    "ticker": "TPG",
+    "title": "TPG Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001127248",
+    "ticker": "EMA",
+    "title": "EMERA INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000868675",
+    "ticker": "TU",
+    "title": "TELUS CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001070423",
+    "ticker": "PAA",
+    "title": "PLAINS ALL AMERICAN PIPELINE LP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001764757",
+    "ticker": "DIDIY",
+    "title": "DiDi Global Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002098381",
+    "ticker": "LNTCY",
+    "title": "Lens Technology Co., Ltd./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001402436",
+    "ticker": "SSNC",
+    "title": "SS&C Technologies Holdings Inc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000704532",
+    "ticker": "ONTO",
+    "title": "ONTO INNOVATION INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000929008",
+    "ticker": "WCC",
+    "title": "WESCO INTERNATIONAL INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001544379",
+    "ticker": "SCRNY",
+    "title": "SCREEN Holdings Co., Ltd./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000912958",
+    "ticker": "TIGO",
+    "title": "MILLICOM INTERNATIONAL CELLULAR SA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000822818",
+    "ticker": "CLH",
+    "title": "CLEAN HARBORS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001116942",
+    "ticker": "TTMI",
+    "title": "TTM TECHNOLOGIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001719117",
+    "ticker": "ARNNY",
+    "title": "ASR Nederland N.V./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001527166",
+    "ticker": "CG",
+    "title": "Carlyle Group Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001206264",
+    "ticker": "SGI",
+    "title": "SOMNIGROUP INTERNATIONAL INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001027552",
+    "ticker": "BSAC",
+    "title": "BANCO SANTANDER CHILE",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001025378",
+    "ticker": "WPC",
+    "title": "W. P. Carey Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001855612",
+    "ticker": "GRAB",
+    "title": "Grab Holdings Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000105016",
+    "ticker": "WSO",
+    "title": "WATSCO INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001968385",
+    "ticker": "BAWAY",
+    "title": "BAWAG Group AG/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001232524",
+    "ticker": "JAZZ",
+    "title": "Jazz Pharmaceuticals plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001792580",
+    "ticker": "OVV",
+    "title": "Ovintiv Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001605484",
+    "ticker": "STLA",
+    "title": "Stellantis N.V.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001878848",
+    "ticker": "IREN",
+    "title": "IREN Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000887225",
+    "ticker": "KEP",
+    "title": "KOREA ELECTRIC POWER CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000888491",
+    "ticker": "OHI",
+    "title": "OMEGA HEALTHCARE INVESTORS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000861967",
+    "ticker": "WTKWY",
+    "title": "WOLTERS KLUWER N V /FI",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001109345",
+    "ticker": "NVMI",
+    "title": "NOVA LTD.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001236275",
+    "ticker": "QXO",
+    "title": "QXO, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002082866",
+    "ticker": "PNFP",
+    "title": "Pinnacle Financial Partners, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000803016",
+    "ticker": "CFNB",
+    "title": "CALIFORNIA FIRST LEASING CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000912593",
+    "ticker": "SUI",
+    "title": "SUN COMMUNITIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000930157",
+    "ticker": "RTO",
+    "title": "RENTOKIL INITIAL PLC /FI",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001668397",
+    "ticker": "MEDP",
+    "title": "Medpace Holdings, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001584509",
+    "ticker": "ARMK",
+    "title": "Aramark",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000889132",
+    "ticker": "PKX",
+    "title": "POSCO HOLDINGS INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002074176",
+    "ticker": "VNOM",
+    "title": "Viper Energy, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001582961",
+    "ticker": "DOCN",
+    "title": "DigitalOcean Holdings, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001037976",
+    "ticker": "JLL",
+    "title": "JONES LANG LASALLE INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000898174",
+    "ticker": "RGA",
+    "title": "REINSURANCE GROUP OF AMERICA INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001481045",
+    "ticker": "DSEEY",
+    "title": "Daiwa Securities Group Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001319161",
+    "ticker": "WMG",
+    "title": "Warner Music Group Corp.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001842022",
+    "ticker": "DTM",
+    "title": "DT Midstream, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001618732",
+    "ticker": "NTNX",
+    "title": "Nutanix, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001264136",
+    "ticker": "WF",
+    "title": "WOORI FINANCIAL GROUP INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001552033",
+    "ticker": "TRU",
+    "title": "TransUnion",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001477049",
+    "ticker": "PHYS",
+    "title": "Sprott Physical Gold Trust",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002055337",
+    "ticker": "ASBHY",
+    "title": "Asahi Group Holdings, Ltd./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001673358",
+    "ticker": "YUMC",
+    "title": "Yum China Holdings, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001823945",
+    "ticker": "OWL",
+    "title": "BLUE OWL CAPITAL INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001032975",
+    "ticker": "LOGI",
+    "title": "LOGITECH INTERNATIONAL S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001744676",
+    "ticker": "TME",
+    "title": "Tencent Music Entertainment Group",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001780232",
+    "ticker": "GFL",
+    "title": "GFL Environmental Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002029472",
+    "ticker": "PUGBY",
+    "title": "Puig Brands S.A./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001159152",
+    "ticker": "JHX",
+    "title": "James Hardie Industries plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001015922",
+    "ticker": "CHKP",
+    "title": "CHECK POINT SOFTWARE TECHNOLOGIES LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001592386",
+    "ticker": "VIRT",
+    "title": "Virtu Financial, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000939767",
+    "ticker": "EXEL",
+    "title": "EXELIXIS, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002080126",
+    "ticker": "FPS",
+    "title": "Forgent Power Solutions, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000082811",
+    "ticker": "RRX",
+    "title": "REGAL REXNORD CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000005513",
+    "ticker": "UNM",
+    "title": "Unum Group",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001865782",
+    "ticker": "BTSG",
+    "title": "BrightSpring Health Services, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001061574",
+    "ticker": "GIB",
+    "title": "CGI INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001347557",
+    "ticker": "PAC",
+    "title": "Pacific Airport Group",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001915657",
+    "ticker": "DINO",
+    "title": "HF Sinclair Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000794170",
+    "ticker": "TOL",
+    "title": "Toll Brothers, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001001807",
+    "ticker": "TLK",
+    "title": "PERUSAHAAN PERSEROAN PERSERO PT TELEKOMUNIKASI INDONESIA TBK",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002026053",
+    "ticker": "PS",
+    "title": "PERSHING SQUARE INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000040729",
+    "ticker": "ALLY",
+    "title": "Ally Financial Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001816319",
+    "ticker": "LYTHF",
+    "title": "Lytus Technologies Holdings PTV. Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001889539",
+    "ticker": "CRBG",
+    "title": "Corebridge Financial, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000021175",
+    "ticker": "CNA",
+    "title": "CNA FINANCIAL CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000059527",
+    "ticker": "LECO",
+    "title": "LINCOLN ELECTRIC HOLDINGS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001754581",
+    "ticker": "FUTU",
+    "title": "Futu Holdings Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001562401",
+    "ticker": "AMH",
+    "title": "American Homes 4 Rent",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000908255",
+    "ticker": "BWA",
+    "title": "BORGWARNER INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001810806",
+    "ticker": "U",
+    "title": "Unity Software Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000913144",
+    "ticker": "RNR",
+    "title": "RENAISSANCERE HOLDINGS LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000790051",
+    "ticker": "CSL",
+    "title": "CARLISLE COMPANIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000110621",
+    "ticker": "RPM",
+    "title": "RPM INTERNATIONAL INC/DE/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001360901",
+    "ticker": "EVR",
+    "title": "Evercore Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001331875",
+    "ticker": "FNF",
+    "title": "Fidelity National Financial, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001287750",
+    "ticker": "ARCC",
+    "title": "ARES CAPITAL CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000004457",
+    "ticker": "UHAL",
+    "title": "U-Haul Holding Co /NV/",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001883685",
+    "ticker": "DKNG",
+    "title": "DraftKings Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001773383",
+    "ticker": "DT",
+    "title": "Dynatrace, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000067887",
+    "ticker": "MOG-A",
+    "title": "MOOG INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000067347",
+    "ticker": "MOD",
+    "title": "MODINE MANUFACTURING CO",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000769218",
+    "ticker": "AEG",
+    "title": "AEGON LTD.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000067215",
+    "ticker": "DY",
+    "title": "DYCOM INDUSTRIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001552275",
+    "ticker": "SUN",
+    "title": "Sunoco LP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001675149",
+    "ticker": "AA",
+    "title": "Alcoa Corp",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001048268",
+    "ticker": "IESC",
+    "title": "IES Holdings, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001567094",
+    "ticker": "CNH",
+    "title": "CNH Industrial N.V.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001060955",
+    "ticker": "ICLR",
+    "title": "ICON PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000088941",
+    "ticker": "SMTC",
+    "title": "SEMTECH CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000751978",
+    "ticker": "VICR",
+    "title": "VICOR CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001333986",
+    "ticker": "EQH",
+    "title": "Equitable Holdings, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001333141",
+    "ticker": "FMS",
+    "title": "Fresenius Medical Care AG",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001157601",
+    "ticker": "MDGL",
+    "title": "MADRIGAL PHARMACEUTICALS, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000845982",
+    "ticker": "SNN",
+    "title": "SMITH & NEPHEW PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001049724",
+    "ticker": "DLAKY",
+    "title": "DEUTSCHE LUFTHANSA A G /FI",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001423689",
+    "ticker": "AGNC",
+    "title": "AGNC Investment Corp.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000089439",
+    "ticker": "MLI",
+    "title": "MUELLER INDUSTRIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000895417",
+    "ticker": "ELS",
+    "title": "EQUITY LIFESTYLE PROPERTIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001015650",
+    "ticker": "SKM",
+    "title": "SK TELECOM CO LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001483994",
+    "ticker": "HTHT",
+    "title": "H World Group Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001506293",
+    "ticker": "PINS",
+    "title": "PINTEREST, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002072098",
+    "ticker": "TMTNY",
+    "title": "Toromont Industries Ltd./ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001492691",
+    "ticker": "KNX",
+    "title": "Knight-Swift Transportation Holdings Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001579428",
+    "ticker": "AXSM",
+    "title": "Axsome Therapeutics, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001944013",
+    "ticker": "CR",
+    "title": "Crane Co",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002099039",
+    "ticker": "WSE",
+    "title": "Wise Group plc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000927003",
+    "ticker": "AEIS",
+    "title": "ADVANCED ENERGY INDUSTRIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001828108",
+    "ticker": "AUR",
+    "title": "Aurora Innovation, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000917273",
+    "ticker": "RMBS",
+    "title": "RAMBUS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001810997",
+    "ticker": "XPEV",
+    "title": "XPENG INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001178819",
+    "ticker": "AGI",
+    "title": "ALAMOS GOLD INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001321732",
+    "ticker": "PEN",
+    "title": "Penumbra Inc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001019849",
+    "ticker": "PAG",
+    "title": "PENSKE AUTOMOTIVE GROUP, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001739104",
+    "ticker": "ELAN",
+    "title": "Elanco Animal Health Inc",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000801337",
+    "ticker": "WBS",
+    "title": "WEBSTER FINANCIAL CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001219601",
+    "ticker": "CCK",
+    "title": "CROWN HOLDINGS, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001289460",
+    "ticker": "TXRH",
+    "title": "Texas Roadhouse, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001858985",
+    "ticker": "ONON",
+    "title": "On Holding AG",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001588823",
+    "ticker": "TFII",
+    "title": "TFI International Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000036966",
+    "ticker": "FHN",
+    "title": "FIRST HORIZON CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001956827",
+    "ticker": "ABVX",
+    "title": "Abivax S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001599298",
+    "ticker": "SMMT",
+    "title": "Summit Therapeutics Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001575965",
+    "ticker": "GLPI",
+    "title": "Gaming & Leisure Properties, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001494728",
+    "ticker": "PSLV",
+    "title": "Sprott Physical Silver Trust",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001964789",
+    "ticker": "HUT",
+    "title": "Hut 8 Corp.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002052568",
+    "ticker": "LGN",
+    "title": "Legence Corp.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000042888",
+    "ticker": "GGG",
+    "title": "GRACO INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001179929",
+    "ticker": "MOH",
+    "title": "MOLINA HEALTHCARE, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001083301",
+    "ticker": "WULF",
+    "title": "TERAWULF INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001736541",
+    "ticker": "NIO",
+    "title": "NIO Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000071691",
+    "ticker": "NYT",
+    "title": "NEW YORK TIMES CO",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002109234",
+    "ticker": "BLMOY",
+    "title": "BELIMO Holding AG/ADR",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001833756",
+    "ticker": "DRS",
+    "title": "Leonardo DRS, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001616707",
+    "ticker": "W",
+    "title": "Wayfair Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000109563",
+    "ticker": "AIT",
+    "title": "APPLIED INDUSTRIAL TECHNOLOGIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001837429",
+    "ticker": "BNT",
+    "title": "Brookfield Wealth Solutions Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000879407",
+    "ticker": "ARWR",
+    "title": "ARROWHEAD PHARMACEUTICALS, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001791706",
+    "ticker": "LI",
+    "title": "Li Auto Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000795403",
+    "ticker": "WTS",
+    "title": "WATTS WATER TECHNOLOGIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000720672",
+    "ticker": "SF",
+    "title": "STIFEL FINANCIAL CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001042046",
+    "ticker": "AFG",
+    "title": "AMERICAN FINANCIAL GROUP INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002103884",
+    "ticker": "CONE",
+    "title": "Compass Sub North, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001355444",
+    "ticker": "EMBJ",
+    "title": "EMBRAER S.A.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000897723",
+    "ticker": "SANM",
+    "title": "SANMINA CORP",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001579878",
+    "ticker": "FIG",
+    "title": "Figma, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001279956",
+    "ticker": "YARIY",
+    "title": "YARA INTERNATIONAL ASA",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001800667",
+    "ticker": "FROG",
+    "title": "JFrog Ltd",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000317540",
+    "ticker": "COKE",
+    "title": "Coca-Cola Consolidated, Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001048477",
+    "ticker": "BMRN",
+    "title": "BIOMARIN PHARMACEUTICAL INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001922641",
+    "ticker": "ENLT",
+    "title": "Enlight Renewable Energy Ltd.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001061983",
+    "ticker": "CYTK",
+    "title": "CYTOKINETICS INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001866581",
+    "ticker": "BROS",
+    "title": "Dutch Bros Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001072397",
+    "ticker": "BZLFY",
+    "title": "BUNZL PLC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000350894",
+    "ticker": "SEIC",
+    "title": "SEI INVESTMENTS CO",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001604028",
+    "ticker": "WMS",
+    "title": "ADVANCED DRAINAGE SYSTEMS, INC.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001135951",
+    "ticker": "RDY",
+    "title": "DR REDDYS LABORATORIES LTD",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000006201",
+    "ticker": "AAL",
+    "title": "American Airlines Group Inc.",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0000049600",
+    "ticker": "EGP",
+    "title": "EASTGROUP PROPERTIES INC",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0001370946",
+    "ticker": "OC",
+    "title": "Owens Corning",
+    "inclusionReason": "top-prominence"
+  },
+  {
+    "cik": "0002071668",
+    "ticker": "MICC",
+    "title": "Magnum Ice Cream Co N.V.",
+    "inclusionReason": "top-prominence"
+  }
+]
