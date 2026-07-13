@@ -235,7 +235,7 @@ export const SCAN_COLUMNS: ScanColumn[] = [
     headerTitle:
       "Net recent congressional trading = distinct members buying minus selling over the last ~60 days. Positive = net buying. Hover a cell for the disclosures behind the number.",
     num: true,
-    sortValue: (q) => q.senateTrades ?? q.congressCompositeSignedScore ?? q.congressCompositeScore,
+    sortValue: (q) => (q.senateTrades ?? 0) !== 0 ? q.senateTrades : q.congressCompositeSignedScore ?? q.congressCompositeScore,
     render: (q) =>
       typeof q.senateTrades === "number" ? (
         <div className="flex flex-col">
