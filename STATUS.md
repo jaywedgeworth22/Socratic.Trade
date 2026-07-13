@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Address 3 Codex P2 review findings on PR #1533 (agent/ag-unified-admin-console)
+
+Codex review on the unified admin console PR flagged 3 P2 findings on the dashboard. All 3 addressed:
+
+1. **Surface failed admin probes (P2)**: Added per-probe error tracking (`probeErrors` state) to the `Promise.allSettled` fetch pattern. When a probe fails (rejected or non-2xx), the error message is surfaced on the relevant card instead of silently falling back to healthy defaults like "All Operations Online" or "$0.00".
+2. **Aggregate LLM rows by model (P2)**: The "Cost By Model" list aggregated rows by `(user, provider, context, key_source)` — not by model. Now aggregates client-side by model name before displaying the top 3. Also fixed `slice(0,3)` before `sort()` (wrong order) and `costEstUsd` type mismatch.
+3. **Key connection cards by credential lane (P2)**: Connection card keys and labels now include `keySource` so multi-lane services (e.g. user+env credentials) are correctly reconciled by React and distinguishable to operators.
+
+Verify trio: tsc clean, 350 suites / 3934 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+Auto-merge enabled.
+
 ## 2026-07-13 — Unified Operator Admin Console & RAG Chunk Details (Antigravity/AG, branch `agent/ag-unified-admin-console`)
 
 Comprehensively unified the path-based admin pages into a single cohesive console with a shared sidebar layout (`layout.tsx`), redesigned `/admin` page as a live metrics and diagnostics dashboard, and enhanced the RAG coverage page to group and display the counts/sources of all document chunk types (blended fundamentals, disclosures, coach memories) instead of leaving them under "0 filings". Verified with passing lint, compiler, build, and 3,931 vitest tests. Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.

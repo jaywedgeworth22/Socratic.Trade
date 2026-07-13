@@ -19,3 +19,16 @@ Comprehensively unified the operator admin panels under a shared responsive side
 * **ESLint**: `npm run lint` passed successfully with zero error exits (warnings only).
 * **Test Suite**: `npm test` executed and passed all **3,931 tests** across the application.
 * **Production Build**: `npm run build` compiled successfully under Webpack and generated all static routes.
+
+## 2026-07-13 Codex Autofix Round (3 P2 Findings)
+
+### Changes
+1. **Surface failed admin probes**: Added `probeErrors` state tracking per endpoint. When a fetch is rejected or returns non-2xx, the error is surfaced on the relevant card (connections health, LLM spend, RAG corpus, server infra, chat transcript) instead of silently falling back to zero/healthy defaults.
+2. **Aggregate LLM rows by model**: Aggregates the API response rows by model name client-side before displaying "Cost By Model", so same-model costs from different contexts/accounts are summed. Also fixed `slice(0,3)` before `sort()` (wrong order) and the `costEstUsd` → `costUsd` type mismatch in `LlmSummary`.
+3. **Key connection cards by credential lane**: Connection card keys now include `keySource` (e.g. `key={srv.service}:{srv.keySource}`) so React correctly reconciles multi-lane services. The label also shows the key source.
+
+### Files Touched
+* `app/admin/page.tsx` (+83 / -25) — all three fixes in the OperatorDashboard component.
+
+### Verification
+All four checks passed: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test` (350 suites / 3,934 tests), `npm run build` (clean).
