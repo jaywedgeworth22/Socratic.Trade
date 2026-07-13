@@ -1035,11 +1035,41 @@ export interface ChunkCoverageRow {
 
 export function getChunkCoverage(): ChunkCoverageRow[] {
   const rows = getDb()
-    .prepare(
-      "SELECT symbol, COUNT(*) as chunk_count, MAX(created_at) as latest_at FROM document_chunks GROUP BY symbol ORDER BY chunk_count DESC"
-    )
+    .prepare(`
+      SELECT symbol, COUNT(*) as chunk_count, MAX(created_at) as latest_at
+      FROM (
+        SELECT symbol, content_hash, created_at FROM chunk_occurrences
+        UNION ALL
+        SELECT symbol, content_hash, created_at FROM document_chunks
+        WHERE content_hash NOT IN (SELECT DISTINCT content_hash FROM chunk_occurrences)
+      )
+      GROUP BY symbol
+      ORDER BY chunk_count DESC
+    `)
     .all() as Array<{ symbol: string; chunk_count: number; latest_at: string }>;
   return rows.map((r) => ({ symbol: r.symbol, chunkCount: r.chunk_count, latestAt: r.latest_at }));
+}
+
+export interface ChunkSourceBreakdownRow {
+  symbol: string;
+  source: string;
+  chunkCount: number;
+}
+
+export function getChunkSourceBreakdown(): ChunkSourceBreakdownRow[] {
+  const rows = getDb()
+    .prepare(`
+      SELECT symbol, source, COUNT(*) as chunk_count
+      FROM (
+        SELECT symbol, source, content_hash FROM chunk_occurrences
+        UNION ALL
+        SELECT symbol, source, content_hash FROM document_chunks
+        WHERE content_hash NOT IN (SELECT DISTINCT content_hash FROM chunk_occurrences)
+      )
+      GROUP BY symbol, source
+    `)
+    .all() as Array<{ symbol: string; source: string; chunk_count: number }>;
+  return rows.map((r) => ({ symbol: r.symbol, source: r.source, chunkCount: r.chunk_count }));
 }
 
 // ── learned_context_pending CRUD (risk-tier confirmation queue; userId-scoped) ──
