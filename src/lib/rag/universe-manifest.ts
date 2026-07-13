@@ -70,7 +70,12 @@ function nonEmptyString(value: unknown): value is string {
 }
 
 function validDate(value: unknown): value is string {
-  return nonEmptyString(value) && DATE_RE.test(value) && Number.isFinite(Date.parse(value));
+  if (!nonEmptyString(value) || !DATE_RE.test(value)) return false;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return false;
+  // Reject impossible dates (e.g. Feb 31) that Date.parse silently normalizes.
+  // Check that the ISO 8601 round-trip preserves the calendar date components.
+  return new Date(parsed).toISOString().slice(0, 10) === value.slice(0, 10);
 }
 
 function canonicalJson(value: unknown): string {
@@ -128,6 +133,23 @@ export function validateSecUniverseManifest(
 
   if (!Array.isArray(value.quarantined)) {
     add("quarantine_shape", "$.quarantined", "quarantined must be an explicit array, even when empty");
+  } else {
+    value.quarantined.forEach((entry: unknown, index: number) => {
+      const path = `$.quarantined[${index}]`;
+      if (!isObject(entry)) {
+        add("quarantine_entry_shape", path, "each quarantined entry must be an object");
+        return;
+      }
+      if (!nonEmptyString(entry.reason)) {
+        add("quarantine_reason", `${path}.reason`, "reason is required and must be non-empty");
+      }
+      if (entry.ticker !== undefined && !nonEmptyString(entry.ticker)) {
+        add("quarantine_ticker", `${path}.ticker`, "ticker must be a non-empty string when present");
+      }
+      if (entry.cik !== undefined && !nonEmptyString(entry.cik)) {
+        add("quarantine_cik", `${path}.cik`, "cik must be a non-empty string when present");
+      }
+    });
   }
 
   const issuers = Array.isArray(value.issuers) ? value.issuers : [];

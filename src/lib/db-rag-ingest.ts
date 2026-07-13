@@ -395,6 +395,10 @@ export function sealSecIngestJobIntake(id: string, expectedTasks?: number, now =
       .get(id) as { status: SecIngestJobStatus; intake_closed_at: string | null; expected_tasks: number | null } | undefined;
     if (!job || !["pending", "running", "paused"].includes(job.status)) return false;
     const taskCount = (database.prepare("SELECT COUNT(*) AS n FROM sec_ingest_tasks WHERE job_id = ?").get(id) as { n: number }).n;
+    // Freeze the originally promised task count: if the job already has an
+    // expected_tasks bound and the caller passes a different explicit count,
+    // reject it rather than silently rewriting the contract.
+    if (job.expected_tasks !== null && expectedTasks !== undefined && expectedTasks !== job.expected_tasks) return false;
     const finalExpected = expectedTasks ?? job.expected_tasks ?? taskCount;
     if (finalExpected !== taskCount) return false;
     if (job.intake_closed_at) return job.expected_tasks === finalExpected;
