@@ -46,12 +46,17 @@ describe("credential tiering — generic resolver", () => {
     expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "env-finnhub", source: "env" });
     expect(resolveApiKeyWithSource("finnhub", undefined).source).toBe("env");
 
-    // With a local key, the local key wins for everyone (returns "env" source
-    // for non-local callers because it's an operator-level fallback, not a per-user credential)
+    // With a local key, the local user's own key still wins for them (returns "user" source)
     upsertUserApiKey("local", "finnhub", "local-finnhub");
-    // local user's own stored key → source "user" (their personal key)
     expect(resolveApiKeyWithSource("finnhub", "local")).toMatchObject({ key: "local-finnhub", source: "user" });
-    // tenant/background fall through to the local key as an operator-level fallback → source "env"
+
+    // But for a tenant/background caller, the configured env key still takes precedence over local fallback
+    expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "env-finnhub", source: "env" });
+    expect(resolveApiKeyWithSource("finnhub", undefined)).toMatchObject({ key: "env-finnhub", source: "env" });
+
+    // When the env key is absent, they fall back to the local database key (source "env")
+    vi.unstubAllEnvs();
+    delete process.env.FINNHUB_API_KEY;
     expect(resolveApiKeyWithSource("finnhub", "u_tenant")).toMatchObject({ key: "local-finnhub", source: "env" });
     expect(resolveApiKeyWithSource("finnhub", undefined)).toMatchObject({ key: "local-finnhub", source: "env" });
   });
