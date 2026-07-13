@@ -16,6 +16,7 @@ import { isIndexUniverse, isValidAppSymbol } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { notify } from "./notify";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
+import { normalizeExclusivePolicyCaps } from "./policy-normalization";
 import {
   rejectProposal,
   runStrategyOnce
@@ -610,6 +611,7 @@ function applyPolicyPatch(userId: string, patch: Partial<TradingPolicy>): { ok: 
       throw new Error("Select at least one base index or additional watchlist symbol before enabling autonomy.");
     }
   }
+  normalizeExclusivePolicyCaps(next, patch);
   setPolicy(next, userId);
   audit("mobile_policy_patch", { fields: Object.keys(patch) }, userId);
   return { ok: true, policy: getPolicy(userId) };

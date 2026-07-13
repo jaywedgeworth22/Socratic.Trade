@@ -27,6 +27,7 @@ import {
 import { admitProviderRequests, resetProviderQuotaState } from "../src/lib/provider-rate-limit";
 import { CircuitOpenError } from "../src/lib/api-circuit-breaker";
 import { getServiceHealthLog } from "../src/lib/db-health";
+import { arbitrateFieldObservation } from "../src/lib/evidence-facts";
 
 // Each test file gets its own isolated SQLite db so db module singleton state
 // (user API keys, consent records) does not leak between test files.
@@ -1986,6 +1987,123 @@ describe("CascadingEnrichmentProvider.activeSources (honest source attribution)"
     const out = await cascade.enrich(["AAPL"]);
     expect(out.AAPL.analystScore).toBe(50); // two distinct votes (80 + 20) blended
     expect(cascade.activeSources.sort()).toEqual(["congress.trade", "fmp"]);
+  });
+});
+
+describe("CascadingEnrichmentProvider evidence receipts and arbitration", () => {
+  const stub = (name: string, data: Record<string, SymbolEnrichment>): MarketEnrichmentProvider => ({
+    name,
+    configured: true,
+    async enrich() {
+      return data;
+    }
+  });
+
+  it("keeps a provider failure distinct from a successful no-match response", async () => {
+    const failed: MarketEnrichmentProvider = {
+      name: "failed-provider",
+      configured: true,
+      async enrich() {
+        throw new Error("upstream unavailable");
+      }
+    };
+    const mixed = new CascadingEnrichmentProvider([failed, stub("no-match-provider", {})]);
+    const mixedResult = await mixed.enrich(["AAPL"]);
+    expect(mixedResult.AAPL.fieldObservations?.peRatio?.status).toBe("no_match");
+    expect(mixedResult.AAPL.providerFailures?.["failed-provider"]).toMatchObject({
+      source: "failed-provider",
+      status: "failed",
+      errorKind: "Error"
+    });
+
+    const allFailed = new CascadingEnrichmentProvider([failed]);
+    const failedResult = await allFailed.enrich(["AAPL"]);
+    expect(failedResult.AAPL.fieldObservations?.peRatio?.status).toBe("failed");
+  });
+
+  it("preserves explicit field timestamps and upstream source metadata", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("redistributor", {
+        AAPL: {
+          peRatio: 22,
+          fieldObservations: {
+            peRatio: {
+              value: 22,
+              source: "sec-xbrl",
+              upstreamFamily: "sec",
+              observedAt: "2026-07-10T00:00:00.000Z",
+              effectiveAt: "2026-06-30T00:00:00.000Z",
+              fetchedAt: "2026-07-13T12:00:00.000Z",
+              expiresAt: "2026-07-14T12:00:00.000Z",
+              status: "ok",
+              confidence: 0.9,
+              reliability: 0.95,
+              directness: 1
+            }
+          }
+        }
+      })
+    ]);
+    const result = await cascade.enrich(["AAPL"]);
+    expect(result.AAPL.peRatio).toBe(22);
+    expect(result.AAPL.sources?.peRatio).toBe("redistributor");
+    expect(result.AAPL.fieldObservations?.peRatio).toMatchObject({
+      source: "sec-xbrl",
+      upstreamFamily: "sec",
+      observedAt: "2026-07-10T00:00:00.000Z",
+      effectiveAt: "2026-06-30T00:00:00.000Z",
+      fetchedAt: "2026-07-13T12:00:00.000Z",
+      expiresAt: "2026-07-14T12:00:00.000Z",
+      status: "ok"
+    });
+  });
+
+  it("arbitrates metadata-aware fields deterministically while retaining price registration priority", () => {
+    const candidates = [
+      {
+        providerName: "first",
+        registrationOrder: 0,
+        observation: {
+          value: 10,
+          source: "first",
+          status: "ok" as const,
+          reliability: 0.8,
+          directness: 1,
+          observedAt: "2026-07-12T00:00:00.000Z"
+        }
+      },
+      {
+        providerName: "second",
+        registrationOrder: 1,
+        observation: {
+          value: 20,
+          source: "second",
+          status: "ok" as const,
+          reliability: 0.8,
+          directness: 1,
+          observedAt: "2026-07-13T00:00:00.000Z"
+        }
+      }
+    ];
+    expect(arbitrateFieldObservation("peRatio", candidates)?.observation.value).toBe(20);
+    expect(arbitrateFieldObservation("price", candidates)?.observation.value).toBe(10);
+  });
+
+  it("deduplicates analyst votes by upstream family before blending", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("redistributor", {
+        AAPL: { analystBySource: { "syndicated-fmp": { score: 80, label: "Buy", upstreamFamily: "fmp" } } }
+      }),
+      stub("fmp", {
+        AAPL: { analystBySource: { "direct-fmp": { score: 20, label: "Sell", upstreamFamily: "fmp" } } }
+      })
+    ]);
+    const result = await cascade.enrich(["AAPL"]);
+    expect(result.AAPL.analystScore).toBe(20);
+    expect(result.AAPL.analystBySource).toEqual({
+      "direct-fmp": { score: 20, label: "Sell", upstreamFamily: "fmp" }
+    });
+    expect(cascade.activeSources).toEqual(["fmp"]);
   });
 });
 

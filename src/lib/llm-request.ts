@@ -34,7 +34,7 @@ export type LlmTransport = OpenAiTransport | "anthropic-messages";
 
 /**
  * Sentinel model id meaning "rotate through every eligible curated model, a different one each
- * run" (owner testing option for accruing comparative live history across models). It is a valid
+ * run" (owner comparative-measurement option for accruing attributed history across models). It is a valid
  * PERSISTED value for policy.llmModel / policy.redTeamLlmModel, but it must never be SERVED:
  * `runStrategyOnce` substitutes the concrete pick onto its run-scoped policy clone at the top of
  * every run (src/lib/model-rotation.ts) before any endpoint resolution. Defined here (leaf module,
@@ -138,7 +138,20 @@ function isDeepSeekV4Model(model: string | undefined): boolean {
   return /^deepseek-v4-(?:flash|pro)(?:$|[-.:_])/.test(lowerModel(model));
 }
 
+function isGpt56Model(model: string | undefined): boolean {
+  return /^gpt-5\.6(?:-(?:luna|terra|sol))?(?:$|[-.:_])/.test(lowerModel(model));
+}
+
 export function reasoningCapabilityForModel(model: string | undefined): LlmReasoningCapability | undefined {
+  if (isGpt56Model(model)) {
+    return {
+      provider: "openai",
+      label: "OpenAI Reasoning",
+      settingLabel: "Reasoning Effort",
+      description: "GPT-5.6 supports the complete none-to-max reasoning ladder.",
+      options: options(["none", "low", "medium", "high", "xhigh", "max"])
+    };
+  }
   if (isReasoningModel(model)) {
     return {
       provider: "openai",

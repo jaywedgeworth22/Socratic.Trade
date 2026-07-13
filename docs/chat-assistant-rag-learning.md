@@ -13,6 +13,22 @@ Touchpoints: `src/lib/chat/*`, `app/api/chat/route.ts`, `app/api/proposals/from-
 
 ---
 
+## 2026-07-13 shared evidence-consumption update
+
+The write boundaries below remain intact, but Coach/chat, strategy tuning, and Framework review now
+consume evidence through the same primitives as the trading strategy:
+
+- retrieved, tool, provider, and persisted-LLM strings are recursively contained as untrusted data;
+- each surface has one global context budget with model-visible truncation/omission receipts;
+- evidence is content-addressed, hashed, and audited rather than being anonymous prompt prose;
+- chat memory/learned context retrieval carries the selected account boundary;
+- Coach uses the shared model catalog, exposes provider-supported reasoning effort, and requires an
+  explicit model instead of silently selecting one; and
+- GPT-5.6 Luna, Terra, and Sol are available alongside retained GPT-5.4 Mini/Nano.
+
+This closes the previously tracked RAG prompt-injection gap (I8) for the active chat tool loop. It
+does not give free-text chat authority to mutate strategy weights or risk policy.
+
 ## 1. Core decision — HYBRID: separate WRITE surfaces, one shared READ substrate
 
 The question is not "one brain or two." Decompose "separation" into **read** and **write**; the

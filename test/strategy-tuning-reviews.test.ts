@@ -363,7 +363,7 @@ describe("/api/strategy/tune route: persistence, targeting, and lifecycle", () =
 });
 
 describe("proposeStrategyTuning evidence-pack widening", () => {
-  it("includes lessons, reflection, decisionMemory, thesis/sector scorecards, cross-account performance, learning mutations, and regime context", async () => {
+  it("includes account-scoped lessons, reflection, decision memory, scorecards, learning mutations, and regime context", async () => {
     const {
       insertFillEvent,
       insertLearnedContext,
@@ -489,14 +489,19 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
       riskTier: "fact",
       confidence: 0.72,
       contributorUserId: userId,
+      connectedAccountId: accountId,
+      accountEnvironment: "paper",
+      learningScope: "account",
+      transferState: "candidate",
       assertedAt: new Date().toISOString(),
       supersededBy: null,
       expiresAt: null
     });
 
-    // Global Socratic decision memory (no connectedAccountId scoping — across this user's accounts).
+    // Exact-account Socratic decision memory; sibling-account outcomes must not enter this review.
     upsertSocraticDecisionCase({
       userId,
+      connectedAccountId: accountId,
       symbol: "NVDA",
       status: "placed",
       authority: "propose",
@@ -579,7 +584,7 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
     expect((reflection as Record<string, unknown> | undefined)?.thesisOutcomes).toBeUndefined();
     expect(reflection?.regimeOutcomes?.length).toBeGreaterThan(0);
 
-    // decisionMemory (global, thesis truncated, outcome/lessons compact)
+    // decisionMemory (exact account, thesis truncated, outcome/lessons compact)
     const decisionMemory = capturedContext?.decisionMemory as Array<{ symbol?: string; outcome?: string; lessons?: string[] }>;
     expect(decisionMemory.some((d) => d.symbol === "NVDA")).toBe(true);
     const nvda = decisionMemory.find((d) => d.symbol === "NVDA");
@@ -592,10 +597,8 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
     const sectorScorecard = capturedContext?.sectorScorecard as Array<{ sector: string }>;
     expect(sectorScorecard.some((s) => s.sector === "Technology")).toBe(true);
 
-    // crossAccountPerformance excludes the reviewed account, includes the other one
-    const crossAccountPerformance = capturedContext?.crossAccountPerformance as Array<{ label: string }>;
-    expect(crossAccountPerformance.some((c) => c.label === "Other Account")).toBe(true);
-    expect(crossAccountPerformance.some((c) => c.label === "Evidence Account")).toBe(false);
+    // Sibling-account performance is intentionally excluded unless separately transfer-validated.
+    expect(capturedContext?.crossAccountPerformance).toBeUndefined();
 
     // learningMutations
     const learningMutations = capturedContext?.learningMutations as Array<{ subsystem: string }>;
@@ -643,6 +646,7 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
     });
     upsertSocraticDecisionCase({
       userId,
+      connectedAccountId: accountId,
       symbol: "NVDA",
       status: "placed",
       authority: "propose",

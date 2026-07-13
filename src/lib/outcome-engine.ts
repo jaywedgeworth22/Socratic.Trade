@@ -28,6 +28,7 @@ import {
   enqueueDueJob,
   failDueJob,
   getDueJobStats,
+  getConnectedAccount,
   getPolicy,
   getSkippedCounterfactualByRunSymbol,
   getSkippedCounterfactualByRunSymbolHorizon,
@@ -764,8 +765,22 @@ async function generatePostMortemLessons(
     decisionCase.connectedAccountId
   );
 
-  // Route each lesson through the shared learned-context ingestion (origin 'autonomous'): the
-  // fail-closed classifier decides fact-vs-risk tier; risk-tier lessons land in the approval inbox.
+  // Route each lesson through the account-scoped learned-context boundary. A historical case without
+  // an attributable connected account may retain its embedded case/lesson, but it cannot enter a
+  // decision prompt as portfolio-wide context because its paper/live provenance is unknowable.
+  const lessonAccount = decisionCase.connectedAccountId
+    ? getConnectedAccount(decisionCase.connectedAccountId, userId)
+    : undefined;
+  if (!lessonAccount) {
+    audit(
+      "learned_context.account_provenance_missing",
+      { userId, decisionId: decisionCase.id, connectedAccountId: decisionCase.connectedAccountId ?? null },
+      userId,
+      decisionCase.connectedAccountId
+    );
+    return { written: true };
+  }
+
   for (const { lesson, direction } of parsed.lessons) {
     try {
       await ingestLearned(
@@ -778,7 +793,8 @@ async function generatePostMortemLessons(
           source: "inferred",
           confidence: 0.55
         },
-        "autonomous"
+        "autonomous",
+        { connectedAccountId: lessonAccount.id, accountEnvironment: lessonAccount.environment }
       );
     } catch (err) {
       console.warn("[outcome-engine] ingestLearned for lesson failed:", err instanceof Error ? err.message : String(err));

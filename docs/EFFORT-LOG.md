@@ -232,6 +232,8 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Unified admin console at admin.socratictrade.com + chunk breakdown details (Antigravity, branch `agent/ag-unified-admin-console`) — COMPLETED 2026-07-13.** Rethink the admin layout into a unified, premium console with shared sidebar navigation and smooth transitions. Redesigned `/admin` page as a live metrics dashboard, and enhanced RAG coverage to show non-filing chunk breakdowns (Fundamentals, Congressional, Insider, Strategy/Coach, etc.) dynamically. Verified with compiler, lint, and all tests passing. Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+- **Congress.Trade Integration Prep & Middleware Fix (AG, branch `agent/ag-congress-trade-integration`).** **COMPLETED 2026-07-13**. Fixed documentation mismatch in `.env.example` (`CONGRESS_TRADE_AUTOFORWARD` -> `CONGRESS_SHARE_ENABLED`). Flipped all required Infisical production variables to ON using Universal Auth CLI script. Fixed a production bug in `middleware.ts` where ops/admin webhook endpoints (like `congress-share`) relying on `x-admin-token` were incorrectly returning 401 Unauthorized before reaching their route guards. Addressed local fallback source keys logic for tenants (`db-api-keys.ts`). Landed via `land.sh`.
 - **Pinecone Vector ID ASCII Sanitization Fix (AG, branch `agent/ag-pinecone-ascii-id-fix`) — COMPLETED 2026-07-13.** Resolved a Pinecone connection failure caused by non-ASCII characters and special symbols in vector IDs (e.g. non-breaking spaces `\xa0` in filing titles/sections). Implemented `sanitizeVectorId` in `src/lib/vector-db.ts` to clean the IDs and ensure 100% compliance with Pinecone's ASCII constraint. Added unit tests and verified. Rollout: docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md.
 - **Infisical Secrets and Machine Identity Audit (AG, branch `agent/ag-infisical-sole-truth-audit`) — COMPLETED 2026-07-13.** Audited Coolify environment variables against local Universal Auth machine identities. Migrated remaining operational configurations (`DB_BOOTSTRAP`, `NODE_ENV`, `REQUIRE_SECRETS_MANAGER`) and Alpaca streams (`STREAMS_ALPACA_*`, `TRIGGER_ENGINE`) to Infisical, establishing it as the absolute, 100% sole source of truth. Cleaned redundant variables from Coolify. Triggered redeploy. Rollout: docs/rollouts/2026-07-13-infisical-secrets-audit.md.
 - **GPT-5.6 Model Benchmark (AG, branch `agent/ag-gpt-5-6-benchmark`) — COMPLETED 2026-07-13.** Ran the benchmark suite for the newly introduced `gpt-5.6-terra`, `-sol`, and `-luna` models. Successfully recorded median latency (e.g. `gpt-5.6-terra` 3.8s Green / 2.3s Red) and cost estimates for each tier using the production strategy schemas. Appended results to `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`.
@@ -242,6 +244,7 @@ As of 2026-07-08 (assignment-rule update).
 - **Quiver Quant API Integration & FMP Endpoint Expansion (AG, branch `agent/antigravity`) — COMPLETED 2026-07-12.** Integrated the Quiver Quant API into the backend application. Added Quiver Quant key support in `src/lib/db-api-keys.ts` and `app/api/keys/route.ts`. Created `QuiverQuantEnrichmentProvider` in `src/lib/data-providers.ts` and injected it into the main cascading enrichment workflow. Expanded the existing `FmpEnrichmentProvider` to utilize `/v3/key-metrics-ttm` and `/v3/financial-growth` endpoints. Updated `MarketQuote` and `SymbolEnrichment` structures in `src/lib/types.ts`. All test suites updated to reflect the new 6-endpoint FMP fetch count. Passed 3896 tests and clean build. Rollout: `docs/rollouts/2026-07-12-quiver-quant-fmp.md`.
 - **Web App Settings UI Refresh (AG, branch `agent/antigravity`) — COMPLETED 2026-07-12.** Replaced all settings page cards with iOS-style `ListSection` and `ListRow` components for a unified cross-platform aesthetic matching the native iOS app. Passed 349/3896 tests and clean build. Rollout: `docs/rollouts/2026-07-12-ios-ui-refresh.md`.
 - **App-wide Audit: Draining State and Cap Fixes (Antigravity/AG, branch `codex/app-wide-audit-20260711`) — COMPLETED 2026-07-12.** Fixed account-deletion race conditions by introducing a safe `is_draining` state and cascade cleanup (`purgeConnectedAccount`). Fixed daily notional risk tracking to accurately attribute to `placed_at` instead of `created_at`, covering `placing` intents as well. Updated various tests, SEC time-flakiness, and local dev forwarded-host behaviors. Rollout: `docs/rollouts/2026-07-12-app-wide-audit-draining-fixes.md`.
+- **Apply safety maintenance refactor, redTeamFallbackModels, and types updates (AG, branch `agent/ag-safety-maintenance`) — IN PROGRESS 2026-07-13.** Syncing unsaved IDE edits: extracting `runSafetyMaintenance` in `strategy.ts`, expanding `NOTIFICATION_EVENT_TYPES` and `EnrichmentSources` in `types.ts`, and adding fallback LLM lists.
 - **Native iOS App Overhaul (Antigravity, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Built a completely native SwiftUI application (`ios/`) using `xcodegen`, replacing the legacy stub. Includes secure `ASWebAuthenticationSession` login flow, tabbed navigation (Dashboard, Proposals, Watchlist), and `MobileStore` persistence. Assessed Cloudflare hosting vs current Hetzner server and decided to keep it on Hetzner to avoid splitting the database. Verified build via `xcodebuild`. Ready to merge.
 - **Activity feed coalescing and audit attribution bug fixes (AG, branch `agent/bug-fixes`) — COMPLETED 2026-07-12.** Fixed two test regressions introduced by earlier P3 fixes: prevented `dashboard-feed.test.ts` from erroneously coalescing items into single groups by injecting distinct ticker symbols, and repaired `connection-health-routing.test.ts` to properly inspect `audit_events` since `storage_warning` notifications now correctly bypass dual-logging into `notification_events`. Furthermore, completed an extensive check of `broker-protective-stops.ts` to add the missing `connectedAccountId` into all nested multi-line `audit()` calls, fully resolving the missing-account attribution issues surfaced by the recent log review. Ready for merge. Rollout: `docs/rollouts/2026-07-12-bug-fixes.md`.
 - **LLM failover UI, account bursts, & Episodic Memory defensive fix (AG, branch `agent/ag-red-team-fallback`) — COMPLETED 2026-07-13.** Added jitter/stagger to concurrent account scheduling in `scheduler.ts` to mitigate shared OpenAI key bursts. Implemented failover loops for both Green and Red Teams. Exposed `llmFallbackModels` and `redTeamFallbackModels` in `app/console/strategy/page.tsx` via a togglable checkbox UI. Resolved episodic memory retrieval `a.filter is not a function` crash with robust defensive guards in `strategy.ts`. Rollout: `docs/rollouts/2026-07-13-red-team-fallback-ui.md`.
@@ -523,11 +526,32 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **SEC/RAG 1,000-stock implementation program (CODEX, branch `codex/sec-rag-program`, worktree
+  `/Users/jay/.codex/worktrees/socratic-sec-rag-program`, 2026-07-13) — IN PROGRESS / OWNER-DIRECTED
+  ALL NINE PACKAGES.** Inherits merged AG baselines #1495 (census/universe), #1496
+  (filing/artifact/occurrence schema), #1520 (temporary limits), and #1527 (ASCII vector IDs); each is being
+  audited against the plan's acceptance criteria before deeper work. The first validator/durable-state slice is
+  **READY PR [#1543](https://github.com/jaywedgeworth22/Socratic.Trade/pull/1543) / LOCAL FULL-GATE GREEN**
+  (Node 24 lint 0 errors, tsc, 3,950 tests, production build; not merged/deployed). Parallel lanes: manifest/worker
+  correctness, historical discovery/archive/aggregate SEC pacing, DOM/iXBRL parser+chunker, then structured
+  facts, retrieval/eval/coverage, and gated shadow canaries. **Acceptance audit findings:** P0's generated
+  universe treats SEC ticker-file order as market-cap/prominence, lacks a dated selection/eligibility snapshot,
+  and does not prove 1,000 operating issuers; its census does not certify target-slot, revision, provenance, or
+  PIT completeness. A versioned/checksummed fail-closed validator is now implemented on this branch and the
+  legacy bare-array manifest correctly fails it. Durable job/task state and verification-required completion now
+  exist locally; immutable raw archive and section/table manifest still do not, while the live ingest path remains
+  recent-only + regex/word chunking. Adversarial review rejected the initial discovery/pacing and parser/chunker
+  drafts; fixes are in progress rather than being integrated as false-complete work. **No
+  provider/corpus write or backfill is authorized
+  until the prerequisite gates pass.** KEEPOUT: AG open PR #1533 admin coverage/db-learning delta until reconciled.
+- 2026-07-13 - **Congress.Trade Integration Prep (AG, branch `agent/ag-congress-trade-integration`).** Fixed documentation mismatch in `.env.example` (`CONGRESS_TRADE_AUTOFORWARD` -> `CONGRESS_SHARE_ENABLED`). Documented the exact Infisical production variables needing manual activation (`CONGRESS_SHARE_ENABLED`, `CONGRESS_TRADE_READS_ENABLED`, `CONGRESS_TRADE_AS_CONGRESS_SOURCE`, `CONGRESS_ANALYTICS_ENABLED`, `CONGRESS_TRADE_FUNDAMENTALS_ENABLED`, `ENRICHMENT_SHORT_CIRCUIT_ENABLED`, `CONGRESS_STREAM_ENABLED`). Prepared the rollout note outlining the required `fullHistory` backfill to be manually executed post-activation. State: **In Progress (Awaiting owner action in Infisical)**.
+- 2026-07-13 - **Congress.Trade Integration Prep (AG, branch `agent/ag-congress-trade-integration`).** Fixed documentation mismatch in `.env.example` (`CONGRESS_TRADE_AUTOFORWARD` -> `CONGRESS_SHARE_ENABLED`). Documented the exact Infisical production variables needing manual activation (`CONGRESS_SHARE_ENABLED`, `CONGRESS_TRADE_READS_ENABLED`, `CONGRESS_TRADE_AS_CONGRESS_SOURCE`, `CONGRESS_ANALYTICS_ENABLED`, `CONGRESS_TRADE_FUNDAMENTALS_ENABLED`, `CONGRESS_SHARE_FUNDAMENTALS_ENABLED`, `ENRICHMENT_SHORT_CIRCUIT_ENABLED`, `CONGRESS_STREAM_ENABLED` plus stream subscription prerequisites: `CONGRESS_STREAM_SUBSCRIPTION_ID`+`_TOKEN` or `CONGRESS_STREAM_AUTO_SUBSCRIBE`). Price-adjustment resolution must precede flipping `CONGRESS_SHARE_ENABLED` to avoid seeding App A with raw-vs-adjusted price mismatches via the nightly share job. Prepared the rollout note outlining the required `fullHistory` backfill to be manually executed post-activation. State: **In Progress (Awaiting owner action in Infisical)**.
+
 - **Fix console theme token-mixing regression from #1476 — ios-components used legacy .dark-keyed text classes on console data-theme surfaces, making Settings secondary text illegible in dark mode (CLAUDE, branch `claude/console-theme-token-fix`) — GATING/LANDING 2026-07-13.** `app/ui/ios-components.tsx` (added by the iOS-settings migration PR #1476) painted backgrounds from the console token system (`--con-*`, keyed to `data-theme` on `.console-root`) but text from the LEGACY app utilities (`text-muted`/`text-faint`/`text-fg`, keyed to `.dark` on `<html>`). The same PR's Light/Dark/System picker flips ONLY the console system, so the two diverged — in console dark mode muted text stayed dark slate on a dark card (near-invisible). Fix: 6 class swaps to the `text-[color:var(--con-*)]` arbitrary-value form the same file already uses elsewhere, plus 2 typo fixes in `app/console/components/chrome.tsx` (`--con-text` → `--con-fg`; `--con-text` is undefined). Display-only CSS-class fix. Rollout: `docs/rollouts/2026-07-13-console-theme-token-fix.md`.
 - **1,000-stock SEC/RAG high-yield backfill plan (CODEX, branch
   `codex/rag-1000-stock-backfill-plan`, worktree
-  `/Users/jay/.codex/worktrees/socratic-rag-1000-plan`, 2026-07-12) — DESIGN COMPLETE / READY PR
-  [#1494](https://github.com/jaywedgeworth22/Socratic.Trade/pull/1494), UNMERGED.** Three read-only expert lanes audited EDGAR coverage, RAG architecture, and
+  `/Users/jay/.codex/worktrees/socratic-rag-1000-plan`, 2026-07-12) — MOVED TO COMPLETED: PR
+  [#1494](https://github.com/jaywedgeworth22/Socratic.Trade/pull/1494) MERGED 2026-07-13; implementation is tracked by the CODEX program row above.** Three read-only expert lanes audited EDGAR coverage, RAG architecture, and
   backfill economics against `main@c9023ea6`; no product source or production data changed. The plan
   specifies archive-vs-structure-vs-embed rules, form/section yield, occurrence-safe provenance,
   durable jobs, DOM/iXBRL tables, intent-routed hybrid retrieval, real-EDGAR evaluation, cost breakers,
@@ -1715,6 +1739,8 @@ As of 2026-07-08 (assignment-rule update).
   Ticker logo now shows before the symbol on those rows (dropped `showLogo={false}`). New pure
   module `app/console/lib/action-verbs.ts` + `test/console-action-rows.test.ts`. Rollout:
   `docs/rollouts/2026-07-13-autonomous-action-row-clarity.md`.
+- **Account-relative risk limits + Green/Red decision clarity (CODEX, branch `codex/account-relative-risk-clarity`, PR #1561, claimed 2026-07-13) — READY PR; LOCAL GATE GREEN, HOSTED CHECKS RUNNING.** Implemented one canonical dollar-or-percent daily opening cap with a 20%-NAV default and exact-$500 legacy migration; preserved explicit dollar mode; fixed the EXE fractional-Alpaca bracket receipt/transport contradiction; persisted app-computed sizing arithmetic for Red Team/UI; split Live Thesis into Green, deterministic sizing, Red, and final outcome sections; replaced “survived” wording and false “Bought / Blocked” copy. Node 24 `scripts/land.sh` passed TypeScript, 359 files / 4,021 tests, and the production build; commit `2cfd7ca8` is pushed. Hosted checks, merge/autodeploy, and production verification remain. `src/lib/broker-protective-stops.ts` remains excluded pending open AG PR #1548.
+- **Evidence architecture and full-source decision-quality program (CODEX, branch `codex/evidence-architecture-program`, PR #1544) — READY PR OPEN, CI GREEN 2026-07-13.** Implemented account-scoped relational/vector learning and sample-gated paper-to-live research transfer; product Test Account create/UI/read removal plus purge migration; exact opening-candidate enforcement; one immutable Green/Red evidence pack; field provenance/freshness/availability/conflicts/provider failures; field-specific arbitration and wider two-stage enrichment; point-in-time RAG, global context budgets and prompt-data containment; shared evidence contracts for chat/review/tuning/Framework; source coverage, outcome-linked source value and shadow ablation; and GPT-5.6 Luna/Terra/Sol with role-specific effort controls across every LLM surface. Curated full GPT-5.4/5.5 are removed while Mini/Nano and legacy IDs remain. Merged current `origin/main` at `1a90281b`, preserving Red Team fallback behavior and exit-replacement migrations 20–22 before this lane's migrations 23–24. Final gate, `scripts/land.sh`, hosted verify, Playwright smoke, and gitleaks are green: lint 0 errors, TypeScript clean, 3,980/3,980 tests, production build pass. Branch pushed; not merged, deployed, or production-verified. Keepouts unchanged: active Kalshi K1 and unrelated open agent branches; no production config/corpus writes or merge/deploy outside the normal PR path.
 - **shared-package-pin-check: resolve refs to commit SHAs before comparing (CLAUDE, branch
   `claude/check-pin-ref-resolve`) — IN PROGRESS 2026-07-12, landing.** Hardens
   `.github/workflows/shared-package-pin-check.yml`: when the two consumer repos' normalized
@@ -2664,35 +2690,52 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
-- **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (unassigned; RAG-B14/B16, 2026-07-12) —
-  PLANNED.** Authenticated production corpus census, exact runtime/config reconciliation, stable issuer/share-
+- **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (CODEX program; RAG-B14/B16, claimed 2026-07-13) —
+  IN PROGRESS / BASELINE #1495 MERGED; ACCEPTANCE CURRENTLY FAILS.** A new schema-v2 validator requires a dated,
+  checksummed 1,000-operating-issuer snapshot with explicit exchange/security classification, alias verification,
+  liquidity dimensions, source receipts, and quarantine; the legacy bare array fails closed. Remaining: authenticated production corpus census, exact runtime/config reconciliation, stable issuer/share-
   class aliases, selection snapshot/reasons, and coverage by issuer/form/period/artifact/parser/embed revision.
   Dependency and acceptance detail: `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` P0.
-- **SEC/RAG P0 occurrence identity + durable manifest/job state (unassigned; RAG-B03/B06/B07, 2026-07-12) —
-  PLANNED.** Separate embedding-cache dedup from filing evidence occurrences; add filings/artifacts/sections/
-  chunks/facts/jobs, exact accepted timestamps, amendments/supersession, partial-state verification, and PIT-
+- **SEC/RAG P0 occurrence identity + durable manifest/job state (CODEX program; RAG-B03/B06/B07, claimed 2026-07-13) —
+  MERGED IN PR #1543 / POST-MERGE P2 FOLLOW-UP IN PROGRESS.** Migration v23 plus `db-rag-ingest`
+  now provide deterministic replay keys, sealed jobs, ordered stage checkpoints, atomic fenced leases/heartbeats,
+  bounded retry/dead-letter/quarantine, cost receipts, and verification-required completion. All three PR review
+  findings across three pre-merge review passes are fixed and covered; PR #1543 merged as `cbe3e532` after all
+  hosted gates passed. Three findings posted after merge (blank failure reasons, checksum overwrites, non-finite
+  leases) are fixed and locally green on `codex/sec-rag-foundation-postmerge` (focused 29/29; lint 0 errors;
+  TypeScript; full 3,963/3,963; build; diff-check) in ready PR #1559. Production reports exact
+  foundation release `cbe3e532` with core health checks green. Then wire
+  artifacts/sections/facts, exact accepted timestamps,
+  amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.
-- **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (unassigned; RAG-B01/B02/B08/B09/
-  B17, 2026-07-12) — PLANNED.** Bulk submissions/companyfacts and master indexes, history shards, primary/
-  exhibit resolution, immutable object storage, shared fair-access token bucket, cache, Retry-After, and
-  breadth-first discovery.
-- **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (unassigned; RAG-B04/B05, 2026-07-12)
-  — PLANNED.** Preserve SEC Items, source anchors, table cells/headers/units/footnotes, bounded row-group chunks,
-  actual tokenizer counts, revisioned normalization, and filing-to-filing deltas.
-- **SEC/RAG P1 structured facts/events (unassigned; RAG-B10, 2026-07-12) — PLANNED.** Persist XBRL,
+- **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (CODEX program; RAG-B01/B02/B08/B09/
+  B17, claimed 2026-07-13) — IN PROGRESS / HOSTILE RE-REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed missing
+  migration integration, header-only body deadlines/permits, process-local concurrency, stale-slot pacing collapse,
+  SEC-host/redirect/abort/Retry-After bypasses, fail-open PIT receipts, order-dependent conflicts, and unbounded
+  bodies/rows/diagnostics. No SEC fetch/archive write is authorized before independent acceptance.
+- **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05, claimed 2026-07-13)
+  — IN PROGRESS / HOSTILE REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed forgeable tokenizer/provenance gates,
+  mutable payload-unbound eligibility, timezone-dependent identities, non-interruptible/pre-allocation bounds,
+  malformed or missing structured XBRL evidence, stylesheet-hidden poisoning, nested-table loss, and amplification
+  paths. No corpus write is authorized before independent acceptance.
+- **SEC/RAG P1 structured facts/events (CODEX program; RAG-B10, claimed 2026-07-13) — CLAIMED.** Persist XBRL,
   Forms 3/4/5/144, 13D/G, 13F-derived deltas, offerings, and other exact facts/events structurally; render cited
   evidence cards instead of embedding raw XML/JSON/rows.
-- **SEC/RAG P1 resumable worker + shadow corpus (unassigned; RAG-B06/B08/B09/B16/B17, 2026-07-12) —
-  PLANNED.** Dedicated database-backed worker, leases/retries/DLQ, observed token/WU/dollar receipts, token-aware
+- **SEC/RAG P1 resumable worker + shadow corpus (CODEX program; RAG-B06/B08/B09/B16/B17, claimed 2026-07-13) —
+  IN PROGRESS / PERSISTENCE CORE BUILT; EXECUTION UNWIRED.** Dedicated database-backed job/task substrate now has
+  leases/retries/DLQ and observed byte/token/chunk/vector/WU/dollar receipts. Remaining: worker process, stage
+  adapters, breaker enforcement, token-aware
   Voyage batching, Pinecone import/upsert benchmark, reconciliation, dual-write, cutover pointer, and rollback.
-- **SEC/RAG P1 retrieval/strategy consumption redesign (unassigned; RAG-B11/B12/B13/B18, 2026-07-12) —
-  PLANNED.** Intent routing, true corpus-wide lexical recall plus dense fusion, wide rerank, MMR/diversity,
+- **SEC/RAG P1 retrieval/strategy consumption redesign (CODEX program; RAG-B11/B12/B13/B18, claimed 2026-07-13) —
+  IN PROGRESS / LEXICAL SLICE STACKED ON #1543; ADVERSARIAL REVIEW RUNNING.** Occurrence-level FTS5 with verified
+  public timestamps, immutable replay, PIT/revision filters, corpus-wide lexical plus dense RRF, and wide rerank
+  pass 107 related tests and TypeScript. Remaining: hostile acceptance, integration, intent routing, MMR/diversity,
   embedding-revision isolation, structured issuer dossiers, deep retrieval for finalists/holdings, and verified
   `evidenceRefs`; remove nonexistent transcript coverage claims.
-- **SEC/RAG P1 real-EDGAR evaluation + truthful coverage (unassigned; RAG-B14/B15, 2026-07-12) — PLANNED.**
+- **SEC/RAG P1 real-EDGAR evaluation + truthful coverage (CODEX program; RAG-B14/B15, claimed 2026-07-13) — CLAIMED.**
   Build 250-500 labeled real-corpus questions plus parser/table/fact/grounding/PIT/idempotency metrics; replace
   the 200-accession coverage proxy with manifest-to-index reconciliation and gate every corpus expansion.
-- **SEC/RAG P1 controlled backfill + freshness operations (unassigned, 2026-07-12) — PLANNED.** Run shadow
+- **SEC/RAG P1 controlled backfill + freshness operations (CODEX program, claimed 2026-07-13) — CLAIMED / GATED.** Run shadow
   waves 10 -> 25 -> 100 -> 300 -> 1,000 only after upstream gates, with spend/rate/failure breakers, daily
   reconciliation, material-event freshness SLOs, selective top-100/250 depth, and ablation before long-tail
   embedding. No production write is authorized by the planning row.

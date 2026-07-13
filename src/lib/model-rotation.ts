@@ -1,9 +1,9 @@
-// model-rotation.ts — the "__rotate__" testing option: rotate the Proposer (green) and/or
+// model-rotation.ts — the "__rotate__" comparative-measurement option: rotate the Proposer (green) and/or
 // Reviewer (red) model through every eligible curated model, a different one each strategy run.
 //
-// PURPOSE (owner request 2026-07-08): accrue live comparative history across models on the paper
-// and test accounts. Proposals already persist `proposedByModel` (the CONCRETE serving model), so
-// attribution is automatic — rotation only has to vary which model serves each run.
+// PURPOSE (owner request 2026-07-08): accrue attributed comparative history across models on the
+// selected broker account. Proposals already persist `proposedByModel` (the CONCRETE serving model),
+// so attribution is automatic — rotation only has to vary which model serves each run.
 //
 // REASONING EFFORT (per-team split 2026-07-10): a rotating seat has NO manual effort control —
 // each rotated model is served at its curated recommended reasoning effort (unknown -> "medium";
@@ -17,7 +17,7 @@
 // PERSISTED policy keeps the sentinel so the NEXT run rotates again; nothing downstream (endpoint
 // resolution, timeouts, `proposedByModel` stamping) ever sees "__rotate__". A safety net in
 // `resolveOpenAiModel` (llm-request.ts) covers consumers that read the persisted policy outside a
-// run (chat, lesson pass, tuning): they get the default model, never the literal sentinel.
+// run (chat, lesson pass, tuning): they fail closed, never serving the literal sentinel.
 //
 // POINTER STATE: independent per-seat round-robin counters persisted via internal settings, keyed
 // `model_rotation:<userId>:<accountId>:<seat>`. To vary green/red COMBINATIONS rather than locking
@@ -59,21 +59,22 @@ export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
  * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
  */
 export const MODEL_ROTATION_POOL: readonly string[] = [
-  "gpt-5.4-mini",
+  "gpt-5.6-terra",
   "claude-haiku-4-5",
   "gemini-3.5-flash",
   "deepseek-v4-flash",
   "mistral-small-2603",
-  "gpt-5.4-nano",
+  "gpt-5.6-luna",
   "claude-sonnet-5",
   "gemini-3.1-flash-lite",
   "grok-4.3",
-  "gpt-5.4",
+  "gpt-5.4-mini",
   "claude-opus-4-8",
   "gemini-3.1-pro-preview",
   "deepseek-v4-pro",
   "mistral-medium-3-5",
-  "gpt-5.5",
+  "gpt-5.6-sol",
+  "gpt-5.4-nano",
   "claude-fable-5"
 ];
 
@@ -245,7 +246,7 @@ export function resolveModelRotationForRun(input: {
       // curated recommended level (unknown -> "medium"), overriding the stored per-team effort on
       // the RUN-SCOPED policy only. The persisted policy keeps the owner's stored effort for
       // whenever rotation is switched off; call time still re-clamps per model.
-      const reasoningEffort = recommendedReasoningEffortForModel(pick.model);
+      const reasoningEffort = recommendedReasoningEffortForModel(pick.model, seat);
       commits.push(() => {
         setInternalSetting(key, pick.nextPointer);
         audit(

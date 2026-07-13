@@ -59,6 +59,13 @@
 > 2026-07-04: `/console/scan` now matches the legacy dashboard's browser-local column controls
 > for the current console scan columns: visibility toggles, reorder arrows, Reset, and saved
 > visible-column state/order. See `docs/rollouts/2026-07-04-scan-column-customization.md`.
+>
+> 2026-07-13: Live Thesis no longer presents one concatenated Green/sizing/Red/outcome paragraph.
+> It renders visually distinct Green Team, deterministic sizing/risk, Red Team, and deterministic
+> outcome sections. Red verdicts say approved at full size / approved at half size / rejected /
+> unavailable rather than "survived"; blocked proposals display intent ("Buy") rather than the
+> false execution claim "Bought". Capital posture and approval cards resolve the selected daily
+> dollar-or-percent cap against current NAV.
 
 
 This phase restructures the dashboard from a long vertical page into a

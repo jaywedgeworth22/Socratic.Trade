@@ -172,7 +172,7 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
     // so approval-time attribution doesn't drift with later policy edits.
     expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4.1-mini");
     // Backward-compat rationale text is still appended.
-    expect(aaplProposal?.proposal.rationale).toContain("Red Team Review Survived");
+    expect(aaplProposal?.proposal.rationale).toContain("Red Team review — approved at full size");
     // The proposal's numeric conviction score survives end-to-end (no second schema pass anymore).
     expect(aaplProposal?.proposal.confidenceScore).toBe(90);
   }, 30_000);

@@ -1,4 +1,4 @@
-import { getActiveConnectedAccount, getDb, getUserSetting, setUserSetting, deleteUserSetting, audit, getInternalSetting, setInternalSetting, deleteInternalSetting, getPolicy, upsertFillExcursionsByKey } from "./db";
+import { getDb, getUserSetting, setUserSetting, deleteUserSetting, audit, getInternalSetting, setInternalSetting, deleteInternalSetting, getPolicy, listConnectedAccounts, upsertFillExcursionsByKey } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from "./performance";
 import { ingestLearned } from "./learned-context/store";
@@ -13,6 +13,7 @@ import { withLlmGeneration } from "./observability";
 import { isOverLlmBudget } from "./llm-budget";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { TradingPolicy } from "./types";
+import { validatePaperToLiveThesisTransfers } from "./learning-transfer";
 
 /**
  * @param policyOverride Optional pre-resolved policy to use INSTEAD OF re-reading `getPolicy(userId)`.
@@ -24,6 +25,7 @@ import type { TradingPolicy } from "./types";
 export async function generateReflectionSummary(accountNumber: string, userId: string = "local", policyOverride?: TradingPolicy): Promise<void> {
   const db = getDb();
   const policy = policyOverride ?? getPolicy(userId);
+  const connectedAccount = listConnectedAccounts(userId).find((account) => account.accountNumber === accountNumber);
   const { url, key: openaiKey, model: resolvedModel, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions");
   if (!openaiKey) return;
   
@@ -75,7 +77,7 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // timing stats, so the reflection is grounded in what actually made or lost money
   // and how well exits were timed — not just what was traded. Excursions hit the
   // network, but this whole function is gated above, so it runs only on new trades.
-  const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
+  const executionState = deriveExecutionState(policy, connectedAccount);
   const source = fillSourceForExecutionMode(executionState);
 
   // Budget guard: when over the daily LLM budget, skip ONLY the LLM reflection call — but still run the
@@ -153,7 +155,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, connectedAccountId: connectedAccount?.id, ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
 
         return { text: typeof text === "string" ? text : undefined };
@@ -182,7 +184,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         outcomesByThesis,
         outcomesByRegime,
         timingByThesis
-      }, userId, policy.accountNumber === accountNumber ? policy.connectedAccountId : undefined);
+      }, userId, connectedAccount?.id);
     }
 
     // Structured learned-context sink — runs IN PARALLEL with (does NOT gate or replace) the
@@ -190,7 +192,15 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
     // erasable FACTS over time. We emit only durable QUALITATIVE track-record facts (directional,
     // no numeric percent/size) for well-sampled theses; the fail-closed classifier drops anything
     // it deems risk-adjacent, and risk/sizing inferences are never written in this slice.
-    await writeThesisTrackRecordFacts(outcomesByThesis, userId);
+    if (connectedAccount) {
+      await writeThesisTrackRecordFacts(
+        outcomesByThesis,
+        userId,
+        connectedAccount.id,
+        connectedAccount.environment
+      );
+      await validatePaperToLiveThesisTransfers(userId);
+    }
   } catch (error) {
     console.error("Failed to generate reflection summary:", error);
   }
@@ -259,7 +269,12 @@ const MIN_LOTS_FOR_TRACK_RECORD_FACT = 5;
  * as a risk-adjacent (numeric) candidate. Untagged buckets are skipped. Best-effort: a failure
  * here never affects the reflection write or any trading path.
  */
-async function writeThesisTrackRecordFacts(outcomesByThesis: ThesisStat[], userId: string): Promise<void> {
+async function writeThesisTrackRecordFacts(
+  outcomesByThesis: ThesisStat[],
+  userId: string,
+  connectedAccountId: string,
+  accountEnvironment: "paper" | "live"
+): Promise<void> {
   for (const stat of outcomesByThesis) {
     if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
     if (stat.trades < MIN_LOTS_FOR_TRACK_RECORD_FACT) continue;
@@ -278,7 +293,8 @@ async function writeThesisTrackRecordFacts(outcomesByThesis: ThesisStat[], userI
           source: "inferred",
           confidence: 0.6
         },
-        "autonomous"
+        "autonomous",
+        { connectedAccountId, accountEnvironment }
       );
     } catch (error) {
       console.error("Failed to write thesis track-record fact:", error);

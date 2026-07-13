@@ -142,7 +142,7 @@ describe("connected accounts route", () => {
     expect(getActiveConnectedAccount()).toMatchObject({ broker: "tradier", environment: "paper", baseUrl: "https://sandbox.tradier.com/v1" });
   });
 
-  it("creates an explicit inactive local mock Test Account", async () => {
+  it("rejects product creation of test broker accounts without persisting one", async () => {
     const { POST } = await import("../app/api/connected-accounts/route");
     const { getActiveConnectedAccount, listConnectedAccounts } = await import("../src/lib/db");
 
@@ -152,21 +152,28 @@ describe("connected accounts route", () => {
       body: JSON.stringify({ broker: "test" })
     }));
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      ok: true,
-      accountNumber: "TEST",
-      label: "Test Account"
-    });
+    expect(response.status).toBe(400);
+    await expect(response.text()).resolves.toContain("test infrastructure");
     expect(getActiveConnectedAccount()).toBeUndefined();
-    expect(listConnectedAccounts()).toEqual([
-      expect.objectContaining({
-        broker: "test",
-        environment: "paper",
-        accountNumber: "TEST",
-        label: "Test Account",
-        isActive: false
-      })
-    ]);
+    expect(listConnectedAccounts()).toEqual([]);
+  });
+
+  it("never exposes internal test broker rows through the product account API", async () => {
+    const { GET } = await import("../app/api/connected-accounts/route");
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    upsertConnectedAccount({
+      id: "legacy-test-account",
+      userId: "local",
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Test Account",
+      isActive: false
+    });
+
+    const response = await GET(new Request("http://localhost/api/connected-accounts"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ accounts: [] });
   });
 });

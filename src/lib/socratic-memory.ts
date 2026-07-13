@@ -30,7 +30,10 @@ function finalAction(decision: SocraticDecisionCase): string {
   return decision.status.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 }
 
-export function buildSocraticMemoryDocument(decision: SocraticDecisionCase): ContextDocument {
+export function buildSocraticMemoryDocument(
+  decision: SocraticDecisionCase,
+  accountEnvironment?: "paper" | "live"
+): ContextDocument {
   const symbol = decision.symbol ?? "PORTFOLIO";
   const criticCounterArgument =
     decision.redTeamVerdict?.reason ??
@@ -85,6 +88,7 @@ export function buildSocraticMemoryDocument(decision: SocraticDecisionCase): Con
       timestamp: decision.createdAt,
       accession: decision.id,
       doc_type: "socratic-decision",
+      memory_scope: "account",
       decision_id: decision.id,
       final_action: finalAction(decision),
       ...(decision.proposalId ? { proposal_id: decision.proposalId } : {}),
@@ -93,12 +97,24 @@ export function buildSocraticMemoryDocument(decision: SocraticDecisionCase): Con
       authority: decision.authority,
       ...(decision.thesisTag ? { thesis_tag: decision.thesisTag } : {}),
       ...(decision.regime ? { entry_market_regime: decision.regime } : {}),
-      ...(decision.connectedAccountId ? { connected_account_id: decision.connectedAccountId } : {})
+      ...(decision.connectedAccountId ? { connected_account_id: decision.connectedAccountId } : {}),
+      ...(accountEnvironment ? {
+        account_environment: accountEnvironment,
+        transfer_state: accountEnvironment === "paper" ? "candidate" : "not_applicable"
+      } : {})
     }
   };
 }
 
 export async function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Promise<StoreContextsResult> {
+  const { getConnectedAccount } = await import("./db");
   const { storeContexts } = await import("./vector-db");
-  return storeContexts([buildSocraticMemoryDocument(decision)], decision.userId, { dedupKeyPrefix: "socratic-decision" });
+  const accountEnvironment = decision.connectedAccountId
+    ? getConnectedAccount(decision.connectedAccountId, decision.userId)?.environment
+    : undefined;
+  return storeContexts(
+    [buildSocraticMemoryDocument(decision, accountEnvironment)],
+    decision.userId,
+    { dedupKeyPrefix: "socratic-decision" }
+  );
 }

@@ -20,6 +20,7 @@ import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
+import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -519,9 +520,9 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       }
     }
   }
-  const effectiveMaxDailyNotional = Math.min(
-    context.policy.maxDailyNotional ?? Infinity,
-    context.policy.maxDailyPctOfNav ? (context.policy.maxDailyPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
+  const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+    context.policy,
+    context.portfolio.totalMarketValue
   );
   // Daily/hourly notional + daily order-count failures are TIME-CONTEXT gates: the budget they
   // guard replenishes on its own (midnight / rolling hour), so they are escalatable — a pending
