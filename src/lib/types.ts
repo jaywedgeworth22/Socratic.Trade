@@ -78,6 +78,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   "budget_alert",
   "learning_review",
   "deterministic_bear_veto",
+  "red_team_veto_override_requested",
   "red_team_veto_overridden",
   "prompt_injection_suspected",
   "evidence_age_anomaly",
@@ -1227,11 +1228,10 @@ export interface TradeProposal {
     model?: string;
     trigger?: "all_openings" | "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime";
     /**
-     * True when the Bear REJECTED this opening but an agent-authored `autonomyOverride` thesis made
-     * the veto advisory (folded into the sized PolicyDecision as an overridable reason and then
-     * applied at resolveSocraticOverride). Lets the decision card distinguish "Bear rejected AND
-     * blocked" from "Bear rejected but overridden & executed". See the pre-veto override flow in
-     * strategy.ts (the Red Team veto branch + the preVetoReasons fold-in before resolveSocraticOverride).
+     * Legacy-named marker that the Bear REJECTED and an agent-authored `autonomyOverride` requested
+     * the advisory path. It is set before `resolveSocraticOverride`, so it does NOT prove the final
+     * override applied. Renderers and decision evidence must use `PolicyDecision.socraticOverride.applied`
+     * (or the final SocraticOverrideResolution) for that claim.
      */
     overridden?: boolean;
     /**

@@ -1630,14 +1630,14 @@ export async function runStrategyOnce(
 
           if (overrideRequested) {
             // ADVISORY path — tag, do NOT continue. FIX #1: emit a DISTINCT audit kind
-            // (red_team_veto_overridden) and DO NOT write the missed-opportunity counterfactual. This
-            // trade may actually EXECUTE, so recording it as a Bear-vetoed missed opportunity would
+            // (red_team_veto_override_requested) and DO NOT write the missed-opportunity
+            // counterfactual. This trade may actually EXECUTE, so recording it as a Bear-vetoed missed opportunity would
             // corrupt getRedTeamEfficacy() (it keys strictly off proposal_rejected_by_red_team joined
             // to the counterfactual return) — double-booking the same symbol as both a missed winner
             // and a real position. Override payoff is measured through the matured-position path
             // (frameworkProposalFromDecision's "Review overridden gate") instead.
             audit(
-              "red_team_veto_overridden",
+              "red_team_veto_override_requested",
               {
                 runId,
                 symbol: proposal.symbol,

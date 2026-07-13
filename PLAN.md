@@ -6,10 +6,14 @@
 > rechecks, prompts, capital posture, mobile data, and AI strategy review. Persist app-computed
 > notional/NAV arithmetic; clear impossible Alpaca whole-share bracket fields before fractional
 > submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
-> sections with explicit verdict wording. Implementation, lint, TypeScript, Swift contract checking,
-> 4,021/4,021 tests, and the production build are complete. Ready PR #1561 is open; hosted acceptance,
-> merge/autodeploy, and production verification remain. See
-> `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
+> sections with explicit verdict wording. PR #1561 merged as `3e105e17`; required hosted checks passed
+> and that exact release is healthy in production. A review posted after auto-merge found three P2
+> gaps. The active focused follow-up persists Green/sizing receipts across refreshes, makes v26
+> cover the legacy global-policy sequence without reinterpreting a later intentional `$500` choice,
+> and separates a Red override request from a final applied override in storage and UI. Targeted
+> console/API/mobile cap-mode tests, touched lint, and TypeScript are green; full gate/PR/deploy remain.
+> See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
+> `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 
 > **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
 > complete source-to-decision boundary before adding more feeds: wider bounded enrichment;

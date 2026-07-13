@@ -544,7 +544,7 @@ function ThesisNarrative({
               Red Team review
             </div>
             <Chip tone={!redTeam.available ? "warn" : redTeam.rejected ? "neg" : "pos"}>
-              {redTeamVerdictLabel(redTeam)}
+              {redTeamVerdictLabel(redTeam, decision?.policyDecision?.socraticOverride?.applied)}
             </Chip>
           </div>
           <p className="mt-1">{redTeam.reason}</p>

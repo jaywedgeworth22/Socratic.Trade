@@ -27,7 +27,9 @@ describe("redTeamVerdictLabel", () => {
     expect(redTeamVerdictLabel(verdict({ available: true, verdict: "approve" }))).toBe("Approved at full size");
     expect(redTeamVerdictLabel(verdict({ available: true, verdict: "approve-at-half" }))).toBe("Approved at half size");
     expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true }))).toBe("Rejected — blocked");
-    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }))).toBe("Objection overridden");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }))).toBe("Rejected — override requested");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }), false)).toBe("Rejected — blocked");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }), true)).toBe("Objection overridden");
     expect(redTeamVerdictLabel(verdict({ available: false }))).toBe("Review unavailable — held for human approval");
   });
 });

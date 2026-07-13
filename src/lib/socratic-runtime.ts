@@ -242,7 +242,7 @@ function dissentForDecision(proposal: TradeProposal, decision: PolicyDecision, o
     // Distinguish "Bear rejected AND blocked" from "Bear rejected but OVERRIDDEN & executed": an
     // overridden veto is advisory (a logged rationale let the opening proceed), so it reads as a
     // warning, not a hard negative, and the title says so.
-    const overridden = proposal.redTeamVerdict.overridden === true;
+    const overridden = overrideResolution?.applied === true;
     rows.push({
       kind: "red_team",
       title: proposal.redTeamVerdict.rejected

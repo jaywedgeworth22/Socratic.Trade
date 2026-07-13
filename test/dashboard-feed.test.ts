@@ -119,6 +119,23 @@ describe("dashboard feed helpers", () => {
     expect(feed[0]?.detail).toContain("2 repeats suppressed");
   });
 
+  it("labels a Red Team override request without claiming that it was applied", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "a-red-request",
+          createdAt: "2026-07-13T00:00:00.000Z",
+          kind: "red_team_veto_override_requested",
+          payload: { symbol: "EXE", side: "buy", reason: "Risk review rejected the entry." }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Red Team Override Requested: EXE");
+    expect(feed[0]?.title).not.toContain("Overridden");
+    expect(feed[0]?.detail).toBe("Risk review rejected the entry.");
+  });
+
   it("never renders raw JSON inline for an unrecognized audit kind's detail, but keeps it in fullText", () => {
     const feed = buildAuditFeed({
       audit: [

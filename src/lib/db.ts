@@ -50,6 +50,39 @@ export function getDb(): Database.Database {
 // migrate() (no ordering/stamp; diverged across worktrees).
 const SCHEMA_BASELINE = 1;
 type Migration = { version: number; name: string; up: (db: Database.Database) => void };
+
+/** Convert only the former product-default daily cap. Keeping this as a shared, idempotent helper
+ * applies the same exact-value rule to every policy store that exists when migration v26 runs. */
+function migrateLegacyDailyOpeningCapRows(database: Database.Database): number {
+  const targets = [
+    { table: "account_strategy_state", column: "policy", where: "1=1" },
+    { table: "strategy_profiles", column: "policy", where: "1=1" },
+    { table: "user_settings", column: "value", where: "key = 'policy'" },
+    { table: "settings", column: "value", where: "key = 'policy'" }
+  ] as const;
+  let changed = 0;
+  for (const target of targets) {
+    const rows = database
+      .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
+      .all() as Array<{ rowid: number; json: string }>;
+    const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
+    for (const row of rows) {
+      try {
+        const policy = JSON.parse(row.json) as Record<string, unknown>;
+        if (policy.maxDailyNotional !== 500 || (typeof policy.maxDailyPctOfNav === "number" && policy.maxDailyPctOfNav > 0)) continue;
+        delete policy.maxDailyNotional;
+        policy.maxDailyPctOfNav = 20;
+        update.run(JSON.stringify(policy), row.rowid);
+        changed += 1;
+      } catch {
+        // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
+        // make the database unbootable while trying to repair an unrelated row.
+      }
+    }
+  }
+  return changed;
+}
+
 const MIGRATIONS: Migration[] = [
   {
     // Per-attached-key LLM usage attribution: usage/cost measured per distinct key (user or
@@ -943,32 +976,24 @@ const MIGRATIONS: Migration[] = [
     version: 26,
     name: "daily_opening_cap_percent_default",
     up: (database) => {
-      const targets = [
-        { table: "account_strategy_state", column: "policy", where: "1=1" },
-        { table: "strategy_profiles", column: "policy", where: "1=1" },
-        { table: "user_settings", column: "value", where: "key = 'policy'" }
-      ] as const;
-      let changed = 0;
-      for (const target of targets) {
-        const rows = database
-          .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
-          .all() as Array<{ rowid: number; json: string }>;
-        const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
-        for (const row of rows) {
-          try {
-            const policy = JSON.parse(row.json) as Record<string, unknown>;
-            if (policy.maxDailyNotional !== 500 || (typeof policy.maxDailyPctOfNav === "number" && policy.maxDailyPctOfNav > 0)) continue;
-            delete policy.maxDailyNotional;
-            policy.maxDailyPctOfNav = 20;
-            update.run(JSON.stringify(policy), row.rowid);
-            changed += 1;
-          } catch {
-            // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
-            // make the database unbootable while trying to repair an unrelated row.
-          }
-        }
-      }
+      const changed = migrateLegacyDailyOpeningCapRows(database);
       if (changed > 0) console.log(`[db] migration 26: moved ${changed} legacy $500 daily cap row(s) to 20% of NAV`);
+    }
+  },
+  {
+    // Persist the exact Green Team text and deterministic sizing arithmetic carried by each
+    // Socratic case. This migration is deliberately schema-only: by the time a database is stamped
+    // v26, a fixed $500 cap may be an intentional user choice and must never be reinterpreted.
+    version: 27,
+    name: "socratic_decision_narrative_receipts",
+    up: (database) => {
+      const columns = database.prepare("PRAGMA table_info(socratic_decisions)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "green_team_rationale")) {
+        database.exec("ALTER TABLE socratic_decisions ADD COLUMN green_team_rationale TEXT");
+      }
+      if (!columns.some((column) => column.name === "sizing_snapshot")) {
+        database.exec("ALTER TABLE socratic_decisions ADD COLUMN sizing_snapshot TEXT");
+      }
     }
   }
 ];
@@ -1656,6 +1681,8 @@ function migrate(database: Database.Database): void {
       authority TEXT NOT NULL,
       thesis TEXT NOT NULL,
       rationale TEXT NOT NULL,
+      green_team_rationale TEXT,
+      sizing_snapshot TEXT,
       action TEXT NOT NULL,
       thesis_tag TEXT,
       regime TEXT,

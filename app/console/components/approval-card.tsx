@@ -333,7 +333,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
               {p.redTeamVerdict.available ? (
                 <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
-                  Verdict: {redTeamVerdictLabel(p.redTeamVerdict)}
+                  Verdict: {redTeamVerdictLabel(p.redTeamVerdict, pending.decision.socraticOverride?.applied)}
                 </span>
               ) : (
                 <span className="font-semibold" style={{ color: "var(--con-warn)" }} title={redFailure.title}>

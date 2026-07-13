@@ -597,6 +597,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     .filter((e) =>
       [
         "deterministic_bear_veto",
+        "red_team_veto_override_requested",
         "red_team_veto_overridden",
         "prompt_injection_suspected",
         "evidence_age_anomaly"
@@ -842,11 +843,15 @@ function getDashboardRedTeamEfficacy(userId: string, connectedAccountId?: string
     limit: 12
   });
   const redTeamOverrideKeys = new Set<string>();
-  for (const event of listAuditByKind("red_team_veto_overridden", RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {
-    const payload = event.payload as { runId?: string; symbol?: string; side?: string } | undefined;
-    if (!payload?.runId || !payload.symbol) continue;
-    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
-    redTeamOverrideKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}:${payload.side ?? ""}`);
+  // New rows record the truthful request state. Keep the historical event kind in the union so
+  // pre-migration efficacy history remains comparable; the Set prevents duplicate counting.
+  for (const kind of ["red_team_veto_override_requested", "red_team_veto_overridden"] as const) {
+    for (const event of listAuditByKind(kind, RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {
+      const payload = event.payload as { runId?: string; symbol?: string; side?: string } | undefined;
+      if (!payload?.runId || !payload.symbol) continue;
+      if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
+      redTeamOverrideKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}:${payload.side ?? ""}`);
+    }
   }
   const appliedOverrideKeys = new Set<string>();
   for (const event of listAuditByKind("socratic_override_applied", RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {

@@ -58,7 +58,7 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(26);
+    expect(getSchemaVersion(db)).toBe(27);
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -72,7 +72,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
     db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(26);
+    expect(getSchemaVersion(db)).toBe(27);
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 
@@ -89,7 +89,7 @@ describe("runMigrations — versioned schema migrations", () => {
 
     db.pragma("user_version = 25");
     applyVersionedMigrations(db);
-    expect(getSchemaVersion(db)).toBe(26);
+    expect(getSchemaVersion(db)).toBe(27);
 
     const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
     const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);
@@ -97,6 +97,60 @@ describe("runMigrations — versioned schema migrations", () => {
     expect(migrated.maxDailyNotional).toBeUndefined();
     expect(preserved).toMatchObject({ maxDailyNotional: 1_000 });
     expect(preserved.maxDailyPctOfNav).toBeUndefined();
+  });
+
+  it("backstops a legacy settings policy when versioned migrations run before the global copy", async () => {
+    const { applyVersionedMigrations, migrateGlobalPolicyToLocalUser } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+    db.exec(`
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE user_settings (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE account_strategy_state (policy TEXT NOT NULL);
+      CREATE TABLE strategy_profiles (policy TEXT NOT NULL);
+      CREATE TABLE socratic_decisions (id TEXT PRIMARY KEY);
+    `);
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('policy', ?, ?)").run(
+      JSON.stringify({ maxDailyNotional: 500 }),
+      now
+    );
+    db.pragma("user_version = 25");
+
+    expect(applyVersionedMigrations(db)).toBe(27);
+    migrateGlobalPolicyToLocalUser(db, now);
+
+    const legacy = JSON.parse((db.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string }).value);
+    const copied = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE user_id = 'local' AND key = 'policy'").get() as { value: string }).value);
+    expect(legacy).toMatchObject({ maxDailyPctOfNav: 20 });
+    expect(legacy.maxDailyNotional).toBeUndefined();
+    expect(copied).toEqual(legacy);
+    db.close();
+  });
+
+  it("does not reinterpret an intentional fixed $500 cap after migration v26", async () => {
+    const { applyVersionedMigrations } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+    db.exec(`
+      CREATE TABLE user_settings (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE socratic_decisions (id TEXT PRIMARY KEY);
+    `);
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, 'policy', ?, ?)"
+    ).run("cap-intentional-500", "cap-intentional-user", JSON.stringify({ maxDailyNotional: 500 }), now);
+    db.pragma("user_version = 26");
+
+    expect(applyVersionedMigrations(db)).toBe(27);
+
+    const preserved = JSON.parse(
+      (db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-intentional-500") as { value: string }).value
+    );
+    expect(preserved).toMatchObject({ maxDailyNotional: 500 });
+    expect(preserved.maxDailyPctOfNav).toBeUndefined();
+    expect(
+      (db.prepare("PRAGMA table_info(socratic_decisions)").all() as Array<{ name: string }>).map((column) => column.name)
+    ).toEqual(expect.arrayContaining(["green_team_rationale", "sizing_snapshot"]));
+    db.close();
   });
 });
 

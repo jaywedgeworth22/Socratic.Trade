@@ -140,6 +140,13 @@ function formatAuditEvent(
     };
   }
 
+  if (kind === "red_team_veto_override_requested") {
+    return {
+      title: `Red Team Override Requested: ${context.symbol ?? "Trade"}`,
+      detail: stringValue(payload.reason) ?? "Override request recorded"
+    };
+  }
+
   if (kind === "red_team_veto_overridden") {
     return {
       title: `Red Team Veto Overridden: ${context.symbol ?? "Trade"}`,

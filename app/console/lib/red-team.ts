@@ -12,10 +12,12 @@ export type RedTeamVerdict = NonNullable<TradeProposal["redTeamVerdict"]>;
 
 /** Plain-language outcome of the review itself — deliberately distinct from the later deterministic
  * policy/broker outcome. "Approved" means the reviewer found no reason to shrink/veto the thesis;
- * it does not claim the order was placed. */
-export function redTeamVerdictLabel(verdict: RedTeamVerdict): string {
+ * it does not claim the order was placed. A model-requested override is only called overridden when
+ * the final policy decision confirms it was applied. */
+export function redTeamVerdictLabel(verdict: RedTeamVerdict, overrideApplied?: boolean): string {
   if (!verdict.available) return "Review unavailable — held for human approval";
-  if (verdict.rejected && verdict.overridden) return "Objection overridden";
+  if (verdict.rejected && overrideApplied === true) return "Objection overridden";
+  if (verdict.rejected && verdict.overridden && overrideApplied === undefined) return "Rejected — override requested";
   if (verdict.rejected || verdict.verdict === "reject") return "Rejected — blocked";
   if (verdict.verdict === "approve-at-half") return "Approved at half size";
   return "Approved at full size";

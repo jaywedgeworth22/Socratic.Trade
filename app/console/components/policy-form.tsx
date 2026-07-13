@@ -183,8 +183,13 @@ export function PolicyDualModeRow({
   const pctTouched = pctDef.path in draft.values;
   const moneyValue = moneyTouched ? draft.values[moneyDef.path] : getAtPath(policy, moneyDef.path);
   const pctValue = pctTouched ? draft.values[pctDef.path] : getAtPath(policy, pctDef.path);
-  const [mode, setModeState] = useState<"money" | "pct">(() => (!isBlank(pctValue) ? "pct" : "money"));
+  const policyMode: "money" | "pct" = !isBlank(getAtPath(policy, pctDef.path)) ? "pct" : "money";
+  const [draftMode, setDraftMode] = useState<"money" | "pct">(policyMode);
   const [editText, setEditText] = useState<string | null>(null);
+  // A mode choice is interaction state only while this field pair has an active draft. After
+  // discard/save or an account switch, derive from that account's persisted policy immediately;
+  // this avoids a stale selector without an effect-driven synchronization render.
+  const mode = moneyTouched || pctTouched ? draftMode : policyMode;
   const activeDef = mode === "money" ? moneyDef : pctDef;
   const activeValue = mode === "money" ? moneyValue : pctValue;
   const touched = moneyTouched || pctTouched;
@@ -192,7 +197,7 @@ export function PolicyDualModeRow({
   const unit = mode === "money" ? "$" : "%";
 
   const setMode = (next: "money" | "pct") => {
-    setModeState(next);
+    setDraftMode(next);
     setEditText(null);
     if (next === "money") {
       draft.set(pctDef.path, null);

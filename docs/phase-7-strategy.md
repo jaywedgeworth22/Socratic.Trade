@@ -26,10 +26,17 @@ invariants, and residual gaps.
 
 - The app computes and persists finalized notional, decision-time NAV, order percentage of NAV,
   daily cap mode/effective dollars, used budget, and remaining budget before Red Team review.
+- Migration v27 stores the exact Green rationale and sizing snapshot on the durable Socratic case;
+  refreshes and later coach/outcome/lesson writes preserve both receipts.
 - Red Team receives those deterministic values as authoritative arithmetic, so prose such as
   "$4 is 0.04% of a $100 account" cannot be treated as a model-derived fact.
 - A Red approval means only that the adversarial thesis review approved the stated size; policy,
   broker preflight, and placement remain separate deterministic outcomes in data and UI.
+- A Red rejection is called overridden only when the final policy decision records an applied
+  override; the earlier model request is not proof that hard gates allowed it.
+- Override-request audits likewise say `red_team_veto_override_requested`; the existing
+  `socratic_override_applied`/`socratic_override_refused` events remain final-outcome truth, while
+  historical `red_team_veto_overridden` rows remain readable for longitudinal metrics.
 - Alpaca sub-share dollar entries clear whole-share bracket fields when the app declares the native
   bracket skipped, preventing the receipt/transport contradiction that previously blocked EXE.
 

@@ -65,7 +65,12 @@
 > outcome sections. Red verdicts say approved at full size / approved at half size / rejected /
 > unavailable rather than "survived"; blocked proposals display intent ("Buy") rather than the
 > false execution claim "Bought". Capital posture and approval cards resolve the selected daily
-> dollar-or-percent cap against current NAV.
+> dollar-or-percent cap against current NAV. Migration v27 persists the exact Green rationale and
+> deterministic sizing receipt across refresh/lifecycle writes, and an objection is labeled
+> overridden only when the final policy decision records an applied override; a pending request is
+> explicitly labeled as requested rather than applied.
+> The Guardrails cap selector derives from the persisted account whenever no draft is active, so
+> discard/save/account changes cannot leave the Dollar/Percent control displaying stale local mode.
 
 
 This phase restructures the dashboard from a long vertical page into a

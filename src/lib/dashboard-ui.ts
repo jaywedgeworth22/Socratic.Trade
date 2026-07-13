@@ -324,6 +324,7 @@ const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
   budget_alert: "Budget alert",
   learning_review: "Learning review",
   deterministic_bear_veto: "Vetoed by Bear risk",
+  red_team_veto_override_requested: "Red Team override requested",
   red_team_veto_overridden: "Red Team veto overridden",
   prompt_injection_suspected: "Prompt injection suspected",
   evidence_age_anomaly: "Evidence age anomaly",
@@ -382,6 +383,8 @@ export function formatNotificationDisplay(
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} ${expired ? "Expired" : "Withdrawn"}`;
   } else if (event.type === "deterministic_bear_veto") {
     title = `${actionLabel(side)} ${symbol ?? "Trade"} Vetoed by Bear Risk`;
+  } else if (event.type === "red_team_veto_override_requested") {
+    title = `Red Team Override Requested ${symbol ? `for ${symbol}` : ""}`;
   } else if (event.type === "red_team_veto_overridden") {
     title = `Red Team Veto Overridden ${symbol ? `for ${symbol}` : ""}`;
   } else if (event.type === "prompt_injection_suspected") {
@@ -402,6 +405,7 @@ export function formatNotificationDisplay(
 function notificationDetail(event: NotificationEvent): string {
   if (
     event.type === "deterministic_bear_veto" ||
+    event.type === "red_team_veto_override_requested" ||
     event.type === "red_team_veto_overridden" ||
     event.type === "prompt_injection_suspected" ||
     event.type === "evidence_age_anomaly"

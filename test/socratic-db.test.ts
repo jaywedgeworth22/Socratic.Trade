@@ -42,6 +42,15 @@ describe("Socratic decision persistence", () => {
       authority: "decide",
       thesis: "Mean-Reversion",
       rationale: "Forced selling looks temporary.",
+      greenTeamRationale: "Forced selling looks temporary.",
+      sizingSnapshot: {
+        portfolioValue: 100,
+        estimatedNotional: 4.6,
+        estimatedPctOfNav: 4.6,
+        dailyOpeningCap: { mode: "pct_nav", configuredValue: 20, effectiveNotional: 20, pctOfNav: 20 },
+        dailyNotionalUsed: 0,
+        remainingDailyNotional: 20
+      },
       action: "BUY AAPL $1000",
       evidence: [{ kind: "policy", title: "Approved", summary: "Preference override applied.", tone: "positive" }],
       ragAttributions: [],
@@ -49,10 +58,22 @@ describe("Socratic decision persistence", () => {
     });
 
     expect(decisionId).toBe("prop-1");
-    expect(listSocraticDecisionCases("u1", { connectedAccountId: "acct-1" })[0]?.symbol).toBe("AAPL");
+    const persisted = listSocraticDecisionCases("u1", { connectedAccountId: "acct-1" })[0];
+    expect(persisted?.symbol).toBe("AAPL");
+    expect(persisted?.greenTeamRationale).toBe("Forced selling looks temporary.");
+    expect(persisted?.sizingSnapshot).toEqual({
+      portfolioValue: 100,
+      estimatedNotional: 4.6,
+      estimatedPctOfNav: 4.6,
+      dailyOpeningCap: { mode: "pct_nav", configuredValue: 20, effectiveNotional: 20, pctOfNav: 20 },
+      dailyNotionalUsed: 0,
+      remainingDailyNotional: 20
+    });
 
     const coached = appendSocraticDecisionCoachNote(decisionId, "Favor broader crash baskets next time.", "u1");
     expect(coached?.coachNotes).toEqual(["Favor broader crash baskets next time."]);
+    expect(coached?.greenTeamRationale).toBe("Forced selling looks temporary.");
+    expect(coached?.sizingSnapshot?.estimatedPctOfNav).toBe(4.6);
 
     // Re-indexing is fire-and-forget (a dynamic import + .then()/.catch()), so poll until the mocked
     // storeContexts call lands rather than assuming a fixed number of microtask flushes.
