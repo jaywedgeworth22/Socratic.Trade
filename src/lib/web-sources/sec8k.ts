@@ -552,10 +552,31 @@ export async function ingestEightKBody(event: EightKEvent, now: number = Date.no
     return { skipped: false, chunks: 0, error: "extracted text too short" };
   }
 
+  // Insert into sec_artifacts
+  try {
+    const { createHash } = await import("crypto");
+    const sha256 = createHash("sha256").update(html).digest("hex");
+    const byteCount = Buffer.byteLength(html, "utf8");
+    const { insertSecArtifact } = await import("../db");
+    insertSecArtifact({
+      accession: event.accession,
+      sequence: 1,
+      documentName: "main.html",
+      sha256,
+      type: "html",
+      byteCount,
+      rawUri: url,
+      parserVersion: "v1"
+    });
+  } catch (err) {
+    console.warn(`[sec8k] insertSecArtifact failed for ${event.accession} (non-fatal):`, err instanceof Error ? err.message : String(err));
+  }
+
   const { storeDocument } = await import("../vector-db");
   const result = await storeDocument(
     {
       text,
+      doc_id: event.accession,
       ticker: event.symbol,
       title: `${event.symbol} 8-K (${event.filedAt})`,
       doc_type: "8-k",
