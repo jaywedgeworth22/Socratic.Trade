@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-13 — Mobile intro-animation size-jerk fix + PR #1417 marked Completed (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+
+Fixed the first-load candlestick intro on mobile: the wordmark reassembled narrow and then
+popped larger just before the mobile brand row slid away. Cause — `intro-canvas.tsx` froze the
+`[data-brand-logo]` measurement on first find, but `MobileBrandRow`'s logo mounts at a placeholder
+height and resizes to a width-scaled clamp (up to ~40% taller), so the landing used the stale small
+box and the real logo popped in at handoff. Fix: re-measure the real logo every frame so the eased
+landing tracks its final geometry and converges before handoff. Also moved the now-merged PR #1417
+(global learning reads + batched advisory review) to Completed in `docs/EFFORT-LOG.md`. Branch
+restarted from latest `main`; `npm ci` needed for the newer `congress-trading-shared` pin. Gate
+green: tsc 0, lint 0 errors, 3927 tests pass, build exit 0. Rollout:
+`docs/rollouts/2026-07-13-mobile-intro-size-jerk.md`.
+
 ## 2026-07-13 — SEC/RAG 1,000-Stock Backfill: P1 — Identity and Manifest (Antigravity/AG, branch `agent/ag-rag-backfill-p1`)
 
 Completed RAG Backfill P1: added version 19 database migration creating relational tables `sec_filings`, `sec_artifacts`, and `chunk_occurrences`, backfilled legacy RAG ingested accessions and document chunks, updated `storeDocument` in `src/lib/vector-db.ts` to map stable unique vector/occurrence IDs and record chunk occurrences correctly (skipped and fresh), and integrated `sec_filings` discovery and `sec_artifacts` HTML logging into `sec-filings.ts` and `sec8k.ts`. Verified with tests, types, and lints. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p1.md`.

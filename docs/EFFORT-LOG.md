@@ -523,18 +523,15 @@ As of 2026-07-08 (assignment-rule update).
 
 - **Native iOS App Overhaul (Antigravity, branch `agent/antigravity`) — IN PROGRESS 2026-07-12.** Replaced the legacy iOS starter app with a native SwiftUI application (`ios/`) using `xcodegen`. Includes tabbed navigation (Dashboard, Proposals, Watchlist), `MobileStore` persistence, and `MobileAPIClient`. Assessed Cloudflare hosting vs current Hetzner server and decided to keep it on Hetzner to avoid splitting the database. Verified build via `xcodebuild`. Ready to merge.
 
-- **Global learning reads + batched AI review of proposals (CLAUDE cloud, branch
-  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-07, PR pending.** Lessons (on
-  `socratic_decisions`) + framework proposals now read GLOBAL across a user's accounts (dropped the
-  active-account filter on the dashboard learning panels; still write `connected_account_id` for
-  provenance — no migration; also fixes the dashboard-vs-decision-detail inconsistency). New
-  `src/lib/framework-review.ts` `reviewPendingFrameworkProposals`: one LLM call adjudicates all pending
-  proposals across accounts and attaches an ADVISORY recommendation (verdict + rationale + optional
-  rewrite) via a new nullable `ai_review` column — owner still decides (not auto-apply); reviewer model =
-  `redTeamLlmModel`→`llmModel`. Wired `POST /api/socratic/framework/review` + "AI review pending" UI in
-  `app/console/page.tsx`. Merged latest `origin/main` (incl. Tradier broker #1425) clean 2026-07-11;
-  full gate green (tsc 0, lint 0 errors, **3745 tests pass**, build exit 0). All 11 Codex review threads
-  resolved. Awaiting CI + owner merge. See `docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
+- **Mobile intro-animation size-jerk fix (CLAUDE cloud, branch
+  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-13, PR pending.** On mobile the intro
+  reassembled the "SOCRATIC TRADE" wordmark at a narrow size, then popped larger just before sliding
+  away. Cause: `intro-canvas.tsx` froze the header-logo measurement on first find, but the mobile
+  brand row mounts its logo at a placeholder height and resizes to a width-scaled clamp (up to ~40%
+  taller) — so the landing used the stale small box and the real logo popped in at handoff. Fix:
+  re-measure the real logo every frame so the eased landing tracks its final geometry. Gate green
+  (tsc 0, lint 0 errors, 3927 tests pass, build exit 0). See
+  `docs/rollouts/2026-07-13-mobile-intro-size-jerk.md`.
 - **Public auth + paid-route rate-limit hardening (CODEX, branch
   `codex/public-auth-rate-limit-hardening`) — MERGED TO `main` 2026-07-11 at `97152c25`; live deploy not independently verified.** Bounded security batch from
   the whole-app reliability audit: key the public Robinhood OAuth callback limiter by client IP
@@ -814,6 +811,20 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## ✅ Completed (merged to `main`, on beta/integration)
+
+- **Global learning reads + batched advisory review of proposals (CLAUDE cloud, branch
+  `claude/socratic-trade-logos-p0hxk7`) — ✅ COMPLETED 2026-07-11: PR #1417 merged to `main` (squash,
+  verify green; auto-deploys to production). Owner-directed.** Lessons (on `socratic_decisions`) +
+  framework/"learning" proposals now read GLOBAL across a user's accounts (dropped the active-account
+  filter on the dashboard learning panels; still write `connected_account_id` for provenance — no
+  migration; also fixed the dashboard-vs-decision-detail inconsistency). New
+  `src/lib/framework-review.ts` `reviewPendingFrameworkProposals`: one LLM call adjudicates all pending
+  proposals across accounts and attaches an ADVISORY recommendation (verdict + rationale + optional
+  rewrite) via a new nullable `ai_review` column — owner still decides (not auto-apply). Reviewer
+  resolves through the RED role (`redTeamLlmModel`, no fallback to the primary model; fails closed as
+  `reviewer_not_configured` when unset). Wired `POST /api/socratic/framework/review` + "AI review
+  pending" UI in `app/console/page.tsx`. All 12 Codex review threads resolved. See
+  `docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
 
 - **Per-team reasoning levels + rotation auto-effort + usage/Learning-Review links (CLAUDE, branch
   `claude/per-team-reasoning`) — ✅ COMPLETED 2026-07-10: PR #1346 merged to `main` (squash
