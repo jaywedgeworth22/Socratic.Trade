@@ -243,9 +243,9 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
           : NextResponse.redirect(new URL("/access-denied", req.url))
       );
     }
-  } else if (pathname.startsWith("/api/admin/") && req.headers.has("x-admin-token")) {
-    // Allow unauthenticated requests with an x-admin-token to reach the admin route handlers.
-    // The middleware does NOT validate the token; the route handler's `requireAdmin()` will strictly validate it.
+  } else if (pathname.startsWith("/api/admin/") && (req.headers.has("x-admin-token") || (req.headers.get("authorization") ?? "").trim().toLowerCase().startsWith("bearer "))) {
+    // Allow unauthenticated requests with an x-admin-token or bearer token to reach the admin route handlers.
+    // The middleware does NOT validate the token; the route handler's `requireAdmin()` or custom auth (like verifySecuritiesImportToken) will strictly validate it.
   } else {
     // No verified identity and auth is configured (or armed) → FAIL CLOSED.
     return withSecurityHeaders(
