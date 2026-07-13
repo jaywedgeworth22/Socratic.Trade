@@ -55,3 +55,18 @@ Addressed the final 4 unresolved Codex review threads (3 P1, 1 P2):
 - `src/lib/db.ts` — Deduplication logic in migration v21
 
 Verification: `npm test` → 350 suites/3933 tests passed, `npm run build` → clean, 0 errors.
+
+### Round 5 (2026-07-13)
+Final Codex review pass (6 remaining threads after Round 4). Addressed 4 of 6:
+
+- **Don't synthesize cancellations for uncanceled rows (P1)** — `order-replacement.ts`: In the reconstruction path, when a `cancel_requested` row has no `cancel_result`, we no longer reconstruct the order as `state: "canceled"` (which would skip the broker cancel and place a market replacement). Instead the row is marked `aborted` — we can't safely proceed without knowing the order's fate (it may have filled, expired, or still exist at the broker).
+- **Reflect active replacement blockers in the client (P2)** — `danger.tsx`: Added `activeReplacements` to the client-side `DeletionBlockers` type, `blockerCount` sum, and warning text so the deletion preview UI is consistent with the server's blocker check.
+- **Make replacement fill insertion idempotent (P2)** — `order-replacement.ts`: The direct `insertFillEvent` call after `placeEquityOrder` success now checks for an existing fill (`SELECT 1 ... WHERE user_id/account_number/broker_order_id`) before inserting, preventing double-booking in multi-process deployments where the reconciliation branch may have already recorded the fill.
+- **Honor auto-remediation opt-out for queued rows (P2)** — `order-replacement.ts`: When `autoRemediateStaleExits` is toggled off after `cancel_requested` rows exist, the pump now aborts those rows (cancel not yet attempted) rather than continuing to process them.
+- **2 remaining threads asked maintainer**: Migration 21 dedup strategy (keep most advanced state not earliest rowid) and separate claim state (new state between cancel_confirmed and replacement_submitted). Both architecturally significant — posted PR comments rather than guessing.
+
+### Files changed (Round 5)
+- `src/lib/order-replacement.ts` — Reconstruction guard for uncanceled rows, idempotent fill check, auto-remediation opt-out skip
+- `app/console/settings/danger.tsx` — Added activeReplacements to client blockers
+
+Verification: `npm test` → 350 suites/3934 tests passed, `npm run build` → clean, 0 errors.

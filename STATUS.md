@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Claude, branch `agent/ag-safety-exit-replacement`)
+
+Addressed 4 of the final 6 unresolved Codex threads from PR #1492 (2 P1, 2 P2), asked about 2 remaining:
+
+1. **Don't synthesize cancellations for uncanceled rows (P1)** — `order-replacement.ts`: In the reconstruction path, when a `cancel_requested` row has no `cancel_result`, abort the row instead of reconstructing as `state: "canceled"` — reconstructing would skip the broker cancel and place a market replacement without knowing the order's actual fate.
+2. **Reflect active replacement blockers in the client (P2)** — `danger.tsx`: Added `activeReplacements` to the client-side `DeletionBlockers` type, `blockerCount`, and warning banner text.
+3. **Make replacement fill insertion idempotent (P2)** — `order-replacement.ts`: Check for existing fill by `(user_id, account_number, broker_order_id)` before inserting, preventing double-booking in multi-process deployments.
+4. **Honor auto-remediation opt-out for queued rows (P2)** — `order-replacement.ts`: When `autoRemediateStaleExits` is off, the pump aborts `cancel_requested` rows that haven't had a cancel attempted.
+5. **Asked maintainer about 2 remaining items**: Migration 21 dedup (keep by state progress not rowid) and separate claim state (new state between cancel_confirmed and replacement_submitted).
+
+All gates pass: tsc clean, 350 suites/3934 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
+Auto-merge enabled. Deployed on next push.
+
 ## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 4 (Claude, branch `agent/ag-safety-exit-replacement`)
 
 Addressed 4 remaining Codex review threads (3 P1, 1 P2) from the final reviews on PR #1492:
