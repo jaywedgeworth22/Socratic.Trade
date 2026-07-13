@@ -27,6 +27,11 @@ Comprehensively unified the path-based admin pages into a single cohesive consol
 ## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
 
 Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes, ensuring 100% compliance with Pinecone's ID constraints. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
+## 2026-07-13 — Red Team Fallover, UI updates, and Episodic Memory defensive fix (Antigravity, branch `agent/ag-red-team-fallback`)
+
+Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. 
+
+Also added critical defensive safeguards in `src/lib/strategy.ts` for the episodic decision memory retrieval block to prevent a minified server crash (`TypeError: a.filter is not a function`) when the `injected` array is undefined or unaligned. Verified with tsc, lint, tests, and build. Next step: land.
 ## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Claude, branch `agent/ag-safety-exit-replacement`)
 
 Addressed 4 of the final 6 unresolved Codex threads from PR #1492 (2 P1, 2 P2), asked about 2 remaining:

@@ -295,6 +295,100 @@ function SeatEffortSelect({
   );
 }
 
+function FallbackModelSelect({
+  id,
+  value,
+  onChange,
+  onCommit,
+  disabled
+}: {
+  id: string;
+  value: string;
+  onChange: (val: string) => void;
+  onCommit: () => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const onCommitRef = useRef(onCommit);
+  useEffect(() => {
+    onCommitRef.current = onCommit;
+  }, [onCommit]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen((currentOpen) => {
+          if (currentOpen) {
+            onCommitRef.current();
+          }
+          return false;
+        });
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedSet = new Set(value.split(",").map(s => s.trim()).filter(Boolean));
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <TextInput
+        id={id}
+        value={value}
+        placeholder="e.g. gpt-4o, claude-3-5-sonnet-20240620"
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            setOpen(false);
+            onCommitRef.current();
+          }
+        }}
+        disabled={disabled}
+        autoComplete="off"
+      />
+      {open && (
+        <div className="absolute z-10 mt-1 w-full max-h-64 overflow-auto rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] shadow-lg py-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-text)]">
+          {CURATED_LLM_MODEL_GROUPS.map((group) => (
+            <div key={group.label}>
+              <div className="px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] bg-[color:var(--con-surface-2)]">
+                {group.label}
+              </div>
+              {group.options.map((opt) => {
+                const checked = selectedSet.has(opt.value);
+                return (
+                  <label
+                    key={opt.value}
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-[color:var(--con-surface-2)] cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const nextSet = new Set(selectedSet);
+                        if (e.target.checked) {
+                          nextSet.add(opt.value);
+                        } else {
+                          nextSet.delete(opt.value);
+                        }
+                        onChange(Array.from(nextSet).join(", "));
+                      }}
+                      className="rounded border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] text-[color:var(--con-accent)]"
+                    />
+                    <span>{opt.value}</span>
+                  </label>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Copy for a rotating seat, where the manual effort control is deliberately hidden. Matches the
  *  server behavior in src/lib/model-rotation.ts (recommendedReasoningEffortForModel). */
 function RotationEffortNote() {
@@ -324,7 +418,9 @@ function AccountScopedStrategyPage() {
   const [localProposerModel, setLocalProposerModel] = useState<string | null>(null);
   const [localRedTeamModel, setLocalRedTeamModel] = useState<string | null>(null);
   const [localFallbackModels, setLocalFallbackModels] = useState<string | null>(null);
+  const [localRedTeamFallbackModels, setLocalRedTeamFallbackModels] = useState<string | null>(null);
   const autoSaveFallback = useAutoSave();
+  const autoSaveRedTeamFallback = useAutoSave();
   // Per-team reasoning overlays (per-team split 2026-07-10). Proposer: plain optimistic value —
   // llmReasoningEffort always resolves (it has a "medium" default). Reviewer: "cleared" = an
   // optimistic explicit-unset (the "Same as Green Team" option) awaiting the server round-trip;
@@ -502,6 +598,17 @@ function AccountScopedStrategyPage() {
     });
   };
 
+  const commitRedTeamFallbackModels = () => {
+    if (localRedTeamFallbackModels === null) return;
+    const array = localRedTeamFallbackModels.split(",").map(s => s.trim()).filter(Boolean);
+    const prevArray = policy.redTeamFallbackModels || [];
+    if (array.join(",") === prevArray.join(",")) return;
+    autoSaveRedTeamFallback.save(() => savePolicy({ redTeamFallbackModels: array }).then(() => refresh()), {
+      onError: () => setLocalRedTeamFallbackModels(prevArray.join(", ")),
+      errorTitle: "Red Team fallback models not saved"
+    });
+  };
+
   // Scoring weights: one factor per blur, skip the write if unchanged from the saved value.
   const commitWeight = (key: keyof ScoringWeights, next: number, saved: number) => {
     if (next === saved) return;
@@ -670,24 +777,41 @@ function AccountScopedStrategyPage() {
           </div>
         </div>
 
-        <div className="mt-4 pt-4 border-t border-[color:var(--con-line)]">
+        <div className="mt-4 pt-4 border-t border-[color:var(--con-line)] grid gap-4 sm:grid-cols-2">
           <Field
             label="Green Team Fallback Models"
-            hint="Comma-separated model IDs. If the primary Green Team model hits a transient error (e.g. rate limit, timeout), these models are tried in order. Does not apply to the Red Team."
+            hint="Models tried in order if the primary Green Team model hits a transient error (e.g. rate limit, timeout)."
             htmlFor="llm-fallback-models"
           >
-            <div className="flex items-center gap-3">
+            <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
-                <TextInput
+                <FallbackModelSelect
                   id="llm-fallback-models"
                   value={localFallbackModels ?? (policy.llmFallbackModels || []).join(", ")}
-                  placeholder="e.g. gpt-4o, claude-3-5-sonnet-20240620"
-                  onChange={(e) => setLocalFallbackModels(e.target.value)}
-                  onBlur={commitFallbackModels}
+                  onChange={(val) => setLocalFallbackModels(val)}
+                  onCommit={commitFallbackModels}
                   disabled={autoSaveFallback.saving}
                 />
               </div>
               <SaveStatus status={autoSaveFallback.status} />
+            </div>
+          </Field>
+          <Field
+            label="Red Team Fallback Models"
+            hint="Models tried in order if the primary Red Team model hits a transient error (e.g. rate limit, timeout)."
+            htmlFor="rt-fallback-models"
+          >
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <FallbackModelSelect
+                  id="rt-fallback-models"
+                  value={localRedTeamFallbackModels ?? (policy.redTeamFallbackModels || []).join(", ")}
+                  onChange={(val) => setLocalRedTeamFallbackModels(val)}
+                  onCommit={commitRedTeamFallbackModels}
+                  disabled={autoSaveRedTeamFallback.saving}
+                />
+              </div>
+              <SaveStatus status={autoSaveRedTeamFallback.status} />
             </div>
           </Field>
         </div>
@@ -701,17 +825,17 @@ function AccountScopedStrategyPage() {
             </div>
           </div>
         )}
-        {rotationSelected && (
-          <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-            Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
-            audited). Every proposal records the concrete model that wrote it, so per-model history accrues
-            automatically. Intended for paper/test accounts.
-          </div>
-        )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
           Green Team: {modelProviderLabel(proposerModel)}. Red Team: {modelProviderLabel(redTeamModel)}.
           {" "}
           {reasoningSummary(reasoningControl)}
+          {rotationSelected && (
+            <span className="block mt-2 pt-2 border-t border-[color:var(--con-line)]">
+              Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
+              audited). Every proposal records the concrete model that wrote it, so per-model history accrues
+              automatically.
+            </span>
+          )}
         </div>
       </Card>
       </div>
