@@ -71,32 +71,39 @@ function getConfigurationSummary() {
   //                   WEB_SOURCE_SEC8K_FULL_BODY → off
   //   disclosure-rag.ts: RAG_EMBED_DISCLOSURES → false
   return {
-    RAG_INGEST_BUDGET_ENABLED: process.env.RAG_INGEST_BUDGET_ENABLED
-      ? `${envFlagOn("RAG_INGEST_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_INGEST_BUDGET_ENABLED})`
-      : "on (default)",
-    RAG_INGEST_MAX_TEXTS_PER_DAY: process.env.RAG_INGEST_MAX_TEXTS_PER_DAY
-      ? `${numericEnv("RAG_INGEST_MAX_TEXTS_PER_DAY", 1_000_000, 1).toLocaleString()}  (raw env: ${process.env.RAG_INGEST_MAX_TEXTS_PER_DAY})`
-      : "1,000,000 (default)",
-    RAG_PINECONE_WRITE_BUDGET_ENABLED: process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED
-      ? `${envFlagOn("RAG_PINECONE_WRITE_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED})`
-      : "on (default)",
-    RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY: process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY
-      ? `${numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", 10_000_000, 1).toLocaleString()}  (raw env: ${process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY})`
-      : "10,000,000 (default)",
-    VECTOR_STORECONTEXTS_DEDUP: process.env.VECTOR_STORECONTEXTS_DEDUP
-      ? `${envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true) ? "on" : "off"}  (env: ${process.env.VECTOR_STORECONTEXTS_DEDUP})`
-      : "on (default)",
-    SEC_FILING_RAG_MAX_PER_RUN: process.env.SEC_FILING_RAG_MAX_PER_RUN
-      ?? "1 (free-tier default, 200 paid)",
-    SEC_FILING_INGEST_TTL_HOURS: process.env.SEC_FILING_INGEST_TTL_HOURS
-      ?? "168 (default, 7 days)",
-    WEB_SOURCE_SEC8K_RAG_LIMIT: process.env.WEB_SOURCE_SEC8K_RAG_LIMIT
-      ?? `${eightKRagLimit()} (default)`,
-    WEB_SOURCE_SEC8K_FULL_BODY: process.env.WEB_SOURCE_SEC8K_FULL_BODY
-      ?? "off (default)",
-    RAG_EMBED_DISCLOSURES: process.env.RAG_EMBED_DISCLOSURES
-      ? `${disclosureRagEnabled() ? "on" : "off"}  (env: ${process.env.RAG_EMBED_DISCLOSURES})`
-      : "off (default)"
+    // Use == null (not truthiness) so that a blank env var (e.g. RAG_INGEST_MAX_TEXTS_PER_DAY=)
+    // is NOT treated as "unset" — it goes through the resolver, which parses and clamps
+    // to match what the ingest path actually uses.
+    RAG_INGEST_BUDGET_ENABLED: process.env.RAG_INGEST_BUDGET_ENABLED == null
+      ? "on (default)"
+      : `${envFlagOn("RAG_INGEST_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_INGEST_BUDGET_ENABLED})`,
+    RAG_INGEST_MAX_TEXTS_PER_DAY: process.env.RAG_INGEST_MAX_TEXTS_PER_DAY == null
+      ? "1,000,000 (default)"
+      : `${numericEnv("RAG_INGEST_MAX_TEXTS_PER_DAY", 1_000_000, 1).toLocaleString()}  (raw env: "${process.env.RAG_INGEST_MAX_TEXTS_PER_DAY}")`,
+    RAG_PINECONE_WRITE_BUDGET_ENABLED: process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED == null
+      ? "on (default)"
+      : `${envFlagOn("RAG_PINECONE_WRITE_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED})`,
+    RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY: process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY == null
+      ? "10,000,000 (default)"
+      : `${numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", 10_000_000, 1).toLocaleString()}  (raw env: "${process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY}")`,
+    VECTOR_STORECONTEXTS_DEDUP: process.env.VECTOR_STORECONTEXTS_DEDUP == null
+      ? "on (default)"
+      : `${envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true) ? "on" : "off"}  (env: ${process.env.VECTOR_STORECONTEXTS_DEDUP})`,
+    SEC_FILING_RAG_MAX_PER_RUN: process.env.SEC_FILING_RAG_MAX_PER_RUN == null
+      ? "1 (free-tier default, 200 paid)"
+      : `${numericEnv("SEC_FILING_RAG_MAX_PER_RUN", 1, 1).toLocaleString()}  (raw env: "${process.env.SEC_FILING_RAG_MAX_PER_RUN}")`,
+    SEC_FILING_INGEST_TTL_HOURS: process.env.SEC_FILING_INGEST_TTL_HOURS == null
+      ? "168 (default, 7 days)"
+      : `${numericEnv("SEC_FILING_INGEST_TTL_HOURS", 168, 1).toLocaleString()} h  (raw env: "${process.env.SEC_FILING_INGEST_TTL_HOURS}")`,
+    WEB_SOURCE_SEC8K_RAG_LIMIT: process.env.WEB_SOURCE_SEC8K_RAG_LIMIT == null
+      ? `${eightKRagLimit()} (default)`
+      : `${process.env.WEB_SOURCE_SEC8K_RAG_LIMIT} (raw)`,
+    WEB_SOURCE_SEC8K_FULL_BODY: process.env.WEB_SOURCE_SEC8K_FULL_BODY == null
+      ? "off (default)"
+      : `${process.env.WEB_SOURCE_SEC8K_FULL_BODY} (raw)`,
+    RAG_EMBED_DISCLOSURES: process.env.RAG_EMBED_DISCLOSURES == null
+      ? "off (default)"
+      : `${disclosureRagEnabled() ? "on" : "off"}  (raw env: "${process.env.RAG_EMBED_DISCLOSURES}")`
   };
 }
 

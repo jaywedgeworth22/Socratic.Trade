@@ -241,19 +241,30 @@ export const SCAN_COLUMNS: ScanColumn[] = [
         <div className="flex flex-col">
           <SignedText value={q.senateTrades}>{q.senateTrades > 0 ? `+${q.senateTrades}` : String(q.senateTrades)}</SignedText>
           {q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 && (
-            <span className="text-[10px] text-muted-foreground whitespace-nowrap">Score: {q.congressCompositeScore}</span>
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+              Score: {q.congressCompositeSignedScore ?? q.congressCompositeScore}
+            </span>
           )}
         </div>
+      ) : q.congressCompositeScore !== undefined && q.congressCompositeScore > 0 ? (
+        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+          {q.congressCompositeDirection === "SELL" ? "SELL" : "BUY"} · {q.congressCompositeSignedScore ?? q.congressCompositeScore}
+        </span>
       ) : (
         <Dash />
       ),
     cellTitle: (q) => {
-      if (typeof q.senateTrades !== "number") return "No recent congressional disclosures for this symbol.";
-      const header = `Net congressional activity ${q.senateTrades > 0 ? "+" : ""}${q.senateTrades} (distinct members buying minus selling, ~60 days).`;
-      const scoreNote = q.congressCompositeScore ? `Composite Score: ${q.congressCompositeScore} (Conviction, Consensus, Skill, Flow, Freshness)` : undefined;
-      const bulletins = q.evidenceBulletins?.length ? q.evidenceBulletins.join("\n") : undefined;
-      const source = q.sources?.senateTrades ? `Source: ${friendlySource(q.sources.senateTrades)}` : undefined;
-      return [header, scoreNote, bulletins, source].filter(Boolean).join("\n");
+      if (typeof q.senateTrades === "number") {
+        const header = `Net congressional activity ${q.senateTrades > 0 ? "+" : ""}${q.senateTrades} (distinct members buying minus selling, ~60 days).`;
+        const scoreNote = q.congressCompositeScore ? `Composite Score: ${q.congressCompositeSignedScore ?? q.congressCompositeScore} (Conviction, Consensus, Skill, Flow, Freshness)` : undefined;
+        const bulletins = q.evidenceBulletins?.length ? q.evidenceBulletins.join("\n") : undefined;
+        const source = q.sources?.senateTrades ? `Source: ${friendlySource(q.sources.senateTrades)}` : undefined;
+        return [header, scoreNote, bulletins, source].filter(Boolean).join("\n");
+      }
+      if (q.congressCompositeScore) {
+        return `Congress composite score: ${q.congressCompositeSignedScore ?? q.congressCompositeScore} (${q.congressCompositeDirection === "SELL" ? "SELL signal" : q.congressCompositeDirection === "BUY" ? "BUY signal" : "NEUTRAL"} — Conviction, Consensus, Skill, Flow, Freshness). No individual trade disclosures available.`;
+      }
+      return "No recent congressional disclosures for this symbol.";
     }
   },
   {
