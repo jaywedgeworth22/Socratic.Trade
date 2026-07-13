@@ -471,6 +471,18 @@ async function refreshFilingBodiesUnlocked(
 
   await runRateLimited(symbols, CIK_POLITE_DELAY_MS, async (symbol) => {
     throwIfOperationLeaseCancelled(operationLeaseSignal);
+
+    // Ingest fundamentals card first (uses local cache or provider API cascade).
+    try {
+      const fundResult = await ingestFundamentalsCard(symbol, "local");
+      if (fundResult.error) {
+        result.errors.push(`ingestFundamentalsCard(${symbol}): ${fundResult.error}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      result.errors.push(`ingestFundamentalsCard(${symbol}) threw: ${msg}`);
+    }
+
     const cik = tickerToCik[symbol];
     if (!cik) return; // symbol not in CIK map — skip silently
     try {
@@ -528,3 +540,97 @@ async function refreshFilingBodiesUnlocked(
   audit("sec_filing_refresh", { symbols: symbols.length, ...result, freeTier, forced: Boolean(opts?.force) });
   return result;
 }
+
+// ── Blended Fundamentals Profile Card Ingest ──────────────────────────────────
+
+function fmt(val: any, suffix = ""): string {
+  if (val == null || (typeof val === "number" && !Number.isFinite(val))) return "N/A";
+  if (typeof val === "number") {
+    return `${val.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix}`;
+  }
+  return `${val}${suffix}`;
+}
+
+export function buildFundamentalsContext(symbol: string, data: any): string {
+  const name = data.companyName ? ` (${data.companyName})` : "";
+  const capStr = data.marketCap != null && Number.isFinite(data.marketCap)
+    ? `$${(data.marketCap / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 })}B`
+    : "N/A";
+
+  return [
+    `Blended Corporate Fundamentals and Profile for ${symbol}${name}.`,
+    `Sector: ${fmt(data.sector)}. Industry: ${fmt(data.industry)}.`,
+    `Market Cap: ${capStr}. Current Share Price: ${fmt(data.price, " USD")}.`,
+    `P/E Ratio: ${fmt(data.peRatio)}. P/B Ratio: ${fmt(data.pbRatio)}. EPS (TTM): ${fmt(data.eps, " USD")}.`,
+    `FCF Yield: ${fmt(data.fcfYield, "%")}. Debt-to-Equity: ${fmt(data.debtToEquity)}.`,
+    `ROE: ${fmt(data.returnOnEquity, "%")}. ROA: ${fmt(data.returnOnAssets, "%")}.`,
+    `Gross Margin: ${fmt(data.grossProfitMargin, "%")}. Free Cash Flow Yield: ${fmt(data.freeCashFlowYield, "%")}.`,
+    `Revenue Growth (YoY): ${fmt(data.revenueGrowth, "%")}. EPS Growth (YoY): ${fmt(data.epsGrowth, "%")}.`,
+    `Short Interest (% of Float): ${fmt(data.shortPercentOfFloat, "%")}.`,
+    `Analyst Consensus Rating: ${fmt(data.analystRating)} (Consensus Score: ${fmt(data.analystScore)}/100).`,
+    `Days to Next Earnings: ${fmt(data.daysToEarnings)}. Institutional Ownership: ${fmt(data.institutionOwnershipPct, "%")}.`,
+    `Dividend Yield: ${fmt(data.dividendYield, "%")}. Beta: ${fmt(data.beta)}.`,
+    `As of: ${data.asOf || new Date().toISOString().slice(0, 10)}.`,
+    `Source: blended-fundamentals-enrichment.`,
+    `Use this for corporate profile, valuation ranges, capital structure, and growth trends.`,
+  ].join("\n");
+}
+
+export async function ingestFundamentalsCard(
+  symbol: string,
+  userId: string = "local"
+): Promise<{ skipped: boolean; error?: string }> {
+  try {
+    const { getEnrichmentProvider } = await import("../data-providers");
+    const { storeContexts } = await import("../vector-db");
+
+    const provider = getEnrichmentProvider(userId);
+    const enriched = await provider.enrich([symbol]);
+    const data = enriched[symbol];
+    if (!data) {
+      return { skipped: true, error: `No enrichment data found for symbol: ${symbol}` };
+    }
+
+    const text = buildFundamentalsContext(symbol, data);
+    const publishedAt = data.asOf || new Date().toISOString().slice(0, 10);
+    const acceptanceDatetime = new Date().toISOString();
+
+    const result = await storeContexts(
+      [
+        {
+          text,
+          metadata: {
+            symbol,
+            source: "blended-fundamentals",
+            timestamp: publishedAt,
+            accession: `${symbol}:fundamentals:${publishedAt}`,
+            acceptance_datetime: acceptanceDatetime,
+            section: "Fundamentals",
+            doc_type: "fundamentals",
+            ticker: [symbol]
+          }
+        }
+      ],
+      userId,
+      { dedupKeyPrefix: "fundamentals" }
+    );
+
+    if (result.error) {
+      return { skipped: false, error: result.error };
+    }
+
+    const skipped = result.indexed === 0;
+    audit("fundamentals_card_ingest", {
+      symbol,
+      asOf: publishedAt,
+      indexed: result.indexed,
+      skipped
+    });
+
+    return { skipped };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { skipped: false, error };
+  }
+}
+
