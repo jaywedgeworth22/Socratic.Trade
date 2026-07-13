@@ -42,6 +42,36 @@ const CENTER_WORDMARK_STEP: boolean = false;
 let introStart: number | null = null;
 let introDone = false;
 let MODEL: Model | null = null;
+
+// Cross-session cache of the real header logo's measured TOP (viewport px), one
+// value per breakpoint bucket ("d" = >=lg desktop bar, "m" = <lg mobile brand row).
+// The real logo's y depends on whether a RealityBanner (~32px, non-live accounts)
+// sits above the bar — and that is unknowable while the console is still on its
+// loading screen (no snapshot => no banner => the bar isn't even mounted yet). So
+// on a first-ever visit the fallback can only guess the no-banner offset; but once
+// the intro has landed on the real logo even once, we remember its top and prime
+// the fallback with it next time, so the wordmark assembles exactly where it ends
+// up (no "assemble high, then drop when the page loads"). localStorage (not
+// session) so it survives across the new tab/session that actually replays the
+// intro. Stale entries (account switched live<->paper) self-heal: the per-frame
+// re-measure glides to the real logo and re-caches. Clamped to a sane range.
+const HDR_Y_KEY = "st.introHdrY";
+function readCachedHeaderTop(bucket: "d" | "m"): number | undefined {
+  try {
+    const raw = localStorage.getItem(HDR_Y_KEY);
+    if (!raw) return undefined;
+    const v = (JSON.parse(raw) as Record<string, unknown>)?.[bucket];
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 400 ? v : undefined;
+  } catch { return undefined; }
+}
+function writeCachedHeaderTop(bucket: "d" | "m", y: number) {
+  try {
+    const raw = localStorage.getItem(HDR_Y_KEY);
+    const o = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    o[bucket] = Math.round(y);
+    localStorage.setItem(HDR_Y_KEY, JSON.stringify(o));
+  } catch { /* ignore */ }
+}
 // The eased landing box, persisted at module scope so a loading->loaded remount
 // (which re-runs the effect) does NOT reset it to null and SNAP to the newly
 // mounted real logo — it keeps easing smoothly from wherever the candles were.
@@ -135,17 +165,22 @@ function buildModel(): Model {
     // Fallback header box, used until the real logo can be measured (the shell may
     // still be on its loading screen for the whole flight — owner hit this on prod).
     // It must match the REAL landing target's geometry per viewport so a late mount
-    // is a small glide, not a size pop:
+    // is a small glide, not a jump. x/w follow the real logo's responsive formula;
+    // the TOP (y) is primed from the cross-session cache (the real logo's last
+    // measured top, which already includes any RealityBanner offset) and falls back
+    // to the no-banner WITHIN-bar offset when we've never measured it:
     //  - <lg (1024): the MobileBrandRow wordmark — SAME height formula as shell.tsx
-    //    (clamp(16..34, 88% of width / WORDMARK_AR)), centered near the top.
+    //    (clamp(16..34, 88% of width / WORDMARK_AR)), centered in its rowH=logoH+20
+    //    row => 10px below the bar top when no banner.
     //  - >=lg: the bar HeaderLogo — 18px tall at the left edge of the centered
-    //    max-w-[1400px] px-4 bar (y ~= py-2 + half the 32px control row).
+    //    max-w-[1400px] px-4 bar; the ~43px control row centers the 18px logo at
+    //    ~20px below the bar top when no banner (py-2 + (43-18)/2).
     let header: Layout["header"];
     if (vw < 1024) {
       const lh = Math.max(16, Math.min(34, Math.round((vw * 0.88) / WORDMARK_AR)));
-      header = { x: (vw - lh * HEADER_AR) / 2, y: 10, w: lh * HEADER_AR, h: lh };
+      header = { x: (vw - lh * HEADER_AR) / 2, y: readCachedHeaderTop("m") ?? 10, w: lh * HEADER_AR, h: lh };
     } else {
-      header = { x: Math.max(16, (vw - 1400) / 2 + 16), y: 15, w: 18 * HEADER_AR, h: 18 };
+      header = { x: Math.max(16, (vw - 1400) / 2 + 16), y: readCachedHeaderTop("d") ?? 20, w: 18 * HEADER_AR, h: 18 };
     }
     return {
       portrait, stackW, stackH, stackX: (vw - stackW) / 2, stackY: (vh - stackH) * 0.46,
@@ -288,6 +323,9 @@ export function ConsoleIntro() {
     // that mounts mid-flight or post-landing (slow first load) glides the
     // wordmark into place — and survives the loading->loaded remount.
     let lastNow: number | null = null;
+    // Last real-logo top written to the cross-session cache (rounded px); avoids a
+    // localStorage write every frame — only persist when the measured top changes.
+    let cachedWriteY = -1;
     // While the page is still loading there's no logo to hand off to, so the
     // ticking wordmark simply stays up — it doubles as branded loading chrome
     // (the overlay is transparent after LIFT, so the loading/error screen shows
@@ -312,6 +350,13 @@ export function ConsoleIntro() {
       // logo is found, so this stays safe before the top bar has mounted.
       measureHeader();
       const target = headerBox ?? L.header; // real logo box, else viewport-matched fallback
+      // Persist the real logo's top so the NEXT intro (a fresh tab/session) primes its
+      // fallback with it and assembles the wordmark exactly where it ends up — including
+      // any RealityBanner offset the loading screen can't know in advance.
+      if (headerBox) {
+        const ry = Math.round(headerBox.y);
+        if (ry !== cachedWriteY) { cachedWriteY = ry; writeCachedHeaderTop(VW < 1024 ? "m" : "d", ry); }
+      }
       let cur: { x: number; y: number; w: number; h: number };
       if (introCurHeader) {
         const a = 1 - Math.exp(-dt * 10);

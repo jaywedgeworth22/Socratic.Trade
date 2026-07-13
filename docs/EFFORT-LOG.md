@@ -232,6 +232,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Infisical Secrets and Machine Identity Audit (AG, branch `agent/ag-infisical-sole-truth-audit`) — COMPLETED 2026-07-13.** Audited Coolify environment variables against local Universal Auth machine identities. Migrated remaining operational configurations (`DB_BOOTSTRAP`, `NODE_ENV`, `REQUIRE_SECRETS_MANAGER`) and Alpaca streams (`STREAMS_ALPACA_*`, `TRIGGER_ENGINE`) to Infisical, establishing it as the absolute, 100% sole source of truth. Cleaned redundant variables from Coolify. Triggered redeploy. Rollout: docs/rollouts/2026-07-13-infisical-secrets-audit.md.
 - **GPT-5.6 Model Benchmark (AG, branch `agent/ag-gpt-5-6-benchmark`) — COMPLETED 2026-07-13.** Ran the benchmark suite for the newly introduced `gpt-5.6-terra`, `-sol`, and `-luna` models. Successfully recorded median latency (e.g. `gpt-5.6-terra` 3.8s Green / 2.3s Red) and cost estimates for each tier using the production strategy schemas. Appended results to `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`.
 - **Raise RAG Ingestion Limits and Deepen Filing Lookback (AG, branch `agent/antigravity`) — COMPLETED 2026-07-12.** Raised `RAG_INGEST_MAX_TEXTS_PER_DAY` to 1M and `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` to 10M to allow massive ingestion. Deepened historical 10-K/10-Q filing lookback to 10 each per ticker, raised `DEFAULT_PAID_MAX_FILINGS_PER_RUN` to 200, and added a `clearCache` option to `/api/admin/reindex-10k` to reset SQLite caches. **Also added a deterministic Fundamentals Profile Card ingestion pipeline (blended from FMP/Yahoo/Finnhub metrics) to Pinecone with content-hash deduplication.** Rollout: `docs/rollouts/2026-07-12-fundamentals-card-rag-ingest.md`.
 - **SEC/RAG 1,000-Stock Backfill: P0 — Truth and Census (Antigravity/AG, branch `agent/ag-rag-backfill-p0`) — COMPLETED 2026-07-13.** Reconciled `.env.example` RAG/Pinecone budget configuration. Wrote `scripts/eval/rag-census.ts` for authenticated vector census and database parity check. Created `scripts/eval/generate-universe-manifest.ts` to generate and freeze the 1,000-CIK universe manifest in `data/rag-universe-manifest.json` prioritizing traded history and index members. Passed all lints, typechecks, and 3,927 tests. Ready to push and merge. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p0.md`.
@@ -572,14 +573,26 @@ As of 2026-07-08 (assignment-rule update).
   `app/console/page.tsx`. Merged latest `origin/main` (incl. Tradier broker #1425) clean 2026-07-11;
   full gate green (tsc 0, lint 0 errors, **3745 tests pass**, build exit 0). All 11 Codex review threads
   resolved. Awaiting CI + owner merge. See `docs/rollouts/2026-07-07-global-learning-and-batched-review.md`.
+- **Intro wordmark height/banner-offset fix — desktop drop (CLAUDE cloud, branch
+  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-13, PR pending.** On desktop the intro
+  assembled "SOCRATIC TRADE" ~37px too HIGH, then it dropped when the page loaded. Measured cause:
+  the real logo sits below a `RealityBanner` (~31.75px, shown for non-live/paper/no-account) that the
+  loading screen can't predict (no snapshot yet), plus a desktop within-bar error (control row ~43px,
+  so the logo centers ~20.7px down, not the assumed 15). Fix (`intro-canvas.tsx` only): persist the
+  real logo's measured top to `localStorage` per breakpoint and prime `layout()`'s fallback `y` from
+  it, so a returning session assembles the wordmark exactly where it ends up (no drop); cold default
+  corrected 15→20; every-frame tracking self-heals a stale cache. Empirically verified in Chromium
+  (primed cache → assembly at real bar level ~51 vs real 52). Gate green (tsc 0, lint 0 errors, 3927
+  tests pass, build exit 0). Independent multi-agent design review converged on the same approach.
+  See `docs/rollouts/2026-07-13-intro-desktop-banner-offset.md`.
 - **Mobile intro-animation size-jerk fix (CLAUDE cloud, branch
-  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-13, PR pending.** On mobile the intro
-  reassembled the "SOCRATIC TRADE" wordmark at a narrow size, then popped larger just before sliding
-  away. Cause: `intro-canvas.tsx` froze the header-logo measurement on first find, but the mobile
-  brand row mounts its logo at a placeholder height and resizes to a width-scaled clamp (up to ~40%
-  taller) — so the landing used the stale small box and the real logo popped in at handoff. Fix:
-  re-measure the real logo every frame so the eased landing tracks its final geometry. Gate green
-  (tsc 0, lint 0 errors, 3927 tests pass, build exit 0). See
+  `claude/socratic-trade-logos-p0hxk7`) — ✅ COMPLETED 2026-07-13: PR #1499 merged to `main` (squash,
+  verify green; auto-deploys to production).** On mobile the intro reassembled the "SOCRATIC TRADE"
+  wordmark at a narrow size, then popped larger just before sliding away. Cause: `intro-canvas.tsx`
+  froze the header-logo measurement on first find, but the mobile brand row mounts its logo at a
+  placeholder height and resizes to a width-scaled clamp (up to ~40% taller) — so the landing used
+  the stale small box and the real logo popped in at handoff. Fix: re-measure the real logo every
+  frame so the eased landing tracks its final geometry. See
   `docs/rollouts/2026-07-13-mobile-intro-size-jerk.md`.
 - **Public auth + paid-route rate-limit hardening (CODEX, branch
   `codex/public-auth-rate-limit-hardening`) — MERGED TO `main` 2026-07-11 at `97152c25`; live deploy not independently verified.** Bounded security batch from
