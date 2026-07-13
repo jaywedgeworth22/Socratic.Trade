@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-13 — SEC/RAG 1,000-Stock Backfill: P0 — Truth and Census (Antigravity/AG, branch `agent/ag-rag-backfill-p0`)
+
+Completed RAG Backfill P0: reconciled `.env.example` configurations, implemented `scripts/eval/rag-census.ts` and `scripts/eval/generate-universe-manifest.ts`, generated the frozen 1,000-CIK manifest `data/rag-universe-manifest.json`, verified lengths and statistics, and passed all tests. Ready for merge and landing. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p0.md`.
+
 ## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 
 Codex review (P2) flagged that the existing 429 Retry-After handling only parses delta-seconds via
