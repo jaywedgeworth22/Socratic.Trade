@@ -16,19 +16,19 @@ export const SIDE_LABEL: Record<string, string> = { buy: "Bought", sell: "Sold",
  *  (proposed, planned, blocked, rejected, error, pending, …). */
 export const SIDE_INTENT: Record<string, string> = { buy: "Buy", sell: "Sell", short: "Short", cover: "Cover" };
 
-/** True only for statuses that mean an order actually reached the broker. The
- *  canonical Socratic status for that is `placed`; the proposal-review path can
- *  also surface raw broker statuses `filled`/`executed`. Everything else
- *  (proposed/planned/blocked/rejected/error/pending/approved/skipped/observed)
- *  means nothing was placed. */
+/** True only for statuses that mean an order actually executed (filled). The
+ *  canonical Socratic status for that is `filled`; the proposal-review path can
+ *  also surface raw broker status `executed`. Everything else
+ *  (proposed/planned/blocked/rejected/error/pending/approved/skipped/observed/placed)
+ *  means nothing was executed yet. */
 export function isExecutedStatus(status: string): boolean {
-  return /^(placed|filled|executed)$/i.test(status);
+  return /^(filled|executed)$/i.test(status);
 }
 
 /** Terminal states where nothing reached the broker — the row must make it
  *  unambiguous that no order was placed. */
 export function isNotPlacedStatus(status: string): boolean {
-  return /^(blocked|rejected|error|failed)$/i.test(status);
+  return /^(blocked|rejected|failed)$/i.test(status);
 }
 
 /** The verb for an autonomous-action row, tense-matched to lifecycle status.
