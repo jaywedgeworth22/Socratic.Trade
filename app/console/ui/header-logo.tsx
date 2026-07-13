@@ -56,7 +56,13 @@ export function HeaderLogo({ height = 18 }: { height?: number }) {
       // wm.ar yields — so the reserved box already equals the final size and the
       // canvas never resizes on mount (a stale ~13.8 guess popped it ~5% narrower,
       // which the landing intro measured and followed: the reported size jump).
-      style={{ display: "block", height: `${height}px`, width: `${Math.round(height * WORDMARK_AR)}px` }}
+      style={{
+        display: "block",
+        height: `${height}px`,
+        width: `${Math.round(height * WORDMARK_AR)}px`,
+        maxWidth: "100%",
+        objectFit: "contain",
+      }}
     />
   );
 }

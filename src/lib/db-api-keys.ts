@@ -739,7 +739,7 @@ export function purgeConnectedAccount(id: string, userId: string = "local"): boo
   const run = database.transaction(() => {
     const result = database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
     if (acct) {
-      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops", "position_stop_plans"]) {
+      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops", "position_stop_plans", "order_replacements"]) {
         database.prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`).run(acct, userId);
       }
     }

@@ -1186,7 +1186,7 @@ export async function runStrategyOnce(
         // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): the episodic pass is
         // cross-symbol, so it gets one PORTFOLIO row rather than a per-symbol one.
         ragRetrievalStatusRows.push({ symbol: "PORTFOLIO", status: episodic.status });
-        if (episodic.injected.length > 0) {
+        if (episodic?.injected && Array.isArray(episodic.injected) && episodic.injected.length > 0) {
           // Run-input persistence: record exactly WHICH analog/coaching vector ids entered this
           // run's prompts (plus the as-of stamp and sketch), so retrieval-usefulness scoring can
           // later join injected ids to this run's realized outcomes. The ids also ride along on
@@ -1197,9 +1197,9 @@ export async function runStrategyOnce(
               runId,
               asOf: episodic.asOf,
               query: episodic.query,
-              analogIds: episodic.injected.filter((ref) => ref.kind === "analog").map((ref) => ref.id),
-              coachingIds: episodic.injected.filter((ref) => ref.kind === "coaching").map((ref) => ref.id),
-              counterexampleIds: episodic.injected.filter((ref) => ref.counterexample).map((ref) => ref.id),
+              analogIds: (episodic.injected || []).filter((ref) => ref?.kind === "analog").map((ref) => ref.id),
+              coachingIds: (episodic.injected || []).filter((ref) => ref?.kind === "coaching").map((ref) => ref.id),
+              counterexampleIds: (episodic.injected || []).filter((ref) => ref?.counterexample).map((ref) => ref.id),
               ...(typeof episodic.topAnalogSimilarity === "number" ? { topAnalogSimilarity: episodic.topAnalogSimilarity } : {})
             },
             userId,

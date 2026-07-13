@@ -163,8 +163,9 @@ export function BrokerAccountsCard() {
     const needsReconnect = rhNeedsReconnect(account);
     return (
       <ListRow key={account.id}>
-        <div className="flex flex-wrap items-center justify-between gap-2 w-full py-1">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex flex-col w-full">
+          <div className="flex flex-wrap items-center justify-between gap-2 w-full py-1">
+            <div className="flex min-w-0 items-center gap-2">
             <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
               {account.label || brokerName(account.broker)}
             </span>
@@ -285,6 +286,7 @@ export function BrokerAccountsCard() {
             </Chip>
           )}
         </div>
+        </div>
       </ListRow>
     );
   };
@@ -293,7 +295,7 @@ export function BrokerAccountsCard() {
     <ListSection
       title="Broker connections"
       action={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 max-w-full">
           <Btn
             size="sm"
             variant="outline"

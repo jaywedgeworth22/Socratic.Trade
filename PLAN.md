@@ -10,8 +10,9 @@
 > product Test Account and purge its simulated outcomes, while retaining real broker paper accounts
 > only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
 > effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
-> custom IDs. Implementation is locally complete; current-main reconciliation, the full gate, and a
-> ready PR remain. See `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
+> custom IDs. Implementation and current-main reconciliation are locally complete; post-merge
+> verification, the full gate, and a ready PR remain. See
+> `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
 > `docs/rollouts/2026-07-13-evidence-architecture-gpt56.md`.
 
 ## Codex Audit Wave 0: Base Guardrails
@@ -21,7 +22,11 @@
   - X0.1 Safety Maintenance Coordinator: Run all side-effecting sweeps (fill reconciliation, stale intents, stale exits, synthetic stops) strictly before strategy admission, with strict network deadlines (15s). Ensures side effects execute exactly once per tick and never hang the singleflight guard.
   - X0.2 Draining Fence: Hard pre-placement veto if the account's state is `draining` or `deleted`. Capture `accountNumber` and `policyRevision` onto the `strategy_runs` snapshot.
   *(Completed 2026-07-12)*
-- **[ ] PR 2: X0.3 Exit Replacement State Machine**
+- **[x] PR 2: X0.3 Exit Replacement State Machine**
+  - Migrated limit order market-replacements to a robust, database-backed state machine.
+  - Added original order detail columns (symbol, side, type, quantity, filled quantity) to SQLite schema and reconstructed orders when missing from broker.
+  - Implemented auto-mode-off continuation and full reconciliation/recovery for in-flight `replacement_submitted` rows.
+  *(Completed 2026-07-13)*
 - **[ ] PR 3: X0.4 Strict P&L Fence**
 
 # Improvement Plan - Socratic Trade

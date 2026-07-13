@@ -3,8 +3,8 @@
 Date: 2026-07-13  
 Owner: CODEX  
 Branch: `codex/evidence-architecture-program`  
-State at this checkpoint: local implementation complete; current-main reconciliation and full gate
-pending; not pushed, merged, deployed, or production-verified.
+State at this checkpoint: local implementation and current-main reconciliation complete; post-merge
+verification and a ready PR remain; not pushed, merged, deployed, or production-verified.
 
 ## Summary
 
@@ -158,7 +158,18 @@ Completed before current-main reconciliation:
 - `npx vitest run test/persistence-hardening.test.ts test/connected-accounts-route.test.ts test/model-rotation.test.ts` — 3 files, 41 tests pass.
 - `git diff --check` — pass before documentation edits.
 
-Required final gate after merging current `origin/main`:
+Current-main reconciliation:
+
+- Merged `origin/main` at `1a90281b` and preserved its Red Team fallback chain/UI, defensive episodic
+  retrieval fix, and exit-replacement state machine.
+- Ordered the combined schema migrations as exit replacement 20–22, account-scoped learning 23,
+  and product Test Account purge 24. The purge now removes matching `order_replacements` rows too.
+- Resolved broker settings by retaining generic real-account capability display with no product Test
+  Account special case.
+- `npx tsc --noEmit` — pass after reconciliation.
+- `npx vitest run test/persistence-hardening.test.ts test/connected-accounts-route.test.ts test/model-rotation.test.ts test/strategy-tuning-reviews.test.ts test/chat-injection.test.ts test/source-value.test.ts test/data-providers.test.ts test/red-team.test.ts test/order-replacement.test.ts` — 9 files, 205 tests pass after reconciliation.
+
+Required final gate after reconciliation:
 
 - `npm run lint`
 - `npx tsc --noEmit`
@@ -167,8 +178,8 @@ Required final gate after merging current `origin/main`:
 
 ## Follow-ups / risks
 
-- `origin/main` advanced during implementation with database migrations 20–22 and Red Team fallback
-  UI. This branch reserves migrations 23–24; merge conflicts must be reconciled before final verify.
+- Current `origin/main` is integrated. Re-run migration and Red Team tests after the combined schema
+  and fallback controls before treating the branch as PR-ready.
 - Source/provider recommendation quality starts with priors. Re-adjudicate from account-scoped
   realized outcomes after enough data accrues.
 - Add an operator source-value dashboard only after enough directional outcomes exist.
