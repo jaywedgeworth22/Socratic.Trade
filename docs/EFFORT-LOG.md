@@ -233,6 +233,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Congress.Trade Integration Prep & Middleware Fix (AG, branch `agent/ag-congress-trade-integration`).** **COMPLETED 2026-07-13**. Fixed documentation mismatch in `.env.example` (`CONGRESS_TRADE_AUTOFORWARD` -> `CONGRESS_SHARE_ENABLED`). Documented and verified required Infisical production variables (`CONGRESS_SHARE_ENABLED`, `CONGRESS_TRADE_READS_ENABLED`, `CONGRESS_TRADE_AS_CONGRESS_SOURCE`, `CONGRESS_ANALYTICS_ENABLED`, `CONGRESS_TRADE_FUNDAMENTALS_ENABLED`, `CONGRESS_SHARE_FUNDAMENTALS_ENABLED`, `ENRICHMENT_SHORT_CIRCUIT_ENABLED`, `CONGRESS_STREAM_ENABLED`, `CONGRESS_TRADE_TOKEN`, and subscription credentials). Fixed a production bug in `middleware.ts` where ops/admin webhook endpoints (like `congress-share`) relying on `x-admin-token` were incorrectly returning 401 Unauthorized before reaching their route guards. Addressed local fallback source keys logic for tenants (`db-api-keys.ts`). Landed via `land.sh`.
 - **Unified admin console at admin.socratictrade.com + chunk breakdown details (Antigravity, branch `agent/ag-unified-admin-console`) — COMPLETED 2026-07-13.** Rethink the admin layout into a unified, premium console with shared sidebar navigation and smooth transitions. Redesigned `/admin` page as a live metrics dashboard, and enhanced RAG coverage to show non-filing chunk breakdowns (Fundamentals, Congressional, Insider, Strategy/Coach, etc.) dynamically. Verified with compiler, lint, and all tests passing. Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
 - **Congress.Trade Integration Prep & Middleware Fix (AG, branch `agent/ag-congress-trade-integration`).** **COMPLETED 2026-07-13**. Fixed documentation mismatch in `.env.example` (`CONGRESS_TRADE_AUTOFORWARD` -> `CONGRESS_SHARE_ENABLED`). Flipped all required Infisical production variables to ON using Universal Auth CLI script. Fixed a production bug in `middleware.ts` where ops/admin webhook endpoints (like `congress-share`) relying on `x-admin-token` were incorrectly returning 401 Unauthorized before reaching their route guards. Addressed local fallback source keys logic for tenants (`db-api-keys.ts`). Landed via `land.sh`.
 - **Pinecone Vector ID ASCII Sanitization Fix (AG, branch `agent/ag-pinecone-ascii-id-fix`) — COMPLETED 2026-07-13.** Resolved a Pinecone connection failure caused by non-ASCII characters and special symbols in vector IDs (e.g. non-breaking spaces `\xa0` in filing titles/sections). Implemented `sanitizeVectorId` in `src/lib/vector-db.ts` to clean the IDs and ensure 100% compliance with Pinecone's ASCII constraint. Added unit tests and verified. Rollout: docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md.
@@ -527,6 +528,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+
 - **SEC/RAG 1,000-stock implementation program (CODEX, branch `codex/sec-rag-program`, worktree
   `/Users/jay/.codex/worktrees/socratic-sec-rag-program`, 2026-07-13) — IN PROGRESS / OWNER-DIRECTED
   ALL NINE PACKAGES.** Inherits merged AG baselines #1495 (census/universe), #1496
