@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-13 — GPT-5.6 Benchmark Run (Antigravity, branch `agent/ag-gpt-5-6-benchmark`)
+
+Ran the benchmark suite against the new `gpt-5.6-terra`, `-sol`, and `-luna` models. Confirmed 100% valid schemas for Green and Red roles on `terra` and `luna`. Recorded latency and token usage. Output saved to `docs/benchmarks/2026-07-13-gpt-5-6-benchmark.md`. All verification checks passed. State: **Completed (merged to main)**.
+
 ## 2026-07-12 — Add clearCache option to admin reindex route (Antigravity, branch `ag/troubleshoot-sentry`)
 
 Added a `clearCache: true` option to the `POST /api/admin/reindex-10k` body to truncate local `document_chunks` and `ingested_accessions` tables. This enables a clean backfill of filings into the empty `socratic-trade` Pinecone index without the local cache incorrectly skipping filings. Flipped `WEB_SOURCE_SEC8K_FULL_BODY` to `on` in Infisical so that both summaries and full text are embedded for 8-Ks.
