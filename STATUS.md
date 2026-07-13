@@ -1,5 +1,32 @@
 # Current Status
 
+## 2026-07-13 — [codex-autofix] Fix unhealthy container status check on PR #1533 (agent/ag-unified-admin-console)
+
+Codex review flagged a P2 finding on the admin dashboard: the container health filter used `c.status.includes("healthy")`, which incorrectly matches `"unhealthy"` or `"running:unhealthy"`. Added `&& !s.includes("unhealthy")` guard so degraded containers aren't counted as running.
+
+Verify trio: tsc clean, 350 suites / 3934 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+All 4 remaining unresolved Codex threads resolved. Auto-merge enabled.
+
+## 2026-07-13 — [codex-autofix] Address 3 Codex P2 review findings on PR #1533 (agent/ag-unified-admin-console)
+
+Codex review on the unified admin console PR flagged 3 P2 findings on the dashboard. All 3 addressed:
+
+1. **Surface failed admin probes (P2)**: Added per-probe error tracking (`probeErrors` state) to the `Promise.allSettled` fetch pattern. When a probe fails (rejected or non-2xx), the error message is surfaced on the relevant card instead of silently falling back to healthy defaults like "All Operations Online" or "$0.00".
+2. **Aggregate LLM rows by model (P2)**: The "Cost By Model" list aggregated rows by `(user, provider, context, key_source)` — not by model. Now aggregates client-side by model name before displaying the top 3. Also fixed `slice(0,3)` before `sort()` (wrong order) and `costEstUsd` type mismatch.
+3. **Key connection cards by credential lane (P2)**: Connection card keys and labels now include `keySource` so multi-lane services (e.g. user+env credentials) are correctly reconciled by React and distinguishable to operators.
+
+Verify trio: tsc clean, 350 suites / 3934 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+Auto-merge enabled.
+
+## 2026-07-13 — Unified Operator Admin Console & RAG Chunk Details (Antigravity/AG, branch `agent/ag-unified-admin-console`)
+
+Comprehensively unified the path-based admin pages into a single cohesive console with a shared sidebar layout (`layout.tsx`), redesigned `/admin` page as a live metrics and diagnostics dashboard, and enhanced the RAG coverage page to group and display the counts/sources of all document chunk types (blended fundamentals, disclosures, coach memories) instead of leaving them under "0 filings". Verified with passing lint, compiler, build, and 3,931 vitest tests. Rollout: `docs/rollouts/2026-07-13-unified-admin-console.md`.
+
+## 2026-07-13 — Pinecone Vector ID ASCII Sanitization Fix (Antigravity/AG, branch `agent/ag-pinecone-ascii-id-fix`)
+
+Resolved a Pinecone connection failure (`upsert: Vector ID must be ASCII...`) caused by non-breaking spaces (`\xa0`), spaces, parentheses, and other special characters in constructed `vector_id`s (from SEC filing names, sections, etc.). Implemented a robust `sanitizeVectorId` helper in `src/lib/vector-db.ts` to replace all non-ASCII / special characters with underscores and limit the length to 512 bytes, ensuring 100% compliance with Pinecone's ID constraints. Updated both fresh chunk embedding mappings and chunk occurrences SQLite writes to use this sanitized ID. Added comprehensive unit tests in `test/vector-db.test.ts` to verify the sanitization logic. Ready for landing. Rollout: `docs/rollouts/2026-07-13-pinecone-ascii-id-fix.md`.
 ## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 5 (Claude, branch `agent/ag-safety-exit-replacement`)
 
 Addressed 4 of the final 6 unresolved Codex threads from PR #1492 (2 P1, 2 P2), asked about 2 remaining:
