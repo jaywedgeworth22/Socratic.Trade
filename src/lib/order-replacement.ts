@@ -431,9 +431,6 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         return;
       }
 
-      db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
-        .run(execution.orderId, new Date().toISOString(), row.id);
-
       const source = fillSourceForExecutionMode(executionState);
       const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
       const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
@@ -458,6 +455,11 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
           execution
         }
       });
+
+      // Mark the row terminal AFTER the fill is recorded so a crash between the
+      // status update and fill insertion doesn't leave a terminal row with no fill.
+      db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
+        .run(execution.orderId, new Date().toISOString(), row.id);
 
       audit(
         "order_replace_market",
@@ -496,7 +498,11 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         const fillExists = db.prepare(`SELECT 1 FROM fill_events WHERE broker_order_id = ?`).get(found.id);
         if (!fillExists) {
           const source = fillSourceForExecutionMode(executionState);
-          const fillStatus = found.state === "filled" ? "filled" : "pending_reconciliation";
+          // If averagePrice is missing from a filled order, keep the fill as
+          // pending_reconciliation so normal pending-fill reconciliation can
+          // fill in the price later — a zero-price booked fill would never
+          // be revisited and would skew P&L.
+          const fillStatus = found.state === "filled" && found.averagePrice != null ? "filled" : "pending_reconciliation";
           const rawPrice = found.averagePrice ?? 0;
           const price = isExit ? applyPaperExitCost(rawPrice, originalOrder.side, source) : rawPrice;
           insertFillEvent({
@@ -535,7 +541,9 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         const ageMs = Date.now() - new Date(row.updated_at).getTime();
         if (ageMs > 5 * 60_000) {
           const errStr = "Replacement order submission timed out or failed to reach the broker.";
-          db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+          // Only fail if the row is still in replacement_submitted — a peer may have
+          // already reconciled it to replacement_confirmed.
+          db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status = 'replacement_submitted'`)
             .run(errStr, new Date().toISOString(), row.id);
           audit("stale_exit_replacement_submission_failed", { orderId: originalOrder.id, symbol, refId: row.replacement_ref_id }, userId, input.policy.connectedAccountId);
         }
@@ -560,7 +568,9 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
            .run(e.message, new Date().toISOString(), row.id);
          break;
        default:
-         db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+         // Only fail replacement_submitted rows — if a peer already advanced
+         // this row to replacement_confirmed don't regress it to failed.
+         db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status = 'replacement_submitted'`)
            .run(e.message, new Date().toISOString(), row.id);
      }
   }

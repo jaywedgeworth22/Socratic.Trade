@@ -20,6 +20,18 @@ Addressed 5 remaining P1 findings from Codex review 2 on PR #1492 (commit 32d047
 All gates pass: tsc clean, 350 suites/3930 tests pass, build clean.
 Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
 
+## 2026-07-13 — PR 2 - X0.3 Codex Review Autofixes Round 3 (Claude, branch `agent/ag-safety-exit-replacement`)
+
+Addressed 4 additional Codex findings (2 P1, 2 P2) from the latest review on PR #1492:
+1. **Record fill before terminal confirmation (P1)** — `order-replacement.ts`: Moved the `replacement_confirmed` status update after `insertFillEvent` so a crash or fill-insert failure doesn't leave a terminal row with no fill event.
+2. **Guard submitted-row failure updates with active status (P1)** — `order-replacement.ts`: Both the timeout path and the catch block's default case now filter `WHERE status = 'replacement_submitted'` to prevent a stale or erroneous failure from overwriting a peer's successful reconciliation.
+3. **Avoid booking recovered fills at zero price (P2)** — `order-replacement.ts`: When `averagePrice` is null on a filled broker order during recovery, the fill is kept as `pending_reconciliation` instead of being booked at price 0 with status `filled`, which would skew P&L and never be revisited.
+4. **Purge replacements when deleting a connected account (P2)** — `db-api-keys.ts`: Added `order_replacements` to the account-delete purge table list so replacement rows are cleaned up during connected-account removal.
+5. **Congress share in-flight work keying (P2)** — `congress-share.ts`: Asked the maintainer how to handle the caching (architecturally significant — options differ between admin and scheduler calls).
+
+All gates pass: tsc clean, 350 suites/3930 tests pass, lint 0 errors, build clean.
+Rollout: `docs/rollouts/2026-07-13-exit-replacement-codex-fixes.md`.
+
 ## 2026-07-12 — [codex-autofix] Record 429 rate-limit failures in api_health_log (CLAUDE, PR #1475 `ag/troubleshoot-sentry`)
 
 Codex review (P2) flagged that the existing 429 Retry-After handling only parses delta-seconds via

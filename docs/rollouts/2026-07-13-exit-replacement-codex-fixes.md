@@ -28,3 +28,17 @@ Executed all four required verification steps:
 2. Lint check: `npm run lint` -> Clean, 0 errors, 439 warnings
 3. Test suite: `npm test` -> 350 suites / 3930 tests passed
 4. Production build: `npm run build` -> Clean compile and optimization
+
+### Round 3 (2026-07-13)
+Addressed 4 additional Codex findings (2 P1, 2 P2) and asked about 1 (P2):
+- **Record fill before terminal confirmation (P1)**: Moved the `replacement_confirmed` status update after `insertFillEvent` so a crash or fill-insert failure doesn't leave a terminal row with no fill event — no fill means the pump never re-selects the row and Activity/P&L permanently misses the replacement.
+- **Guard submitted-row failure updates with active status (P1)**: Both the timeout path (age > 5 min in `replacement_submitted`) and the catch block's default case now filter `WHERE status = 'replacement_submitted'` to prevent a stale or erroneous failure from overwriting a peer's successful reconciliation. Also applied to the catch block's default case.
+- **Avoid booking recovered fills at zero price (P2)**: When `averagePrice` is null on a filled broker order during recovery, the fill is kept as `pending_reconciliation` instead of being booked at price 0 with status `filled`. Normal pending-fill reconciliation will fill in the price later.
+- **Purge replacements when deleting a connected account (P2)**: Added `"order_replacements"` to the `purgeConnectedAccount` transactional cleanup loop to prevent orphaned replacement rows when a connected account is removed.
+- **Congress share in-flight work keying (P2 — asked maintainer)**: `activeDailySharePromise` does not differentiate by `options` (symbols, force, etc.). An admin backfill during the nightly run would silently return the nightly run's result. Too architecturally significant to guess — posted a comment asking the maintainer which approach to take.
+
+### Files changed (Round 3)
+- `src/lib/order-replacement.ts` — Fill-ordering fix, status-guarded failure paths, null-averagePrice fill marking
+- `src/lib/db-api-keys.ts` — Added `order_replacements` to purge table list
+
+Verification: all four gates pass at each round boundary.
