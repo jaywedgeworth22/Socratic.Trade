@@ -142,6 +142,13 @@ Completed RAG Backfill P1: added version 19 database migration creating relation
 
 Completed RAG Backfill P0: reconciled `.env.example` configurations, implemented `scripts/eval/rag-census.ts` and `scripts/eval/generate-universe-manifest.ts`, generated the frozen 1,000-CIK manifest `data/rag-universe-manifest.json`, verified lengths and statistics, and passed all tests. Rollout: `docs/rollouts/2026-07-13-rag-backfill-p0.md`.
 
+## 2026-07-13 — [codex-autofix] Fix 3 Codex P2 findings: budget defaults, paid-tier filing cap, congress sort composite (PR #1495)
+
+Codex P2 review on the latest revision flagged 3 remaining issues:
+1. **Vector-db budget defaults**: census hard-coded `1,000,000`/`10,000,000` for `RAG_INGEST_MAX_TEXTS_PER_DAY`/`RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY`, but `vector-db.ts` defaults to `20_000`/`200_000`. When env vars were unset, the report overstated active fuses by 50×. Fixed defaults to match `vector-db.ts`.
+2. **Paid-tier filing cap**: `SEC_FILING_RAG_MAX_PER_RUN` fallback always returned `1` regardless of tier. Paid backfills with unset/blank/invalid env showed a 1-filing cap while the scheduler would attempt 200. Added tier-aware fallback via `isFreeTier()` matching `sec-filings.ts`.
+3. **Congress sort composite**: when a quote had only `congressCompositeScore` (no `senateTrades`), the column's `sortValue` only returned `q.senateTrades`, so `scan-table.tsx` sorted composite-only rows last. Fixed with fallback to `congressCompositeSignedScore`/`congressCompositeScore`. All 3 Codex threads resolved. Auto-merge enabled. Rollout: `docs/rollouts/2026-07-13-codex-autofix-3-p2.md`.
+
 ## 2026-07-13 — [codex-autofix] Address 3 Codex P2 findings on PR #1495 (stripped provenance, 8-K parity, quadratic scan)
 
 Codex P2 review flagged 4 items. Fixed 3: (1) stripped `"held-history"` provenance label from the frozen manifest + generator to avoid committing trade/watch history to the public repo; (2) excluded `"8-K-body"` accesions from the missing-chunks parity check (8-K body chunk_ids are UUID-based, so the accession-substring check always false-flagged them); (3) replaced nested in-memory scans with `Set`-based O(1) lookups in the parity check. Item 4 (GOOG/GOOGL ticker alias handling for shared-CIK issuers) left open — architecturally significant, question posted. Verify trio passes (350 files, 3927 tests, build clean). Rollout: `docs/rollouts/2026-07-13-codex-autofix-rag-backfill.md`. Auto-merge enabled.
