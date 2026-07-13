@@ -1200,7 +1200,9 @@ function migrate(database: Database.Database): void {
       started_at TEXT NOT NULL,
       finished_at TEXT,
       status TEXT NOT NULL,
-      summary TEXT
+      summary TEXT,
+      account_number TEXT,
+      policy_revision TEXT
     );
 
     CREATE TABLE IF NOT EXISTS trade_proposals (
@@ -1933,6 +1935,18 @@ function migrate(database: Database.Database): void {
     "notification_events"
   ]) {
     addAccountColumn(table);
+  }
+
+  // Bind the active account number and policy revision explicitly to the strategy run
+  // so retrospective evaluation matches exactly what the run operated against.
+  {
+    const cols = database.prepare("PRAGMA table_info(strategy_runs)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "account_number")) {
+      database.exec("ALTER TABLE strategy_runs ADD COLUMN account_number TEXT");
+    }
+    if (!cols.some((c) => c.name === "policy_revision")) {
+      database.exec("ALTER TABLE strategy_runs ADD COLUMN policy_revision TEXT");
+    }
   }
 
   // AI-review advisory column: a single-LLM-call reviewer attaches a per-proposal
