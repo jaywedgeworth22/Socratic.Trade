@@ -807,7 +807,16 @@ function vectorUserIdFor(userId: string | undefined): string {
 }
 
 export function sanitizeVectorId(id: string): string {
-  return id.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 512);
+  const sanitized = id.replace(/[^A-Za-z0-9_.:-]/g, "_");
+  if (sanitized.length <= 512) return sanitized;
+  // Preserve the tail where unique suffixes (ordinal, parserRev, embedRev) live.
+  // Taking a blind prefix slice can drop the only differing portion when a
+  // document title or section has a long common prefix, causing multiple
+  // chunks to share the same truncated ID.
+  const headLen = 384;
+  const tailMarker = "..";
+  const tailLen = 512 - headLen - tailMarker.length;
+  return sanitized.slice(0, headLen) + tailMarker + sanitized.slice(-tailLen);
 }
 
 function contextId(document: ContextDocument, fallbackIndex: number): string {
