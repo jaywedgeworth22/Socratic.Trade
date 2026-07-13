@@ -42,6 +42,5 @@ after merge, so this follow-up preserves failure, checksum, and lease invariants
 
 ## Follow-ups
 
-- Open a ready follow-up PR, resolve the three review threads through the new PR record, and verify its
-  auto-deploy/live SHA after merge.
+- Monitor ready PR #1559 through hosted acceptance, merge, and exact auto-deploy/live SHA verification.
 - Keep all provider, object-store, vector, and corpus writes disabled until the broader SEC/RAG gates pass.

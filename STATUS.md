@@ -27,7 +27,7 @@ merged as `cbe3e532`. A review posted seconds after merge found three more P2 du
 reasons, overwritable artifact checksums, and non-finite lease durations. Production now reports exact release
 `cbe3e532` with healthy database, scheduler, storage, and Litestream checks; the only degraded dependency is the
 pre-existing Alpha Vantage quota state. Their follow-up fixes are verified on
-`codex/sec-rag-foundation-postmerge` and are being opened as a ready PR.
+`codex/sec-rag-foundation-postmerge` in ready PR #1559; hosted gates and refreshed review are running.
 
 Node remains pinned to 24 (`.nvmrc`, production, native-module ABI, and CI). The host default is Node 26.5.0,
 but this program runs with `/opt/homebrew/opt/node@24/bin` first on `PATH`; no Node 26 upgrade is planned.
@@ -41,7 +41,7 @@ follow-up now validates/falls back malformed lease durations before date arithme
 failure reasons, and preserves the first accepted raw/normalized SHA-256 values across later checkpoints. Focused
 regressions pass (2 files / 29 tests). The full Node 24 gate is green: lint 0 errors / 452 inherited warnings,
 TypeScript clean, 352 files / 3,963 tests, production build, and diff-check. No provider, object-store, vector, or
-corpus writes ran.
+corpus writes ran. Ready PR #1559 is open with auto-merge pending hosted acceptance.
 
 Rollout: `docs/rollouts/2026-07-13-sec-rag-foundation-postmerge.md`.
 

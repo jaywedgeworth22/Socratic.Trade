@@ -8,8 +8,8 @@
   job/task state with leases, strict transitions, retries, dead-letter/quarantine, verification receipts, and
   replay invariants merged in PR #1543 after local/hosted gates. Corrected universe selection, census truth, and
   adversarial integration remain in progress. Three post-merge P2 durability findings (failure reasons, checksum
-  immutability, lease config) are locally green on `codex/sec-rag-foundation-postmerge` and are being opened as a
-  ready follow-up PR. Production is verified on foundation release `cbe3e532`; corpus writes remain gated.
+  immutability, lease config) are locally green on `codex/sec-rag-foundation-postmerge` in ready PR #1559.
+  Production is verified on foundation release `cbe3e532`; hosted follow-up acceptance and corpus gates remain.
 - **[~] Wave B — source correctness:** discover recent plus historical submission shards and filing exhibits;
   archive immutable raw artifacts; enforce one aggregate SEC limiter; parse DOM/iXBRL sections, tables, units,
   contexts, and footnotes; chunk against provider token budgets.

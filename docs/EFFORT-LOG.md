@@ -2684,7 +2684,7 @@ As of 2026-07-08 (assignment-rule update).
   findings across three pre-merge review passes are fixed and covered; PR #1543 merged as `cbe3e532` after all
   hosted gates passed. Three findings posted after merge (blank failure reasons, checksum overwrites, non-finite
   leases) are fixed and locally green on `codex/sec-rag-foundation-postmerge` (focused 29/29; lint 0 errors;
-  TypeScript; full 3,963/3,963; build; diff-check), with a ready follow-up PR opening. Production reports exact
+  TypeScript; full 3,963/3,963; build; diff-check) in ready PR #1559. Production reports exact
   foundation release `cbe3e532` with core health checks green. Then wire
   artifacts/sections/facts, exact accepted timestamps,
   amendments/supersession, worker adapters, and PIT-
