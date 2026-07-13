@@ -93,3 +93,35 @@ Full gate on Node 24 via `scripts/land.sh` (`npx tsc --noEmit` → `npm test` �
 - Possible future consistency pass: `policy-diff.ts` still labels the authority
   setting "Propose"/"Decide" in policy-change diffs — harmless (no status chip
   adjacency there) but could be unified later.
+
+## Codex autofix rounds
+
+### Round 2 (commit `61af9725`, 2026-07-13) — preserve distinct `not_placed` status
+
+Codex P2 finding: `deriveActionRows` in `page.tsx` preferred persisted Socratic
+decisions over fresh proposals, but the "confirmed no-order path" in `strategy.ts`
+persisted decisions as `"error"` via `placing_failed`, which `isNotPlacedStatus`
+at that time did NOT recognize — so the broker-verified "no order exists" case
+never showed the "· not placed" cue.
+
+Fix: added `not_placed` to `SocraticDecisionStatus` (types.ts), to
+`socraticStatusFromProposalStatus` (socratic-runtime.ts), and to
+`isNotPlacedStatus` (action-verbs.ts). The broker-confirmed no-order path
+(strategy.ts:2508-2513) now persists `status: "not_placed"` instead of `"error"`,
+and the `error` branch (uncertain broker-unreachable case) is excluded from
+`isNotPlacedStatus` so it shows no cue.
+
+### Round 3 (commit `cb1372c1`, 2026-07-13) — persist `filled` status on sync fills
+
+Codex P2 finding: when the broker returns a synchronous fill (`execution.state ===
+"filled"`), `strategy.ts:2564` persisted the Socratic decision as `"placed"` while
+the fill was correctly recorded as `"filled"` in `recordFillFromProposal`. The
+action row, driven solely by `decision.status`, rendered past-tense verb only for
+`filled|executed` — so a synchronously-filled order showed infinitive ("Buy
+[Placed]") instead of past-tense ("Bought [Placed]").
+
+Fix: pass `status: execution.state === "filled" ? "filled" : "placed"` to
+`recordSocraticDecision`. Added `"filled"` to `SocraticDecisionStatus` (types.ts),
+`socraticStatusFromProposalStatus`, `listSocraticDecisionCasesNeedingOutcome` and
+`getSocraticOutcomeCoverage` SQL queries (db-socratic.ts), lesson guidance
+(socratic-runtime.ts), and `DECISION_STATUS_LABELS` (labels.ts).

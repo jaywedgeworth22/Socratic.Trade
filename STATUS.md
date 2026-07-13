@@ -9,17 +9,27 @@ regardless of whether anything executed. So a merely-proposed or BLOCKED decisio
 [Proposed]" / "AAPL Bought [Blocked]" — falsely claiming a completed purchase (owner's exact confusion:
 "Bought + Blocked — did it really buy it?"). Fix: extracted pure helpers to
 `app/console/lib/action-verbs.ts` — `sideVerb(side,status)` returns past tense ONLY when
-`isExecutedStatus` (`/^(placed|filled|executed)$/i`), else infinitive intent ("Buy"/"Sell"), falls back
+`isExecutedStatus` (`/^(filled|executed)$/i`), else infinitive intent ("Buy"/"Sell"), falls back
 to raw side, no-side → "Observed"; `DecisionRow` also renders a muted "· not placed" cue when
-`isNotPlacedStatus` (blocked/rejected/error/failed). Net: proposed/blocked rows now say "Buy AAPL",
+`isNotPlacedStatus` (blocked/rejected/failed/not_placed). Net: proposed/blocked rows now say "Buy AAPL",
 executed rows still say "Bought AAPL". (2) Trace-header (`decisions/[id]/page.tsx`) authority chip
 relabeled in `labels.ts` `AUTHORITY_LABELS` from "Propose"/"Decide" → "Ask-first"/"Autopilot" (tooltips
 unchanged) so it no longer collides with the adjacent "Proposed" status chip; matches the app-wide
 vocabulary (`derive.ts` `authorityWord`), and `authorityLabel` is used only there. (3) Ticker company
 logo now shows before the symbol on those rows (removed `showLogo={false}`; Portfolio pseudo-symbol
 stays logo-less). New test `test/console-action-rows.test.ts`. Rollout:
-`docs/rollouts/2026-07-13-autonomous-action-row-clarity.md`. Next action: gate via `scripts/land.sh`,
-arm `gh pr merge <N> --squash --auto` (auto-deploys on merge; display-only, safe).
+`docs/rollouts/2026-07-13-autonomous-action-row-clarity.md`.
+
+**[codex-autofix] rounds on this PR:**
+- Round 2 (commit `61af9725`): Preserved distinct `not_placed` status so broker-verified
+  failures show the "· not placed" cue — `isNotPlacedStatus` gained `not_placed` alongside
+  `blocked`/`rejected`/`failed`, and the broker-confirmed no-order path in `strategy.ts:2508-2513`
+  persists `not_placed` instead of `error`.
+- Round 3 (commit `cb1372c1`): Persist `filled` status when the broker returns a synchronous
+  fill, so the action-row renders past-tense verb ("Bought [Filled]") for orders that actually
+  executed, not infinitive ("Buy [Placed]"). Added `"filled"` to `SocraticDecisionStatus`,
+  `socraticStatusFromProposalStatus`, outcome-engine queries, lesson guidance, and labels.
+  All four Codex review threads resolved. Auto-merge enabled.
 ## 2026-07-13 — Red Team Fallover, UI updates, and Episodic Memory defensive fix (Antigravity, branch `agent/ag-red-team-fallback`)
 
 Implemented Red Team LLM fallback logic and improved the Strategy settings UI. Both Green and Red teams now use a `FallbackModelSelect` component allowing users to check off fallback models from a curated list via an interactive dropdown. The Rotation settings warning was streamlined and the "paper/test accounts" restriction reference was removed per user request. 
