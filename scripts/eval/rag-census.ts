@@ -1,5 +1,8 @@
 import { getDb } from "../../src/lib/db";
+import { envFlagOn } from "../../src/lib/rag/env-flag";
 import { getVectorStoreStats } from "../../src/lib/vector-db";
+import { eightKRagLimit } from "../../src/lib/web-sources/sec8k";
+import { disclosureRagEnabled } from "../../src/lib/web-sources/disclosure-rag";
 
 interface DocTypeRow {
   doc_type: string;
@@ -58,17 +61,40 @@ function reportBySymbol(topN = 50): SymbolCoverageRow[] {
 }
 
 function getConfigurationSummary() {
+  // Resolve effective configuration matching the ingest path's defaults
+  // rather than printing "unset" when a default is silently in effect.
+  // Defaults sourced from:
+  //   vector-db.ts:  RAG_INGEST_BUDGET_ENABLED → true,  RAG_PINECONE_WRITE_BUDGET_ENABLED → true
+  //                   RAG_INGEST_MAX_TEXTS_PER_DAY → 1,000,000,  RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY → 10,000,000
+  //   sec-filings.ts: SEC_FILING_RAG_MAX_PER_RUN → 1 (free) / 200 (paid),  SEC_FILING_INGEST_TTL_HOURS → 168
+  //   sec8k.ts:       VECTOR_STORECONTEXTS_DEDUP → true,  WEB_SOURCE_SEC8K_RAG_LIMIT → 16,
+  //                   WEB_SOURCE_SEC8K_FULL_BODY → off
+  //   disclosure-rag.ts: RAG_EMBED_DISCLOSURES → false
   return {
-    RAG_INGEST_BUDGET_ENABLED: process.env.RAG_INGEST_BUDGET_ENABLED ?? "unset",
-    RAG_INGEST_MAX_TEXTS_PER_DAY: process.env.RAG_INGEST_MAX_TEXTS_PER_DAY ?? "unset",
-    RAG_PINECONE_WRITE_BUDGET_ENABLED: process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED ?? "unset",
-    RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY: process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY ?? "unset",
-    VECTOR_STORECONTEXTS_DEDUP: process.env.VECTOR_STORECONTEXTS_DEDUP ?? "unset",
-    SEC_FILING_RAG_MAX_PER_RUN: process.env.SEC_FILING_RAG_MAX_PER_RUN ?? "unset",
-    SEC_FILING_INGEST_TTL_HOURS: process.env.SEC_FILING_INGEST_TTL_HOURS ?? "unset",
-    WEB_SOURCE_SEC8K_RAG_LIMIT: process.env.WEB_SOURCE_SEC8K_RAG_LIMIT ?? "unset",
-    WEB_SOURCE_SEC8K_FULL_BODY: process.env.WEB_SOURCE_SEC8K_FULL_BODY ?? "unset",
-    RAG_EMBED_DISCLOSURES: process.env.RAG_EMBED_DISCLOSURES ?? "unset"
+    RAG_INGEST_BUDGET_ENABLED: process.env.RAG_INGEST_BUDGET_ENABLED
+      ? `${envFlagOn("RAG_INGEST_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_INGEST_BUDGET_ENABLED})`
+      : "on (default)",
+    RAG_INGEST_MAX_TEXTS_PER_DAY: process.env.RAG_INGEST_MAX_TEXTS_PER_DAY
+      ?? "1,000,000 (default)",
+    RAG_PINECONE_WRITE_BUDGET_ENABLED: process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED
+      ? `${envFlagOn("RAG_PINECONE_WRITE_BUDGET_ENABLED", true) ? "on" : "off"}  (env: ${process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED})`
+      : "on (default)",
+    RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY: process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY
+      ?? "10,000,000 (default)",
+    VECTOR_STORECONTEXTS_DEDUP: process.env.VECTOR_STORECONTEXTS_DEDUP
+      ? `${envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true) ? "on" : "off"}  (env: ${process.env.VECTOR_STORECONTEXTS_DEDUP})`
+      : "on (default)",
+    SEC_FILING_RAG_MAX_PER_RUN: process.env.SEC_FILING_RAG_MAX_PER_RUN
+      ?? "1 (free-tier default, 200 paid)",
+    SEC_FILING_INGEST_TTL_HOURS: process.env.SEC_FILING_INGEST_TTL_HOURS
+      ?? "168 (default, 7 days)",
+    WEB_SOURCE_SEC8K_RAG_LIMIT: process.env.WEB_SOURCE_SEC8K_RAG_LIMIT
+      ?? `${eightKRagLimit()} (default)`,
+    WEB_SOURCE_SEC8K_FULL_BODY: process.env.WEB_SOURCE_SEC8K_FULL_BODY
+      ?? "off (default)",
+    RAG_EMBED_DISCLOSURES: process.env.RAG_EMBED_DISCLOSURES
+      ? `${disclosureRagEnabled() ? "on" : "off"}  (env: ${process.env.RAG_EMBED_DISCLOSURES})`
+      : "off (default)"
   };
 }
 
@@ -90,6 +116,12 @@ async function performParityCheck() {
   // See ingestEightKBody: no doc_id passed to storeDocument → chunk_id is UUID-based.
   const NON_ACCESSION_BEARING_DOC_TYPES = new Set(["8-K-body"]);
 
+  // Chunk sources that intentionally have no ingested_accessions marker.
+  // sec8k-summary chunks embed the SEC accession in chunk_id but the summary
+  // path never inserts an accession ledger row, so the orphan check would
+  // false-flag every valid summary chunk.
+  const ORPHAN_EXEMPT_SOURCES = new Set(["sec8k-summary:sec-8k"]);
+
   // Build O(1) lookup sets to avoid quadratic nested scans.
   const accessionSet = new Set(accessions.map(a => a.accession));
   const accessionInChunkIds = new Set<string>();
@@ -99,17 +131,23 @@ async function performParityCheck() {
   }
 
   let missingChunks = 0;
+  let zeroChunkAccessions = 0;
   for (const acc of accessions) {
     if (NON_ACCESSION_BEARING_DOC_TYPES.has(acc.doc_type)) continue;
     const hasChunk = accessionInChunkIds.has(acc.accession);
-    if (!hasChunk && acc.chunk_count > 0) {
-      console.log(`  ⚠️  [Missing Chunks] Accession ${acc.accession} (${acc.doc_type}) for ${acc.ticker} has 0 local chunks recorded.`);
-      missingChunks++;
+    if (!hasChunk) {
+      if (acc.chunk_count > 0) {
+        console.log(`  ⚠️  [Missing Chunks] Accession ${acc.accession} (${acc.doc_type}) for ${acc.ticker} has 0 local chunks recorded.`);
+        missingChunks++;
+      } else {
+        zeroChunkAccessions++;
+      }
     }
   }
 
   let orphans = 0;
   for (const chunk of chunks) {
+    if (ORPHAN_EXEMPT_SOURCES.has(chunk.source)) continue;
     const match = chunk.chunk_id.match(/(\d{10}-\d{2}-\d{6})/);
     if (match) {
       const accession = match[1]!;
@@ -120,7 +158,8 @@ async function performParityCheck() {
     }
   }
 
-  console.log(`  Manifest-to-chunk parity: ${missingChunks} accessions missing chunks, ${orphans} orphan chunks.`);
+  const zeroChunkNote = zeroChunkAccessions > 0 ? `, ${zeroChunkAccessions} zero-chunk accessions (retry suppressed)` : "0 zero-chunk accessions";
+  console.log(`  Manifest-to-chunk parity: ${missingChunks} accessions missing chunks, ${orphans} orphan chunks, ${zeroChunkNote}.`);
 }
 
 async function main(): Promise<void> {

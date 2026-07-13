@@ -11,6 +11,8 @@ interface UniverseEntry {
   ticker: string;
   title: string;
   inclusionReason: string;
+  /** Alternative tickers for the same CIK (e.g. GOOG/GOOGL for Alphabet). */
+  aliases?: string[];
 }
 
 async function fetchSecTickerList(): Promise<Array<{ cik: number; ticker: string; title: string }>> {
@@ -91,14 +93,29 @@ async function main() {
   const addedTickers = new Set<string>();
 
   const addIssuer = (cik: string, ticker: string, title: string, reason: string) => {
-    if (addedCiks.has(cik)) return false;
+    if (addedCiks.has(cik)) {
+      // CIK already exists — track alias ticker for multi-ticker entities (e.g. GOOG/GOOGL)
+      if (!addedTickers.has(ticker)) {
+        addedTickers.add(ticker);
+        const existing = universe.find(e => e.cik === cik);
+        if (existing) {
+          existing.aliases = existing.aliases ?? [];
+          if (!existing.aliases.includes(ticker)) {
+            existing.aliases.push(ticker);
+          }
+        }
+      }
+      return false;
+    }
+    if (universe.length >= 1000) return false; // hard cap at 1,000 CIKs
     addedCiks.add(cik);
     addedTickers.add(ticker);
     universe.push({
       cik,
       ticker,
       title,
-      inclusionReason: reason
+      inclusionReason: reason,
+      aliases: [],
     });
     return true;
   };
@@ -157,6 +174,9 @@ async function main() {
   if (universe.length < 1000) {
     console.warn(`  ⚠️  Warning: Managed to gather only ${universe.length} symbols. Universe is below 1,000.`);
   }
+
+  // Sort by ticker before writing to avoid leaking DB-derived provenance through insertion order.
+  universe.sort((a, b) => a.ticker.localeCompare(b.ticker));
 
   // 4. Save the manifest
   const destDir = path.dirname(path.resolve("data/rag-universe-manifest.json"));
