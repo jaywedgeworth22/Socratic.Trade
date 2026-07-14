@@ -58,6 +58,22 @@ beforeEach(() => {
   });
 });
 
+const COMMITTED_RECEIPT_CLAUSE = {
+  $or: [
+    { receipt_required: { $exists: false } },
+    { receipt_required: { $eq: false } },
+    { ingest_state: { $eq: "committed" } }
+  ]
+};
+
+function unwrapCommittedFilter(filter: Record<string, unknown>): Record<string, unknown> {
+  expect(Array.isArray(filter.$and)).toBe(true);
+  const clauses = filter.$and as Record<string, unknown>[];
+  expect(clauses).toHaveLength(2);
+  expect(clauses[1]).toEqual(COMMITTED_RECEIPT_CLAUSE);
+  return clauses[0]!;
+}
+
 describe("vector-db", () => {
   it("batches document embeddings and upserts through one initialized index", async () => {
     mocks.listIndexes.mockResolvedValue({ indexes: [] });
@@ -245,15 +261,15 @@ describe("vector-db", () => {
       // (rerankOverFetchK(2), default VECTOR_RERANK_OVERFETCH_K=150) and Voyage reranks back down
       // to the requested limit. The filter is the tenant-isolation contract under test.
       topK: 150,
-      filter: {
-        symbol: { $eq: "AAPL" },
-        userId: { $eq: "user-1" }
-      },
       includeMetadata: true
+    });
+    expect(unwrapCommittedFilter(mocks.query.mock.calls[0][0].filter)).toEqual({
+      symbol: { $eq: "AAPL" },
+      userId: { $eq: "user-1" }
     });
     // The shared-tier query now uses a backward-compat $or: scope:'shared' OR userId:'local'
     // so that pre-scope (legacy) vectors are still retrieved.
-    const sharedFilter = mocks.query.mock.calls[1][0].filter;
+    const sharedFilter = unwrapCommittedFilter(mocks.query.mock.calls[1][0].filter);
     expect(sharedFilter.symbol).toEqual({ $eq: "AAPL" });
     expect(sharedFilter.$or).toEqual(
       expect.arrayContaining([
@@ -283,7 +299,7 @@ describe("vector-db", () => {
 
     expect(mocks.resolveApiKey).toHaveBeenCalledWith("pinecone", "auth0|user 1");
     expect(mocks.resolveApiKey).toHaveBeenCalledWith("voyage", "auth0|user 1");
-    expect(mocks.query.mock.calls[0][0].filter.userId).toEqual({ $eq: "auth0user1" });
+    expect(unwrapCommittedFilter(mocks.query.mock.calls[0][0].filter).userId).toEqual({ $eq: "auth0user1" });
   });
 
   it("applies deduplication, score sorting, and slicing in retrieveContext", async () => {

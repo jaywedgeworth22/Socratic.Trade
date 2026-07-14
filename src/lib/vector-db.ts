@@ -1,8 +1,9 @@
 import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-database/pinecone";
 import { VoyageAIClient } from "voyageai";
+import crypto from "crypto";
 import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
-import { filterNewDocumentChunks, insertDocumentChunks, insertChunkOccurrences } from "./db";
+import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { logApiHealth } from "./db-health";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { envFlagOn } from "./rag/env-flag";
@@ -10,7 +11,7 @@ import { fuseHybrid, rrfFuse } from "./rag/hybrid";
 import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
-import { getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled } from "./rag-metering";
+import { estimateVoyageDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled } from "./rag-metering";
 import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPersistEnabled, recordCandidatePoolFull, type CandidateDisposition } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
@@ -36,13 +37,20 @@ export interface StoreContextsResult {
   skipped?: boolean;
   /** Set with skipped: Pinecone/Voyage keys missing — nothing can embed until configured. */
   unconfigured?: boolean;
-  /** Set with skipped: every chunk was already in the index (content-hash dedup) — the content
-   *  is fully stored; the caller may safely treat the document as ingested. */
+  /** Set by opt-in `storeContexts` content dedup only. This proves reusable content exists, not that
+   *  a new source occurrence has its own queryable vector; source producers must require
+   *  `documentComplete` instead. `storeDocument` never returns this shortcut. */
   dedupComplete?: boolean;
   /**
-   * Count of embeddings dropped by the integrity guard (R2: wrong dimension or non-finite values,
-   * e.g. a Voyage model/config drift) instead of being upserted as a degenerate vector. 0 in the
-   * healthy case; always present so callers can tell "nothing to embed" from "embed came back bad".
+   * Set by storeDocument only when every source occurrence has a successful Pinecone upsert plus
+   * atomic document_chunks/chunk_occurrences receipts. Producers must require this and exact
+   * indexed===attempted cardinality before writing a source-level completion ledger.
+   */
+  documentComplete?: boolean;
+  /**
+   * Count of malformed or unaccounted response entries detected by the integrity guard. Any positive
+   * value rejects its entire Voyage batch, so callers can distinguish "nothing to embed" from an
+   * incomplete/ambiguous provider response and keep the source document retryable.
    */
   rejectedInvalidEmbeddings?: number;
   /** Count skipped by RAG_INGEST_MAX_TEXTS_PER_DAY before any Voyage/Pinecone write. */
@@ -77,6 +85,9 @@ const VOYAGE_MODEL = "voyage-finance-2";
  * item shipped carry no `embed_rev` at all; callers should treat a missing value as rev 0, NOT as
  * this rev, so a mixed population stays distinguishable.
  */
+// Keep the live corpus on representation revision 1 until a bounded inventory/backfill,
+// completeness check, switchover, rollback window, and v1 deletion can be executed. The prior
+// dirty branch changed this globally to 2 without that migration, which mixed incomparable spaces.
 const EMBED_REV = 1;
 const EMBEDDING_DIMENSION = 1024; // voyage-finance-2 dimension
 const DEFAULT_INDEX_NAME = "socratic-trade";
@@ -109,9 +120,131 @@ export function isValidEmbedding(embedding: unknown): embedding is number[] {
   );
 }
 
+export interface ValidatedDocumentEmbeddingBatch {
+  /** Embeddings ordered by original request position; present only when the whole response is valid. */
+  embeddings?: number[][];
+  /** Number of malformed/unaccounted response entries; any positive value rejects the whole batch. */
+  rejected: number;
+  /** Bounded diagnostic code; never contains provider content or document text. */
+  reason?: "missing-data" | "cardinality" | "malformed-item" | "mixed-index" | "invalid-index" | "duplicate-index" | "invalid-embedding";
+}
+
+/**
+ * Validate Voyage's document response as an exact one-to-one mapping before any Pinecone write.
+ * Explicit indices may arrive out of response-array order and are authoritative. A legacy response
+ * with no indices remains positional, but mixed index presence is ambiguous and fails closed.
+ */
+export function validateDocumentEmbeddingBatch(
+  data: unknown,
+  expectedCount: number
+): ValidatedDocumentEmbeddingBatch {
+  if (!Array.isArray(data)) {
+    return { rejected: Math.max(1, expectedCount), reason: "missing-data" };
+  }
+  if (data.length !== expectedCount) {
+    return { rejected: Math.max(1, expectedCount), reason: "cardinality" };
+  }
+
+  const items: Array<{ embedding?: unknown; index?: unknown }> = [];
+  let explicitIndexCount = 0;
+  for (const raw of data) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { rejected: Math.max(1, expectedCount), reason: "malformed-item" };
+    }
+    const item = raw as { embedding?: unknown; index?: unknown };
+    if (item.index !== undefined) explicitIndexCount += 1;
+    items.push(item);
+  }
+  if (explicitIndexCount !== 0 && explicitIndexCount !== expectedCount) {
+    return { rejected: Math.max(1, expectedCount), reason: "mixed-index" };
+  }
+
+  const embeddings = new Array<number[]>(expectedCount);
+  const seen = new Set<number>();
+  let invalidEmbeddings = 0;
+  for (let responsePosition = 0; responsePosition < items.length; responsePosition++) {
+    const item = items[responsePosition]!;
+    const targetIndex = explicitIndexCount === 0 ? responsePosition : item.index;
+    if (!Number.isInteger(targetIndex) || (targetIndex as number) < 0 || (targetIndex as number) >= expectedCount) {
+      return { rejected: Math.max(1, expectedCount), reason: "invalid-index" };
+    }
+    const requestIndex = targetIndex as number;
+    if (seen.has(requestIndex)) {
+      return { rejected: Math.max(1, expectedCount), reason: "duplicate-index" };
+    }
+    seen.add(requestIndex);
+    if (!isValidEmbedding(item.embedding)) {
+      invalidEmbeddings += 1;
+      continue;
+    }
+    embeddings[requestIndex] = item.embedding;
+  }
+  if (invalidEmbeddings > 0 || embeddings.some((embedding) => !embedding)) {
+    return { rejected: Math.max(1, invalidEmbeddings), reason: "invalid-embedding" };
+  }
+  return { embeddings, rejected: 0 };
+}
+
 export interface ContextDocument {
   text: string;
+  /**
+   * Optional exact text handed to Voyage while `text` remains the citation/display payload.
+   * `storeDocument` uses raw chunk content here so occurrence-specific provenance stays in metadata
+   * and citations without forcing byte-identical content to be embedded again for every ticker/date.
+   */
+  embeddingText?: string;
   metadata: { symbol: string; source: string; timestamp: string; accession?: string; [key: string]: unknown };
+}
+
+const DOCUMENT_EMBED_CACHE_MAX_ENTRIES = 4096;
+const DOCUMENT_EMBED_CACHE_TTL_MS = 6 * 60 * 60_000;
+
+interface DocumentEmbeddingCacheEntry {
+  embedding: number[];
+  expiresAt: number;
+}
+
+// Exact-text, vector-only, process-local cache. It never stores Pinecone results or metadata, so
+// user/symbol/PIT filters still execute independently for every per-occurrence vector materialized.
+const documentEmbeddingCache = new Map<string, DocumentEmbeddingCacheEntry>();
+
+function documentEmbeddingCacheKey(input: string): string {
+  // `input` is already the exact post-cleaning text, so model + representation revision + bytes is
+  // sufficient and remains stable even if an operator changes an env flag while a call is in flight.
+  return `${VOYAGE_MODEL}\u0000${EMBED_REV}\u0000${input}`;
+}
+
+function getCachedDocumentEmbedding(input: string): number[] | undefined {
+  const key = documentEmbeddingCacheKey(input);
+  const entry = documentEmbeddingCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt || !isValidEmbedding(entry.embedding)) {
+    documentEmbeddingCache.delete(key);
+    return undefined;
+  }
+  documentEmbeddingCache.delete(key);
+  documentEmbeddingCache.set(key, entry);
+  return [...entry.embedding];
+}
+
+function setCachedDocumentEmbedding(input: string, embedding: number[]): void {
+  if (!isValidEmbedding(embedding)) return;
+  const key = documentEmbeddingCacheKey(input);
+  documentEmbeddingCache.delete(key);
+  documentEmbeddingCache.set(key, {
+    embedding: [...embedding],
+    expiresAt: Date.now() + DOCUMENT_EMBED_CACHE_TTL_MS
+  });
+  while (documentEmbeddingCache.size > DOCUMENT_EMBED_CACHE_MAX_ENTRIES) {
+    const oldest = documentEmbeddingCache.keys().next().value;
+    if (oldest === undefined) break;
+    documentEmbeddingCache.delete(oldest);
+  }
+}
+
+/** Test-only cache reset; production callers never need to clear exact document vectors manually. */
+export function clearDocumentEmbeddingCacheForTest(): void {
+  documentEmbeddingCache.clear();
 }
 
 const indexInitPromises = new Map<string, Promise<void>>();
@@ -380,6 +513,25 @@ export function mergeAsOfEpoch(
 }
 
 /**
+ * Every query excludes managed pending records at Pinecone. Legacy records are admitted only when
+ * the receipt marker is absent; direct new records explicitly carry receipt_required=false.
+ */
+export function withCommittedVectorFilter(base: Record<string, unknown>): Record<string, unknown> {
+  return {
+    $and: [
+      base,
+      {
+        $or: [
+          { receipt_required: { $exists: false } },
+          { receipt_required: { $eq: false } },
+          { ingest_state: { $eq: "committed" } }
+        ]
+      }
+    ]
+  };
+}
+
+/**
  * R17 (2026-07-01 RAG backlog): fix train/serve text skew. `storeContexts` embeds a literal
  * `[Published: ...]` prefix (and `storeDocument` bakes a `context_header` into stored text), but
  * the QUERY embedding is the raw query with none of that boilerplate — a systematic query/document
@@ -408,8 +560,25 @@ export function stripPublishedPrefix(text: string): string {
   return text.replace(/^\[Published: \d{4}-\d{2}-\d{2}\]\s*/, "");
 }
 
-function sleep(ms: number): Promise<void> {
-  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error("Operation aborted."));
+  }
+  if (ms <= 0) return Promise.resolve();
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener("abort", aborted);
+      resolve();
+    }
+    function aborted() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", aborted);
+      reject(signal?.reason instanceof Error ? signal.reason : new Error("Operation aborted."));
+    }
+    signal.addEventListener("abort", aborted, { once: true });
+  });
 }
 
 /**
@@ -443,7 +612,8 @@ function resolveRagKeyWithSource(service: "pinecone" | "voyage", userId: string)
   return { key, source: key ? "env" : "none", service };
 }
 
-function getClients(userId: string = "local") {
+async function getClients(userId: string = "local", leaseGuard?: VectorStoreLeaseGuard) {
+  assertVectorStoreLease(leaseGuard);
   const lookupUserId = userId || "local";
   const pinecone = resolveRagKeyWithSource("pinecone", lookupUserId);
   const voyage = resolveRagKeyWithSource("voyage", lookupUserId);
@@ -451,14 +621,26 @@ function getClients(userId: string = "local") {
   const voyageKey = voyage.key;
 
   if (!pineconeKey || !voyageKey) {
-    if (!pineconeKey) recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar);
-    if (!voyageKey) recordMissingRagKey("voyage", voyage.source, lookupUserId, voyage.envVar);
+    if (leaseGuard) {
+      if (!pineconeKey) {
+        await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
+        assertVectorStoreLease(leaseGuard);
+      }
+      if (!voyageKey) {
+        await recordMissingRagKey("voyage", voyage.source, lookupUserId, voyage.envVar, leaseGuard);
+        assertVectorStoreLease(leaseGuard);
+      }
+    } else {
+      if (!pineconeKey) void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
+      if (!voyageKey) void recordMissingRagKey("voyage", voyage.source, lookupUserId, voyage.envVar).catch(() => {});
+    }
     return { pc: null, voyage: null, initCacheKey: "", pineconeSource: pinecone.source, voyageSource: voyage.source };
   }
 
   const cacheKey = `${pineconeKey}|${voyageKey}`;
   let clients = clientCache.get(cacheKey);
   if (!clients) {
+    assertVectorStoreLease(leaseGuard);
     clients = { pc: new Pinecone({ apiKey: pineconeKey }), voyage: new VoyageAIClient({ apiKey: voyageKey }) };
     clientCache.set(cacheKey, clients);
   }
@@ -507,9 +689,17 @@ function wasRagSentryCaptured(error: unknown): boolean {
   return Boolean((error as { __ragSentryCaptured?: boolean } | undefined)?.__ragSentryCaptured);
 }
 
-function recordMissingRagKey(service: "pinecone" | "voyage", source: ApiKeySource, userId: string, envVar?: string): void {
+async function recordMissingRagKey(
+  service: "pinecone" | "voyage",
+  source: ApiKeySource,
+  userId: string,
+  envVar?: string,
+  leaseGuard?: VectorStoreLeaseGuard
+): Promise<void> {
+  assertVectorStoreLease(leaseGuard);
   const message = envVar ? `${envVar} is not configured` : `${service} API key is not configured`;
   const targetUserId = ragHealthUserId(source, userId);
+  assertVectorStoreLease(leaseGuard);
   logApiHealth({
     service,
     ok: false,
@@ -517,7 +707,9 @@ function recordMissingRagKey(service: "pinecone" | "voyage", source: ApiKeySourc
     keySource: source,
     userId: targetUserId
   });
-  void alertRagConnectionFailure(service, source, targetUserId, "configuration", message);
+  assertVectorStoreLease(leaseGuard);
+  await alertRagConnectionFailure(service, source, targetUserId, "configuration", message, leaseGuard);
+  assertVectorStoreLease(leaseGuard);
 }
 
 async function alertRagConnectionFailure(
@@ -525,12 +717,16 @@ async function alertRagConnectionFailure(
   source: ApiKeySource,
   targetUserId: string,
   operation: string,
-  message: string
+  message: string,
+  leaseGuard?: VectorStoreLeaseGuard
 ): Promise<void> {
   try {
+    const assertActive = leaseGuard ? () => assertVectorStoreLease(leaseGuard) : undefined;
+    assertVectorStoreLease(leaseGuard);
     const key = `${RAG_CONNECTION_ALERT_PREFIX}:${service}:${source}:${targetUserId}`;
     const last = getInternalSetting<string>(key);
     if (last && Date.now() - Date.parse(last) < RAG_CONNECTION_ALERT_COOLDOWN_MS) return;
+    assertVectorStoreLease(leaseGuard);
     setInternalSetting(key, new Date().toISOString());
 
     const title = `${service === "pinecone" ? "Pinecone" : service === "voyage-rerank" ? "Voyage Rerank" : "Voyage"} connection failed`;
@@ -548,23 +744,33 @@ async function alertRagConnectionFailure(
       operation,
       userSpecific: source === "user",
       reason: message
-    });
-    await sendNotification({ type: "provider_degraded", title, payload }, { userId: targetUserId, directBody: body }).catch(() => {});
+    }, leaseGuard);
+    assertVectorStoreLease(leaseGuard);
+    await sendNotification(
+      { type: "provider_degraded", title, payload },
+      { userId: targetUserId, directBody: body, assertActive, signal: leaseGuard?.signal }
+    );
+    assertVectorStoreLease(leaseGuard);
     const limitStatus = ragLimitStatus(message);
     if (limitStatus) {
-      await alertUsageLimitHit({
-        userId: targetUserId,
-        provider: title.replace(" connection failed", ""),
-        operation,
-        limitName: limitStatus === "rate_limited" ? "provider rate limit" : limitStatus === "billing" ? "provider billing limit" : "provider quota",
-        status: limitStatus,
-        recommendation:
-          limitStatus === "rate_limited"
-            ? "Either slow the caller, batch requests more efficiently, or raise the provider rate limit if the traffic is intentional."
-            : "Check whether this is expected growth. If usage is useful, raise the cap; if not, inspect batching, deduping, and retry behavior before paying for more."
-      });
+      await alertUsageLimitHit(
+        {
+          userId: targetUserId,
+          provider: title.replace(" connection failed", ""),
+          operation,
+          limitName: limitStatus === "rate_limited" ? "provider rate limit" : limitStatus === "billing" ? "provider billing limit" : "provider quota",
+          status: limitStatus,
+          recommendation:
+            limitStatus === "rate_limited"
+              ? "Either slow the caller, batch requests more efficiently, or raise the provider rate limit if the traffic is intentional."
+              : "Check whether this is expected growth. If usage is useful, raise the cap; if not, inspect batching, deduping, and retry behavior before paying for more."
+        },
+        { assertActive, signal: leaseGuard?.signal }
+      );
+      assertVectorStoreLease(leaseGuard);
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof VectorStoreLeaseLostError) throw error;
     // Alerts must not affect trading/RAG control flow.
   }
 }
@@ -572,16 +778,20 @@ async function alertRagConnectionFailure(
 async function captureRagSentryMessage(
   level: "warning" | "error",
   message: string,
-  context: Record<string, string | number | boolean | null | undefined>
+  context: Record<string, string | number | boolean | null | undefined>,
+  leaseGuard?: VectorStoreLeaseGuard
 ): Promise<void> {
+  assertVectorStoreLease(leaseGuard);
   if (!process.env.SENTRY_DSN) return;
   try {
     const mod = (await import("@sentry/nextjs")) as typeof import("@sentry/nextjs") & {
       default?: typeof import("@sentry/nextjs");
     };
+    assertVectorStoreLease(leaseGuard);
     const captureMessage = mod.captureMessage ?? mod.default?.captureMessage;
     const withScope = mod.withScope ?? mod.default?.withScope;
     if (typeof captureMessage !== "function" || typeof withScope !== "function") return;
+    assertVectorStoreLease(leaseGuard);
     withScope((scope) => {
       scope.setLevel(level);
       scope.setTag("component", "rag");
@@ -591,8 +801,102 @@ async function captureRagSentryMessage(
       scope.setContext("rag", context);
       captureMessage(message);
     });
-  } catch {
+    assertVectorStoreLease(leaseGuard);
+  } catch (error) {
+    if (error instanceof VectorStoreLeaseLostError) throw error;
     // Observability must not affect trading/RAG control flow.
+  }
+}
+
+interface RagDispatchOptions {
+  units?: number;
+  estimatedCostUsd?: number;
+  /** The callback reserves each physical retry itself (used by Voyage's explicit retry loop). */
+  durablyTrackedInside?: boolean;
+}
+
+async function withDurableRagProviderDispatch<T>(
+  service: "pinecone" | "voyage" | "voyage-rerank",
+  source: ApiKeySource,
+  userId: string,
+  operation: string,
+  fn: () => Promise<T>,
+  leaseGuard?: VectorStoreLeaseGuard,
+  dispatch?: RagDispatchOptions
+): Promise<T> {
+  assertVectorStoreLease(leaseGuard);
+  const provider = service === "voyage-rerank" ? "voyage" : service;
+  const credential = resolveApiKey(provider, userId) ?? `${provider}:${source}:${userId}`;
+  const credentialRef = crypto.createHash("sha256").update(credential, "utf8").digest("hex").slice(0, 24);
+  const perMinuteDefault = provider === "voyage" ? 60 : 600;
+  const envPrefix = provider.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  const perMinuteRaw = process.env[`PROVIDER_DISPATCH_${envPrefix}_PER_MIN`]?.trim();
+  const costCapRaw = process.env[`PROVIDER_DISPATCH_${envPrefix}_MAX_COST_USD_PER_DAY`]?.trim();
+  const configuredPerMinute = perMinuteRaw ? Number(perMinuteRaw) : undefined;
+  const configuredCostCap = costCapRaw ? Number(costCapRaw) : undefined;
+  let attemptId: string | undefined;
+  let providerSettled = false;
+  let providerReturned = false;
+  let markDispatch: typeof dbModule.markProviderDispatchStarted | undefined;
+  let settleDispatch: typeof dbModule.settleProviderDispatch | undefined;
+  try {
+    const reserveDispatch = dbModule.reserveProviderDispatch;
+    markDispatch = dbModule.markProviderDispatchStarted;
+    settleDispatch = dbModule.settleProviderDispatch;
+    if (
+      typeof reserveDispatch !== "function" ||
+      typeof markDispatch !== "function" ||
+      typeof settleDispatch !== "function"
+    ) throw new Error("Durable provider dispatch ledger is unavailable.");
+    const reservation = reserveDispatch({
+      provider,
+      operation,
+      credentialRef,
+      userId,
+      units: dispatch?.units ?? 1,
+      estimatedCostUsd: dispatch?.estimatedCostUsd ?? 0,
+      windows: [{
+        // Explicit zero pauses this provider lane. Empty/unset/invalid values retain the safe
+        // default instead of Number("") accidentally becoming a production stop.
+        maxUnits: typeof configuredPerMinute === "number" && Number.isFinite(configuredPerMinute) && configuredPerMinute >= 0
+          ? Math.floor(configuredPerMinute)
+          : perMinuteDefault,
+        windowMs: 60_000
+      }],
+      // A configured zero is a deliberate stop. When unset, $25/day is a conservative shared
+      // dispatch fuse; request/text/WU budgets remain the tighter normal controls.
+      maxEstimatedCostUsdPer24h: typeof configuredCostCap === "number" && Number.isFinite(configuredCostCap) && configuredCostCap >= 0
+        ? configuredCostCap
+        : 25
+    });
+    if (!reservation.admitted) throw new Error(`Durable ${provider} ${reservation.reason} reservation denied.`);
+    attemptId = reservation.attemptId;
+  } catch (error) {
+    // A few isolated unit suites replace the entire db module with a minimal fake. Never permit
+    // that seam outside tests; production must fail closed if the durable admission ledger fails.
+    const missingTestMock = process.env.NODE_ENV === "test" && error instanceof Error && (
+      error.message === "Durable provider dispatch ledger is unavailable." ||
+      /No \"(?:reserveProviderDispatch|markProviderDispatchStarted|settleProviderDispatch)\" export is defined .* mock/i.test(error.message)
+    );
+    if (!missingTestMock) throw error;
+    markDispatch = undefined;
+    settleDispatch = undefined;
+  }
+  try {
+    if (attemptId) markDispatch!(attemptId);
+    const result = await fn();
+    providerReturned = true;
+    // Usage truth is independent of the business lease. Settle before checking whether ownership
+    // moved while the SDK promise was in flight.
+    if (attemptId) settleDispatch!(attemptId, "succeeded");
+    providerSettled = true;
+    assertVectorStoreLease(leaseGuard);
+    return result;
+  } catch (error) {
+    if (attemptId && !providerSettled && !providerReturned) settleDispatch!(attemptId, "failed", {
+      outcomeCode: error instanceof Error ? error.name : "provider-error"
+    });
+    throw error;
   }
 }
 
@@ -601,12 +905,26 @@ async function withRagApiHealth<T>(
   source: ApiKeySource,
   userId: string,
   operation: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  leaseGuard?: VectorStoreLeaseGuard,
+  dispatch?: RagDispatchOptions
 ): Promise<T> {
+  assertVectorStoreLease(leaseGuard);
   const start = Date.now();
   const targetUserId = ragHealthUserId(source, userId);
   try {
-    const result = await fn();
+    const result = dispatch?.durablyTrackedInside
+      ? await fn()
+      : await withDurableRagProviderDispatch(
+          service,
+          source,
+          userId,
+          operation,
+          fn,
+          leaseGuard,
+          dispatch
+        );
+    assertVectorStoreLease(leaseGuard);
     logApiHealth({
       service,
       ok: true,
@@ -616,7 +934,12 @@ async function withRagApiHealth<T>(
     });
     return result;
   } catch (error) {
+    // Lease cancellation is a concurrency boundary, not provider degradation. The caller converts
+    // it to VectorStoreLeaseLostError and must not emit health failures/alerts for the successor's
+    // operation.
+    assertVectorStoreLease(leaseGuard);
     const message = `${operation}: ${ragErrorMessage(error)}`;
+    assertVectorStoreLease(leaseGuard);
     logApiHealth({
       service,
       ok: false,
@@ -626,7 +949,13 @@ async function withRagApiHealth<T>(
       userId: targetUserId
     });
     markRagSentryCaptured(error);
-    void alertRagConnectionFailure(service, source, targetUserId, operation, ragErrorMessage(error));
+    const alert = alertRagConnectionFailure(service, source, targetUserId, operation, ragErrorMessage(error), leaseGuard);
+    if (leaseGuard) {
+      await alert;
+      assertVectorStoreLease(leaseGuard);
+    } else {
+      void alert;
+    }
     throw error;
   }
 }
@@ -635,31 +964,48 @@ async function withRagApiHealth<T>(
 // indexInitPromises, so `describeIndex` is called AT MOST ONCE per (key, index) pair for the
 // lifetime of the process — not once per retrieval/store call.
 const indexMetricChecked = new Set<string>();
+const initializedIndexKeys = new Set<string>();
 
 /**
  * R7 — index-metric assertion at bootstrap. Every cosine floor (VECTOR_MIN_SCORE, the rerank
  * relevance floor) is meaningless if the Pinecone index's distance metric isn't actually
  * 'cosine' — EMBEDDING_DIMENSION is asserted (createIndex specifies it), but the metric never
  * was. Calls `describeIndex` once (cached via indexMetricChecked) and WARNS (audit + console),
- * NEVER throws — a legitimate non-cosine index or a transient control-plane failure on this
- * best-effort check must not take down retrieval/storage.
+ * NEVER throws for provider/metric failures — a legitimate non-cosine index or transient
+ * control-plane failure must not take down retrieval/storage. Durable lease loss still propagates.
  */
-async function assertIndexMetric(pc: Pinecone, initCacheKey: string, source: ApiKeySource, userId: string): Promise<void> {
+async function assertIndexMetric(
+  pc: Pinecone,
+  initCacheKey: string,
+  source: ApiKeySource,
+  userId: string,
+  leaseGuard?: VectorStoreLeaseGuard
+): Promise<void> {
+  assertVectorStoreLease(leaseGuard);
   if (indexMetricChecked.has(initCacheKey)) return;
-  indexMetricChecked.add(initCacheKey); // mark first — a failure here must not retry forever
   try {
-    const model = await withRagApiHealth("pinecone", source, userId, "describeIndex", () => pc.describeIndex(indexName()));
+    const model = await withRagApiHealth(
+      "pinecone",
+      source,
+      userId,
+      "describeIndex",
+      () => pc.describeIndex(indexName()),
+      leaseGuard
+    );
+    assertVectorStoreLease(leaseGuard);
     const metric = (model as { metric?: unknown })?.metric;
     if (metric != null && metric !== "cosine") {
+      assertVectorStoreLease(leaseGuard);
       console.warn(`[vector-db] Pinecone index "${indexName()}" metric is "${String(metric)}", expected "cosine" — cosine-scale floors (VECTOR_MIN_SCORE, rerank relevance floor) may be meaningless against this index.`);
-      void captureRagSentryMessage("warning", "Pinecone index metric mismatch", {
+      await captureRagSentryMessage("warning", "Pinecone index metric mismatch", {
         provider: "pinecone",
         operation: "describeIndex",
         source,
         indexName: indexName(),
         metric: String(metric),
         expectedMetric: "cosine"
-      });
+      }, leaseGuard);
+      assertVectorStoreLease(leaseGuard);
       try {
         audit("vector_index_metric_mismatch", { indexName: indexName(), metric: String(metric) }, "local");
       } catch {
@@ -667,54 +1013,99 @@ async function assertIndexMetric(pc: Pinecone, initCacheKey: string, source: Api
       }
     }
   } catch (err) {
+    // A stale owner must not turn cancellation into a best-effort warning, Sentry alert, or cached
+    // "metric checked" receipt. The successor gets an independent initialization attempt.
+    assertVectorStoreLease(leaseGuard);
     // describeIndex itself failing (network, permissions, index not found yet) is NOT the
     // condition this guard checks for — swallow silently, this is a best-effort sanity check.
     console.warn(`[vector-db] Could not verify index metric for "${indexName()}":`, err instanceof Error ? err.message : String(err));
-    void captureRagSentryMessage("warning", "Pinecone index metric check failed", {
+    await captureRagSentryMessage("warning", "Pinecone index metric check failed", {
       provider: "pinecone",
       operation: "describeIndex",
       source,
       indexName: indexName(),
       reason: err instanceof Error ? err.message : String(err)
-    });
+    }, leaseGuard);
   }
+  assertVectorStoreLease(leaseGuard);
+  // Mark only after the complete guarded path. A lease-aborted attempt must remain retryable.
+  indexMetricChecked.add(initCacheKey);
 }
 
-async function ensureIndex(pc: Pinecone, initCacheKey: string, source: ApiKeySource, userId: string): Promise<void> {
+async function initializeIndex(
+  pc: Pinecone,
+  initCacheKey: string,
+  source: ApiKeySource,
+  userId: string,
+  leaseGuard?: VectorStoreLeaseGuard
+): Promise<void> {
+  assertVectorStoreLease(leaseGuard);
+  const name = indexName();
+  const indexes = await withRagApiHealth(
+    "pinecone",
+    source,
+    userId,
+    "listIndexes",
+    () => pc.listIndexes(),
+    leaseGuard
+  );
+  assertVectorStoreLease(leaseGuard);
+  if (!indexes.indexes?.some((i) => i.name === name)) {
+    try {
+      await withRagApiHealth(
+        "pinecone",
+        source,
+        userId,
+        "createIndex",
+        () => pc.createIndex({
+          name,
+          dimension: EMBEDDING_DIMENSION,
+          metric: "cosine",
+          spec: { serverless: { cloud: "aws", region: "us-east-1" } }
+        }),
+        leaseGuard
+      );
+    } catch (error) {
+      assertVectorStoreLease(leaseGuard);
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/already exists|409|conflict/i.test(message)) throw error;
+    }
+    assertVectorStoreLease(leaseGuard);
+    await sleep(indexReadyWaitMs(), leaseGuard?.signal);
+    assertVectorStoreLease(leaseGuard);
+  }
+  await assertIndexMetric(pc, initCacheKey, source, userId, leaseGuard);
+  assertVectorStoreLease(leaseGuard);
+}
+
+async function ensureIndex(
+  pc: Pinecone,
+  initCacheKey: string,
+  source: ApiKeySource,
+  userId: string,
+  leaseGuard?: VectorStoreLeaseGuard
+): Promise<void> {
+  assertVectorStoreLease(leaseGuard);
+  if (initializedIndexKeys.has(initCacheKey)) return;
+
+  // Never attach a durable owner to another owner's in-flight cached promise. Guarded producers are
+  // serialized by RAG_REINDEX and initialize independently; only a fully completed result is shared.
+  if (leaseGuard) {
+    await initializeIndex(pc, initCacheKey, source, userId, leaseGuard);
+    assertVectorStoreLease(leaseGuard);
+    initializedIndexKeys.add(initCacheKey);
+    return;
+  }
+
   const cached = indexInitPromises.get(initCacheKey);
   if (cached) return cached;
 
-  const init = (async () => {
-    const name = indexName();
-    const indexes = await withRagApiHealth("pinecone", source, userId, "listIndexes", () => pc.listIndexes());
-    if (!indexes.indexes?.some((i) => i.name === name)) {
-      try {
-        await withRagApiHealth("pinecone", source, userId, "createIndex", () =>
-          pc.createIndex({
-            name,
-            dimension: EMBEDDING_DIMENSION,
-            metric: "cosine",
-            spec: { serverless: { cloud: "aws", region: "us-east-1" } }
-          })
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!/already exists|409|conflict/i.test(message)) throw error;
-      }
-      await sleep(indexReadyWaitMs());
-    }
-    // Fire-and-forget: never await this on the critical path and never let it fail ensureIndex.
-    // assertIndexMetric already never throws, but the extra guard costs nothing and documents intent.
-    try {
-      await assertIndexMetric(pc, initCacheKey, source, userId);
-    } catch {
-      // assertIndexMetric never throws; this is belt-and-suspenders only.
-    }
-  })();
+  const init = initializeIndex(pc, initCacheKey, source, userId);
 
   indexInitPromises.set(initCacheKey, init);
   try {
     await init;
+    initializedIndexKeys.add(initCacheKey);
   } catch (error) {
     indexInitPromises.delete(initCacheKey);
     throw error;
@@ -772,7 +1163,12 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
     userId,
     scope,
     embed_model: VOYAGE_MODEL,
-    embed_rev: EMBED_REV
+    embed_rev: EMBED_REV,
+    // Direct/legacy-style writes have no relational receipt protocol and are committed by their
+    // single successful upsert. `storeDocument` explicitly overrides these to pending/required,
+    // then promotes them only after its exact receipt transaction.
+    ingest_state: "committed",
+    receipt_required: false
   };
   for (const [key, value] of Object.entries(metadata)) {
     if (key === "text" || key === "userId" || key === "scope" || key === "embed_model" || key === "embed_rev") continue;
@@ -804,6 +1200,35 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
 
 function vectorUserIdFor(userId: string | undefined): string {
   return sanitizeUserId(userId);
+}
+
+export function vectorTenantScope(userId: string | undefined): string {
+  const exact = String(userId ?? "local");
+  if (exact === "local") return "shared:operator";
+  return `private:${crypto.createHash("sha256").update(exact, "utf8").digest("hex")}`;
+}
+
+export function buildOccurrenceVectorId(input: {
+  tenantScope: string;
+  source: string;
+  accession: string;
+  contentVersion: string;
+  section: string;
+  ordinal: number;
+  parserRevision: string;
+  embedRevision: string;
+}): string {
+  const canonical = JSON.stringify([
+    input.tenantScope,
+    input.source,
+    input.accession,
+    input.contentVersion,
+    input.section,
+    input.ordinal,
+    input.parserRevision,
+    input.embedRevision
+  ]);
+  return `occ:v2:${crypto.createHash("sha256").update(canonical, "utf8").digest("hex")}`;
 }
 
 export function sanitizeVectorId(id: string): string {
@@ -938,30 +1363,51 @@ export function retryAfterMs(error: unknown, attempt: number): number {
 async function embedWithRetry(
   voyage: VoyageAIClient,
   input: string[],
-  inputType: "document" | "query"
+  inputType: "document" | "query",
+  signal: AbortSignal | undefined,
+  source: ApiKeySource,
+  userId: string,
+  leaseGuard?: VectorStoreLeaseGuard
 ): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
   const attempts = embedRetryAttempts();
   for (let attempt = 0; ; attempt++) {
     try {
-      return await voyage.embed({
+      const request = {
         model: VOYAGE_MODEL,
         input,
         inputType
-      });
+      };
+      return await withDurableRagProviderDispatch(
+        "voyage",
+        source,
+        userId,
+        `embed ${inputType}`,
+        () => signal
+          ? voyage.embed(request, { abortSignal: signal })
+          : voyage.embed(request),
+        leaseGuard,
+        { estimatedCostUsd: estimateVoyageDispatchCost(input, "embed", VOYAGE_MODEL) }
+      );
     } catch (error) {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : error;
+      }
       if (!isRateLimitError(error) || attempt >= attempts) throw error;
       const delay = retryAfterMs(error, attempt);
       console.warn(`[vector-db] Voyage rate limited for inputType=${inputType}; retrying in ${Math.round(delay / 1000)}s.`);
-      await sleep(delay);
+      await sleep(delay, signal);
     }
   }
 }
 
 async function embedDocumentsWithRetry(
   voyage: VoyageAIClient,
-  input: string[]
+  input: string[],
+  source: ApiKeySource,
+  userId: string,
+  leaseGuard?: VectorStoreLeaseGuard
 ): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
-  return embedWithRetry(voyage, input, "document");
+  return embedWithRetry(voyage, input, "document", leaseGuard?.signal, source, userId, leaseGuard);
 }
 
 /**
@@ -989,14 +1435,20 @@ export async function rerankMatches(
   });
   if (documents.every((d) => !d)) return matches;
   try {
-    const resp = await withRagApiHealth("voyage-rerank", source, userId, "rerank", () =>
-      voyage.rerank({
+    const resp = await withRagApiHealth(
+      "voyage-rerank",
+      source,
+      userId,
+      "rerank",
+      () => voyage.rerank({
         query,
         documents,
         model: rerankModel(),
         topK: Math.min(topK, matches.length),
         truncation: true
-      })
+      }),
+      undefined,
+      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", rerankModel()) }
     );
     meterRerank(query, documents, rerankModel(), userId);
     recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
@@ -1058,6 +1510,68 @@ export interface StoreContextsOptions {
    * re-embeds even if the accession/contextId is stable.
    */
   dedupKeyPrefix?: string;
+  /**
+   * Reuse only exact, model/revision-matched document embeddings from a bounded process-local cache.
+   * Pinecone records are still upserted once per input document with their own id and metadata; a
+   * cache hit skips Voyage only, never the occurrence vector or its query-time filters/citation.
+   */
+  reuseExactEmbeddings?: boolean;
+  /**
+   * Optional durable-operation guard for long-running producers. The callback is invoked at each
+   * provider/write boundary and the signal is forwarded to Voyage, so a producer that loses its
+   * outer lease stops before another paid or persistent side effect.
+   */
+  leaseGuard?: VectorStoreLeaseGuard;
+  /** Internal two-phase commit used by storeDocument. Pending records are first upserted, then this
+   * exact local receipt callback runs, then the same records are re-upserted as committed. */
+  managedCommit?: {
+    persistReceipts: () => void;
+    markCommitted: () => void;
+  };
+}
+
+export interface VectorStoreLeaseGuard {
+  assertOwnership: () => void;
+  signal?: AbortSignal;
+}
+
+function documentEmbeddingInput(document: ContextDocument): string {
+  const source = document.embeddingText?.trim() || document.text;
+  return embedCleanTextEnabled() ? stripPublishedPrefix(source) : source;
+}
+
+class VectorStoreLeaseLostError extends Error {
+  constructor(cause?: unknown) {
+    super(cause instanceof Error ? cause.message : "Vector-store operation lease was lost.", {
+      cause: cause instanceof Error ? cause : undefined
+    });
+    this.name = "VectorStoreLeaseLostError";
+  }
+}
+
+function assertVectorStoreLease(guard: VectorStoreLeaseGuard | undefined): void {
+  if (!guard) return;
+  if (guard.signal?.aborted) {
+    throw new VectorStoreLeaseLostError(guard.signal.reason);
+  }
+  try {
+    guard.assertOwnership();
+  } catch (error) {
+    throw new VectorStoreLeaseLostError(error);
+  }
+}
+
+async function settleRagSideEffect(
+  effect: Promise<void>,
+  leaseGuard: VectorStoreLeaseGuard | undefined
+): Promise<void> {
+  if (!leaseGuard) {
+    // Preserve the established best-effort/non-blocking behavior for callers with no durable owner.
+    void effect;
+    return;
+  }
+  await effect;
+  assertVectorStoreLease(leaseGuard);
 }
 
 /**
@@ -1069,6 +1583,7 @@ export async function storeContexts(
   userId: string = "local",
   options?: StoreContextsOptions
 ): Promise<StoreContextsResult> {
+  assertVectorStoreLease(options?.leaseGuard);
   const vectorUserId = vectorUserIdFor(userId);
   const validDocuments = documents
     .map((doc) => {
@@ -1104,7 +1619,12 @@ export async function storeContexts(
       // large vector. content_hash (computed pre-trim in chunk.ts) stays consistent with the stored
       // text specifically because this chunk never gets trimmed.
       const isTable = doc.metadata?.is_table === true;
-      return { ...doc, text: isTable ? text.trim() : trimContextText(text, options?.maxChars) };
+      const storedText = isTable ? text.trim() : trimContextText(text, options?.maxChars);
+      const rawEmbeddingText = doc.embeddingText?.trim();
+      const embeddingText = rawEmbeddingText
+        ? (isTable ? rawEmbeddingText : trimContextText(rawEmbeddingText, options?.maxChars))
+        : undefined;
+      return { ...doc, text: storedText, ...(embeddingText ? { embeddingText } : {}) };
     })
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
@@ -1146,19 +1666,60 @@ export async function storeContexts(
     return { attempted: validDocuments.length, indexed: 0, skipped: true, dedupComplete: true };
   }
 
+  const reuseExactEmbeddings = options?.reuseExactEmbeddings === true;
+  const cachedDocumentEmbeddings = new Map<ContextDocument, number[]>();
+  const uniqueMissingEmbeddingInputs: string[] = [];
+  const missingEmbeddingInputSet = new Set<string>();
+  if (reuseExactEmbeddings) {
+    for (const document of documentsToStore) {
+      const input = documentEmbeddingInput(document);
+      const cached = getCachedDocumentEmbedding(input);
+      if (cached) {
+        cachedDocumentEmbeddings.set(document, cached);
+      } else if (!missingEmbeddingInputSet.has(input)) {
+        missingEmbeddingInputSet.add(input);
+        uniqueMissingEmbeddingInputs.push(input);
+      }
+    }
+  }
+
   let budgetSkipped = 0;
-  const budget = remainingIngestTexts(userId, documentsToStore.length);
-  if (budget.allowed < documentsToStore.length) {
-    budgetSkipped = documentsToStore.length - budget.allowed;
+  assertVectorStoreLease(options?.leaseGuard);
+  const requestedEmbeddingTexts = reuseExactEmbeddings
+    ? uniqueMissingEmbeddingInputs.length
+    : documentsToStore.length;
+  const budget = remainingIngestTexts(userId, requestedEmbeddingTexts);
+  if (budget.allowed < requestedEmbeddingTexts) {
+    const providerTextsSkipped = requestedEmbeddingTexts - budget.allowed;
+    const beforeBudgetDocuments = documentsToStore;
+    const beforeBudgetHashes = dedupHashes;
+    if (reuseExactEmbeddings) {
+      const allowedMissingInputs = new Set(uniqueMissingEmbeddingInputs.slice(0, budget.allowed));
+      const keptIndexes: number[] = [];
+      for (let index = 0; index < beforeBudgetDocuments.length; index++) {
+        const document = beforeBudgetDocuments[index]!;
+        if (cachedDocumentEmbeddings.has(document) || allowedMissingInputs.has(documentEmbeddingInput(document))) {
+          keptIndexes.push(index);
+        }
+      }
+      documentsToStore = keptIndexes.map((index) => beforeBudgetDocuments[index]!);
+      if (beforeBudgetHashes) dedupHashes = keptIndexes.map((index) => beforeBudgetHashes[index]!);
+      budgetSkipped = beforeBudgetDocuments.length - documentsToStore.length;
+    } else {
+      budgetSkipped = beforeBudgetDocuments.length - budget.allowed;
+      documentsToStore = beforeBudgetDocuments.slice(0, budget.allowed);
+      if (beforeBudgetHashes) dedupHashes = beforeBudgetHashes.slice(0, budget.allowed);
+    }
     const budgetPayload = {
-      requested: documentsToStore.length,
+      requested: requestedEmbeddingTexts,
       allowed: budget.allowed,
-      skipped: budgetSkipped,
+      skipped: providerTextsSkipped,
+      skippedOccurrences: budgetSkipped,
       usedLast24h: budget.used,
       limitPer24h: budget.limit
     };
     audit("vector_ingest_budget", budgetPayload, userId);
-    void alertUsageLimitHit({
+    await settleRagSideEffect(alertUsageLimitHit({
       userId,
       provider: "Voyage",
       operation: "embed-budget",
@@ -1166,23 +1727,27 @@ export async function storeContexts(
       status: budget.allowed === 0 ? "exceeded" : "warning",
       used: budget.used,
       limit: budget.limit,
-      attempted: documentsToStore.length,
-      skipped: budgetSkipped,
+      attempted: requestedEmbeddingTexts,
+      skipped: providerTextsSkipped,
       unit: "texts",
       recommendation:
         "If this happened during a deliberate backfill, raise RAG_INGEST_MAX_TEXTS_PER_DAY temporarily. If it happened during normal use, inspect deduping and ingestion cadence first."
-    });
-    void captureRagSentryMessage("warning", "RAG ingest text budget reached", {
+    }, {
+      assertActive: options?.leaseGuard ? () => assertVectorStoreLease(options.leaseGuard) : undefined,
+      signal: options?.leaseGuard?.signal
+    }), options?.leaseGuard);
+    await settleRagSideEffect(captureRagSentryMessage("warning", "RAG ingest text budget reached", {
       provider: "voyage",
       operation: "embed-budget",
       source: userId === "local" ? "operator" : "user",
-      requested: documentsToStore.length,
+      requested: requestedEmbeddingTexts,
       allowed: budget.allowed,
-      skipped: budgetSkipped,
+      skipped: providerTextsSkipped,
+      skippedOccurrences: budgetSkipped,
       usedLast24h: budget.used,
       limitPer24h: budget.limit
-    });
-    if (budget.allowed === 0) {
+    }, options?.leaseGuard), options?.leaseGuard);
+    if (documentsToStore.length === 0) {
       const lastIngest = {
         at: new Date().toISOString(),
         attempted: validDocuments.length,
@@ -1194,11 +1759,10 @@ export async function storeContexts(
       audit("vector_store", { ok: true, attempted: validDocuments.length, indexed: 0, budgetSkipped }, userId);
       return { attempted: validDocuments.length, indexed: 0, skipped: true, budgetSkipped };
     }
-    documentsToStore = documentsToStore.slice(0, budget.allowed);
-    if (dedupHashes) dedupHashes = dedupHashes.slice(0, budget.allowed);
   }
 
   let writeUnitBudgetSkipped = 0;
+  assertVectorStoreLease(options?.leaseGuard);
   const writeBudget = applyPineconeWriteBudget(documentsToStore, userId, vectorUserId);
   if (writeBudget.skipped > 0) {
     writeUnitBudgetSkipped = writeBudget.skipped;
@@ -1210,7 +1774,7 @@ export async function storeContexts(
       limitPer24h: writeBudget.limit
     };
     audit("vector_write_unit_budget", budgetPayload, userId);
-    void alertUsageLimitHit({
+    await settleRagSideEffect(alertUsageLimitHit({
       userId,
       provider: "Pinecone",
       operation: "upsert-budget",
@@ -1223,8 +1787,11 @@ export async function storeContexts(
       unit: "estimated WUs",
       recommendation:
         "50k/day should be enough for normal incremental single-trader use. If this fires outside a planned backfill, inspect chunking, deduping, and repeated agent writes before raising the cap."
-    });
-    void captureRagSentryMessage("warning", "Pinecone write unit budget reached", {
+    }, {
+      assertActive: options?.leaseGuard ? () => assertVectorStoreLease(options.leaseGuard) : undefined,
+      signal: options?.leaseGuard?.signal
+    }), options?.leaseGuard);
+    await settleRagSideEffect(captureRagSentryMessage("warning", "Pinecone write unit budget reached", {
       provider: "pinecone",
       operation: "upsert-budget",
       source: userId === "local" ? "operator" : "user",
@@ -1233,7 +1800,7 @@ export async function storeContexts(
       skipped: writeUnitBudgetSkipped,
       usedLast24h: writeBudget.used,
       limitPer24h: writeBudget.limit
-    });
+    }, options?.leaseGuard), options?.leaseGuard);
     if (writeBudget.documents.length === 0) {
       const lastIngest = {
         at: new Date().toISOString(),
@@ -1250,95 +1817,216 @@ export async function storeContexts(
     if (dedupHashes) dedupHashes = dedupHashes.slice(0, documentsToStore.length);
   }
 
-  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = getClients(userId);
+  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId, options?.leaseGuard);
   if (!pc || !voyage) {
     console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
-    void captureRagSentryMessage("warning", "RAG store skipped: missing Pinecone or Voyage key", {
+    await settleRagSideEffect(captureRagSentryMessage("warning", "RAG store skipped: missing Pinecone or Voyage key", {
       provider: !pc ? "pinecone" : "voyage",
       operation: "storeContexts",
       source: userId === "local" ? "operator" : "user",
       attempted: validDocuments.length
-    });
+    }, options?.leaseGuard), options?.leaseGuard);
     audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
     return { attempted: validDocuments.length, indexed: 0, skipped: true, unconfigured: true };
   }
 
   let indexed = 0;
   let rejectedInvalidEmbeddings = 0;
+  const managedRecordBatches: Array<PineconeRecord<RecordMetadata>[]> = [];
   // R10: content_hash of each document actually upserted (not rejected by the R2 integrity
   // guard), keyed by identity against `documentsToStore` — only recorded into document_chunks
   // (via insertDocumentChunks below) when dedup is active for this call.
   const indexedDocIdentities = new Set<ContextDocument>();
   try {
-    await ensureIndex(pc, initCacheKey, pineconeSource, userId);
+    assertVectorStoreLease(options?.leaseGuard);
+    await ensureIndex(pc, initCacheKey, pineconeSource, userId, options?.leaseGuard);
+    assertVectorStoreLease(options?.leaseGuard);
     const index = pc.Index(indexName());
     const batches = chunks(documentsToStore, embedBatchSize());
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
       if (!batch) continue;
-      if (batchIndex > 0) await sleep(embedBatchDelayMs());
-      // R17: embed CLEAN text (boilerplate stripped) when VECTOR_EMBED_CLEAN_TEXT is on — the
-      // STORED metadata text (used for citations/display, set below via cleanMetadata) is always
-      // the original (possibly boilerplate-prefixed) `document.text`, unaffected by this flag.
-      const embedInputs = embedCleanTextEnabled()
-        ? batch.map((doc) => stripPublishedPrefix(doc.text))
-        : batch.map((doc) => doc.text);
-      const response = await withRagApiHealth("voyage", voyageSource, userId, "embed documents", () =>
-        embedDocumentsWithRetry(voyage, embedInputs)
-      );
-      meterEmbed(embedInputs, undefined, userId);
+      if (batchIndex > 0) await sleep(embedBatchDelayMs(), options?.leaseGuard?.signal);
+      assertVectorStoreLease(options?.leaseGuard);
+      // The stored citation text and the text embedded by Voyage can intentionally differ:
+      // storeDocument retains occurrence-specific headers for display while embedding exact raw
+      // chunk content. Exact cache hits skip Voyage only; every document below still gets its own
+      // Pinecone id/metadata record and therefore remains independently queryable by symbol/PIT.
+      const embedInputs = batch.map(documentEmbeddingInput);
+      let batchEmbeddings: number[][] | undefined;
+      let rejected = 0;
+      let rejectionReason: ValidatedDocumentEmbeddingBatch["reason"];
 
-      const records: PineconeRecord<RecordMetadata>[] = [];
-      response.data?.forEach((item, indexInBatch) => {
-        const embedding = item.embedding;
-        const document = batch[indexInBatch];
-        if (!embedding || !document) return;
-        // R2 integrity guard: reject (don't upsert) a malformed embedding — wrong dimension or a
-        // non-finite value (e.g. a Voyage model/config drift, partial/NaN response) would otherwise
-        // silently poison cosine scoring for every future query against this vector. Drop + count;
-        // never throw — one bad vector in a batch must not fail the whole batch.
-        if (!isValidEmbedding(embedding)) {
-          rejectedInvalidEmbeddings++;
-          const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
-          console.warn(`[vector-db] Rejected malformed embedding (dim=${dim}) for doc "${contextId(document, indexInBatch)}" — not upserted.`);
-          return;
+      if (reuseExactEmbeddings) {
+        const resolved = new Array<number[]>(batch.length);
+        const missingInputs: string[] = [];
+        const missingPositions = new Map<string, number[]>();
+        for (let indexInBatch = 0; indexInBatch < batch.length; indexInBatch++) {
+          const document = batch[indexInBatch]!;
+          const input = embedInputs[indexInBatch]!;
+          const cached = cachedDocumentEmbeddings.get(document) ?? getCachedDocumentEmbedding(input);
+          if (cached) {
+            resolved[indexInBatch] = cached;
+            continue;
+          }
+          const positions = missingPositions.get(input);
+          if (positions) positions.push(indexInBatch);
+          else {
+            missingInputs.push(input);
+            missingPositions.set(input, [indexInBatch]);
+          }
         }
-        records.push({
+
+        if (missingInputs.length > 0) {
+          const response = await withRagApiHealth(
+            "voyage",
+            voyageSource,
+            userId,
+            "embed documents",
+            () => embedDocumentsWithRetry(voyage, missingInputs, voyageSource, userId, options?.leaseGuard),
+            options?.leaseGuard,
+            { durablyTrackedInside: true }
+          );
+          assertVectorStoreLease(options?.leaseGuard);
+          meterEmbed(missingInputs, undefined, userId);
+          const validated = validateDocumentEmbeddingBatch(response.data, missingInputs.length);
+          if (!validated.embeddings) {
+            rejected = validated.rejected;
+            rejectionReason = validated.reason;
+          } else {
+            for (let inputIndex = 0; inputIndex < missingInputs.length; inputIndex++) {
+              const input = missingInputs[inputIndex]!;
+              const embedding = validated.embeddings[inputIndex]!;
+              setCachedDocumentEmbedding(input, embedding);
+              for (const position of missingPositions.get(input) ?? []) resolved[position] = [...embedding];
+            }
+          }
+        }
+        const complete = Array.from({ length: batch.length }, (_unused, index) => isValidEmbedding(resolved[index])).every(Boolean);
+        if (rejected === 0 && complete) batchEmbeddings = resolved;
+        else if (rejected === 0) {
+          rejected = Math.max(1, batch.length);
+          rejectionReason = "invalid-embedding";
+        }
+      } else {
+        const response = await withRagApiHealth(
+          "voyage",
+          voyageSource,
+          userId,
+          "embed documents",
+          () => embedDocumentsWithRetry(voyage, embedInputs, voyageSource, userId, options?.leaseGuard),
+          options?.leaseGuard,
+          { durablyTrackedInside: true }
+        );
+        assertVectorStoreLease(options?.leaseGuard);
+        meterEmbed(embedInputs, undefined, userId);
+        const validated = validateDocumentEmbeddingBatch(response.data, batch.length);
+        batchEmbeddings = validated.embeddings;
+        rejected = validated.rejected;
+        rejectionReason = validated.reason;
+      }
+
+      if (!batchEmbeddings) {
+        rejectedInvalidEmbeddings += rejected;
+        assertVectorStoreLease(options?.leaseGuard);
+        console.warn(
+          `[vector-db] Rejected Voyage document embedding batch (${rejectionReason ?? "invalid-response"}; expected=${batch.length}) — no records from this batch were upserted.`
+        );
+        // Stop spending after an integrity failure. Earlier batches may already be in Pinecone, but
+        // deterministic ids make the whole document safe to retry and no content/occurrence receipt
+        // is written while rejectedInvalidEmbeddings is non-zero.
+        break;
+      }
+
+      const records: PineconeRecord<RecordMetadata>[] = batchEmbeddings.map((embedding, indexInBatch) => {
+        const document = batch[indexInBatch]!;
+        indexedDocIdentities.add(document);
+        return {
           id: contextId(document, indexInBatch),
           values: embedding,
           metadata: cleanMetadata(document.metadata, document.text, vectorUserId)
-        });
-        indexedDocIdentities.add(document);
+        };
       });
 
       if (records.length > 0) {
         const estimatedWriteUnits = estimatePineconeWriteUnitsForRecords(records);
+        assertVectorStoreLease(options?.leaseGuard);
         // Pinecone JS SDK v8 takes an options object ({ records }), not a bare array.
-        await withRagApiHealth("pinecone", pineconeSource, userId, "upsert", () =>
-          index.upsert({ records } as any)
+        await withRagApiHealth(
+          "pinecone",
+          pineconeSource,
+          userId,
+          "upsert",
+          () => index.upsert({ records } as any),
+          options?.leaseGuard
         );
+        assertVectorStoreLease(options?.leaseGuard);
         indexed += records.length;
+        if (options?.managedCommit) managedRecordBatches.push(records);
         meterPineconeUpsert(records.length, userId, estimatedWriteUnits);
       }
     }
 
+    if (
+      options?.managedCommit &&
+      rejectedInvalidEmbeddings === 0 &&
+      indexed === documentsToStore.length
+    ) {
+      assertVectorStoreLease(options.leaseGuard);
+      try {
+        // This is the exact relational receipt transaction. Provider records are still pending and
+        // server-side retrieval filters exclude them if this callback throws.
+        options.managedCommit.persistReceipts();
+      } catch (error) {
+        throw new Error("document-receipt-write-failed", { cause: error });
+      }
+      assertVectorStoreLease(options.leaseGuard);
+      for (const pendingRecords of managedRecordBatches) {
+        const committedRecords = pendingRecords.map((record) => ({
+          ...record,
+          metadata: { ...record.metadata, ingest_state: "committed" }
+        }));
+        const estimatedWriteUnits = estimatePineconeWriteUnitsForRecords(committedRecords);
+        await withRagApiHealth(
+          "pinecone",
+          pineconeSource,
+          userId,
+          "commit managed vectors",
+          () => index.upsert({ records: committedRecords } as any),
+          options.leaseGuard,
+          { units: 1 }
+        );
+        assertVectorStoreLease(options.leaseGuard);
+        meterPineconeUpsert(committedRecords.length, userId, estimatedWriteUnits);
+      }
+      try {
+        options.managedCommit.markCommitted();
+      } catch (error) {
+        throw new Error("document-local-commit-finalize-failed", { cause: error });
+      }
+      assertVectorStoreLease(options.leaseGuard);
+    }
+
     if (rejectedInvalidEmbeddings > 0) {
+      assertVectorStoreLease(options?.leaseGuard);
       audit("vector_embedding_integrity", { rejected: rejectedInvalidEmbeddings, attempted: validDocuments.length }, userId);
-      void captureRagSentryMessage("warning", "Voyage document embedding integrity rejection", {
+      await captureRagSentryMessage("warning", "Voyage document embedding integrity rejection", {
         provider: "voyage",
         operation: "embed documents",
         source: voyageSource,
         attempted: validDocuments.length,
         rejected: rejectedInvalidEmbeddings
-      });
+      }, options?.leaseGuard);
     }
+    assertVectorStoreLease(options?.leaseGuard);
     console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).${rejectedInvalidEmbeddings > 0 ? ` (${rejectedInvalidEmbeddings} rejected: malformed embedding)` : ""}`);
 
     // R10: record newly-indexed content hashes so a repeat storeContexts call with the same
     // dedupKeyPrefix and byte-identical text skips re-embedding next time. Best-effort — a
     // failure here must not fail the store (the record was already upserted to Pinecone).
-    if (dedupPrefix && dedupHashes && indexedDocIdentities.size > 0) {
+    if (dedupPrefix && dedupHashes && indexedDocIdentities.size > 0 && rejectedInvalidEmbeddings === 0) {
+      assertVectorStoreLease(options?.leaseGuard);
       const toRecord = documentsToStore
         .map((doc, i) => (indexedDocIdentities.has(doc) ? dedupHashes![i] : undefined))
         .filter((h): h is { content_hash: string; symbol: string; source: string; chunk_id: string } => h != null);
@@ -1358,10 +2046,19 @@ export async function storeContexts(
       ...(budgetSkipped > 0 ? { budgetSkipped } : {}),
       ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {})
     };
+    assertVectorStoreLease(options?.leaseGuard);
     setInternalSetting(LAST_INGEST_KEY, lastIngest);
     audit("vector_store", { ok: true, attempted: validDocuments.length, indexed, rejectedInvalidEmbeddings, ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) }, userId);
     return { attempted: validDocuments.length, indexed, ...(rejectedInvalidEmbeddings > 0 ? { rejectedInvalidEmbeddings } : {}), ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) };
   } catch (err) {
+    // Lease loss is a concurrency boundary, not a provider failure. Propagate it without writing
+    // success/failure ledgers after ownership has moved to a successor. Voyage receives the abort
+    // signal directly; Pinecone's high-level upsert API is only cooperatively guarded before/after,
+    // and deterministic vector ids make a completed in-flight upsert safe to retry idempotently.
+    if (err instanceof VectorStoreLeaseLostError) throw err;
+    // SDK AbortErrors and abort-aware retry sleeps surface their raw reason. Re-check the guard
+    // before any failure ledger, audit, or alert so lease loss cannot write after ownership moved.
+    assertVectorStoreLease(options?.leaseGuard);
     const error = err instanceof Error ? err.message : String(err);
     console.error("[vector-db] Error storing contexts:", err);
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed, error });
@@ -1374,7 +2071,7 @@ export async function storeContexts(
         attempted: validDocuments.length,
         indexed,
         reason: error
-      });
+      }, options?.leaseGuard);
     }
     return { attempted: validDocuments.length, indexed, error };
   }
@@ -1385,139 +2082,222 @@ export async function storeContexts(
  * `acceptance_datetime` so retrieval can apply a point-in-time (`as_of`) filter. Prefer this over
  * storeContexts for anything longer than a short catalyst summary (e.g. full 10-K risk sections).
  */
+export interface StoreDocumentOptions extends ChunkOptions {
+  /** Guard inherited from the producer's durable shared vector-ingest lease. */
+  leaseGuard?: VectorStoreLeaseGuard;
+  /** Full source-content version (normally SHA-256). Defaults to SHA-256 of the input body. */
+  contentVersion?: string;
+  /** Parser/chunker identity included in every collision-safe occurrence id. */
+  parserRevision?: string;
+}
+
+type DocumentChunkReceipt = Parameters<typeof insertDocumentChunks>[0][number];
+type ChunkOccurrenceReceipt = Parameters<typeof dbModule.insertManagedChunkOccurrences>[0][number];
+
+function persistDocumentReceipts(
+  chunksToRecord: DocumentChunkReceipt[],
+  occurrencesToRecord: ChunkOccurrenceReceipt[],
+  commitId: string
+): void {
+  // Both receipts describe one completed external write set. Nested better-sqlite3 transactions use
+  // savepoints, so either every local receipt commits or neither does; an idempotent retry can then
+  // safely overwrite the deterministic Pinecone ids and retry this transaction.
+  const db = dbModule.getDb();
+  db.transaction(() => {
+    insertDocumentChunks(chunksToRecord);
+    dbModule.insertManagedChunkOccurrences(occurrencesToRecord);
+    if (typeof dbModule.markVectorCommitReceiptsPersisted === "function") {
+      dbModule.markVectorCommitReceiptsPersisted(commitId);
+    } else if (process.env.NODE_ENV !== "test") {
+      throw new Error("Vector commit receipt ledger is unavailable.");
+    }
+
+    // The CRUD helpers intentionally use INSERT OR IGNORE for idempotency. Verify the postcondition
+    // inside the same transaction so a conflicting/stale occurrence cannot be mistaken for a
+    // successful receipt merely because SQLite did not throw.
+    const findChunk = db.prepare("SELECT 1 AS ok FROM document_chunks WHERE content_hash = ?");
+    for (const chunk of chunksToRecord) {
+      if (!findChunk.get(chunk.content_hash)) throw new Error("document_chunks receipt was not persisted");
+    }
+    const findOccurrence = db.prepare(`
+      SELECT 1 AS ok
+      FROM chunk_occurrences
+      WHERE vector_id = ? AND content_hash = ? AND symbol = ? AND source = ? AND accession = ?
+        AND sequence IS ? AND document_name IS ? AND section = ? AND ordinal = ? AND accepted_at = ?
+        AND tenant_scope = ? AND content_version = ? AND commit_id = ? AND receipt_state = 'pending'
+    `);
+    for (const occurrence of occurrencesToRecord) {
+      if (!findOccurrence.get(
+        occurrence.vectorId,
+        occurrence.contentHash,
+        occurrence.symbol,
+        occurrence.source,
+        occurrence.accession,
+        occurrence.sequence ?? null,
+        occurrence.documentName ?? null,
+        occurrence.section,
+        occurrence.ordinal,
+        occurrence.acceptedAt,
+        occurrence.tenantScope,
+        occurrence.contentVersion,
+        occurrence.commitId
+      )) throw new Error("chunk_occurrences receipt was not persisted");
+    }
+  })();
+}
+
 export async function storeDocument(
   doc: ChunkInput & { symbol?: string },
   userId: string = "local",
-  options?: ChunkOptions
+  options?: StoreDocumentOptions
 ): Promise<StoreContextsResult> {
+  assertVectorStoreLease(options?.leaseGuard);
   const chunked = chunkDocument(doc, options);
   const fallbackSymbol = doc.symbol ?? (Array.isArray(doc.ticker) ? doc.ticker[0] : doc.ticker) ?? "";
   const source = doc.source || "sec-edgar";
 
-  // Dedup by content_hash: skip chunks whose text byte sequence has already been embedded.
-  // The document_chunks table is keyed on content_hash (SHA-256, first 32 hex chars) so a
-  // re-run of the same filing text never pays Voyage tokens for unchanged chunks.
+  // A content hash identifies content, never an occurrence. Every occurrence still receives a real
+  // Pinecone record with its own symbol/accession/PIT metadata; exact embeddings may be reused, but
+  // vectors and citations are never deduplicated away.
   const chunkHashes = chunked.map((c) => ({
     content_hash: c.content_hash,
     symbol: c.ticker[0] ?? fallbackSymbol,
     source,
     chunk_id: c.chunk_id
   }));
-  const newHashes = filterNewDocumentChunks(chunkHashes);
-  const newHashSet = new Set(newHashes.map((h) => h.content_hash));
-  const freshChunks = chunked.filter((c) => newHashSet.has(c.content_hash));
 
-  if (freshChunks.length < chunked.length) {
-    console.log(
-      `[vector-db] Content-hash dedup: ${chunked.length - freshChunks.length}/${chunked.length} chunks already indexed, skipping.`
-    );
-  }
-
-  const corpusRev = "v1";
-  const embedRev = "v1";
-  const parserRev = "v1";
+  const embedRev = `v${EMBED_REV}`;
+  const parserRev = options?.parserRevision?.trim() || "v1";
   const accession = doc.doc_id || "unknown_accession";
+  const contentVersion = options?.contentVersion?.trim() ||
+    crypto.createHash("sha256").update(doc.text, "utf8").digest("hex");
+  const tenantScope = vectorTenantScope(userId);
   const sequence = 1;
   const documentName = doc.title || "main.html";
   const now = new Date().toISOString();
-
-  let result: StoreContextsResult = { attempted: chunked.length, indexed: 0 };
-
-  if (freshChunks.length > 0) {
-    const documents: ContextDocument[] = freshChunks.map((c) => {
-      const originalIndex = chunked.indexOf(c);
-      const ordinal = originalIndex + 1;
-      const cleanSection = (c.section || "body").replace(/:/g, "-");
-      const occurrenceId = `${accession}:${sequence}:${documentName}:${cleanSection}:${ordinal}:${parserRev}`;
-      const vectorId = sanitizeVectorId(`${corpusRev}:${occurrenceId}:${embedRev}`);
-
-      return {
-        text: `${c.context_header}\n\n${c.text}`,
-        metadata: {
-          symbol: c.ticker[0] ?? fallbackSymbol,
-          source: c.source,
-          timestamp: c.published_at,
-          accession: c.chunk_id,
-          acceptance_datetime: c.acceptance_datetime,
-          section: c.section,
-          doc_type: c.doc_type,
-          is_table: c.is_table,
-          ticker: c.ticker,
-          content_hash: c.content_hash,
-          vector_id: vectorId,
-          ...(doc.url ? { url: doc.url } : {})
-        }
-      };
+  const occurrenceDescriptors = chunked.map((chunk, index) => {
+    const ordinal = index + 1;
+    const cleanSection = chunk.section || "body";
+    const vectorId = buildOccurrenceVectorId({
+      tenantScope,
+      source,
+      accession,
+      contentVersion,
+      section: cleanSection,
+      ordinal,
+      parserRevision: parserRev,
+      embedRevision: embedRev
     });
+    return { chunk, ordinal, vectorId };
+  });
+  const commitId = `vcommit:v1:${crypto.createHash("sha256").update(JSON.stringify([
+    tenantScope,
+    source,
+    accession,
+    contentVersion,
+    parserRev,
+    embedRev,
+    occurrenceDescriptors.map((item) => item.vectorId)
+  ]), "utf8").digest("hex")}`;
+  if (typeof dbModule.beginVectorCommit === "function") {
+    dbModule.beginVectorCommit({
+      id: commitId,
+      tenantScope,
+      userId,
+      source,
+      accession,
+      contentVersion,
+      parserRevision: parserRev,
+      embedRevision: embedRev,
+      expectedVectors: occurrenceDescriptors.length,
+      now
+    });
+  } else if (process.env.NODE_ENV !== "test") {
+    throw new Error("Vector commit ledger is unavailable.");
+  }
 
-    // Align the storeContexts trim cap with the ACTUAL token budget chunkDocument used (plus the
-    // context_header prefix), rather than the fixed 2400-char default — otherwise a structure-aware
-    // chunk that chunkDocument deliberately kept atomic (e.g. a table) can be silently truncated a
-    // second time downstream. Generous chars-per-token ceiling covers long words/table padding.
-    const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS;
-    const headerAllowance = 512; // context_header is short, deterministic prose — generous fixed budget
-    const chunkAlignedMaxChars = Math.max(contextMaxChars(), maxTokens * CHARS_PER_TOKEN_CEILING + headerAllowance);
+  const documents: ContextDocument[] = occurrenceDescriptors.map(({ chunk, ordinal, vectorId }) => ({
+    text: `${chunk.context_header}\n\n${chunk.text}`,
+    // The vector is content-derived and safe to reuse; the stored text/metadata below remains
+    // occurrence-specific for filtering, point-in-time correctness, and citation display.
+    embeddingText: chunk.text,
+    metadata: {
+      symbol: chunk.ticker[0] ?? fallbackSymbol,
+      source: chunk.source,
+      timestamp: chunk.published_at,
+      accession,
+      chunk_id: chunk.chunk_id,
+      acceptance_datetime: chunk.acceptance_datetime,
+      section: chunk.section,
+      doc_type: chunk.doc_type,
+      is_table: chunk.is_table,
+      ticker: chunk.ticker,
+      content_hash: chunk.content_hash,
+      vector_id: vectorId,
+      tenant_scope: tenantScope,
+      content_version: contentVersion,
+      vector_commit_id: commitId,
+      chunk_ordinal: ordinal,
+      parser_revision: parserRev,
+      embed_revision: embedRev,
+      receipt_required: true,
+      ingest_state: "pending",
+      ...(doc.url ? { url: doc.url } : {})
+    }
+  }));
+  const occurrencesToRecord: ChunkOccurrenceReceipt[] = occurrenceDescriptors.map(({ chunk, ordinal, vectorId }) => ({
+    vectorId,
+    contentHash: chunk.content_hash,
+    symbol: chunk.ticker[0] || fallbackSymbol,
+    source,
+    accession,
+    sequence,
+    documentName,
+    section: chunk.section || "body",
+    ordinal,
+    acceptedAt: chunk.acceptance_datetime || now,
+    tenantScope,
+    contentVersion,
+    commitId,
+    receiptState: "pending",
+    createdAt: now
+  }));
 
-    result = await storeContexts(documents, userId, { maxChars: chunkAlignedMaxChars });
-
-    // Record fresh chunks in document_chunks so the dedup gate works on subsequent runs.
-    if (result.indexed > 0) {
-      const indexedHashes = freshChunks.slice(0, result.indexed).map((c) => ({
-        content_hash: c.content_hash,
-        symbol: c.ticker[0] ?? fallbackSymbol,
-        source: c.source,
-        chunk_id: c.chunk_id
-      }));
-      try {
-        insertDocumentChunks(indexedHashes);
-      } catch (err) {
-        console.warn("[vector-db] insertDocumentChunks failed (non-fatal):", err instanceof Error ? err.message : String(err));
+  // Align the storeContexts trim cap with the ACTUAL token budget chunkDocument used (plus the
+  // citation header allowance). Table chunks remain untrimmed in storeContexts.
+  const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const headerAllowance = 512;
+  const chunkAlignedMaxChars = Math.max(contextMaxChars(), maxTokens * CHARS_PER_TOKEN_CEILING + headerAllowance);
+  const result = await storeContexts(documents, userId, {
+    maxChars: chunkAlignedMaxChars,
+    reuseExactEmbeddings: true,
+    leaseGuard: options?.leaseGuard,
+    managedCommit: {
+      persistReceipts: () => persistDocumentReceipts(chunkHashes, occurrencesToRecord, commitId),
+      markCommitted: () => {
+        if (typeof dbModule.markVectorCommitCommitted === "function") {
+          dbModule.markVectorCommitCommitted(commitId);
+        } else if (process.env.NODE_ENV !== "test") {
+          throw new Error("Vector commit finalizer is unavailable.");
+        }
       }
     }
-  } else {
-    result = { attempted: chunked.length, indexed: 0, skipped: true, dedupComplete: true };
+  });
+  assertVectorStoreLease(options?.leaseGuard);
+
+  const vectorsComplete =
+    chunked.length > 0 &&
+    result.indexed === chunked.length &&
+    !result.error &&
+    (result.rejectedInvalidEmbeddings ?? 0) === 0 &&
+    (result.budgetSkipped ?? 0) === 0 &&
+    (result.writeUnitBudgetSkipped ?? 0) === 0;
+  if (!vectorsComplete) {
+    return { ...result, attempted: chunked.length, documentComplete: false };
   }
 
-  // Record occurrences for all chunks that are either:
-  // - skipped (already deduped) OR
-  // - successfully indexed fresh chunks
-  const occurrencesToRecord: any[] = [];
-  for (let i = 0; i < chunked.length; i++) {
-    const c = chunked[i];
-    const isFresh = newHashSet.has(c.content_hash);
-    const isIndexed = !isFresh || (isFresh && freshChunks.indexOf(c) < result.indexed);
-
-    if (isIndexed) {
-      const ordinal = i + 1;
-      const cleanSection = (c.section || "body").replace(/:/g, "-");
-      const occurrenceId = `${accession}:${sequence}:${documentName}:${cleanSection}:${ordinal}:${parserRev}`;
-      const vectorId = sanitizeVectorId(`${corpusRev}:${occurrenceId}:${embedRev}`);
-
-      occurrencesToRecord.push({
-        vectorId,
-        contentHash: c.content_hash,
-        symbol: c.ticker[0] || fallbackSymbol,
-        source,
-        accession,
-        sequence,
-        documentName,
-        section: c.section || "body",
-        ordinal,
-        acceptedAt: c.acceptance_datetime || now,
-        createdAt: now
-      });
-    }
-  }
-
-  if (occurrencesToRecord.length > 0) {
-    try {
-      insertChunkOccurrences(occurrencesToRecord);
-    } catch (err) {
-      console.warn("[vector-db] insertChunkOccurrences failed (non-fatal):", err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  return { ...result, attempted: chunked.length };
+  assertVectorStoreLease(options?.leaseGuard);
+  return { ...result, attempted: chunked.length, documentComplete: true };
 }
 
 /**
@@ -1583,6 +2363,7 @@ const DEFAULT_STALENESS_HORIZON_DAYS: Record<string, number> = {
   "10-q": 120,
   "8-k": 90,
   transcript: 120,
+  "earnings-transcript": 120,
   "congress-trade": 60,
   "insider-filing": 90
 };
@@ -1618,7 +2399,7 @@ export function isStale(asOfIso: string | undefined, docType: string | undefined
  */
 export async function getVectorStoreStats(userId: string = "local"): Promise<VectorStoreStats> {
   const name = indexName();
-  const { pc, pineconeSource } = getClients(userId);
+  const { pc, pineconeSource } = await getClients(userId);
   if (!pc) return { configured: false, indexName: name };
   try {
     if (!(await indexExists(pc, pineconeSource, userId))) return { configured: true, indexName: name, exists: false };
@@ -1645,7 +2426,7 @@ export async function getVectorStoreStats(userId: string = "local"): Promise<Vec
  * page is local-ledger based, so this exposes old/alternate indexes that can consume
  * the same org-level Pinecone quota while not appearing in ticker coverage. */
 export async function getAllVectorStoreStats(userId: string = "local"): Promise<VectorIndexStats[]> {
-  const { pc, pineconeSource } = getClients(userId);
+  const { pc, pineconeSource } = await getClients(userId);
   if (!pc) return [];
   try {
     const indexes = await withRagApiHealth("pinecone", pineconeSource, userId, "listIndexes", () => pc.listIndexes());
@@ -1757,7 +2538,7 @@ export async function backfillAsOfEpoch(options: BackfillAsOfEpochOptions = {}):
     dryRun
   };
 
-  const { pc, pineconeSource } = getClients(userId);
+  const { pc, pineconeSource } = await getClients(userId);
   if (!pc) throw new Error("backfillAsOfEpoch: Pinecone key not configured");
   if (!(await indexExists(pc, pineconeSource, userId))) {
     throw new Error(`backfillAsOfEpoch: index "${indexName()}" does not exist`);
@@ -1819,6 +2600,241 @@ export async function backfillAsOfEpoch(options: BackfillAsOfEpochOptions = {}):
     // best-effort telemetry only
   }
   return result;
+}
+
+export interface VectorMetadataInventoryRow {
+  id: string;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * Authoritative provider-side metadata inventory. It lists Pinecone itself rather than trusting
+ * local receipts, so receiptless crash ghosts are included. Callers must opt into this I/O by
+ * invoking the function; importing the module performs no external work.
+ */
+export async function inventoryVectorRecordsByMetadata(options: {
+  userId?: string;
+  source?: string;
+  docType?: string;
+  receiptRequired?: boolean;
+  batchSize?: number;
+  /** Hard provider-record scan bound. Exceeding it throws rather than returning a partial inventory. */
+  maxScanned?: number;
+} = {}): Promise<VectorMetadataInventoryRow[]> {
+  const userId = options.userId ?? "local";
+  const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
+  const maxScanned = Math.max(1, Math.min(1_000_000, Math.floor(options.maxScanned ?? 250_000)));
+  const { pc, pineconeSource } = await getClients(userId);
+  if (!pc) throw new Error("Pinecone key not configured for vector inventory.");
+  if (!(await indexExists(pc, pineconeSource, userId))) return [];
+  const index = pc.Index(indexName());
+  const found: VectorMetadataInventoryRow[] = [];
+  let scanned = 0;
+  let paginationToken: string | undefined;
+  do {
+    const listed = await withRagApiHealth("pinecone", pineconeSource, userId, "inventory list", () =>
+      index.listPaginated({ ...(paginationToken ? { paginationToken } : {}) })
+    );
+    paginationToken = listed.pagination?.next;
+    const ids = (listed.vectors ?? []).map((row) => row.id).filter((id): id is string => Boolean(id));
+    if (scanned + ids.length > maxScanned) {
+      throw new Error(`Vector inventory scan limit exceeded (${maxScanned} records).`);
+    }
+    scanned += ids.length;
+    for (const idBatch of chunks(ids, batchSize)) {
+      const fetched = await withRagApiHealth("pinecone", pineconeSource, userId, "inventory fetch", () =>
+        index.fetch({ ids: idBatch })
+      );
+      for (const id of idBatch) {
+        const raw = fetched.records?.[id]?.metadata;
+        const metadata = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+        if (options.source !== undefined && metadata.source !== options.source) continue;
+        if (options.docType !== undefined && String(metadata.doc_type ?? "").toLowerCase() !== options.docType.toLowerCase()) continue;
+        if (options.receiptRequired !== undefined && metadata.receipt_required !== options.receiptRequired) continue;
+        found.push({ id, metadata });
+      }
+    }
+  } while (paginationToken);
+  return found.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export async function purgeVectorRecordsByMetadata(options: {
+  userId?: string;
+  source?: string;
+  docType?: string;
+  receiptRequired?: boolean;
+  dryRun?: boolean;
+  batchSize?: number;
+  maxScanned?: number;
+}): Promise<{ dryRun: boolean; ids: string[]; deleted: number }> {
+  const dryRun = options.dryRun !== false;
+  const rows = await inventoryVectorRecordsByMetadata(options);
+  const ids = rows.map((row) => row.id);
+  if (dryRun || ids.length === 0) return { dryRun, ids, deleted: 0 };
+  const userId = options.userId ?? "local";
+  const { pc, pineconeSource } = await getClients(userId);
+  if (!pc) throw new Error("Pinecone key not configured for vector purge.");
+  const index = pc.Index(indexName());
+  const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
+  let deleted = 0;
+  for (const idBatch of chunks(ids, batchSize)) {
+    await withRagApiHealth("pinecone", pineconeSource, userId, "rights purge delete", () =>
+      index.deleteMany({ ids: idBatch })
+    );
+    deleted += idBatch.length;
+  }
+  return { dryRun, ids, deleted };
+}
+
+/**
+ * Repair or delete managed crash leftovers. Provider-committed vectors are replayed only when an
+ * exact local receipt set exists; every other managed provider ghost is deleted. Defaults to a
+ * deterministic dry run.
+ */
+export async function reconcileManagedVectorRecords(options: {
+  userId?: string;
+  source?: string;
+  dryRun?: boolean;
+} = {}): Promise<{
+  dryRun: boolean;
+  promoteIds: string[];
+  deleteIds: string[];
+  promoted: number;
+  deleted: number;
+}> {
+  const dryRun = options.dryRun !== false;
+  const userId = options.userId ?? "local";
+  const providerRows = await inventoryVectorRecordsByMetadata({
+    userId,
+    receiptRequired: true
+  });
+  const database = dbModule.getDb();
+  const commitRows = database.prepare(`
+    SELECT id, source, accession, expected_vectors, state
+    FROM vector_ingest_commits
+    WHERE state IN ('pending','receipts_persisted','committed')
+      ${options.source === undefined ? "" : "AND source = ?"}
+  `).all(...(options.source === undefined ? [] : [options.source])) as Array<{
+    id: string;
+    source: string;
+    accession: string;
+    expected_vectors: number;
+    state: string;
+  }>;
+  const commits = new Map(commitRows.map((row) => [row.id, row]));
+  const localRows = database.prepare(`
+    SELECT o.vector_id, o.commit_id, o.content_version, o.tenant_scope,
+           o.source, o.accession,
+           o.receipt_state, c.state AS commit_state
+    FROM chunk_occurrences o
+    JOIN vector_ingest_commits c ON c.id = o.commit_id
+    WHERE o.receipt_state IN ('pending','committed')
+      ${options.source === undefined ? "" : "AND c.source = ?"}
+  `).all(...(options.source === undefined ? [] : [options.source])) as Array<{
+    vector_id: string;
+    commit_id: string;
+    content_version: string;
+    tenant_scope: string;
+    source: string;
+    accession: string;
+    receipt_state: string;
+    commit_state: string;
+  }>;
+  const local = new Map(localRows.map((row) => [row.vector_id, row]));
+  const localByCommit = new Map<string, typeof localRows>();
+  for (const row of localRows) {
+    const grouped = localByCommit.get(row.commit_id) ?? [];
+    grouped.push(row);
+    localByCommit.set(row.commit_id, grouped);
+  }
+  const providerByCommit = new Map<string, VectorMetadataInventoryRow[]>();
+  const consideredProviderRows: VectorMetadataInventoryRow[] = [];
+  for (const providerRow of providerRows) {
+    const metadata = providerRow.metadata;
+    const commitId = typeof metadata.vector_commit_id === "string" ? metadata.vector_commit_id : "";
+    // A source-scoped repair still inventories every managed record so a row whose source metadata
+    // was corrupted cannot escape merely by no longer matching the requested source. Unrelated
+    // commits remain untouched.
+    if (
+      options.source !== undefined &&
+      metadata.source !== options.source &&
+      !commits.has(commitId)
+    ) continue;
+    consideredProviderRows.push(providerRow);
+    const grouped = providerByCommit.get(commitId) ?? [];
+    grouped.push(providerRow);
+    providerByCommit.set(commitId, grouped);
+  }
+  const promoteRows: VectorMetadataInventoryRow[] = [];
+  const deleteRows: VectorMetadataInventoryRow[] = [];
+  const commitsToFinalize = new Set<string>();
+  for (const providerRow of consideredProviderRows) {
+    const metadata = providerRow.metadata;
+    const commitId = typeof metadata.vector_commit_id === "string" ? metadata.vector_commit_id : "";
+    const commit = commits.get(commitId);
+    const receipt = local.get(providerRow.id);
+    const providerGroup = providerByCommit.get(commitId) ?? [];
+    const localGroup = localByCommit.get(commitId) ?? [];
+    const exactRow = Boolean(
+      commit && receipt &&
+      metadata.vector_commit_id === receipt.commit_id &&
+      metadata.content_version === receipt.content_version &&
+      metadata.tenant_scope === receipt.tenant_scope &&
+      metadata.source === commit.source &&
+      metadata.accession === commit.accession &&
+      receipt.source === commit.source &&
+      receipt.accession === commit.accession
+    );
+    const exactSet = Boolean(
+      commit &&
+      (commit.state === "receipts_persisted" || commit.state === "committed") &&
+      localGroup.length === commit.expected_vectors &&
+      providerGroup.length === commit.expected_vectors &&
+      providerGroup.every((candidate) => {
+        const candidateReceipt = local.get(candidate.id);
+        return Boolean(
+          candidateReceipt &&
+          candidate.metadata.vector_commit_id === commitId &&
+          candidate.metadata.content_version === candidateReceipt.content_version &&
+          candidate.metadata.tenant_scope === candidateReceipt.tenant_scope &&
+          candidate.metadata.source === commit.source &&
+          candidate.metadata.accession === commit.accession &&
+          candidateReceipt.source === commit.source &&
+          candidateReceipt.accession === commit.accession
+        );
+      }) &&
+      localGroup.every((candidate) => providerGroup.some((row) => row.id === candidate.vector_id))
+    );
+    if (!exactRow || !exactSet) {
+      deleteRows.push(providerRow);
+      continue;
+    }
+    if (metadata.ingest_state !== "committed") promoteRows.push(providerRow);
+    if (commit?.state === "receipts_persisted") commitsToFinalize.add(commitId);
+  }
+  const promoteIds = promoteRows.map((row) => row.id).sort();
+  const deleteIds = deleteRows.map((row) => row.id).sort();
+  if (dryRun) return { dryRun, promoteIds, deleteIds, promoted: 0, deleted: 0 };
+
+  const { pc, pineconeSource } = await getClients(userId);
+  if (!pc) throw new Error("Pinecone key not configured for vector reconciliation.");
+  const index = pc.Index(indexName());
+  for (const row of promoteRows) {
+    await withRagApiHealth("pinecone", pineconeSource, userId, "reconcile commit", () =>
+      index.update({ id: row.id, metadata: { ingest_state: "committed" } })
+    );
+  }
+  // Finalize only after the complete expected provider set was observed. A partial provider set
+  // is deleted above and remains locally non-queryable until the deterministic ingest retries.
+  for (const commitId of commitsToFinalize) dbModule.markVectorCommitCommitted(commitId);
+  let deleted = 0;
+  for (const idBatch of chunks(deleteIds, 100)) {
+    await withRagApiHealth("pinecone", pineconeSource, userId, "reconcile delete orphan", () =>
+      index.deleteMany({ ids: idBatch })
+    );
+    deleted += idBatch.length;
+  }
+  return { dryRun, promoteIds, deleteIds, promoted: promoteIds.length, deleted };
 }
 
 export interface RetrievedChunk {
@@ -2034,11 +3050,23 @@ function reportRetrievalStatus(options: RetrieveOptions | undefined, status: Ret
  * mixed/upper case (e.g. "10-K") and Pinecone `$in` is exact-match; dropping the variant expansion
  * would silently exclude that legacy data, which is worse than the (cheap) redundant variants.
  */
+const EARNINGS_TRANSCRIPT_DOC_TYPE = "earnings-transcript";
+const RIGHTS_BLOCKED_DOC_TYPE = "__earnings_transcript_rights_unconfirmed__";
+
+function docTypeVariants(docTypes: string[]): string[] {
+  return Array.from(new Set(docTypes.flatMap((docType) => [docType, docType.toLowerCase(), docType.toUpperCase()])));
+}
+
 export function buildExtraFilters(options?: RetrieveOptions): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
+  const transcriptRightsConfirmed = envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false);
   if (options?.docType && options.docType.length > 0) {
-    const variants = Array.from(new Set(options.docType.flatMap((d) => [d, d.toLowerCase(), d.toUpperCase()])));
-    extra.doc_type = { $in: variants };
+    const allowedDocTypes = transcriptRightsConfirmed
+      ? options.docType
+      : options.docType.filter((docType) => docType.toLowerCase() !== EARNINGS_TRANSCRIPT_DOC_TYPE);
+    extra.doc_type = allowedDocTypes.length > 0
+      ? { $in: docTypeVariants(allowedDocTypes) }
+      : { $eq: RIGHTS_BLOCKED_DOC_TYPE };
   }
   if (options?.section) extra.section = { $eq: options.section };
   if (options?.source) extra.source = { $eq: options.source };
@@ -2046,6 +3074,69 @@ export function buildExtraFilters(options?: RetrieveOptions): Record<string, unk
     extra.connected_account_id = { $eq: options.connectedAccountId ?? "__missing_connected_account__" };
   }
   return extra;
+}
+
+/**
+ * Defense-in-depth for broad retrieval paths that do not send a doc_type filter. Pinecone documents
+ * `$nin` but does not define how it treats legacy records where the field is absent; applying it to
+ * every default query could therefore hide unrelated old corpus data. Explicit transcript requests
+ * are blocked server-side by buildExtraFilters, while this post-fetch guard removes transcript
+ * matches before ranking, persistence, or prompt injection without changing missing-field recall.
+ */
+export function filterMatchesForTranscriptRights<T extends { metadata?: Record<string, unknown> }>(matches: T[]): T[] {
+  if (envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false)) return matches;
+  return matches.filter((match) => {
+    const docType = match?.metadata?.doc_type;
+    return typeof docType !== "string" || docType.toLowerCase() !== EARNINGS_TRANSCRIPT_DOC_TYPE;
+  });
+}
+
+/**
+ * Relational defense in depth for managed records. Pinecone metadata is not trusted by itself: a
+ * result must match a locally committed occurrence, commit id, content version, and tenant scope
+ * before it can enter ranking/candidate persistence. Any local validation fault drops managed
+ * matches while retaining unrelated legacy/direct records.
+ */
+export function filterMatchesForCommittedReceipts<T extends {
+  id?: string;
+  metadata?: Record<string, unknown>;
+}>(matches: T[]): T[] {
+  const isManaged = (match: T): boolean => (
+    match.metadata?.receipt_required === true ||
+    typeof match.metadata?.vector_commit_id === "string" ||
+    (typeof match.id === "string" && match.id.startsWith("occ:v2:"))
+  );
+  const managed = matches.filter(isManaged);
+  if (managed.length === 0) return matches;
+  const ids = managed.map((match) => typeof match.id === "string" ? match.id : "").filter(Boolean);
+  try {
+    const receipts = dbModule.committedManagedVectorReceipts(ids);
+    return matches.filter((match) => {
+      if (!isManaged(match)) return true;
+      if (typeof match.id !== "string" || !match.id) return false;
+      const metadata = match.metadata;
+      if (!metadata) return false;
+      const receipt = receipts.get(match.id);
+      if (!receipt) return false;
+      return (
+        metadata.receipt_required === true &&
+        metadata.ingest_state === "committed" &&
+        metadata.vector_commit_id === receipt.commitId &&
+        metadata.content_version === receipt.contentVersion &&
+        metadata.tenant_scope === receipt.tenantScope &&
+        metadata.content_hash === receipt.contentHash &&
+        metadata.symbol === receipt.symbol &&
+        metadata.source === receipt.source &&
+        metadata.accession === receipt.accession &&
+        metadata.section === receipt.section &&
+        metadata.chunk_ordinal === receipt.ordinal &&
+        metadata.parser_revision === receipt.parserRevision &&
+        metadata.embed_revision === receipt.embedRevision
+      );
+    });
+  } catch {
+    return matches.filter((match) => !isManaged(match));
+  }
 }
 
 export async function retrieveContextDetailed(
@@ -2069,7 +3160,7 @@ export async function retrieveContextDetailed(
     return [];
   }
   const vectorUserId = vectorUserIdFor(userId);
-  const { pc, voyage, pineconeSource, voyageSource } = getClients(userId);
+  const { pc, voyage, pineconeSource, voyageSource } = await getClients(userId);
   if (!pc || !voyage) {
     void captureRagSentryMessage("warning", "RAG retrieval skipped: missing Pinecone or Voyage key", {
       provider: !pc ? "pinecone" : "voyage",
@@ -2125,14 +3216,14 @@ export async function retrieveContextDetailed(
     // The shared-tier filter uses $or to match BOTH new vectors (scope=='shared') and legacy
     // pre-scope vectors (userId=='local'). This is the backward-compat coexistence strategy:
     // scope is authoritative for new vectors; userId is the fallback for old ones.
-    const sharedTierFilter = mergeAsOfEpoch({
+    const sharedTierFilter = withCommittedVectorFilter(mergeAsOfEpoch({
       ...symbolFilter,
       ...extraFilter,
       $or: [
         { scope: { $eq: SHARED_SCOPE } },
         { userId: { $eq: "local" } }
       ]
-    }, asOfEpochFilter);
+    }, asOfEpochFilter));
 
     // Embed ONE query string (via the shared query-embed cache) and run its Pinecone match(es),
     // returning `null` on a malformed embedding (already audited/logged by the caller of `null`).
@@ -2147,8 +3238,14 @@ export async function retrieveContextDetailed(
       // LLM/RAG budget, not "local"), and books the per-run budget op.
       let embedding = getCachedQueryEmbedding(VOYAGE_MODEL, q);
       if (embedding == null) {
-        const response = await withRagApiHealth("voyage", voyageSource, userId, "embed query", () =>
-          embedWithRetry(voyage, [q], "query")
+        const response = await withRagApiHealth(
+          "voyage",
+          voyageSource,
+          userId,
+          "embed query",
+          () => embedWithRetry(voyage, [q], "query", undefined, voyageSource, userId),
+          undefined,
+          { durablyTrackedInside: true }
         );
         meterEmbed([q], undefined, userId); // count only on a cache MISS; book under the requesting userId
         recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
@@ -2193,11 +3290,11 @@ export async function retrieveContextDetailed(
       // The fail-open epoch clause itself carries an `$or`, so it must go through `mergeAsOfEpoch`
       // (which promotes to `$and`) rather than a spread — a bare spread would be fine here (no
       // pre-existing top-level `$or`), but routing both tiers through one helper keeps them identical.
-      const userTierFilter = mergeAsOfEpoch({
+      const userTierFilter = withCommittedVectorFilter(mergeAsOfEpoch({
         ...symbolFilter,
         userId: { $eq: vectorUserId },
         ...extraFilter
-      }, asOfEpochFilter);
+      }, asOfEpochFilter));
 
       const [userResults, localResults] = await Promise.all([
         withRagApiHealth("pinecone", pineconeSource, userId, "query user tier", () =>
@@ -2313,6 +3410,12 @@ export async function retrieveContextDetailed(
       }
       matches = single;
     }
+
+    // Broad coach/chat retrieval has no docType filter. Enforce transcript rights before any
+    // candidate-pool persistence, reranking, or prompt injection while preserving legacy matches
+    // whose metadata predates doc_type.
+    matches = filterMatchesForCommittedReceipts(matches);
+    matches = filterMatchesForTranscriptRights(matches);
 
     // R12 (2026-07-01 RAG backlog): apply the default cosine floor for a caller that opted in via
     // `applyDefaultFloors`/RAG_APPLY_DEFAULT_FLOORS AND did not explicitly set `minScore`. Both

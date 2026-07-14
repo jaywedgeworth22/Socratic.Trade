@@ -41,6 +41,14 @@ vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
   resolveApiKeyWithSource: vi.fn((service: string) => ({ key: mocks.resolveApiKey(service), source: "env" as const })),
   hasDataPoolConsent: vi.fn(() => false),
+  reserveProviderDispatch: vi.fn(() => ({
+    admitted: true as const,
+    attemptId: "test-provider-attempt",
+    authorityId: "test"
+  })),
+  markProviderDispatchStarted: vi.fn(),
+  settleProviderDispatch: vi.fn(),
+  cancelUndispatchedProviderReservation: vi.fn(() => true),
   audit: vi.fn(),
   setInternalSetting: vi.fn()
 }));
@@ -435,4 +443,3 @@ describe("Milestone 4 Challenger: Alpha Vantage Warning Detection & Cache Bypass
     expect(mockFetch).toHaveBeenCalledTimes(1); // Cached!
   });
 });
-

@@ -67,6 +67,22 @@ beforeEach(() => {
   });
 });
 
+const COMMITTED_RECEIPT_CLAUSE = {
+  $or: [
+    { receipt_required: { $exists: false } },
+    { receipt_required: { $eq: false } },
+    { ingest_state: { $eq: "committed" } }
+  ]
+};
+
+function unwrapCommittedFilter(filter: Record<string, unknown>): Record<string, unknown> {
+  expect(Array.isArray(filter.$and)).toBe(true);
+  const clauses = filter.$and as Record<string, unknown>[];
+  expect(clauses).toHaveLength(2);
+  expect(clauses[1]).toEqual(COMMITTED_RECEIPT_CLAUSE);
+  return clauses[0]!;
+}
+
 describe("vector-db scope metadata", () => {
   describe("write path — cleanMetadata", () => {
     it("sets scope:'shared' on shared-tier (userId=local) writes", async () => {
@@ -148,7 +164,7 @@ describe("vector-db scope metadata", () => {
       await retrieveContext("AAPL catalysts", "AAPL", 3);
 
       expect(mocks.query).toHaveBeenCalledTimes(1);
-      const filter = mocks.query.mock.calls[0][0].filter;
+      const filter = unwrapCommittedFilter(mocks.query.mock.calls[0][0].filter);
       expect(filter.symbol).toEqual({ $eq: "AAPL" });
       // Must include the $or with both the new scope field AND the legacy userId fallback
       expect(filter.$or).toEqual(
@@ -171,7 +187,7 @@ describe("vector-db scope metadata", () => {
       expect(mocks.query).toHaveBeenCalledTimes(2);
 
       // First query = user's private docs
-      const privateFilter = mocks.query.mock.calls[0][0].filter;
+      const privateFilter = unwrapCommittedFilter(mocks.query.mock.calls[0][0].filter);
       expect(privateFilter).toMatchObject({
         symbol: { $eq: "AAPL" },
         userId: { $eq: "user-42" }
@@ -179,7 +195,7 @@ describe("vector-db scope metadata", () => {
       expect(privateFilter.$or).toBeUndefined(); // pure userId match, no $or
 
       // Second query = shared tier (backward-compat $or)
-      const sharedFilter = mocks.query.mock.calls[1][0].filter;
+      const sharedFilter = unwrapCommittedFilter(mocks.query.mock.calls[1][0].filter);
       expect(sharedFilter.symbol).toEqual({ $eq: "AAPL" });
       expect(sharedFilter.$or).toEqual(
         expect.arrayContaining([

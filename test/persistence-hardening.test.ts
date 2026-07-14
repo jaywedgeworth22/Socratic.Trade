@@ -58,7 +58,7 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(26);
+    expect(getSchemaVersion(db)).toBe(27);
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -72,7 +72,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
     db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(26);
+    expect(getSchemaVersion(db)).toBe(27);
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 
@@ -89,7 +89,7 @@ describe("runMigrations — versioned schema migrations", () => {
 
     db.pragma("user_version = 25");
     applyVersionedMigrations(db);
-    expect(getSchemaVersion(db)).toBe(26);
+    expect(getSchemaVersion(db)).toBe(27);
 
     const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
     const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);

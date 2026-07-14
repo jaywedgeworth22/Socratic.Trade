@@ -1,5 +1,34 @@
 # Active Implementation Plan
 
+> **2026-07-13 - FMP transcript producer (CODEX).** Add a production-inert, default-off,
+> rights-confirmed FMP earnings-call transcript source with tracked stable-endpoint requests,
+> independent cadence/lease/cursor/budgets, ticker-period identities, first-observed PIT timing,
+> retryable incomplete states, content-derived dedup plus occurrence identity, rights-aware
+> Strategy/Coach retrieval,
+> source status, and focused telemetry/safety tests. Do not enable production until the FMP plan
+> exposes both endpoints and the agreement permits persistence/embedding/display. Speaker/Q&A
+> segmentation and cited derived briefs require entitled representative fixtures before broad corpus
+> rollout. Starter is below its advertised rate/bandwidth limits but not entitled to transcripts;
+> surface that as a plan exclusion, never as quota exhaustion. See
+> `docs/rollouts/2026-07-13-fmp-transcripts-safe.md`.
+> Round-9 closes the subsequent nine-finding durability/rights review: atomic provider request/cost
+> reservations precede every FMP/Voyage/Pinecone boundary; dispatch outcomes survive lease loss and
+> crash-left calls reconcile to durable `unknown` outbox events; managed vectors remain pending until
+> exact provider plus relational receipts commit and retrieval validates every identity/version field.
+> Transcript revisions retain full SHA-256 content versions and first-content-seen PIT rows, ingestion
+> is operator-only, SEC uses the same lease guard, embedding revision stays at v1 pending a real corpus
+> migration, Strategy language is source-neutral, and rights tooling performs bounded dry-run inventory
+> plus provider-first verified purge. Account deletion covers the new user-scoped receipts/outbox rows.
+> Generic FMP and transcript calls share authority within Socratic.Trade; production remains blocked on
+> confirmed commercial rights and a genuinely shared cross-app transactional quota authority. The dirty
+> lane is based on `86971ec4`; fetched `origin/main` advanced to `4432c2bc`, so current-main reconciliation,
+> final full gates, fresh hostile review, ready PR, merge/autodeploy, and live verification remain. On the
+> old base, Node 24 lint (0 errors), TypeScript, all 4,126 tests, and diff-check pass; its production build
+> fails at the unsupported TypeScript 7 alias hack that `4432c2bc` removes, so build verification must be
+> repeated only after reconciling that current-main toolchain repair. Round-10 first captures the complete
+> dirty implementation as a local-only checkpoint, then merges fetched `origin/main`, reinstalls the Node 24
+> dependency graph, resolves reviewed conflicts, and repeats the full gate. No push or PR is authorized yet.
+
 > **2026-07-13 - Account-relative daily risk and decision clarity (CODEX).** Replace the fixed $500
 > daily-opening default with one canonical dollar-or-percent mode (20% NAV default), preserve
 > explicit legacy dollar choices, and route the resolved value through policy gates, approval-time
@@ -75,8 +104,9 @@ filling the missing pieces.
 > direction is “archive broadly, embed selectively”: catalog all SEC filings; preserve selected immutable
 > originals; keep XBRL, insider, ownership, and financing facts structured; embed sectioned narrative, tables,
 > and material exhibits with occurrence-level provenance; and expose derived summaries only as cited children.
-> The current recent-10-K/10-Q scheduler is not the bulk runner. Before a 1,000-issuer write, fix global
-> content-hash occurrence loss, artifact/job state, historical/exhibit discovery, DOM/iXBRL tables, PIT dates,
+> The current recent-10-K/10-Q scheduler is not the bulk runner. Round-8 FMP/RAG hardening now materializes
+> each new `storeDocument` occurrence as its own vector; before a 1,000-issuer write, reconcile any legacy
+> content-hash occurrence loss and finish artifact/job state, historical/exhibit discovery, DOM/iXBRL tables, PIT dates,
 > true lexical recall, real-corpus evaluation, coverage truth, and config drift. Then use a shadow corpus and
 > gated 10 -> 25 -> 100 -> 300 -> 1,000 breadth-first waves. See
 > `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` and

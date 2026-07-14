@@ -54,7 +54,13 @@ const DELETE_TABLES_BY_USER_ID = [
   // Added 2026-07-11: strategy_tuning_reviews (src/lib/db-tuning-reviews.ts) — persisted AI
   // strategy-review results, user-scoped.
   "strategy_tuning_reviews",
-  "order_replacements"
+  "order_replacements",
+  // Added 2026-07-14: managed-vector receipts and durable provider dispatch/usage telemetry are
+  // explicitly user-scoped. Delete the usage outbox before its attempt row so this remains safe if
+  // a future migration adds the natural foreign key between them.
+  "provider_usage_outbox",
+  "provider_dispatch_attempts",
+  "vector_ingest_commits"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];
@@ -311,6 +317,13 @@ export function confirmAndDeleteAccount(input: {
       JSON.stringify(counts),
       schemaVersion
     );
+
+    // Occurrences intentionally carry no raw user_id; remove them through their user-scoped commit
+    // before the generic loop deletes that parent receipt. (There is no FK/cascade on legacy DBs.)
+    db.prepare(`
+      DELETE FROM chunk_occurrences
+      WHERE commit_id IN (SELECT id FROM vector_ingest_commits WHERE user_id = ?)
+    `).run(input.userId);
 
     for (const table of DELETE_TABLES_BY_USER_ID) {
       db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(input.userId);

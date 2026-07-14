@@ -134,6 +134,64 @@ Addressed 15 Codex P2 threads across four autofix rounds:
 - Round 4 (3 threads): fixed local fallback key source classification (`source: "user"` → `"env"` to preserve shared cache scope), added `local` user fallback to `resolveAlphaVantageKeyPool`, resolved STATUS.md Infisical activation contradiction (dev/staging only, prod is manual).
 Rollout: `docs/rollouts/2026-07-13-congress-trade-integration.md`.
 Auto-merge enabled.
+## 2026-07-14 — FMP earnings-call transcripts (CODEX, branch `codex/fmp-transcripts-safe`)
+
+Implemented a production-inert, default-off transcript producer on FMP's stable dates/body APIs.
+It is dual-gated on the feature flag and explicit storage/display-rights confirmation; every real
+provider attempt is metered through the redacted wrapper, with bounded responses, exact retry/request
+budgets, a shared durable RAG lease plus independent cadence/cursor, ticker-period identities, and first-content-seen
+point-in-time metadata. Retrieval fails closed across Strategy and broad Coach/chat queries when rights
+are unconfirmed. Content hashes remain content-derived while ticker-period occurrences retain source
+identity, and dashboard/RAG status exposes capability and coverage without content or credentials.
+
+Production remains disabled: the current Starter credential returns typed HTTP 402 for the stable
+transcript endpoint despite 0% over-limit status, and commercial storage/display rights still require
+confirmation. Rounds 3-7 hardened Voyage response mapping, lease fencing, retry fairness, bounded JSON,
+and delayed notification/terminal-body boundaries. Round-8 independent review rejected the remaining
+draft on three truth gaps: global content dedup could complete a new occurrence whose vector ID did not
+exist; lossy UTF-8 and schema-less HTTP-200 handling could still write false-green evidence; and local
+receipt faults were non-fatal after the external write.
+
+All three are remediated locally. `storeDocument` now materializes a deterministic Pinecone record for
+every ticker/accession/PIT occurrence, reusing only exact model/revision/text-matched embeddings and
+never manufacturing a completion vector ID. Source completion requires exact upsert cardinality plus
+an atomic `document_chunks`/`chunk_occurrences` receipt transaction. Fatal UTF-8 decoding and strict
+dates/body envelope validation happen before the single green health/usage event; malformed bytes,
+oversized/malformed JSON, wrong endpoint rows, and embedded provider errors produce one bounded redacted
+failure and no green event. Same-content cross-ticker retrieval, pre-acceptance PIT exclusion, Pinecone
+failure, receipt-fault, and real SQLite rollback/retry regressions are covered.
+
+Round-9 remediates the subsequent nine-finding durability/rights rejection. Every FMP, Voyage, and
+Pinecone boundary reserves durable credential-wide request/cost capacity before dispatch; usage outcome
+settles independently of the producer lease, crash-left dispatches reconcile to `unknown`, and a durable
+outbox replays deterministic provider events. Generic FMP enrichment shares the same ledger as transcripts
+inside this app. Managed vectors now use pending provider metadata plus exact local commit/occurrence
+receipts; server filters exclude pending rows and local retrieval fails closed on any tenant, commit,
+version, content, source, accession, section, ordinal, parser, or embedding mismatch. Transcript body
+revisions retain distinct full-SHA/PIT versions, ingestion is operator-only, SEC propagates the same
+lease, embedding revision remains v1 pending a real migration, and Strategy copy is source-neutral.
+Bounded dry-run rights inventory scans Pinecone itself (including receiptless ghosts); real purge is
+provider-first, verified, then transactionally removes exact local/observation/tagged derivative rows.
+Account deletion now removes the new user-scoped provider/vector receipts and linked occurrences.
+
+Round-10 preserves the complete Round-9 implementation in a local-only checkpoint commit whose parent is
+`86971ec4`; it is not pushed and is not a PR. A fresh fetch on 2026-07-14 found `origin/main@4432c2bc`
+two commits ahead (background-worker production gates and the supported TypeScript gate repair), so the
+checkpoint is not yet current-main reconciled. Latest Node 24 evidence on the old base: the focused
+durability/transcript/vector/SEC/provider run exposed one missing receipt-marker check, now fixed; the
+complete adjacent regression rerun is 51 files / 732 tests green; account-deletion coverage and behavior
+are 7/7 green; full lint has 0 errors / 459 inherited warnings; TypeScript is clean; the full suite is
+367 files / 4,126 tests green; and diff-check is clean. The production build reaches webpack but fails
+because this old base's unsupported TypeScript 7 alias hack cannot resolve existing `@/lib/*` imports;
+`4432c2bc` removes that hack and restores the supported TypeScript gate. Current-main reconciliation,
+a repeated full gate including a successful build, and fresh hostile review remain.
+
+Production activation/backfill remains gated on an entitled transcript plan, confirmed commercial
+persistence/embedding/display rights, and one genuinely shared cross-app transactional quota authority;
+matching `PROVIDER_QUOTA_AUTHORITY_ID` strings on separate databases is insufficient. No FMP/provider,
+corpus, Infisical, PR, merge, deploy, or production write occurred in this lane.
+
+Rollout: `docs/rollouts/2026-07-13-fmp-transcripts-safe.md`.
 
 ## 2026-07-13 — Account-relative risk limits and Green/Red decision clarity (CODEX, branch `codex/account-relative-risk-clarity`)
 

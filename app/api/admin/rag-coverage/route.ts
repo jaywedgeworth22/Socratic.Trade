@@ -3,6 +3,7 @@ import { getChunkCoverage, getChunkSourceBreakdown, getInternalSetting, listInge
 import { getRagUsageSummary } from "@/lib/rag-metering";
 import { getAllVectorStoreStats, getVectorStoreStats, type VectorIndexStats, type VectorStoreStats } from "@/lib/vector-db";
 import { requireAdmin } from "@/lib/auth/admin";
+import { getFmpTranscriptStatus } from "@/lib/web-sources/fmp-transcripts";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +107,7 @@ export async function GET(request: Request) {
     allVectorIndexes,
     allVectorStoreTotalVectors: allVectorTotal,
     coverageGaps: noChunksSymbols,
+    earningsTranscripts: getFmpTranscriptStatus(),
     providerUsage: {
       pinecone: {
         monthlyUsageApiAvailable: false,

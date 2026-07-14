@@ -1,10 +1,34 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { buildExtraFilters, defaultMinScore, isWithinAsOf, matchToChunk, rerankMatches } from "../src/lib/vector-db";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildExtraFilters, defaultMinScore, filterMatchesForTranscriptRights, isWithinAsOf, matchToChunk, rerankMatches } from "../src/lib/vector-db";
 
 describe("buildExtraFilters", () => {
-  it("is empty with no options", () => {
+  beforeEach(() => vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "on"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is empty with no options while transcript storage/display rights are confirmed", () => {
     expect(buildExtraFilters()).toEqual({});
     expect(buildExtraFilters({})).toEqual({});
+  });
+  it("excludes transcripts from broad and explicit retrieval when rights are unconfirmed", () => {
+    vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "off");
+    // Broad queries preserve server-side recall for legacy vectors that lack doc_type; the
+    // post-fetch guard below removes transcripts before ranking/prompt injection.
+    expect(buildExtraFilters()).toEqual({});
+
+    const mixed = buildExtraFilters({ docType: ["10-k", "earnings-transcript"] }).doc_type as { $in: string[] };
+    expect(new Set(mixed.$in)).toEqual(new Set(["10-k", "10-K"]));
+    expect(buildExtraFilters({ docType: ["earnings-transcript"] })).toEqual({
+      doc_type: { $eq: "__earnings_transcript_rights_unconfirmed__" }
+    });
+
+    const legacy = { id: "legacy", metadata: { source: "sec-edgar" } };
+    const filing = { id: "filing", metadata: { doc_type: "10-k" } };
+    const transcript = { id: "transcript", metadata: { doc_type: "EARNINGS-TRANSCRIPT" } };
+    expect(filterMatchesForTranscriptRights([legacy, filing, transcript])).toEqual([legacy, filing]);
+  });
+  it("leaves broad transcript matches available while rights are confirmed", () => {
+    const matches = [{ id: "transcript", metadata: { doc_type: "earnings-transcript" } }];
+    expect(filterMatchesForTranscriptRights(matches)).toBe(matches);
   });
   it("matches doc_type across casings (stored values are inconsistent: '10-K' vs '8-k')", () => {
     // Each requested type expands to original + lower + upper, deduped — so a lowercase filter still

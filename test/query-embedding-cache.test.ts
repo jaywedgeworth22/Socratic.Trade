@@ -50,6 +50,7 @@ vi.mock("../src/lib/db", () => ({
 
 // Spy on the usage metering so we can assert a cache HIT is not metered as a real Voyage call.
 vi.mock("../src/lib/rag-metering", () => ({
+  estimateVoyageDispatchCost: vi.fn(() => 0),
   meterEmbed: mocks.meterEmbed,
   meterPineconeQuery: vi.fn(),
   meterPineconeUpsert: vi.fn(),

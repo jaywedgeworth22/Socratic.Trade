@@ -25,7 +25,7 @@ import {
   type SymbolEnrichment
 } from "../src/lib/data-providers";
 import { admitProviderRequests, resetProviderQuotaState } from "../src/lib/provider-rate-limit";
-import { CircuitOpenError } from "../src/lib/api-circuit-breaker";
+import { resetApiCircuitBreaker } from "../src/lib/api-circuit-breaker";
 import { getServiceHealthLog } from "../src/lib/db-health";
 import { arbitrateFieldObservation } from "../src/lib/evidence-facts";
 
@@ -938,8 +938,19 @@ describe("callsPerSymbol('fmp', …) — per-symbol request accounting", () => {
 
 describe("FMP request quota — defer / refund / breaker / cache-hit / per-credential", () => {
   const QUOTA_ENV = ["PROVIDER_QUOTA_FMP_PER_MIN", "PROVIDER_QUOTA_FMP_PER_DAY", "FMP_PRICE_TARGETS_ENABLED"];
-  beforeEach(() => { for (const k of QUOTA_ENV) delete process.env[k]; resetProviderQuotaState(); });
-  afterEach(() => { for (const k of QUOTA_ENV) delete process.env[k]; resetProviderQuotaState(); });
+  beforeEach(() => {
+    for (const k of QUOTA_ENV) delete process.env[k];
+    delete process.env.API_CIRCUIT_BREAKER_BACKOFF_MS;
+    process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
+    resetProviderQuotaState();
+  });
+  afterEach(() => {
+    for (const k of QUOTA_ENV) delete process.env[k];
+    delete process.env.API_CIRCUIT_BREAKER_BACKOFF_MS;
+    process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
+    resetProviderQuotaState();
+    resetApiCircuitBreaker();
+  });
 
   // ratios-ttm returns a P/E so a fetched symbol yields non-empty, cacheable data; every other
   // sub-call returns []. Each fetched symbol therefore costs 4 requests (targets off by default).
@@ -979,12 +990,22 @@ describe("FMP request quota — defer / refund / breaker / cache-hit / per-crede
 
   it("refunds a breaker-skipped symbol's cost and does not cache it", async () => {
     const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    const { getDb } = await import("../src/lib/db");
     clearEnrichmentCache();
     process.env.PROVIDER_QUOTA_FMP_PER_MIN = "4"; // room for exactly one symbol per minute
-    let phase: "open" | "ok" = "open";
+    process.env.API_CIRCUIT_BREAKER_DISABLED = "0";
+    process.env.API_CIRCUIT_BREAKER_BACKOFF_MS = "60000";
+    resetApiCircuitBreaker();
+    getDb().prepare("DELETE FROM api_health_log WHERE service = 'fmp'").run();
+    const seedFailure = getDb().prepare(`
+      INSERT INTO api_health_log (id, service, ts, ok, latency_ms, error_text, key_source, user_id)
+      VALUES (?, 'fmp', ?, 0, 1, 'synthetic breaker seed', 'env', 'local')
+    `);
+    for (let index = 0; index < 5; index++) {
+      seedFailure.run(randomUUID(), new Date(Date.now() - index * 1_000).toISOString());
+    }
     let okCalls = 0;
     vi.stubGlobal("fetch", async (url: string) => {
-      if (phase === "open") throw new CircuitOpenError("fmp", "env"); // breaker trips before any request leaves
       okCalls++;
       if (url.includes("ratios-ttm")) return new Response(JSON.stringify([{ priceToEarningsRatioTTM: "20" }]));
       return new Response(JSON.stringify([]));
@@ -997,10 +1018,13 @@ describe("FMP request quota — defer / refund / breaker / cache-hit / per-crede
     // If the cost were NOT refunded, the 4/min budget would be spent and this rescan would defer ZZZ
     // as {} with zero fetches; if ZZZ had been cached, the rescan would serve {} from cache. Either
     // failure mode yields no fetch. Getting real data back proves BOTH the refund and the no-cache.
-    phase = "ok";
+    getDb().prepare("DELETE FROM api_health_log WHERE service = 'fmp'").run();
+    resetApiCircuitBreaker();
     const res2 = await provider.enrich(["ZZZ"]);
     expect(res2.ZZZ).toEqual({ peRatio: 20 });
     expect(okCalls).toBe(4);
+    process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
+    delete process.env.API_CIRCUIT_BREAKER_BACKOFF_MS;
   });
 
   it("does not spend the quota on a cache hit", async () => {

@@ -60,9 +60,31 @@ disclosures lets the agent act on the same names *before* the copycats pile in.
   and counts **only open-market discretionary** transactions: `P` (purchase) and
   `S` (sale). Codes `M`/`A`/`F`/`G` (option exercise, grant, tax, gift) are NOT
   trading signals and are ignored. Filings accumulate into a rolling window.
+- **`fmp-transcripts.ts`** — default-off FMP earnings-call transcript discovery and body ingest.
+  It requires both endpoint enablement and explicit storage/display-rights confirmation, uses the
+  stable dates/body endpoints with header authentication, preserves first-content-observed time for
+  point-in-time retrieval, accepts documented strict `period: "Q1".."Q4"` bodies plus numeric
+  quarters, keeps content hashes separate from ticker-period occurrences, and records typed entitlement,
+  bounded retry, quota, embedding-budget, and capability receipts without logging transcript content.
+  Fatal UTF-8 and endpoint-specific envelope validation precede green telemetry; embedded provider errors,
+  malformed/oversized bodies, and wrong endpoint rows produce one bounded redacted failure per attempt.
+  Voyage document responses are accepted only as an exact request/response bijection; malformed batches
+  fail atomically. Store errors, empty/incomplete writes, and invalid embeddings receive one priority
+  retry before cursor rotation. Guarded fetch, Pinecone bootstrap/write, notification, usage-alert, and
+  Sentry paths are awaited and re-prove the shared lease after every async boundary. Every completed
+  occurrence has a real deterministic Pinecone vector with its own ticker/accession/PIT metadata; exact
+  embeddings may be reused, but completion requires exact vector cardinality plus an atomic local
+  content/occurrence receipt transaction. Provider attempts and quota/cost reservations are durable
+  before each network/SDK boundary and replay `succeeded`/`failed`/crash-`unknown` outcomes. Managed
+  vectors remain query-ineligible until exact provider and relational receipts agree. Transcript body
+  revisions retain distinct content-version/PIT rows instead of overwriting history. A bounded,
+  dry-run-default rights tool inventories provider ghosts plus local receipts/observations/tagged
+  derivatives and performs provider-first verified purge. Commercial rights and a genuinely shared
+  cross-app FMP quota authority remain activation gates.
 - **`index.ts`** — registry + the three entry points the app uses:
   `refreshDueWebSources()` (scheduler), `getSymbolWebSignals()` (scan overlay,
-  cache-only / no network), `collectEvidenceBulletins()`, `getWebSourcesStatus()`.
+  cache-only / no network), `collectEvidenceBulletins()`, `getWebSourcesStatus()`, plus the separately
+  paced `refreshFmpTranscripts()` corpus producer.
 
 ## Persistence + cadence
 
@@ -75,7 +97,9 @@ dataset with nothing** on a transient outage.
 
 Cost per refresh is small and bounded: Senate eFD ≈ 1 search + ≤80 PTR pages
 (capped, rate-limited 350ms); SEC ≈ 1 feed + ≤30 filings × 2 reqs (rate-limited
-250ms). Both run in the background, independent of whether autonomous trading is on.
+250ms). Both run in the background, independent of whether autonomous trading is on. FMP transcripts
+have their own exact-attempt cap, rotating demand-first symbol cursor, retry cadence, response-byte
+limits, and remain entirely inert with either opt-in disabled.
 
 ### Cross-entry single-flight
 
@@ -83,8 +107,9 @@ Manual admin requests and scheduler/background calls converge at durable operati
 not only at the route layer. `src/lib/operation-lease.ts` stores owner-token leases in the existing
 SQLite `settings` KV and uses an immediate transaction for atomic acquisition, a TTL heartbeat for
 long work, and owner-checked release. Congress and SEC 8-K refreshes have separate dataset groups;
-Congress daily sharing has its own group; 8-K reindex and 10-K/10-Q filing ingest deliberately share
-the `rag-reindex` group because both spend the same embedding/corpus-write capacity.
+Congress daily sharing has its own group; 8-K reindex, 10-K/10-Q filing ingest, and enabled FMP
+transcript ingest deliberately share the `rag-reindex` group because they spend the same
+embedding/corpus-write capacity.
 
 Contention in a background caller is a typed benign skip: it performs no provider request and does
 not advance the connector attempt/daily marker. Admin admission acquires the durable lease before
@@ -106,7 +131,14 @@ durable pending/retry job or awaiting it, and remains an explicit follow-up rath
   as a positioning tailwind worth front-running (and SELLS as a caution), as one
   input among many — not a standalone trigger.
 - **Dashboard** — `getWebSourcesStatus()` (freshness, record counts, sources, due)
-  is on the snapshot for a health indicator.
+  is on the snapshot for a health indicator. Transcript status separately exposes the feature gate,
+  rights gate, endpoint capability, cadence, and ingested count.
+- **Strategy/Coach RAG** — transcript chunks are retrievable only while storage/display rights remain
+  confirmed. Turning future ingestion off preserves already licensed evidence; withdrawing rights
+  adds a global metadata exclusion so broad Coach/chat retrieval cannot bypass the Strategy filter.
+  New `storeDocument` writes materialize repeated content per occurrence, so they retain queryable
+  PIT/source provenance without inventing a missing vector ID. Reconcile any corpus written by the older
+  content-only shortcut before treating legacy coverage as complete.
 
 ## Configuration (env)
 
@@ -128,6 +160,11 @@ durable pending/retry job or awaiting it, and remains an explicit follow-up rath
 | `WEB_SOURCE_INSIDER_WINDOW_DAYS` | 30 | rolling window kept |
 | `WEB_SOURCE_INSIDER_MAX_FILINGS` | 30 | ownership XMLs parsed per refresh |
 | `SEC_EDGAR_USER_AGENT` | generic | SEC fair-access UA (set your contact) |
+| `WEB_SOURCE_FMP_TRANSCRIPTS` | `off` | enables transcript endpoint use; still requires rights confirmation |
+| `FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED` | `off` | operator assertion that persistence, embedding, retrieval, and display are permitted |
+| `FMP_TRANSCRIPT_TTL_HOURS` | 24h | independent successful-refresh cadence |
+| `FMP_TRANSCRIPT_MAX_REQUESTS_PER_RUN` | 12 | exact cap across discovery, body requests, and retries; `0` pauses calls |
+| `FMP_TRANSCRIPT_MAX_PER_SYMBOL` | 2 | newest un-ingested fiscal periods attempted per symbol |
 
 ## Adding another source
 

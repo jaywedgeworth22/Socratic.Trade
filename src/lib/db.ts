@@ -532,6 +532,11 @@ const MIGRATIONS: Migration[] = [
           section TEXT NOT NULL,
           ordinal INTEGER NOT NULL,
           accepted_at TEXT NOT NULL,
+          tenant_scope TEXT NOT NULL DEFAULT 'legacy',
+          content_version TEXT NOT NULL DEFAULT 'legacy',
+          commit_id TEXT,
+          receipt_state TEXT NOT NULL DEFAULT 'legacy_committed'
+            CHECK(receipt_state IN ('pending','committed','legacy_committed')),
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_hash ON chunk_occurrences (content_hash);
@@ -969,6 +974,123 @@ const MIGRATIONS: Migration[] = [
         }
       }
       if (changed > 0) console.log(`[db] migration 26: moved ${changed} legacy $500 daily cap row(s) to 20% of NAV`);
+    }
+  },
+  {
+    // Crash-durable provider dispatch/quota receipts and two-phase vector document commits. New
+    // managed vectors are queryable only after their exact local receipt set and provider-side
+    // committed metadata both succeed. Legacy occurrence rows retain an explicit legacy state.
+    version: 27,
+    name: "provider_dispatch_and_vector_commit_receipts",
+    up: (database) => {
+      const occurrenceColumns = database
+        .prepare("PRAGMA table_info(chunk_occurrences)")
+        .all() as Array<{ name: string }>;
+      const addOccurrenceColumn = (name: string, sql: string) => {
+        if (!occurrenceColumns.some((column) => column.name === name)) database.exec(sql);
+      };
+      addOccurrenceColumn(
+        "tenant_scope",
+        "ALTER TABLE chunk_occurrences ADD COLUMN tenant_scope TEXT NOT NULL DEFAULT 'legacy'"
+      );
+      addOccurrenceColumn(
+        "content_version",
+        "ALTER TABLE chunk_occurrences ADD COLUMN content_version TEXT NOT NULL DEFAULT 'legacy'"
+      );
+      addOccurrenceColumn("commit_id", "ALTER TABLE chunk_occurrences ADD COLUMN commit_id TEXT");
+      addOccurrenceColumn(
+        "receipt_state",
+        "ALTER TABLE chunk_occurrences ADD COLUMN receipt_state TEXT NOT NULL DEFAULT 'legacy_committed'"
+      );
+
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS vector_ingest_commits (
+          id TEXT PRIMARY KEY,
+          tenant_scope TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          content_version TEXT NOT NULL,
+          parser_revision TEXT NOT NULL,
+          embed_revision TEXT NOT NULL,
+          expected_vectors INTEGER NOT NULL CHECK(expected_vectors >= 0),
+          state TEXT NOT NULL CHECK(state IN ('pending','receipts_persisted','committed','aborted')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          committed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_state
+          ON vector_ingest_commits (state, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_source
+          ON vector_ingest_commits (source, accession, content_version);
+        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_commit
+          ON chunk_occurrences (commit_id, receipt_state);
+        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_tenant
+          ON chunk_occurrences (tenant_scope, vector_id);
+
+        CREATE TABLE IF NOT EXISTS provider_dispatch_attempts (
+          id TEXT PRIMARY KEY,
+          authority_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          credential_ref TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          units INTEGER NOT NULL CHECK(units > 0),
+          estimated_cost_usd REAL NOT NULL DEFAULT 0 CHECK(estimated_cost_usd >= 0),
+          actual_cost_usd REAL,
+          status TEXT NOT NULL CHECK(status IN ('reserved','dispatched','succeeded','failed','unknown','cancelled')),
+          idempotency_key TEXT,
+          outcome_code TEXT,
+          created_at TEXT NOT NULL,
+          dispatched_at TEXT,
+          completed_at TEXT,
+          updated_at TEXT NOT NULL,
+          UNIQUE(authority_id, idempotency_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_provider_dispatch_quota
+          ON provider_dispatch_attempts (authority_id, provider, credential_ref, created_at, status);
+        CREATE INDEX IF NOT EXISTS idx_provider_dispatch_status
+          ON provider_dispatch_attempts (status, updated_at);
+
+        CREATE TABLE IF NOT EXISTS provider_usage_outbox (
+          id TEXT PRIMARY KEY,
+          attempt_id TEXT NOT NULL UNIQUE,
+          provider TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          credential_ref TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          outcome TEXT NOT NULL CHECK(outcome IN ('succeeded','failed','unknown')),
+          requests INTEGER NOT NULL DEFAULT 1,
+          estimated_cost_usd REAL NOT NULL DEFAULT 0,
+          actual_cost_usd REAL,
+          occurred_at TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_provider_usage_outbox_created
+          ON provider_usage_outbox (created_at, id);
+
+        CREATE TABLE IF NOT EXISTS fmp_transcript_versions (
+          version_id TEXT PRIMARY KEY,
+          accession TEXT NOT NULL,
+          content_sha256 TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          fiscal_year INTEGER NOT NULL,
+          fiscal_quarter INTEGER NOT NULL,
+          call_date TEXT,
+          first_content_seen_at TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('observed','indexing','committed','failed')),
+          vector_commit_id TEXT,
+          chunk_count INTEGER NOT NULL DEFAULT 0,
+          observed_at TEXT NOT NULL,
+          indexed_at TEXT,
+          updated_at TEXT NOT NULL,
+          UNIQUE(accession, content_sha256)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_versions_accession
+          ON fmp_transcript_versions (accession, first_content_seen_at);
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_versions_state
+          ON fmp_transcript_versions (state, updated_at);
+      `);
     }
   }
 ];
@@ -1607,6 +1729,78 @@ function migrate(database: Database.Database): void {
       PRIMARY KEY (content_hash)
     );
     CREATE INDEX IF NOT EXISTS idx_document_chunks_symbol ON document_chunks (symbol);
+    CREATE TABLE IF NOT EXISTS vector_ingest_commits (
+      id TEXT PRIMARY KEY,
+      tenant_scope TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      accession TEXT NOT NULL,
+      content_version TEXT NOT NULL,
+      parser_revision TEXT NOT NULL,
+      embed_revision TEXT NOT NULL,
+      expected_vectors INTEGER NOT NULL CHECK(expected_vectors >= 0),
+      state TEXT NOT NULL CHECK(state IN ('pending','receipts_persisted','committed','aborted')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      committed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_state ON vector_ingest_commits (state, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_source ON vector_ingest_commits (source, accession, content_version);
+    CREATE TABLE IF NOT EXISTS provider_dispatch_attempts (
+      id TEXT PRIMARY KEY,
+      authority_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      credential_ref TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      units INTEGER NOT NULL CHECK(units > 0),
+      estimated_cost_usd REAL NOT NULL DEFAULT 0 CHECK(estimated_cost_usd >= 0),
+      actual_cost_usd REAL,
+      status TEXT NOT NULL CHECK(status IN ('reserved','dispatched','succeeded','failed','unknown','cancelled')),
+      idempotency_key TEXT,
+      outcome_code TEXT,
+      created_at TEXT NOT NULL,
+      dispatched_at TEXT,
+      completed_at TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(authority_id, idempotency_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_provider_dispatch_quota ON provider_dispatch_attempts (authority_id, provider, credential_ref, created_at, status);
+    CREATE INDEX IF NOT EXISTS idx_provider_dispatch_status ON provider_dispatch_attempts (status, updated_at);
+    CREATE TABLE IF NOT EXISTS provider_usage_outbox (
+      id TEXT PRIMARY KEY,
+      attempt_id TEXT NOT NULL UNIQUE,
+      provider TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      credential_ref TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('succeeded','failed','unknown')),
+      requests INTEGER NOT NULL DEFAULT 1,
+      estimated_cost_usd REAL NOT NULL DEFAULT 0,
+      actual_cost_usd REAL,
+      occurred_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_provider_usage_outbox_created ON provider_usage_outbox (created_at, id);
+    CREATE TABLE IF NOT EXISTS fmp_transcript_versions (
+      version_id TEXT PRIMARY KEY,
+      accession TEXT NOT NULL,
+      content_sha256 TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      fiscal_year INTEGER NOT NULL,
+      fiscal_quarter INTEGER NOT NULL,
+      call_date TEXT,
+      first_content_seen_at TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('observed','indexing','committed','failed')),
+      vector_commit_id TEXT,
+      chunk_count INTEGER NOT NULL DEFAULT 0,
+      observed_at TEXT NOT NULL,
+      indexed_at TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(accession, content_sha256)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fmp_transcript_versions_accession ON fmp_transcript_versions (accession, first_content_seen_at);
+    CREATE INDEX IF NOT EXISTS idx_fmp_transcript_versions_state ON fmp_transcript_versions (state, updated_at);
     CREATE TABLE IF NOT EXISTS learned_context (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -2246,3 +2440,5 @@ export * from "./db-socratic";
 export * from "./db-jobs";
 export * from "./db-rag-ingest";
 export * from "./db-tuning-reviews";
+export * from "./db-provider-dispatch";
+export * from "./db-vector-commits";

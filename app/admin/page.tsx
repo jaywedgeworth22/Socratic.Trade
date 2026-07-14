@@ -8,7 +8,6 @@ import {
   Database,
   Server,
   FileText,
-  TrendingUp,
   Cpu,
   RefreshCw,
   ArrowRight,
@@ -33,6 +32,13 @@ interface RagSummary {
   totalChunks: number;
   vectorStoreTotalVectors: number;
   globalBreakdown?: Record<string, number>;
+  earningsTranscripts?: {
+    featureEnabled: boolean;
+    storageRightsConfirmed: boolean;
+    enabled: boolean;
+    capability: "disabled" | "unknown" | "available" | "endpoint_not_entitled";
+    ingestedCount: number;
+  };
 }
 
 interface ServerSummary {
@@ -131,6 +137,7 @@ export default function OperatorDashboard() {
     if (src.startsWith("disclosure:insider")) return "Insider";
     if (src.includes("socratic-memory")) return "Coach";
     if (src.startsWith("sec8k-summary")) return "8-K Summary";
+    if (src === "fmp-earnings-transcript") return "Earnings Transcript";
     return src.split(":").pop() || src;
   };
 
@@ -141,10 +148,21 @@ export default function OperatorDashboard() {
     if (src.startsWith("disclosure:insider")) return "neutral";
     if (src.includes("socratic-memory")) return "pos";
     if (src.startsWith("sec8k-summary")) return "neg";
+    if (src === "fmp-earnings-transcript") return "info";
     return "neutral";
   };
 
   const failedConnections = connections?.services.filter((s) => s.stoppedWorking) ?? [];
+  const earningsStatus = rag?.earningsTranscripts;
+  const earningsStatusView = !earningsStatus?.featureEnabled
+    ? { label: "Off", tone: "neutral" as const }
+    : !earningsStatus.storageRightsConfirmed
+      ? { label: "Rights unconfirmed", tone: "warn" as const }
+      : earningsStatus.capability === "endpoint_not_entitled"
+        ? { label: "Plan excludes endpoint", tone: "warn" as const }
+        : earningsStatus.capability === "available"
+          ? { label: "Available", tone: "pos" as const }
+          : { label: "Not checked", tone: "neutral" as const };
 
   return (
     <div className="space-y-6">
@@ -314,6 +332,17 @@ export default function OperatorDashboard() {
                   </div>
                 </div>
               )}
+              {earningsStatus && (
+                <div className="border-t border-line/20 pt-3 flex items-center justify-between gap-3 text-xs">
+                  <div>
+                    <div className="text-muted">Earnings transcripts</div>
+                    <div className="text-[11px] text-faint mt-0.5">
+                      {earningsStatus.ingestedCount.toLocaleString()} periods indexed
+                    </div>
+                  </div>
+                  <Chip tone={earningsStatusView.tone}>{earningsStatusView.label}</Chip>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -369,7 +398,7 @@ export default function OperatorDashboard() {
               <div className="border-t border-line/20 pt-3 flex items-center justify-between text-xs">
                 <span className="text-muted">Docker Containers</span>
                 <span className="font-mono text-fg font-semibold">
-                  {server?.resources?.filter((c: any) => { const s = c.status ?? ""; return (s.includes("running") || s.includes("healthy")) && !s.includes("unhealthy"); }).length ?? 0} Running
+                  {server?.resources?.filter((c) => { const s = c.status ?? ""; return (s.includes("running") || s.includes("healthy")) && !s.includes("unhealthy"); }).length ?? 0} Running
                 </span>
               </div>
             </div>

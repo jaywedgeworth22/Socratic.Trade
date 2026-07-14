@@ -118,6 +118,62 @@ describe("account deletion", () => {
     expect(count()).toBe(0); // the sweep deleted the reservation row
   });
 
+  it("purges only the subject's managed-vector receipts and durable provider usage", async () => {
+    const dbModule = await import("../src/lib/db");
+    const deletion = await import("../src/lib/account-deletion");
+    const db = dbModule.getDb();
+    const userA = `u_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    const userB = `u_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    const now = new Date().toISOString();
+
+    const seed = (userId: string) => {
+      const commitId = `commit-${randomUUID()}`;
+      const vectorId = `vector-${randomUUID()}`;
+      const attemptId = `attempt-${randomUUID()}`;
+      db.prepare(`
+        INSERT INTO vector_ingest_commits (
+          id, tenant_scope, user_id, source, accession, content_version, parser_revision,
+          embed_revision, expected_vectors, state, created_at, updated_at, committed_at
+        ) VALUES (?, ?, ?, 'private-note', ?, 'v1', 'v1', 'v1', 1, 'committed', ?, ?, ?)
+      `).run(commitId, `private:${userId}`, userId, `accession-${userId}`, now, now, now);
+      db.prepare(`
+        INSERT INTO chunk_occurrences (
+          vector_id, content_hash, symbol, source, accession, section, ordinal, accepted_at,
+          tenant_scope, content_version, commit_id, receipt_state, created_at
+        ) VALUES (?, 'hash', 'AAPL', 'private-note', ?, 'body', 1, ?, ?, 'v1', ?, 'committed', ?)
+      `).run(vectorId, `accession-${userId}`, now, `private:${userId}`, commitId, now);
+      db.prepare(`
+        INSERT INTO provider_dispatch_attempts (
+          id, authority_id, provider, operation, credential_ref, user_id, units,
+          estimated_cost_usd, status, created_at, dispatched_at, completed_at, updated_at
+        ) VALUES (?, 'test-authority', 'voyage', 'embed', 'credential', ?, 1, 0, 'succeeded', ?, ?, ?, ?)
+      `).run(attemptId, userId, now, now, now, now);
+      db.prepare(`
+        INSERT INTO provider_usage_outbox (
+          id, attempt_id, provider, operation, credential_ref, user_id, outcome,
+          requests, estimated_cost_usd, occurred_at, created_at
+        ) VALUES (?, ?, 'voyage', 'embed', 'credential', ?, 'succeeded', 1, 0, ?, ?)
+      `).run(`outbox-${randomUUID()}`, attemptId, userId, now, now);
+      return { commitId };
+    };
+
+    const a = seed(userA);
+    const b = seed(userB);
+    deletion.prepareAccountDeletion({ userId: userA, email: "vector-delete@example.com" });
+    expect(deletion.confirmAndDeleteAccount({
+      userId: userA,
+      email: "vector-delete@example.com",
+      body: confirmation("vector-delete@example.com")
+    }).ok).toBe(true);
+
+    for (const table of ["vector_ingest_commits", "provider_dispatch_attempts", "provider_usage_outbox"]) {
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE user_id = ?`).get(userA)).toEqual({ count: 0 });
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE user_id = ?`).get(userB)).toEqual({ count: 1 });
+    }
+    expect(db.prepare("SELECT COUNT(*) AS count FROM chunk_occurrences WHERE commit_id = ?").get(a.commitId)).toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM chunk_occurrences WHERE commit_id = ?").get(b.commitId)).toEqual({ count: 1 });
+  });
+
   it("blocks final deletion while order placement or reconciliation is in flight", async () => {
     const db = await import("../src/lib/db");
     const deletion = await import("../src/lib/account-deletion");

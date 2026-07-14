@@ -253,7 +253,8 @@ export function extractFilingText(html: string): string {
 export async function ingestFiling(
   ticker: string,
   filingRef: FilingRef,
-  userId: string = "local"
+  userId: string = "local",
+  leaseGuard?: { assertOwnership: () => void; signal?: AbortSignal }
 ): Promise<IngestResult> {
   if (hasIngestedAccession(filingRef.accession, filingRef.docType)) {
     return { skipped: true, chunks: 0 };
@@ -303,8 +304,7 @@ export async function ingestFiling(
   }
 
   const { storeDocument } = await import("../vector-db");
-  const result = await storeDocument(
-    {
+  const document = {
       text,
       doc_id: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
       ticker,
@@ -314,9 +314,10 @@ export async function ingestFiling(
       acceptance_datetime: filingRef.acceptanceDateTime,
       source: "sec-edgar",
       url: filingRef.url
-    },
-    userId
-  );
+    };
+  const result = leaseGuard
+    ? await storeDocument(document, userId, { leaseGuard })
+    : await storeDocument(document, userId);
 
   if (result.error) {
     return { skipped: false, chunks: result.indexed, error: result.error };
@@ -330,24 +331,6 @@ export async function ingestFiling(
   // mid-run is an EXPECTED state during the backlog drain — leave the filing un-recorded so
   // a later run retries it (content-hash dedup makes the re-embed cheap), and flag
   // budgetExhausted so the bulk loop stops instead of grinding through doomed filings.
-  // Every chunk was already in the index (content-hash dedup) — the crash-window state where a
-  // prior run embedded everything but died before recording the accession. The content is fully
-  // stored, so RECORD it now: without this, the filing re-fetches every run, and (worse) sits at
-  // the head of the deterministic demand-first queue forever. Review 2026-07-10: this state must
-  // never be confused with budget exhaustion, or it halts the whole backlog behind it.
-  if (result.dedupComplete) {
-    insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted);
-    audit("sec_filing_ingest", {
-      ticker,
-      accession: filingRef.accession,
-      docType: filingRef.docType,
-      filedAt: filingRef.filedAt,
-      chunks: result.attempted,
-      dedupHealed: true
-    });
-    return { skipped: true, chunks: 0 };
-  }
-
   // budgetExhausted only on genuine capacity signals — the explicit budget counters or the
   // store's keys-unconfigured skip. A single pathological document that chunks to nothing
   // must not stop the whole run.
@@ -355,6 +338,11 @@ export async function ingestFiling(
     (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0 || result.unconfigured === true;
   if (result.indexed <= 0 || outOfCapacity) {
     return { skipped: true, chunks: result.indexed, ...(outOfCapacity ? { budgetExhausted: true } : {}) };
+  }
+  if (result.documentComplete !== true || result.indexed !== result.attempted) {
+    // A content-only dedup receipt or partial Pinecone write cannot complete an accession. Every
+    // occurrence must have its own queryable vector and the required local receipt transaction.
+    return { skipped: true, chunks: result.indexed };
   }
 
   // Persist de-dup record only after successful embedding so a partial failure doesn't
@@ -546,7 +534,10 @@ async function refreshFilingBodiesUnlocked(
     processed++;
     try {
       assertOperationLeaseOwnership(operationLeaseClaim);
-      const ingestResult = await ingestFiling(ticker, ref);
+      const ingestResult = await ingestFiling(ticker, ref, "local", {
+        assertOwnership: () => assertOperationLeaseOwnership(operationLeaseClaim),
+        signal: operationLeaseSignal
+      });
       throwIfOperationLeaseCancelled(operationLeaseSignal);
       if (ingestResult.budgetExhausted) {
         // The embed layer is out of capacity for the day (or unconfigured) — every later
@@ -707,4 +698,3 @@ export async function ingestFundamentalsCard(
     return { skipped: false, error };
   }
 }
-

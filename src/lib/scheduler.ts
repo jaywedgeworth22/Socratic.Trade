@@ -24,7 +24,14 @@ import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import type { TradingPolicy } from "./types";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
-import { getTechnicalWatchlist, isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
+import {
+  getTechnicalWatchlist,
+  isFilingIngestDue,
+  isFmpTranscriptRefreshDue,
+  refreshDueWebSources,
+  refreshFilingBodies,
+  refreshFmpTranscripts
+} from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
 import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
 import { reconcilePendingFills } from "./strategy-execution";
@@ -314,14 +321,15 @@ async function tick(): Promise<void> {
   // free-safe 5/min so the raised paid default can't 429-storm. No-op until due; fully self-guarded.
   void runProviderTierCheckIfDue().catch((err) => console.error("[scheduler] provider-tier check error:", err));
 
-  // 10-K/10-Q body ingest (TTL cadence, gated on paid Voyage key signal).
-  // Collects the union of all user watchlists + policy universes so the shared
-  // corpus covers every symbol any active user is monitoring. Fire-and-forget;
-  // errors are captured inside refreshFilingBodies and audited there.
+  // 10-K/10-Q bodies and default-OFF FMP transcripts have separate producer cadences, request
+  // budgets, and cursors. They share the durable RAG_REINDEX operation lease and this demand-first
+  // symbol collection so both corpora prioritize held/watchlisted/recent-candidate names.
   // Gated on the operator monthly spend ceiling too: RAG (Voyage/Pinecone) spend counts toward
   // LLM_SPEND_CEILING, and this refresh runs BEFORE the strategy-run ceiling check below, so without
   // this guard a breached ceiling would still let the weekly filing-body ingest spend.
-  if (isFilingIngestDue() && checkMonthlyLlmSpendCeiling().ok) {
+  const filingIngestDue = isFilingIngestDue();
+  const transcriptIngestDue = isFmpTranscriptRefreshDue();
+  if ((filingIngestDue || transcriptIngestDue) && checkMonthlyLlmSpendCeiling().ok) {
     // DEMAND-FIRST ordering: ingestion is capped per run, so queue order decides which
     // symbols' filings the strategy can actually retrieve against. Watchlist names and the
     // last scan's candidate set (which force-includes held positions) go first; the broad
@@ -344,9 +352,28 @@ async function tick(): Promise<void> {
         // don't let a single user's DB error block the others
       }
     }
-    void refreshFilingBodies(Array.from(symbolSet)).catch((err) =>
-      console.error("[scheduler] filing-body refresh error:", err)
-    );
+    const symbols = Array.from(symbolSet);
+    // These producers spend from the same Voyage/Pinecone budgets and share the durable RAG_REINDEX
+    // lease. Keep their scheduler admission ordered too, so a same-tick refresh does not make one
+    // producer race into a benign busy result while the other starts embedding.
+    void (async () => {
+      if (filingIngestDue) {
+        try {
+          await refreshFilingBodies(symbols);
+        } catch (err) {
+          console.error("[scheduler] filing-body refresh error:", err);
+        }
+      }
+      if (transcriptIngestDue) {
+        try {
+          await refreshFmpTranscripts(symbols);
+        } catch {
+          // The connector captures sanitized failures in its result/audit. Do not print a thrown
+          // provider error here: it could contain request context and transcript bodies are untrusted.
+          console.error("[scheduler] FMP transcript refresh failed before a result was recorded");
+        }
+      }
+    })();
   }
 
   // Once-per-day share of company refs + daily closes + the S&P-500 series to congress.trade

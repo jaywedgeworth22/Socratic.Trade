@@ -1,9 +1,10 @@
 import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent } from "./db";
-import { notify } from "./notify";
+import { notify, type NotifyDispatchDeps } from "./notify";
 import type { NotificationEvent, NotificationEventType, NotifyChannelId, NotifyChannelResult, TradingPolicy } from "./types";
 
 type Fetcher = typeof fetch;
 type NotifyDispatcher = typeof notify;
+type NotificationDeliveryControl = Pick<NotifyDispatchDeps, "assertActive" | "signal">;
 
 type SendNotificationOptions = {
   policy?: TradingPolicy;
@@ -16,8 +17,61 @@ type SendNotificationOptions = {
   notifyImpl?: NotifyDispatcher;
   notifyDeps?: Parameters<NotifyDispatcher>[2];
   /** Extra operator-only lane (for example the configured fallback email), invoked after gating. */
-  additionalDelivery?: () => Promise<NotifyChannelResult[]>;
+  additionalDelivery?: (control?: NotificationDeliveryControl) => Promise<NotifyChannelResult[]>;
+  /** Cooperative ownership fence for callers whose work may be superseded while delivery awaits. */
+  assertActive?: () => void;
+  /** Cancellation signal paired with assertActive for in-flight delivery and retry waits. */
+  signal?: AbortSignal;
 };
+
+function assertNotificationActive(options: SendNotificationOptions): void {
+  options.assertActive?.();
+  if (options.notifyDeps?.assertActive !== options.assertActive) {
+    options.notifyDeps?.assertActive?.();
+  }
+  for (const signal of [options.signal, options.notifyDeps?.signal]) {
+    if (!signal?.aborted) continue;
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Notification delivery ownership was lost.");
+  }
+}
+
+function combineNotificationSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (active.length === 0) return undefined;
+  if (active.length === 1 || typeof AbortSignal.any !== "function") return active[0];
+  return AbortSignal.any(active);
+}
+
+function guardedNotifyDeps(
+  deps: NotifyDispatchDeps | undefined,
+  assertActive: (() => void) | undefined,
+  signal: AbortSignal | undefined
+): NotifyDispatchDeps {
+  const nestedAssert = deps?.assertActive;
+  const combinedAssert = assertActive || nestedAssert
+    ? () => {
+        assertActive?.();
+        nestedAssert?.();
+      }
+    : undefined;
+  const combinedSignal = combineNotificationSignals(signal, deps?.signal);
+  return {
+    ...deps,
+    ...(combinedAssert ? { assertActive: combinedAssert } : {}),
+    ...(combinedSignal ? { signal: combinedSignal } : {})
+  };
+}
+
+function notificationDeliveryControl(options: SendNotificationOptions): NotificationDeliveryControl {
+  const hasGuard = options.assertActive !== undefined || options.notifyDeps?.assertActive !== undefined;
+  const signal = combineNotificationSignals(options.signal, options.notifyDeps?.signal);
+  return {
+    ...(hasGuard ? { assertActive: () => assertNotificationActive(options) } : {}),
+    ...(signal ? { signal } : {})
+  };
+}
 
 const CHANNEL_LABELS: Record<NotifyChannelId, string> = {
   push: "Phone push",
@@ -76,41 +130,61 @@ export async function sendNotification(
   },
   options: SendNotificationOptions = {}
 ): Promise<NotificationEvent> {
+  assertNotificationActive(options);
   const userId = options.userId ?? "local";
   const policy = options.policy ?? getPolicy(userId);
+  assertNotificationActive(options);
   const settings = policy.notificationSettings;
   const webhookUrl = settings.webhookUrl?.trim();
 
   if (!settings.enabledEvents.includes(input.type)) {
+    assertNotificationActive(options);
     return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, policy.connectedAccountId);
   }
 
   const results: NotifyChannelResult[] = [];
   const bridgeErrors: string[] = [];
   try {
-    results.push(
-      ...(await sendDirectNotification(input, userId, {
-        skipWebhook: !!webhookUrl,
-        directBody: options.directBody,
-        notifyImpl: options.notifyImpl,
-        notifyDeps: options.notifyDeps
-      }))
-    );
+    assertNotificationActive(options);
+    const directResults = await sendDirectNotification(input, userId, {
+      skipWebhook: !!webhookUrl,
+      directBody: options.directBody,
+      notifyImpl: options.notifyImpl,
+      notifyDeps: options.notifyDeps,
+      assertActive: options.assertActive,
+      signal: options.signal
+    });
+    assertNotificationActive(options);
+    results.push(...directResults);
   } catch (error) {
+    assertNotificationActive(options);
     bridgeErrors.push(recordBridgeError(input.type, userId, "direct", error, policy.connectedAccountId));
   }
 
   if (options.additionalDelivery) {
     try {
-      results.push(...(await options.additionalDelivery()));
+      assertNotificationActive(options);
+      const additionalResults = await options.additionalDelivery(notificationDeliveryControl(options));
+      assertNotificationActive(options);
+      results.push(...additionalResults);
     } catch (error) {
+      assertNotificationActive(options);
       bridgeErrors.push(recordBridgeError(input.type, userId, "additional", error, policy.connectedAccountId));
     }
   }
 
   if (webhookUrl) {
-    const legacyWebhookResult = await sendLegacyWebhook(input, webhookUrl, options.fetcher ?? fetch, options.timeoutMs ?? 5000);
+    assertNotificationActive(options);
+    const legacyWebhookResult = await sendLegacyWebhook(
+      input,
+      webhookUrl,
+      options.fetcher ?? fetch,
+      options.timeoutMs ?? 5000,
+      options.signal
+    );
+    assertNotificationActive(options);
     results.push(legacyWebhookResult);
+    assertNotificationActive(options);
     audit(
       legacyWebhookResult.ok ? "notify.sent" : "notify.error",
       {
@@ -125,8 +199,11 @@ export async function sendNotification(
     );
   }
 
+  assertNotificationActive(options);
   const outcome = deriveDeliveryOutcome(results, bridgeErrors);
+  assertNotificationActive(options);
   const event = record(input, outcome.status, webhookUrl, outcome.reason, userId, policy.connectedAccountId);
+  assertNotificationActive(options);
   audit(
     "notification.delivery",
     {
@@ -146,7 +223,8 @@ async function sendLegacyWebhook(
   input: { type: NotificationEventType; title: string; payload: unknown },
   webhookUrl: string,
   fetcher: Fetcher,
-  timeoutMs: number
+  timeoutMs: number,
+  callerSignal?: AbortSignal
 ): Promise<NotifyChannelResult> {
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
   const controller = new AbortController();
@@ -164,7 +242,7 @@ async function sendLegacyWebhook(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payloadBody),
-      signal: controller.signal
+      signal: combineNotificationSignals(callerSignal, controller.signal)
     });
     if (!response.ok) {
       return { channel: "webhook", ok: false, error: `Webhook returned HTTP ${response.status}.` };
@@ -185,6 +263,8 @@ async function sendDirectNotification(
     directBody?: string;
     notifyImpl?: NotifyDispatcher;
     notifyDeps?: Parameters<NotifyDispatcher>[2];
+    assertActive?: () => void;
+    signal?: AbortSignal;
   } = {}
 ): Promise<NotifyChannelResult[]> {
   const basePrefs = options.notifyDeps?.prefs;
@@ -194,6 +274,7 @@ async function sendDirectNotification(
         return { ...current, channels: current.channels.filter((channel) => channel !== "webhook") };
       })()
     : basePrefs;
+  const deps = guardedNotifyDeps(options.notifyDeps, options.assertActive, options.signal);
   return (options.notifyImpl ?? notify)(
     userId,
     {
@@ -202,7 +283,7 @@ async function sendDirectNotification(
       kind: input.type,
       data: input.payload
     },
-    { ...options.notifyDeps, ...(prefs ? { prefs } : {}) }
+    { ...deps, ...(prefs ? { prefs } : {}) }
   );
 }
 

@@ -102,6 +102,7 @@ import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { startStrategyLockGuard, StrategyLockOwnershipLostError } from "./strategy-lock-guard";
 import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
+import { fmpTranscriptStorageRightsConfirmed, fmpTranscriptsEnabled } from "./web-sources/fmp-transcripts";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -161,8 +162,8 @@ const MAX_SKIPPED_EVIDENCE = 25;
 /**
  * corpus-coverage-receipt (2026-07-06, redesigned same day — see
  * docs/rollouts/2026-07-06-corpus-coverage-receipt.md for the full history): doc types the
- * empty-corpus receipt (below, near `computeEmptyDocTypes`) checks. Deliberately a STATIC
- * allowlist restricted to types whose PRODUCER LEDGER (`ingested_accessions`, via
+ * empty-corpus receipt (below, near `computeEmptyDocTypes`) checks. The base allowlist is restricted
+ * to types whose PRODUCER LEDGER (`ingested_accessions`, via
  * `ingestedAccessionCountsByDocType`) is COMPLETE — i.e. every writer for that type records an
  * accession row, so "zero ingested rows" reliably means "never produced," not "this writer just
  * doesn't track accessions."
@@ -181,12 +182,21 @@ const MAX_SKIPPED_EVIDENCE = 25;
  * on a large fraction of normal runs. Re-add "8-k" here the day an accurate per-doc_type 8-K corpus
  * signal exists (e.g. a `document_chunks.doc_type` column populated by both writers).
  *
- * "earnings-transcript" is excluded from both coverage checks and live retrieval: no ingestion
- * writer exists anywhere in this repo, so requesting it only creates a permanent empty filter.
- * Re-add it when a producer lands. "fundamentals" has a real producer and is requested below, but
- * its producer ledger is not yet complete enough for the empty-corpus receipt.
+ * "earnings-transcript" has a complete ticker-period ledger through fmp-transcripts.ts, but that
+ * producer is default OFF pending endpoint-plan and content-rights confirmation. It participates in
+ * the empty-corpus receipt only while explicitly enabled; otherwise the default config stays quiet.
+ * Existing transcript chunks remain retrievable after an operator disables future ingestion only
+ * while storage/display rights remain confirmed.
+ * "fundamentals" has a real producer and is requested below, but its producer ledger is not yet
+ * complete enough for the empty-corpus receipt.
  */
-const COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
+const BASE_COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
+
+export function coverageCheckedFilingsDocTypes(): string[] {
+  return fmpTranscriptsEnabled()
+    ? [...BASE_COVERAGE_CHECKED_DOC_TYPES, "earnings-transcript"]
+    : [...BASE_COVERAGE_CHECKED_DOC_TYPES];
+}
 
 // STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
 // can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
@@ -856,11 +866,19 @@ export async function runStrategyOnce(
     // corpus-coverage-receipt (2026-07-06): the filings doc types requested below, hoisted so the
     // coverage receipt after this block can report "requested" alongside "retrieved this run" /
     // "empty" without re-declaring the literal. Advisory only — never affects the retrieval call
-    // itself. NOTE: the coverage receipt itself only CHECKS the COVERAGE_CHECKED_DOC_TYPES subset
-    // (10-k/10-q — narrower than this request list) against retrievedFilingsDocTypes below. 8-K and
-    // fundamentals both have real producers but incomplete ledgers, so they are retrieved without
-    // participating in the empty-corpus assertion. A nonexistent transcript producer is not queried.
-    const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "fundamentals"];
+    // itself. NOTE: the coverage receipt only checks ledger-complete types. 10-k/10-q always
+    // participate; earnings-transcript joins only while its default-off producer is explicitly on.
+    // 8-K/fundamentals remain retrieval-only because their ledgers are incomplete. Transcript
+    // retrieval is independently rights-gated: turning off future refresh keeps existing evidence
+    // usable, while withdrawing storage/display confirmation removes it from every RAG consumer.
+    const requestedFilingsDocTypes = [
+      "10-k",
+      "10-q",
+      "8-k",
+      ...(fmpTranscriptStorageRightsConfirmed() ? ["earnings-transcript"] : []),
+      "fundamentals"
+    ];
+    const coverageCheckedDocTypes = coverageCheckedFilingsDocTypes();
     const retrievedFilingsDocTypes = new Set<string>();
     // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): one row per symbol (filings
     // pass) plus one PORTFOLIO row (episodic pass), persisted via the `rag_retrieval_status` audit
@@ -1066,9 +1084,9 @@ export async function runStrategyOnce(
 
     // ── Corpus-coverage receipt (advisory only) ────────────────────────────
     // ONE aggregated audit + ONE kind-'safety' evidence item when a COVERAGE-CHECKED filings doc
-    // type (COVERAGE_CHECKED_DOC_TYPES — a static allowlist restricted to types whose producer
-    // ledger is COMPLETE, currently 10-k/10-q; see its comment for why "8-k" and
-    // "earnings-transcript" are excluded) is BOTH not retrieved this run AND has zero ever-ingested
+    // type (coverageCheckedDocTypes — ledger-complete 10-k/10-q plus earnings-transcript only while
+    // its producer is explicitly enabled; see the declaration above) is BOTH not retrieved this run
+    // AND has zero ever-ingested
     // producer rows. Both-conditions is load-bearing — see computeEmptyDocTypes's doc comment.
     // Never touches ragContext/sizing/policy — receipt only.
     if (!skipLlmDueToBudget) {
@@ -1084,7 +1102,7 @@ export async function runStrategyOnce(
         }
         return false;
       };
-      const emptyDocTypes = computeEmptyDocTypes(COVERAGE_CHECKED_DOC_TYPES, retrievedFilingsDocTypes, hasProducerForDocType);
+      const emptyDocTypes = computeEmptyDocTypes(coverageCheckedDocTypes, retrievedFilingsDocTypes, hasProducerForDocType);
       if (emptyDocTypes.length > 0) {
         const coverageSymbols = marketScan.topCandidates.slice(0, 3).map((c) => c.symbol);
         audit(
@@ -1095,8 +1113,8 @@ export async function runStrategyOnce(
         );
         // Copy honesty (owner report 2026-07-09): the old title ("Requested filings doc type never
         // ingested") read on every stock as "a document was looked for and not found" — a per-symbol
-        // lookup failure. The real state is a still-warming shared corpus: SEC ingestion is paced,
-        // so say that, with the actual count. Neutral tone: an advisory warm-up receipt on every
+        // lookup failure. The real state is a still-warming shared corpus: source ingestion is bounded,
+        // so say that without falsely attributing non-SEC document types to EDGAR. Neutral tone: an advisory warm-up receipt on every
         // decision card shouldn't wear the same orange as a real safety warning.
         const ingestedFilingsTotal = Object.values(accessionCountsByDocType).reduce((sum, n) => sum + n, 0);
         promptSafetyEvidence.push({
@@ -1104,9 +1122,9 @@ export async function runStrategyOnce(
           tone: "neutral",
           title: "Filings library still warming up",
           summary:
-            `No ${emptyDocTypes.join(" or ")} filings are in the research library yet ` +
-            `(${ingestedFilingsTotal} filing${ingestedFilingsTotal === 1 ? "" : "s"} ingested so far — SEC ingestion is paced ` +
-            `and fills watchlist/held names first). This decision used the other evidence; nothing was altered or blocked.`,
+            `No ${emptyDocTypes.join(" or ")} documents are in the research library yet ` +
+            `(${ingestedFilingsTotal} document${ingestedFilingsTotal === 1 ? "" : "s"} ingested so far — source ingestion is bounded ` +
+            `and prioritizes watchlist/held names). This decision used the other evidence; nothing was altered or blocked.`,
           source: "prompt-safety",
           data: { emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes }
         });
