@@ -144,6 +144,14 @@ describe("market enrichment provider", () => {
   });
 });
 
+describe("apiKeyFingerprint", () => {
+  it("uses edge-safe SHA-256 without exposing the credential", async () => {
+    expect(await apiKeyFingerprint("abc")).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+  });
+});
+
 describe("scoreHeadlines", () => {
   it("returns neutral 50 with no headlines or no signal words", () => {
     expect(scoreHeadlines([])).toBe(50);
@@ -978,7 +986,7 @@ describe("FMP request quota — defer / refund / breaker / cache-hit / per-crede
     expect(res.GOOG).toEqual({}); // deferred this scan, NOT queried
     expect(count()).toBe(8);      // exactly 2 symbols × 4 sub-calls
     // The 8 dispatched were recorded; the 1-request remainder was refunded → 1 headroom remains this minute.
-    expect(admitProviderRequests("fmp", apiKeyFingerprint("q-key"), 100)).toBe(1);
+    expect(admitProviderRequests("fmp", await apiKeyFingerprint("q-key"), 100)).toBe(1);
 
     // GOOG was deferred, never fetched → it must NOT have been cached. A fresh-budget rescan fetches it.
     process.env.PROVIDER_QUOTA_FMP_PER_MIN = "290";
@@ -1042,7 +1050,7 @@ describe("FMP request quota — defer / refund / breaker / cache-hit / per-crede
     expect(count()).toBe(4);    // served from cache — no fetch
     expect(res2.IBM).toEqual({ peRatio: 20 });
     // The cache hit reserved nothing, so the whole fresh window is still available.
-    expect(admitProviderRequests("fmp", apiKeyFingerprint("cache-key"), 4)).toBe(4);
+    expect(admitProviderRequests("fmp", await apiKeyFingerprint("cache-key"), 4)).toBe(4);
   });
 
   it("keeps a separate quota lane per credential (one key's spend never gates another)", async () => {

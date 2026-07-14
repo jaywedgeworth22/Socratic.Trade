@@ -74,7 +74,8 @@ disclosures lets the agent act on the same names *before* the copycats pile in.
   Sentry paths are awaited and re-prove the shared lease after every async boundary. Every completed
   occurrence has a real deterministic Pinecone vector with its own ticker/accession/PIT metadata; exact
   embeddings may be reused, but completion requires exact vector cardinality plus an atomic local
-  content/occurrence receipt transaction. Provider attempts and quota/cost reservations are durable
+  content/occurrence receipt transaction. Edge-safe Web Crypto SHA-256 credential identities keep
+  provider attempts and quota/cost reservations durable
   before each network/SDK boundary and replay `succeeded`/`failed`/crash-`unknown` outcomes. Managed
   vectors remain query-ineligible until exact provider and relational receipts agree. Transcript body
   revisions retain distinct content-version/PIT rows instead of overwriting history. A bounded,

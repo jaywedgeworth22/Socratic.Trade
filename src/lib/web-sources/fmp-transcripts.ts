@@ -661,7 +661,7 @@ async function requestFmpJson(
   claim: OperationLeaseClaim,
   leaseSignal: AbortSignal
 ): Promise<FmpRequestResult> {
-  const credential = apiKeyFingerprint(apiKey);
+  const credential = await apiKeyFingerprint(apiKey);
   for (let retry = 0; retry <= retries; retry++) {
     throwIfOperationLeaseCancelled(leaseSignal);
     assertOperationLeaseOwnership(claim);

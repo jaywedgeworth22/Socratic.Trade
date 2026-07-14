@@ -233,17 +233,18 @@ Bounded dry-run rights inventory scans Pinecone itself (including receiptless gh
 provider-first, verified, then transactionally removes exact local/observation/tagged derivative rows.
 Account deletion now removes the new user-scoped provider/vector receipts and linked occurrences.
 
-Round-10 preserves the complete Round-9 implementation in a local-only checkpoint commit whose parent is
-`86971ec4`; it is not pushed and is not a PR. A fresh fetch on 2026-07-14 found `origin/main@4432c2bc`
-two commits ahead (background-worker production gates and the supported TypeScript gate repair), so the
-checkpoint is not yet current-main reconciled. Latest Node 24 evidence on the old base: the focused
-durability/transcript/vector/SEC/provider run exposed one missing receipt-marker check, now fixed; the
-complete adjacent regression rerun is 51 files / 732 tests green; account-deletion coverage and behavior
-are 7/7 green; full lint has 0 errors / 459 inherited warnings; TypeScript is clean; the full suite is
-367 files / 4,126 tests green; and diff-check is clean. The production build reaches webpack but fails
-because this old base's unsupported TypeScript 7 alias hack cannot resolve existing `@/lib/*` imports;
-`4432c2bc` removes that hack and restores the supported TypeScript gate. Current-main reconciliation,
-a repeated full gate including a successful build, and fresh hostile review remain.
+Round-10 preserves the complete Round-9 implementation in local-only checkpoint `52cfcbec` (parent
+`86971ec4`) and cleanly merges fetched `origin/main@4432c2bc` in `0713a254` with zero conflicts. Node 24
+`npm ci` resolves Node 24.18.0, npm 11.16.0, TypeScript 6.0.3, and `@types/node` 24.13.3. The first
+current-main full suite passed 369 files / 4,144 tests, then the production build found a real Edge
+boundary: `data-providers.ts` imported `node:crypto` through the scheduler graph. Credential identity now
+uses awaited Web Crypto SHA-256 with an exact known-digest regression. The final ordered Node 24 gate is
+green: lint 0 errors / 458 inherited warnings; TypeScript clean; full suite 369 files / 4,145 tests;
+production build clean with the real `Running TypeScript` / `Finished TypeScript` phase and 32 generated
+static pages; diff-check clean. Fresh current-main hostile review found no remaining P0/P1/P2 code
+finding across durable provider dispatch/outbox, managed-vector two-phase receipts and reconciliation,
+immutable transcript/PIT versions, operator scope, rights inventory/purge, scheduler gating, usage replay,
+or account deletion. The lane is locally code-ready but remains unpushed with no PR.
 
 Production activation/backfill remains gated on an entitled transcript plan, confirmed commercial
 persistence/embedding/display rights, and one genuinely shared cross-app transactional quota authority;

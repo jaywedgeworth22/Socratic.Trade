@@ -419,16 +419,44 @@ database, mocked transcript responses, and an injected usage-monitor collector.
 
 ### Round-10 current-main reconciliation
 
-The complete Round-9 dirty tree is captured in this local-only checkpoint commit before any merge. Its
-parent remains `86971ec4`; it has not been pushed and no PR exists. This prevents the broad provider,
-vector, transcript, notification, test, and documentation changes from being lost or partially stashed
-while reconciling `origin/main@4432c2bc` or newer.
+The complete Round-9 dirty tree was first captured in local-only checkpoint `52cfcbec` with parent
+`86971ec4`. Fetched `origin/main@4432c2bc` was then merged in `0713a254` with zero conflicts, preserving
+both the incoming production-worker gates and supported TypeScript repair. Neither commit was pushed and
+no PR exists. Node 24 `npm ci` installed Node 24.18.0, npm 11.16.0, TypeScript 6.0.3, and
+`@types/node` 24.13.3 without changing the lockfile.
 
-Next steps are intentionally mechanical: merge fetched current main, preserve both incoming production-
-worker gates and the supported TypeScript toolchain repair, reinstall dependencies with Node 24, resolve
-reviewed conflicts, and repeat lint, TypeScript, the full test suite, production build, and diff-check.
-Fresh hostile review follows that gate. No FMP/provider request, Infisical read/write, vector/corpus/R2
-mutation, activation, push, PR, deployment, or production write is part of reconciliation.
+The first current-main full suite passed 369 files / 4,144 tests. The following production build exposed
+a real current-main blocker: `data-providers.ts` imported `node:crypto`, and that module reached the Edge
+bundle through `market -> strategy -> scheduler -> background-worker-startup`. The credential fingerprint
+now uses awaited `globalThis.crypto.subtle.digest("SHA-256", ...)`; all production and test callers await
+it, and an exact known SHA-256 digest regression proves the result without storing or logging credentials.
+Focused post-fix verification passed 3 files / 148 tests, TypeScript, a scoped lint with 0 errors / 6
+inherited warnings, and a diagnostic production build with the real TypeScript phase.
+
+Final ordered Node 24 verification:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit --pretty false
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build
+git diff --check
+```
+
+Results: lint 0 errors / 458 inherited warning-class findings; TypeScript clean; full suite 369 files /
+4,145 tests; production build clean with `Running TypeScript`, `Finished TypeScript`, and 32 generated
+static pages; diff-check clean. A fresh current-main hostile review found no remaining P0/P1/P2 code
+finding across atomic provider reservations and immutable outcomes, crash-`unknown` reconciliation and
+outbox replay, two-phase managed-vector receipts and fail-closed retrieval, corrected-body PIT versions,
+operator-only ingestion, scheduler dual gating, bounded rights inventory/provider-first purge, and account
+deletion. The implementation is locally code-ready. Activation is not ready: endpoint entitlement,
+commercial persistence/embedding/display rights, and one genuinely shared cross-app transactional quota
+authority remain hard gates.
+
+Round-10 touched `src/lib/data-providers.ts`, `src/lib/web-sources/fmp-transcripts.ts`,
+`test/data-providers.test.ts`, `STATUS.md`, `PLAN.md`, `docs/phase-9-web-sources.md`, this rollout note,
+and both effort-log mirrors. No FMP/provider request, Infisical read/write, vector/corpus/R2 mutation,
+activation, push, PR, deployment, or production write occurred.
 
 ## Follow-ups / enablement blockers
 

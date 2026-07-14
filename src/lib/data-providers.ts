@@ -9,7 +9,6 @@
 // Each keyed provider is only instantiated when its env key is set. Yahoo Finance is always
 // the final real tier — no API key required, uses session crumb auth.
 
-import crypto from "node:crypto";
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import {
   congressFundamentalsEnabled,
@@ -414,8 +413,12 @@ function maxSymbols(): number {
 // Collision-resistant, one-way credential lane identity. It is now persisted in the durable
 // dispatch ledger, so a 32-bit process-local hash is insufficient: an accidental collision could
 // conflate unrelated account quotas. The literal key is never logged or stored.
-export function apiKeyFingerprint(apiKey: string): string {
-  return crypto.createHash("sha256").update(apiKey, "utf8").digest("hex");
+export async function apiKeyFingerprint(apiKey: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(apiKey)
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 // Short negative-cache TTL for symbols a rate-limited provider returns no usable data for, so they
@@ -2551,7 +2554,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       const cost = callsPerSymbol("fmp", { skipPe, skipConsensus, wantTargets });
       return { symbol, skipPe, skipConsensus, wantTargets, cost };
     });
-    const credKey = apiKeyFingerprint(this.apiKey);
+    const credKey = await apiKeyFingerprint(this.apiKey);
     const totalWanted = plans.reduce((n, p) => n + p.cost, 0);
     const allowed = admitProviderRequests("fmp", credKey, totalWanted);
     // Greedy best-first prefix walk: misses arrive best-first, so take whole symbols in order until the
@@ -2746,7 +2749,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     const reservation = reserveProviderDispatch({
       provider: "fmp",
       operation: `enrichment-${operation}`,
-      credentialRef: apiKeyFingerprint(this.apiKey),
+      credentialRef: await apiKeyFingerprint(this.apiKey),
       userId: this.userId ?? "local",
       units: 1,
       estimatedCostUsd: 0,
@@ -3512,7 +3515,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     // Scan-size-agnostic + per-credential; never stalls. (Owner's Tiingo dashboard showed hourly at
     // -10/50 — an unpaced 30-symbol scan fires ~90 requests and 403s.)
     const perSymbol = callsPerSymbol("tiingo", { dropExtra: dropNews });
-    const credKey = apiKeyFingerprint(this.apiKey);
+    const credKey = await apiKeyFingerprint(this.apiKey);
     const allowedRequests = admitProviderRequests("tiingo", credKey, misses.length * perSymbol);
     const symbolsAllowed = Math.floor(allowedRequests / perSymbol);
     // admit() budgets in REQUESTS but we only dispatch whole symbols — hand back the partial remainder
@@ -3690,7 +3693,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
     // 1 credit per symbol. admit() returns how many fit RIGHT NOW under both windows — scan-size-agnostic
     // (works for any number of tickers) and per-credential — and the rest defer best-effort (the cascade
     // + shared cache cover them; coverage accretes across scans). Never blocks/stalls the scan.
-    const credKey = apiKeyFingerprint(this.apiKey);
+    const credKey = await apiKeyFingerprint(this.apiKey);
     const symbolsAllowed = admitProviderRequests(this.name, credKey, misses.length);
     const toQuery = misses.slice(0, symbolsAllowed);
     const skipped = misses.length - toQuery.length;

@@ -20,14 +20,15 @@
 > migration, Strategy language is source-neutral, and rights tooling performs bounded dry-run inventory
 > plus provider-first verified purge. Account deletion covers the new user-scoped receipts/outbox rows.
 > Generic FMP and transcript calls share authority within Socratic.Trade; production remains blocked on
-> confirmed commercial rights and a genuinely shared cross-app transactional quota authority. The dirty
-> lane is based on `86971ec4`; fetched `origin/main` advanced to `4432c2bc`, so current-main reconciliation,
-> final full gates, fresh hostile review, ready PR, merge/autodeploy, and live verification remain. On the
-> old base, Node 24 lint (0 errors), TypeScript, all 4,126 tests, and diff-check pass; its production build
-> fails at the unsupported TypeScript 7 alias hack that `4432c2bc` removes, so build verification must be
-> repeated only after reconciling that current-main toolchain repair. Round-10 first captures the complete
-> dirty implementation as a local-only checkpoint, then merges fetched `origin/main`, reinstalls the Node 24
-> dependency graph, resolves reviewed conflicts, and repeats the full gate. No push or PR is authorized yet.
+> confirmed commercial rights and a genuinely shared cross-app transactional quota authority. Round-10
+> captures the complete implementation in local checkpoint `52cfcbec`, cleanly merges
+> `origin/main@4432c2bc` in `0713a254`, and uses an awaited Edge-safe Web Crypto SHA-256 credential
+> fingerprint after the first current-main production build exposed a transitive `node:crypto` import.
+> The final Node 24 gate is green: lint 0 errors / 458 inherited warnings; TypeScript clean; 369 files /
+> 4,145 tests; production build with the real TypeScript phase and 32 static pages; diff-check clean. Fresh
+> hostile review found no remaining P0/P1/P2 code issue. This lane is locally code-ready; no push or PR is
+> authorized yet, and activation/backfill remains blocked on an entitled plan, commercial rights, and the
+> shared authority. A future PR, merge/autodeploy, and live verification require explicit follow-through.
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
 > TypeScript 5 compiler-API arrangement with one supported TypeScript 6.0.3 graph; remove the
 > postinstall mutation, module-resolution hooks, Next override, and `ignoreBuildErrors` bypass;
