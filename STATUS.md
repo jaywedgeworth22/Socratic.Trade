@@ -15,8 +15,8 @@ production build exits zero. A first accidental Node 26 test attempt failed only
 the app change itself. A stripped-environment disposable
 `next dev` emitted the disabled receipt and no scheduler-start line; `/login` then hit the separate
 known invalid Tailwind wildcard on current `main`, already fixed in the console lane. Independent
-review and the local gate are complete; ready PR, hosted verify, merge/autodeploy, and production
-verification remain.
+review and the local gate are complete. Ready PR #1576 is open; hosted verify, merge/autodeploy,
+and production verification remain.
 No provider, broker, corpus, or production configuration call was made. Rollout:
 `docs/rollouts/2026-07-13-development-background-workers.md`.
 

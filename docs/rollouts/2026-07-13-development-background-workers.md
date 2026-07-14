@@ -75,8 +75,14 @@ The build reproduced two current-main warnings that are not caused by this lane:
 in-build type pass (fixed in `codex/typescript-gate-repair`). The required standalone TypeScript gate
 was green here. No external provider, broker, corpus, Infisical, or production action occurred.
 
+`scripts/land.sh` then repeated standalone TypeScript, all 4,051 tests, and the production build
+under Node 24 before pushing `codex/dev-background-workers`. Its final PR command missed `gh` because
+the one-off PATH override contained Node 24 but not Homebrew's general binary directory; the pushed
+branch and gate were unaffected. Authenticated `gh` recovery opened ready PR #1576. Hosted `verify`
+is pending.
+
 ## Follow-ups
 
-- Land through `scripts/land.sh` as a ready PR and require hosted `verify`; do not manually deploy.
+- Require hosted `verify` on ready PR #1576; do not manually deploy.
 - After merge auto-deploys, verify `/api/health`, the production enabled boot receipt, and fresh
   scheduler ticks without starting any retired preview.
