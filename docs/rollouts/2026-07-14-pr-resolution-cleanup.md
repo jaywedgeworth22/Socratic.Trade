@@ -54,6 +54,16 @@ Codex review flagged 4 remaining P2 threads after round 3:
 
 4. **STATUS.md + EFFORT-LOG #1578 merge status** (PRRT_kwDOS7mOVM6Q4hKk): The TypeScript toolchain entry still said "fresh review, final ordered gate, commit, ready PR, hosted verification, merge/autodeploy, and production verification remain" and the EFFORT-LOG showed it as "READY FOR MAIN RECONCILIATION." PR #1578 was already merged (`4432c2b`). Updated both to reflect merged state.
 
+## [codex-autofix] Round 5: Move completed efforts out of Planned section + update stale #1544
+
+Codex review flagged 3 remaining P2 threads after round 4:
+
+1. **EFFORT-LOG #1578/#1576 in Planned section** (PRRT_kwDOS7mOVM6Q46v3): Both entries were marked COMPLETED but still under `## Planned / Reserved Before Implementation`. Moved to `## Completed` section (added at top, after section heading; removed from Planned section).
+
+2. **EFFORT-LOG #1544 stale READY PR status** (PRRT_kwDOS7mOVM6Q46v7): PR #1544 ("Evidence architecture program") was listed as "READY PR OPEN, CI GREEN ... Branch pushed; not merged" but actually merged as `60703dfe` on 2026-07-13. Updated to COMPLETED with merge SHA and corrected tail text.
+
+3. **Commit author email** (PRRT_kwDOS7mOVM6Q46v-): The original commit `db9f0acd` was authored as `Codex <codex@openai.com>`. Since there are 5 autofix commits on top, rebasing/amending is architecturally significant. Asked maintainer via PR comment; recommended squash-merge (already configured) which collapses all commits including the original authorship.
+
 ## Next Steps
-- Await maintainer response on AG branch handoff thread (PRRT_kwDOS7mOVM6Q4KKi — unresolved).
+- Await maintainer response on AG branch handoff thread (PRRT_kwDOS7mOVM6Q4KKi — unresolved) and commit author thread (PRRT_kwDOS7mOVM6Q46v-).
 - Auto-merge enabled for the resolved threads.

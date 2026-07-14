@@ -20,6 +20,16 @@ Codex review flagged 4 remaining P2 findings on the round-3 cleanup:
 Verify trio passed. Codex threads resolved, auto-merge enabled.
 Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
 
+## 2026-07-14 — [codex-autofix] Round 5: Move completed out of Planned + update stale #1544 (PR #1589)
+
+Codex review flagged 3 remaining P2 threads:
+1. EFFORT-LOG #1578/#1576 marked COMPLETED but under `## Planned` — moved to `## Completed` section.
+2. EFFORT-LOG #1544 still showed "READY PR OPEN ... Branch pushed; not merged" — updated to COMPLETED (merged as `60703dfe`).
+3. Original commit author email — asked maintainer (requires rebasing 5 commits).
+
+Verify trio passed. Codex threads fixed, resolved. Auto-merge remains enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
 ## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
 
 An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent
