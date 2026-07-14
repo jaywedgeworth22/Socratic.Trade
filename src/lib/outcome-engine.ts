@@ -276,7 +276,7 @@ async function measureCase(
   let realizedLot: ClosedLot | undefined;
   let note: string | undefined;
 
-  if (decisionCase.status === "placed") {
+  if (decisionCase.status === "placed" || decisionCase.status === "filled") {
     const fills = listFillEventsByProposalId(decisionCase.proposalId ?? decisionCase.id, ctx.userId).filter(
       (fill) => normalizeSymbol(fill.symbol) === symbol
     );
@@ -398,7 +398,7 @@ async function measureCase(
 
   const allHorizonsTerminal = outcomes.length === 4;
   const okRows = outcomes.filter((row) => row.resolution === "ok");
-  if (decisionCase.status !== "placed" && allHorizonsTerminal) {
+  if (decisionCase.status !== "placed" && decisionCase.status !== "filled" && allHorizonsTerminal) {
     const headline = pickHeadlineRow(okRows);
     if (headline && typeof headline.returnPct === "number") {
       return {
