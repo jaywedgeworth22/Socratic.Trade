@@ -570,16 +570,47 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
 }
 
 /**
+ * Max wall-clock for a single replay POST. Prevents a hung connection from permanently blocking the
+ * replay interval (which uses an inFlight promise guard — the promise would never settle otherwise).
+ */
+const REPLAY_SEND_TIMEOUT_MS = 30_000;
+
+/**
  * Send a caller-owned batch and report whether the monitor acknowledged it. Unlike the live
  * in-memory queue, this does not retain failed events: durable callers keep their ledger cursor
  * unchanged and reconstruct the exact same idempotent payload on the next pass.
+ *
+ * Applies an AbortSignal timeout so that a connection stall cannot permanently block the caller
+ * (the replay worker's inFlight guard is never cleared if the POST promise never settles).
  */
 export async function sendUsageMonitorBatch(
   events: UsageMonitorEvent[]
 ): Promise<boolean> {
   if (events.length === 0) return true;
   if (!usageMonitorEnabled()) return false;
-  return postBatch(events);
+
+  const baseUrl = usageMonitorBaseUrl();
+  const token = usageMonitorToken();
+  if (!baseUrl || !token) return false;
+
+  const fetchImpl = state.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REPLAY_SEND_TIMEOUT_MS);
+
+  try {
+    const client = createUsageTelemetryClient({
+      baseUrl,
+      token,
+      fetchImpl: (input, init) =>
+        fetchImpl(input, { ...init, signal: controller.signal }),
+    });
+    await client.send(events);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
