@@ -73,6 +73,45 @@ describe("mobile command gateway", () => {
     ).toThrow(MobileCommandValidationError);
   });
 
+  it("applies exclusive daily percent and dollar cap modes through mobile commands", async () => {
+    const { processPendingMobileCommands, queueMobileCommand } = await import("../src/lib/mobile-api");
+    const { getPolicy, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
+    const userId = `mobile-cap-${randomUUID()}`;
+    const accountId = `mobile-cap-account-${randomUUID()}`;
+    upsertConnectedAccount({
+      id: accountId,
+      userId,
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "MOBILE-CAP",
+      label: "Mobile Cap",
+      isActive: true
+    });
+    setPolicy(
+      { ...getPolicy(userId, accountId), maxDailyNotional: 1_000, maxDailyPctOfNav: undefined },
+      userId,
+      accountId
+    );
+
+    queueMobileCommand({
+      userId,
+      commandType: "policy.patch",
+      payload: { patch: { maxDailyPctOfNav: 20 } }
+    });
+    await processPendingMobileCommands({ limit: 10 });
+    expect(getPolicy(userId, accountId)).toMatchObject({ maxDailyPctOfNav: 20 });
+    expect(getPolicy(userId, accountId).maxDailyNotional).toBeUndefined();
+
+    queueMobileCommand({
+      userId,
+      commandType: "policy.patch",
+      payload: { patch: { maxDailyNotional: 250 } }
+    });
+    await processPendingMobileCommands({ limit: 10 });
+    expect(getPolicy(userId, accountId)).toMatchObject({ maxDailyNotional: 250 });
+    expect(getPolicy(userId, accountId).maxDailyPctOfNav).toBeUndefined();
+  });
+
   it("keeps command reads scoped to the authenticated user", async () => {
     const { queueMobileCommand, getMobileCommand, listMobileCommands } = await import("../src/lib/mobile-api");
     const owner = `owner-${randomUUID()}`;

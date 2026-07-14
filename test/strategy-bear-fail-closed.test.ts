@@ -154,7 +154,7 @@ async function setupBrokerPaperDecide(label: string): Promise<void> {
     strategyAuthority: "decide",
     // Relax caps so a single $1000 AAPL buy survives the risk gates and reaches the routing branch.
     maxOrderPctOfNav: 100,
-    // Kept just under the db.ts safety clamp (>=500_000 is reset to the 500 default).
+    // Large explicit dollar mode keeps this test focused on Red-Team fail-closed routing.
     maxDailyNotional: 400_000,
     // 0/falsy disables the NAV-relative daily cap (the test broker reports ~0 NAV, which would
     // otherwise make the percent-of-NAV ceiling 0 and block every opening).

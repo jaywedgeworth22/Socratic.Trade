@@ -36,6 +36,7 @@ type PendingProposal = {
   accountNumber?: string;
   executionMode?: string;
   estimatedNotional?: number;
+  decision?: { socraticOverride?: { applied?: boolean } };
   proposal: {
     symbol: string;
     side: string;
@@ -123,13 +124,14 @@ function commandLabel(value: string): string {
 
 /** Compact one-line model attribution for a proposal card: which model proposed it, and which
  *  model reviewed it — or failed to (text-only on mobile; the console gets the logo badges). */
-function modelAttributionLine(proposal: PendingProposal["proposal"]): string | null {
+function modelAttributionLine(pending: PendingProposal): string | null {
+  const proposal = pending.proposal;
   const parts: string[] = [];
   if (proposal.proposedByModel) parts.push(`Proposed by ${modelDisplayName(proposal.proposedByModel)}`);
   const verdict = proposal.redTeamVerdict;
   if (verdict?.available) {
     const reviewer = verdict.model ? ` — ${modelDisplayName(verdict.model)}` : "";
-    parts.push(`Red team: ${redTeamVerdictLabel(verdict)}${reviewer}`);
+    parts.push(`Red team: ${redTeamVerdictLabel(verdict, pending.decision?.socraticOverride?.applied)}${reviewer}`);
   } else if (verdict) {
     const reviewer = verdict.model ? ` — ${modelDisplayName(verdict.model)}` : "";
     parts.push(`Red team FAILED (${redTeamFailureMeta(verdict.failureKind).label})${reviewer}`);
@@ -662,8 +664,8 @@ export function MobilePwaClient() {
                     </div>
                     <p className="text-sm font-medium">{money(proposal.estimatedNotional)}</p>
                   </div>
-                  {modelAttributionLine(proposal.proposal) && (
-                    <p className="mt-1 text-xs text-faint">{modelAttributionLine(proposal.proposal)}</p>
+                  {modelAttributionLine(proposal) && (
+                    <p className="mt-1 text-xs text-faint">{modelAttributionLine(proposal)}</p>
                   )}
                   {proposal.proposal.rationale && (
                     <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{proposal.proposal.rationale}</p>

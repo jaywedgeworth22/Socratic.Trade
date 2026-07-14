@@ -10,14 +10,170 @@ beforeAll(() => {
 // Captures every storeContexts call so we can assert the re-index after a coach-note append
 // carries the note in its embedded text, without needing real Pinecone/Voyage credentials.
 const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string } }> = [];
+let storeContextsInterceptor: ((text: string) => Promise<void>) | undefined;
 vi.mock("../src/lib/vector-db", () => ({
   storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string }) => {
+    if (storeContextsInterceptor) await storeContextsInterceptor(documents.map((document) => document.text).join("\n"));
     storeContextsCalls.push({ documents, options });
     return { attempted: documents.length, indexed: documents.length };
   }
 }));
 
 describe("Socratic decision persistence", () => {
+  it("serializes one decision's vector updates so a slow older lifecycle cannot overwrite the terminal state", async () => {
+    const { indexSocraticDecisionMemory } = await import("../src/lib/socratic-memory");
+    let releasePlacing!: () => void;
+    let reportPlacingStarted!: () => void;
+    const placingBlocked = new Promise<void>((resolve) => { releasePlacing = resolve; });
+    const placingStarted = new Promise<void>((resolve) => { reportPlacingStarted = resolve; });
+    storeContextsInterceptor = async (text) => {
+      if (!text.includes("final_action: PLACING")) return;
+      reportPlacingStarted();
+      await placingBlocked;
+    };
+
+    const id = `serialized-${randomUUID()}`;
+    const base = {
+      id,
+      userId: `u-${randomUUID()}`,
+      createdAt: "2026-07-14T12:00:00.000Z",
+      updatedAt: "2026-07-14T12:00:00.000Z",
+      symbol: "EXE",
+      side: "buy" as const,
+      authority: "decide" as const,
+      thesis: id,
+      rationale: "Green thesis.",
+      action: "BUY EXE $5",
+      evidence: [],
+      ragAttributions: [],
+      dissent: [],
+      lessons: [],
+      coachNotes: []
+    };
+    const first = indexSocraticDecisionMemory({ ...base, status: "placing" });
+    await placingStarted;
+    const second = indexSocraticDecisionMemory({
+      ...base,
+      status: "placed",
+      updatedAt: "2026-07-14T12:00:01.000Z"
+    });
+    releasePlacing();
+    await Promise.all([first, second]);
+    storeContextsInterceptor = undefined;
+
+    const calls = storeContextsCalls.filter((call) =>
+      call.documents.some((document) => document.text.includes(`broker_argument: ${id}`))
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls[0].documents[0].text).toContain("final_action: PLACING");
+    expect(calls[1].documents[0].text).toContain("final_action: PLACED");
+  });
+
+  it("keeps case status, applied sizing, policy evidence, and embedded memory synchronized with proposal lifecycle", async () => {
+    const {
+      claimProposalForExecution,
+      getSocraticDecisionCase,
+      insertProposal,
+      updateProposalStatus,
+      upsertSocraticDecisionCase
+    } = await import("../src/lib/db");
+    const userId = `u-lifecycle-${randomUUID()}`;
+    const proposalId = `prop-lifecycle-${randomUUID()}`;
+    const baseProposal = {
+      symbol: "EXE",
+      side: "buy" as const,
+      type: "market" as const,
+      dollarAmount: 4,
+      timeInForce: "gfd" as const,
+      marketHours: "regular_hours" as const,
+      rationale: "Green thesis.\n\nRed Team review — approved at full size: evidence checks out.",
+      greenTeamRationale: "Green thesis.",
+      sizingSnapshot: { portfolioValue: 100, estimatedNotional: 4, estimatedPctOfNav: 4 },
+      tradeThesisTag: "Value-Quality",
+      entryMarketRegime: "Neutral"
+    };
+    const approved = { approved: true, reasons: ["Deterministic checks passed."] };
+    insertProposal({
+      id: proposalId,
+      userId,
+      runId: `run-${randomUUID()}`,
+      accountNumber: "IRA-1",
+      proposal: baseProposal,
+      decision: approved,
+      estimatedNotional: 4,
+      status: "proposed"
+    });
+    upsertSocraticDecisionCase({
+      id: proposalId,
+      userId,
+      proposalId,
+      accountNumber: "IRA-1",
+      symbol: "EXE",
+      side: "buy",
+      status: "proposed",
+      authority: "decide",
+      thesis: "Value-Quality",
+      rationale: baseProposal.rationale,
+      greenTeamRationale: baseProposal.greenTeamRationale,
+      sizingSnapshot: baseProposal.sizingSnapshot,
+      action: "BUY EXE $4",
+      policyDecision: approved,
+      evidence: [{ kind: "policy", title: "Proposed decision", summary: "Policy approved BUY EXE $4." }],
+      ragAttributions: [],
+      dissent: [],
+      outcome: { status: "open", note: "Still maturing.", outcomes: [] },
+      lessons: ["Preserve this learned lesson."],
+      coachNotes: ["Preserve this coach note."]
+    });
+
+    const appliedProposal = {
+      ...baseProposal,
+      dollarAmount: 5,
+      sizingSnapshot: { portfolioValue: 100, estimatedNotional: 5, estimatedPctOfNav: 5 },
+      rationale: `${baseProposal.rationale} [Sized up from $4.00 to meet the broker minimum.]`
+    };
+    expect(
+      claimProposalForExecution(proposalId, "placing", userId, {
+        proposal: appliedProposal,
+        review: { estimatedNotional: 5, alerts: [], raw: {} },
+        estimatedNotional: 5,
+        refId: "ref-lifecycle",
+        executionMode: "broker/live"
+      })
+    ).toBe(true);
+
+    const placing = getSocraticDecisionCase(proposalId, userId);
+    expect(placing).toMatchObject({ status: "placing", notional: 5, action: "BUY EXE $5" });
+    expect(placing?.sizingSnapshot).toMatchObject({ estimatedNotional: 5, estimatedPctOfNav: 5 });
+    expect(placing?.evidence[0]).toMatchObject({ title: "Placement pending confirmation" });
+
+    updateProposalStatus(
+      proposalId,
+      "rejected_by_broker",
+      "order-declined",
+      { estimatedNotional: 5, alerts: [], raw: {} },
+      5,
+      userId,
+      undefined,
+      "Broker declined the fractional order."
+    );
+    const rejected = getSocraticDecisionCase(proposalId, userId);
+    expect(rejected?.status).toBe("rejected_by_broker");
+    expect(rejected?.evidence[0]).toMatchObject({ title: "Rejected by broker" });
+    expect(rejected?.evidence[0]?.summary).toContain("Broker declined the fractional order");
+    expect(rejected?.outcome).toMatchObject({ status: "open", note: "Still maturing." });
+    expect(rejected?.lessons).toContain("Preserve this learned lesson.");
+    expect(rejected?.coachNotes).toContain("Preserve this coach note.");
+
+    await vi.waitFor(() => {
+      expect(
+        storeContextsCalls.some((call) =>
+          call.documents.some((document) => document.text.includes("final_action: REJECTED_BY_BROKER"))
+        )
+      ).toBe(true);
+    });
+  });
+
   it("persists decision cases, coach notes, and framework proposal status", async () => {
     const {
       attachSocraticDecisionCoachPrimitives,
@@ -42,6 +198,15 @@ describe("Socratic decision persistence", () => {
       authority: "decide",
       thesis: "Mean-Reversion",
       rationale: "Forced selling looks temporary.",
+      greenTeamRationale: "Forced selling looks temporary.",
+      sizingSnapshot: {
+        portfolioValue: 100,
+        estimatedNotional: 4.6,
+        estimatedPctOfNav: 4.6,
+        dailyOpeningCap: { mode: "pct_nav", configuredValue: 20, effectiveNotional: 20, pctOfNav: 20 },
+        dailyNotionalUsed: 0,
+        remainingDailyNotional: 20
+      },
       action: "BUY AAPL $1000",
       evidence: [{ kind: "policy", title: "Approved", summary: "Preference override applied.", tone: "positive" }],
       ragAttributions: [],
@@ -49,10 +214,22 @@ describe("Socratic decision persistence", () => {
     });
 
     expect(decisionId).toBe("prop-1");
-    expect(listSocraticDecisionCases("u1", { connectedAccountId: "acct-1" })[0]?.symbol).toBe("AAPL");
+    const persisted = listSocraticDecisionCases("u1", { connectedAccountId: "acct-1" })[0];
+    expect(persisted?.symbol).toBe("AAPL");
+    expect(persisted?.greenTeamRationale).toBe("Forced selling looks temporary.");
+    expect(persisted?.sizingSnapshot).toEqual({
+      portfolioValue: 100,
+      estimatedNotional: 4.6,
+      estimatedPctOfNav: 4.6,
+      dailyOpeningCap: { mode: "pct_nav", configuredValue: 20, effectiveNotional: 20, pctOfNav: 20 },
+      dailyNotionalUsed: 0,
+      remainingDailyNotional: 20
+    });
 
     const coached = appendSocraticDecisionCoachNote(decisionId, "Favor broader crash baskets next time.", "u1");
     expect(coached?.coachNotes).toEqual(["Favor broader crash baskets next time."]);
+    expect(coached?.greenTeamRationale).toBe("Forced selling looks temporary.");
+    expect(coached?.sizingSnapshot?.estimatedPctOfNav).toBe(4.6);
 
     // Re-indexing is fire-and-forget (a dynamic import + .then()/.catch()), so poll until the mocked
     // storeContexts call lands rather than assuming a fixed number of microtask flushes.

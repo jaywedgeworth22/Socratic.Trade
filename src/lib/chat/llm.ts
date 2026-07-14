@@ -454,7 +454,7 @@ async function defaultOpenAITransport(body: any, apiKey: string): Promise<any> {
  * injectable-transport approach as AnthropicLLM so it is fully testable offline.
  *
  * Tool calling follows the OpenAI function-calling protocol (tools/tool_calls).
- * CHAT_LLM_MODEL defaults to the app's current OpenAI default when CHAT_LLM=openai.
+ * CHAT_LLM_MODEL is required when CHAT_LLM=openai; the app never silently chooses a model.
  */
 export class OpenAILLM implements ChatLLM {
   constructor(

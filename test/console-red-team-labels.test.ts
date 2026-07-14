@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel, type RedTeamVerdict } from "../app/console/lib/red-team";
+import { deterministicOutcomePresentation, isSuccessfulApprovalResult, proposalGreenRationale, proposalHumanReviewReasons } from "../app/console/lib/thesis";
 
 function verdict(overrides: Partial<RedTeamVerdict>): RedTeamVerdict {
   return { rejected: false, available: false, reason: "Red Team evaluation failed.", ...overrides };
@@ -22,13 +23,71 @@ describe("redTeamFailureMeta", () => {
   });
 });
 
+describe("decision evidence presentation", () => {
+  it("treats a synchronous broker fill as a successful approval result", () => {
+    expect(isSuccessfulApprovalResult("filled")).toBe(true);
+    expect(isSuccessfulApprovalResult("placed")).toBe(true);
+    expect(isSuccessfulApprovalResult("blocked")).toBe(false);
+  });
+
+  it("keeps appended Red/owner-hold prose out of the Green Team panel", () => {
+    expect(
+      proposalGreenRationale({
+        symbol: "EXE",
+        side: "buy",
+        type: "market",
+        dollarAmount: 4,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "Green-only thesis.\n\nRed Team review — final broker-adjusted size requires owner approval: objection.",
+        greenTeamRationale: "Green-only thesis.",
+        tradeThesisTag: "Value-Quality",
+        entryMarketRegime: "Neutral"
+      })
+    ).toBe("Green-only thesis.");
+  });
+
+  it("describes an uncertain placement as pending confirmation, never safe to retry", () => {
+    const presentation = deterministicOutcomePresentation("placing");
+    expect(presentation?.label).toBe("Placement pending confirmation");
+    expect(presentation?.body).not.toMatch(/retry/i);
+  });
+
+  it("keeps an independent owner hold separate from the Red Team verdict", () => {
+    expect(
+      proposalHumanReviewReasons({
+        symbol: "EXE",
+        side: "buy",
+        type: "market",
+        dollarAmount: 4,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "Green thesis.",
+        tradeThesisTag: "Value-Quality",
+        entryMarketRegime: "Neutral",
+        redTeamVerdict: { available: true, rejected: false, verdict: "approve", reason: "Approved." },
+        humanReviewReasons: [
+          { code: "rationale_collapse", title: "Rationale-diversity hold", summary: "The proposals repeated the same reasoning." }
+        ]
+      })
+    ).toEqual([
+      { code: "rationale_collapse", title: "Rationale-diversity hold", summary: "The proposals repeated the same reasoning." }
+    ]);
+  });
+});
+
 describe("redTeamVerdictLabel", () => {
   it("names the review result without implying the order executed", () => {
     expect(redTeamVerdictLabel(verdict({ available: true, verdict: "approve" }))).toBe("Approved at full size");
     expect(redTeamVerdictLabel(verdict({ available: true, verdict: "approve-at-half" }))).toBe("Approved at half size");
-    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true }))).toBe("Rejected — blocked");
-    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }))).toBe("Objection overridden");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true }))).toBe("Rejected by Red Team");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }))).toBe("Rejected — override requested");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }), false)).toBe("Rejected by Red Team");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, overridden: true }), true)).toBe("Objection overridden");
     expect(redTeamVerdictLabel(verdict({ available: false }))).toBe("Review unavailable — held for human approval");
+    expect(redTeamVerdictLabel(verdict({ available: false, humanOverrideApplied: true }))).toBe("Review unavailable — approved by user");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "reject", rejected: true, humanOverrideApplied: true }))).toBe("Objection overridden by user");
+    expect(redTeamVerdictLabel(verdict({ available: true, verdict: "approve-at-half", humanOverrideApplied: true }))).toBe("Half-size advice overridden by user");
   });
 });
 

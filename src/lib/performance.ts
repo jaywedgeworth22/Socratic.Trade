@@ -190,18 +190,24 @@ export function recordFillFromProposal(input: {
   const symbol = normalizeSymbol(input.proposal.symbol);
   const marketPrice = input.marketScan?.quotesBySymbol[symbol]?.price;
   const executionPrice = input.execution?.averagePrice;
+  const fillStatus = input.status ?? (input.source === "paper" ? "filled" : "pending_reconciliation");
+  const awaitingBrokerPrice = fillStatus === "pending_reconciliation"
+    && Boolean(input.execution)
+    && (input.source === "live" || input.executionMode === "broker/live" || input.executionMode === "broker/paper")
+    && positiveNumber(executionPrice) === undefined;
   const proposedPrice = input.proposal.limitPrice ?? input.proposal.stopPrice;
   const notional = input.review?.estimatedNotional ?? input.proposal.dollarAmount ?? 0;
   const quantityInput = positiveNumber(input.execution?.filledQuantity) ?? positiveNumber(input.proposal.quantity);
   const impliedPrice = quantityInput && notional > 0 ? notional / quantityInput : undefined;
   const reviewPrice = priceFromReview(input.review?.raw);
-  const basePrice =
-    positiveNumber(executionPrice) ??
-    positiveNumber(proposedPrice) ??
-    positiveNumber(marketPrice) ??
-    positiveNumber(reviewPrice) ??
-    positiveNumber(impliedPrice) ??
-    0;
+  const basePrice = awaitingBrokerPrice
+    ? 0
+    : positiveNumber(executionPrice) ??
+      positiveNumber(proposedPrice) ??
+      positiveNumber(marketPrice) ??
+      positiveNumber(reviewPrice) ??
+      positiveNumber(impliedPrice) ??
+      0;
   // Deterministic execution-cost model for SIMULATED fills (default ON). Real broker (live) fills
   // already carry their realized price, so only paper fills are adjusted — this makes the learning
   // loop net-of-cost rather than certifying a frictionless edge that won't survive a live fill.
@@ -233,8 +239,9 @@ export function recordFillFromProposal(input: {
   }
   const quantity =
     quantityInput ?? (price > 0 && notional > 0 ? notional / price : 0);
-  const finalNotional =
-    quantity > 0 && price > 0
+  const finalNotional = awaitingBrokerPrice
+    ? 0
+    : quantity > 0 && price > 0
       ? quantity * price
       : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
 
@@ -253,7 +260,7 @@ export function recordFillFromProposal(input: {
     quantity,
     price,
     notional: Math.abs(finalNotional),
-    status: input.status ?? (input.source === "paper" ? "filled" : "pending_reconciliation"),
+    status: fillStatus,
     brokerOrderId: input.execution?.orderId,
     // Stamp the symbol's sector at fill time so closed lots can be grouped by sector
     // for the sector learning dimension (sector isn't on the proposal itself).
@@ -304,7 +311,7 @@ export function recordFillFromProposal(input: {
     // Only an ACTUALLY EXECUTED fill commits the plan — a live broker order still
     // `pending_reconciliation` may yet cancel/expire without ever opening the position, and a plan
     // recorded (or cleared) now would then govern a lot that never existed (Codex review, PR #1371).
-    fill.status === "filled"
+    (fill.status === "filled" || fill.status === "partially_filled")
   ) {
     try {
       if (input.proposal.stopPlan.style === "default") {
@@ -1507,7 +1514,9 @@ function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: str
 }
 
 function isAccountingFill(fill: FillEvent): boolean {
-  if (fill.status === "filled") return true;
+  // A working partial fill is already real broker exposure. The same receipt is updated in place as
+  // more shares execute, so counting its current quantity cannot double-book subsequent polls.
+  if (fill.status === "filled" || fill.status === "partially_filled") return true;
   if (fill.source !== "paper") return false;
   // Legacy/local Test rows used source=paper before executionMode existed, or carried the now-removed
   // "test/local" executionMode value (the local-simulation execution path was deleted; the string can

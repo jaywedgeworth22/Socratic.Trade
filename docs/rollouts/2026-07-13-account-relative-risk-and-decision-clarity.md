@@ -11,6 +11,8 @@ Base: `origin/main@60703dfe`
   policies default to `20%` of current NAV.
 - Added migration v26 for only the exact former `$500` product default. Explicit dollar choices,
   including the observed `$1,000` Roth IRA setting, are preserved until changed in Guardrails.
+  The post-merge follow-up makes v26 cover every legacy policy store while v27 remains schema-only,
+  preserving an intentional fixed `$500` choice made after v26.
 - Routed the resolved cap through deterministic policy checks, autonomous and approval-time broker
   minimum bumps, Green/Red prompts, capital posture, approval cards, mobile snapshot data, and AI
   strategy review.
@@ -172,8 +174,13 @@ PATH="/opt/homebrew/opt/node@24/bin:$PATH" bash scripts/land.sh \
 # pushed commit 2cfd7ca8 and opened ready PR #1561
 ```
 
-No timeout threshold or unrelated test infrastructure was weakened. The hosted `verify` job remains
-the required clean-environment full-suite acceptance gate before merge.
+No timeout threshold or unrelated test infrastructure was weakened. Required hosted verify,
+Playwright smoke, and gitleaks checks passed. PR #1561 auto-merged as `3e105e17`; production health
+reported that exact SHA with DB/scheduler/Litestream current and one healthy app container.
+
+The optional post-review autofix workflow failed after reaching its 60-turn cap. It made no change.
+The triggering Codex review posted after auto-merge with three non-outdated P2 findings; all three
+are tracked in `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 
 ## Follow-ups
 
@@ -182,5 +189,5 @@ the required clean-environment full-suite acceptance gate before merge.
 - Existing persisted EXE prose retains its historical `0.04%` error. New decisions carry the
   app-computed percentage and use it in both Red Team and Live Thesis.
 - PR #1548 remains the separate owner of post-fill Alpaca broker protective-stop work.
-- No production configuration, account policy, broker order, merge, or deploy has been changed;
-  PR #1561 is awaiting hosted checks.
+- No production account policy or broker order was changed. The active Roth setting remains explicit
+  `$1,000` dollar mode until the owner changes it in Guardrails.

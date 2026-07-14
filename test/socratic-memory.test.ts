@@ -17,7 +17,8 @@ describe("Socratic institutional memory documents", () => {
       status: "blocked",
       authority: "decide",
       thesis: "Flash crash selling is overdone.",
-      rationale: "Cloud capex demand is intact and liquidity stress looks temporary.",
+      rationale: "Cloud capex demand is intact. Red Team review — stale legacy objection text.",
+      greenTeamRationale: "Cloud capex demand is intact and liquidity stress looks temporary.",
       action: "BUY AMD $50000",
       thesisTag: "Mean-Reversion",
       regime: "High-Vol",
@@ -77,6 +78,8 @@ describe("Socratic institutional memory documents", () => {
       entry_market_regime: "High-Vol"
     });
     expect(document.text).toContain("broker_argument: Flash crash selling is overdone.");
+    expect(document.text).toContain("Cloud capex demand is intact and liquidity stress looks temporary.");
+    expect(document.text).not.toContain("stale legacy objection text");
     expect(document.text).toContain("critic_counter_argument: Inventory buildup");
     expect(document.text).toContain("policy_outcome: blocked: Daily notional limit exceeded.");
     expect(document.text).toContain("rag_contribution: memory-rag score=0.820");
