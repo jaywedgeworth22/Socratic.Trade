@@ -386,7 +386,7 @@ export function listSocraticDecisionCasesNeedingOutcome(
   const measuredBefore = opts.measuredBefore ?? new Date().toISOString();
   const clauses = [
     "user_id = ?",
-    "status IN ('placed', 'blocked', 'rejected', 'filled')",
+    "status IN ('placed', 'blocked', 'rejected', 'filled', 'rejected_by_broker')",
     "(outcome IS NULL OR (json_extract(outcome, '$.status') = 'open' AND COALESCE(json_extract(outcome, '$.measuredAt'), '') <= ?))"
   ];
   const args: unknown[] = [userId, measuredBefore];
@@ -488,7 +488,7 @@ export interface SocraticOutcomeCoverage {
 }
 
 export function getSocraticOutcomeCoverage(userId: string = "local", connectedAccountId?: string): SocraticOutcomeCoverage {
-  const clauses = ["user_id = ?", "status IN ('placed', 'filled', 'blocked', 'rejected')"];
+  const clauses = ["user_id = ?", "status IN ('placed', 'filled', 'blocked', 'rejected', 'rejected_by_broker')"];
   const args: unknown[] = [userId];
   if (connectedAccountId) {
     clauses.push("connected_account_id = ?");

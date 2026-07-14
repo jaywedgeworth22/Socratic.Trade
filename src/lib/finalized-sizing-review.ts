@@ -54,14 +54,22 @@ export function redTeamSizingFromSnapshot(snapshot: ProposalSizingSnapshot): Red
 }
 
 /** A final-size rerun must not feed the prior critic's prose/verdict back as if it were Green
- * evidence. The current deterministic sizing snapshot remains attached separately. */
+ * evidence. The current deterministic sizing snapshot remains attached separately.
+ * Also strips any prior `red_team_veto:` preVetoReasons so the fresh Red Team judge sees only
+ * Green's adjusted size, not an overridden prior adversary's objection. */
 export function proposalForFinalSizeRedReview(proposal: TradeProposal): TradeProposal {
+  const cleanPreVetoReasons = proposal.preVetoReasons?.filter(
+    (r) => !r.startsWith("red_team_veto:")
+  );
   return {
     ...proposal,
     rationale: proposal.greenTeamRationale?.trim() || proposal.rationale,
     redTeamVerdict: undefined,
     reviewedByModel: undefined,
-    finalSizeReview: undefined
+    finalSizeReview: undefined,
+    ...(cleanPreVetoReasons !== undefined
+      ? { preVetoReasons: cleanPreVetoReasons.length > 0 ? cleanPreVetoReasons : undefined }
+      : {})
   };
 }
 
