@@ -147,6 +147,7 @@ function OrderRowActions({
           onClick={onReplace}
           title={view.replaceTitle}
           className="max-lg:min-h-10"
+          align="right"
         >
           Replace at market
         </Btn>
@@ -157,6 +158,7 @@ function OrderRowActions({
         onClick={onCancel}
         title="Ask the broker to cancel this order. Risk-reducing — allowed even while the system is stopped; fills that already happened stand."
         className="max-lg:min-h-10"
+        align="right"
       >
         Cancel
       </Btn>
