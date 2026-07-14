@@ -29,3 +29,5 @@ closed on ambiguous input.
 
 - Do not release the held shared-package consumer lane until the corrective production SHA is live.
 - Keep the CLI version pinned; update parser tests deliberately if the upstream JSON contract changes.
+- Make `scripts/coolify-prod-start.sh` compare the cached Infisical executable's actual version with
+  `INFISICAL_CLI_VERSION` and reinstall on mismatch; current production cache is known v0.43.98.

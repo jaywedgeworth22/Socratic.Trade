@@ -10,8 +10,10 @@ pinned Infisical CLI v0.43.98 source confirms `--format json` serializes an arra
 only an array of object records with non-empty string `key` and string `value`, copies no metadata,
 and rejects duplicate keys, NULs, malformed records, and the incorrect flat-object shape without
 printing raw output. Focused Node 24 verification is green: 37 tests, scoped ESLint, standalone
-TypeScript, and `git diff --check`. The canonical full landing gate, merge, automatic rollout, and exact-SHA
-production verification remain.
+TypeScript, and `git diff --check`. Independent hostile review reports LAND with no P0-P2 findings.
+Its nonblocking P3 is to make the production bootstrap compare the cached Infisical executable's
+version instead of only checking its presence; the current cache is known to be v0.43.98. The
+canonical full landing gate, merge, automatic rollout, and exact-SHA production verification remain.
 
 ## 2026-07-14 — Final hosted-review remediation (PR #1587)
 
