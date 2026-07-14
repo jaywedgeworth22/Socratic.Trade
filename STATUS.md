@@ -30,6 +30,49 @@ stays logo-less). New test `test/console-action-rows.test.ts`. Rollout:
   executed, not infinitive ("Buy [Placed]"). Added `"filled"` to `SocraticDecisionStatus`,
   `socraticStatusFromProposalStatus`, outcome-engine queries, lesson guidance, and labels.
   All four Codex review threads resolved. Auto-merge enabled.
+## 2026-07-14 — [codex-autofix] Round 7: Preserve filed_at + batch deletes + limit respects + chunk_occurrences (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 4 P2 findings on the round-6 clearCache logic:
+
+1. **Select cache-reset filings from the actual SEC window** — `insertIngestedAccession` was overwriting `sec_filings.filed_at` with `now`, so the `ORDER BY filed_at DESC LIMIT 10` query would pick a different set than `refreshFilingBodies` refetches from SEC. Fixed `insertIngestedAccession` to preserve existing `filed_at`/`accepted_at` via targeted UPDATE instead of full `insertSecFiling` when a row already exists.
+
+2. **Batch chunk-cache deletes for broad reindexes** — The single `DELETE FROM document_chunks` built one `OR` term per accession, exceeding SQLite's expression-depth limit (~1000) with 51+ tickers. All accession-based operations now batch in groups of 50.
+
+3. **Limit clears to filings this run can rebuild** — `clearCache` with a small explicit `limit` would clear 20 accessions per symbol but only rebuild up to `limit`. Added a cap that trims `accessionsToClear` to `limit` when explicitly provided.
+
+4. **Clear chunk_occurrences with the chunk ledger** — Added `DELETE FROM chunk_occurrences` alongside the existing `document_chunks` delete so coverage diagnostics don't report stale data after a cache reset.
+
+## 2026-07-13 — [codex-autofix] Round 6: Restrict sec_filings reset to refetched filings (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 1 P2 finding on the clearCache logic (round 5 of autofix):
+1. **Restrict sec_filings reset to refetched filings** — Previously, `clearCache` cleared all local cache and document chunks for the symbols. However, since `refreshFilingBodies` only retrieves the latest 10 filings per type, any older completed filings would remain downgraded to `discovered` but never re-ingested. We updated the logic to identify and target only the latest 10 filings of each type per symbol.
+Verify trio passes (tsc clean, new clear-cache tests pass, lint clean).
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round6.md`.
+
+## 2026-07-13 — [codex-autofix] Round 5: Count marketCap + skip empty without error (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 2 more P2 findings on the round-4 fix:
+
+1. **Count market cap before skipping cards** — `buildFundamentalsContext` renders Market Cap via `data.marketCap` but the `hasRealField` guard didn't check it. Added `(data as any).marketCap != null` to the guard.
+
+2. **Treat empty fundamentals as a skip** — Empty-card return included `error`, which the caller pushed to `result.errors`, falsely failing the admin route. Changed to `{ skipped: true }` without `error` field.
+
+Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round5.md`.
+
+## 2026-07-13 — [codex-autofix] Round 4: Recognize all rendered metrics before skipping cards (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged the `hasRealField` emptiness check in `ingestFundamentalsCard` as too narrow — only checking 6 of the ~22 fields that `buildFundamentalsContext` renders. A provider that returns only `debtToEquity` (e.g. SEC XBRL only, no paid/Yahoo tiers) would be incorrectly skipped. Expanded the check to cover every field the card renders.
+Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round4.md`.
+
+## 2026-07-13 — [codex-autofix] Skip empty fundamentals cards + clear sec_filings completion rows (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 2 P2 findings on the clearCache + fundamentals-ingest code (round 3 of autofix):
+1. **Skip empty fundamentals cards before embedding** (`src/lib/web-sources/sec-filings.ts`): added a `hasRealField` check in `ingestFundamentalsCard` that verifies at least one core metric/profile field (`companyName`, `sector`, `industry`, `peRatio`, `eps`, `price`) has a real value before calling `storeContexts`. Prevents wasting embedding budget and polluting RAG with all-"N/A" factual cards for unsupported tickers or symbols where all providers were skipped by quota/circuit breaker.
+2. **Clear sec_filings completion rows too** (`app/api/admin/reindex-10k/route.ts`): `clearCache` was only deleting from `ingested_accessions` and `document_chunks`, but `hasIngestedAccession` checks `sec_filings WHERE status = 'complete'` first — so after a Pinecone reset the operator could not reindex filings whose `sec_filings` rows were still marked complete. Now `UPDATE sec_filings SET status = 'discovered'` runs for the affected symbols' 10-K/10-Q rows.
+Verify trio passes (tsc clean, 350 files / 3930 tests, build clean).
+Rollout: `docs/rollouts/2026-07-13-codex-autofix-1493-round3.md`.
 ## 2026-07-14 — [codex-autofix] Add AbortSignal timeout to usage-monitor replay sends (PR #1563)
 
 Codex P2 review flagged that a hung POST in the usage-monitor replay worker
