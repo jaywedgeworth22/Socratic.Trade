@@ -3,6 +3,64 @@
 ## 2026-07-14 — Watchlist & Order Row Button Tooltip Alignment + TS 7.0.2 postinstall fix (AG, branch `agent/ag-watchlist-tooltip-fix`)
 
 Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Also fixed a TS 7.0.2 postinstall CommonJS/ESM resolution conflict in Next.js webpack build-worker processes by writing a CommonJS package.json in the `node_modules/typescript/lib` directory. Verify gate passes (tsc, test, build), PR #1575 is open, and auto-merge is armed. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
+
+An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent
+toolchain: `npx tsc` executed TypeScript 7.0.2, while a postinstall rewrite and process-wide module
+resolution hooks made Next, ESLint, and other compiler-API consumers execute TypeScript 5.5.4.
+`next.config.mjs` also set `typescript.ignoreBuildErrors: true`, so the production build explicitly
+reported `Skipping validation of types`. Production health for release `d93abd9b` remains accepted;
+the disputed claim is full type-validation coverage, not runtime availability.
+
+The local repair restores the ecosystem-supported TypeScript 6.0.3 line, removes the TypeScript 5
+alias, postinstall mutation, resolution hooks, Next override, and build-error bypass, and adds
+structured policy coverage. The first hostile review rejected the initial pass because self-hosted
+CI could satisfy the required gate under its inherited Node 26 PATH, `@types/node` still targeted
+26, the tests checked only known strings, and the ESLint comment named version 10 while the repo is
+on 9. All findings are remediated: self-hosted CI selects `/opt/homebrew/opt/node@24/bin` through
+`GITHUB_PATH` and hard-checks 24.x again before install; hosted CI remains setup-node 24;
+`scripts/land.sh` rejects non-24 runtimes before git mutation; Node declarations are 24.13.3 with a
+Dependabot major hold; and the 5-test policy suite parses the lockfile/YAML plus scans active
+scripts/configuration for every prior mutation class.
+
+Current Node 24 focused verification is green: clean `npm ci` with an unchanged lock hash, a
+byte-identical isolated lock regeneration, one TypeScript 6.0.3 / Node-types 24.13.3 graph, 5/5
+policy tests, scoped ESLint, standalone TypeScript, Bash 3 syntax and runtime-guard probes, YAML
+parsing, and diff-check. The earlier full gate remains 0 lint errors, 363 files / 4,041 tests, and a
+production webpack build; an independent review build also executed `Running TypeScript` and
+`Finished TypeScript`. The final full suite/build is intentionally deferred until fresh review to
+avoid duplicating an expensive gate. The inherited invalid console Tailwind wildcard warning
+remains owned by the separate console-usage lane. Fresh review, final ordered gate, commit, ready PR,
+merge/autodeploy, and live verification remain.
+
+Fresh independent re-review accepts the remediation. It confirmed one installed TypeScript 6.0.3
+graph, aligned Node 24 declarations, structural lock/YAML policy checks, Node 24 enforcement in both
+CI routes and the landing script, and a byte-identical clean-install lock. The final ordered Node 24
+gate is green: lint 0 errors / 458 inherited warnings, standalone TypeScript, 363 files / 4,043
+tests, and the production build pass; the build explicitly logged `Running TypeScript` and
+`Finished TypeScript`. Current-main reconciliation, commit, ready PR, hosted verification,
+merge/autodeploy, and live verification remain.
+
+Rollout: `docs/rollouts/2026-07-13-typescript-toolchain-gate-repair.md`.
+## 2026-07-13 — Non-production background workers fail closed (CODEX, branch `codex/dev-background-workers`)
+
+`next dev`, tests, and ad-hoc non-production runtimes no longer start the autonomous scheduler,
+Usage Monitor replay, or outbound stream workers unless `DEV_BACKGROUND_WORKERS=on` is explicit.
+Production preserves the prior default-on contract regardless of the dev-only flag. One shared boot
+decision emits an enabled/disabled startup receipt, and injected starter tests prove the disabled
+path imports/calls no worker family while the opt-in path starts each exactly once. Local focused
+proof is green (22 tests, scoped ESLint, TypeScript, diff-check). Fresh independent review accepted
+the implementation. The final ordered Node 24 gate is green: repository lint has zero errors (458
+grandfathered warnings), standalone TypeScript passes, 363 files / 4,051 tests pass, and the
+production build exits zero. A first accidental Node 26 test attempt failed only at the expected
+`better-sqlite3` ABI boundary (Node ABI 147 vs installed ABI 137); the complete Node 24 rerun proves
+the app change itself. A stripped-environment disposable
+`next dev` emitted the disabled receipt and no scheduler-start line; `/login` then hit the separate
+known invalid Tailwind wildcard on current `main`, already fixed in the console lane. Independent
+review and the local gate are complete. Ready PR #1576 is open; hosted verify, merge/autodeploy,
+and production verification remain.
+No provider, broker, corpus, or production configuration call was made. Rollout:
+`docs/rollouts/2026-07-13-development-background-workers.md`.
 
 ## 2026-07-13 — Autonomous-action row clarity: tense-matched verbs + de-collided authority labels + ticker logo (CLAUDE/Fable, branch `claude/autonomous-action-row-clarity`)
 
