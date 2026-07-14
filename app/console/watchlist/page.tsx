@@ -270,6 +270,7 @@ export default function WatchlistPage() {
                             disabled={busy}
                             onClick={() => prefillAlert(item.symbol)}
                             title={`Set a price alert for ${item.symbol} — prefills the form below with the current price.`}
+                            align="right"
                           >
                             <BellPlus size={13} /> Alert
                           </Btn>
@@ -279,6 +280,7 @@ export default function WatchlistPage() {
                             disabled={busy}
                             onClick={() => void removeSymbol(item.symbol)}
                             title={`Stop watching ${item.symbol}. Its alerts are separate and stay armed until deleted.`}
+                            align="right"
                           >
                             <Trash2 size={13} />
                           </Btn>

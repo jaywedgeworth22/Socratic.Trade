@@ -1731,6 +1731,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Watchlist & Order Row Button Tooltip Alignment (AG, PR #1575, branch `agent/ag-watchlist-tooltip-fix`) — READY PR; CI GREEN.** Aligned watchlist action button and order row action button tooltips to the right (`align="end"`) to prevent clipping at the screen's right edge. Passed verification gate (tsc, lint, test, build).
 - **Autonomous-action row clarity: tense-matched verbs + de-collided authority labels + ticker
   logo (CLAUDE/Fable, branch `claude/autonomous-action-row-clarity`) — IN PROGRESS 2026-07-13,
   landing.** Display-only console trust fix. (1) Home "Autonomous actions" rows used a PAST-TENSE
