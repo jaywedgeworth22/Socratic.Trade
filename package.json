@@ -8,11 +8,12 @@
     "dev:secrets": "node scripts/infisical-run.mjs -- npm run dev",
     "dev:codex": "node scripts/codex-dev-server.mjs",
     "dev:clean": "lsof -ti:3000 | xargs kill -9 2>/dev/null || true && next dev",
+    "postinstall": "node -e 'const fs = require(\"fs\"); const path = require(\"path\"); const dir = \"node_modules/typescript/lib\"; if (fs.existsSync(path.dirname(dir))) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, \"typescript.js\"), \"module.exports = require(\\\"typescript-v5\\\");\\n\"); }'",
     "build": "next build --webpack",
     "build:secrets": "node scripts/infisical-run.mjs -- npm run build",
     "start": "next start",
     "start:secrets": "node scripts/infisical-run.mjs -- npm run start",
-    "lint": "eslint .",
+    "lint": "node --require ./eslint-preload.cjs node_modules/eslint/bin/eslint.js .",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
@@ -73,12 +74,16 @@
     "tailwindcss": "^4.3.1",
     "ts-morph": "^28.0.0",
     "tsx": "^4.23.1",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
+    "typescript-v5": "npm:typescript@^5.5.4",
     "vitest": "^4.1.10"
   },
   "overrides": {
     "axios": "^1.18.0",
-    "postcss": "^8.5.15"
+    "postcss": "^8.5.15",
+    "next": {
+      "typescript": "npm:typescript@^5.5.4"
+    }
   },
   "allowScripts": {
     "@sentry/cli@2.58.6": true,
