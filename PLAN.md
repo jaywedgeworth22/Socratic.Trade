@@ -20,6 +20,12 @@
 > warnings, TypeScript, 369 files / 4,161 tests, and a production build with all 32 static pages. Publish
 > through `scripts/land.sh`, require hosted verification, then verify the automatic production rollout.
 > See `docs/rollouts/2026-07-14-infisical-bootstrap-wiring.md`.
+> **2026-07-14 - Final open-PR reconciliation (CODEX).** Reconcile PR #1589 with current
+> `origin/main`, correct stale merged/closed PR and effort-board state, resolve all review threads,
+> run the documentation branch through the canonical Node 24 gate, update the existing PR head
+> without rewriting history, and squash-merge after hosted checks. Then finish PR #1586 and verify
+> the exact auto-deployed production release. See
+> `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
 
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
 > TypeScript 5 compiler-API arrangement with one supported TypeScript 6.0.3 graph; remove the

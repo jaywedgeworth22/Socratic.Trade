@@ -106,6 +106,35 @@ Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
 ## 2026-07-14 — Watchlist & Order Row Button Tooltip Alignment (AG, branch `agent/ag-watchlist-tooltip-fix`)
 
+Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 merged to main. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+## 2026-07-14 — [codex-autofix] Update stale STATUS.md entries for merged PRs #1576 and #1561 (PR #1589)
+
+Codex review flagged that STATUS.md still described PR #1576 and PR #1561 as open when both were merged. Updated both entries to reflect merged state. All verification gates passed (lint 0 errors, tsc clean, 4056 tests pass, build clean). Codex thread resolved, auto-merge enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
+## 2026-07-14 — [codex-autofix] Round 4: Fix EFFORT-LOG stale tails and #1578 merge status (PR #1589)
+
+Codex review flagged 4 remaining P2 findings on the round-3 cleanup:
+
+1. **EFFORT-LOG #1575 wrong merge reference**: "#1575 Merged via PR #1589" was incorrect — #1575 was merged on its own. Fixed to "Merged via PR #1575."
+2. **EFFORT-LOG #1561 stale completed tail**: Removed "Hosted checks, merge/autodeploy, and production verification remain." from the completed row.
+3. **EFFORT-LOG #1576 stale completed tail**: Removed "Hosted verify, merge/autodeploy, and production verification remain." from the completed row.
+4. **STATUS.md + EFFORT-LOG #1578 merge status**: TypeScript toolchain entry showed pending status; updated both STATUS.md and EFFORT-LOG.md to reflect that PR #1578 merged to main.
+
+Verify trio passed. Codex threads resolved, auto-merge enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
+## 2026-07-14 — [codex-autofix] Round 5: Move completed out of Planned + update stale #1544 (PR #1589)
+
+Codex review flagged 3 remaining P2 threads:
+1. EFFORT-LOG #1578/#1576 marked COMPLETED but under `## Planned` — moved to `## Completed` section.
+2. EFFORT-LOG #1544 still showed "READY PR OPEN ... Branch pushed; not merged" — updated to COMPLETED (merged as `60703dfe`).
+3. Original commit author email — verified directly from Git: `db9f0acd` already uses the
+   repository noreply address for both author and committer, so no rewrite is needed.
+
+Verify trio passed. Codex threads fixed, resolved. Auto-merge remains enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
 Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="right"`). Passed verification gate (tsc, lint, test, build); PR #1575 merged to `main` as `07c2da3f` and auto-deploy verification is pending. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
 Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 is open, and auto-merge is armed. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
 ## 2026-07-14 — Local Infisical machine-identity bootstrap wiring (CODEX, branch `codex/infisical-bootstrap-wiring`)
@@ -164,16 +193,7 @@ parsing, and diff-check. The earlier full gate remains 0 lint errors, 363 files 
 production webpack build; an independent review build also executed `Running TypeScript` and
 `Finished TypeScript`. The final full suite/build is intentionally deferred until fresh review to
 avoid duplicating an expensive gate. The inherited invalid console Tailwind wildcard warning
-remains owned by the separate console-usage lane. Fresh review, final ordered gate, commit, ready PR,
-merge/autodeploy, and live verification remain.
-
-Fresh independent re-review accepts the remediation. It confirmed one installed TypeScript 6.0.3
-graph, aligned Node 24 declarations, structural lock/YAML policy checks, Node 24 enforcement in both
-CI routes and the landing script, and a byte-identical clean-install lock. The final ordered Node 24
-gate is green: lint 0 errors / 458 inherited warnings, standalone TypeScript, 363 files / 4,043
-tests, and the production build pass; the build explicitly logged `Running TypeScript` and
-`Finished TypeScript`. Current-main reconciliation, commit, ready PR, hosted verification,
-merge/autodeploy, and live verification remain.
+remains owned by the separate console-usage lane. PR #1578 merged to main.
 
 Rollout: `docs/rollouts/2026-07-13-typescript-toolchain-gate-repair.md`.
 ## 2026-07-13 — Non-production background workers fail closed (CODEX, branch `codex/dev-background-workers`)
@@ -191,8 +211,7 @@ production build exits zero. A first accidental Node 26 test attempt failed only
 the app change itself. A stripped-environment disposable
 `next dev` emitted the disabled receipt and no scheduler-start line; `/login` then hit the separate
 known invalid Tailwind wildcard on current `main`, already fixed in the console lane. Independent
-review and the local gate are complete. Ready PR #1576 is open; hosted verify, merge/autodeploy,
-and production verification remain.
+review and the local gate are complete. PR #1576 merged to main.
 No provider, broker, corpus, or production configuration call was made. Rollout:
 `docs/rollouts/2026-07-13-development-background-workers.md`.
 
@@ -352,6 +371,7 @@ Focused verification is green (8 files / 63 tests, then 5 files / 39 tests and 2
 Repository lint passed with 0 errors / 452 inherited warnings; TypeScript and the native Swift
 snapshot model are clean. After documenting and isolating earlier host-contention timeouts, the
 canonical Node 24 `scripts/land.sh` gate passed completely: 359 files / 4,021 tests and the production
+build. Commit `2cfd7ca8` pushed; PR #1561 merged to main.
 build. PR #1561 merged as `3e105e17`; required hosted verification/security/smoke checks passed and
 production reported that exact release healthy. The later post-merge Codex findings are tracked in
 the follow-up section above.
@@ -420,7 +440,7 @@ follow-up now validates/falls back malformed lease durations before date arithme
 failure reasons, and preserves the first accepted raw/normalized SHA-256 values across later checkpoints. Focused
 regressions pass (2 files / 29 tests). The full Node 24 gate is green: lint 0 errors / 452 inherited warnings,
 TypeScript clean, 352 files / 3,963 tests, production build, and diff-check. No provider, object-store, vector, or
-corpus writes ran. Ready PR #1559 is open with auto-merge pending hosted acceptance.
+corpus writes ran. PR #1559 merged as `af087a1f` and auto-deployed.
 
 Rollout: `docs/rollouts/2026-07-13-sec-rag-foundation-postmerge.md`.
 
@@ -617,8 +637,8 @@ backfill architecture. Blocking fixes are occurrence-level provenance (global co
 later filing instances), durable artifact/job state, DOM/iXBRL table parsing, exact acceptance-time safety,
 historical/exhibit discovery, real-corpus evaluation, and truthful coverage/config reporting. Plan:
 `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. Rollout:
-`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete; ready
-PR #1494; unmerged; production unchanged**.
+`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete;
+PR #1494 merged as `1dbe9b42` on 2026-07-13**. Bulk ingestion remains a separate gated effort.
 ## 2026-07-12 — Capability & Platform Program: Phase 1 plan + iOS status-doc truth-fix (CLAUDE, branch `claude/capability-program-docs`)
 
 Phase 1 (recon + design + feasibility + synthesis) of the owner-directed capability/platform
@@ -877,16 +897,16 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 ## What was just completed
-- Native iOS App: Implemented Apple Sign-in with backend verification and token validation.
-- UI Updates: Updated the Login page to use the Socratic.Trade candlestick logo and stripped unnecessary text. Reduced the height of the HeaderLogo and prevented it from overflowing on small mobile screens.
-- Console UI: Changed the Model Stats UI from a Sheet to a Drawer, formatting model row labels to display grouped company names vertically on mobile devices, and removing redundant parenthetical names.
-- Settings UI: Addressed overlapping text in the "Broker Connections" section by allowing the action buttons to wrap on mobile, and wrapping the account subtitle in a flex-col layout.
-- PR opened and waiting for review/merge.
+- Native Apple sign-in, login/logo updates, Model Stats drawer changes, and mobile overlap fixes
+  were recorded by the AG lane. Their original PRs #1525 and #1526 are closed without merge, so
+  there is no pending branch handoff to land from either PR.
 
 ## Current Status
 
-- Discovered why `Congress.Trade` congressional trades were stuck in June for Socratic.Trade: App A (`Congress.Trade`) recently enabled a `botDefense.ts` guard on `/api/v1/transactions` that blocks standard node `fetch` UAs. Fixed Socratic.Trade by providing a custom `User-Agent: SocraticTrade/1.0`.
-- Applied an IPv6 DNS force-ipv4 fix to `congress-scout.mjs` on Congress.Trade to fix its own scrape failures.
+- PRs #1584, #1583, #1580, #1582, #1575, #1578, and #1587 were verified and merged into
+  `main`. PR #1589 carries this documentation cleanup and its current-main Node 24 gate is green:
+  lint 0 errors/459 inherited warnings, TypeScript clean, 368 files/4,128 tests, and production
+  build with real TypeScript validation plus 32 static pages. PR #1586 remains the only other open PR.
 
 ## Next Action
-- Land branch `agent/ag-update-status-effort-log` and await production auto-deploy.
+- Finish verification and merge of PR #1586, then verify the resulting production release.
