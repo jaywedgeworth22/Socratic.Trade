@@ -46,7 +46,7 @@
 > binds legacy chat-case repair to the historical account. The final price/quantity review is also
 > closed: unpriced broker receipts store zero rather than estimates, cumulative execution is
 > monotonic, replacement partials remain refId-recoverable, and the active replacement index is
-> user-scoped. Current `main@f331b28a` is integrated and independent re-review reports no P0-P2
+> user-scoped. Current `main@07c2da3f` is integrated and independent re-review reports no P0-P2
 > findings. The ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
 > standalone TypeScript clean, 368 files / 4,124 tests, and a production build with the real
 > TypeScript phase plus 32 static pages. `scripts/land.sh` repeated current-main TypeScript, all

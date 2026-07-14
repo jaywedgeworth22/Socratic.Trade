@@ -31,4 +31,4 @@ npm run build        → compiled successfully, no errors (32/32 static pages ge
 
 ## Follow-ups
 
-- PR 1575 auto-merge has been enabled and will merge to `main` as soon as status checks complete.
+- PR #1575 merged to `main` as `07c2da3f`; verify the automatic production deployment.

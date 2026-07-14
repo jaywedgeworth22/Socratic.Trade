@@ -40,7 +40,7 @@ dedupe by tenant/account/replacement identity; counts working partial fills as r
 repairs legacy chat cases against their historical account and doctrine. A final adversarial pass
 also required finite positive realized prices, monotonic broker-reported quantity floors, recoverable
 unpriced/no-id replacement partials, and user-scoped active replacement uniqueness; all findings are
-implemented and the independent re-review reports no P0-P2 findings. Current `main@f331b28a` is
+implemented and the independent re-review reports no P0-P2 findings. Current `main@07c2da3f` is
 integrated. The ordered Node 24 gate is green: lint has 0 errors / 458 inherited warnings,
 standalone TypeScript is clean, all 368 files / 4,124 tests pass, and the production build completes
 its real TypeScript phase and generates 32 static pages. A diagnostic full-suite pass also passed the
@@ -52,7 +52,7 @@ Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
 ## 2026-07-14 — Watchlist & Order Row Button Tooltip Alignment (AG, branch `agent/ag-watchlist-tooltip-fix`)
 
-Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 is open, and auto-merge is armed. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="right"`). Passed verification gate (tsc, lint, test, build); PR #1575 merged to `main` as `07c2da3f` and auto-deploy verification is pending. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
 ## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
 
 An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent
