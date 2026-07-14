@@ -28,7 +28,7 @@ export default defineConfig({
     }
   },
   test: {
-    maxWorkers: 4,
+    maxWorkers: 1,
     testTimeout: 20_000,
     globalSetup: "./test/global-setup.ts",
     // Force isTradingDay()'s no-argument "today" check true so strategy/scheduler tests don't flake

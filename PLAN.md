@@ -201,6 +201,14 @@ filling the missing pieces.
 > lanes cannot collide under the shared five-field fallback. Ledger timestamps are reused on replay,
 > and failed/ambiguous batches retain their exact events for bounded in-memory retry. See
 > `docs/rollouts/2026-07-11-usage-telemetry-delivery-ids.md`.
+> **2026-07-13 - Crash-durable usage telemetry replay (CODEX).** No product-roadmap or trading-path
+> change. Every new usage event now declares `project:"socratic-trade"` while retaining the raw
+> provider identity. A startup/one-minute worker reconstructs historical and new LLM/RAG events
+> from their durable ledgers using existing row IDs/timestamps, ordered monotonic settings
+> watermarks, acknowledged-only advancement, and idempotent one-row overlap. No schema or new env
+> configuration is required. The producer checkpoint is blocked from merge/deploy until the API
+> Usage Monitor receiver backfill is deployed. See
+> `docs/rollouts/2026-07-13-usage-monitor-durable-replay.md`.
 > **2026-07-11 - Admin authorization fail-closed hardening (CODEX).** No roadmap scope change;
 > security/correctness only. The shared admin gate now denies by default in every environment unless
 > the caller has a middleware-proven Cloudflare Access/Auth.js admin email or valid admin token. The
