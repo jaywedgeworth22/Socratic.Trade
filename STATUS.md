@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-14 — [codex-autofix] Round 7: Preserve filed_at + batch deletes + limit respects + chunk_occurrences (PR #1493 `ag/troubleshoot-sentry`)
+
+Codex review flagged 4 P2 findings on the round-6 clearCache logic:
+
+1. **Select cache-reset filings from the actual SEC window** — `insertIngestedAccession` was overwriting `sec_filings.filed_at` with `now`, so the `ORDER BY filed_at DESC LIMIT 10` query would pick a different set than `refreshFilingBodies` refetches from SEC. Fixed `insertIngestedAccession` to preserve existing `filed_at`/`accepted_at` via targeted UPDATE instead of full `insertSecFiling` when a row already exists.
+
+2. **Batch chunk-cache deletes for broad reindexes** — The single `DELETE FROM document_chunks` built one `OR` term per accession, exceeding SQLite's expression-depth limit (~1000) with 51+ tickers. All accession-based operations now batch in groups of 50.
+
+3. **Limit clears to filings this run can rebuild** — `clearCache` with a small explicit `limit` would clear 20 accessions per symbol but only rebuild up to `limit`. Added a cap that trims `accessionsToClear` to `limit` when explicitly provided.
+
+4. **Clear chunk_occurrences with the chunk ledger** — Added `DELETE FROM chunk_occurrences` alongside the existing `document_chunks` delete so coverage diagnostics don't report stale data after a cache reset.
+
 ## 2026-07-13 — [codex-autofix] Round 6: Restrict sec_filings reset to refetched filings (PR #1493 `ag/troubleshoot-sentry`)
 
 Codex review flagged 1 P2 finding on the clearCache logic (round 5 of autofix):

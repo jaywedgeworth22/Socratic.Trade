@@ -982,16 +982,30 @@ export function insertIngestedAccession(accession: string, docType: string, tick
     )
     .run(accession, docType, ticker, now, chunkCount);
 
-  insertSecFiling({
-    accession,
-    cik: "",
-    ticker,
-    form: docType,
-    filedAt: now,
-    acceptedAt: now,
-    status: "complete",
-    chunkCount,
-  });
+  // Preserve the original SEC filed_at/accepted_at from the scraper (if the row already
+  // exists) rather than overwriting every field via insertSecFiling, which sets both
+  // to 'now' from this code path.  The clearCache admin route (§ reindex-10k/route.ts)
+  // orders the latest-10-per-form query by sec_filings.filed_at to match the set that
+  // refreshFilingBodies will refetch from SEC, so losing the real SEC dates would make
+  // the cache-clearing query select the wrong accessions and leave cleared-but-not-rebuilt
+  // filings permanently missing from the vector store.
+  const existing = getSecFiling(accession);
+  if (existing) {
+    getDb().prepare(
+      "UPDATE sec_filings SET status = 'complete', chunk_count = ?, updated_at = ? WHERE accession = ?"
+    ).run(chunkCount, now, accession);
+  } else {
+    insertSecFiling({
+      accession,
+      cik: "",
+      ticker,
+      form: docType,
+      filedAt: now,
+      acceptedAt: now,
+      status: "complete",
+      chunkCount,
+    });
+  }
 }
 
 /** List all ingested accessions (admin/diagnostic). */
