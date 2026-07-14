@@ -463,11 +463,20 @@ describe("OpenAILLM — token-cap param by model/provider", () => {
     expect(body.max_completion_tokens).toBeUndefined();
   });
 
-  it("keeps max_tokens for OpenAI-compatible providers (never sends the OpenAI-only param)", async () => {
+  it("uses provider-aware reasoning bounds for reasoning-capable OpenAI-compatible providers", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
     await new OpenAILLM("sk-test", "gemini-2.5-flash", transport, {}, "gemini").run(baseArgs);
     const body = transport.mock.calls[0][0];
-    expect(body.max_tokens).toBeGreaterThan(0);
-    expect(body.max_completion_tokens).toBeUndefined();
+    expect(body.max_completion_tokens).toBeGreaterThan(0);
+    expect(body.reasoning_effort).toBe("medium");
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("sends the selected complete GPT-5.6 effort ladder value", async () => {
+    const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
+    await new OpenAILLM("sk-test", "gpt-5.6-sol", transport, {}, "openai", "max").run(baseArgs);
+    const body = transport.mock.calls[0][0];
+    expect(body.reasoning_effort).toBe("max");
+    expect(body.max_completion_tokens).toBeGreaterThan(10_000);
   });
 });

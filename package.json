@@ -27,6 +27,7 @@
     "eval:corpus-coverage": "tsx scripts/eval/corpus-coverage.ts",
     "eval:rag-census": "tsx scripts/eval/rag-census.ts",
     "eval:generate-universe": "tsx scripts/eval/generate-universe-manifest.ts",
+    "eval:validate-universe": "tsx scripts/eval/validate-rag-universe.ts",
     "ops:snapshot": "bash scripts/fetch-prod-ops-snapshot.sh"
   },
   "dependencies": {
@@ -37,7 +38,7 @@
     "@opentelemetry/instrumentation": "^0.220.0",
     "@opentelemetry/sdk-trace-node": "^2.9.0",
     "@pinecone-database/pinecone": "^8.0.0",
-    "@sentry/nextjs": "^10.63.0",
+    "@sentry/nextjs": "^10.65.0",
     "@xyflow/react": "^12.11.2",
     "better-sqlite3": "^12.11.1",
     "clsx": "^2.1.1",

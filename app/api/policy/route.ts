@@ -146,7 +146,11 @@ export async function PUT(request: Request) {
     return new NextResponse("learningReviewModel must be a non-empty model id.", { status: 400 });
   }
   stripNullsDeep(policy as unknown as Record<string, unknown>);
-  normalizeExclusivePolicyCaps(policy);
+  const capFields = ["maxOrderNotional", "maxOrderPctOfNav", "maxDailyNotional", "maxDailyPctOfNav"] as const;
+  const capPreference = capFields.some((key) => Object.prototype.hasOwnProperty.call(body, key))
+    ? body as Partial<TradingPolicy>
+    : current;
+  normalizeExclusivePolicyCaps(policy, capPreference);
   // Only enforce the interactive gpt-5.5/high-reasoning rejection when THIS request actually
   // changes the model/effort combination. validatePolicy runs against the MERGED policy, so a
   // stored gpt-5.5+high config used to fail EVERY unrelated save (notification prefs, short
@@ -224,6 +228,9 @@ async function validatePolicy(
   if (policy.learningReviewMode !== undefined && !["annotate", "decide"].includes(policy.learningReviewMode)) return "learningReviewMode must be annotate or decide.";
   if (policy.brokerMinimumHandling !== undefined && !["bump", "skip"].includes(policy.brokerMinimumHandling)) return "brokerMinimumHandling must be bump or skip.";
   if (policy.learningReviewModel !== undefined && (typeof policy.learningReviewModel !== "string" || policy.learningReviewModel.trim().length === 0 || policy.learningReviewModel.length > 64)) return "learningReviewModel must be a non-empty model id.";
+  if (policy.learningReviewReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.learningReviewReasoningEffort)) {
+    return "learningReviewReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
+  }
   if (policy.learningReviewMinNewLessons !== undefined && (!Number.isInteger(policy.learningReviewMinNewLessons) || policy.learningReviewMinNewLessons < 1 || policy.learningReviewMinNewLessons > 1000)) return "learningReviewMinNewLessons must be an integer between 1 and 1000.";
   if (policy.learningReviewMaxWaitDays !== undefined && (!Number.isInteger(policy.learningReviewMaxWaitDays) || policy.learningReviewMaxWaitDays < 1 || policy.learningReviewMaxWaitDays > 365)) return "learningReviewMaxWaitDays must be an integer between 1 and 365.";
   // Owner directive 2026-07-07: a chosen model must belong to a provider the user holds a key for
@@ -265,7 +272,10 @@ async function validatePolicy(
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";
+  if (policy.maxDailyNotional !== undefined && policy.maxDailyNotional <= 0) return "maxDailyNotional must be positive.";
+  if (policy.maxDailyPctOfNav !== undefined && (policy.maxDailyPctOfNav <= 0 || policy.maxDailyPctOfNav > 100)) return "maxDailyPctOfNav must be between 0 and 100.";
   if (policy.maxDailyNotional !== undefined && policy.maxOrderNotional !== undefined && policy.maxDailyNotional < policy.maxOrderNotional) return "maxDailyNotional must be at least maxOrderNotional.";
+  if (policy.maxDailyPctOfNav !== undefined && policy.maxOrderPctOfNav !== undefined && policy.maxDailyPctOfNav < policy.maxOrderPctOfNav) return "maxDailyPctOfNav must be at least maxOrderPctOfNav.";
   if (policy.maxSymbolExposurePct !== undefined && (policy.maxSymbolExposurePct <= 0 || policy.maxSymbolExposurePct > 100)) return "maxSymbolExposurePct must be between 0 and 100.";
   if (policy.maxPortfolioBeta !== undefined && (!Number.isFinite(policy.maxPortfolioBeta) || policy.maxPortfolioBeta <= 0 || policy.maxPortfolioBeta > 10)) return "maxPortfolioBeta must be a positive number (≤ 10).";
   if (policy.maxAvgCorrelation !== undefined && (!Number.isFinite(policy.maxAvgCorrelation) || policy.maxAvgCorrelation <= 0 || policy.maxAvgCorrelation > 1)) return "maxAvgCorrelation must be between 0 (off) and 1.";
@@ -337,6 +347,9 @@ async function validatePolicy(
   }
   if (policy.llmFallbackModels !== undefined && (!Array.isArray(policy.llmFallbackModels) || policy.llmFallbackModels.some((m) => typeof m !== "string"))) {
     return "llmFallbackModels must be an array of model-id strings.";
+  }
+  if (policy.redTeamFallbackModels !== undefined && (!Array.isArray(policy.redTeamFallbackModels) || policy.redTeamFallbackModels.some((m) => typeof m !== "string"))) {
+    return "redTeamFallbackModels must be an array of model-id strings.";
   }
   if (policy.tuning) {
     // tuning.redTeamConvictionThreshold was removed 2026-07-07 (single-adversary consolidation O2:

@@ -4,30 +4,25 @@ export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
 
 /**
  * Sentinel model id meaning "rotate through all eligible curated models — a different one each
- * run" (testing option for accruing comparative live history across models; intended for the
- * paper/test accounts). Persisted as-is on policy.llmModel / policy.redTeamLlmModel; the strategy
+ * run" (comparative-measurement option for accruing attributed history across models on any real
+ * broker account). Persisted as-is on policy.llmModel / policy.redTeamLlmModel; the strategy
  * run substitutes the concrete round-robin pick at run start (src/lib/model-rotation.ts — models
  * with no resolvable provider key are skipped). Keep the literal in sync with
  * LLM_MODEL_ROTATION_SENTINEL in src/lib/llm-request.ts.
  */
 export const ROTATE_ALL_MODELS_ID = "__rotate__";
-export const ROTATE_ALL_MODELS_LABEL = "Rotate all models (testing)";
+export const ROTATE_ALL_MODELS_LABEL = "Rotate eligible models (comparative measurement)";
 
 // Label + recommendation conventions (owner rulings 2026-07-08 + 2026-07-09; this is the ONLY
 // catalog copy since the Settings models card was retired 2026-07-10 — the Framework page and
 // the Coach picker both read it): descriptors are ROLE-NEUTRAL noun phrases (this catalog feeds
 // both the Green/proposer and Red/reviewer pickers — no "critique"/"review" in a label).
 //
-// RECOMMENDATION POLICY (owner ruling 2026-07-09 — supersedes the 2026-07-08 "empirical
-// realized-history only" convention): a rec chip is earned by (a) SUBSTANTIVE output in the
-// 2026-07-08 benchmark for that role (real proposals with brackets / inspectable review work —
-// NOT mere schema-validity), weighed with (b) realized history where it exists, and (c)
-// role-appropriate reasoning depth — the Red seat is the adversarial gate on real-money trades,
-// so demonstrated reasoning outweighs cost/latency there. Owner rulings sit on top of the
-// evidence: 2026-07-09 the owner ruled gemini-3.1-pro-preview a Red rec. Chips are display-level
-// guidance and cheap to change; rotation mode (ROTATE_ALL_MODELS_ID) is accruing the attributed
-// comparative live history (proposedByModel/reviewedByModel + model_rotation_pick audits) that
-// will re-adjudicate every chip.
+// RECOMMENDATION POLICY: established models use substantive benchmark output + realized history,
+// never schema-validity alone. A newly released model may carry a PROVISIONAL role prior when its
+// official tier/price clearly replaces an older full-size model; source-value, model-attribution,
+// and rotation history must re-adjudicate that prior as real outcomes accrue. The GPT-5.6 Terra
+// Green and Sol Red flags below are provisional capability/price priors, not empirical claims.
 //
 // TWO EVIDENCE TRAPS the previous flags fell into — do not repeat them:
 // 1) DEGENERATE-BENCHMARK TRAP: the benchmark ranking (schema-valid rate, ties by latency)
@@ -46,7 +41,7 @@ export const ROTATE_ALL_MODELS_LABEL = "Rotate all models (testing)";
 //    recommendedRed removed 2026-07-09. Harden the Bear parse to treat unknown envelopes as
 //    PARSE FAILURE before ever seating a DeepSeek model as Red.
 //
-// Current flags (2026-07-09):
+// Current established flags (2026-07-09):
 // - GREEN: claude-haiku-4-5 (benchmark: 3 proposals every round, 89% bracket population, 8.9s
 //   cold, $0.0067 — volume/brackets can't be faked by empty JSON; realized history pending the
 //   Anthropic key cap lifting 2026-08-01) and gemini-3.5-flash (substantive all rounds, 75%
@@ -64,6 +59,10 @@ export const ROTATE_ALL_MODELS_LABEL = "Rotate all models (testing)";
 //   capable model, stays in rotation and can earn flags back); gemini-3.5-flash Red (crowding,
 //   not contradiction — weaker than sonnet's verifiable review work, and two Gemini Red chips
 //   would concentrate provider risk; it is the natural interim Red fallback).
+// - Added provisionally 2026-07-13: GPT-5.6 Terra Green (balanced tier, Medium effort) and Sol Red
+//   (frontier tier, High effort). Luna is the high-volume/Coach tier; Mini/Nano remain because Luna
+//   is newer but costs more, while full GPT-5.4/5.5 were removed from curated pickers as same-price
+//   predecessors to Terra/Sol. Stored/custom legacy ids remain callable for backward compatibility.
 //
 // Standing rulings preserved: key-level quota/rate limits (the 2026-07 Anthropic usage cap; the
 // OpenAI RPM=2 429s dominating gpt-5.5's bull record and gpt-5.4's benchmark Red row) are
@@ -77,14 +76,15 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "OpenAI",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano - lowest cost OpenAI", tier: "$" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini - balanced OpenAI mini", tier: "$$" },
-      { value: "gpt-5.4", label: "gpt-5.4 - stronger analysis", tier: "$$$" },
-      { value: "gpt-5.5", label: "gpt-5.5 - deepest OpenAI reasoning", tier: "$$$" }
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini - proven low-cost OpenAI", tier: "$$" },
+      { value: "gpt-5.6-luna", label: "gpt-5.6-luna - current cost-sensitive tier", tier: "$$" },
+      { value: "gpt-5.6-terra", label: "gpt-5.6-terra - balanced current-generation analysis", tier: "$$$", recommendedGreen: true },
+      { value: "gpt-5.6-sol", label: "gpt-5.6-sol - frontier professional reasoning", tier: "$$$", recommendedRed: true }
     ]
   },
   {
     provider: "anthropic",
-    label: "Anthropic (Claude)",
+    label: "Anthropic",
     options: [
       { value: "claude-haiku-4-5", label: "claude-haiku-4-5 - fast low-cost Claude", tier: "$", recommendedGreen: true },
       { value: "claude-sonnet-5", label: "claude-sonnet-5 - balanced Claude analysis", tier: "$$", recommendedRed: true },
@@ -94,7 +94,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   },
   {
     provider: "xai",
-    label: "xAI (Grok)",
+    label: "xAI",
     options: [
       { value: "grok-build-0.1", label: "grok-build-0.1 - coding specialist", tier: "$" },
       { value: "grok-4.3", label: "grok-4.3 - default Grok analysis", tier: "$$" }
@@ -102,7 +102,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   },
   {
     provider: "gemini",
-    label: "Google (Gemini)",
+    label: "Google",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
       { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true },

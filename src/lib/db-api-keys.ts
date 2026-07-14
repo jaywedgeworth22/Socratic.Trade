@@ -333,9 +333,18 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
 
   const envKey = envVar ? process.env[envVar] : undefined;
 
-  // 2. shared-operator-infra: env is a global fallback for ANY user (incl. no-userId background).
+  // 2. shared-operator-infra: global env fallback first, then fallback to `local` user's key.
   if (credTierForService(canonical) === "shared-operator-infra") {
+    // Check global env key first.
     if (envKey) return { key: envKey, source: "env", envVar, service: canonical };
+
+    // Fall back to the Socratic.Trade owner's ('local') key as the system default, since background
+    // jobs and global operations run off these keys.
+    if (userId !== "local") {
+      const localKey = getUserApiKey("local", canonical);
+      if (localKey?.apiKey) return { key: localKey.apiKey, source: "env", envVar, service: canonical };
+    }
+
     return { source: "none", envVar, service: canonical };
   }
 
@@ -377,6 +386,7 @@ export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; s
     if (userKey?.apiKey) return { keys: [userKey.apiKey], source: "user", envVar: "ALPHAVANTAGE_API_KEY" };
   }
 
+  // Check global env first.
   const singular = process.env.ALPHAVANTAGE_API_KEY?.trim();
   if (singular) return { keys: [singular], source: "env", envVar: "ALPHAVANTAGE_API_KEY" };
 
@@ -386,6 +396,13 @@ export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; s
   if (pluralRaw) {
     const first = pluralRaw.split(",").map((k) => k.trim()).filter(Boolean)[0];
     if (first) return { keys: [first], source: "env", envVar: "ALPHAVANTAGE_API_KEYS" };
+  }
+
+  // 1b. shared-operator-infra fallback: use the `local` user's stored key if available.
+  // Mirror of the pattern in resolveApiKeyWithSource.
+  if (userId !== "local") {
+    const localKey = getUserApiKey("local", "alphavantage");
+    if (localKey?.apiKey) return { keys: [localKey.apiKey], source: "env", envVar: "ALPHAVANTAGE_API_KEY" };
   }
 
   return { keys: [], source: "none", envVar: "ALPHAVANTAGE_API_KEY" };
@@ -613,28 +630,6 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   }));
 }
 
-const TEST_ACCOUNT_LABEL = "Test Account";
-
-// Creates a connected "Test" broker account (broker: "test", environment: "paper") backed by
-// TestBrokerGateway (real quotes, deterministic simulated fills). This is TEST INFRASTRUCTURE for
-// the unit-test suite to exercise the normal broker execution path without hitting real Alpaca/
-// Robinhood — call it from test setup. The production app does NOT call this: an account is an
-// account, and with none connected the app correctly reports "no account" rather than defaulting
-// to a fake broker.
-export function ensureTestAccount(userId: string = "local"): void {
-  const accounts = listConnectedAccounts(userId);
-  if (accounts.some((a) => a.broker === "test")) return;
-  upsertConnectedAccount({
-    id: `test-${userId}`,
-    userId,
-    broker: "test",
-    environment: "paper",
-    accountNumber: "TEST",
-    label: TEST_ACCOUNT_LABEL,
-    isActive: false
-  });
-}
-
 export function getActiveConnectedAccount(userId: string = "local"): ConnectedAccount | undefined {
   const row = getDb()
     .prepare("SELECT * FROM connected_accounts WHERE user_id = ? AND is_active = 1 LIMIT 1")
@@ -761,7 +756,7 @@ export function purgeConnectedAccount(id: string, userId: string = "local"): boo
   const run = database.transaction(() => {
     const result = database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
     if (acct) {
-      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops", "position_stop_plans"]) {
+      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops", "position_stop_plans", "order_replacements"]) {
         database.prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`).run(acct, userId);
       }
     }

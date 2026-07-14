@@ -20,7 +20,6 @@ import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle } from "lucide-react";
 import {
   connectAlpacaAccount,
   connectTradierAccount,
-  connectTestAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
   syncRobinhoodAccount,
@@ -36,8 +35,6 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
       return "Alpaca MCP";
     case "robinhood":
       return "Robinhood";
-    case "test":
-      return "Test Account";
     case "tradier":
       return "Tradier";
     default:
@@ -128,7 +125,6 @@ export function BrokerAccountsCard() {
   const rhAuthed = Boolean(rhHealth?.configured && rhHealth?.authenticated && rhHealth?.ok);
   const rhNeedsReconnect = (account: ConnectedAccount) =>
     account.broker === "robinhood" && rhHealth !== null && !rhAuthed;
-  const hasTestAccount = accounts.some((account) => account.broker === "test");
   // Exactly one account carries isActive — hoist it as the "Currently Loaded"
   // account; everything else lists under "Other Accounts". Same isActive flag,
   // no server/query change.
@@ -159,23 +155,6 @@ export function BrokerAccountsCard() {
     }
   };
 
-  const connectTest = async () => {
-    setBusy("test");
-    try {
-      const result = await connectTestAccount();
-      await refresh();
-      toast.push(
-        "pos",
-        result.label ? `${result.label} added` : "Test Account added",
-        "Not loaded automatically. Load it to practice; it cannot reach real money."
-      );
-    } catch (error) {
-      toast.push("neg", "Could not add test account", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(null);
-    }
-  };
-
   // One row renderer, reused for the loaded account and each "Other" account so
   // the two sections stay identical in look and behavior.
   const renderAccountRow = (account: ConnectedAccount) => {
@@ -184,8 +163,9 @@ export function BrokerAccountsCard() {
     const needsReconnect = rhNeedsReconnect(account);
     return (
       <ListRow key={account.id}>
-        <div className="flex flex-wrap items-center justify-between gap-2 w-full py-1">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex flex-col w-full">
+          <div className="flex flex-wrap items-center justify-between gap-2 w-full py-1">
+            <div className="flex min-w-0 items-center gap-2">
             <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
               {account.label || brokerName(account.broker)}
             </span>
@@ -259,56 +239,54 @@ export function BrokerAccountsCard() {
           {`${brokerName(account.broker)} · ${account.environment}`}
           {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
           {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
-          {account.broker === "test" && " — excluded from wash-sale accounting"}
         </p>
-        {account.broker !== "test" && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {caps ? (
-              <>
-                <Chip
-                  tone="info"
-                  title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
-                >
-                  <Briefcase className="inline size-3.5 mr-1.5" />
-                  stocks
-                </Chip>
-                <Chip
-                  tone="info"
-                  title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
-                >
-                  <ArrowDown className="inline size-3.5 mr-1.5" />
-                  shorting
-                </Chip>
-                {caps.optionsTrading && (
-                  <Chip
-                    tone="info"
-                    title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
-                  >
-                    <Zap className="inline size-3.5 mr-1.5" />
-                    options L{caps.optionsLevel}
-                  </Chip>
-                )}
-                {caps.marginEnabled && (
-                  <Chip
-                    tone="info"
-                    title="Margin trading enabled"
-                  >
-                    <Scale className="inline size-3.5 mr-1.5" />
-                    margin
-                  </Chip>
-                )}
-              </>
-            ) : (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {caps ? (
+            <>
               <Chip
-                tone="warn"
-                title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
+                tone="info"
+                title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
               >
-                <AlertTriangle className="inline size-3.5 mr-1.5" />
-                capabilities unconfirmed
+                <Briefcase className="inline size-3.5 mr-1.5" />
+                stocks
               </Chip>
-            )}
-          </div>
-        )}
+              <Chip
+                tone="info"
+                title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
+              >
+                <ArrowDown className="inline size-3.5 mr-1.5" />
+                shorting
+              </Chip>
+              {caps.optionsTrading && (
+                <Chip
+                  tone="info"
+                  title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
+                >
+                  <Zap className="inline size-3.5 mr-1.5" />
+                  options L{caps.optionsLevel}
+                </Chip>
+              )}
+              {caps.marginEnabled && (
+                <Chip
+                  tone="info"
+                  title="Margin trading enabled"
+                >
+                  <Scale className="inline size-3.5 mr-1.5" />
+                  margin
+                </Chip>
+              )}
+            </>
+          ) : (
+            <Chip
+              tone="warn"
+              title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
+            >
+              <AlertTriangle className="inline size-3.5 mr-1.5" />
+              capabilities unconfirmed
+            </Chip>
+          )}
+        </div>
+        </div>
       </ListRow>
     );
   };
@@ -317,7 +295,7 @@ export function BrokerAccountsCard() {
     <ListSection
       title="Broker connections"
       action={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 max-w-full">
           <Btn
             size="sm"
             variant="outline"
@@ -348,19 +326,6 @@ export function BrokerAccountsCard() {
             title="Link a Tradier account with an access token. Choose Sandbox (paper) or Production (live)."
           >
             Connect Tradier
-          </Btn>
-          <Btn
-            size="sm"
-            variant="outline"
-            disabled={busy !== null || hasTestAccount}
-            onClick={() => void connectTest()}
-            title={
-              hasTestAccount
-                ? "A Test Account already exists. It is only used if you load it."
-                : "Add a Test Account for practice trades. Not loaded automatically; cannot reach real money."
-            }
-          >
-            {busy === "test" ? "Adding..." : hasTestAccount ? "Test Account Added" : "Add Test Account"}
           </Btn>
         </div>
       }

@@ -65,7 +65,8 @@ const PUBLIC_PREFIXES = [
   "/how-it-works",
   "/design/socratic-trade",
   "/privacy-policy",
-  "/terms-and-conditions"
+  "/terms-and-conditions",
+  "/api/mobile/auth/apple"
 ];
 const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",
@@ -242,6 +243,9 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
           : NextResponse.redirect(new URL("/access-denied", req.url))
       );
     }
+  } else if (pathname.startsWith("/api/admin/") && (req.headers.has("x-admin-token") || (req.headers.get("authorization") ?? "").trim().toLowerCase().startsWith("bearer "))) {
+    // Allow unauthenticated requests with an x-admin-token or bearer token to reach the admin route handlers.
+    // The middleware does NOT validate the token; the route handler's `requireAdmin()` or custom auth (like verifySecuritiesImportToken) will strictly validate it.
   } else {
     // No verified identity and auth is configured (or armed) → FAIL CLOSED.
     return withSecurityHeaders(
@@ -253,7 +257,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Strip spoofable client-supplied identity hints, then forward the resolved identity + provenance.
   const headers = stripClientIdentityHeaders(new Headers(req.headers));
-  headers.set("x-authenticated-user-email", trustedEmail);
+  headers.set("x-authenticated-user-email", trustedEmail || "");
   // Preserve provenance separately from the email. Node handlers use this trusted middleware-set
   // marker to distinguish verified identities from the auth-unconfigured local fallback.
   if (identitySource) headers.set(AUTHENTICATED_IDENTITY_SOURCE_HEADER, identitySource);

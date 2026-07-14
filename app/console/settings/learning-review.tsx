@@ -13,6 +13,9 @@
  *                            an explicit value — never a blank that secretly means Fable). */
 
 import { useState } from "react";
+import type { LlmReasoningEffort } from "@/lib/types";
+import { normalizeReasoningEffortForModel, reasoningCapabilityForModel } from "@/lib/llm-request";
+import { reasoningAdviceForModel, recommendedReasoningEffortForModel } from "@/lib/model-reasoning-recommendations";
 import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
@@ -37,10 +40,11 @@ const MODE_OPTIONS = [
 // per-account team models on Framework → Models). No blank/"default" pseudo-option — the
 // field always holds a real, chosen model.
 const REVIEW_MODEL_OPTIONS = [
+  { value: "gpt-5.6-sol", label: "gpt-5.6-sol — recommended frontier audit · $$$" },
+  { value: "gpt-5.6-terra", label: "gpt-5.6-terra — balanced current-generation audit · $$$" },
+  { value: "gpt-5.6-luna", label: "gpt-5.6-luna — lower-cost current-generation audit · $$" },
   { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" },
   { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
-  { value: "gpt-5.5", label: "gpt-5.5 — deepest OpenAI reasoning · $$$" },
-  { value: "gpt-5.4", label: "gpt-5.4 — stronger OpenAI analysis · $$$" },
   { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$" }
 ];
 
@@ -58,6 +62,13 @@ export function LearningReviewCard() {
   // Real default value (never blank-means-Fable).
   const model = policy.learningReviewModel?.trim() || "claude-fable-5";
   const customModel = model && !REVIEW_MODEL_OPTIONS.some((o) => o.value === model) ? model : null;
+  const reasoningCapability = reasoningCapabilityForModel(model);
+  const recommendedEffort = recommendedReasoningEffortForModel(model, "review");
+  const reasoningEffort = normalizeReasoningEffortForModel(
+    model,
+    policy.learningReviewReasoningEffort ?? recommendedEffort
+  );
+  const reasoningAdvice = reasoningAdviceForModel(model);
 
   const save = async (patch: Record<string, unknown>, saved: string) => {
     if (busy) return;
@@ -128,7 +139,16 @@ export function LearningReviewCard() {
               value={model}
               disabled={busy}
               title="The model that runs the daily learning review. Needs a resolvable key for its provider (Settings → API keys)."
-              onChange={(e) => void save({ learningReviewModel: e.target.value }, "Learning-review model saved")}
+              onChange={(e) => {
+                const nextModel = e.target.value;
+                void save(
+                  {
+                    learningReviewModel: nextModel,
+                    learningReviewReasoningEffort: recommendedReasoningEffortForModel(nextModel, "review")
+                  },
+                  "Learning-review model and recommended effort saved"
+                );
+              }}
             >
               {customModel && (
                 <option value={customModel} title="A model id outside the curated list, kept exactly as stored.">
@@ -144,6 +164,42 @@ export function LearningReviewCard() {
           </LabeledContent>
         </div>
       </ListRow>
+
+      {reasoningCapability && reasoningEffort && (
+        <ListRow>
+          <div className="w-full py-1">
+            <LabeledContent
+              label={reasoningCapability.settingLabel}
+              hint={`Recommended for this review role: ${recommendedEffort}. ${reasoningCapability.description}`}
+            >
+              <select
+                id="learning-review-reasoning-effort"
+                className="bg-transparent text-right text-[length:var(--con-fs-sm)] focus:outline-none focus:ring-0 cursor-pointer"
+                value={reasoningEffort}
+                disabled={busy}
+                title={reasoningAdvice ?? reasoningCapability.description}
+                onChange={(e) =>
+                  void save(
+                    { learningReviewReasoningEffort: e.target.value as LlmReasoningEffort },
+                    "Learning-review reasoning effort saved"
+                  )
+                }
+              >
+                {reasoningCapability.options.map((option) => (
+                  <option key={option.value} value={option.value} title={option.hint}>
+                    {option.label}{option.value === recommendedEffort ? " — recommended" : ""}
+                  </option>
+                ))}
+              </select>
+            </LabeledContent>
+            {reasoningAdvice && (
+              <p className="mt-1 text-right text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                {reasoningAdvice}
+              </p>
+            )}
+          </div>
+        </ListRow>
+      )}
     </ListSection>
   );
 }

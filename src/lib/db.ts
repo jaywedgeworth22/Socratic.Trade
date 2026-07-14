@@ -205,6 +205,9 @@ const MIGRATIONS: Migration[] = [
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_status_created ON trade_proposals (user_id, account_number, status, created_at DESC)");
       database.exec("CREATE INDEX IF NOT EXISTS idx_trade_proposals_user_account_created ON trade_proposals (user_id, account_number, created_at DESC)");
 
+      database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
+      database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
+
       // 4. Composite index for day-trade counting and excursions
       database.exec("CREATE INDEX IF NOT EXISTS idx_fill_events_user_account_symbol_filled ON fill_events (user_id, account_number, symbol, filled_at DESC)");
 
@@ -571,6 +574,402 @@ const MIGRATIONS: Migration[] = [
         }
       }
     }
+  },
+  {
+    // Persist original order details for stale exit replacements (PR 2 follow-up)
+    version: 20,
+    name: "order_replacements_original_order_columns",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(order_replacements)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "symbol")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN symbol TEXT");
+      }
+      if (!cols.some((c) => c.name === "side")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN side TEXT");
+      }
+      if (!cols.some((c) => c.name === "original_type")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_type TEXT");
+      }
+      if (!cols.some((c) => c.name === "original_quantity")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_quantity REAL");
+      }
+      if (!cols.some((c) => c.name === "original_filled_quantity")) {
+        database.exec("ALTER TABLE order_replacements ADD COLUMN original_filled_quantity REAL");
+      }
+    }
+  },
+  {
+    // Order-replacements indexes for the exit-replacement state machine (PR 2 follow-up).
+    // These were originally added inside migration v6, but deployed databases already
+    // have PRAGMA user_version past 6, so runMigrations skips that block and never
+    // creates the indexes. Every database — fresh and existing — needs the UNIQUE
+    // partial index as the concurrency guard against duplicate replacements.
+    version: 21,
+    name: "order_replacements_indexes_reapply",
+    up: (database) => {
+      // Before creating the UNIQUE partial index, collapse any duplicate active
+      // rows that could already exist. Prioritize keeping the most progressed
+      // row in the state machine (favoring rows with a replacement_order_id).
+      const dupGroups = database
+        .prepare(
+          `WITH ranked AS (
+             SELECT rowid, account_number, original_order_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY account_number, original_order_id
+                      ORDER BY
+                        CASE status
+                          WHEN 'replacement_submitted' THEN 1
+                          WHEN 'replacement_claiming' THEN 2
+                          WHEN 'cancel_confirmed' THEN 3
+                          WHEN 'cancel_requested' THEN 4
+                          ELSE 5
+                        END ASC,
+                        CASE WHEN replacement_order_id IS NOT NULL THEN 0 ELSE 1 END ASC,
+                        rowid DESC
+                    ) as rn
+             FROM order_replacements
+             WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+           )
+           SELECT account_number, original_order_id, COUNT(*) AS c, MAX(CASE WHEN rn = 1 THEN rowid END) AS keep_rowid
+           FROM ranked
+           GROUP BY account_number, original_order_id
+           HAVING COUNT(*) > 1`
+        )
+        .all() as Array<{ account_number: string; original_order_id: string; c: number; keep_rowid: number }>;
+      const terminalizeExtras = database.prepare(
+        `UPDATE order_replacements SET status = 'failed', error = 'superseded by duplicate active replacement', updated_at = ?
+         WHERE account_number = ? AND original_order_id = ? AND rowid != ?
+         AND status NOT IN ('replacement_confirmed', 'failed', 'aborted')`
+      );
+      const now = new Date().toISOString();
+      for (const g of dupGroups) {
+        const info = terminalizeExtras.run(now, g.account_number, g.original_order_id, g.keep_rowid);
+        console.warn(
+          `[db] migration 21: terminalized ${info.changes} duplicate order_replacements row(s) ` +
+          `for (account_number=${g.account_number}, original_order_id=${g.original_order_id}) — kept rowid ${g.keep_rowid}.`
+        );
+      }
+      database.exec("CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status)");
+      database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')");
+    }
+  },
+  {
+    version: 22,
+    name: "order_replacements_claiming_state_schema",
+    up: (database) => {
+      // SQLite does not support ALTER TABLE DROP CONSTRAINT. To expand the CHECK
+      // constraint on status to include 'replacement_claiming', we recreate the table.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS order_replacements_v22 (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          original_order_id TEXT NOT NULL,
+          symbol TEXT,
+          side TEXT,
+          original_type TEXT,
+          original_quantity REAL,
+          original_filled_quantity REAL,
+          replacement_ref_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_claiming', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
+          remaining_quantity REAL,
+          cancel_result TEXT,
+          replacement_order_id TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO order_replacements_v22 SELECT * FROM order_replacements;
+        DROP TABLE order_replacements;
+        ALTER TABLE order_replacements_v22 RENAME TO order_replacements;
+
+        CREATE INDEX IF NOT EXISTS idx_order_replacements_user_account_status ON order_replacements (user_id, account_number, status);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted');
+      `);
+    }
+  },
+  {
+    // Durable, stage-aware SEC/RAG backfill substrate. A generic due_job is not enough here:
+    // ingestion must retain an immutable artifact identity, a resumable stage checkpoint, fenced
+    // leases/heartbeats, per-stage attempts, typed failures, verification receipts, and measured
+    // provider cost. No scheduler or production writer is wired by this migration; it only creates
+    // the local durable state that a separately gated worker can use.
+    version: 23,
+    name: "sec_rag_ingest_jobs",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_ingest_jobs (
+          id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          corpus_revision TEXT NOT NULL,
+          universe_snapshot_id TEXT,
+          status TEXT NOT NULL CHECK(status IN (
+            'pending', 'running', 'paused', 'complete', 'complete_with_errors',
+            'failed_terminal', 'canceled'
+          )),
+          config_json TEXT NOT NULL DEFAULT '{}',
+          expected_tasks INTEGER CHECK(expected_tasks IS NULL OR expected_tasks >= 0),
+          last_error_type TEXT,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          intake_closed_at TEXT,
+          completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS sec_ingest_tasks (
+          id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL,
+          task_key TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          cik TEXT NOT NULL DEFAULT '',
+          symbol TEXT NOT NULL DEFAULT '',
+          sequence INTEGER,
+          document_name TEXT,
+          checkpoint TEXT NOT NULL CHECK(checkpoint IN (
+            'discovered', 'fetched', 'validated', 'parsed', 'facts_extracted', 'chunked',
+            'embed_queued', 'embedded', 'index_queued', 'indexed', 'verified', 'complete'
+          )),
+          status TEXT NOT NULL CHECK(status IN (
+            'pending', 'leased', 'retry_wait', 'complete', 'dead_letter',
+            'quarantined', 'superseded'
+          )),
+          priority INTEGER NOT NULL DEFAULT 0,
+          ordinal INTEGER NOT NULL DEFAULT 0,
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          total_attempts INTEGER NOT NULL DEFAULT 0 CHECK(total_attempts >= 0),
+          stage_attempts INTEGER NOT NULL DEFAULT 0 CHECK(stage_attempts >= 0),
+          max_stage_attempts INTEGER NOT NULL DEFAULT 6 CHECK(max_stage_attempts >= 1),
+          next_retry_at TEXT,
+          lease_owner TEXT,
+          lease_token TEXT,
+          lease_expires_at TEXT,
+          heartbeat_at TEXT,
+          raw_sha256 TEXT,
+          normalized_sha256 TEXT,
+          parser_revision TEXT,
+          chunker_revision TEXT,
+          embed_model TEXT,
+          embed_revision TEXT,
+          index_name TEXT,
+          namespace TEXT,
+          observed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(observed_bytes >= 0),
+          observed_tokens INTEGER NOT NULL DEFAULT 0 CHECK(observed_tokens >= 0),
+          observed_chunks INTEGER NOT NULL DEFAULT 0 CHECK(observed_chunks >= 0),
+          observed_vectors INTEGER NOT NULL DEFAULT 0 CHECK(observed_vectors >= 0),
+          observed_write_units INTEGER NOT NULL DEFAULT 0 CHECK(observed_write_units >= 0),
+          observed_cost_usd REAL NOT NULL DEFAULT 0 CHECK(observed_cost_usd >= 0),
+          verification_json TEXT,
+          last_error_type TEXT,
+          last_error TEXT,
+          last_error_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(job_id) REFERENCES sec_ingest_jobs(id) ON DELETE CASCADE,
+          UNIQUE(job_id, task_key),
+          CHECK(
+            (status = 'leased' AND lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+            OR
+            (status != 'leased' AND lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
+          ),
+          CHECK((status = 'retry_wait' AND next_retry_at IS NOT NULL) OR status != 'retry_wait'),
+          CHECK((status = 'complete' AND checkpoint = 'complete') OR status != 'complete'),
+          CHECK(checkpoint != 'complete' OR (status = 'complete' AND verification_json IS NOT NULL))
+        );
+
+        CREATE TABLE IF NOT EXISTS sec_ingest_task_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id TEXT NOT NULL,
+          attempt_no INTEGER NOT NULL CHECK(attempt_no >= 1),
+          checkpoint TEXT NOT NULL,
+          lease_owner TEXT NOT NULL,
+          lease_token TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          heartbeat_at TEXT NOT NULL,
+          finished_at TEXT,
+          outcome TEXT NOT NULL CHECK(outcome IN (
+            'claimed', 'advanced', 'retry_wait', 'dead_letter', 'quarantined',
+            'superseded', 'lease_expired'
+          )),
+          error_type TEXT,
+          error TEXT,
+          receipt_json TEXT,
+          FOREIGN KEY(task_id) REFERENCES sec_ingest_tasks(id) ON DELETE CASCADE,
+          UNIQUE(task_id, attempt_no),
+          UNIQUE(task_id, lease_token)
+        );
+
+        -- Shared, cross-process SEC host coordination. Request policy and mutation logic live in
+        -- the discovery/limiter module; the durable row belongs in this same SEC/RAG migration so
+        -- every consumer coordinates against one host clock/circuit instead of per-process timers.
+        CREATE TABLE IF NOT EXISTS sec_request_coordination (
+          host TEXT PRIMARY KEY,
+          next_allowed_at INTEGER NOT NULL DEFAULT 0,
+          paused_until INTEGER NOT NULL DEFAULT 0,
+          circuit_open_until INTEGER NOT NULL DEFAULT 0,
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          reservations INTEGER NOT NULL DEFAULT 0,
+          responses INTEGER NOT NULL DEFAULT 0,
+          successes INTEGER NOT NULL DEFAULT 0,
+          client_errors INTEGER NOT NULL DEFAULT 0,
+          rate_limited INTEGER NOT NULL DEFAULT 0,
+          server_errors INTEGER NOT NULL DEFAULT 0,
+          network_errors INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          total_wait_ms INTEGER NOT NULL DEFAULT 0,
+          last_request_at INTEGER,
+          last_response_at INTEGER,
+          last_status INTEGER,
+          last_429_at INTEGER,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sec_ingest_jobs_status
+          ON sec_ingest_jobs(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_sec_ingest_tasks_claim
+          ON sec_ingest_tasks(job_id, status, next_retry_at, lease_expires_at, priority DESC, ordinal ASC);
+        CREATE INDEX IF NOT EXISTS idx_sec_ingest_tasks_accession
+          ON sec_ingest_tasks(accession, document_name);
+        CREATE INDEX IF NOT EXISTS idx_sec_ingest_attempts_task
+          ON sec_ingest_task_attempts(task_id, attempt_no);
+      `);
+    }
+  },
+  {
+    // Account-bound learning: autonomous outcomes from one broker account must not silently enter a
+    // sibling account's prompt. Paper-derived rows are candidates until a separate transfer check
+    // corroborates them; pre-migration autonomous rows are quarantined as `legacy` because their
+    // originating account cannot be reconstructed reliably.
+    version: 24,
+    name: "learned_context_account_scope",
+    up: (database) => {
+      const addColumns = (table: "learned_context" | "learned_context_pending") => {
+        const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "connected_account_id")) {
+          database.exec(`ALTER TABLE ${table} ADD COLUMN connected_account_id TEXT`);
+        }
+        if (!cols.some((c) => c.name === "account_environment")) {
+          database.exec(
+            `ALTER TABLE ${table} ADD COLUMN account_environment TEXT CHECK(account_environment IS NULL OR account_environment IN ('paper','live'))`
+          );
+        }
+        if (!cols.some((c) => c.name === "learning_scope")) {
+          database.exec(
+            `ALTER TABLE ${table} ADD COLUMN learning_scope TEXT NOT NULL DEFAULT 'legacy' CHECK(learning_scope IN ('account','portfolio','research','legacy'))`
+          );
+        }
+        if (!cols.some((c) => c.name === "transfer_state")) {
+          database.exec(
+            `ALTER TABLE ${table} ADD COLUMN transfer_state TEXT NOT NULL DEFAULT 'not_applicable' CHECK(transfer_state IN ('not_applicable','candidate','validated','rejected'))`
+          );
+        }
+      };
+
+      addColumns("learned_context");
+      addColumns("learned_context_pending");
+
+      // User-authored and explicitly ingested context was intentionally account-agnostic before this
+      // migration, so retain it as portfolio context. Autonomous rows lack enough provenance to know
+      // which account produced them; keep them quarantined as legacy rather than guessing.
+      database.exec(`
+        UPDATE learned_context
+        SET learning_scope = CASE WHEN origin IN ('chat','ingest') THEN 'portfolio' ELSE 'legacy' END
+        WHERE connected_account_id IS NULL;
+
+        UPDATE learned_context_pending
+        SET learning_scope = CASE WHEN origin IN ('chat','ingest') THEN 'portfolio' ELSE 'legacy' END
+        WHERE connected_account_id IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_learned_context_account_scope
+          ON learned_context (user_id, connected_account_id, learning_scope, transfer_state, superseded_by);
+        CREATE INDEX IF NOT EXISTS idx_learned_context_pending_account_scope
+          ON learned_context_pending (user_id, connected_account_id, learning_scope, status, created_at);
+      `);
+    }
+  },
+  {
+    // Remove the old user-creatable local simulator. The `broker='test'` adapter remains available
+    // only to tests that insert their fixture account after migrations have run; production boot
+    // purges any legacy Test Account and its simulated outcomes so they cannot train real decisions.
+    version: 25,
+    name: "remove_product_test_accounts",
+    up: (database) => {
+      const accounts = database
+        .prepare("SELECT id, user_id, account_number FROM connected_accounts WHERE broker = 'test'")
+        .all() as Array<{ id: string; user_id: string; account_number: string | null }>;
+      for (const account of accounts) {
+        if (account.account_number) {
+          for (const table of [
+            "fill_events",
+            "portfolio_snapshots",
+            "trade_proposals",
+            "synthetic_trailing_stops",
+            "broker_protective_stops",
+            "position_stop_plans",
+            "order_replacements"
+          ]) {
+            database
+              .prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`)
+              .run(account.account_number, account.user_id);
+          }
+        }
+        for (const table of [
+          "account_strategy_state",
+          "strategy_runs",
+          "skipped_candidate_counterfactuals",
+          "counterfactual_learning_watermarks",
+          "learning_mutations",
+          "audit_events",
+          "notification_events",
+          "socratic_decisions",
+          "learned_context",
+          "learned_context_pending"
+        ]) {
+          database
+            .prepare(`DELETE FROM ${table} WHERE connected_account_id = ? AND user_id = ?`)
+            .run(account.id, account.user_id);
+        }
+        database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(account.id, account.user_id);
+        database.prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${account.user_id}:${account.id}`);
+      }
+    }
+  },
+  {
+    // The former $500 value was a product default, not an account-relative risk posture. Convert
+    // only that exact legacy default to the new 20%-of-NAV mode. Other dollar values (including a
+    // user's explicit $1,000 setting) remain untouched and visible as dollar mode.
+    version: 26,
+    name: "daily_opening_cap_percent_default",
+    up: (database) => {
+      const targets = [
+        { table: "account_strategy_state", column: "policy", where: "1=1" },
+        { table: "strategy_profiles", column: "policy", where: "1=1" },
+        { table: "user_settings", column: "value", where: "key = 'policy'" }
+      ] as const;
+      let changed = 0;
+      for (const target of targets) {
+        const rows = database
+          .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
+          .all() as Array<{ rowid: number; json: string }>;
+        const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
+        for (const row of rows) {
+          try {
+            const policy = JSON.parse(row.json) as Record<string, unknown>;
+            if (policy.maxDailyNotional !== 500 || (typeof policy.maxDailyPctOfNav === "number" && policy.maxDailyPctOfNav > 0)) continue;
+            delete policy.maxDailyNotional;
+            policy.maxDailyPctOfNav = 20;
+            update.run(JSON.stringify(policy), row.rowid);
+            changed += 1;
+          } catch {
+            // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
+            // make the database unbootable while trying to repair an unrelated row.
+          }
+        }
+      }
+      if (changed > 0) console.log(`[db] migration 26: moved ${changed} legacy $500 daily cap row(s) to 20% of NAV`);
+    }
   }
 ];
 
@@ -687,7 +1086,8 @@ export function runMigrations(database: Database.Database, migrations: Migration
   return current;
 }
 
-function applyVersionedMigrations(database: Database.Database): number {
+/** Apply the application's concrete migration list. Exported for migration regression tests. */
+export function applyVersionedMigrations(database: Database.Database): number {
   return runMigrations(database, MIGRATIONS, SCHEMA_BASELINE);
 }
 
@@ -775,7 +1175,9 @@ function migrate(database: Database.Database): void {
       started_at TEXT NOT NULL,
       finished_at TEXT,
       status TEXT NOT NULL,
-      summary TEXT
+      summary TEXT,
+      account_number TEXT,
+      policy_revision TEXT
     );
 
     CREATE TABLE IF NOT EXISTS trade_proposals (
@@ -838,6 +1240,26 @@ function migrate(database: Database.Database): void {
       positions TEXT NOT NULL,
       created_at TEXT NOT NULL,
       execution_mode TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS order_replacements (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      original_order_id TEXT NOT NULL,
+      symbol TEXT,
+      side TEXT,
+      original_type TEXT,
+      original_quantity REAL,
+      original_filled_quantity REAL,
+      replacement_ref_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('cancel_requested', 'cancel_confirmed', 'replacement_claiming', 'replacement_submitted', 'replacement_confirmed', 'failed', 'aborted')),
+      remaining_quantity REAL,
+      cancel_result TEXT,
+      replacement_order_id TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS fill_events (
@@ -1488,6 +1910,18 @@ function migrate(database: Database.Database): void {
     addAccountColumn(table);
   }
 
+  // Bind the active account number and policy revision explicitly to the strategy run
+  // so retrospective evaluation matches exactly what the run operated against.
+  {
+    const cols = database.prepare("PRAGMA table_info(strategy_runs)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "account_number")) {
+      database.exec("ALTER TABLE strategy_runs ADD COLUMN account_number TEXT");
+    }
+    if (!cols.some((c) => c.name === "policy_revision")) {
+      database.exec("ALTER TABLE strategy_runs ADD COLUMN policy_revision TEXT");
+    }
+  }
+
   // AI-review advisory column: a single-LLM-call reviewer attaches a per-proposal
   // recommendation (verdict + rationale + optional rewrite) to a pending framework
   // proposal WITHOUT changing the owner verb/status — the owner still makes the final
@@ -1772,8 +2206,13 @@ function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
         policy.notificationSettings?.enabledEvents ?? DEFAULT_POLICY.notificationSettings.enabledEvents
     }
   };
+  const explicitDailyPct = typeof policyWithoutLegacyFields.maxDailyPctOfNav === "number" && policyWithoutLegacyFields.maxDailyPctOfNav > 0;
+  const explicitDailyNotional = typeof policyWithoutLegacyFields.maxDailyNotional === "number" && policyWithoutLegacyFields.maxDailyNotional > 0;
+  if (explicitDailyPct) delete merged.maxDailyNotional;
+  else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
   if ((merged.maxDailyNotional ?? 0) >= 500_000) {
-    merged.maxDailyNotional = DEFAULT_POLICY.maxDailyNotional;
+    delete merged.maxDailyNotional;
+    merged.maxDailyPctOfNav = DEFAULT_POLICY.maxDailyPctOfNav;
     if (merged.maxDailyOrders > DEFAULT_POLICY.maxDailyOrders) merged.maxDailyOrders = DEFAULT_POLICY.maxDailyOrders;
   }
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
@@ -1805,4 +2244,5 @@ export * from "./db-health";
 export * from "./db-securities-import";
 export * from "./db-socratic";
 export * from "./db-jobs";
+export * from "./db-rag-ingest";
 export * from "./db-tuning-reviews";

@@ -1,5 +1,55 @@
 # Active Implementation Plan
 
+> **2026-07-13 - Account-relative daily risk and decision clarity (CODEX).** Replace the fixed $500
+> daily-opening default with one canonical dollar-or-percent mode (20% NAV default), preserve
+> explicit legacy dollar choices, and route the resolved value through policy gates, approval-time
+> rechecks, prompts, capital posture, mobile data, and AI strategy review. Persist app-computed
+> notional/NAV arithmetic; clear impossible Alpaca whole-share bracket fields before fractional
+> submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
+> sections with explicit verdict wording. Implementation, lint, TypeScript, Swift contract checking,
+> 4,021/4,021 tests, and the production build are complete. Ready PR #1561 is open; hosted acceptance,
+> merge/autodeploy, and production verification remain. See
+> `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
+
+> **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
+> complete source-to-decision boundary before adding more feeds: wider bounded enrichment;
+> field-level provenance/freshness/failures and upstream-family arbitration; exact candidate
+> enforcement; immutable Green/Red evidence parity; point-in-time RAG, prompt-data containment and
+> global context budgets; account-scoped relational/vector learning with independently validated
+> paper-to-live transfer; source coverage, shadow ablation and outcome-linked value telemetry; and
+> the same evidence contract for strategy review, learning review, Framework, and Coach. Remove the
+> product Test Account and purge its simulated outcomes, while retaining real broker paper accounts
+> only behind exact-account learning and transfer gates. Add GPT-5.6 Luna/Terra/Sol plus role-specific
+> effort controls across every LLM surface; curate out full GPT-5.4/5.5 but keep Mini/Nano and legacy
+> custom IDs. Implementation, current-main reconciliation, and the full verification gate are
+> complete; PR #1544 merged as `60703dfe` and that exact release is healthy in production. See
+> `docs/reviews/2026-07-13-decision-evidence-architecture.md` and
+> `docs/rollouts/2026-07-13-evidence-architecture-gpt56.md`.
+## SEC/RAG 1,000-stock implementation train
+
+**Status: In progress; corpus writes gated**
+
+- **[~] Wave A — prerequisite truth:** the versioned/checksummed universe acceptance contract and durable
+  job/task state with leases, strict transitions, retries, dead-letter/quarantine, verification receipts, and
+  replay invariants merged in PR #1543 after local/hosted gates. Corrected universe selection, census truth, and
+  adversarial integration remain in progress. Three post-merge P2 durability findings (failure reasons, checksum
+  immutability, lease config) are locally green on `codex/sec-rag-foundation-postmerge` in ready PR #1559.
+  Production is verified on foundation release `cbe3e532`; hosted follow-up acceptance and corpus gates remain.
+- **[~] Wave B — source correctness:** discover recent plus historical submission shards and filing exhibits;
+  archive immutable raw artifacts; enforce one aggregate SEC limiter; parse DOM/iXBRL sections, tables, units,
+  contexts, and footnotes; chunk against provider token budgets.
+- **[ ] Wave C — structured and searchable evidence:** normalize XBRL, insider, ownership, offering, and event
+  facts; add a true corpus-wide lexical index; fuse dense/lexical recall, rerank wide, diversify, and return
+  typed evidence packets with strict point-in-time filtering.
+- **[ ] Wave D — evaluation and consumption:** build real-EDGAR parser/fact/retrieval/grounding fixtures and
+  metrics; replace the generic three-chunk strategy blob with issuer-scoped scout/deep dossiers and verified
+  evidence references.
+- **[ ] Wave E — controlled operations:** only after gates, run shadow 10 -> 25 -> 100 -> 300 -> 1,000 breadth-
+  first waves with cost/rate/failure breakers, reconciliation, dual-read/write, rollback, and freshness SLOs.
+
+Node 24 remains the supported runtime. Node 26 is installed on the host but is not adopted while `.nvmrc`, CI,
+production, and the `better-sqlite3` native ABI are pinned to 24.
+
 ## Codex Audit Wave 0: Base Guardrails
 **Status: In Progress**
 
@@ -7,7 +57,11 @@
   - X0.1 Safety Maintenance Coordinator: Run all side-effecting sweeps (fill reconciliation, stale intents, stale exits, synthetic stops) strictly before strategy admission, with strict network deadlines (15s). Ensures side effects execute exactly once per tick and never hang the singleflight guard.
   - X0.2 Draining Fence: Hard pre-placement veto if the account's state is `draining` or `deleted`. Capture `accountNumber` and `policyRevision` onto the `strategy_runs` snapshot.
   *(Completed 2026-07-12)*
-- **[ ] PR 2: X0.3 Exit Replacement State Machine**
+- **[x] PR 2: X0.3 Exit Replacement State Machine**
+  - Migrated limit order market-replacements to a robust, database-backed state machine.
+  - Added original order detail columns (symbol, side, type, quantity, filled quantity) to SQLite schema and reconstructed orders when missing from broker.
+  - Implemented auto-mode-off continuation and full reconciliation/recovery for in-flight `replacement_submitted` rows.
+  *(Completed 2026-07-13)*
 - **[ ] PR 3: X0.4 Strict P&L Fence**
 
 # Improvement Plan - Socratic Trade

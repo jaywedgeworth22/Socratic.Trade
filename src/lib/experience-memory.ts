@@ -88,6 +88,7 @@ export function holdingDaysBetween(entryAt?: string, exitAt?: string): number | 
 export interface ClosedLotExperienceInput {
   userId: string;
   connectedAccountId?: string;
+  accountEnvironment?: "paper" | "live";
   accountNumber: string;
   symbol: string;
   side: "long" | "short";
@@ -176,6 +177,7 @@ export function buildClosedLotExperienceDocument(input: ClosedLotExperienceInput
       timestamp: input.exitAt,
       doc_type: "socratic-decision",
       memory_kind: "experience",
+      memory_scope: "account",
       side: input.side,
       return_pct: round2(input.returnPct),
       pnl_usd: round2(input.pnl),
@@ -192,6 +194,10 @@ export function buildClosedLotExperienceDocument(input: ClosedLotExperienceInput
       ...(input.sector ? { sector: input.sector } : {}),
       ...(typeof input.confidence === "number" ? { confidence: input.confidence } : {}),
       ...(input.connectedAccountId ? { connected_account_id: input.connectedAccountId } : {}),
+      ...(input.accountEnvironment ? {
+        account_environment: input.accountEnvironment,
+        transfer_state: input.accountEnvironment === "paper" ? "candidate" : "not_applicable"
+      } : {}),
       ...factorMetadata
     }
   };
@@ -276,6 +282,7 @@ export async function recordClosedLotExperience(
       return buildClosedLotExperienceDocument({
         userId,
         connectedAccountId: input.connectedAccountId,
+        accountEnvironment: input.source,
         accountNumber: input.accountNumber,
         symbol: closingSymbol,
         side: lot.side ?? "long",
@@ -478,6 +485,7 @@ export async function retrieveDecisionExperiences(
         asOf,
         minScore: defaultMinScore(),
         connectedAccountId: input.connectedAccountId,
+        accountScope: "exact",
         runId: input.runId,
         onStatus: (s) => {
           vectorStatusRef.value = s;

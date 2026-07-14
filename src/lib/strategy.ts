@@ -10,6 +10,7 @@ import {
   finishStrategyRun,
   getConnectedAccount,
   getPolicy,
+  getActiveStrategyProfile,
   getProposal,
   getStrategyPrompt,
   ingestedAccessionCountsByDocType,
@@ -38,6 +39,9 @@ import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
+import { applyEvidenceBudget } from "./evidence-budget";
+import { createEvidencePack, createEvidenceRef } from "./evidence-pack";
+import { summarizeSourceCoverage } from "./source-value";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { checkBrokerHealth } from "./broker-health";
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
@@ -65,6 +69,7 @@ import {
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
+  getSourceValueScorecard,
   getSkippedCandidateReturns,
   getThesisRegimeScorecard,
   getThesisScorecard,
@@ -78,6 +83,7 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { effectiveDailyOpeningNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
 import { assessProtectiveExitRepriceDrift, extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
 import type { ProtectiveExitQuote } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
@@ -110,9 +116,12 @@ import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import {
   collectEvidenceAgeAnomalies,
   computeEmptyDocTypes,
+  containPromptText,
   scanForInjectionAttempts,
   type EvidenceAgeInput,
   type InjectionFinding,
+  type PromptContainmentResult,
+  type PromptTextSource,
   type UntrustedPromptField
 } from "./prompt-safety";
 import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
@@ -138,6 +147,7 @@ import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
 import { reconcilePendingFills, flagStalePlacingIntents, reconcilePlacementError, LiveApprovalConfirmation, LiveApprovalConfirmationError, coerceProtectiveExitToMarket } from "./strategy-execution";
+import { runSafetyMaintenance } from "./safety-maintenance";
 import { shouldSkipNegativeExpectancy, applyDeterministicSizing, isRiskAddingOpening, applyRedTeamHalfSize, applyEarningsBlackoutTag, applyCorrelationClusterGate, applyRiskReceipts, shouldEscalateDecision, allowedProposalSides, deterministicBearFilter, mapWithConcurrency } from "./strategy-risk";
 
 /**
@@ -171,10 +181,10 @@ const MAX_SKIPPED_EVIDENCE = 25;
  * on a large fraction of normal runs. Re-add "8-k" here the day an accurate per-doc_type 8-K corpus
  * signal exists (e.g. a `document_chunks.doc_type` column populated by both writers).
  *
- * "earnings-transcript" also stays EXCLUDED (same as before): no ingestion writer exists anywhere
- * in this repo for it, so it is a genuine, permanent zero-producer — including it would fire a
- * receipt on every single run forever, training the operator to ignore the whole receipt. Re-add
- * it the day a producer lands.
+ * "earnings-transcript" is excluded from both coverage checks and live retrieval: no ingestion
+ * writer exists anywhere in this repo, so requesting it only creates a permanent empty filter.
+ * Re-add it when a producer lands. "fundamentals" has a real producer and is requested below, but
+ * its producer ledger is not yet complete enough for the empty-corpus receipt.
  */
 const COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
 
@@ -304,6 +314,9 @@ export async function runStrategyOnce(
   const connectedAccountId = options.connectedAccountId ?? getPolicy(userId).connectedAccountId;
   
   const runId = crypto.randomUUID();
+  // One immutable point-in-time boundary for every retrieval and evidence receipt in this run.
+  // Passing this through prevents a later retrieval step from seeing data published mid-run.
+  const runAsOf = new Date().toISOString();
   if (!acquireStrategyLock(runId, userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
@@ -325,8 +338,10 @@ export async function runStrategyOnce(
   try {
     // Keep all post-acquire setup inside the protected region. If the run receipt cannot be
     // inserted, the finally block must still stop the heartbeat and release this owner token.
-    insertStrategyRun(runId, userId, connectedAccountId);
+    const activeProfile = getActiveStrategyProfile(userId);
+    const policyRevision = activeProfile ? `${activeProfile.id}@${activeProfile.updatedAt}` : undefined;
     const savedPolicy = getPolicy(userId, connectedAccountId);
+    insertStrategyRun(runId, userId, connectedAccountId, savedPolicy.accountNumber, policyRevision);
     const accountNumber = savedPolicy.accountNumber;
     if (!accountNumber) throw new Error("No account selected.");
     if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
@@ -352,7 +367,7 @@ export async function runStrategyOnce(
       return result;
     }
 
-    // ── Model rotation (owner testing option) ─────────────────────────────
+    // ── Model rotation (comparative-measurement option) ───────────────────
     // "__rotate__" as llmModel / redTeamLlmModel round-robins each run through every curated
     // model whose provider credential resolves, so comparative live history accrues across
     // models (`proposedByModel` already stamps the CONCRETE serving model on each proposal).
@@ -417,11 +432,11 @@ export async function runStrategyOnce(
 
     const gateway = getBrokerGateway(policy, userId);
     lockGuard.assertOwned();
-    await reconcilePendingFills(gateway, policy.accountNumber, userId, connectedAccountId);
-    lockGuard.assertOwned();
-    // Broker-truth reconcile any order-placement intent left "placing" by a prior run that crashed
-    // mid-call: match it against the broker by clientOrderId and recover or abandon it.
-    await flagStalePlacingIntents(gateway, policy.accountNumber, userId, connectedAccountId);
+    
+    // --- Safety Maintenance Coordinator ---
+    // Run fill reconciliation, stale placing-intent recovery, stale-exit handling,
+    // synthetic/broker stops, and expiry sequentially with strict broker-read timeouts.
+    await runSafetyMaintenance(userId, policy as RunnablePolicy, activeAccount!, gateway);
     lockGuard.assertOwned();
 
     // Check broker health before making LLM calls.
@@ -491,7 +506,6 @@ export async function runStrategyOnce(
     const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
     const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     lockGuard.assertOwned();
-    await notifyStaleLimitOrders({ userId, policy, orders });
 
     // Re-prove ownership before entering the first stateful maintenance phase. The awaited setup
     // above takes real wall time; if its heartbeat failed, snapshots and breaker mutations must not
@@ -843,11 +857,10 @@ export async function runStrategyOnce(
     // coverage receipt after this block can report "requested" alongside "retrieved this run" /
     // "empty" without re-declaring the literal. Advisory only — never affects the retrieval call
     // itself. NOTE: the coverage receipt itself only CHECKS the COVERAGE_CHECKED_DOC_TYPES subset
-    // (10-k/10-q — narrower than this request list) against retrievedFilingsDocTypes below — "8-k"
-    // and "earnings-transcript" stay in this retrieval request list (harmless — retrieveContextDetailed
-    // just gets more empty filter values) but are deliberately excluded from the coverage check
-    // itself; see COVERAGE_CHECKED_DOC_TYPES's comment near the top of this file.
-    const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "earnings-transcript"];
+    // (10-k/10-q — narrower than this request list) against retrievedFilingsDocTypes below. 8-K and
+    // fundamentals both have real producers but incomplete ledgers, so they are retrieved without
+    // participating in the empty-corpus assertion. A nonexistent transcript producer is not queried.
+    const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "fundamentals"];
     const retrievedFilingsDocTypes = new Set<string>();
     // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): one row per symbol (filings
     // pass) plus one PORTFOLIO row (episodic pass), persisted via the `rag_retrieval_status` audit
@@ -908,6 +921,7 @@ export async function runStrategyOnce(
             }
             const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
               docType: requestedFilingsDocTypes,
+              asOf: runAsOf,
               minScore: defaultMinScore(),
               // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
               // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
@@ -983,8 +997,15 @@ export async function runStrategyOnce(
       // learned facts on a held name outside the top-8 still surface, without touching the
       // top-8 BUY-candidate slice itself.
       const learnedSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 8).map((c) => c.symbol), ...heldSymbols]);
-      // regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice).
-      const learnedFacts = retrieveLearnedContextDetailed(userId, learnedSymbols);
+      // Regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice),
+      // but the current connected account is always forwarded so account-scoped retrieval can keep
+      // sibling portfolios' learned facts isolated.
+      const learnedFacts = retrieveLearnedContextDetailed(
+        userId,
+        learnedSymbols,
+        undefined,
+        { connectedAccountId }
+      );
       if (learnedFacts.lines.length > 0) {
         learnedContext = learnedFacts.lines.join("\n");
       }
@@ -1160,7 +1181,8 @@ export async function runStrategyOnce(
           runId,
           regime: regimeForSketch,
           candidates: situationCandidates,
-          connectedAccountId: policy.connectedAccountId
+          connectedAccountId: policy.connectedAccountId,
+          asOf: runAsOf
         });
         lockGuard.assertOwned();
         experienceAnalogs = episodic.analogsBlock ?? "";
@@ -1168,7 +1190,7 @@ export async function runStrategyOnce(
         // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): the episodic pass is
         // cross-symbol, so it gets one PORTFOLIO row rather than a per-symbol one.
         ragRetrievalStatusRows.push({ symbol: "PORTFOLIO", status: episodic.status });
-        if (episodic.injected.length > 0) {
+        if (episodic?.injected && Array.isArray(episodic.injected) && episodic.injected.length > 0) {
           // Run-input persistence: record exactly WHICH analog/coaching vector ids entered this
           // run's prompts (plus the as-of stamp and sketch), so retrieval-usefulness scoring can
           // later join injected ids to this run's realized outcomes. The ids also ride along on
@@ -1179,9 +1201,9 @@ export async function runStrategyOnce(
               runId,
               asOf: episodic.asOf,
               query: episodic.query,
-              analogIds: episodic.injected.filter((ref) => ref.kind === "analog").map((ref) => ref.id),
-              coachingIds: episodic.injected.filter((ref) => ref.kind === "coaching").map((ref) => ref.id),
-              counterexampleIds: episodic.injected.filter((ref) => ref.counterexample).map((ref) => ref.id),
+              analogIds: (episodic.injected || []).filter((ref) => ref?.kind === "analog").map((ref) => ref.id),
+              coachingIds: (episodic.injected || []).filter((ref) => ref?.kind === "coaching").map((ref) => ref.id),
+              counterexampleIds: (episodic.injected || []).filter((ref) => ref?.counterexample).map((ref) => ref.id),
               ...(typeof episodic.topAnalogSimilarity === "number" ? { topAnalogSimilarity: episodic.topAnalogSimilarity } : {})
             },
             userId,
@@ -1270,6 +1292,7 @@ export async function runStrategyOnce(
       commitRotation();
       const proposed = await proposeTrades({
         runId,
+        asOf: runAsOf,
         userId,
         policyAllowlist: allowedSymbols,
         prompt: getStrategyPrompt(userId, connectedAccountId),
@@ -1303,14 +1326,20 @@ export async function runStrategyOnce(
         for (const finding of proposed.promptSafetyFindings) {
           byField.set(finding.name, [...(byField.get(finding.name) ?? []), finding]);
         }
+        const containedFields = new Set(proposed.promptContainmentFields ?? []);
         for (const [field, findings] of Array.from(byField.entries()).slice(0, 4)) {
+          const disposition = containedFields.has(field)
+            ? "Instruction-like spans in this untrusted field were replaced with explicit quarantine markers; generation continued."
+            : field === "owner_strategy_prompt"
+              ? "The owner strategy is trusted and remained unchanged; generation continued."
+              : "No instruction-like span required replacement; generation continued.";
           promptSafetyEvidence.push({
             kind: "safety",
             tone: "warning",
             title: `Possible prompt-injection pattern in ${field}`,
             summary:
               `Deterministic scan matched ${findings.map((f) => f.pattern).join(", ")}: "${findings[0].excerpt.slice(0, 240)}". ` +
-              "The text was passed through unmodified — advisory receipt, generation was not blocked.",
+              disposition,
             source: "prompt-safety",
             data: findings
           });
@@ -1515,11 +1544,33 @@ export async function runStrategyOnce(
         // Pass the run-scoped `runPolicy` explicitly (R17 — rather than letting debateProposal
         // re-read the user-level getPolicy) so the account-scoped Red model/reasoning AND any
         // usage-budget Phase 2 downgrade actually reach the reviewer's model resolution.
+        const finalizedNotional = estimateNotional(proposal);
+        const dailyCap = resolveDailyOpeningCap(policy, workingPortfolio.totalMarketValue);
+        proposal.sizingSnapshot = {
+          portfolioValue: workingPortfolio.totalMarketValue,
+          estimatedNotional: finalizedNotional,
+          estimatedPctOfNav:
+            workingPortfolio.totalMarketValue > 0
+              ? Number(((finalizedNotional / workingPortfolio.totalMarketValue) * 100).toFixed(4))
+              : undefined,
+          dailyOpeningCap: dailyCap
+            ? {
+                mode: dailyCap.mode,
+                configuredValue: dailyCap.configuredValue,
+                effectiveNotional: Number(dailyCap.notional.toFixed(2)),
+                pctOfNav: dailyCap.pctOfNav != null ? Number(dailyCap.pctOfNav.toFixed(2)) : undefined
+              }
+            : undefined,
+          dailyNotionalUsed: Number(daily.notional.toFixed(2)),
+          remainingDailyNotional: dailyCap
+            ? Number(Math.max(0, dailyCap.notional - daily.notional).toFixed(2))
+            : undefined
+        };
         const result = await debateProposal(proposal, quote, userId, runPolicy, {
           context: adversaryContext,
           sizing: {
-            estimatedNotional: estimateNotional(proposal),
-            sizeBasis: typeof proposal.quantity === "number" && proposal.quantity > 0 ? "quantity" : "notional"
+            sizeBasis: typeof proposal.quantity === "number" && proposal.quantity > 0 ? "quantity" : "notional",
+            ...proposal.sizingSnapshot
           }
         });
         reviewResults.set(proposal, result);
@@ -1695,7 +1746,18 @@ export async function runStrategyOnce(
           // at a size larger than the reviewer approved, never up-sized.
           const haircut = applyRedTeamHalfSize(proposal);
           if (haircut.applied) {
-            proposal.rationale += `\n\nRed Team verdict: approve-at-half — ${redTeamResult.reason} [${haircut.note}]`;
+            if (proposal.sizingSnapshot) {
+              const finalNotional = estimateNotional(proposal);
+              proposal.sizingSnapshot = {
+                ...proposal.sizingSnapshot,
+                estimatedNotional: finalNotional,
+                estimatedPctOfNav:
+                  proposal.sizingSnapshot.portfolioValue > 0
+                    ? Number(((finalNotional / proposal.sizingSnapshot.portfolioValue) * 100).toFixed(4))
+                    : undefined
+              };
+            }
+            proposal.rationale += `\n\nRed Team review — approved at half size: ${redTeamResult.reason} [${haircut.note}]`;
             audit(
               "red_team_approved_at_half",
               { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model, haircut: haircut.note },
@@ -1703,7 +1765,7 @@ export async function runStrategyOnce(
               connectedAccountId
             );
           } else {
-            proposal.rationale += `\n\nRed Team verdict: approve-at-half — ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
+            proposal.rationale += `\n\nRed Team review — approved at half size: ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
             requiresHumanReview.add(proposal);
             audit(
               "red_team_half_size_unplaceable",
@@ -1713,7 +1775,7 @@ export async function runStrategyOnce(
             );
           }
         } else {
-          proposal.rationale += `\n\nRed Team Review Survived: ${redTeamResult.reason}`;
+          proposal.rationale += `\n\nRed Team review — approved at full size: ${redTeamResult.reason}`;
         }
       }
       debatedProposals.push(proposal);
@@ -1977,9 +2039,9 @@ export async function runStrategyOnce(
         // the remaining daily/hourly budget. Anything the planner bumps past this would be
         // policy-rejected every run — and a cap breach can demote authority via
         // autoRevertOnCapBreach, which the app must never self-inflict with its own up-sizing.
-        const effectiveMaxDailyNotional = Math.min(
-          policy.maxDailyNotional ?? Infinity,
-          policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * workingPortfolio.totalMarketValue : Infinity
+        const effectiveMaxDailyNotional = effectiveDailyOpeningNotionalCap(
+          policy,
+          workingPortfolio.totalMarketValue
         );
         const openingCapNotional = Math.min(
           applyOpeningOrderHeadroom(openingPolicyNotionalCap(normalizedProposal, policy, workingPortfolio)),
@@ -2468,6 +2530,7 @@ export async function runStrategyOnce(
           gateway,
           accountNumber: policy.accountNumber,
           userId,
+          connectedAccountId,
           proposalId,
           refId,
           proposal: normalizedProposal,
@@ -2567,6 +2630,7 @@ export async function runStrategyOnce(
       const preFillPosition = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
       const fill = recordFillFromProposal({
         userId,
+        connectedAccountId,
         accountNumber: policy.accountNumber,
         proposalId,
         runId,
@@ -2609,13 +2673,20 @@ export async function runStrategyOnce(
         regime: runRegime,
         side: r.proposal.side,
         status: r.status,
-        thesisTag: r.proposal.tradeThesisTag
+        thesisTag: r.proposal.tradeThesisTag,
+        scoringWeights: runPolicy.scoringWeights
       })
     );
     const skippedEvidence = (marketScan?.topCandidates ?? [])
       .filter((candidate) => !chosenSymbols.has(normalizeSymbol(candidate.symbol)))
       .slice(0, MAX_SKIPPED_EVIDENCE)
-      .map((candidate) => buildCandidateEvidence(candidate, { symbol: candidate.symbol, chosen: false, regime: runRegime }));
+      .map((candidate) => buildCandidateEvidence(candidate, {
+        symbol: candidate.symbol,
+        chosen: false,
+        regime: runRegime,
+        scoringWeights: runPolicy.scoringWeights
+      }));
+    const sourceCoverage = summarizeSourceCoverage(marketScan?.topCandidates ?? []);
 
     // Counterfactual decision index: which names we bought vs the top-ranked names we
     // passed. The skipped half now carries full evidence (was symbol/score/sector/change
@@ -2633,6 +2704,7 @@ export async function runStrategyOnce(
     audit("signal_snapshot", {
       runId,
       asOf: new Date().toISOString(),
+      sourceCoverage,
       signals: [...chosenEvidence, ...skippedEvidence]
     }, userId, connectedAccountId);
     void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25, connectedAccountId })
@@ -3031,10 +3103,14 @@ interface ProposeTradesResult {
    * decision-case evidence. NEVER affects the proposals themselves.
    */
   promptSafetyFindings?: InjectionFinding[];
+  /** Fields whose untrusted instruction-like spans were quarantined before either model saw them. */
+  promptContainmentFields?: string[];
 }
 
 async function proposeTrades(input: {
   runId: string;
+  /** Immutable point-in-time boundary captured when the strategy run acquired its lock. */
+  asOf: string;
   userId: string;
   policyAllowlist: string[];
   prompt: string;
@@ -3081,7 +3157,8 @@ async function proposeTrades(input: {
   if (!resolvedModel) throw new LlmCredentialRequiredError(LLM_MODEL_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
-  const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
+  const dailyOpeningCap = resolveDailyOpeningCap(input.policy, input.portfolio.totalMarketValue);
+  const remainingNotional = Math.max(0, (dailyOpeningCap?.notional ?? Infinity) - input.dailyNotionalUsed);
   const remainingOrders = Math.max(0, input.policy.maxDailyOrders - input.dailyOrderCount);
 
   // Phase 2 fix: build a full symbol→sector map from ALL scan candidates (not just
@@ -3129,6 +3206,16 @@ async function proposeTrades(input: {
   // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
   // at entry vs the baseline — so the agent learns which evidence actually predicts wins.
   const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
+  // Outcome-linked leave-one-provider-out telemetry. This is explicitly observational and
+  // selection-biased; only mature directional buckets are shown to the model, and no automatic
+  // scoring-weight mutation is performed from it.
+  const sourceValueScorecard = input.policy.accountNumber
+    ? getSourceValueScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched, {
+        connectedAccountId: input.policy.connectedAccountId
+      })
+        .filter((row) => row.learningStatus !== "insufficient")
+        .slice(0, 12)
+    : [];
   // Confidence calibration: realized outcomes by the agent's own entry confidence band —
   // since confidence now drives position size, this surfaces over/under-confidence.
   const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
@@ -3208,11 +3295,13 @@ async function proposeTrades(input: {
   // execution time as a backstop. Declared here (before the prompt) so both the prompt and schema use it.
   const allowedSides = allowedProposalSides(input.policy, input.activeAccount);
   const shortAllowed = allowedSides.includes("short");
+  // The owner strategy is the sole trusted prompt-text source and is preserved byte-for-byte.
+  const trustedStrategyPrompt = containPromptText({ source: "owner_strategy", text: input.prompt }).sanitizedText;
   const systemPrompt = buildBullSystem({
     shortAllowed,
     executionMode,
     executionModeClarification,
-    strategyPrompt: input.prompt,
+    strategyPrompt: trustedStrategyPrompt,
     // reflection deliberately NOT interpolated into the SYSTEM prompt anymore (prompt-safety
     // lane, agentic-strategy@1.5.0): the post-mortem writer persists raw LLM output, so it rides
     // in userContent as the fenced `reflectionSummary` DATA field below instead.
@@ -3292,8 +3381,302 @@ async function proposeTrades(input: {
       : Infinity
   );
   const preferredMaxOrderNotional = applyOpeningOrderHeadroom(effectiveMaxOrderNotional);
+  const promptContainmentReceipts: Array<{ field: string; result: PromptContainmentResult }> = [];
+  const containData = (source: PromptTextSource, field: string, text: string | undefined): string => {
+    const result = containPromptText({ source, text: text ?? "" });
+    if (result.status !== "clean" && result.status !== "trusted") {
+      promptContainmentReceipts.push({ field, result });
+    }
+    return result.sanitizedText;
+  };
+  const containedRagContext = containData("rag", "retrievedFinancialContext", input.ragContext);
+  const containedLearnedContext = containData("learned", "learnedContext", input.learnedContext);
+  const containedReflection = containData("reflection", "reflection_summary", reflection);
+  const containedExperienceAnalogs = containData("learned", "closestHistoricalAnalogs", input.experienceAnalogs);
+  const containedOwnerCoaching = containData("coach", "ownerCoaching", input.ownerCoaching);
+  // Only mutate a prompt-only clone. Stored/source evidence remains byte-for-byte intact for audit.
+  const promptMarketScan = input.marketScan
+    ? {
+        ...input.marketScan,
+        topCandidates: input.marketScan.topCandidates.map((candidate) => {
+          const sym = normalizeSymbol(candidate.symbol);
+          return {
+            ...candidate,
+            ...(candidate.headlines
+              ? {
+                  headlines: candidate.headlines.map((headline, index) =>
+                    index < 2 ? containData("news", `headlines:${sym}`, headline) : headline
+                  )
+                }
+              : {}),
+            ...(candidate.evidenceBulletins
+              ? {
+                  evidenceBulletins: candidate.evidenceBulletins.map((bulletin, index) =>
+                    index < 3 ? containData("unknown", `smartMoney:${sym}`, bulletin) : bulletin
+                  )
+                }
+              : {})
+          };
+        })
+      }
+    : undefined;
+  const compactPromptMarketScan = compactMarketScanForPrompt(promptMarketScan);
+  const evidenceSourceCoverage = summarizeSourceCoverage(input.marketScan?.topCandidates ?? []);
+  const decisionAsOf = input.asOf;
+  const evidenceSubject = input.policy.connectedAccountId ?? input.policy.accountNumber ?? input.userId;
+  const textEvidenceInputs = [
+    {
+      key: "rag",
+      text: containedRagContext,
+      priority: 100,
+      ref: createEvidenceRef({
+        kind: "retrieved-financial-context",
+        subject: evidenceSubject,
+        source: {
+          family: "filings",
+          name: "vector-retrieval",
+          status: containedRagContext ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "vector-db", locator: null, upstreamHash: null, lineage: ["strategy-rag"] }
+        },
+        content: containedRagContext
+      })
+    },
+    {
+      key: "coaching",
+      text: containedOwnerCoaching,
+      priority: 95,
+      ref: createEvidenceRef({
+        kind: "owner-coaching",
+        subject: evidenceSubject,
+        source: {
+          family: "learning",
+          name: "owner-coaching",
+          status: containedOwnerCoaching ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "experience-memory", locator: null, upstreamHash: null, lineage: ["owner-coaching"] }
+        },
+        content: containedOwnerCoaching
+      })
+    },
+    {
+      key: "learned",
+      text: containedLearnedContext,
+      priority: 90,
+      ref: createEvidenceRef({
+        kind: "learned-context",
+        subject: evidenceSubject,
+        source: {
+          family: "learning",
+          name: "learned-context",
+          status: containedLearnedContext ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "relational-learning", locator: null, upstreamHash: null, lineage: ["learned-context"] }
+        },
+        content: containedLearnedContext
+      })
+    },
+    {
+      key: "analogs",
+      text: containedExperienceAnalogs,
+      priority: 85,
+      ref: createEvidenceRef({
+        kind: "historical-analogs",
+        subject: evidenceSubject,
+        source: {
+          family: "learning",
+          name: "historical-analogs",
+          status: containedExperienceAnalogs ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "experience-memory", locator: null, upstreamHash: null, lineage: ["episodic-retrieval"] }
+        },
+        content: containedExperienceAnalogs
+      })
+    },
+    {
+      key: "reflection",
+      text: containedReflection,
+      priority: 80,
+      ref: createEvidenceRef({
+        kind: "account-reflection",
+        subject: evidenceSubject,
+        source: {
+          family: "learning",
+          name: "post-mortem-reflection",
+          status: containedReflection ? "success" : "no_data",
+          observedAt: null,
+          asOf: null,
+          retrievedAt: decisionAsOf,
+          provenance: { provider: "post-mortem", locator: null, upstreamHash: null, lineage: ["account-reflection"] }
+        },
+        content: containedReflection
+      })
+    }
+  ] as const;
+  // Variable-length prose shares one deterministic budget. Structured candidates/portfolio/macro
+  // are separately compacted and bounded before this point, so they cannot crowd out every filing
+  // or learned lesson. Every truncation/omission receives a model-visible and audited receipt.
+  const evidenceBudget = applyEvidenceBudget(
+    textEvidenceInputs.map(({ ref, text, priority }) => ({ ref, text, priority })),
+    {
+      maxCharacters: 48_000,
+      maxTokenEstimate: 12_000,
+      familyQuotas: {
+        filings: { maxCharacters: 24_000, maxTokenEstimate: 6_000 },
+        learning: { maxCharacters: 28_000, maxTokenEstimate: 7_000 }
+      }
+    }
+  );
+  const includedEvidenceText = new Map(evidenceBudget.included.map((item) => [item.evidenceId, item.text]));
+  const budgetedText = (key: (typeof textEvidenceInputs)[number]["key"]): string => {
+    const item = textEvidenceInputs.find((candidate) => candidate.key === key);
+    return item ? includedEvidenceText.get(item.ref.id) ?? "" : "";
+  };
+  const budgetedRagContext = budgetedText("rag");
+  const budgetedLearnedContext = budgetedText("learned");
+  const budgetedReflection = budgetedText("reflection");
+  const budgetedExperienceAnalogs = budgetedText("analogs");
+  const budgetedOwnerCoaching = budgetedText("coaching");
+
+  const structuredEvidence = [
+    createEvidenceRef({
+      kind: "broker-account-state",
+      subject: evidenceSubject,
+      source: {
+        family: "broker",
+        name: "portfolio-and-orders",
+        status: input.activeAccount ? "success" : "no_data",
+        observedAt: decisionAsOf,
+        asOf: decisionAsOf,
+        retrievedAt: decisionAsOf,
+        provenance: {
+          provider: input.activeAccount?.broker ?? "broker-gateway",
+          locator: input.policy.connectedAccountId ?? null,
+          upstreamHash: null,
+          lineage: ["connected-account", "strategy-run"]
+        }
+      },
+      content: JSON.stringify({ portfolio: input.portfolio, positions: input.positions, recentOrders: input.recentOrders })
+    }),
+    createEvidenceRef({
+      kind: "market-candidate-set",
+      subject: "equity-universe",
+      source: {
+        family: "market",
+        name: "ranked-market-scan",
+        status: compactPromptMarketScan ? "success" : "no_data",
+        observedAt: input.marketScan?.generatedAt ?? null,
+        asOf: input.marketScan?.generatedAt ?? null,
+        retrievedAt: decisionAsOf,
+        provenance: {
+          provider: input.marketScan?.source || "market-scan",
+          locator: null,
+          upstreamHash: null,
+          lineage: ["market-scan", "candidate-ranking", "prompt-compaction"]
+        }
+      },
+      content: JSON.stringify({ scan: compactPromptMarketScan ?? null, sourceCoverage: evidenceSourceCoverage })
+    }),
+    createEvidenceRef({
+      kind: "macro-regime-state",
+      subject: "market-regime",
+      source: {
+        family: "macro",
+        name: "macro-and-market-regime",
+        status: "success",
+        observedAt: decisionAsOf,
+        asOf: decisionAsOf,
+        retrievedAt: decisionAsOf,
+        provenance: { provider: "macro-cascade", locator: null, upstreamHash: null, lineage: ["macro", "derived-metrics"] }
+      },
+      content: JSON.stringify({ currentMarketRegime, macroeconomicData, macroDerived, marketInternals, marketSignals, regimeSeverity })
+    }),
+    createEvidenceRef({
+      kind: "account-performance-state",
+      subject: evidenceSubject,
+      source: {
+        family: "learning",
+        name: "realized-performance-scorecards",
+        status: "success",
+        observedAt: decisionAsOf,
+        asOf: decisionAsOf,
+        retrievedAt: decisionAsOf,
+        provenance: { provider: "performance-db", locator: input.policy.connectedAccountId ?? null, upstreamHash: null, lineage: ["fills", "scorecards"] }
+      },
+      content: JSON.stringify({
+        thesisOutcomes: thesisScorecard.slice(0, 12),
+        regimeOutcomes: regimeScorecard.slice(0, 8),
+        comboOutcomes: thesisRegimeScorecard,
+        signalEfficacy,
+        sourceValueScorecard,
+        confidenceCalibration,
+        sectorOutcomes: sectorScorecard,
+        factorOutcomes: factorScorecard,
+        skippedCounterfactuals
+      })
+    })
+  ];
+  const evidencePack = createEvidencePack({
+    decisionKey: input.runId,
+    evidence: [...textEvidenceInputs.map(({ ref }) => ref), ...structuredEvidence]
+  });
+  const evidenceManifest = {
+    contractVersion: evidencePack.contractVersion,
+    packHash: evidencePack.packHash,
+    greenRedParityHash: evidencePack.greenRedParityHash,
+    refs: evidencePack.evidence.map((ref) => ({
+      id: ref.id,
+      contentHash: ref.contentHash,
+      kind: ref.kind,
+      subject: ref.subject,
+      family: ref.source.family,
+      source: ref.source.name,
+      status: ref.source.status,
+      observedAt: ref.source.observedAt,
+      asOf: ref.source.asOf,
+      retrievedAt: ref.source.retrievedAt,
+      provider: ref.source.provenance.provider
+    }))
+  };
+  audit(
+    "strategy_evidence_pack",
+    {
+      runId: input.runId,
+      packHash: evidencePack.packHash,
+      greenRedParityHash: evidencePack.greenRedParityHash,
+      refs: evidenceManifest.refs,
+      budget: {
+        usedCharacters: evidenceBudget.usedCharacters,
+        usedTokenEstimate: evidenceBudget.usedTokenEstimate,
+        receipts: evidenceBudget.receipts.filter((receipt) => receipt.originalCharacters > 0)
+      }
+    },
+    input.userId,
+    input.policy.connectedAccountId
+  );
+  audit(
+    "strategy_source_coverage",
+    {
+      runId: input.runId,
+      candidateCount: input.marketScan?.topCandidates.length ?? 0,
+      providers: evidenceSourceCoverage,
+      sourceValueRows: sourceValueScorecard
+    },
+    input.userId,
+    input.policy.connectedAccountId
+  );
   const userContent = {
-    currentDate: new Date().toISOString(),
+    currentDate: decisionAsOf,
+    evidenceManifest,
+    evidenceBudgetReceipts: evidenceBudget.receipts.filter((receipt) => receipt.originalCharacters > 0),
     executionMode,
     executionModeClarification,
     currentMarketRegime,
@@ -3314,11 +3697,19 @@ async function proposeTrades(input: {
     positions: input.positions,
     recentOrders: input.recentOrders,
     allowedSymbols: allowedSymbolsForPrompt,
-    marketScan: compactMarketScanForPrompt(input.marketScan),
+    marketScan: compactPromptMarketScan,
     limits: {
       maxOrderNotional: Number.isFinite(effectiveMaxOrderNotional) ? Number(effectiveMaxOrderNotional.toFixed(2)) : undefined,
       preferredMaxOrderNotional: Number.isFinite(preferredMaxOrderNotional) ? Number(preferredMaxOrderNotional.toFixed(2)) : undefined,
       maxOrderPctOfNav: input.policy.maxOrderPctOfNav,
+      dailyOpeningCap: dailyOpeningCap
+        ? {
+            mode: dailyOpeningCap.mode,
+            configuredValue: dailyOpeningCap.configuredValue,
+            effectiveNotional: Number(dailyOpeningCap.notional.toFixed(2)),
+            pctOfNav: dailyOpeningCap.pctOfNav != null ? Number(dailyOpeningCap.pctOfNav.toFixed(2)) : undefined
+          }
+        : undefined,
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
@@ -3356,29 +3747,38 @@ async function proposeTrades(input: {
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
     ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
     ...(signalEfficacy.length > 1 ? { signalEfficacy } : {}),
+    ...(sourceValueScorecard.length > 0
+      ? {
+          sourceValueScorecard: {
+            caveat: "Observational leave-one-winning-provider-out telemetry; selection-biased and not causal. Use as a reason to investigate or cross-check, never as sole trade evidence.",
+            rows: sourceValueScorecard
+          }
+        }
+      : {}),
+    ...(evidenceSourceCoverage.length > 0 ? { evidenceSourceCoverage } : {}),
     ...(confidenceCalibration.length > 1 ? { confidenceCalibration } : {}),
     ...(sectorScorecard.length > 0 ? { sectorOutcomes: sectorScorecard } : {}),
     ...(factorScorecard.length > 0 ? { factorOutcomes: factorScorecard } : {}),
     ...(skippedCounterfactuals.length > 0 ? { skippedCounterfactuals } : {}),
     ...(taxContext ? { taxContext } : {}),
-    ...(input.ragContext ? { retrievedFinancialContext: input.ragContext } : {}),
-    ...(input.learnedContext ? { learnedContext: input.learnedContext } : {}),
+    ...(budgetedRagContext ? { retrievedFinancialContext: budgetedRagContext } : {}),
+    ...(budgetedLearnedContext ? { learnedContext: budgetedLearnedContext } : {}),
     // Historical reflection RELOCATED here from the Bull SYSTEM prompt (prompt-safety lane): it is
     // persisted raw LLM output, so it enters as fenced, labeled user-role DATA — the system prompt
     // references it by name and the data-not-command clause covers it.
-    ...(reflection ? { reflectionSummary: `<reflection_summary>\n${reflection}\n</reflection_summary>` } : {}),
+    ...(budgetedReflection ? { reflectionSummary: `<reflection_summary>\n${budgetedReflection}\n</reflection_summary>` } : {}),
     // Episodic decision memory (composite review A1): labeled analogs + owner-coaching blocks.
     // Mirrored into the Red Team review's adversaryContext below — evidence parity between the
     // strategist and its reviewer is the point.
-    ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
-    ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {})
+    ...(budgetedExperienceAnalogs ? { closestHistoricalAnalogs: budgetedExperienceAnalogs } : {}),
+    ...(budgetedOwnerCoaching ? { ownerCoaching: budgetedOwnerCoaching } : {})
   };
 
   // ── Advisory prompt-injection scan (CR-H prompt-safety lane) ─────────────
   // Deterministic receipts over the UNTRUSTED text blocks entering the Bull/Bear prompts. The
   // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = first 2
-  // headlines, smartMoney = first 3 bulletins). Detection IS the control: on a hit we audit and
-  // surface evidence — the text is NEVER altered or dropped, and generation always proceeds.
+  // headlines, smartMoney = first 3 bulletins). Raw source text is scanned for reviewability;
+  // instruction-like spans in untrusted fields were already quarantined in the prompt-only copy.
   const untrustedPromptFields: UntrustedPromptField[] = [
     { name: "owner_strategy_prompt", text: input.prompt },
     { name: "reflection_summary", text: reflection },
@@ -3405,6 +3805,24 @@ async function proposeTrades(input: {
         fields: [...new Set(promptSafetyFindings.map((f) => f.name))],
         patterns: [...new Set(promptSafetyFindings.map((f) => f.pattern))],
         findings: promptSafetyFindings.slice(0, 12).map((f) => ({ ...f, excerpt: f.excerpt.slice(0, 240) }))
+      },
+      input.userId,
+      input.policy.connectedAccountId
+    );
+  }
+  if (promptContainmentReceipts.length > 0) {
+    audit(
+      "prompt_injection_contained",
+      {
+        runId: input.runId,
+        receipts: promptContainmentReceipts.slice(0, 24).map(({ field, result }) => ({
+          field,
+          source: result.source,
+          status: result.status,
+          truncated: result.truncated,
+          patterns: result.findings.map((finding) => finding.pattern),
+          excerpts: result.quarantinedExcerpts.slice(0, 4).map(({ pattern, excerpt, replacement }) => ({ pattern, excerpt, replacement }))
+        }))
       },
       input.userId,
       input.policy.connectedAccountId
@@ -3460,6 +3878,21 @@ async function proposeTrades(input: {
     ]
   };
 
+  // Keep the structured-output vocabulary bounded to the exact scan candidates plus
+  // positions that may legitimately need an exit. The deterministic post-parse boundary
+  // below remains authoritative: providers do not all enforce JSON-schema constraints
+  // identically, and this enum alone cannot express the side-dependent opening rule.
+  const candidateSymbols = uniqueSymbols((input.marketScan?.topCandidates ?? []).map((candidate) => candidate.symbol));
+  const heldSymbols = uniqueSymbols(input.positions.map((position) => position.symbol));
+  const proposalSymbols = uniqueSymbols([...candidateSymbols, ...heldSymbols]);
+  const proposalSymbolSchema = proposalSymbols.length > 0
+    ? {
+        type: "string",
+        enum: proposalSymbols,
+        description: "A normalized topCandidates symbol, or a current holding when proposing an exit."
+      }
+    : { type: "string" };
+
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -3490,7 +3923,7 @@ async function proposeTrades(input: {
             "stopPlan"
           ],
           properties: {
-            symbol: { type: "string" },
+            symbol: proposalSymbolSchema,
             // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
             // i.e. policy.shortSellingEnabled AND the connected account reports shortSelling. Default long-only.
             side: { enum: allowedSides },
@@ -3712,8 +4145,28 @@ async function proposeTrades(input: {
     throw new StrategyLlmStepFailure(reason, llmSteps, error);
   }
 
-  const rawBullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
+  const sanitizedBullProposals = sanitizeProposals(bullResult.proposals, maxProposals);
+  const { accepted: candidateBoundBullProposals, rejected: offCandidateOpenings } =
+    enforceCandidateSetForOpenings(sanitizedBullProposals, input.marketScan?.topCandidates ?? []);
+  for (const rejected of offCandidateOpenings) {
+    audit(
+      "proposal_rejected_off_candidate_opening",
+      {
+        runId: input.runId,
+        symbol: normalizeSymbol(rejected.symbol),
+        side: rejected.side,
+        candidateCount: candidateSymbols.length,
+        candidates: candidateSymbols
+      },
+      input.userId,
+      input.policy.connectedAccountId
+    );
+  }
+  const rawBullProposals = candidateBoundBullProposals.map(p => ({
     ...p,
+    // Preserve the proposing model's own thesis before deterministic sizing/risk receipts and the
+    // Red Team review are appended to the legacy all-in-one rationale string.
+    greenTeamRationale: p.rationale,
     entryMarketRegime: currentMarketRegime,
     ...(regimeSeverity ? { entryRegimeSeverity: Number(regimeSeverity.severity.toFixed(2)) } : {}),
     // FAILOVER-AWARE attribution: the model that actually served this run (not necessarily
@@ -3737,7 +4190,7 @@ async function proposeTrades(input: {
         cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
         wireOutputCap: bullResult.wireOutputCap,
         finishReason: bullResult.finishReason,
-        parsedProposals: rawBullProposals.length,
+        parsedProposals: sanitizedBullProposals.length,
         provider,
         model
       },
@@ -3808,20 +4261,9 @@ async function proposeTrades(input: {
     typeof candidate.sym === "string" && proposedSymbols.has(normalizeSymbol(candidate.sym))
   );
   const adversaryContext: RedTeamReviewContext = {
-    currentDate: userContent.currentDate,
-    currentMarketRegime: userContent.currentMarketRegime,
-    ...(userContent.regimeSeverity ? { regimeSeverity: userContent.regimeSeverity } : {}),
-    macroeconomicData: userContent.macroeconomicData,
-    limits: userContent.limits,
-    socraticAuthority: userContent.socraticAuthority,
-    portfolio: input.portfolio,
-    positions: input.positions,
-    ...(sectorComposition ? { sectorComposition } : {}),
-    ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
-    ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
-    ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
-    ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
-    ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {}),
+    // Spread the complete Green evidence object rather than reconstructing a lossy subset. The
+    // content-addressed parity hash lets audits prove both stages received the same evidence.
+    ...userContent,
     candidatesUnderReview
   };
 
@@ -3829,7 +4271,10 @@ async function proposeTrades(input: {
     proposals: bullProposals,
     llmSteps,
     adversaryContext,
-    ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {})
+    ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {}),
+    ...(promptContainmentReceipts.length > 0
+      ? { promptContainmentFields: [...new Set(promptContainmentReceipts.map(({ field }) => field))] }
+      : {})
   };
 }
 
@@ -4103,6 +4548,33 @@ export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradePro
 }
 
 /**
+ * Enforce the exact normalized market-scan candidate boundary after provider parsing.
+ *
+ * Buy/short openings must name a current `marketScan.topCandidates` member. Sell/cover
+ * proposals deliberately bypass this boundary: deterministic exit validation still owns
+ * held-position correctness, and an existing position must remain eligible to exit even
+ * when it falls outside the current scan.
+ */
+export function enforceCandidateSetForOpenings(
+  proposals: TradeProposal[],
+  topCandidates: ReadonlyArray<Pick<MarketQuote, "symbol">>
+): { accepted: TradeProposal[]; rejected: TradeProposal[] } {
+  const candidateSymbols = new Set(topCandidates.map((candidate) => normalizeSymbol(candidate.symbol)));
+  const accepted: TradeProposal[] = [];
+  const rejected: TradeProposal[] = [];
+
+  for (const proposal of proposals) {
+    const isOpening = proposal.side === "buy" || proposal.side === "short";
+    if (isOpening && !candidateSymbols.has(normalizeSymbol(proposal.symbol))) {
+      rejected.push(proposal);
+    } else {
+      accepted.push(proposal);
+    }
+  }
+  return { accepted, rejected };
+}
+
+/**
  * Stamp an opening proposal with the entry anchor (referencePrice) the deterministic entry-drift
  * guard compares against at approval time, and — on brokers with native bracket support (Alpaca),
  * when policy.brokerBracketsEnabled is not disabled — attach broker-held stop-loss/take-profit legs
@@ -4227,6 +4699,12 @@ export function enrichOpeningProposal(
   } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
     next = {
       ...next,
+      // The execution contract must match the receipt. Leaving any LLM-supplied bracket field on
+      // the proposal makes Alpaca route it as a whole-share bracket and reject the fractional
+      // dollar order, even though the rationale says the native bracket was skipped.
+      bracketStopLoss: undefined,
+      bracketTakeProfit: undefined,
+      bracketStopLimit: undefined,
       rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry price; this avoids a broker rejection for sub-share brackets.`
     };
   } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {

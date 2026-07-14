@@ -8,8 +8,32 @@ struct SocraticTradeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MobileControlView()
+            ContentView()
                 .environmentObject(store)
+        }
+    }
+}
+
+struct ContentView: View {
+    @EnvironmentObject private var store: MobileStore
+
+    var body: some View {
+        Group {
+            if !store.hasInitialized {
+                ProgressView()
+                    .onAppear {
+                        Task {
+                            await store.load()
+                            if store.isAuthenticated {
+                                store.startEvents()
+                            }
+                        }
+                    }
+            } else if store.isAuthenticated {
+                MobileControlView()
+            } else {
+                LoginView()
+            }
         }
     }
 }

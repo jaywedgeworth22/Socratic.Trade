@@ -10,6 +10,17 @@ import type { TradeProposal } from "@/lib/types";
 
 export type RedTeamVerdict = NonNullable<TradeProposal["redTeamVerdict"]>;
 
+/** Plain-language outcome of the review itself — deliberately distinct from the later deterministic
+ * policy/broker outcome. "Approved" means the reviewer found no reason to shrink/veto the thesis;
+ * it does not claim the order was placed. */
+export function redTeamVerdictLabel(verdict: RedTeamVerdict): string {
+  if (!verdict.available) return "Review unavailable — held for human approval";
+  if (verdict.rejected && verdict.overridden) return "Objection overridden";
+  if (verdict.rejected || verdict.verdict === "reject") return "Rejected — blocked";
+  if (verdict.verdict === "approve-at-half") return "Approved at half size";
+  return "Approved at full size";
+}
+
 export function redTeamFailureMeta(failureKind: RedTeamVerdict["failureKind"]): { label: string; title: string } {
   const label = describeRedTeamFailureKind(failureKind);
   switch (failureKind) {

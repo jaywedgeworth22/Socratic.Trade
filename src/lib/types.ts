@@ -1,4 +1,5 @@
 import type { DerivedMetrics } from "./derived-metrics";
+import type { FieldObservation, ProviderFailureReceipt } from "./evidence-facts";
 
 export class OrderValidationError extends Error {
   constructor(message: string) {
@@ -844,6 +845,12 @@ export interface TradingPolicy {
    *  fallback — a blank model skips the review with reason "no-model"). */
   learningReviewModel?: string;
   /**
+   * Provider reasoning/thinking effort for the daily learning review. User-level, like the
+   * review model. When unset, the runner derives the role-specific recommendation for the chosen
+   * model; selecting a curated model in Settings persists that recommendation explicitly.
+   */
+  learningReviewReasoningEffort?: LlmReasoningEffort;
+  /**
    * TRIGGER — the review fires when EITHER threshold is met (whichever comes first), capped at one
    * run per UTC day. Both user-level; the review is user-scoped (one run per user per day).
    */
@@ -862,6 +869,11 @@ export interface TradingPolicy {
    */
   llmFallbackModels?: string[];
   /**
+   * Optional ordered list of failover models (e.g. `["gemini-2.5-flash", "claude-3-5-haiku-20241022"]`)
+   * to try if the primary `redTeamLlmModel` fails (timeout, rate limit, or 5xx).
+   */
+  redTeamFallbackModels?: string[];
+  /**
    * The Green Team / proposer's provider-specific reasoning/thinking effort, for models that
    * support it (ignored by models without that knob). Per-team split 2026-07-10: this legacy
    * field is the PROPOSER's; the reviewer has its own `redTeamReasoningEffort` below.
@@ -879,11 +891,13 @@ export interface TradingPolicy {
   holdingHorizon?: HoldingHorizon;
   maxOrderNotional?: number;
   maxOrderPctOfNav?: number;
+  /** Daily opening-order ceiling in fixed dollars. Mutually exclusive with maxDailyPctOfNav. */
   maxDailyNotional?: number;
   /** Hard ceiling on total order notional executed within any rolling 60-minute window. On breach the account auto-reverts strategyAuthority to "propose" and the order is rejected. */
   maxHourlyNotional?: number;
   /** Allow synthetic trailing-stop monitoring to act during extended hours. Default false (regular hours only). */
   allowExtendedHoursSyntheticStops?: boolean;
+  /** Daily opening-order ceiling as a percentage of current portfolio value. Mutually exclusive with maxDailyNotional. */
   maxDailyPctOfNav?: number;
   maxSymbolExposurePct?: number;
   maxSymbolExposureNotional?: number;
@@ -1090,6 +1104,20 @@ export interface TradingPolicy {
   maxFundamentalsAgeSec?: number;
 }
 
+export interface ProposalSizingSnapshot {
+  portfolioValue: number;
+  estimatedNotional: number;
+  estimatedPctOfNav?: number;
+  dailyOpeningCap?: {
+    mode: "pct_nav" | "dollar";
+    configuredValue: number;
+    effectiveNotional: number;
+    pctOfNav?: number;
+  };
+  dailyNotionalUsed?: number;
+  remainingDailyNotional?: number;
+}
+
 export interface TradeProposal {
   symbol: string;
   side: OrderSide;
@@ -1101,6 +1129,14 @@ export interface TradeProposal {
   timeInForce: TimeInForce;
   marketHours: MarketHours;
   rationale: string;
+  /**
+   * The Green Team's original rationale before deterministic sizing/risk receipts and Red Team text
+   * are appended to the legacy `rationale` string. Optional for persisted proposals created before
+   * the narrative split; readers fall back to the pre-Red portion of `rationale`.
+   */
+  greenTeamRationale?: string;
+  /** App-computed sizing arithmetic captured before Red Team review; never model-authored. */
+  sizingSnapshot?: ProposalSizingSnapshot;
   tradeThesisTag: string;
   entryMarketRegime: string;
   /**
@@ -1333,6 +1369,10 @@ export interface SocraticDecisionCase {
   authority: StrategyAuthority;
   thesis: string;
   rationale: string;
+  /** Green Team rationale before deterministic receipts and Red Team review text were appended. */
+  greenTeamRationale?: string;
+  /** App-computed sizing arithmetic captured with the proposal. */
+  sizingSnapshot?: ProposalSizingSnapshot;
   action: string;
   thesisTag?: string;
   regime?: string;
@@ -1418,9 +1458,14 @@ export interface SocraticDecisionTrace {
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "daysToEarnings" | "institutionOwnershipPct" | "nearTheMoneyIv" | "putCallRatio" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian" | "returnOnEquity" | "returnOnAssets" | "revenueGrowth" | "freeCashFlowYield" | "grossProfitMargin" | "congressTradesQuiver" | "insiderTradesQuiver" | "govContractsQuiver" | "lobbyingQuiver" | "patentsQuiver",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "pbRatio" | "shortPercentOfFloat" | "beta" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "daysToEarnings" | "institutionOwnershipPct" | "nearTheMoneyIv" | "putCallRatio" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian" | "returnOnEquity" | "returnOnAssets" | "revenueGrowth" | "freeCashFlowYield" | "grossProfitMargin" | "congressTradesQuiver" | "insiderTradesQuiver" | "govContractsQuiver" | "lobbyingQuiver" | "patentsQuiver",
     string
   >
+>;
+
+/** Optional source-faithful receipts for enriched scalar fields. */
+export type EnrichmentFieldObservations = Partial<
+  Record<keyof EnrichmentSources, FieldObservation<unknown>>
 >;
 
 export interface AnalystRatingDetail {
@@ -1428,6 +1473,8 @@ export interface AnalystRatingDetail {
   label: string;
   counts?: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number };
   mean?: number;
+  /** Canonical upstream source family, used to avoid blending duplicate redistributions. */
+  upstreamFamily?: string;
 }
 
 export interface MarketQuote {
@@ -1518,6 +1565,8 @@ export interface MarketQuote {
   preCongressScore?: number;
   evidenceBulletins?: string[]; // 1-line backend web-source bulletins (congress, insider, etc.)
   sources?: EnrichmentSources;
+  fieldObservations?: EnrichmentFieldObservations;
+  providerFailures?: Record<string, ProviderFailureReceipt>;
 }
 
 export interface MarketScan {
@@ -1591,10 +1640,55 @@ export interface CandidateEvidence {
   asOf?: string; // candidate data freshness (most-recent enrichment timestamp)
   provider?: string; // primary provider
   sources?: EnrichmentSources; // per-field provenance (source attribution)
+  /** Decision-time leave-one-provider-out score estimate. This is shadow telemetry, not a causal
+   *  claim: it removes only fields that provider won in the cascade and does not invent a fallback
+   *  value from a provider that was not retained. */
+  sourceAblations?: SourceAblationReceipt[];
+  /** Provider failures visible during this symbol's enrichment pass. */
+  providerFailures?: Record<string, ProviderFailureReceipt>;
   bulletins?: string[]; // up to 3 web-source evidence bulletins
   /** Backend-derived ratios at decision time (PEG, earnings yield, ROE, payout, $ volume, spread).
    *  Persisted so the learning loop can correlate, e.g., low-PEG entries with realized outcomes. */
   derived?: DerivedMetrics;
+}
+
+export interface SourceAblationReceipt {
+  provider: string;
+  affectedFields: string[];
+  scoringFields: string[];
+  promptOnlyFields: string[];
+  originalScore: number;
+  shadowScore: number;
+  /** originalScore - shadowScore; positive means this source lifted deterministic rank. */
+  scoreDelta: number;
+  method: "leave_winning_fields_out/v1";
+}
+
+export interface SourceCoverageReceipt {
+  provider: string;
+  symbolsCovered: number;
+  symbolCoveragePct: number;
+  fieldsObserved: number;
+  fields: string[];
+  failedSymbols: number;
+  failureKinds: string[];
+}
+
+export interface SourceValueStat {
+  provider: string;
+  outcomes: number;
+  directionalOutcomes: number;
+  chosenOutcomes: number;
+  skippedOutcomes: number;
+  winRate: number;
+  avgReturnPct: number;
+  avgScoreDelta: number;
+  /** Average sign(scoreDelta) * realized return. Positive means the source's rank direction aligned
+   *  with subsequent returns. Observational and selection-biased; never treated as causal. */
+  directionalValuePct: number;
+  directionalAgreementRate: number;
+  fields: string[];
+  learningStatus: "insufficient" | "directional" | "established";
 }
 
 export interface MarketQuoteSummary {
@@ -1654,6 +1748,8 @@ export interface MarketQuoteSummary {
   volume?: number;
   sectorRelStrength?: number;
   sources?: EnrichmentSources;
+  fieldObservations?: EnrichmentFieldObservations;
+  providerFailures?: Record<string, ProviderFailureReceipt>;
 }
 
 export interface MarketDataProviderOptions {
@@ -1995,7 +2091,9 @@ export interface StrategyTuningPatch {
     Pick<
       TradingPolicy,
       | "maxOrderNotional"
+      | "maxOrderPctOfNav"
       | "maxDailyNotional"
+      | "maxDailyPctOfNav"
       | "maxHourlyNotional"
       | "maxSymbolExposurePct"
       | "maxDailyOrders"
@@ -2248,6 +2346,18 @@ export type LearnedContextScope = "private" | "shared";
 export type LearnedContextKind = "pattern" | "decision" | "fact";
 export type LearnedContextOrigin = "chat" | "autonomous" | "ingest";
 export type LearnedContextRiskTier = "fact" | "risk" | "strategy-directive";
+/**
+ * Which decision boundary a lesson is allowed to cross.
+ *
+ * - account: evidence learned from one connected broker account; exact-account retrieval only.
+ * - portfolio: owner-supplied/general context that is safe across the owner's accounts.
+ * - research: an explicitly transfer-tested result that may inform sibling accounts.
+ * - legacy: pre-scoping autonomous data whose account provenance cannot be reconstructed.
+ */
+export type LearnedContextLearningScope = "account" | "portfolio" | "research" | "legacy";
+/** Paper-derived research stays `candidate` until corroborated; only `validated` research is retrievable. */
+export type LearnedContextTransferState = "not_applicable" | "candidate" | "validated" | "rejected";
+export type LearnedContextAccountEnvironment = "paper" | "live";
 
 /** A persisted learned-context row. `supersededBy` non-null means a newer fact replaced it. */
 export interface LearnedContextRow {
@@ -2263,6 +2373,10 @@ export interface LearnedContextRow {
   riskTier: LearnedContextRiskTier;
   confidence: number;
   contributorUserId: string | null;
+  connectedAccountId: string | null;
+  accountEnvironment: LearnedContextAccountEnvironment | null;
+  learningScope: LearnedContextLearningScope;
+  transferState: LearnedContextTransferState;
   assertedAt: string;
   supersededBy: string | null;
   expiresAt: string | null;
@@ -2302,6 +2416,10 @@ export interface LearnedContextPendingRow {
   origin: LearnedContextOrigin;
   /** Only the two human-confirmable tiers are ever queued. */
   riskTier: Exclude<LearnedContextRiskTier, "fact">;
+  connectedAccountId: string | null;
+  accountEnvironment: LearnedContextAccountEnvironment | null;
+  learningScope: LearnedContextLearningScope;
+  transferState: LearnedContextTransferState;
   classifierReason: string | null;
   createdAt: string;
   status: LearnedContextPendingStatus;

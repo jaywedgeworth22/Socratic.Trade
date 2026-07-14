@@ -69,6 +69,17 @@ describe("/api/policy — learningReviewModel blank handling", () => {
 });
 
 describe("/api/policy — learning-review trigger knobs", () => {
+  it("persists a supported learning-review reasoning effort and rejects unknown values", async () => {
+    const { PUT } = await import("../app/api/policy/route");
+    const ok = await PUT(putPolicy({ learningReviewModel: "gpt-5.6-sol", learningReviewReasoningEffort: "high" }));
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).learningReviewReasoningEffort).toBe("high");
+
+    const bad = await PUT(putPolicy({ learningReviewReasoningEffort: "extreme" }));
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain("learningReviewReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.");
+  });
+
   it("bounds learningReviewMinNewLessons and learningReviewMaxWaitDays", async () => {
     const { PUT } = await import("../app/api/policy/route");
     for (const bad of [{ learningReviewMinNewLessons: 0 }, { learningReviewMinNewLessons: 1.5 }, { learningReviewMinNewLessons: "five" }]) {
