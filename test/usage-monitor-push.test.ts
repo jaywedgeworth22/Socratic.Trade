@@ -102,6 +102,7 @@ describe("usage-monitor-push", () => {
     expect(events).toHaveLength(1);
     const e = events[0]!;
     expect(e.sourceApp).toBe("socratic-trade");
+    expect(e.project).toBe("socratic-trade");
     expect(e.environment).toBe("test");
     expect(e.provider).toBe("anthropic");
     expect(e.service).toBe("llm");
@@ -126,6 +127,7 @@ describe("usage-monitor-push", () => {
 
     expect(captured).toHaveLength(1);
     const events = captured[0]!.body.events;
+    expect(events.every((event) => event.project === "socratic-trade")).toBe(true);
     const rag = events.find((e) => e.service === "rag");
     expect(rag).toBeDefined();
     expect(rag!.provider).toBe("voyage");

@@ -51,6 +51,11 @@ export async function register() {
   const { startScheduler } = await import("./src/lib/scheduler");
   startScheduler();
 
+  // Reconstruct crash-lost outbound usage events from the durable LLM/RAG ledgers. No-op unless
+  // the existing Usage Monitor base URL + ingest token are configured.
+  const { startUsageMonitorReplay } = await import("./src/lib/usage-monitor-replay");
+  startUsageMonitorReplay();
+
   // Outbound streaming workers (opt-in; no-op unless enabled + keyed).
   const { startStreams } = await import("./src/lib/streams");
   startStreams();
