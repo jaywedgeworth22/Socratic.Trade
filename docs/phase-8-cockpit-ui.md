@@ -85,6 +85,11 @@
 > cannot show “Filled” while its accounting receipt remains pending; those ledgers advance together.
 > A broker cancellation after partial execution is shown as a completed partial execution—not a
 > total rejection—and current partial quantity enters exposure immediately.
+>
+> 2026-07-14: the decision trace treats the structured Red Team verdict card as the
+> canonical explanation. Exact generic dissent copies and known generated policy
+> wrappers around that same reason are hidden, while genuinely distinct policy
+> objections and override context remain visible.
 
 
 This phase restructures the dashboard from a long vertical page into a

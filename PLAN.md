@@ -131,6 +131,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-14 - Decision-detail dissent deduplication (CODEX).** No roadmap scope
+> change. `/console/decisions/[id]` now shows a structured Red Team verdict once,
+> filters only exact/generated copies of that explanation from the generic dissent
+> list, and preserves distinct policy or override objections. See
+> `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
+
 > **2026-07-12 - SEC/RAG 1,000-stock high-yield backfill architecture (CODEX).** The approved planning
 > direction is “archive broadly, embed selectively”: catalog all SEC filings; preserve selected immutable
 > originals; keep XBRL, insider, ownership, and financing facts structured; embed sectioned narrative, tables,
