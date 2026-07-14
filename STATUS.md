@@ -164,6 +164,36 @@ Verify trio passed. Codex threads fixed, resolved. Auto-merge remains enabled.
 Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
 
 Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="right"`). Passed verification gate (tsc, lint, test, build); PR #1575 merged to `main` as `07c2da3f` and auto-deploy verification is pending. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 is open, and auto-merge is armed. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+## 2026-07-14 — Local Infisical machine-identity bootstrap wiring (CODEX, branch `codex/infisical-bootstrap-wiring`)
+
+An isolated worktree closes the bootstrap gap without touching the AG checkout or transcript lane.
+Resolution is process env > `.env.local` > fixed `~/.secrets/global-api-keys`; a complete machine
+pair beats a stale token within a source. The broad file accepts only Socratic `INFIISICAL_ST_*` /
+corrected `INFISICAL_ST_*` and `INFISICAL_CT_SHARED_*`, while generic names remain local/process
+only. Descriptor-level no-follow, identity, ownership, mode, size, duplicate-assignment, and inert
+managed-only parsing checks fail closed without exposing values.
+
+P1/P2 remediation now removes long-lived credentials from the runner immediately, clears auth
+objects after token mint/copy, and gives probe/login/export/watch CLI processes only a minimal
+allowlisted environment. Normal/overlay paths export then launch directly, so ambient provider and
+cross-app secrets never transit a third-party CLI. The argv-safe final wrapper masks every bootstrap
+name after Infisical injection; actual `@next/env` tests prove neither remote values nor `.env.local`
+can restore them, including watch mode. Ambient `GLOBAL_API_KEYS_FILE` is ignored and scrubbed.
+Node 24 focused verification is green: 33/33 adversarial resolver/runner tests, scoped ESLint with
+zero errors, standalone TypeScript, JS/Bash syntax, ASCII, and diff-check. Coverage includes CLI
+domain routing, JSON multiline/quote/backslash fidelity, signal forwarding, argv separators, Node
+preload neutralization/restoration, runtime masks, conflicting aliases, shell blocks/heredocs, and
+NUL rejection without value echo. The branch is cleanly rebased on `origin/main@acd67a5c`. The first
+clean install after the interrupted session exposed a local npm Git-cache artifact: the valid shared
+package had only declarations staged and therefore caused broad module-resolution failures. Fresh
+isolated v1.6.0/current-main installs built all CJS/ESM/type artifacts; reinstalling this worktree with
+a disposable cache repaired the graph. The final exact-tree gate passes lint with 0 errors / 459
+inherited warnings, standalone TypeScript, 369 files / 4,161 tests, and a production build with the
+real TypeScript phase and all 32 static pages. No real secret file was read in this remediation unit
+and no Infisical/provider call, push, merge, deploy, or production mutation occurred. Rollout:
+`docs/rollouts/2026-07-14-infisical-bootstrap-wiring.md`.
+
 ## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
 
 An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent

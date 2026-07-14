@@ -1,5 +1,25 @@
 # Active Implementation Plan
 
+> **2026-07-14 - Local Infisical bootstrap wiring (CODEX).** Resolve the Socratic and shared
+> machine identities before the Infisical runner authenticates, with process env > `.env.local` >
+> secure global-file precedence; support both the owner-provided `INFIISICAL_ST_*` spelling and its
+> corrected alias plus `INFISICAL_CT_SHARED_*`; normalize only in process memory; default known
+> nonsecret project IDs without forcing a shared overlay; reject incomplete pairs; and prove no
+> unrelated global key or long-lived credential reaches the app child. Review found three P1s and
+> three P2s: same-source token-before-pair selection, Next reload reintroduction, runner-lifetime
+> credential retention, broad CLI inheritance, ambient path override, and overbroad global aliases.
+> All are remediated with pair-first resolution, immediate auth scrubbing, minimal CLI environments,
+> a fixed global path, a narrow ST/CT-shared allowlist, and an argv-safe post-injection wrapper whose
+> real `@next/env` regressions are green in normal and watch paths. Descriptor-level file hardening
+> and managed-only inert parsing also remain green. JSON export preserves exact values, CLI domain
+> routing remains explicit, preload hooks execute only after masking, and signal/argv/NUL/conflicting
+> alias/shell-block regressions are green. The branch is rebased on `origin/main@acd67a5c`; a force-quit-
+> contaminated npm Git-dependency cache initially installed declarations without runtime bundles, but
+> isolated installs proved the immutable shared-package release healthy and a disposable-cache reinstall
+> restored all CJS/ESM/type artifacts. The exact-tree Node 24 gate is green: lint 0 errors / 459 inherited
+> warnings, TypeScript, 369 files / 4,161 tests, and a production build with all 32 static pages. Publish
+> through `scripts/land.sh`, require hosted verification, then verify the automatic production rollout.
+> See `docs/rollouts/2026-07-14-infisical-bootstrap-wiring.md`.
 > **2026-07-14 - Final open-PR reconciliation (CODEX).** Reconcile PR #1589 with current
 > `origin/main`, correct stale merged/closed PR and effort-board state, resolve all review threads,
 > run the documentation branch through the canonical Node 24 gate, update the existing PR head

@@ -10,21 +10,88 @@ projects / 3 envs / unlimited secrets). It's open-source, so you can self-host l
 change. Infisical is the **only** secrets-manager path the app supports.
 
 ## How it works
-`npm run start:secrets` → `scripts/infisical-run.mjs` → `infisical run --env <INFISICAL_ENV> --path
-<INFISICAL_PATH> [--projectId …] -- next start`. The Infisical CLI authenticates, pulls the project's
-secrets, and injects them into the process env **before** Next boots. The runner also sets
-`SECRETS_SOURCE=infisical`.
+
+`npm run start:secrets` starts `scripts/infisical-run.mjs`. In the normal non-watch path, the runner
+authenticates, calls `infisical export` with a minimal CLI-only environment, merges the exported
+values over the app's ambient environment, and starts the requested command through
+`scripts/infisical-app-child.mjs`. Shared-overlay mode exports both projects the same way and lets the
+app project win overlaps. `INFISICAL_WATCH=true` is the exception: the Infisical CLI owns its watch
+loop and starts the same final wrapper after each injection. Every path sets
+`SECRETS_SOURCE=infisical` before Next boots.
+
+Exports use the CLI's JSON format rather than reparsing dotenv text, preserving multiline values,
+quotes, backslashes, and whitespace exactly. Invalid JSON shapes, environment entries, or NUL bytes
+fail with raw CLI output suppressed.
 
 **Auth (per project):** the runner authenticates the machine identity with its **Client ID + Client
 Secret** (universal auth, long-lived) — set `INFISICAL_CLIENT_ID` + `INFISICAL_CLIENT_SECRET` and it
 exchanges them for a fresh access token on every launch via `infisical login --method=universal-auth
-… --plain`, then passes that token to `infisical run`/`export` (nothing expires between deploys). A
+… --plain`, then passes that token only to the required `export` or watch operation (nothing expires
+between deploys). A
 pre-minted `INFISICAL_TOKEN` (a short-lived JWT) is still accepted as a fallback. **The Client Secret
 is not the access token** — pasting a 64-char Client Secret into `INFISICAL_TOKEN` is the "malformed
-token" 403; use the Client ID + Secret pair instead.
+token" 403; use the Client ID + Secret pair instead. Within one precedence source, a complete Client
+ID + Secret pair wins over a stale token.
 
-Precedence: injected secrets are in `process.env` before Next loads `.env.local`, and Next never
-overrides an already-set var — so the manager always wins over any leftover `.env.local`.
+Precedence: exported/injected app secrets are in `process.env` before Next loads `.env.local`, and
+Next does not override an already-defined variable. The final wrapper also installs empty masks for
+every bootstrap credential name, so a stale `.env.local` or a credential-named Infisical secret
+cannot restore a machine credential inside the app.
+
+### Local machine-identity bootstrap
+
+`scripts/infisical-run.mjs` must authenticate before Next starts, so it now resolves its own small
+bootstrap set first. Precedence is explicit process environment, then `.env.local`, then the
+owner-local `~/.secrets/global-api-keys` file. Only recognized Infisical bootstrap assignments are
+parsed as inert dotenv data; quote state prevents key-looking lines inside unrelated multiline
+values from being reinterpreted; indented/unrelated one-line data and provider/API keys are ignored
+and never copied into `process.env` or child processes. The file is an assignment store, not a shell
+program: multiline shell blocks and heredocs fail closed rather than being approximately parsed.
+
+The generic runner names remain `INFISICAL_CLIENT_ID` + `INFISICAL_CLIENT_SECRET` for the app and
+`INFISICAL_SHARED_CLIENT_ID` + `INFISICAL_SHARED_CLIENT_SECRET` for the shared overlay when supplied
+through the process environment or `.env.local`. The shared machine file is narrower: it accepts only
+`INFIISICAL_ST_*` (the owner-provided extra-I spelling) or corrected `INFISICAL_ST_*` for this app,
+and `INFISICAL_CT_SHARED_*` for the shared project. It does not import generic app/shared names,
+tokens, project IDs, runtime controls, provider keys, or cross-app credentials from that broad file.
+The resolver normalizes the selected pair in memory only, never prints/copies a value, and refuses a
+higher-precedence half-pair instead of combining fields across files.
+
+The runner snapshots the selected identity, immediately removes every bootstrap credential from its
+own long-lived `process.env`, and clears each auth object after its synchronous token mint/copy. The
+CLI probe/login/export environment is a small OS/network allowlist plus only the credential needed by
+that operation; ambient provider, GitHub, Slack, broker, and cross-app secrets never transit the
+Infisical CLI. Raw login/export failure output is suppressed because a CLI could echo its
+environment. Normal and overlay application children still receive their ambient app environment
+directly from the trusted runner plus Infisical exports. Watch mode intentionally receives only the
+small runtime allowlist plus Infisical-managed values, so credentials needed by a watched app must be
+stored in Infisical rather than inherited from the shell. `INFISICAL_DOMAIN` is retained explicitly
+for EU/self-hosted routing while remaining masked from the final app.
+
+Before starting the Node final wrapper, `/usr/bin/env` removes `NODE_OPTIONS`, `BASH_ENV`, and `ENV`
+so injected preload hooks cannot execute before bootstrap masking. The wrapper then restores the
+intended `NODE_OPTIONS` only after installing every empty mask, preserves command argv without shell
+evaluation, and forwards termination signals through the process chain. Normal export mode safely
+restores the manager-winning `NODE_OPTIONS`; watch mode cannot inspect dynamic injected values before
+the CLI spawns its child, so it deliberately discards an Infisical-injected `NODE_OPTIONS` and
+restores only the pre-Infisical host value after masking.
+
+The global path is fixed at `~/.secrets/global-api-keys`; an ambient `GLOBAL_API_KEYS_FILE` override
+is ignored and scrubbed (tests can dependency-inject a temporary path directly into the resolver).
+Before reading, the resolver checks `lstat`, opens with no-follow semantics, and verifies the opened
+descriptor still identifies the same current-user-owned regular file. It rejects live/broken
+symlinks, directories/devices/FIFOs, group/other permission bits, duplicate managed assignments, and
+files over 1 MiB. Managed assignments are parsed with Node's dotenv parser as inert data; quotes,
+command substitutions, backticks, semicolons, and other shell-looking text are never sourced or
+evaluated.
+
+The Socratic.Trade project defaults to `39d93bb7-76f9-498c-8b50-a7def52e072f`. The shared project
+defaults to `18f563a3-9c88-454c-96eb-28fc9678f3ba` only when shared credentials are actually present
+(or an operator explicitly sets `INFISICAL_SHARED_PROJECT_ID`), so app-only setups do not
+accidentally enable an inaccessible overlay. A shared overlay without an explicit app identity/token
+fails before either project is fetched. `scripts/cloud-setup.sh` runs a value-free bootstrap
+check after seeding local defaults; a missing identity remains valid for keyless local UI work, but
+any recognized incomplete pair fails closed before an Infisical CLI call.
 
 ## Enforcement (forcing the manager)
 Set `REQUIRE_SECRETS_MANAGER=1` on the box. At startup (`instrumentation.ts` →
