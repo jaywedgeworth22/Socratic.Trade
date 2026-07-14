@@ -458,6 +458,42 @@ Round-10 touched `src/lib/data-providers.ts`, `src/lib/web-sources/fmp-transcrip
 and both effort-log mirrors. No FMP/provider request, Infisical read/write, vector/corpus/R2 mutation,
 activation, push, PR, deployment, or production write occurred.
 
+### Round-11 landing review and managed-commit cardinality correction
+
+The independent landing pass found one release-blocking flaw missed by Round 10. `storeContexts` may
+legitimately trim a document set to a nonzero prefix when the rolling Voyage text budget or Pinecone
+write-unit fuse has only partial capacity. The managed commit previously compared `indexed` only with
+that already-trimmed `documentsToStore` array, then invoked callbacks that persisted all original chunk
+receipts and promoted the written prefix to `ingest_state=committed`. The source correctly returned
+`documentComplete:false`, but the prefix could still match the falsely committed relational receipt and
+enter retrieval before a complete retry.
+
+`storeDocument` now passes its immutable original occurrence count as `expectedRecordCount`.
+`storeContexts` invokes neither receipt persistence nor provider promotion unless the post-budget
+document set and successful upsert count both equal that exact count. A nonzero partial prefix therefore
+remains provider-`pending`, has no local `chunk_occurrences`, fails committed-receipt retrieval, and keeps
+the source document retryable. Regression coverage exercises both the ingest-text budget and Pinecone
+write-unit budget on generic SEC documents; it also restores capacity and proves the deterministic retry
+commits the exact complete set.
+
+Verification used Node 24.18.0 / npm 11.16.0 and no live provider or production state:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/vector-db-document-receipts.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit --pretty false
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run build
+git diff --check
+```
+
+Results: exact receipt regression 6/6; related focused set 6 files / 106 tests; lint 0 errors / 458
+inherited warnings; TypeScript clean; full suite 369 files / 4,147 tests; production build clean with
+`Running TypeScript`, `Finished TypeScript`, and 32 static pages; diff-check clean. A scoped hostile
+re-review found no remaining P0/P1/P2 in the managed-vector budget/receipt/retry path. The remediation
+remains local, uncommitted, and unpushed for root review. No PR, merge, deploy, flag change, FMP/provider
+call, corpus mutation, or Infisical mutation occurred; the activation blockers below are unchanged.
+
 ## Follow-ups / enablement blockers
 
 - Upgrade to, or otherwise obtain, a plan that exposes both `/stable/earning-call-transcript-dates`

@@ -29,6 +29,13 @@
 > hostile review found no remaining P0/P1/P2 code issue. This lane is locally code-ready; no push or PR is
 > authorized yet, and activation/backfill remains blocked on an entitled plan, commercial rights, and the
 > shared authority. A future PR, merge/autodeploy, and live verification require explicit follow-through.
+> Round-11 landing review found and locally remediated one missed managed-commit cardinality defect:
+> nonzero ingest/write-budget prefixes can no longer commit full-document receipts or become retrievable.
+> The immutable original occurrence count now gates receipt persistence and provider promotion; partial
+> prefixes remain pending with zero receipts and a later SEC retry commits the exact full set. Node 24:
+> exact regression 6/6, related focused tests 106/106, lint 0 errors / 458 inherited warnings, TypeScript
+> clean, 369 files / 4,147 tests, production build with real TypeScript and 32 static pages, diff-check
+> clean. Hostile re-review found no remaining P0/P1/P2 in scope. Root review is pending; still no push/PR.
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
 > TypeScript 5 compiler-API arrangement with one supported TypeScript 6.0.3 graph; remove the
 > postinstall mutation, module-resolution hooks, Next override, and `ignoreBuildErrors` bypass;

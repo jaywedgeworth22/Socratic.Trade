@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.DATABASE_URL = `file:${join(tmpdir(), `socratic-vector-receipts-${randomUUID()}.db`)}`;
 
@@ -72,6 +72,15 @@ afterAll(() => {
     "VECTOR_EMBED_BATCH_DELAY_MS",
     "VECTOR_ENABLE_RERANK",
     "HYBRID_RETRIEVAL"
+  ]) delete process.env[key];
+});
+
+afterEach(() => {
+  for (const key of [
+    "RAG_INGEST_BUDGET_ENABLED",
+    "RAG_INGEST_MAX_TEXTS_PER_DAY",
+    "RAG_PINECONE_WRITE_BUDGET_ENABLED",
+    "RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY"
   ]) delete process.env[key];
 });
 
@@ -158,6 +167,108 @@ describe("storeDocument receipt transaction", () => {
     expect(mocks.embed).toHaveBeenCalledTimes(1);
     expect(mocks.upsert).toHaveBeenCalledTimes(4);
     warn.mockRestore();
+  });
+
+  it("keeps a nonzero ingest-budget prefix pending and writes no full-document receipts", async () => {
+    const { getDb } = await import("../src/lib/db");
+    const { filterMatchesForCommittedReceipts, storeDocument } = await import("../src/lib/vector-db");
+    const db = getDb();
+    const accession = `SEC-INGEST-BUDGET:${randomUUID()}`;
+    const nonce = randomUUID();
+    db.exec("DELETE FROM rag_usage");
+    mocks.embed.mockClear();
+    mocks.upsert.mockClear();
+    process.env.RAG_INGEST_BUDGET_ENABLED = "on";
+    process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "1";
+    process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED = "off";
+
+    const document = {
+      text: `${nonce}-a ${nonce}-b ${nonce}-c ${nonce}-d ${nonce}-e ${nonce}-f ${nonce}-g ${nonce}-h`,
+      doc_id: accession,
+      ticker: "AAPL",
+      title: "AAPL budget-limited 10-K",
+      doc_type: "10-k",
+      source: "sec-edgar",
+      published_at: "2026-07-14T12:00:00.000Z"
+    };
+    const stored = await storeDocument(document, "local", { maxTokens: 4, overlapRatio: 0 });
+
+    expect(stored).toMatchObject({
+      attempted: 2,
+      indexed: 1,
+      budgetSkipped: 1,
+      documentComplete: false
+    });
+    expect(mocks.embed).toHaveBeenCalledTimes(1);
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+    const pendingRecord = mocks.upsert.mock.calls[0]![0].records[0];
+    expect(pendingRecord.metadata.ingest_state).toBe("pending");
+    expect(filterMatchesForCommittedReceipts([{ ...pendingRecord, score: 0.9 }])).toEqual([]);
+
+    const commit = db.prepare(`
+      SELECT id, state, expected_vectors FROM vector_ingest_commits WHERE accession = ?
+    `).get(accession) as { id: string; state: string; expected_vectors: number };
+    expect(commit).toMatchObject({ state: "pending", expected_vectors: 2 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM chunk_occurrences WHERE commit_id = ?").get(commit.id))
+      .toEqual({ count: 0 });
+
+    // Once capacity returns, the deterministic retry must materialize and commit the complete set.
+    db.exec("DELETE FROM rag_usage");
+    process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "2";
+    const retried = await storeDocument(document, "local", { maxTokens: 4, overlapRatio: 0 });
+    expect(retried).toMatchObject({ attempted: 2, indexed: 2, documentComplete: true });
+    expect(mocks.embed).toHaveBeenCalledTimes(2);
+    expect(mocks.upsert).toHaveBeenCalledTimes(3);
+    expect(db.prepare("SELECT state FROM vector_ingest_commits WHERE id = ?").get(commit.id))
+      .toEqual({ state: "committed" });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count FROM chunk_occurrences
+      WHERE commit_id = ? AND receipt_state = 'committed'
+    `).get(commit.id)).toEqual({ count: 2 });
+  });
+
+  it("keeps a nonzero write-unit-budget prefix pending and preserves generic SEC retry semantics", async () => {
+    const { getDb } = await import("../src/lib/db");
+    const { filterMatchesForCommittedReceipts, storeDocument } = await import("../src/lib/vector-db");
+    const db = getDb();
+    const accession = `SEC-WRITE-BUDGET:${randomUUID()}`;
+    const nonce = randomUUID();
+    db.exec("DELETE FROM rag_usage");
+    mocks.embed.mockClear();
+    mocks.upsert.mockClear();
+    process.env.RAG_INGEST_BUDGET_ENABLED = "off";
+    process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED = "on";
+    // One managed record is ~6 estimated WUs with current metadata; two exceed this fuse.
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "8";
+
+    const stored = await storeDocument({
+      text: `${nonce}-a ${nonce}-b ${nonce}-c ${nonce}-d ${nonce}-e ${nonce}-f ${nonce}-g ${nonce}-h`,
+      doc_id: accession,
+      ticker: "MSFT",
+      title: "MSFT budget-limited 10-Q",
+      doc_type: "10-q",
+      source: "sec-edgar",
+      published_at: "2026-07-14T12:00:00.000Z"
+    }, "local", { maxTokens: 4, overlapRatio: 0 });
+
+    expect(stored).toMatchObject({
+      attempted: 2,
+      indexed: 1,
+      writeUnitBudgetSkipped: 1,
+      documentComplete: false
+    });
+    expect(mocks.embed).toHaveBeenCalledTimes(1);
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+    const pendingRecord = mocks.upsert.mock.calls[0]![0].records[0];
+    expect(pendingRecord.metadata.ingest_state).toBe("pending");
+    expect(filterMatchesForCommittedReceipts([{ ...pendingRecord, score: 0.9 }])).toEqual([]);
+
+    const commit = db.prepare(`
+      SELECT id, state, expected_vectors FROM vector_ingest_commits WHERE accession = ?
+    `).get(accession) as { id: string; state: string; expected_vectors: number };
+    expect(commit).toMatchObject({ state: "pending", expected_vectors: 2 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM chunk_occurrences WHERE commit_id = ?").get(commit.id))
+      .toEqual({ count: 0 });
   });
 
   it("requires the complete provider vector set before reconciliation can finalize a commit", async () => {

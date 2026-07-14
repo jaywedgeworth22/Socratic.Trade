@@ -246,6 +246,18 @@ finding across durable provider dispatch/outbox, managed-vector two-phase receip
 immutable transcript/PIT versions, operator scope, rights inventory/purge, scheduler gating, usage replay,
 or account deletion. The lane is locally code-ready but remains unpushed with no PR.
 
+Round-11 landing review corrected one managed-vector cardinality flaw missed by Round 10. A nonzero
+ingest-text or Pinecone write-unit budget could shrink `documentsToStore` to a prefix, while the managed
+commit compared the successful upsert count only with that shrunken set and then persisted/promoted the
+full source-document receipt set. `storeDocument` now supplies the immutable full occurrence count, and
+receipt persistence plus provider promotion require both the post-budget set and successful upsert count
+to equal it. Partial prefixes stay provider-`pending`, have no local occurrence receipts, fail retrieval,
+and a later deterministic SEC retry commits the complete document when capacity returns. Exact regression
+coverage is 6/6 and the related focused set is 106/106. The repeated ordered Node 24 gate is green: lint
+0 errors / 458 inherited warnings; TypeScript clean; 369 files / 4,147 tests; production build clean with
+the real TypeScript phase and 32 static pages; diff-check clean. Scoped hostile re-review found no remaining
+P0/P1/P2. The remediation remains local and unpushed for root review; no PR exists.
+
 Production activation/backfill remains gated on an entitled transcript plan, confirmed commercial
 persistence/embedding/display rights, and one genuinely shared cross-app transactional quota authority;
 matching `PROVIDER_QUOTA_AUTHORITY_ID` strings on separate databases is insufficient. No FMP/provider,

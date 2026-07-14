@@ -1525,6 +1525,8 @@ export interface StoreContextsOptions {
   /** Internal two-phase commit used by storeDocument. Pending records are first upserted, then this
    * exact local receipt callback runs, then the same records are re-upserted as committed. */
   managedCommit?: {
+    /** Full source-document cardinality. Budget/dedup filtering must never shrink this commit set. */
+    expectedRecordCount: number;
     persistReceipts: () => void;
     markCommitted: () => void;
   };
@@ -1971,7 +1973,8 @@ export async function storeContexts(
     if (
       options?.managedCommit &&
       rejectedInvalidEmbeddings === 0 &&
-      indexed === documentsToStore.length
+      documentsToStore.length === options.managedCommit.expectedRecordCount &&
+      indexed === options.managedCommit.expectedRecordCount
     ) {
       assertVectorStoreLease(options.leaseGuard);
       try {
@@ -2273,6 +2276,7 @@ export async function storeDocument(
     reuseExactEmbeddings: true,
     leaseGuard: options?.leaseGuard,
     managedCommit: {
+      expectedRecordCount: occurrenceDescriptors.length,
       persistReceipts: () => persistDocumentReceipts(chunkHashes, occurrencesToRecord, commitId),
       markCommitted: () => {
         if (typeof dbModule.markVectorCommitCommitted === "function") {
