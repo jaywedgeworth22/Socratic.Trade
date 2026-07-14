@@ -1,6 +1,23 @@
 # Current Status
 
-## 2026-07-14 — Final-size Red review and lifecycle truth (CODEX, branch `codex/account-relative-risk-review-fixes`)
+## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle (PR #1587)
+
+Latest autofix on PR #1587: two codex review findings fixed and pushed, one
+architectural question deferred to the maintainer.
+
+**Fixed:**
+- P2 — sync `draftMode` on account switch: `useEffect` now resets the cap-mode
+  selector when `policyMode` changes, preventing first-keystroke unit flip.
+- P1 — keep unpriced fill growth pending: `reconciledFillStatus` now checks
+  `merged.unresolvedGrowth` before returning `"filled"`, so a broker snapshot
+  with larger quantity but no price stays `partially_filled`.
+
+**Deferred:**
+- P1 — final-size holds vs sell-to-fund ordering: posted a comment asking the
+  maintainer how to proceed.
+
+Verify gate: `npx tsc --noEmit` clean, all 4124 tests pass, `npm run build` clean.
+Auto-merge enabled via `--auto`.
 
 PR #1561 merged as `3e105e17` and production was verified on that exact SHA with one healthy
 container, zero restarts, current scheduler/DB/Litestream checks, and roughly 358 MiB runtime
