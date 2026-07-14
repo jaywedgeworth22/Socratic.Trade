@@ -220,6 +220,10 @@ npm run build
 
 git diff --check
 # passed
+
+# Current-main landing gate and ready PR creation
+bash scripts/land.sh --pr-title "Harden account-relative risk and broker lifecycle truth"
+# passed: TypeScript, 368 files / 4,124 tests, production build; opened ready PR #1587
 ```
 
 ## Follow-ups

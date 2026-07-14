@@ -47,10 +47,11 @@
 > closed: unpriced broker receipts store zero rather than estimates, cumulative execution is
 > monotonic, replacement partials remain refId-recoverable, and the active replacement index is
 > user-scoped. Current `main@f331b28a` is integrated and independent re-review reports no P0-P2
-> findings. The pre-merge ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
+> findings. The ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
 > standalone TypeScript clean, 368 files / 4,124 tests, and a production build with the real
-> TypeScript phase plus 32 static pages. Run the current-main `scripts/land.sh` gate, open a ready
-> PR, merge after hosted verification, and verify the exact production release.
+> TypeScript phase plus 32 static pages. `scripts/land.sh` repeated current-main TypeScript, all
+> 4,124 tests, and the build before opening ready PR #1587. Merge after hosted verification and
+> verify the exact production release.
 > See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
 > `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 > Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
