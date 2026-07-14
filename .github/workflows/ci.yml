@@ -209,15 +209,42 @@ jobs:
                 ;;
             esac
           fi
+      - name: Select the supported Node 24 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          node24_bin="/opt/homebrew/opt/node@24/bin"
+          if [ ! -x "$node24_bin/node" ]; then
+            echo "::error::Node 24 is missing at $node24_bin/node; failing self-hosted lane so hosted Node 24 can arbitrate."
+            exit 1
+          fi
+          version="$("$node24_bin/node" -p 'process.versions.node')"
+          case "$version" in
+            24.*) ;;
+            *)
+              echo "::error::Expected Node 24 at $node24_bin/node, found v$version."
+              exit 1
+              ;;
+          esac
+          echo "$node24_bin" >> "$GITHUB_PATH"
+          echo "Selected Node v$version from $node24_bin."
       - name: Fail fast if the runner box is not sane
         shell: bash
         run: |
           command -v node >/dev/null 2>&1 || { echo "::error::node missing on the self-hosted runner — failing fast (hosted re-run will cover this)."; exit 1; }
-          echo "node: $(node -v)"
+          version="$(node -p 'process.versions.node')"
+          case "$version" in
+            24.*) ;;
+            *)
+              echo "::error::verify-self requires Node 24.x, found v$version."
+              exit 1
+              ;;
+          esac
+          echo "node: v$version"
       - uses: actions/checkout@v4
-      # NOTE: deliberately NO actions/setup-node here. The production Mac uses its system
-      # node (same as deploy.yml), and setup-node's npm cache post-action wedges on this
-      # long-lived self-hosted runner (see docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md).
+      # NOTE: deliberately NO actions/setup-node here. The self-hosted Mac uses the Homebrew
+      # Node 24 installation selected above; setup-node's npm cache post-action wedges on
+      # this long-lived runner (see docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md).
       - name: Restore Next.js build cache
         # runner.os = macOS here, so this is a separate cache namespace from the Linux
         # lineage — macOS restores never poison Linux builds and vice versa.
