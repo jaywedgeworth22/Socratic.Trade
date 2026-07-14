@@ -48,6 +48,12 @@ invariants, and residual gaps.
 - Reject, unavailable, or broker-unplaceable half-size results hold the final broker-adjusted order
   for one explicit owner decision. That second approval is stamped and audited as an override
   without recursively rerunning Red. Risk-reducing exits remain exempt.
+- Sell-to-fund planning cannot run ahead of that decision. Every otherwise autonomous opening is
+  correlation-gated, broker-reviewed, minimum-adjusted, exact-size Red-reviewed, and
+  policy/override-preflighted before its notional can request a funding sale. Correlation-dropped,
+  broker-unplaceable, human-held, and non-funding policy-blocked openings contribute zero demand;
+  the intended cumulative buying-power shortfall remains fundable. Placement consumes the cached
+  exact broker shape rather than rerunning a review that could create a post-sale hold.
 - Human-review reasons are independent. A later Red approval clears only the superseded Red hold,
   never rationale-collapse or owner-preference holds.
 - Before any autonomous broker submission, the durable `trade_proposals` intent and initial

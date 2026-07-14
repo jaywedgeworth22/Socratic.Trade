@@ -5,12 +5,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { BrokerGateway, MarketQuote, MarketScan } from "../src/lib/types";
 
-const { debateProposal, reviewEquityOrder, placeEquityOrder, rationaleDiversityState, brokerFailureState } = vi.hoisted(() => ({
+const { debateProposal, reviewEquityOrder, placeEquityOrder, rationaleDiversityState, brokerFailureState, accountState, marketState } = vi.hoisted(() => ({
   debateProposal: vi.fn(),
   reviewEquityOrder: vi.fn(),
   placeEquityOrder: vi.fn(),
   rationaleDiversityState: { collapsed: false },
-  brokerFailureState: { placementAttempted: false, ordersUnreachable: false }
+  brokerFailureState: { placementAttempted: false, ordersUnreachable: false },
+  accountState: {
+    buyingPower: 100,
+    cash: 100,
+    positions: [] as Array<{ symbol: string; quantity: number; averageCost: number; marketValue: number }>
+  },
+  marketState: { symbols: ["AAPL"] }
 }));
 
 vi.mock("../src/lib/red-team", async (importOriginal) => {
@@ -47,26 +53,26 @@ vi.mock("../src/lib/market", async (importOriginal) => {
     ...actual,
     scanMarket: async (): Promise<MarketScan> => {
       const asOf = new Date().toISOString();
-      const quote: MarketQuote = {
-        symbol: "AAPL",
-        price: 10,
-        bid: 9.99,
-        ask: 10,
+      const quotes: MarketQuote[] = marketState.symbols.map((symbol) => ({
+        symbol,
+        price: symbol === "AAPL" ? 10 : 1,
+        bid: symbol === "AAPL" ? 9.99 : 1,
+        ask: symbol === "AAPL" ? 10 : 1,
         volume: 1_000_000,
         intradayChangePct: 0.5,
         positionMarketValue: 0,
         score: 80,
         provider: "test-scan",
         asOf
-      };
+      }));
       return {
         source: "test-scan",
         generatedAt: asOf,
-        scannedSymbols: 1,
-        returnedQuotes: 1,
-        topCandidates: [quote],
-        sectorBySymbol: { AAPL: "Technology" },
-        quotesBySymbol: { AAPL: quote },
+        scannedSymbols: quotes.length,
+        returnedQuotes: quotes.length,
+        topCandidates: quotes,
+        sectorBySymbol: Object.fromEntries(quotes.map((quote) => [quote.symbol, "Technology"])),
+        quotesBySymbol: Object.fromEntries(quotes.map((quote) => [quote.symbol, quote])),
         warnings: []
       };
     }
@@ -81,19 +87,27 @@ function gateway(): BrokerGateway {
     getPortfolio: async () => ({
       accountNumber: ACCOUNT,
       totalMarketValue: 100,
-      buyingPower: 100,
+      buyingPower: accountState.buyingPower,
       equityMarketValue: 0,
       optionMarketValue: 0,
-      cash: 100
+      cash: accountState.cash
     }),
-    getEquityPositions: async () => [],
+    getEquityPositions: async () => accountState.positions,
     getEquityOrders: async () => {
       if (brokerFailureState.placementAttempted && brokerFailureState.ordersUnreachable) {
         throw new Error("broker unreachable after placement timeout");
       }
       return [];
     },
-    getEquityQuotes: async () => ({ AAPL: { symbol: "AAPL", bid: 9.99, ask: 10, asOf: new Date().toISOString() } }),
+    getEquityQuotes: async (_account, symbols) => Object.fromEntries(symbols.map((symbol) => [
+      symbol,
+      {
+        symbol,
+        bid: symbol === "AAPL" ? 9.99 : 1,
+        ask: symbol === "AAPL" ? 10 : 1,
+        asOf: new Date().toISOString()
+      }
+    ])),
     getEquityTradability: async (_account, symbols) =>
       Object.fromEntries(symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])),
     reviewEquityOrder,
@@ -117,28 +131,30 @@ beforeEach(() => {
   rationaleDiversityState.collapsed = false;
   brokerFailureState.placementAttempted = false;
   brokerFailureState.ordersUnreachable = false;
+  accountState.buyingPower = 100;
+  accountState.cash = 100;
+  accountState.positions = [];
+  marketState.symbols = ["AAPL"];
 });
 
-function stubGreenProposalResponse(): void {
+function stubGreenProposals(proposals: Array<{ symbol: string; dollarAmount: number }>): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
     if (String(url).includes("api.openai.com")) {
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
-            proposals: [
-              {
-                symbol: "AAPL",
+            proposals: proposals.map((proposal) => ({
+                symbol: proposal.symbol,
                 side: "buy",
                 type: "market",
-                dollarAmount: 0.25,
+                dollarAmount: proposal.dollarAmount,
                 timeInForce: "gfd",
                 marketHours: "regular_hours",
                 rationale: "Small-account value setup.",
                 tradeThesisTag: "Value-Quality",
                 entryMarketRegime: "Neutral (Normal Volatility)",
                 confidenceScore: 75
-              }
-            ]
+              }))
           })
         }),
         { status: 200, headers: { "content-type": "application/json" } }
@@ -148,7 +164,15 @@ function stubGreenProposalResponse(): void {
   });
 }
 
-async function configureAutonomousAccount(userId: string, gateOnRationaleCollapse: boolean = false): Promise<void> {
+function stubGreenProposalResponse(dollarAmount: number = 0.25): void {
+  stubGreenProposals([{ symbol: "AAPL", dollarAmount }]);
+}
+
+async function configureAutonomousAccount(
+  userId: string,
+  gateOnRationaleCollapse: boolean = false,
+  sellToFundBuy: "off" | "suggest" | "propose" | "automated" = "off"
+): Promise<void> {
   const { setPolicy, upsertConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
   upsertConnectedAccount({
     id: "autonomous-final-size-account",
@@ -171,7 +195,8 @@ async function configureAutonomousAccount(userId: string, gateOnRationaleCollaps
       llmModel: "gpt-4.1-mini",
       redTeamLlmModel: "gpt-5.6-terra",
       includedIndices: [],
-      additionalSymbols: ["AAPL"],
+      additionalSymbols: marketState.symbols,
+      sellToFundBuy,
       tuning: { ...DEFAULT_POLICY.tuning, gateOnRationaleCollapse }
     },
     userId
@@ -179,6 +204,135 @@ async function configureAutonomousAccount(userId: string, gateOnRationaleCollaps
 }
 
 describe("autonomous broker-minimum final-size Red review", () => {
+  it("does not emit or execute funding sells when the pre-funded buy fails final-size Red review", async () => {
+    accountState.buyingPower = 0;
+    accountState.cash = 0;
+    accountState.positions = [{ symbol: "MSFT", quantity: 10, averageCost: 1, marketValue: 10 }];
+    debateProposal
+      .mockResolvedValueOnce({
+        verdict: "approve",
+        rejected: false,
+        available: true,
+        reason: "Initial size approved.",
+        model: "gpt-5.6-terra"
+      })
+      .mockResolvedValueOnce({
+        verdict: "reject",
+        rejected: true,
+        available: true,
+        reason: "The broker-adjusted size is not justified.",
+        model: "gpt-5.6-terra"
+      });
+    let aaplReviewCount = 0;
+    reviewEquityOrder.mockImplementation(async (input: {
+      symbol: string;
+      dollarAmount?: number;
+      quantity?: number;
+    }) => {
+      const estimatedNotional = input.dollarAmount ?? (input.quantity ?? 0) * (input.symbol === "AAPL" ? 10 : 1);
+      if (input.symbol === "AAPL") aaplReviewCount += 1;
+      return input.symbol === "AAPL" && aaplReviewCount === 1
+        ? {
+            estimatedNotional: 0.25,
+            alerts: [],
+            preflightBlock: {
+              alertTypes: ["EQUITY_DOLLAR_BASED_MINIMUM_AMOUNT_ERROR"],
+              message: "below broker minimum"
+            },
+            raw: {}
+          }
+        : { estimatedNotional, alerts: [], raw: {} };
+    });
+    placeEquityOrder.mockResolvedValue({
+      orderId: randomUUID(),
+      refId: randomUUID(),
+      state: "filled",
+      raw: {}
+    });
+    stubGreenProposalResponse();
+    const userId = `autonomous-final-size-funding-${randomUUID()}`;
+    await configureAutonomousAccount(userId, false, "automated");
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { listAudit, listRecentProposals } = await import("../src/lib/db");
+    const result = await runStrategyOnce(userId);
+
+    expect(result.status).toBe("completed");
+    expect(placeEquityOrder).not.toHaveBeenCalled();
+    expect(listRecentProposals(ACCOUNT, 20, userId).some(
+      (row) => row.proposal.tradeThesisTag === "Sell-to-Fund"
+    )).toBe(false);
+    expect(listAudit(100, userId).some((event) => event.kind === "sell_to_fund_plan")).toBe(false);
+    expect(listRecentProposals(ACCOUNT, 20, userId).find(
+      (row) => row.proposal.symbol === "AAPL"
+    )).toMatchObject({ status: "proposed" });
+    expect(aaplReviewCount).toBe(2);
+    expect(debateProposal).toHaveBeenCalledTimes(2);
+  }, 30_000);
+
+  it("funds a cumulative buying-power shortfall and reuses each prepared broker shape", async () => {
+    accountState.buyingPower = 2;
+    accountState.cash = 100;
+    accountState.positions = [{ symbol: "MSFT", quantity: 10, averageCost: 1, marketValue: 10 }];
+    marketState.symbols = ["AAPL", "GOOG"];
+    debateProposal.mockResolvedValue({
+      verdict: "approve",
+      rejected: false,
+      available: true,
+      reason: "The proposed size is justified.",
+      model: "gpt-5.6-terra"
+    });
+    const reviewCounts = new Map<string, number>();
+    reviewEquityOrder.mockImplementation(async (input: {
+      symbol: string;
+      dollarAmount?: number;
+      quantity?: number;
+    }) => {
+      reviewCounts.set(input.symbol, (reviewCounts.get(input.symbol) ?? 0) + 1);
+      return {
+        estimatedNotional:
+          input.dollarAmount ?? (input.quantity ?? 0) * (input.symbol === "AAPL" ? 10 : 1),
+        alerts: [],
+        raw: {}
+      };
+    });
+    placeEquityOrder.mockImplementation(async (input: { quantity?: number }) => ({
+      orderId: randomUUID(),
+      refId: randomUUID(),
+      state: "filled",
+      filledQuantity: input.quantity,
+      averagePrice: 1,
+      raw: {}
+    }));
+    stubGreenProposals([
+      { symbol: "AAPL", dollarAmount: 2 },
+      { symbol: "GOOG", dollarAmount: 1 }
+    ]);
+    const userId = `autonomous-final-size-buying-power-${randomUUID()}`;
+    await configureAutonomousAccount(userId, false, "automated");
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { listAudit } = await import("../src/lib/db");
+    const result = await runStrategyOnce(userId);
+
+    expect(result.status).toBe("completed");
+    expect(placeEquityOrder).toHaveBeenCalledTimes(3);
+    expect(placeEquityOrder.mock.calls.map((call) => call[0])).toContainEqual(expect.objectContaining({
+      symbol: "MSFT",
+      side: "sell",
+      quantity: 1
+    }));
+    expect(placeEquityOrder.mock.calls.map((call) => call[0].symbol).sort()).toEqual([
+      "AAPL",
+      "GOOG",
+      "MSFT"
+    ]);
+    expect(reviewCounts.get("AAPL")).toBe(1);
+    expect(reviewCounts.get("GOOG")).toBe(1);
+    expect(debateProposal).toHaveBeenCalledTimes(2);
+    expect(listAudit(100, userId).some((event) => event.kind === "sell_to_fund_plan")).toBe(true);
+  }, 30_000);
+
   it("reruns Red on the broker-reviewed order, persists the new rejection, and routes to approval without placement", async () => {
     debateProposal
       .mockResolvedValueOnce({

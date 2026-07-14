@@ -47,11 +47,21 @@
 > closed: unpriced broker receipts store zero rather than estimates, cumulative execution is
 > monotonic, replacement partials remain refId-recoverable, and the active replacement index is
 > user-scoped. Current `main@07c2da3f` is integrated and independent re-review reports no P0-P2
-> findings. The ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
+> findings on that snapshot. The later hosted review found one P1 ordering gap: sell-to-fund could
+> liquidate a holding before a broker-minimum-adjusted buy entered a final-size Red hold. The fix
+> now correlation-gates and caches tradability, broker minimum, exact-size Red, policy, and override
+> preflight before funding notional is calculated. Correlation-dropped, broker-unplaceable,
+> human-held, and non-funding policy-blocked openings fund `$0`; a valid cumulative buying-power
+> shortfall remains eligible. Regressions cover both no-sale-on-hold and exact cumulative funding,
+> and placement reuses the cached shape. Hosted autofix also synchronized account-switch cap-mode drafts and kept unpriced
+> fill growth pending. The prior ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
 > standalone TypeScript clean, 368 files / 4,124 tests, and a production build with the real
 > TypeScript phase plus 32 static pages. `scripts/land.sh` repeated current-main TypeScript, all
-> 4,124 tests, and the build before opening ready PR #1587. Merge after hosted verification and
-> verify the exact production release.
+> 4,124 tests, and the build before opening ready PR #1587. The local ordering remediation passes
+> TypeScript and 3 focused files / 20 tests. The combined-tree ordered Node 24 gate is green:
+> lint exit 0, standalone TypeScript clean, 368 files / 4,126 tests, and a production build with
+> the real TypeScript phase plus 32 static pages. Push, resolve the review, merge after hosted
+> verification, and verify the exact production release.
 > See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
 > `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 > Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.

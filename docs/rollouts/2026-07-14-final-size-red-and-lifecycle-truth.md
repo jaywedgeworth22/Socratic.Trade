@@ -13,6 +13,10 @@ Landing base: `origin/main@07c2da3f` (integrated; includes PR #1575)
 - Added one shared final-sizing receipt and one-shot Red rerun after a successful broker-minimum
   bump. The autonomous and approval paths now agree on exact route, notional, NAV percentage,
   daily-cap arithmetic, Red result, half-size behavior, and owner-override state.
+- Moved correlation, broker-minimum/final-size, and non-funding policy decisions ahead of
+  sell-to-fund demand. Prepared tradability and exact broker/Red shape are cached for placement;
+  dropped, unplaceable, human-held, and non-funding-blocked openings contribute `$0`, while a valid
+  cumulative buying-power shortfall remains eligible for the exact funding sale.
 - Kept independent human-review reasons separate; final-size Red approval cannot clear a
   rationale-collapse or unresolved owner-preference hold.
 - Synchronized proposal lifecycle changes into Socratic decisions transactionally. Autonomous
@@ -66,6 +70,13 @@ Likewise, proposal and Socratic ledgers that transition independently can tell t
 or uncertain placement is still merely proposed—or safe to retry. These changes make the exact
 broker-submitted shape and the durable lifecycle one invariant across strategy, approval, memory,
 and UI without turning owner-configured preferences into immutable gates.
+
+The hosted review identified one remaining ordering hazard: funding sells were planned before a
+broker-minimum-adjusted buy could enter its final-size Red hold. One finalization helper plus a
+prepared-shape cache closes that gap without creating either a duplicate review cycle or a
+cancel-after-liquidation path. Moving correlation ahead of funding prevents a correlated-away buy
+from orphaning a funding sale; policy preflight excludes hard/non-funding failures without treating
+the expected cumulative buying-power shortfall as a reason to suppress funding.
 
 ## Files
 
@@ -196,6 +207,27 @@ npx vitest run test/broker-side.test.ts test/reconciliation-risk.test.ts \
   test/chat-draft-policy.test.ts test/performance.test.ts
 # passed: 8 files / 167 tests
 
+npx tsc --noEmit
+# passed after the hosted autofix and prepared-shape sell-to-fund remediation
+
+npx vitest run test/final-size-red-autonomous.test.ts test/sell-to-fund.test.ts \
+  test/correlation-cluster-gate.test.ts
+# passed: 3 files / 20 tests; final-size hold funds nothing, cumulative shortfall funds exactly,
+# prepared buy shapes are reviewed once, and the correlation gate remains green
+
+# Final combined-tree authoritative Node 24 gate
+npm run lint
+# passed: exit 0
+
+npx tsc --noEmit
+# passed
+
+npm test
+# passed: 368 files / 4,126 tests
+
+npm run build
+# passed: real TypeScript phase, 32 static pages
+
 # Final independent re-review: no P0-P2 findings.
 
 git diff --check
@@ -228,8 +260,8 @@ bash scripts/land.sh --pr-title "Harden account-relative risk and broker lifecyc
 
 ## Follow-ups
 
-- Land through `scripts/land.sh`, open a ready PR, auto-merge after hosted verification, resolve the
-  original PR #1561 review threads, and verify the exact production SHA plus DB/scheduler/Litestream
-  health.
+- Run the final combined-tree ordered gate, push the review remediation, resolve the PR #1587
+  finding, auto-merge after hosted verification, and verify the exact production SHA plus
+  DB/scheduler/Litestream health.
 - No broker-protective-stop file, host configuration, production secret, or corpus state is changed
   by this effort.

@@ -1,9 +1,9 @@
 # Current Status
 
-## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle (PR #1587)
+## 2026-07-14 — Final hosted-review remediation (PR #1587)
 
-Latest autofix on PR #1587: two codex review findings fixed and pushed, one
-architectural question deferred to the maintainer.
+The hosted autofix pushed two independent review fixes. The remaining money-path
+finding is now implemented locally and awaiting the final ordered gate and push.
 
 **Fixed:**
 - P2 — sync `draftMode` on account switch: `useEffect` now resets the cap-mode
@@ -12,12 +12,23 @@ architectural question deferred to the maintainer.
   `merged.unresolvedGrowth` before returning `"filled"`, so a broker snapshot
   with larger quantity but no price stays `partially_filled`.
 
-**Deferred:**
-- P1 — final-size holds vs sell-to-fund ordering: posted a comment asking the
-  maintainer how to proceed.
+**Resolved locally:**
+- P1 — final-size holds vs sell-to-fund ordering: every otherwise autonomous
+  opening now completes broker-minimum adjustment, exact-size Red review, and a
+  final policy/override preflight before it contributes notional to sell-to-fund
+  planning. Correlation-dropped, broker-unplaceable, human-held, and non-funding
+  policy-blocked openings contribute `$0`; the expected cumulative buying-power
+  shortfall remains eligible. Placement reuses the cached broker shape, so a
+  second review cycle cannot create a post-sale hold.
+- Regression coverage proves both directions: a final-size Red hold emits and
+  executes no `Sell-to-Fund` order, while two valid openings whose combined
+  notional exceeds buying power still produce the exact funding sale.
 
-Verify gate: `npx tsc --noEmit` clean, all 4124 tests pass, `npm run build` clean.
-Auto-merge enabled via `--auto`.
+Hosted-autofix gate: `npx tsc --noEmit` clean, all 4,124 tests pass, and
+`npm run build` clean. Local remediation checks: standalone TypeScript clean and
+3 ordering-focused files / 20 tests pass. The final combined-tree Node 24 gate is green:
+lint exit 0, standalone TypeScript clean, 368 files / 4,126 tests, and a production build
+with the real TypeScript phase and 32 static pages. Auto-merge remains armed.
 
 PR #1561 merged as `3e105e17` and production was verified on that exact SHA with one healthy
 container, zero restarts, current scheduler/DB/Litestream checks, and roughly 358 MiB runtime
@@ -57,13 +68,16 @@ dedupe by tenant/account/replacement identity; counts working partial fills as r
 repairs legacy chat cases against their historical account and doctrine. A final adversarial pass
 also required finite positive realized prices, monotonic broker-reported quantity floors, recoverable
 unpriced/no-id replacement partials, and user-scoped active replacement uniqueness; all findings are
-implemented and the independent re-review reports no P0-P2 findings. Current `main@07c2da3f` is
-integrated. The ordered Node 24 gate is green: lint has 0 errors / 458 inherited warnings,
+implemented. A later hosted review found that sell-to-fund planning still preceded the final-size
+hold. The remediation now correlation-gates and caches tradability, broker minimum, exact-size Red,
+policy, and override routing before funding notional is calculated, while preserving legitimate
+cumulative buying-power demand. Current `main@07c2da3f` is integrated. The prior ordered
+Node 24 gate is green: lint has 0 errors / 458 inherited warnings,
 standalone TypeScript is clean, all 368 files / 4,124 tests pass, and the production build completes
 its real TypeScript phase and generates 32 static pages. A diagnostic full-suite pass also passed the
 same 4,124 tests before the authoritative gate. `scripts/land.sh` repeated current-main TypeScript,
 all 4,124 tests, and the build before opening ready PR #1587. Hosted verification, auto-merge,
-original-thread resolution, and exact production verification remain.
+original-thread resolution, and exact production verification remain after pushing the green tree.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
