@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-14 — Watchlist & Order Row Button Tooltip Alignment + TS 7.0.2 postinstall fix (AG, branch `agent/ag-watchlist-tooltip-fix`)
+
+Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Also fixed a TS 7.0.2 postinstall CommonJS/ESM resolution conflict in Next.js webpack build-worker processes by writing a CommonJS package.json in the `node_modules/typescript/lib` directory. Verify gate passes (tsc, test, build), PR #1575 is open, and auto-merge is armed. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+
 ## 2026-07-13 — Autonomous-action row clarity: tense-matched verbs + de-collided authority labels + ticker logo (CLAUDE/Fable, branch `claude/autonomous-action-row-clarity`)
 
 Display-only console trust fix, three parts, no logic touched. (1) The Home "Autonomous actions" feed
