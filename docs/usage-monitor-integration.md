@@ -52,6 +52,9 @@ alpaca.trackHealth / robinhood   ─┘   call-volume aggregate; debounced batch
                                         ▼
                               API Usage Monitor → ExternalUsageEvent
 
+llm_usage / rag_usage ──► usage-monitor-replay.ts (startup + 60s bounded replay;
+                          ordered durable settings watermarks) ──► same ingest endpoint
+
 runStrategyOnce entry ──► usage-budget.ts ──GET /api/budget-status──► monitor
    (Phase 1) over-budget → notify(budget_alert)
    (Phase 1.5, always on) → audit(usage_budget_status) + Bull prompt advisory line
@@ -82,6 +85,19 @@ using bounded exponential backoff. This preserves transport retry deduplication
 and prevents distinct lanes in one flush from colliding just because they share
 `provider`, `metricType`, and `occurredAt`. The shared five-field fallback remains
 unchanged for other producers.
+
+Discrete LLM/RAG delivery is also crash-durable. `usage-monitor-replay.ts` reads the persisted
+ledgers in `(created_at,id)` order, reconstructs the exact event key/timestamp, and advances a
+per-ledger watermark in the existing internal `settings` table only after the batch is acknowledged.
+Every pass inclusively re-sends the last acknowledged row once; receiver idempotency makes that
+overlap safe if the app dies between remote acknowledgement and its local watermark write. The
+watermark update is monotonic inside `BEGIN IMMEDIATE`, so an overlapping deploy cannot regress it.
+The worker runs immediately at Node startup and every minute, bounded to ten 100-event pages per
+ledger per pass. It needs no schema migration or additional env variable.
+
+Every newly emitted event also carries top-level `project:"socratic-trade"`. The raw `provider`
+value remains unchanged at the producer; canonical provider/project resolution belongs to the
+monitor receiver.
 
 The event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
 `UsageTelemetryEventSchema` and the monitor's server parser
@@ -193,5 +209,6 @@ length cap even if an upstream identifier is unexpectedly large.
 ## Verification
 
 - **App B:** `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build`.
-  New tests: `test/usage-monitor-push.test.ts`, `test/usage-budget.test.ts`.
+  New tests: `test/usage-monitor-push.test.ts`, `test/usage-monitor-replay.test.ts`,
+  `test/usage-budget.test.ts`.
 - **Monitor:** `npm run lint` (`tsc --noEmit`), `npm run build`.

@@ -48,6 +48,6 @@ monitor's idempotency-key limit. Empty IDs receive independent UUID-backed ident
   route now returns 409 for conflicting payloads instead of silently accepting one.
 - No merge to Socratic.Trade `main` without an explicit landing decision because merge
   auto-deploys production.
-- Retry buffering remains process memory, not a durable outbox. A process crash between the local
-  ledger write and successful delivery can still leave an unforwarded row; durable replay/outbox
-  recovery is a separate reliability enhancement.
+- The former process-crash gap for LLM/RAG ledger rows is resolved locally by the bounded durable
+  replay worker documented in `docs/rollouts/2026-07-13-usage-monitor-durable-replay.md`. Landing is
+  intentionally blocked until the paired API Usage Monitor receiver backfill is deployed.
