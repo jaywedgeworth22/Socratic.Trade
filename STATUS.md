@@ -5,9 +5,10 @@
 The decision trace now treats the structured Red Team verdict as the canonical explanation and
 suppresses only exact generic echoes plus known generated policy wrappers around that same reason.
 Distinct policy objections and Red Team override context remain visible. The change is display-only;
-persisted cases and other consumers are unchanged. The full hosted gate is green (369 files / 4,133
-tests, production build). PR #1593 is open with auto-merge enabled; hosted checks, review, and
-merge/autodeploy remain.
+persisted cases and other consumers are unchanged. Required hosted CI, Playwright smoke, and
+gitleaks passed on the pre-autofix head. The accepted review fix is locally green (focused 5/5,
+scoped ESLint, standalone TypeScript, and diff-check); final-head hosted reruns remain. PR #1593 is
+open, auto-merge is disabled, and production is unchanged.
 
 **[codex-autofix] Round 1:**
 - P2 — preserve overridden Red Team dissent rows when the summary matches the canonical verdict

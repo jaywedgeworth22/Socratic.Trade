@@ -20,7 +20,7 @@ objections and override context remain visible. Persisted decision data is uncha
 - Node 24 focused Vitest: 1 file / 5 tests passed.
 - `npm run lint`: passed.
 - `npx tsc --noEmit`: passed.
-- `npm test`: 369 files / 4,133 tests passed.
+- Pre-review `npm test`: 369 files / 4,132 tests passed locally and in `scripts/land.sh`.
 - `npm run build`: passed, including TypeScript and 32 static pages. Existing middleware,
   documentation-token CSS scanning, webpack cache, and Sentry Edge warnings remain unrelated.
 - `git diff --check`: passed.
@@ -47,3 +47,7 @@ override context was lost from the trace.
 appended to the reason text. The real `syncSocraticDecisionLifecycle` keeps `redTeamVerdict.reason`
 as the summary verbatim, so the original test didn't actually catch the bug. Added a test case
 that matches production behavior (bare reason as summary).
+
+Post-fix focused Vitest (5/5), scoped ESLint, standalone TypeScript, and diff-check passed. Required
+hosted CI, Playwright smoke, and gitleaks passed on the pre-autofix head; final-head reruns remain.
+Auto-merge is disabled and production is unchanged.
