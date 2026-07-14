@@ -54,8 +54,9 @@ export function Btn({
   className,
   type = "button",
   title,
+  align,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: "sm" }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: "sm"; align?: "center" | "left" | "right" }) {
   const button = (
     <button
       type={type}
@@ -64,7 +65,7 @@ export function Btn({
     />
   );
   if (title) {
-    return <Tooltip content={title}>{button}</Tooltip>;
+    return <Tooltip content={title} align={align}>{button}</Tooltip>;
   }
   return button;
 }
@@ -73,8 +74,9 @@ export function IconButton({
   label,
   className,
   type = "button",
+  align,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; align?: "center" | "left" | "right" }) {
   const button = (
     <button
       type={type}
@@ -86,7 +88,7 @@ export function IconButton({
       {...rest}
     />
   );
-  return <Tooltip content={label}>{button}</Tooltip>;
+  return <Tooltip content={label} align={align}>{button}</Tooltip>;
 }
 
 // ── Chip ─────────────────────────────────────────────────────────────────────
@@ -112,7 +114,19 @@ const CHIP_CLASS: Record<ChipTone, string | undefined> = Object.fromEntries(
   (Object.keys(TONE_VAR) as ChipTone[]).map((tone) => [tone, tone === "muted" ? undefined : `con-chip-${tone}`])
 ) as Record<ChipTone, string | undefined>;
 
-export function Chip({ tone = "muted", className, title, children }: { tone?: ChipTone; className?: string; title?: string; children: ReactNode }) {
+export function Chip({
+  tone = "muted",
+  className,
+  title,
+  align,
+  children
+}: {
+  tone?: ChipTone;
+  className?: string;
+  title?: string;
+  align?: "center" | "left" | "right";
+  children: ReactNode;
+}) {
   const chip = (
     <span className={cx("con-chip", CHIP_CLASS[tone], className)}>
       {children}
@@ -121,7 +135,7 @@ export function Chip({ tone = "muted", className, title, children }: { tone?: Ch
   // Only pay for the Tooltip (state + effects) when there's actually a title —
   // matches the Btn pattern above and avoids per-chip hook overhead in lists.
   if (title) {
-    return <Tooltip content={title}>{chip}</Tooltip>;
+    return <Tooltip content={title} align={align}>{chip}</Tooltip>;
   }
   return chip;
 }
@@ -392,11 +406,13 @@ export function SignedText({ value, children }: { value: number | null | undefin
 export function Tooltip({
   children,
   content,
-  className
+  className,
+  align = "center"
 }: {
   children: ReactNode;
   content: ReactNode;
   className?: string;
+  align?: "center" | "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -411,6 +427,13 @@ export function Tooltip({
   }, [open]);
 
   if (!content) return <>{children}</>;
+
+  const alignClass =
+    align === "right"
+      ? "right-0 translate-x-0"
+      : align === "left"
+      ? "left-0 translate-x-0"
+      : "left-1/2 -translate-x-1/2";
 
   return (
     <span
@@ -432,7 +455,10 @@ export function Tooltip({
             exit={{ opacity: 0, y: 2, scale: 0.98 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
             role="tooltip"
-            className="pointer-events-none absolute bottom-full left-1/2 z-[100] mb-2 w-max max-w-xs -translate-x-1/2 rounded-[var(--con-radius-sm)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-2.5 py-1.5 text-center text-[length:var(--con-fs-xs)] font-medium leading-snug text-[color:var(--con-fg)] shadow-[var(--con-shadow-lg)]"
+            className={cx(
+              "pointer-events-none absolute bottom-full z-[100] mb-2 w-max max-w-xs rounded-[var(--con-radius-sm)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-2.5 py-1.5 text-center text-[length:var(--con-fs-xs)] font-medium leading-snug text-[color:var(--con-fg)] shadow-[var(--con-shadow-lg)]",
+              alignClass
+            )}
           >
             {content}
           </motion.div>
