@@ -288,7 +288,7 @@ follow-up now validates/falls back malformed lease durations before date arithme
 failure reasons, and preserves the first accepted raw/normalized SHA-256 values across later checkpoints. Focused
 regressions pass (2 files / 29 tests). The full Node 24 gate is green: lint 0 errors / 452 inherited warnings,
 TypeScript clean, 352 files / 3,963 tests, production build, and diff-check. No provider, object-store, vector, or
-corpus writes ran. Ready PR #1559 is open with auto-merge pending hosted acceptance.
+corpus writes ran. PR #1559 merged as `af087a1f` and auto-deployed.
 
 Rollout: `docs/rollouts/2026-07-13-sec-rag-foundation-postmerge.md`.
 

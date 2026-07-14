@@ -32,5 +32,16 @@ Both entries updated to reflect merged state. Verify trio passed: `npm run lint`
 
 Codex review thread resolved. Auto-merge enabled.
 
+## [codex-autofix] Round 3: Fix remaining Codex threads (stale #1559, EFFORT-LOG #1561/#1576)
+
+Codex review flagged 3 remaining P2 threads after round 2:
+
+1. **STATUS.md stale #1559 entry** (PRRT_kwDOS7mOVM6Q4KKr): The SEC/RAG post-merge follow-up entry still said "Ready PR #1559 is open with auto-merge pending hosted acceptance" but PR #1559 was merged as `af087a1f`. Updated to reflect merged/auto-deployed state.
+
+2. **EFFORT-LOG #1561/#1576 still in ready** (PRRT_kwDOS7mOVM6Q4KKW): `docs/EFFORT-LOG.md` had #1561 as "Ready PR" and #1576 as "Ready PR open" in the In Progress and Planned sections, but both were merged. Updated both entries to `COMPLETED` with their merge SHAs.
+
+3. **AG branch handoff** (PRRT_kwDOS7mOVM6Q4KKi): Asked maintainer — PR #1526 (`agent/ag-update-status-effort-log`) is CLOSED (not merged), so the "land" next action is no longer applicable. Thread left open pending maintainer response.
+
 ## Next Steps
-- Await any further user instructions.
+- Await maintainer response on AG branch handoff thread.
+- Auto-merge enabled for the resolved threads.
