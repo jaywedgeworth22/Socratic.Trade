@@ -57,8 +57,7 @@ production build exits zero. A first accidental Node 26 test attempt failed only
 the app change itself. A stripped-environment disposable
 `next dev` emitted the disabled receipt and no scheduler-start line; `/login` then hit the separate
 known invalid Tailwind wildcard on current `main`, already fixed in the console lane. Independent
-review and the local gate are complete. Ready PR #1576 is open; hosted verify, merge/autodeploy,
-and production verification remain.
+review and the local gate are complete. PR #1576 merged to main.
 No provider, broker, corpus, or production configuration call was made. Rollout:
 `docs/rollouts/2026-07-13-development-background-workers.md`.
 
@@ -218,8 +217,7 @@ Focused verification is green (8 files / 63 tests, then 5 files / 39 tests and 2
 Repository lint passed with 0 errors / 452 inherited warnings; TypeScript and the native Swift
 snapshot model are clean. After documenting and isolating earlier host-contention timeouts, the
 canonical Node 24 `scripts/land.sh` gate passed completely: 359 files / 4,021 tests and the production
-build. Commit `2cfd7ca8` is pushed in ready PR #1561; hosted CI/security/smoke checks, merge/autodeploy,
-and production verification remain.
+build. Commit `2cfd7ca8` pushed; PR #1561 merged to main.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
 
