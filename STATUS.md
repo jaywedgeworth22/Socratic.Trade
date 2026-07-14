@@ -129,7 +129,8 @@ Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
 Codex review flagged 3 remaining P2 threads:
 1. EFFORT-LOG #1578/#1576 marked COMPLETED but under `## Planned` — moved to `## Completed` section.
 2. EFFORT-LOG #1544 still showed "READY PR OPEN ... Branch pushed; not merged" — updated to COMPLETED (merged as `60703dfe`).
-3. Original commit author email — asked maintainer (requires rebasing 5 commits).
+3. Original commit author email — verified directly from Git: `db9f0acd` already uses the
+   repository noreply address for both author and committer, so no rewrite is needed.
 
 Verify trio passed. Codex threads fixed, resolved. Auto-merge remains enabled.
 Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
@@ -606,8 +607,8 @@ backfill architecture. Blocking fixes are occurrence-level provenance (global co
 later filing instances), durable artifact/job state, DOM/iXBRL table parsing, exact acceptance-time safety,
 historical/exhibit discovery, real-corpus evaluation, and truthful coverage/config reporting. Plan:
 `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. Rollout:
-`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete; ready
-PR #1494; unmerged; production unchanged**.
+`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete;
+PR #1494 merged as `1dbe9b42` on 2026-07-13**. Bulk ingestion remains a separate gated effort.
 ## 2026-07-12 — Capability & Platform Program: Phase 1 plan + iOS status-doc truth-fix (CLAUDE, branch `claude/capability-program-docs`)
 
 Phase 1 (recon + design + feasibility + synthesis) of the owner-directed capability/platform
@@ -866,15 +867,16 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 ## What was just completed
-- Native iOS App: Implemented Apple Sign-in with backend verification and token validation.
-- UI Updates: Updated the Login page to use the Socratic.Trade candlestick logo and stripped unnecessary text. Reduced the height of the HeaderLogo and prevented it from overflowing on small mobile screens.
-- Console UI: Changed the Model Stats UI from a Sheet to a Drawer, formatting model row labels to display grouped company names vertically on mobile devices, and removing redundant parenthetical names.
-- Settings UI: Addressed overlapping text in the "Broker Connections" section by allowing the action buttons to wrap on mobile, and wrapping the account subtitle in a flex-col layout.
-- PR opened and waiting for review/merge.
+- Native Apple sign-in, login/logo updates, Model Stats drawer changes, and mobile overlap fixes
+  were recorded by the AG lane. Their original PRs #1525 and #1526 are closed without merge, so
+  there is no pending branch handoff to land from either PR.
 
 ## Current Status
 
-- PRs #1584, #1583, #1580, #1582, #1575, and #1578 were all successfully verified and merged into main, clearing the open PR backlog. EFFORT-LOG stale tails cleaned up for #1561, #1576, #1575, and #1578.
+- PRs #1584, #1583, #1580, #1582, #1575, #1578, and #1587 were verified and merged into
+  `main`. PR #1589 carries this documentation cleanup and its current-main Node 24 gate is green:
+  lint 0 errors/459 inherited warnings, TypeScript clean, 368 files/4,128 tests, and production
+  build with real TypeScript validation plus 32 static pages. PR #1586 remains the only other open PR.
 
 ## Next Action
-- Await any further user instructions.
+- Finish verification and merge of PR #1586, then verify the resulting production release.

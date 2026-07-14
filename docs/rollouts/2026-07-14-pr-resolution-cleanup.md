@@ -62,8 +62,24 @@ Codex review flagged 3 remaining P2 threads after round 4:
 
 2. **EFFORT-LOG #1544 stale READY PR status** (PRRT_kwDOS7mOVM6Q46v7): PR #1544 ("Evidence architecture program") was listed as "READY PR OPEN, CI GREEN ... Branch pushed; not merged" but actually merged as `60703dfe` on 2026-07-13. Updated to COMPLETED with merge SHA and corrected tail text.
 
-3. **Commit author email** (PRRT_kwDOS7mOVM6Q46v-): The original commit `db9f0acd` was authored as `Codex <codex@openai.com>`. Since there are 5 autofix commits on top, rebasing/amending is architecturally significant. Asked maintainer via PR comment; recommended squash-merge (already configured) which collapses all commits including the original authorship.
+3. **Commit author email** (PRRT_kwDOS7mOVM6Q46v-): The review claimed that `db9f0acd`
+   used `codex@openai.com`, but direct Git inspection shows both its author and committer as
+   `Jay Wedgeworth <12656028+jaywedgeworth22@users.noreply.github.com>`. No history rewrite is
+   needed.
+
+## Round 6: Current-main reconciliation and final thread closure
+
+- Merged current `origin/main@acd67a5c` into the PR branch without conflict.
+- Recorded that PRs #1525 and #1526 are closed without merge, so neither branch is a pending handoff.
+- Corrected PR #1494 to merged (`1dbe9b42`) and PR #1548 to merged (`11ea0c55`).
+- Moved completed #1575, #1587, and #1544 efforts out of `In Progress`; the authoritative #1561 row remains under `Deployed`.
+- Kept the original branch commits intact: direct Git inspection confirms that the root commit
+  already uses the repository noreply identity, and no force-push is justified.
+- Verification on Node `v24.18.0`: `npm ci`; `npm run lint` (0 errors, 459 inherited warnings);
+  `npx tsc --noEmit` (clean); `npm test` (368 files, 4,128 tests passed); `npm run build`
+  (production webpack build, real TypeScript phase, 32 static pages). The build retained the known
+  CSS-token, webpack-cache, middleware-deprecation, and Sentry Edge-runtime warnings without errors.
 
 ## Next Steps
-- Await maintainer response on AG branch handoff thread (PRRT_kwDOS7mOVM6Q4KKi — unresolved) and commit author thread (PRRT_kwDOS7mOVM6Q46v-).
-- Auto-merge enabled for the resolved threads.
+
+- Merge this PR after hosted checks, then finish PR #1586 and verify the resulting production release.
