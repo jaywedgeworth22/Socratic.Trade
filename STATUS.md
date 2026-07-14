@@ -8,7 +8,8 @@ Distinct policy objections and Red Team override context remain visible. The cha
 persisted cases and other consumers are unchanged. Browser QA passed at desktop and 390 px mobile,
 including the coach-note interaction and zero horizontal overflow. The exact-tree Node 24 gate is
 green: focused 4/4, lint, standalone TypeScript, 369 files / 4,132 tests, production build with 32
-static pages, and diff-check. Review PR publication remains; production is unchanged.
+static pages, and diff-check. Ready PR #1593 is open; hosted checks, review, merge/autodeploy, and
+production verification remain. Production is unchanged.
 
 Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 

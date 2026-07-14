@@ -30,5 +30,5 @@ objections and override context remain visible. Persisted decision data is uncha
 
 ## Follow-ups
 
-- Review and merge the PR, then verify the automatic production deployment. Production was not
-  changed by this work.
+- Review and merge ready PR #1593, then verify the automatic production deployment. Production
+  was not changed by this work.
