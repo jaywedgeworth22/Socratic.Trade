@@ -8,6 +8,18 @@ Fixed edge cropping of action tooltips in the Watchlist and Order history rows b
 Codex review flagged that STATUS.md still described PR #1576 and PR #1561 as open when both were merged. Updated both entries to reflect merged state. All verification gates passed (lint 0 errors, tsc clean, 4056 tests pass, build clean). Codex thread resolved, auto-merge enabled.
 Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
 
+## 2026-07-14 — [codex-autofix] Round 4: Fix EFFORT-LOG stale tails and #1578 merge status (PR #1589)
+
+Codex review flagged 4 remaining P2 findings on the round-3 cleanup:
+
+1. **EFFORT-LOG #1575 wrong merge reference**: "#1575 Merged via PR #1589" was incorrect — #1575 was merged on its own. Fixed to "Merged via PR #1575."
+2. **EFFORT-LOG #1561 stale completed tail**: Removed "Hosted checks, merge/autodeploy, and production verification remain." from the completed row.
+3. **EFFORT-LOG #1576 stale completed tail**: Removed "Hosted verify, merge/autodeploy, and production verification remain." from the completed row.
+4. **STATUS.md + EFFORT-LOG #1578 merge status**: TypeScript toolchain entry showed pending status; updated both STATUS.md and EFFORT-LOG.md to reflect that PR #1578 merged to main.
+
+Verify trio passed. Codex threads resolved, auto-merge enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
 ## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
 
 An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent
@@ -35,16 +47,7 @@ parsing, and diff-check. The earlier full gate remains 0 lint errors, 363 files 
 production webpack build; an independent review build also executed `Running TypeScript` and
 `Finished TypeScript`. The final full suite/build is intentionally deferred until fresh review to
 avoid duplicating an expensive gate. The inherited invalid console Tailwind wildcard warning
-remains owned by the separate console-usage lane. Fresh review, final ordered gate, commit, ready PR,
-merge/autodeploy, and live verification remain.
-
-Fresh independent re-review accepts the remediation. It confirmed one installed TypeScript 6.0.3
-graph, aligned Node 24 declarations, structural lock/YAML policy checks, Node 24 enforcement in both
-CI routes and the landing script, and a byte-identical clean-install lock. The final ordered Node 24
-gate is green: lint 0 errors / 458 inherited warnings, standalone TypeScript, 363 files / 4,043
-tests, and the production build pass; the build explicitly logged `Running TypeScript` and
-`Finished TypeScript`. Current-main reconciliation, commit, ready PR, hosted verification,
-merge/autodeploy, and live verification remain.
+remains owned by the separate console-usage lane. PR #1578 merged to main.
 
 Rollout: `docs/rollouts/2026-07-13-typescript-toolchain-gate-repair.md`.
 ## 2026-07-13 — Non-production background workers fail closed (CODEX, branch `codex/dev-background-workers`)
@@ -753,7 +756,7 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## Current Status
 
-- PRs #1584, #1583, #1580, #1582, and #1575 were all successfully verified and merged into main, clearing the open PR backlog.
+- PRs #1584, #1583, #1580, #1582, #1575, and #1578 were all successfully verified and merged into main, clearing the open PR backlog. EFFORT-LOG stale tails cleaned up for #1561, #1576, #1575, and #1578.
 
 ## Next Action
 - Await any further user instructions.

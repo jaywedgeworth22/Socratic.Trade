@@ -42,6 +42,18 @@ Codex review flagged 3 remaining P2 threads after round 2:
 
 3. **AG branch handoff** (PRRT_kwDOS7mOVM6Q4KKi): Asked maintainer — PR #1526 (`agent/ag-update-status-effort-log`) is CLOSED (not merged), so the "land" next action is no longer applicable. Thread left open pending maintainer response.
 
+## [codex-autofix] Round 4: Fix remaining EFFORT-LOG stale tails and #1578 merge status
+
+Codex review flagged 4 remaining P2 threads after round 3:
+
+1. **EFFORT-LOG #1575 wrong merge reference** (PRRT_kwDOS7mOVM6Q4hKd): "#1575 Merged via PR #1589 batch cleanup" was incorrect — #1575 was merged on its own, not batched through #1589. Fixed to "Merged via PR #1575."
+
+2. **EFFORT-LOG #1561 stale completed tail** (PRRT_kwDOS7mOVM6Q4hKV): The completed #1561 row still said "Hosted checks, merge/autodeploy, and production verification remain." Removed the stale tail.
+
+3. **EFFORT-LOG #1576 stale completed tail** (PRRT_kwDOS7mOVM6Q4hKY): The completed #1576 row still said "Hosted verify, merge/autodeploy, and production verification remain." Removed the stale tail.
+
+4. **STATUS.md + EFFORT-LOG #1578 merge status** (PRRT_kwDOS7mOVM6Q4hKk): The TypeScript toolchain entry still said "fresh review, final ordered gate, commit, ready PR, hosted verification, merge/autodeploy, and production verification remain" and the EFFORT-LOG showed it as "READY FOR MAIN RECONCILIATION." PR #1578 was already merged (`4432c2b`). Updated both to reflect merged state.
+
 ## Next Steps
-- Await maintainer response on AG branch handoff thread.
+- Await maintainer response on AG branch handoff thread (PRRT_kwDOS7mOVM6Q4KKi — unresolved).
 - Auto-merge enabled for the resolved threads.
