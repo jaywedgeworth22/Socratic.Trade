@@ -4,8 +4,20 @@
 
 The hosted autofix pushed two independent review fixes. The remaining money-path
 finding is now implemented locally and awaiting the final ordered gate and push.
+## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle + final-size input cleanliness + broker-rejection measurability (PR #1587)
 
-**Fixed:**
+**[codex-autofix] Round 2 (this commit):** two more Codex review findings fixed,
+two architectural questions posted to the maintainer.
+
+**Fixed this round:**
+- P2 — strip prior `red_team_veto` prejudgment from `proposalForFinalSizeRedReview`
+  so the fresh final-size Red Team judge sees only Green's adjusted size, not an
+  overridden prior adversary's objection.
+- P2 — add `'rejected_by_broker'` to the status filter in both
+  `listSocraticDecisionCasesNeedingOutcome` and `getSocraticOutcomeCoverage` so
+  broker-rejected orders are measured by the outcome engine.
+
+**Fixed previously:**
 - P2 — sync `draftMode` on account switch: `useEffect` now resets the cap-mode
   selector when `policyMode` changes, preventing first-keystroke unit flip.
 - P1 — keep unpriced fill growth pending: `reconciledFillStatus` now checks
@@ -29,6 +41,13 @@ Hosted-autofix gate: `npx tsc --noEmit` clean, all 4,124 tests pass, and
 3 ordering-focused files / 20 tests pass. The final combined-tree Node 24 gate is green:
 lint exit 0, standalone TypeScript clean, 368 files / 4,126 tests, and a production build
 with the real TypeScript phase and 32 static pages. Auto-merge remains armed.
+**Deferred (asked maintainer):**
+- P1 — final-size holds vs sell-to-fund ordering.
+- P2 — revalidate final-size consent against fresh notional on price drift.
+
+Verify gate: `npm run lint` (0 errors), `npm run build` (includes tsc) clean,
+all 4124 tests pass.
+Auto-merge enabled via `--auto`.
 
 PR #1561 merged as `3e105e17` and production was verified on that exact SHA with one healthy
 container, zero restarts, current scheduler/DB/Litestream checks, and roughly 358 MiB runtime

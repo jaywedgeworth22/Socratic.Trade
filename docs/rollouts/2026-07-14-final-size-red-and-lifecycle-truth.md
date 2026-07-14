@@ -258,6 +258,30 @@ bash scripts/land.sh --pr-title "Harden account-relative risk and broker lifecyc
 # passed: TypeScript, 368 files / 4,124 tests, production build; opened ready PR #1587
 ```
 
+### [codex-autofix] Round 2 (commit `487aa16a`)
+
+Two more Codex review findings fixed, two architectural questions posted:
+
+**Fixed:**
+1. **P2 — Strip prior Red input before final-size rereview** (`src/lib/finalized-sizing-review.ts`):
+   `proposalForFinalSizeRedReview` now filters out `red_team_veto:` entries from `preVetoReasons`
+   so the fresh final-size Red judge sees only Green's adjusted size, not an overridden prior
+   adversary's objection.
+2. **P2 — Keep broker rejections measurable** (`src/lib/db-socratic.ts`): Added `'rejected_by_broker'`
+   to the status filter in both `listSocraticDecisionCasesNeedingOutcome` and
+   `getSocraticOutcomeCoverage` so broker-rejected orders are measured by the outcome engine.
+
+**Deferred (asked maintainer):**
+- P1 — Decide final-size holds before funding sells (architecturally significant reordering).
+- P2 — Revalidate final-size consent against fresh notional on price drift.
+
+**Verify trio (this round):**
+```bash
+npm run lint        # 0 errors / 459 inherited warnings
+npm run build       # includes tsc — passed, TypeScript phase, 32 static pages
+npm test            # 368 files / 4,124 tests passed
+```
+
 ## Follow-ups
 
 - Run the final combined-tree ordered gate, push the review remediation, resolve the PR #1587
