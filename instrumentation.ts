@@ -48,15 +48,9 @@ export async function register() {
   const { startObservability } = await import("./src/lib/observability");
   await startObservability();
 
-  const { startScheduler } = await import("./src/lib/scheduler");
-  startScheduler();
-
-  // Reconstruct crash-lost outbound usage events from the durable LLM/RAG ledgers. No-op unless
-  // the existing Usage Monitor base URL + ingest token are configured.
-  const { startUsageMonitorReplay } = await import("./src/lib/usage-monitor-replay");
-  startUsageMonitorReplay();
-
-  // Outbound streaming workers (opt-in; no-op unless enabled + keyed).
-  const { startStreams } = await import("./src/lib/streams");
-  startStreams();
+  // Production keeps all process-level workers on by default. Local development and tests fail
+  // closed unless DEV_BACKGROUND_WORKERS=on is explicit, preventing a UI-only dev server from
+  // launching broker/provider/RAG work against a credentialed or copied database.
+  const { startServerBackgroundWorkers } = await import("./src/lib/background-worker-startup");
+  await startServerBackgroundWorkers();
 }
