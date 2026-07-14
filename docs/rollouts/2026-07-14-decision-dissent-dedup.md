@@ -91,3 +91,12 @@ and reason, so it must own the status label as well.
   request final review, then reply to and resolve only `PRRT_kwDOS7mOVM6Q6zNL` and
   `PRRT_kwDOS7mOVM6Q6zNO`.
 - Do not merge or deploy; auto-merge remains disabled and production remains unchanged.
+
+### Landing reconciliation
+
+The first `scripts/land.sh` pass on current `main` passed TypeScript, 370 files / 4,168 tests, and
+the production build, then correctly refused a non-fast-forward push because remote autofix
+`02c03fe5` advanced the PR branch during the gate. No force-push was used. The remote commit only
+added a simpler verdict-label span and had no tests; its history is merged, while the single conflict
+keeps the already-tested Chip, semantic status tone, applied-override argument, and two focused
+regressions. A focused/TypeScript check and serialized landing retry remain before hosted review.

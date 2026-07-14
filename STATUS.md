@@ -22,8 +22,11 @@ open, auto-merge is disabled, and production is unchanged.
   dissent rationale echo.
 - Exact-tree Node 24 verification: focused 2 files / 24 tests, lint, TypeScript, full 369 files /
   4,135 tests, production build with TypeScript + 32 static pages, and diff-check passed. Commit
-  `40853f3e` contains both fixes and required docs. `scripts/land.sh` is queued behind another
-  serialized full gate; final hosted review/checks, replies, and resolution of threads
+  `40853f3e` contains both fixes and required docs. The first `scripts/land.sh` pass was also green
+  (TypeScript, 370 files / 4,168 tests, production build) but its push correctly stopped when remote
+  autofix `02c03fe5` advanced the branch. That one-file delta is now merged without force; the
+  conflict preserves the tested Chip, status tone, and applied-override semantics. Focused/
+  TypeScript recheck, landing retry, final hosted review/checks, replies, and resolution of threads
   `PRRT_kwDOS7mOVM6Q6zNL` and `PRRT_kwDOS7mOVM6Q6zNO` remain.
 
 Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
