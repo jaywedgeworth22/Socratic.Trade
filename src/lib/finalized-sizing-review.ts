@@ -2,6 +2,32 @@ import { resolveDailyOpeningCap } from "./policy-caps";
 import type { RedTeamDebateResult, RedTeamFinalizedSizing } from "./red-team";
 import type { ProposalSizingSnapshot, TradeProposal, TradingPolicy } from "./types";
 
+/** Owner consent to override a final-size Red hold is scoped to the broker estimate shown on the
+ * pending card. Fixed-quantity market orders naturally move with the quote, so ignore sub-cent or
+ * <=1% upward noise; larger increases need a fresh click. A lower fresh estimate is already within
+ * the owner's approved risk envelope. */
+export const FINAL_SIZE_CONSENT_UPWARD_DRIFT_PCT = 0.01;
+export const FINAL_SIZE_CONSENT_MIN_ABSOLUTE_DRIFT = 0.01;
+
+export function assessFinalSizeConsentDrift(
+  consentedNotional: number,
+  freshNotional: number
+): { materialIncrease: boolean; increase: number; tolerance: number; increasePct?: number } {
+  const baseline = Number.isFinite(consentedNotional) ? Math.max(0, consentedNotional) : 0;
+  const fresh = Number.isFinite(freshNotional) ? Math.max(0, freshNotional) : 0;
+  const increase = Math.max(0, fresh - baseline);
+  const tolerance = Math.max(
+    FINAL_SIZE_CONSENT_MIN_ABSOLUTE_DRIFT,
+    baseline * FINAL_SIZE_CONSENT_UPWARD_DRIFT_PCT
+  );
+  return {
+    materialIncrease: baseline <= 0 ? fresh > 0 : increase > tolerance + Number.EPSILON,
+    increase,
+    tolerance,
+    ...(baseline > 0 ? { increasePct: (increase / baseline) * 100 } : {})
+  };
+}
+
 /** Capture the exact order shape and broker-reviewed notional that Red/policy are evaluating. */
 export function captureProposalSizingSnapshot(input: {
   proposal: TradeProposal;

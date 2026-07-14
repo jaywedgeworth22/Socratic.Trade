@@ -48,6 +48,9 @@ invariants, and residual gaps.
 - Reject, unavailable, or broker-unplaceable half-size results hold the final broker-adjusted order
   for one explicit owner decision. That second approval is stamped and audited as an override
   without recursively rerunning Red. Risk-reducing exits remain exempt.
+- That owner decision is scoped to the broker estimate shown on the pending card. Downward drift
+  and upward quote noise no greater than the larger of 1%/$0.01 remain inside the approved risk
+  envelope; a larger upward requote persists the new amount and requires one fresh click.
 - Sell-to-fund planning cannot run ahead of that decision. Every otherwise autonomous opening is
   correlation-gated, broker-reviewed, minimum-adjusted, exact-size Red-reviewed, and
   policy/override-preflighted before its notional can request a funding sale. Correlation-dropped,

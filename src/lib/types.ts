@@ -1278,6 +1278,12 @@ export interface TradeProposal {
     reviewedAt: string;
     ownerApprovalRequired: boolean;
     ownerApprovalReason?: string;
+    /** Broker estimate the pending owner consent currently covers. Defaults to toNotional on
+     * legacy receipts. It can advance only after a material upward requote is shown again. */
+    ownerApprovalNotional?: number;
+    /** Explains why a prior click was not consumed after the broker estimate increased. */
+    ownerApprovalRequoteReason?: string;
+    ownerApprovalRequotedAt?: string;
     ownerOverrideAppliedAt?: string;
   };
   /** Every independent hold that must be resolved before placement, in strategy evaluation order. */

@@ -2,8 +2,10 @@
 
 ## 2026-07-14 — Final hosted-review remediation (PR #1587)
 
-The hosted autofix pushed two independent review fixes. The remaining money-path
-finding is now implemented locally and awaiting the final ordered gate and push.
+The hosted autofix pushed two independent review fixes. Both remaining money-path
+findings are now implemented locally: funding sells are downstream of exact-size
+eligibility, and a stored owner override cannot be consumed after a material upward
+broker requote. Focused verification is green; the final ordered gate and push remain.
 ## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle + final-size input cleanliness + broker-rejection measurability (PR #1587)
 
 **[codex-autofix] Round 2 (this commit):** two more Codex review findings fixed,
@@ -38,12 +40,14 @@ two architectural questions posted to the maintainer.
 
 Hosted-autofix gate: `npx tsc --noEmit` clean, all 4,124 tests pass, and
 `npm run build` clean. Local remediation checks: standalone TypeScript clean and
-3 ordering-focused files / 20 tests pass. The final combined-tree Node 24 gate is green:
-lint exit 0, standalone TypeScript clean, 368 files / 4,126 tests, and a production build
+3 ordering-focused files / 20 tests pass. After the final consent-drift fix, the authoritative
+Node 24 gate is green: lint exit 0, standalone TypeScript clean, 368 files / 4,128 tests, and a production build
 with the real TypeScript phase and 32 static pages. Auto-merge remains armed.
-**Deferred (asked maintainer):**
-- P1 — final-size holds vs sell-to-fund ordering.
-- P2 — revalidate final-size consent against fresh notional on price drift.
+**Resolved after hosted review:**
+- P1 — final-size holds resolve before sell-to-fund planning.
+- P2 — final-size owner consent is bound to the shown broker estimate. Downward or
+  at-most-1%/$0.01 upward quote noise can proceed; a larger increase persists the fresh
+  amount and requires one new approval before placement.
 
 Verify gate: `npm run lint` (0 errors), `npm run build` (includes tsc) clean,
 all 4124 tests pass.

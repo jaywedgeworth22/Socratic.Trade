@@ -59,9 +59,14 @@
 > TypeScript phase plus 32 static pages. `scripts/land.sh` repeated current-main TypeScript, all
 > 4,124 tests, and the build before opening ready PR #1587. The local ordering remediation passes
 > TypeScript and 3 focused files / 20 tests. The combined-tree ordered Node 24 gate is green:
-> lint exit 0, standalone TypeScript clean, 368 files / 4,126 tests, and a production build with
+> lint exit 0, standalone TypeScript clean, 368 files / 4,128 tests, and a production build with
 > the real TypeScript phase plus 32 static pages. Push, resolve the review, merge after hosted
 > verification, and verify the exact production release.
+> The last hosted P2 is also closed: final-size owner consent carries the exact broker estimate it
+> covers. A fresh upward estimate above the greater of 1% or $0.01 is persisted and re-queued for
+> one new click; downward/immaterial drift remains within the approved envelope. Focused final-size
+> verification is green (3 files / 21 tests plus standalone TypeScript); the repeated full gate
+> passes lint, TypeScript, 368 files / 4,128 tests, and the production build.
 > See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
 > `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 > Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.

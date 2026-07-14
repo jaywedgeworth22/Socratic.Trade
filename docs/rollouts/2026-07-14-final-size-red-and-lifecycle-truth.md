@@ -17,6 +17,9 @@ Landing base: `origin/main@07c2da3f` (integrated; includes PR #1575)
   sell-to-fund demand. Prepared tradability and exact broker/Red shape are cached for placement;
   dropped, unplaceable, human-held, and non-funding-blocked openings contribute `$0`, while a valid
   cumulative buying-power shortfall remains eligible for the exact funding sale.
+- Bound a final-size owner override to the broker estimate displayed on its pending card. A fresh
+  estimate may move down or up within the greater of 1%/$0.01; a larger upward requote persists the
+  new amount and requires one fresh click, so stale consent never reaches placement.
 - Kept independent human-review reasons separate; final-size Red approval cannot clear a
   rationale-collapse or unresolved owner-preference hold.
 - Synchronized proposal lifecycle changes into Socratic decisions transactionally. Autonomous
@@ -77,6 +80,12 @@ prepared-shape cache closes that gap without creating either a duplicate review 
 cancel-after-liquidation path. Moving correlation ahead of funding prevents a correlated-away buy
 from orphaning a funding sale; policy preflight excludes hard/non-funding failures without treating
 the expected cumulative buying-power shortfall as a reason to suppress funding.
+
+The remaining hosted P2 concerned price drift between a held final-size review and the owner's next
+click. The execution path now compares the fresh broker review with the consented notional after
+broker-minimum handling and before consuming the override. Material upward drift re-queues the same
+exact proposal and audit receipt for owner confirmation; downward/immaterial drift needs no extra
+model call or confirmation loop.
 
 ## Files
 
@@ -215,6 +224,14 @@ npx vitest run test/final-size-red-autonomous.test.ts test/sell-to-fund.test.ts 
 # passed: 3 files / 20 tests; final-size hold funds nothing, cumulative shortfall funds exactly,
 # prepared buy shapes are reviewed once, and the correlation gate remains green
 
+npx vitest run test/finalized-sizing-review.test.ts test/broker-minimum-bump-execute.test.ts \
+  test/final-size-red-autonomous.test.ts
+# passed: 3 files / 21 tests; material upward requotes re-queue before placement and the next
+# fresh click consumes only the updated notional
+
+npx tsc --noEmit
+# passed after final-size consent drift binding
+
 # Final combined-tree authoritative Node 24 gate
 npm run lint
 # passed: exit 0
@@ -223,7 +240,7 @@ npx tsc --noEmit
 # passed
 
 npm test
-# passed: 368 files / 4,126 tests
+# passed: 368 files / 4,128 tests
 
 npm run build
 # passed: real TypeScript phase, 32 static pages
@@ -271,9 +288,10 @@ Two more Codex review findings fixed, two architectural questions posted:
    to the status filter in both `listSocraticDecisionCasesNeedingOutcome` and
    `getSocraticOutcomeCoverage` so broker-rejected orders are measured by the outcome engine.
 
-**Deferred (asked maintainer):**
-- P1 — Decide final-size holds before funding sells (architecturally significant reordering).
-- P2 — Revalidate final-size consent against fresh notional on price drift.
+**Resolved locally after the hosted questions:**
+- P1 — pre-funding finalization excludes held/unplaceable openings and caches valid order shapes.
+- P2 — owner consent is not consumed after a material upward broker requote; the fresh amount is
+  persisted and routed back for one new click.
 
 **Verify trio (this round):**
 ```bash

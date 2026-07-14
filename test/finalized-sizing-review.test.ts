@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import {
+  assessFinalSizeConsentDrift,
   captureProposalSizingSnapshot,
   proposalForFinalSizeRedReview,
   redTeamSizingFromSnapshot,
@@ -26,6 +27,14 @@ function proposal(overrides: Partial<TradeProposal> = {}): TradeProposal {
 }
 
 describe("finalized broker-size Red review helpers", () => {
+  it("requires fresh consent only for upward broker-estimate drift above one percent or one cent", () => {
+    expect(assessFinalSizeConsentDrift(100, 101)).toMatchObject({ materialIncrease: false, tolerance: 1 });
+    expect(assessFinalSizeConsentDrift(100, 101.01)).toMatchObject({ materialIncrease: true, tolerance: 1 });
+    expect(assessFinalSizeConsentDrift(1, 1.01)).toMatchObject({ materialIncrease: false, tolerance: 0.01 });
+    expect(assessFinalSizeConsentDrift(1, 1.02)).toMatchObject({ materialIncrease: true, tolerance: 0.01 });
+    expect(assessFinalSizeConsentDrift(100, 90)).toMatchObject({ materialIncrease: false, increase: 0 });
+  });
+
   it("computes the EXE-style account math centrally: $4 of $100 is 4%, with a $20 effective 20%-NAV daily cap", () => {
     const snapshot = captureProposalSizingSnapshot({
       proposal: proposal(),

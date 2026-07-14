@@ -13,6 +13,7 @@ import { upsertSocraticDecisionCase } from "./db-socratic";
 import { emitDashboardEvent } from "./events";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import {
+  assessFinalSizeConsentDrift,
   captureProposalSizingSnapshot,
   proposalForFinalSizeRedReview,
   redTeamSizingFromSnapshot,
@@ -551,7 +552,9 @@ export async function executeProposal(
               toNotional: fullBumpedReview.estimatedNotional,
               reviewedAt: new Date().toISOString(),
               ownerApprovalRequired: Boolean(ownerApprovalReason),
-              ...(ownerApprovalReason ? { ownerApprovalReason } : {})
+              ...(ownerApprovalReason
+                ? { ownerApprovalReason, ownerApprovalNotional: review.estimatedNotional }
+                : {})
             };
             audit(
               "red_team_rereview_after_broker_minimum",
@@ -641,6 +644,68 @@ export async function executeProposal(
     }
 
     if (ownerApprovedStoredFinalSize) {
+      const storedFinalSizeReview = proposal.finalSizeReview as NonNullable<TradeProposal["finalSizeReview"]>;
+      const consentedNotional = storedFinalSizeReview.ownerApprovalNotional ?? storedFinalSizeReview.toNotional;
+      const consentDrift = assessFinalSizeConsentDrift(consentedNotional, review.estimatedNotional);
+      if (consentDrift.materialIncrease) {
+        const requotedAt = new Date().toISOString();
+        const driftReason = `The broker's fresh estimate increased from $${consentedNotional.toFixed(2)} to $${review.estimatedNotional.toFixed(2)} (${(consentDrift.increasePct ?? 0).toFixed(2)}%) after your final-size approval. Approve the updated amount again before placement.`;
+        proposal.finalSizeReview = {
+          ...storedFinalSizeReview,
+          ownerApprovalRequired: true,
+          ownerApprovalNotional: review.estimatedNotional,
+          ownerApprovalRequoteReason: driftReason,
+          ownerApprovalRequotedAt: requotedAt
+        };
+        proposal.sizingSnapshot = captureProposalSizingSnapshot({
+          proposal,
+          estimatedNotional: review.estimatedNotional,
+          policy,
+          portfolioValue: account.portfolio.totalMarketValue,
+          dailyNotionalUsed: daily.notional
+        });
+        const pendingDecision: PolicyDecision = {
+          ...row.decision,
+          approved: false,
+          reasons: [...new Set([...(row.decision.reasons ?? []), driftReason])]
+        };
+        const persisted = updatePendingProposalReprice(
+          proposalId,
+          { proposal, review, estimatedNotional: review.estimatedNotional, decision: pendingDecision },
+          userId
+        );
+        audit(
+          "final_size_owner_consent_requoted",
+          {
+            proposalId,
+            symbol: proposal.symbol,
+            side: proposal.side,
+            consentedNotional,
+            freshNotional: review.estimatedNotional,
+            increase: consentDrift.increase,
+            increasePct: consentDrift.increasePct,
+            tolerance: consentDrift.tolerance,
+            persisted,
+            action: "approval"
+          },
+          userId,
+          policy.connectedAccountId
+        );
+        if (!persisted) {
+          const current = getProposal(proposalId, userId)?.status ?? "removed";
+          return { status: current, reasons: [`Proposal was ${current} before the updated owner consent could be saved.`] };
+        }
+        await sendNotification(
+          {
+            type: "pending_approval",
+            title: `${proposal.symbol} final size increased — approval needed again`,
+            payload: { proposalId, proposal, review, decision: pendingDecision, reason: driftReason }
+          },
+          { policy, userId }
+        );
+        return { status: "proposed", reasons: [driftReason] };
+      }
+
       const approvedAt = new Date().toISOString();
       proposal.finalSizeReview = {
         ...(proposal.finalSizeReview as NonNullable<TradeProposal["finalSizeReview"]>),

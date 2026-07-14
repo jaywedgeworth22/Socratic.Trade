@@ -266,6 +266,75 @@ describe("executeProposal — broker-minimum bump-to-floor wiring", () => {
     expect(listAudit(100, userId).filter((event) => event.kind === "final_size_red_review_owner_override")).toHaveLength(1);
   });
 
+  it("does not consume final-size consent after a material upward requote; it shows the new notional and requires one fresh click", async () => {
+    reviewEquityOrder.mockImplementation(async (input) => ({
+      estimatedNotional: input.dollarAmount ?? (input.quantity ?? 0) * 204,
+      alerts: [],
+      raw: {}
+    }));
+    placeEquityOrder.mockImplementation(async (input) => ({
+      orderId: `ord-${randomUUID()}`,
+      state: "confirmed",
+      raw: {},
+      ...input
+    }));
+
+    const userId = `bump-red-requote-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, listAudit, updatePendingProposalReprice } = await import("../src/lib/db");
+    const seeded = getProposal(proposalId, userId)!;
+    updatePendingProposalReprice(
+      proposalId,
+      {
+        proposal: {
+          ...seeded.proposal,
+          quantity: 0.005,
+          dollarAmount: undefined,
+          finalSizeReview: {
+            trigger: "broker_minimum_bump",
+            fromNotional: 0.25,
+            toNotional: 1,
+            reviewedAt: new Date().toISOString(),
+            ownerApprovalRequired: true,
+            ownerApprovalReason: "Red rejected the final broker-adjusted size.",
+            ownerApprovalNotional: 1
+          },
+          redTeamVerdict: {
+            verdict: "reject",
+            rejected: true,
+            available: true,
+            reason: "The broker floor makes this position too large for the thesis."
+          }
+        },
+        estimatedNotional: 1
+      },
+      userId
+    );
+
+    const first = await executeProposal(proposalId, userId);
+    expect(first.status).toBe("proposed");
+    expect(first.reasons?.[0]).toContain("increased from $1.00 to $1.02");
+    expect(placeEquityOrder).not.toHaveBeenCalled();
+    expect(debateProposal).not.toHaveBeenCalled();
+    expect(getProposal(proposalId, userId)?.proposal.finalSizeReview).toMatchObject({
+      ownerApprovalRequired: true,
+      ownerApprovalNotional: 1.02,
+      ownerApprovalRequoteReason: expect.stringContaining("Approve the updated amount again")
+    });
+    expect(listAudit(100, userId).filter((event) => event.kind === "final_size_owner_consent_requoted")).toHaveLength(1);
+
+    const second = await executeProposal(proposalId, userId);
+    expect(second.status).toBe("placed");
+    expect(placeEquityOrder).toHaveBeenCalledTimes(1);
+    expect(placeEquityOrder.mock.calls[0][0]).toMatchObject({ quantity: 0.005 });
+    expect(getProposal(proposalId, userId)?.proposal.finalSizeReview).toMatchObject({
+      ownerApprovalRequired: false,
+      ownerApprovalNotional: 1.02,
+      ownerOverrideAppliedAt: expect.any(String)
+    });
+  });
+
   it("holds an unavailable final-size review for owner approval and records that failure on the pending decision", async () => {
     reviewEquityOrder.mockImplementation(async (i) => echoReview(i));
     debateProposal.mockResolvedValue({
