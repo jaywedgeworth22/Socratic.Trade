@@ -995,6 +995,62 @@ const MIGRATIONS: Migration[] = [
         database.exec("ALTER TABLE socratic_decisions ADD COLUMN sizing_snapshot TEXT");
       }
     }
+  },
+  {
+    // Replacement dedupe is tenant-scoped. Migration v21/v22 created an unscoped partial UNIQUE
+    // index, so replace it in place after collapsing any same-user duplicates that may predate the
+    // corrected key. Cross-user rows with the same broker account/order remain valid.
+    version: 28,
+    name: "order_replacements_user_scoped_active_unique",
+    up: (database) => {
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'order_replacements'")
+        .get();
+      if (!tableExists) return;
+
+      const dupGroups = database
+        .prepare(
+          `WITH ranked AS (
+             SELECT rowid, user_id, account_number, original_order_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY user_id, account_number, original_order_id
+                      ORDER BY
+                        CASE status
+                          WHEN 'replacement_submitted' THEN 1
+                          WHEN 'replacement_claiming' THEN 2
+                          WHEN 'cancel_confirmed' THEN 3
+                          WHEN 'cancel_requested' THEN 4
+                          ELSE 5
+                        END ASC,
+                        CASE WHEN replacement_order_id IS NOT NULL THEN 0 ELSE 1 END ASC,
+                        rowid DESC
+                    ) AS rn
+             FROM order_replacements
+             WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+           )
+           SELECT user_id, account_number, original_order_id,
+                  MAX(CASE WHEN rn = 1 THEN rowid END) AS keep_rowid
+           FROM ranked
+           GROUP BY user_id, account_number, original_order_id
+           HAVING COUNT(*) > 1`
+        )
+        .all() as Array<{ user_id: string; account_number: string; original_order_id: string; keep_rowid: number }>;
+      const terminalizeExtras = database.prepare(
+        `UPDATE order_replacements
+         SET status = 'failed', error = 'superseded by duplicate active replacement', updated_at = ?
+         WHERE user_id = ? AND account_number = ? AND original_order_id = ? AND rowid != ?
+         AND status NOT IN ('replacement_confirmed', 'failed', 'aborted')`
+      );
+      const now = new Date().toISOString();
+      for (const group of dupGroups) {
+        terminalizeExtras.run(now, group.user_id, group.account_number, group.original_order_id, group.keep_rowid);
+      }
+
+      database.exec("DROP INDEX IF EXISTS idx_order_replacements_active_unique");
+      database.exec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (user_id, account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')"
+      );
+    }
   }
 ];
 

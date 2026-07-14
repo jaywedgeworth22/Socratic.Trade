@@ -30,10 +30,22 @@ daily/hourly caps; structured owner holds never invent a Red outage; lifecycle s
 execution-owned case fields and preserves outcome/lessons/coach notes; and approval cannot submit
 without a durable proposed Socratic intent receipt. A broader `filled` audit also corrected bulk
 approval success, toasts, strategy summaries, ops counts, audit-feed details, outcome coverage, and
-legacy execution-mode inference. Node 24 TypeScript plus 15 focused files / 132 tests pass. PR #1578
-restored the supported TypeScript toolchain and merged as `4432c2bc`; integrate that current main,
-obtain the fresh independent acceptance, then restart the authoritative lint/tsc/test/build gate.
-Ready PR, auto-merge, original-thread resolution, and exact production verification remain.
+legacy execution-mode inference. Two later race/recovery findings are also closed: a chat draft now
+maps to one proposal through its entire lifecycle, with both preflight and write-locked dedupe; and a
+stale `placing` intent whose existing receipt advances from `pending_reconciliation` to broker-filled
+atomically finalizes fill accounting, proposal status, and Socratic status. The final money-path
+audit also closes terminal-partial execution loss in direct, inline, delayed, stale, and replacement
+paths; makes direct broker success plus fill/proposal/case persistence atomic; scopes replacement
+dedupe by tenant/account/replacement identity; counts working partial fills as real exposure; and
+repairs legacy chat cases against their historical account and doctrine. A final adversarial pass
+also required finite positive realized prices, monotonic broker-reported quantity floors, recoverable
+unpriced/no-id replacement partials, and user-scoped active replacement uniqueness; all findings are
+implemented and the independent re-review reports no P0-P2 findings. Current `main@4432c2bc` is
+integrated. The final ordered Node 24 gate is green: lint has 0 errors / 458 inherited warnings,
+standalone TypeScript is clean, all 368 files / 4,124 tests pass, and the production build completes
+its real TypeScript phase and generates 32 static pages. A diagnostic full-suite pass also passed the
+same 4,124 tests before the authoritative gate. Ready PR, auto-merge, original-thread resolution,
+and exact production verification remain.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.

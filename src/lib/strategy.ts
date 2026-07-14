@@ -59,7 +59,7 @@ import { OrderValidationError } from "./types";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
 import { planFundingSells } from "./sell-to-fund";
-import { isRejectedOrCanceledState } from "./broker-side";
+import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState } from "./broker-side";
 import {
   calibratedConviction,
   getClosedLotCount,
@@ -2770,8 +2770,15 @@ export async function runStrategyOnce(
           runId
         });
         if (outcome.kind === "placed") {
-          const recoveredStatus = outcome.state === "filled" ? "filled" : "placed";
-          updateProposalStatus(proposalId, recoveredStatus, outcome.orderId, review, review.estimatedNotional, userId);
+          const recoveredStatus = outcome.fillStatus === "filled" ? "filled" : "placed";
+          updateProposalStatus(
+            proposalId,
+            recoveredStatus,
+            outcome.orderId,
+            review,
+            outcome.fillStatus === "filled" ? outcome.fill?.notional ?? review.estimatedNotional : review.estimatedNotional,
+            userId
+          );
           auditWashSaleProceed(decision, { runId, proposalId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
           audit("order_placement_recovered_inline", { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: normalizedProposal.side }, userId, connectedAccountId);
           resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
@@ -2828,7 +2835,7 @@ export async function runStrategyOnce(
       // "placed" would tell the user/dashboard a live order exists when the broker already
       // declined it — broker-agnostic via isRejectedOrCanceledState (handles both spellings and
       // known terminal-decline states across brokers).
-      if (isRejectedOrCanceledState(execution.state)) {
+      if (isRejectedOrCanceledState(execution.state) && !hasBrokerReportedFill(execution)) {
         const message = `Broker declined the order (state: ${execution.state}).`;
         updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
         audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, connectedAccountId);
@@ -2841,28 +2848,83 @@ export async function runStrategyOnce(
         continue;
       }
 
-      updateProposalStatus(proposalId, execution.state === "filled" ? "filled" : "placed", execution.orderId, review, review.estimatedNotional, userId);
+      const hasPricedFill = hasBrokerReportedPricedFill(execution);
+      const terminalAfterPartialFill = isRejectedOrCanceledState(execution.state) && hasPricedFill;
+      const fillStatus = (execution.state === "filled" && hasPricedFill) || terminalAfterPartialFill
+        ? "filled"
+        : execution.state === "partially_filled" && hasPricedFill
+          ? "partially_filled"
+          : "pending_reconciliation";
+      const proposalStatus = fillStatus === "filled" ? "filled" : "placed";
+      if (!execution.orderId && fillStatus !== "filled") {
+        const message = `Broker returned ${execution.state} without an order id; keeping the idempotent intent pending until refId reconciliation confirms the order.`;
+        updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, message);
+        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, brokerState: execution.state, missingOrderId: true }, userId, connectedAccountId);
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+        await sendNotification(
+          { type: "run_failed", title: `${normalizedProposal.symbol} order accepted without broker id — recovery pending`, payload: { runId, proposalId, refId, state: execution.state, reconcile: "uncertain" } },
+          { policy, userId }
+        );
+        lockGuard.assertOwned();
+        continue;
+      }
+      const executedNotional =
+        hasPricedFill
+          ? Math.abs(execution.filledQuantity! * execution.averagePrice!)
+          : undefined;
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
-      auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const preFillPosition = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
-      const fill = recordFillFromProposal({
-        userId,
-        connectedAccountId,
-        accountNumber: policy.accountNumber,
-        proposalId,
-        runId,
-        source: learningSource,
-        executionMode,
-        proposal: normalizedProposal,
-        review,
-        execution,
-        marketScan,
-        status: execution.state === "filled" ? "filled" : "pending_reconciliation",
-        existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
-      });
-      results.push({ proposal: normalizedProposal, status: execution.state === "filled" ? "filled" : "placed", reasons: [], orderId: execution.orderId });
+      let fill: FillEvent;
+      try {
+        fill = getDb().transaction(() => {
+          const receipt = recordFillFromProposal({
+            userId,
+            connectedAccountId,
+            accountNumber: policy.accountNumber,
+            proposalId,
+            runId,
+            source: learningSource,
+            executionMode,
+            proposal: normalizedProposal,
+            review,
+            execution,
+            marketScan,
+            status: fillStatus,
+            existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
+          });
+          updateProposalStatus(
+            proposalId,
+            proposalStatus,
+            execution.orderId,
+            review,
+            fillStatus === "filled" ? executedNotional ?? receipt.notional : review.estimatedNotional,
+            userId
+          );
+          return receipt;
+        }).immediate();
+      } catch (receiptError) {
+        const detail = receiptError instanceof Error ? receiptError.message : String(receiptError);
+        const message = `Broker confirmed order ${execution.orderId}, but its local fill receipt could not be committed: ${detail}`;
+        updateProposalStatus(proposalId, "placing", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+        audit("order_placement_uncertain", { runId, proposalId, refId, orderId: execution.orderId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, brokerState: execution.state, receiptPersistenceFailed: true, error: detail }, userId, connectedAccountId);
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [message], orderId: execution.orderId });
+        await sendNotification(
+          { type: "run_failed", title: `${normalizedProposal.symbol} broker order confirmed — local receipt recovery pending`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state, error: detail, reconcile: "uncertain" } },
+          { policy, userId }
+        );
+        lockGuard.assertOwned();
+        continue;
+      }
+      auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
+      results.push({ proposal: normalizedProposal, status: proposalStatus, reasons: [], orderId: execution.orderId });
       await sendNotification(
-        { type: "fill", title: `${normalizedProposal.symbol} live order ${execution.state}`, payload: { runId, proposalId, fill } },
+        {
+          type: "fill",
+          title: terminalAfterPartialFill
+            ? `${normalizedProposal.symbol} partially filled, then ${execution.state}`
+            : `${normalizedProposal.symbol} live order ${execution.state}`,
+          payload: { runId, proposalId, fill }
+        },
         { policy, userId }
       );
       // Push so open dashboards refresh on an autonomously-placed order (the approval path

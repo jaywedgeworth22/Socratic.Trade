@@ -1,9 +1,10 @@
 import crypto from "crypto";
-import { audit, insertFillEvent, getDb } from "./db";
+import { audit, insertFillEvent, getDb, updateFillEvent } from "./db";
 import { applyPaperExitCost } from "./execution-cost";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { isActiveBrokerOrderState, isRejectedOrCanceledState } from "./broker-held-orders";
+import { isActiveBrokerOrderState } from "./broker-held-orders";
+import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState } from "./broker-side";
 import { listStaleLimitOrders } from "./stale-limit-orders";
 import { normalizeSymbol } from "./money";
 import type { BrokerGateway, ConnectedAccount, EquityOrder, EquityOrderInput, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
@@ -12,6 +13,7 @@ const CANCEL_SETTLE_MS = 750;
 const MARKET_REPLACE_TYPES = new Set(["limit", "stop_limit"]);
 const POST_CANCEL_ACTIVE_STATES = new Set(["done_for_day", "stopped", "calculated"]);
 const POSITION_EPSILON = 1e-6;
+const EXECUTION_WITHOUT_ORDER_ID = "Broker reported executed quantity without an order id";
 
 export interface OrderReplacementRow {
   id: string;
@@ -90,8 +92,8 @@ export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput
   const userId = input.userId ?? "local";
   const db = getDb();
   
-  // Concurrency guard is now enforced via SQLite UNIQUE constraint: Only one 
-  // replacement state machine per (account_number, original_order_id).
+  // Concurrency guard is enforced via SQLite UNIQUE constraint: only one replacement
+  // state machine per user/account/original order.
   const id = crypto.randomUUID();
   const refId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -99,9 +101,9 @@ export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput
   const insertTx = db.transaction(() => {
     const active = db.prepare(`
       SELECT 1 FROM order_replacements
-      WHERE account_number = ? AND original_order_id = ?
+      WHERE user_id = ? AND account_number = ? AND original_order_id = ?
       AND status NOT IN ('replacement_confirmed', 'failed', 'aborted')
-    `).get(input.policy.accountNumber, input.orderId);
+    `).get(userId, input.policy.accountNumber, input.orderId);
 
     if (active) {
       throw new MarketReplacePreconditionError(
@@ -208,9 +210,27 @@ export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput
     // Read the actual fill status from the fill event that was created inside
     // stepReplacementState, so the caller sees "filled" for immediately-filled
     // market replacements instead of always reporting "pending_reconciliation".
-    const fillEvent = db.prepare(`SELECT status FROM fill_events WHERE broker_order_id = ? ORDER BY filled_at DESC LIMIT 1`).get(row.replacement_order_id) as { status: string } | undefined;
+    const fillEvent = findReplacementFill(row, row.replacement_order_id);
     const fillStatus = fillEvent?.status ?? "pending_reconciliation";
-    return { status: "replaced", canceledOrderId: original.id, replacementOrderId: row.replacement_order_id!, fillStatus, remainingQuantity: row.remaining_quantity! };
+    return {
+      status: "replaced",
+      canceledOrderId: original.id,
+      ...(row.replacement_order_id ? { replacementOrderId: row.replacement_order_id } : {}),
+      fillStatus,
+      remainingQuantity: row.remaining_quantity!
+    };
+  } else if (row?.status === "replacement_submitted") {
+    const pendingReceipt = findReplacementFill(row, row.replacement_order_id);
+    if (pendingReceipt && replacementReceiptQuantityFloor(pendingReceipt) > 0) {
+      return {
+        status: "replaced",
+        canceledOrderId: original.id,
+        ...(row.replacement_order_id ? { replacementOrderId: row.replacement_order_id } : {}),
+        fillStatus: pendingReceipt.status,
+        remainingQuantity: row.remaining_quantity!
+      };
+    }
+    return { status: "pending_cancel", canceledOrderId: original.id, remainingQuantity: stale.remainingQuantity };
   } else if (row?.status === 'aborted') {
     if (row.cancel_result && row.remaining_quantity === 0) {
       return { status: "already_filled", canceledOrderId: original.id, remainingQuantity: 0 };
@@ -451,8 +471,10 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
           .run(error instanceof Error ? error.message : String(error), new Date().toISOString(), row.id);
         return;
       }
-      // placeEquityOrder returned without throwing, but the broker may have rejected it.
-      if (isRejectedOrCanceledState(execution.state) || !execution.orderId) {
+      // A terminal broker state proves a total decline only when NOTHING executed. A cancel,
+      // reject, or expiry can follow a partial fill; those shares are real and must be booked.
+      const terminalAfterPartialFill = isRejectedOrCanceledState(execution.state) && hasBrokerReportedFill(execution);
+      if (isRejectedOrCanceledState(execution.state) && !terminalAfterPartialFill) {
         const rejectStr = `Broker rejected the replacement order (state: ${execution.state})`;
         db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
           .run(rejectStr, new Date().toISOString(), row.id);
@@ -466,42 +488,53 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       }
 
       const source = fillSourceForExecutionMode(executionState);
-      const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
-      const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
+      const fillStatus = replacementFillStatus(execution);
+      const fillQuantity = hasBrokerReportedFill(execution) ? execution.filledQuantity! : remainingQuantity;
+      const rawPrice = hasBrokerReportedPricedFill(execution) ? execution.averagePrice! : 0;
       const price = isExit ? applyPaperExitCost(rawPrice, originalOrder.side, source) : rawPrice;
-      // Check for existing fill before inserting — in multi-process deployments the
-      // replacement_submitted reconciliation branch may have already recorded this
-      // fill before we reach this point. Replacement fills have no proposal_id, so
-      // the (proposal_id, broker_order_id) uniqueness guard in insertFillEvent does
-      // not apply.
-      const existingFill = db.prepare(`SELECT 1 FROM fill_events WHERE user_id = ? AND account_number = ? AND broker_order_id = ?`).get(userId, input.policy.accountNumber, execution.orderId);
-      if (!existingFill) {
-        insertFillEvent({
-          userId,
-          accountNumber: input.policy.accountNumber,
-          source,
-          executionMode,
-          symbol,
-          side: originalOrder.side,
-          quantity: remainingQuantity,
-          price,
-          notional: Math.abs(price * remainingQuantity),
-          status: fillStatus,
-          brokerOrderId: execution.orderId,
-          raw: {
-            source: "market_replace",
-            replacedOrderId: originalOrder.id,
-            cancel: row.cancel_result,
-            review,
-            execution
-          }
-        });
-      }
+      const unresolvedPricedExecution = hasBrokerReportedFill(execution) && !hasBrokerReportedPricedFill(execution);
+      const missingOrderId = !execution.orderId;
+      // Serialize check + insert + terminal handoff. replacement_ref_id is this standalone
+      // replacement proposal's durable idempotency scope; broker ids are not globally unique.
+      db.transaction(() => {
+        const existing = findReplacementFill(row, execution.orderId);
+        if (!existing) {
+          insertFillEvent({
+            userId,
+            accountNumber: input.policy.accountNumber,
+            source,
+            executionMode,
+            symbol,
+            side: originalOrder.side,
+            quantity: fillQuantity,
+            price,
+            notional: Math.abs(price * fillQuantity),
+            status: fillStatus,
+            brokerOrderId: execution.orderId,
+            raw: {
+              source: "market_replace",
+              replacementRefId: row.replacement_ref_id,
+              replacedOrderId: originalOrder.id,
+              terminalAfterPartialFill,
+              ...(hasBrokerReportedFill(execution) ? { maxBrokerFilledQuantity: fillQuantity } : {}),
+              cancel: row.cancel_result,
+              review,
+              execution
+            }
+          });
+        }
 
-      // Mark the row terminal AFTER the fill is recorded so a crash between the
-      // status update and fill insertion doesn't leave a terminal row with no fill.
-      db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
-        .run(execution.orderId, new Date().toISOString(), row.id);
+        // A final priced execution is complete even if a malformed response omitted its order id;
+        // the durable replacement ref in raw is its local identity. A working/missing-price fill,
+        // however, must remain in the refId recovery pump until the broker exposes an id + price.
+        const recoverByRef = missingOrderId && fillStatus !== "filled";
+        const nextStatus = unresolvedPricedExecution || recoverByRef ? "replacement_submitted" : "replacement_confirmed";
+        const error = missingOrderId
+          ? `${hasBrokerReportedFill(execution) ? EXECUTION_WITHOUT_ORDER_ID : "Broker accepted replacement without an order id"}; state=${execution.state}`
+          : null;
+        db.prepare(`UPDATE order_replacements SET status = ?, replacement_order_id = ?, error = ?, updated_at = ? WHERE id = ?`)
+          .run(nextStatus, execution.orderId ?? null, error, new Date().toISOString(), row.id);
+      }).immediate();
 
       audit(
         "order_replace_market",
@@ -511,8 +544,10 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
           symbol,
           side: originalOrder.side,
           remainingQuantity,
+          executedQuantity: fillQuantity,
           brokerState: execution.state,
-          fillStatus
+          fillStatus,
+          terminalAfterPartialFill
         },
         userId,
         input.policy.connectedAccountId
@@ -524,57 +559,92 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
       const orders = await input.gateway.getEquityOrders(input.policy.accountNumber);
       const found = orders.find((o) => o.clientOrderId === row.replacement_ref_id || o.id === row.replacement_order_id);
       if (found) {
-        // Treat terminal (rejected/canceled) broker states as failures so the
-        // state machine stops retrying and the original exit remains canceled
-        // with no replacement — the caller will see a failed row and can alert.
-        if (isRejectedOrCanceledState(found.state)) {
-          db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
-            .run(`Replacement order was ${found.state} by the broker`, new Date().toISOString(), row.id);
-          return;
-        }
-        // Already placed, confirm it
-        db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', replacement_order_id = ?, updated_at = ? WHERE id = ?`)
-          .run(found.id, new Date().toISOString(), row.id);
+        const source = fillSourceForExecutionMode(executionState);
+        const result = db.transaction(() => {
+          const existing = findReplacementFill(row, found.id);
+          const knownQuantity = Math.max(replacementReceiptQuantityFloor(existing), hasBrokerReportedFill(found) ? found.filledQuantity! : 0);
+          // A terminal zero snapshot is a true failure only when no prior receipt proves execution.
+          // A stale zero must never erase a priced partial already booked under this replacement ref.
+          if (isRejectedOrCanceledState(found.state) && knownQuantity <= 0) {
+            db.prepare(`UPDATE order_replacements SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+              .run(`Replacement order was ${found.state} by the broker`, new Date().toISOString(), row.id);
+            return { failed: true };
+          }
 
-        // Check if fill event exists for this order
-        const fillExists = db.prepare(`SELECT 1 FROM fill_events WHERE broker_order_id = ?`).get(found.id);
-        if (!fillExists) {
-          const source = fillSourceForExecutionMode(executionState);
-          // If averagePrice is missing from a filled order, keep the fill as
-          // pending_reconciliation so normal pending-fill reconciliation can
-          // fill in the price later — a zero-price booked fill would never
-          // be revisited and would skew P&L.
-          const fillStatus = found.state === "filled" && found.averagePrice != null ? "filled" : "pending_reconciliation";
-          const rawPrice = found.averagePrice ?? 0;
-          const price = isExit ? applyPaperExitCost(rawPrice, originalOrder.side, source) : rawPrice;
-          insertFillEvent({
-            userId,
-            accountNumber: input.policy.accountNumber,
-            source,
-            executionMode,
-            symbol,
-            side: originalOrder.side,
-            quantity: row.remaining_quantity!,
-            price,
-            notional: Math.abs(price * row.remaining_quantity!),
-            status: fillStatus,
-            brokerOrderId: found.id,
-            raw: {
-              source: "market_replace_reconciliation",
-              replacedOrderId: originalOrder.id,
-              cancel: row.cancel_result,
-              order: found
+          const terminalAfterPartialFill = isRejectedOrCanceledState(found.state) && knownQuantity > 0;
+          let fillStatus = replacementFillStatus(found);
+          let fillQuantity = hasBrokerReportedFill(found) ? found.filledQuantity! : row.remaining_quantity!;
+          let price = hasBrokerReportedPricedFill(found)
+            ? (isExit ? applyPaperExitCost(found.averagePrice!, originalOrder.side, source) : found.averagePrice!)
+            : 0;
+
+          const existingPriced = replacementReceiptHasPricedExecution(existing);
+          if (existingPriced && (!hasBrokerReportedPricedFill(found) || found.filledQuantity! < existing!.quantity)) {
+            fillQuantity = existing!.quantity;
+            price = existing!.price;
+            fillStatus = isRejectedOrCanceledState(found.state) ? "filled" : existing!.status as "filled" | "partially_filled";
+          } else if (knownQuantity > 0 && (!hasBrokerReportedPricedFill(found) || found.filledQuantity! < knownQuantity)) {
+            fillQuantity = knownQuantity;
+            fillStatus = "pending_reconciliation";
+            price = 0;
+          }
+          const raw = {
+            ...((existing?.raw as Record<string, unknown>) ?? {}),
+            source: "market_replace_reconciliation",
+            replacementRefId: row.replacement_ref_id,
+            replacedOrderId: originalOrder.id,
+            terminalAfterPartialFill,
+            cancel: row.cancel_result,
+            order: found,
+            ...(knownQuantity > 0 ? { maxBrokerFilledQuantity: knownQuantity } : {})
+          };
+          if (!existing) {
+            insertFillEvent({
+              userId,
+              accountNumber: input.policy.accountNumber,
+              source,
+              executionMode,
+              symbol,
+              side: originalOrder.side,
+              quantity: fillQuantity,
+              price,
+              notional: Math.abs(price * fillQuantity),
+              status: fillStatus,
+              brokerOrderId: found.id,
+              raw
+            });
+          } else {
+            updateFillEvent(existing.id, {
+              status: fillStatus,
+              quantity: fillQuantity,
+              price,
+              notional: Math.abs(price * fillQuantity),
+              raw,
+              filledAt: found.updatedAt ?? existing.filled_at
+            }, userId);
+            if (!existing.broker_order_id) {
+              db.prepare("UPDATE fill_events SET broker_order_id = ? WHERE id = ? AND user_id = ?").run(found.id, existing.id, userId);
             }
-          });
-        }
+          }
+          const pricedQuantity = fillStatus === "filled" || fillStatus === "partially_filled" ? fillQuantity : 0;
+          const nextStatus = knownQuantity > pricedQuantity ? "replacement_submitted" : "replacement_confirmed";
+          db.prepare(`UPDATE order_replacements SET status = ?, replacement_order_id = ?, error = ?, updated_at = ? WHERE id = ?`)
+            .run(
+              nextStatus,
+              found.id,
+              nextStatus === "replacement_submitted" ? "Broker execution price remains unresolved" : null,
+              new Date().toISOString(),
+              row.id
+            );
+          return { failed: false };
+        }).immediate();
+        if (result.failed) return;
         return;
       } else {
-        // Not found at broker. Check if a fill event exists for this replacement_ref_id or replacement_order_id —
-        // scoped to the replacement's user/account so another user's fill with the same broker_order_id
-        // doesn't incorrectly suppress this fill's event (broker order ids are not globally unique).
-        const fillExists = db.prepare(`SELECT 1 FROM fill_events WHERE account_number = ? AND user_id = ? AND (broker_order_id = ? OR raw LIKE ?)`)
-          .get(row.account_number, row.user_id, row.replacement_order_id, `%${row.replacement_ref_id}%`);
-        if (fillExists) {
+        // A prior process may already have booked this proposal. Scope by tenant, account, and the
+        // replacement proposal/ref; broker_order_id alone is never an identity boundary.
+        const fillExists = findReplacementFill(row, row.replacement_order_id);
+        if (row.replacement_order_id && fillExists && (fillExists.status === "filled" || fillExists.status === "partially_filled")) {
           db.prepare(`UPDATE order_replacements SET status = 'replacement_confirmed', updated_at = ? WHERE id = ?`)
             .run(new Date().toISOString(), row.id);
           return;
@@ -584,6 +654,16 @@ async function stepReplacementState(row: OrderReplacementRow, input: MarketRepla
         // we assume the submission failed to reach the broker.
         const ageMs = Date.now() - new Date(row.updated_at).getTime();
         if (ageMs > 5 * 60_000) {
+          const knownExecution = replacementReceiptQuantityFloor(fillExists) > 0 || row.error?.startsWith(EXECUTION_WITHOUT_ORDER_ID);
+          if (knownExecution) {
+            audit(
+              "stale_exit_replacement_execution_unresolved",
+              { orderId: originalOrder.id, symbol, refId: row.replacement_ref_id, replacementOrderId: row.replacement_order_id, note: "Broker previously reported execution, but id/price truth is still incomplete; retaining reconciliation state." },
+              userId,
+              input.policy.connectedAccountId
+            );
+            return;
+          }
           if (row.status === 'replacement_claiming') {
             audit("stale_exit_replacement_claiming_reverted", { orderId: originalOrder.id, symbol, refId: row.replacement_ref_id }, userId, input.policy.connectedAccountId);
             db.prepare(`UPDATE order_replacements SET status = 'cancel_confirmed', updated_at = ? WHERE id = ? AND status = 'replacement_claiming'`)
@@ -669,12 +749,12 @@ export async function autoRemediateStaleExitOrders(input: {
         const fiveMinsAgo = new Date(Date.now() - 5 * 60_000).toISOString();
         const activeOrRecent = db.prepare(`
           SELECT 1 FROM order_replacements
-          WHERE account_number = ? AND original_order_id = ?
+          WHERE user_id = ? AND account_number = ? AND original_order_id = ?
           AND (
             status NOT IN ('replacement_confirmed', 'failed', 'aborted')
             OR updated_at > ?
           )
-        `).get(input.policy.accountNumber, item.order.id, fiveMinsAgo);
+        `).get(userId, input.policy.accountNumber, item.order.id, fiveMinsAgo);
 
         if (!activeOrRecent) {
           const id = crypto.randomUUID();
@@ -802,4 +882,83 @@ function remainingAfterCancel(original: EquityOrder, afterCancel?: EquityOrder):
 function delay(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function replacementFillStatus(order: { state: string; filledQuantity?: number | null; averagePrice?: number | null }): "filled" | "partially_filled" | "pending_reconciliation" {
+  if (!hasBrokerReportedPricedFill(order)) {
+    return "pending_reconciliation";
+  }
+  if (order.state === "filled" || isRejectedOrCanceledState(order.state)) return "filled";
+  return order.state === "partially_filled" ? "partially_filled" : "pending_reconciliation";
+}
+
+type ReplacementFillRecord = {
+  id: string;
+  status: string;
+  quantity: number;
+  price: number;
+  notional: number;
+  broker_order_id: string | null;
+  raw: unknown;
+  filled_at: string;
+};
+
+function replacementReceiptQuantityFloor(fill: ReplacementFillRecord | undefined): number {
+  if (!fill) return 0;
+  const raw = (fill.raw ?? {}) as {
+    maxBrokerFilledQuantity?: unknown;
+    execution?: { filledQuantity?: unknown };
+    order?: { filledQuantity?: unknown };
+  };
+  const values = [
+    fill.status === "filled" || fill.status === "partially_filled" ? fill.quantity : 0,
+    raw.maxBrokerFilledQuantity,
+    raw.execution?.filledQuantity,
+    raw.order?.filledQuantity
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+  return values.length > 0 ? Math.max(...values) : 0;
+}
+
+function replacementReceiptHasPricedExecution(fill: ReplacementFillRecord | undefined): boolean {
+  return Boolean(
+    fill
+      && (fill.status === "filled" || fill.status === "partially_filled")
+      && Number.isFinite(fill.quantity)
+      && fill.quantity > 0
+      && Number.isFinite(fill.price)
+      && fill.price > 0
+  );
+}
+
+/** Locate a fill for this exact replacement proposal. The explicit raw replacementRefId covers
+ * new rows; the nested paths preserve recovery for receipts written before that field existed. */
+function findReplacementFill(
+  row: Pick<OrderReplacementRow, "user_id" | "account_number" | "replacement_ref_id">,
+  brokerOrderId?: string | null
+): ReplacementFillRecord | undefined {
+  const args: unknown[] = [
+    row.user_id,
+    row.account_number,
+    row.replacement_ref_id,
+    row.replacement_ref_id,
+    row.replacement_ref_id
+  ];
+  const brokerPredicate = brokerOrderId ? "AND (broker_order_id = ? OR broker_order_id IS NULL)" : "";
+  if (brokerOrderId) args.push(brokerOrderId);
+  const record = getDb().prepare(`
+    SELECT id, status, quantity, price, notional, broker_order_id, raw, filled_at
+    FROM fill_events
+    WHERE user_id = ?
+      AND account_number = ?
+      AND (
+        json_extract(raw, '$.replacementRefId') = ?
+        OR json_extract(raw, '$.execution.refId') = ?
+        OR json_extract(raw, '$.order.clientOrderId') = ?
+      )
+      ${brokerPredicate}
+    ORDER BY filled_at DESC
+    LIMIT 1
+  `).get(...args) as (Omit<ReplacementFillRecord, "raw"> & { raw: string | null }) | undefined;
+  if (!record) return undefined;
+  return { ...record, raw: record.raw ? JSON.parse(record.raw) : undefined };
 }

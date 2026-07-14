@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import type { EquityOrder, MarketQuote, MarketScan, ReviewedOrder } from "../src/lib/types";
+import type { EquityOrder, ExecutedOrder, MarketQuote, MarketScan, ReviewedOrder } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
@@ -75,7 +75,7 @@ let getEquityOrdersThrowsAfterPlacement = false;
 // stays 'placing' + uncertain instead of being wrongly declared not_placed.
 let authoritativeOrderList = true;
 
-const placeImpl = async (input: { refId: string }) => {
+const placeImpl = async (input: { refId: string }): Promise<ExecutedOrder> => {
   capturedRefId = input.refId;
   placementAttempted = true;
   throw new Error("network timeout during placement");
@@ -244,10 +244,130 @@ describe("inline placement-error reconciliation via executeProposal", () => {
     expect(fills[0].status).toBe("filled");
     expect(fills[0].quantity).toBe(1);
     expect(fills[0].price).toBe(201.5);
-    expect(dailyExecutionStats(ACCOUNT, new Date(), userId)).toMatchObject({ orderCount: 1, openingOrderCount: 1, notional: 200 });
-    expect(notionalInLastMinutes(ACCOUNT, 60, new Date(), userId)).toMatchObject({ orderCount: 1, openingOrderCount: 1, notional: 200 });
+    expect(dailyExecutionStats(ACCOUNT, new Date(), userId)).toMatchObject({ orderCount: 1, openingOrderCount: 1, notional: 201.5 });
+    expect(notionalInLastMinutes(ACCOUNT, 60, new Date(), userId)).toMatchObject({ orderCount: 1, openingOrderCount: 1, notional: 201.5 });
     expect(getSocraticDecisionCase(proposalId, userId)).toMatchObject({ status: "filled" });
     expect(getSocraticDecisionCase(proposalId, userId)?.evidence[0]).toMatchObject({ title: "Order filled" });
+  });
+
+  it("throw + order PRESENT with quantity but no realized price stays pending reconciliation", async () => {
+    const userId = `reco-unpriced-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    getEquityOrders.mockImplementation(async () => {
+      if (!placementAttempted) return [];
+      return [brokerOrder({ clientOrderId: capturedRefId, state: "filled", filledQuantity: 1 })];
+    });
+
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, getSocraticDecisionCase, listFillEventsByProposalId } = await import("../src/lib/db");
+
+    const result = await executeProposal(proposalId, userId);
+    expect(result).toMatchObject({ status: "placed", brokerState: "filled", fillStatus: "pending_reconciliation" });
+    expect(listFillEventsByProposalId(proposalId, userId)).toMatchObject([{ status: "pending_reconciliation", quantity: 1, price: 0, notional: 0 }]);
+    expect(getProposal(proposalId, userId)?.status).toBe("placed");
+    expect(getSocraticDecisionCase(proposalId, userId)?.status).toBe("placed");
+  });
+
+  it("throw + terminal order with executed quantity → filled at the real partial quantity, not declined", async () => {
+    const userId = `reco-terminal-partial-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    getEquityOrders.mockImplementation(async () => {
+      if (!placementAttempted) return [];
+      return [brokerOrder({ clientOrderId: capturedRefId, state: "canceled", filledQuantity: 0.4, averagePrice: 202 })];
+    });
+
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, getSocraticDecisionCase, listFillEventsByProposalId } = await import("../src/lib/db");
+
+    const result = await executeProposal(proposalId, userId);
+    expect(result).toMatchObject({ status: "filled", brokerState: "canceled", fillStatus: "filled" });
+    const [fill] = listFillEventsByProposalId(proposalId, userId);
+    expect(fill).toMatchObject({ status: "filled", quantity: 0.4, price: 202 });
+    expect(fill.notional).toBeCloseTo(80.8);
+    expect(getProposal(proposalId, userId)?.status).toBe("filled");
+    expect(getProposal(proposalId, userId)?.estimatedNotional).toBeCloseTo(80.8);
+    expect(getSocraticDecisionCase(proposalId, userId)?.status).toBe("filled");
+    expect(getSocraticDecisionCase(proposalId, userId)?.notional).toBeCloseTo(80.8);
+  });
+
+  it("keeps a broker-confirmed direct fill at placing when receipt persistence fails, then stale recovery books it", async () => {
+    const userId = `direct-receipt-failure-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    const brokerOrderId = `direct-${randomUUID()}`;
+    placeEquityOrder.mockImplementation(async (input: { refId: string }) => {
+      capturedRefId = input.refId;
+      placementAttempted = true;
+      return { orderId: brokerOrderId, refId: input.refId, state: "filled", filledQuantity: 1, averagePrice: 203, raw: {} };
+    });
+
+    const { executeProposal, flagStalePlacingIntents } = await import("../src/lib/strategy");
+    const { getDb, getProposal, getSocraticDecisionCase, listFillEventsByProposalId } = await import("../src/lib/db");
+    getDb().exec("CREATE TRIGGER fail_direct_fill BEFORE INSERT ON fill_events BEGIN SELECT RAISE(ABORT, 'forced fill receipt failure'); END;");
+
+    const failedReceipt = await executeProposal(proposalId, userId);
+    expect(failedReceipt.status).toBe("error");
+    expect(getProposal(proposalId, userId)?.status).toBe("placing");
+    expect(getSocraticDecisionCase(proposalId, userId)?.status).toBe("placing");
+    expect(listFillEventsByProposalId(proposalId, userId)).toHaveLength(0);
+
+    getDb().exec("DROP TRIGGER fail_direct_fill");
+    getDb().prepare("UPDATE trade_proposals SET created_at = ? WHERE id = ? AND user_id = ?").run(
+      new Date(Date.now() - 10 * 60_000).toISOString(),
+      proposalId,
+      userId
+    );
+    await flagStalePlacingIntents(
+      {
+        getEquityOrders: async () => [brokerOrder({ id: brokerOrderId, clientOrderId: capturedRefId, state: "filled", filledQuantity: 1, averagePrice: 203 })]
+      } as never,
+      ACCOUNT,
+      userId,
+      "acc-reconcile-test"
+    );
+
+    expect(listFillEventsByProposalId(proposalId, userId)).toMatchObject([{ status: "filled", quantity: 1, price: 203, notional: 203 }]);
+    expect(getProposal(proposalId, userId)).toMatchObject({ status: "filled", estimatedNotional: 203 });
+    expect(getSocraticDecisionCase(proposalId, userId)).toMatchObject({ status: "filled", notional: 203 });
+  });
+
+  it("does not finalize a broker-reported fill until the broker supplies a positive realized price", async () => {
+    const userId = `direct-unpriced-fill-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    const brokerOrderId = `direct-unpriced-${randomUUID()}`;
+    placeEquityOrder.mockImplementation(async (input: { refId: string }) => {
+      capturedRefId = input.refId;
+      placementAttempted = true;
+      return { orderId: brokerOrderId, refId: input.refId, state: "filled", filledQuantity: 1, raw: {} };
+    });
+
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, getSocraticDecisionCase, listFillEventsByProposalId } = await import("../src/lib/db");
+    const result = await executeProposal(proposalId, userId);
+
+    expect(result).toMatchObject({ status: "placed", brokerState: "filled", fillStatus: "pending_reconciliation" });
+    expect(listFillEventsByProposalId(proposalId, userId)).toMatchObject([{ status: "pending_reconciliation", quantity: 1, price: 0, notional: 0 }]);
+    expect(getProposal(proposalId, userId)?.status).toBe("placed");
+    expect(getSocraticDecisionCase(proposalId, userId)?.status).toBe("placed");
+  });
+
+  it("keeps a nonterminal broker response without an order id at placing for refId recovery", async () => {
+    const userId = `direct-missing-order-id-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    placeEquityOrder.mockImplementation(async (input: { refId: string }) => {
+      capturedRefId = input.refId;
+      placementAttempted = true;
+      return { refId: input.refId, state: "accepted", raw: {} };
+    });
+
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, getSocraticDecisionCase, listFillEventsByProposalId } = await import("../src/lib/db");
+    const result = await executeProposal(proposalId, userId);
+
+    expect(result.status).toBe("error");
+    expect(result.reasons?.join(" ")).toContain("without an order id");
+    expect(getProposal(proposalId, userId)?.status).toBe("placing");
+    expect(getSocraticDecisionCase(proposalId, userId)?.status).toBe("placing");
+    expect(listFillEventsByProposalId(proposalId, userId)).toHaveLength(0);
   });
 
   it("throw + order PRESENT (declined) → rejected_by_broker, decline alert, NO fill", async () => {

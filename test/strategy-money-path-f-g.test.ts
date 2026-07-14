@@ -27,10 +27,43 @@ vi.mock("../src/lib/vector-db", () => ({
   storeContexts: async () => {}
 }));
 
+const brokerBehavior = vi.hoisted(() => ({ terminalPartial: false, unpricedFill: false }));
+
+vi.mock("../src/lib/broker", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/broker")>();
+  return {
+    ...actual,
+    getBrokerGateway: (...args: Parameters<typeof actual.getBrokerGateway>) => {
+      const gateway = actual.getBrokerGateway(...args);
+      if (brokerBehavior.terminalPartial) {
+        gateway.placeEquityOrder = async (input) => ({
+          orderId: `terminal-partial-${randomUUID()}`,
+          refId: input.refId ?? randomUUID(),
+          state: "canceled",
+          filledQuantity: 0.4,
+          averagePrice: 200,
+          raw: { test: true }
+        });
+      } else if (brokerBehavior.unpricedFill) {
+        gateway.placeEquityOrder = async (input) => ({
+          orderId: `unpriced-fill-${randomUUID()}`,
+          refId: input.refId ?? randomUUID(),
+          state: "filled",
+          filledQuantity: 0.4,
+          raw: { test: true }
+        });
+      }
+      return gateway;
+    }
+  };
+});
+
 beforeEach(() => {
   // Reset the module cache so the DB singleton (a module-level `let db` in db.ts) re-opens against
   // this test's fresh temp file rather than reusing the previous test's connection/data.
   vi.resetModules();
+  brokerBehavior.terminalPartial = false;
+  brokerBehavior.unpricedFill = false;
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-money-path-${randomUUID()}.db`)}`;
 });
 
@@ -152,11 +185,11 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
     expect(aaplFill?.status).toBe("filled");
     expect(aaplFill?.source).toBe("paper");
 
-    // A proposal was persisted for AAPL, placed through the normal broker path.
+    // A proposal was persisted for AAPL and synchronously filled through the normal broker path.
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplProposal = proposals.find((p) => p.proposal.symbol === "AAPL");
     expect(aaplProposal).toBeDefined();
-    expect(aaplProposal?.status).toBe("placed");
+    expect(aaplProposal?.status).toBe("filled");
 
     // F1: the redTeamVerdict field round-trips through the persisted JSON payload (no migration),
     // including the served red-team model attribution (t3) and the universal-coverage trigger.
@@ -175,6 +208,44 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
     expect(aaplProposal?.proposal.rationale).toContain("Red Team review — approved at full size");
     // The proposal's numeric conviction score survives end-to-end (no second schema pass anymore).
     expect(aaplProposal?.proposal.confidenceScore).toBe(90);
+  }, 30_000);
+
+  it("books a terminal partial execution as filled instead of treating the whole order as declined", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubEnv("PAPER_EXECUTION_COST_MODEL", "off");
+    brokerBehavior.terminalPartial = true;
+    vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." } }));
+
+    await seedTestAccountAndPolicy();
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { getSocraticDecisionCase, listFillEvents, listRecentProposals } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+    expect(result.status).toBe("completed");
+    const fill = listFillEvents("TEST", undefined, 100, "local").find((row) => row.symbol === "AAPL");
+    expect(fill).toMatchObject({ status: "filled", quantity: 0.4, price: 200, notional: 80 });
+    const proposal = listRecentProposals("TEST", 100, "local").find((row) => row.proposal.symbol === "AAPL");
+    expect(proposal).toMatchObject({ status: "filled", estimatedNotional: 80 });
+    expect(getSocraticDecisionCase(proposal!.id, "local")).toMatchObject({ status: "filled", notional: 80 });
+  }, 30_000);
+
+  it("keeps an autonomous broker execution pending until a positive realized price is reported", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubEnv("PAPER_EXECUTION_COST_MODEL", "off");
+    brokerBehavior.unpricedFill = true;
+    vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." } }));
+
+    await seedTestAccountAndPolicy();
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { getSocraticDecisionCase, listFillEvents, listRecentProposals } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+    expect(result.status).toBe("completed");
+    const fill = listFillEvents("TEST", undefined, 100, "local").find((row) => row.symbol === "AAPL");
+    expect(fill).toMatchObject({ status: "pending_reconciliation", quantity: 0.4, price: 0, notional: 0 });
+    const proposal = listRecentProposals("TEST", 100, "local").find((row) => row.proposal.symbol === "AAPL");
+    expect(proposal?.status).toBe("placed");
+    expect(getSocraticDecisionCase(proposal!.id, "local")?.status).toBe("placed");
   }, 30_000);
 });
 

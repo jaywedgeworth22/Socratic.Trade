@@ -58,7 +58,7 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(28);
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -72,7 +72,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
     db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(28);
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 
@@ -89,7 +89,7 @@ describe("runMigrations — versioned schema migrations", () => {
 
     db.pragma("user_version = 25");
     applyVersionedMigrations(db);
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(28);
 
     const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
     const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);
@@ -124,7 +124,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 25");
 
-    expect(applyVersionedMigrations(db)).toBe(27);
+    expect(applyVersionedMigrations(db)).toBe(28);
 
     for (const json of [
       (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
@@ -166,7 +166,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 26");
 
-    expect(applyVersionedMigrations(db)).toBe(27);
+    expect(applyVersionedMigrations(db)).toBe(28);
 
     for (const json of [
       (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
@@ -189,6 +189,53 @@ describe("runMigrations — versioned schema migrations", () => {
     const merged = mergePolicy({ ...DEFAULT_POLICY, maxDailyNotional: 750_000, maxDailyPctOfNav: undefined });
     expect(merged.maxDailyNotional).toBe(750_000);
     expect(merged.maxDailyPctOfNav).toBeUndefined();
+  });
+
+  it("migrates active replacement uniqueness to user scope and collapses same-user duplicates", async () => {
+    const { applyVersionedMigrations } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+    db.exec(`
+      CREATE TABLE order_replacements (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        original_order_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        replacement_order_id TEXT,
+        error TEXT,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO order_replacements
+        (id, user_id, account_number, original_order_id, status, updated_at)
+      VALUES
+        ('older', 'user-1', 'ACCOUNT', 'ORDER', 'cancel_requested', '2026-07-14T00:00:00.000Z'),
+        ('newer', 'user-1', 'ACCOUNT', 'ORDER', 'replacement_submitted', '2026-07-14T00:01:00.000Z');
+    `);
+    db.pragma("user_version = 27");
+
+    expect(applyVersionedMigrations(db)).toBe(28);
+    expect(db.prepare(`
+      SELECT status, COUNT(*) AS count
+      FROM order_replacements
+      WHERE user_id = 'user-1' AND account_number = 'ACCOUNT' AND original_order_id = 'ORDER'
+      GROUP BY status
+      ORDER BY status
+    `).all()).toEqual([
+      { status: "failed", count: 1 },
+      { status: "replacement_submitted", count: 1 }
+    ]);
+
+    expect(() => db.prepare(`
+      INSERT INTO order_replacements
+        (id, user_id, account_number, original_order_id, status, updated_at)
+      VALUES ('cross-user', 'user-2', 'ACCOUNT', 'ORDER', 'cancel_requested', '2026-07-14T00:02:00.000Z')
+    `).run()).not.toThrow();
+    expect(() => db.prepare(`
+      INSERT INTO order_replacements
+        (id, user_id, account_number, original_order_id, status, updated_at)
+      VALUES ('same-user', 'user-1', 'ACCOUNT', 'ORDER', 'cancel_requested', '2026-07-14T00:03:00.000Z')
+    `).run()).toThrow();
+    db.close();
   });
 });
 

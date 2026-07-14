@@ -498,38 +498,58 @@ export function claimProposalForExecution(
   // (flagStalePlacingIntents) books fills from this stored JSON, so it must reflect the order
   // actually sent to the broker, not the original ask — and Recent/Activity hydrate from it too.
   const database = getDb();
-  const result = database.transaction(() => {
-    const anyDecisionCase = database
-      .prepare("SELECT id FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) LIMIT 1")
-      .get(userId, id, id) as { id: string } | undefined;
-    if (!anyDecisionCase && opts.createSocraticDecisionCase) {
-      opts.createSocraticDecisionCase();
-    }
-    const decisionCase = database
-      .prepare("SELECT id FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) AND status = 'proposed' LIMIT 1")
-      .get(userId, id, id) as { id: string } | undefined;
-    if (!decisionCase) return { claimed: false, decisionId: undefined };
-    const info = database
-      .prepare(
-        "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode), proposal = COALESCE(?, proposal), decision = COALESCE(?, decision), placed_at = CASE WHEN ? IN ('placed', 'filled', 'paper', 'placing') THEN COALESCE(placed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ELSE placed_at END WHERE id = ? AND user_id = ? AND status = 'proposed' AND EXISTS (SELECT 1 FROM socratic_decisions sd WHERE sd.user_id = trade_proposals.user_id AND (sd.id = trade_proposals.id OR sd.proposal_id = trade_proposals.id) AND sd.status = 'proposed')"
-      )
-      .run(
-        toStatus,
-        opts.review ? JSON.stringify(opts.review) : null,
-        opts.estimatedNotional ?? null,
-        opts.refId ?? null,
-        opts.executionMode ?? null,
-        opts.proposal ? JSON.stringify(opts.proposal) : null,
-        opts.decision ? JSON.stringify(opts.decision) : null,
-        toStatus,
-        id,
-        userId
-      );
-    return {
-      claimed: info.changes === 1,
-      decisionId: info.changes === 1 ? syncSocraticDecisionLifecycle(database, id, userId) : undefined
-    };
-  })();
+  const rollbackLostFallbackClaim = new Error("proposal claim lost after fallback case creation");
+  let result: { claimed: boolean; decisionId: string | undefined };
+  try {
+    result = database.transaction(() => {
+      // BEGIN IMMEDIATE (invoked below) makes the proposal-state check, optional legacy-case repair,
+      // and CAS one write-locked unit across processes. Never create a proposed case for a row that
+      // already expired, was rejected, or was claimed elsewhere.
+      const pendingProposal = database
+        .prepare("SELECT id FROM trade_proposals WHERE id = ? AND user_id = ? AND status = 'proposed' LIMIT 1")
+        .get(id, userId) as { id: string } | undefined;
+      if (!pendingProposal) return { claimed: false, decisionId: undefined };
+      const anyDecisionCase = database
+        .prepare("SELECT id FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) LIMIT 1")
+        .get(userId, id, id) as { id: string } | undefined;
+      let createdFallbackCase = false;
+      if (!anyDecisionCase && opts.createSocraticDecisionCase) {
+        opts.createSocraticDecisionCase();
+        createdFallbackCase = true;
+      }
+      const decisionCase = database
+        .prepare("SELECT id FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) AND status = 'proposed' LIMIT 1")
+        .get(userId, id, id) as { id: string } | undefined;
+      if (!decisionCase) {
+        if (createdFallbackCase) throw rollbackLostFallbackClaim;
+        return { claimed: false, decisionId: undefined };
+      }
+      const info = database
+        .prepare(
+          "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode), proposal = COALESCE(?, proposal), decision = COALESCE(?, decision), placed_at = CASE WHEN ? IN ('placed', 'filled', 'paper', 'placing') THEN COALESCE(placed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ELSE placed_at END WHERE id = ? AND user_id = ? AND status = 'proposed' AND EXISTS (SELECT 1 FROM socratic_decisions sd WHERE sd.user_id = trade_proposals.user_id AND (sd.id = trade_proposals.id OR sd.proposal_id = trade_proposals.id) AND sd.status = 'proposed')"
+        )
+        .run(
+          toStatus,
+          opts.review ? JSON.stringify(opts.review) : null,
+          opts.estimatedNotional ?? null,
+          opts.refId ?? null,
+          opts.executionMode ?? null,
+          opts.proposal ? JSON.stringify(opts.proposal) : null,
+          opts.decision ? JSON.stringify(opts.decision) : null,
+          toStatus,
+          id,
+          userId
+        );
+      if (info.changes !== 1 && createdFallbackCase) throw rollbackLostFallbackClaim;
+      return {
+        claimed: info.changes === 1,
+        decisionId: info.changes === 1 ? syncSocraticDecisionLifecycle(database, id, userId) : undefined
+      };
+    }).immediate();
+  } catch (error) {
+    if (error === rollbackLostFallbackClaim) return false;
+    throw error;
+  }
   reindexSocraticDecisionAfterLifecycleSync(result.decisionId, userId);
   return result.claimed;
 }
@@ -639,10 +659,11 @@ export function listStalePlacingProposals(
   }));
 }
 
-/** Idempotency for chat-drafted proposals: the id of an existing still-`proposed` row for a runId. */
-export function findProposedIdByRunId(runId: string, userId: string = "local"): string | null {
+/** Idempotency for chat-drafted proposals: one draft/runId remains one proposal across its entire
+ * lifecycle, including retries racing approval or arriving after a fill. */
+export function findProposalIdByRunId(runId: string, userId: string = "local"): string | null {
   const row = getDb()
-    .prepare("SELECT id FROM trade_proposals WHERE run_id = ? AND user_id = ? AND status = 'proposed' ORDER BY created_at DESC LIMIT 1")
+    .prepare("SELECT id FROM trade_proposals WHERE run_id = ? AND user_id = ? ORDER BY created_at ASC LIMIT 1")
     .get(runId, userId) as { id: string } | undefined;
   return row?.id ?? null;
 }

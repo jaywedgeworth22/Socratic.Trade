@@ -171,7 +171,7 @@ beforeEach(() => {
 describe("executeProposal — broker-minimum bump-to-floor wiring", () => {
   it("bumps a below-minimum dollar buy to the $1 floor, re-reviews once, places at the bumped size, audits it, and persists the executed sizing to the row", async () => {
     reviewEquityOrder.mockImplementation(async (i) => echoReview(i));
-    placeEquityOrder.mockImplementation(async (i) => ({ id: `ord-${randomUUID()}`, state: "confirmed", raw: {}, ...i }));
+    placeEquityOrder.mockImplementation(async (i) => ({ orderId: `ord-${randomUUID()}`, state: "confirmed", raw: {}, ...i }));
 
     const userId = `bump-happy-${randomUUID()}`;
     const proposalId = await seedApprovedProposal(userId);
@@ -222,7 +222,7 @@ describe("executeProposal — broker-minimum bump-to-floor wiring", () => {
 
   it("persists a fresh Red rejection against the bumped size, then consumes one explicit owner override without rerunning or looping", async () => {
     reviewEquityOrder.mockImplementation(async (i) => echoReview(i));
-    placeEquityOrder.mockImplementation(async (i) => ({ id: `ord-${randomUUID()}`, state: "confirmed", raw: {}, ...i }));
+    placeEquityOrder.mockImplementation(async (i) => ({ orderId: `ord-${randomUUID()}`, state: "confirmed", raw: {}, ...i }));
     debateProposal.mockResolvedValue({
       verdict: "reject",
       rejected: true,

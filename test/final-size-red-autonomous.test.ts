@@ -269,7 +269,14 @@ describe("autonomous broker-minimum final-size Red review", () => {
       const { listRecentProposals, listSocraticDecisionCases } = await import("../src/lib/db");
       expect(listRecentProposals(ACCOUNT, 10, userId)[0]?.status).toBe("placing");
       expect(listSocraticDecisionCases(userId, { connectedAccountId: "autonomous-final-size-account" })[0]?.status).toBe("placing");
-      return { orderId: randomUUID(), refId: randomUUID(), state: "filled", raw: {} };
+      return {
+        orderId: randomUUID(),
+        refId: randomUUID(),
+        state: "filled",
+        filledQuantity: 0.1,
+        averagePrice: 10,
+        raw: {}
+      };
     });
 
     const { runStrategyOnce } = await import("../src/lib/strategy");

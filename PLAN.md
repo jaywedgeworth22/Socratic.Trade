@@ -38,10 +38,19 @@
 > same-decision vector updates, and keeps uncertain submissions in `placing`. The latest hostile
 > blockers are implemented: `filled` orders remain in caps and every success/count/UI/outcome
 > consumer; independent holds have structured owner-facing reasons; lifecycle sync preserves
-> learned fields; and an atomic approval claim requires a proposed Socratic case. Node 24 TypeScript
-> plus 15 focused files / 132 tests are green. PR #1578's TypeScript-toolchain repair has merged;
-> integrate current main, obtain fresh independent acceptance, run the authoritative full gate, land
-> through a ready PR, and verify the exact production release.
+> learned fields; and an atomic approval claim requires a proposed Socratic case. The final two
+> race/recovery defects are closed: chat draft idempotency spans proposed through filled under an
+> immediate transaction, and stale broker-filled orders finalize an existing pending receipt with
+> proposal/case truth atomically. A final audit also handles terminal partial executions everywhere,
+> makes direct broker receipt + lifecycle commits atomic/recoverable, scopes replacement dedupe, and
+> binds legacy chat-case repair to the historical account. The final price/quantity review is also
+> closed: unpriced broker receipts store zero rather than estimates, cumulative execution is
+> monotonic, replacement partials remain refId-recoverable, and the active replacement index is
+> user-scoped. Current `main@4432c2bc` is integrated and independent re-review reports no P0-P2
+> findings. The final ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
+> standalone TypeScript clean, 368 files / 4,124 tests, and a production build with the real
+> TypeScript phase plus 32 static pages. Land through a ready PR, merge after hosted verification,
+> and verify the exact production release.
 > See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
 > `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 > Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.

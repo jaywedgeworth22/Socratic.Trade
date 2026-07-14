@@ -62,6 +62,24 @@ invariants, and residual gaps.
 - A synchronous broker fill remains `filled` end to end while still consuming daily/hourly limits
   and placement counts. Outcome coverage, run summaries, ops diagnostics, and the decision-memory
   lifecycle include it rather than dropping the most useful realized cases.
+- A chat draft's synthetic run id is permanent idempotency, not merely pending-card dedupe. Retries
+  after approval or fill return the original proposal, and the final lookup plus insert share an
+  immediate SQLite transaction so concurrent requests cannot create a second approvable order.
+- Crash recovery uses `(proposalId, brokerOrderId)` to prevent duplicate fill rows, but still
+  reconciles the existing row forward. Broker-filled truth atomically advances a pending receipt,
+  proposal, and Socratic case before the uncertainty notification is resolved.
+- Terminal broker state is never interpreted without quantity: canceled/rejected/expired with a
+  positive broker-filled quantity is a final partial execution. Direct placement stores the fill
+  receipt before advancing proposal/case lifecycle in one transaction; persistence failure or a
+  nonterminal response lacking an order id stays `placing` under refId recovery.
+- A live `partially_filled` receipt is already accounting exposure and updates in place. Stale-limit
+  replacement receipts dedupe on user + account + replacement identity, not globally on a broker id.
+- Broker execution is not accounting truth until both cumulative quantity and a finite positive
+  realized price are known. Unpriced receipts persist zero price/notional plus the maximum
+  broker-reported quantity; later stale or terminal-zero snapshots cannot reduce that floor.
+- A replacement partial missing price or order id remains active under its durable replacement ref,
+  binds the eventual broker id onto the same receipt, and leaves recovery only after its known
+  execution is priced. The active replacement lock is scoped by user + account + original order.
 
 ## 1. Strategy Architecture: Evaluation Lenses
 
