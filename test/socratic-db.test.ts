@@ -9,9 +9,9 @@ beforeAll(() => {
 
 // Captures every storeContexts call so we can assert the re-index after a coach-note append
 // carries the note in its embedded text, without needing real Pinecone/Voyage credentials.
-const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string } }> = [];
+const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string; scope?: string } }> = [];
 vi.mock("../src/lib/vector-db", () => ({
-  storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string }) => {
+  storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string; scope?: string }) => {
     storeContextsCalls.push({ documents, options });
     return { attempted: documents.length, indexed: documents.length };
   }
@@ -71,6 +71,7 @@ describe("Socratic decision persistence", () => {
     );
     expect(coachCalls.length).toBeGreaterThanOrEqual(1);
     expect(coachCalls[coachCalls.length - 1].options?.dedupKeyPrefix).toBe("socratic-decision");
+    expect(coachCalls[coachCalls.length - 1].options?.scope).toBe("private");
 
     const promoted = await attachSocraticDecisionCoachPrimitives(
       decisionId,

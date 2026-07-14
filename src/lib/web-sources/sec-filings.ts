@@ -14,7 +14,14 @@
 //    Free-tier keeps the existing 8-K-summary path UNCHANGED and skips body ingest.
 //  • Errors: surface via returned error field and audit log — never swallowed silently.
 
-import { audit, getInternalSetting, hasIngestedAccession, insertIngestedAccession, setInternalSetting } from "../db";
+import {
+  audit,
+  getInternalSetting,
+  hasIngestedAccession,
+  insertIngestedAccession,
+  runWithActiveVectorCommitProof,
+  setInternalSetting
+} from "../db";
 import {
   assertOperationLeaseOwnership,
   OPERATION_LEASE_GROUPS,
@@ -39,6 +46,10 @@ function filingIngestTtlMs(): number {
   return (Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_FILING_INGEST_TTL_HOURS) * 60 * 60_000;
 }
 const ATTEMPT_KEY = "webSource:sec10k:lastAttempt";
+
+function isValidPersistedTimestamp(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && Number.isFinite(Date.parse(value));
+}
 
 // Polite delay between per-CIK submissions-JSON fetches (300 ms per EDGAR fair-use guidance).
 const CIK_POLITE_DELAY_MS = 300;
@@ -80,6 +91,13 @@ export interface RefreshFilingBodiesResult {
    *  mid-run; they are NOT recorded as ingested and retry at the next tick. */
   deferredForBudget: number;
   errors: string[];
+}
+
+type SecFilingLeaseGuard = { assertOwnership: () => void; signal?: AbortSignal };
+
+function assertSecFilingLease(leaseGuard?: SecFilingLeaseGuard): void {
+  if (leaseGuard?.signal) throwIfOperationLeaseCancelled(leaseGuard.signal);
+  leaseGuard?.assertOwnership();
 }
 
 // ── Submission JSON parsing ──────────────────────────────────────────────────
@@ -254,8 +272,9 @@ export async function ingestFiling(
   ticker: string,
   filingRef: FilingRef,
   userId: string = "local",
-  leaseGuard?: { assertOwnership: () => void; signal?: AbortSignal }
+  leaseGuard?: SecFilingLeaseGuard
 ): Promise<IngestResult> {
+  assertSecFilingLease(leaseGuard);
   if (hasIngestedAccession(filingRef.accession, filingRef.docType)) {
     return { skipped: true, chunks: 0 };
   }
@@ -266,14 +285,20 @@ export async function ingestFiling(
   // burst from exactly this). Deferring here costs nothing: the accession stays
   // un-recorded and retries at the next tick.
   const { hasIngestTextBudget } = await import("../vector-db");
+  assertSecFilingLease(leaseGuard);
   if (!hasIngestTextBudget(userId)) {
     return { skipped: true, chunks: 0, budgetExhausted: true };
   }
 
   let html: string;
   try {
+    assertSecFilingLease(leaseGuard);
     html = await fetchFilingHtml(filingRef.url);
+    assertSecFilingLease(leaseGuard);
   } catch (err) {
+    // A stale owner must never turn lease loss into an ordinary provider warning and continue
+    // into artifact/vector writes. Re-assert first; normal network errors still return below.
+    assertSecFilingLease(leaseGuard);
     const error = err instanceof Error ? err.message : String(err);
     return { skipped: false, chunks: 0, error: `fetch failed: ${error}` };
   }
@@ -285,10 +310,13 @@ export async function ingestFiling(
 
   // Insert into sec_artifacts
   try {
+    assertSecFilingLease(leaseGuard);
     const { createHash } = await import("crypto");
+    assertSecFilingLease(leaseGuard);
     const sha256 = createHash("sha256").update(html).digest("hex");
     const byteCount = Buffer.byteLength(html, "utf8");
     const { insertSecArtifact } = await import("../db");
+    assertSecFilingLease(leaseGuard);
     insertSecArtifact({
       accession: filingRef.accession,
       sequence: 1,
@@ -299,11 +327,16 @@ export async function ingestFiling(
       rawUri: filingRef.url,
       parserVersion: "v1"
     });
+    assertSecFilingLease(leaseGuard);
   } catch (err) {
+    // Artifact persistence is otherwise best-effort, but ownership loss is terminal.
+    assertSecFilingLease(leaseGuard);
     console.warn(`[sec-filings] insertSecArtifact failed for ${filingRef.accession} (non-fatal):`, err instanceof Error ? err.message : String(err));
   }
 
+  assertSecFilingLease(leaseGuard);
   const { storeDocument } = await import("../vector-db");
+  assertSecFilingLease(leaseGuard);
   const document = {
       text,
       doc_id: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
@@ -315,9 +348,11 @@ export async function ingestFiling(
       source: "sec-edgar",
       url: filingRef.url
     };
-  const result = leaseGuard
-    ? await storeDocument(document, userId, { leaseGuard })
-    : await storeDocument(document, userId);
+  const result = await storeDocument(document, userId, {
+    parserRevision: "sec-edgar-filing-v1",
+    ...(leaseGuard ? { leaseGuard } : {})
+  });
+  assertSecFilingLease(leaseGuard);
 
   if (result.error) {
     return { skipped: false, chunks: result.indexed, error: result.error };
@@ -336,28 +371,39 @@ export async function ingestFiling(
   // must not stop the whole run.
   const outOfCapacity =
     (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0 || result.unconfigured === true;
-  if (result.indexed <= 0 || outOfCapacity) {
+  const reusedCommitted =
+    result.reusedCommitted === true && result.documentComplete === true && result.attempted > 0;
+  if ((result.indexed <= 0 && !reusedCommitted) || outOfCapacity) {
     return { skipped: true, chunks: result.indexed, ...(outOfCapacity ? { budgetExhausted: true } : {}) };
   }
-  if (result.documentComplete !== true || result.indexed !== result.attempted) {
+  if (result.documentComplete !== true || (!reusedCommitted && result.indexed !== result.attempted)) {
     // A content-only dedup receipt or partial Pinecone write cannot complete an accession. Every
     // occurrence must have its own queryable vector and the required local receipt transaction.
     return { skipped: true, chunks: result.indexed };
   }
+  if (!result.managedCommitProof) {
+    return { skipped: true, chunks: result.indexed, error: "document-commit-proof-missing" };
+  }
 
   // Persist de-dup record only after successful embedding so a partial failure doesn't
   // permanently block re-ingest of the same filing.
-  insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.indexed);
-  audit("sec_filing_ingest", {
-    ticker,
-    accession: filingRef.accession,
-    docType: filingRef.docType,
-    filedAt: filingRef.filedAt,
-    chunks: result.indexed,
-    attempted: result.attempted
-  });
+  try {
+    runWithActiveVectorCommitProof(result.managedCommitProof, () => {
+      insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted);
+      audit("sec_filing_ingest", {
+        ticker,
+        accession: filingRef.accession,
+        docType: filingRef.docType,
+        filedAt: filingRef.filedAt,
+        chunks: result.attempted,
+        attempted: result.attempted
+      });
+    });
+  } catch {
+    return { skipped: true, chunks: result.indexed, error: "document-commit-proof-lost" };
+  }
 
-  return { skipped: false, chunks: result.indexed };
+  return { skipped: false, chunks: result.attempted };
 }
 
 // ── Scheduler-facing refresh ─────────────────────────────────────────────────
@@ -376,8 +422,8 @@ function maxFilingsPerRunFromEnv(): number {
 
 /** Whether we're due for a filing ingest check (TTL per SEC_FILING_INGEST_TTL_HOURS, default weekly). */
 export function isFilingIngestDue(now: number = Date.now()): boolean {
-  const last = getInternalSetting<string>(ATTEMPT_KEY);
-  if (!last) return true;
+  const last = getInternalSetting<unknown>(ATTEMPT_KEY);
+  if (!isValidPersistedTimestamp(last)) return true;
   return now - Date.parse(last) >= filingIngestTtlMs();
 }
 
@@ -398,7 +444,8 @@ export function isFilingIngestDue(now: number = Date.now()): boolean {
  * `opts.force` skips the TTL gate (again: the admin backfill route, which used to silently
  * no-op for up to a week after any scheduler attempt).
  *
- * Never throws — all errors are captured in the returned result and the audit log.
+ * Provider/data errors are captured in the returned result and the audit log. Lease loss is
+ * intentionally re-thrown so a stale scheduler owner cannot continue into the next EDGAR call.
  */
 export async function refreshFilingBodies(
   symbols: string[],
@@ -442,6 +489,13 @@ async function refreshFilingBodiesUnlocked(
   // prior owner completed and advanced the cadence stamp.
   if (!opts?.force && !isFilingIngestDue(now)) return result;
   assertOperationLeaseOwnership(operationLeaseClaim);
+  const leaseGuard = {
+    signal: operationLeaseSignal,
+    assertOwnership: () => {
+      throwIfOperationLeaseCancelled(operationLeaseSignal);
+      assertOperationLeaseOwnership(operationLeaseClaim);
+    }
+  };
 
   // Mark attempt so the next tick won't immediately retry. Forced runs (admin backfill)
   // deliberately do NOT touch the stamp — a targeted backfill must not push the scheduled
@@ -482,11 +536,14 @@ async function refreshFilingBodiesUnlocked(
 
     // Ingest fundamentals card first (uses local cache or provider API cascade).
     try {
-      const fundResult = await ingestFundamentalsCard(symbol, "local");
+      const fundResult = await ingestFundamentalsCard(symbol, "local", leaseGuard);
       if (fundResult.error) {
         result.errors.push(`ingestFundamentalsCard(${symbol}): ${fundResult.error}`);
       }
     } catch (err) {
+      // ingestFundamentalsCard performs provider work before submissions discovery. If the lease
+      // was lost during that await, stop here rather than issuing the next EDGAR request.
+      assertSecFilingLease(leaseGuard);
       const msg = err instanceof Error ? err.message : String(err);
       result.errors.push(`ingestFundamentalsCard(${symbol}) threw: ${msg}`);
     }
@@ -494,8 +551,9 @@ async function refreshFilingBodiesUnlocked(
     const cik = tickerToCik[symbol];
     if (!cik) return; // symbol not in CIK map — skip silently
     try {
+      assertSecFilingLease(leaseGuard);
       const filings = await fetchRecentFilings(cik, ["10-K", "10-Q"], 10);
-      throwIfOperationLeaseCancelled(operationLeaseSignal);
+      assertSecFilingLease(leaseGuard);
       const { insertSecFiling, getSecFiling } = await import("../db");
       for (const ref of filings) {
         try {
@@ -520,7 +578,7 @@ async function refreshFilingBodiesUnlocked(
         }
       }
     } catch (err) {
-      throwIfOperationLeaseCancelled(operationLeaseSignal);
+      assertSecFilingLease(leaseGuard);
       const msg = err instanceof Error ? err.message : String(err);
       result.errors.push(`fetchRecentFilings(${symbol}): ${msg}`);
     }
@@ -534,10 +592,7 @@ async function refreshFilingBodiesUnlocked(
     processed++;
     try {
       assertOperationLeaseOwnership(operationLeaseClaim);
-      const ingestResult = await ingestFiling(ticker, ref, "local", {
-        assertOwnership: () => assertOperationLeaseOwnership(operationLeaseClaim),
-        signal: operationLeaseSignal
-      });
+      const ingestResult = await ingestFiling(ticker, ref, "local", leaseGuard);
       throwIfOperationLeaseCancelled(operationLeaseSignal);
       if (ingestResult.budgetExhausted) {
         // The embed layer is out of capacity for the day (or unconfigured) — every later
@@ -607,14 +662,17 @@ export function buildFundamentalsContext(symbol: string, data: any): string {
 
 export async function ingestFundamentalsCard(
   symbol: string,
-  userId: string = "local"
+  userId: string = "local",
+  leaseGuard?: SecFilingLeaseGuard
 ): Promise<{ skipped: boolean; error?: string }> {
   try {
+    assertSecFilingLease(leaseGuard);
     const { getEnrichmentProvider } = await import("../data-providers");
     const { storeContexts } = await import("../vector-db");
 
     const provider = getEnrichmentProvider(userId);
     const enriched = await provider.enrich([symbol]);
+    assertSecFilingLease(leaseGuard);
     const data = enriched[symbol];
     if (!data) {
       return { skipped: true, error: `No enrichment data found for symbol: ${symbol}` };
@@ -677,8 +735,12 @@ export async function ingestFundamentalsCard(
         }
       ],
       userId,
-      { dedupKeyPrefix: "fundamentals" }
+      {
+        dedupKeyPrefix: "fundamentals",
+        ...(leaseGuard ? { leaseGuard } : {})
+      }
     );
+    assertSecFilingLease(leaseGuard);
 
     if (result.error) {
       return { skipped: false, error: result.error };
@@ -694,6 +756,9 @@ export async function ingestFundamentalsCard(
 
     return { skipped };
   } catch (err) {
+    // Do not convert cooperative cancellation/ownership loss into a normal fundamentals error.
+    // A healthy lease passes this check and preserves the existing error-return contract.
+    assertSecFilingLease(leaseGuard);
     const error = err instanceof Error ? err.message : String(err);
     return { skipped: false, error };
   }

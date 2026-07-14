@@ -9,9 +9,9 @@ beforeAll(() => {
 });
 
 // Capture every vector-memory re-index (the lifecycle hook) without Pinecone/Voyage credentials.
-const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string } }> = [];
+const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string; scope?: string } }> = [];
 vi.mock("../src/lib/vector-db", () => ({
-  storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string }) => {
+  storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string; scope?: string }) => {
     storeContextsCalls.push({ documents, options });
     return { attempted: documents.length, indexed: documents.length };
   }
@@ -165,6 +165,7 @@ describe("outcome engine — the outcome writer", () => {
     );
     expect(reindexed).toBe(true);
     expect(storeContextsCalls.every((call) => call.options?.dedupKeyPrefix === "socratic-decision")).toBe(true);
+    expect(storeContextsCalls.every((call) => call.options?.scope === "private")).toBe(true);
 
     // Lesson routed through ingestLearned (origin 'autonomous'): lands as a live fact row or,
     // if the fail-closed classifier escalates, as a pending approval row — never silently dropped.

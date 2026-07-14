@@ -251,7 +251,7 @@ describe("usage monitor durable replay", () => {
       "SELECT status, outcome_code FROM provider_dispatch_attempts WHERE id = ?"
     ).get(reserved.attemptId)).toEqual({
       status: "unknown",
-      outcome_code: "process-ended-before-outcome"
+      outcome_code: "stale-owner-unresolved"
     });
 
     const firstRaw = captured[0]!.rawBody;

@@ -18,7 +18,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const upsert = vi.fn();
   const query = vi.fn();
-  const index = vi.fn(() => ({ upsert, query }));
+  const namespacedIndex = { upsert, query };
+  const namespace = vi.fn(() => namespacedIndex);
+  const index = vi.fn(() => ({ ...namespacedIndex, namespace }));
   const transaction = vi.fn((callback: () => void) => () => callback());
   const prepare = vi.fn<(sql?: unknown) => { get: (...args: unknown[]) => unknown }>(() => ({
     get: vi.fn<(...args: unknown[]) => unknown>(() => ({ ok: 1 }))
@@ -40,10 +42,16 @@ const mocks = vi.hoisted(() => {
         symbol: record.metadata.symbol,
         source: record.metadata.source,
         accession: record.metadata.accession,
+        documentKey: record.metadata.document_key,
         section: record.metadata.section,
         ordinal: record.metadata.chunk_ordinal,
         parserRevision: record.metadata.parser_revision,
-        embedRevision: record.metadata.embed_revision
+        embedRevision: record.metadata.embed_revision,
+        retrievalMetadataVersion: record.metadata.retrieval_metadata_version,
+        attemptToken: record.metadata.vector_attempt_token,
+        providerAuthority: record.metadata.provider_authority,
+        ledgerAuthority: record.metadata.ledger_authority,
+        vectorNamespace: record.metadata.vector_namespace
       }]] : [];
     }));
   });
@@ -52,6 +60,7 @@ const mocks = vi.hoisted(() => {
     query,
     index,
     listIndexes: vi.fn(),
+    describeIndex: vi.fn(),
     createIndex: vi.fn(),
     embed: vi.fn(),
     resolveApiKey: vi.fn(),
@@ -59,6 +68,8 @@ const mocks = vi.hoisted(() => {
     insertDocumentChunks: vi.fn(),
     insertChunkOccurrences: vi.fn(),
     beginVectorCommit: vi.fn(),
+    abortVectorCommit: vi.fn(),
+    renewVectorCommitLease: vi.fn(),
     markVectorCommitReceiptsPersisted: vi.fn(),
     markVectorCommitCommitted: vi.fn(),
     committedManagedVectorReceipts,
@@ -66,13 +77,19 @@ const mocks = vi.hoisted(() => {
     transaction,
     prepare,
     setInternalSetting: vi.fn(),
-    audit: vi.fn()
+    audit: vi.fn(),
+    namespace
   };
 });
 
 vi.mock("@pinecone-database/pinecone", () => ({
   Pinecone: vi.fn(function Pinecone() {
-    return { listIndexes: mocks.listIndexes, createIndex: mocks.createIndex, Index: mocks.index };
+    return {
+      listIndexes: mocks.listIndexes,
+      describeIndex: mocks.describeIndex,
+      createIndex: mocks.createIndex,
+      Index: mocks.index
+    };
   })
 }));
 
@@ -91,6 +108,8 @@ vi.mock("../src/lib/db", () => ({
   insertChunkOccurrences: mocks.insertChunkOccurrences,
   insertManagedChunkOccurrences: mocks.insertChunkOccurrences,
   beginVectorCommit: mocks.beginVectorCommit,
+  abortVectorCommit: mocks.abortVectorCommit,
+  renewVectorCommitLease: mocks.renewVectorCommitLease,
   markVectorCommitReceiptsPersisted: mocks.markVectorCommitReceiptsPersisted,
   markVectorCommitCommitted: mocks.markVectorCommitCommitted,
   committedManagedVectorReceipts: mocks.committedManagedVectorReceipts,
@@ -117,6 +136,10 @@ beforeEach(() => {
     return undefined;
   });
   mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+  mocks.describeIndex.mockResolvedValue({
+    host: "socratic-trade-test.svc.test.pinecone.io",
+    metric: "cosine"
+  });
   mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
   mocks.filterNewDocumentChunks.mockImplementation((hashes: Array<{ content_hash: string }>) => hashes);
 });
@@ -326,10 +349,16 @@ describe("storeDocument: per-chunk char cap aligned with the token chunker (item
 
     const aaplRecord = storedRecords.find((record) => record.metadata.symbol === "AAPL")!;
     const msftRecord = storedRecords.find((record) => record.metadata.symbol === "MSFT")!;
-    mocks.query
-      .mockResolvedValueOnce({ matches: [{ ...aaplRecord, score: 0.95 }] })
-      .mockResolvedValueOnce({ matches: [{ ...msftRecord, score: 0.95 }] })
-      .mockResolvedValueOnce({ matches: [{ ...msftRecord, score: 0.95 }] });
+    // Return the matching provider record for every queried namespace. Retrieval must validate the
+    // managed receipt, enforce PIT, and deduplicate it independent of how many corpus namespaces
+    // the implementation consults; a brittle sequence of one-shot mock responses would couple this
+    // regression to the current query fan-out count.
+    mocks.query.mockImplementation(async (request: { filter?: Record<string, unknown> }) => {
+      const filter = JSON.stringify(request.filter ?? {});
+      if (filter.includes("AAPL")) return { matches: [{ ...aaplRecord, score: 0.95 }] };
+      if (filter.includes("MSFT")) return { matches: [{ ...msftRecord, score: 0.95 }] };
+      return { matches: [] };
+    });
 
     const aaplRetrieved = await retrieveContextDetailed("earnings outlook", "AAPL", 3, "local", {
       docType: ["earnings-transcript"],

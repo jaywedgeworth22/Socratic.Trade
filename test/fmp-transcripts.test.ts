@@ -19,8 +19,16 @@ const mocks = vi.hoisted(() => ({
   withProviderLimit: vi.fn(async (_provider: string, work: () => Promise<unknown>) => work()),
   hasIngestTextBudget: vi.fn(() => true),
   storeDocument: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
+  managedVectorLedgerAuthority: vi.fn(),
+  vectorTenantScope: vi.fn(),
+  managedOccurrenceVectorPrefix: vi.fn(),
+  managedOccurrenceVectorIdMatches: vi.fn(),
+  managedVectorReceiptEvidence: vi.fn(),
   inventoryVectorRecordsByMetadata: vi.fn(),
-  purgeVectorRecordsByMetadata: vi.fn()
+  purgeVectorRecordsByMetadata: vi.fn(),
+  purgeVectorRecordIds: vi.fn(),
+  purgeVectorNamespaceAll: vi.fn()
 }));
 
 vi.mock("../src/lib/provider-rate-limit", async (importOriginal) => {
@@ -55,10 +63,39 @@ vi.mock("../src/lib/data-providers", async (importOriginal) => {
 
 vi.mock("../src/lib/vector-db", () => ({
   hasIngestTextBudget: mocks.hasIngestTextBudget,
-  storeDocument: mocks.storeDocument,
+  storeDocument: async (...args: unknown[]) => {
+    const result = await mocks.storeDocument(...args);
+    return result?.documentComplete === true
+      ? { ...result, managedCommitProof: result.managedCommitProof ?? { commitId: "test:fmp", attemptToken: "test:fmp" } }
+      : result;
+  },
+  getCurrentVectorProviderAuthority: mocks.getCurrentVectorProviderAuthority,
+  managedVectorLedgerAuthority: mocks.managedVectorLedgerAuthority,
+  vectorTenantScope: mocks.vectorTenantScope,
+  managedOccurrenceVectorPrefix: mocks.managedOccurrenceVectorPrefix,
+  managedOccurrenceVectorIdMatches: mocks.managedOccurrenceVectorIdMatches,
+  managedVectorReceiptEvidence: mocks.managedVectorReceiptEvidence,
   inventoryVectorRecordsByMetadata: mocks.inventoryVectorRecordsByMetadata,
-  purgeVectorRecordsByMetadata: mocks.purgeVectorRecordsByMetadata
+  purgeVectorRecordsByMetadata: mocks.purgeVectorRecordsByMetadata,
+  purgeVectorRecordIds: mocks.purgeVectorRecordIds,
+  purgeVectorNamespaceAll: mocks.purgeVectorNamespaceAll
 }));
+
+vi.mock("../src/lib/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/db")>();
+  return {
+    ...actual,
+    runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
+  };
+});
+
+vi.mock("../src/lib/db-vector-commits", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/db-vector-commits")>();
+  return {
+    ...actual,
+    runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
+  };
+});
 
 function jsonResponse(payload: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
@@ -82,7 +119,21 @@ beforeEach(async () => {
   vi.clearAllMocks();
   mocks.admitProviderRequests.mockReturnValue(1);
   mocks.hasIngestTextBudget.mockReturnValue(true);
-  mocks.storeDocument.mockResolvedValue({ attempted: 2, indexed: 2, documentComplete: true });
+  mocks.getCurrentVectorProviderAuthority.mockResolvedValue("test-current-authority");
+  mocks.managedVectorLedgerAuthority.mockReturnValue("ledger:v1:test-current-authority");
+  mocks.vectorTenantScope.mockReturnValue("shared:operator");
+  mocks.managedOccurrenceVectorPrefix.mockReturnValue("occ:v3:test-current:");
+  mocks.managedOccurrenceVectorIdMatches.mockReturnValue(false);
+  mocks.managedVectorReceiptEvidence.mockReturnValue([]);
+  mocks.inventoryVectorRecordsByMetadata.mockResolvedValue([]);
+  mocks.purgeVectorRecordIds.mockImplementation(async ({ ids }) => ({ ids, deleted: ids.length }));
+  mocks.purgeVectorNamespaceAll.mockResolvedValue(undefined);
+  mocks.storeDocument.mockResolvedValue({
+    attempted: 2,
+    indexed: 2,
+    documentComplete: true,
+    managedCommitProof: { commitId: "test:fmp", attemptToken: "test:fmp" }
+  });
 
   const { getDb } = await import("../src/lib/db");
   getDb().prepare("DELETE FROM settings WHERE key LIKE 'webSource:fmpTranscripts:%'").run();
@@ -370,7 +421,7 @@ describe("refreshFmpTranscripts", () => {
     expect(mocks.fetchWithRetry.mock.calls[0]![2]).toMatchObject({
       service: "fmp",
       healthService: "fmp-transcripts",
-      suppressHealthStatuses: [402]
+      suppressHealthStatuses: [400, 401, 402, 403]
     });
     expect(getFmpTranscriptCapability()).toEqual({
       status: "endpoint_not_entitled",
@@ -427,7 +478,24 @@ describe("refreshFmpTranscripts", () => {
     expect(mocks.storeDocument).not.toHaveBeenCalled();
   });
 
-  it.each([403, 404])("does not claim transcript capability when the body endpoint returns HTTP %i", async (status) => {
+  it.each([
+    {
+      status: 403,
+      capability: "access_denied",
+      error: "body:AAPL:access_denied:403",
+      persisted: {
+        status: "access_denied",
+        checkedAt: "2025-01-31T00:00:00.000Z",
+        httpStatus: 403
+      }
+    },
+    { status: 404, capability: "unknown", error: "body:AAPL:http-404", persisted: undefined }
+  ])("classifies transcript body endpoint HTTP $status without a false available claim", async ({
+    status,
+    capability,
+    error,
+    persisted
+  }) => {
     mocks.fetchWithRetry
       .mockResolvedValueOnce(jsonResponse([
         { symbol: "AAPL", year: 2025, quarter: 1, date: "2025-01-30" }
@@ -442,9 +510,9 @@ describe("refreshFmpTranscripts", () => {
       maxRequests: 2
     });
 
-    expect(result).toMatchObject({ capability: "unknown", requests: 2, ingested: 0 });
-    expect(result.errors).toEqual([`body:AAPL:http-${status}`]);
-    expect(getFmpTranscriptCapability()).toBeUndefined();
+    expect(result).toMatchObject({ capability, requests: 2, ingested: 0 });
+    expect(result.errors).toEqual([error]);
+    expect(getFmpTranscriptCapability()).toEqual(persisted);
     expect(mocks.storeDocument).not.toHaveBeenCalled();
   });
 
@@ -655,6 +723,98 @@ describe("refreshFmpTranscripts", () => {
     expect(JSON.parse(auditRow.payload)).toMatchObject({ chunks: 4, indexedThisAttempt: 4 });
   });
 
+  it("finishes the source ledger from an exact previously committed occurrence set", async () => {
+    mocks.fetchWithRetry
+      .mockResolvedValueOnce(jsonResponse([
+        { symbol: "AAPL", year: 2025, quarter: 1, date: "2025-01-30" }
+      ]))
+      .mockResolvedValueOnce(jsonResponse([{
+        symbol: "AAPL",
+        year: 2025,
+        quarter: 1,
+        content: "Operator introduction. Management discusses results and outlook. ".repeat(8)
+      }]));
+    mocks.storeDocument.mockResolvedValue({
+      attempted: 4,
+      indexed: 0,
+      skipped: true,
+      reusedCommitted: true,
+      documentComplete: true
+    });
+    const { refreshFmpTranscripts, transcriptAccession } = await import(
+      "../src/lib/web-sources/fmp-transcripts"
+    );
+    const { getDb } = await import("../src/lib/db");
+
+    const result = await refreshFmpTranscripts(["AAPL"], Date.UTC(2025, 0, 31), {
+      force: true,
+      maxRequests: 2
+    });
+
+    expect(result).toMatchObject({ ingested: 1, skippedExisting: 0 });
+    expect(
+      getDb().prepare(
+        "SELECT chunk_count FROM ingested_accessions WHERE accession = ? AND doc_type = ?"
+      ).get(transcriptAccession("AAPL", 2025, 1), "earnings-transcript")
+    ).toEqual({ chunk_count: 4 });
+    const auditRow = getDb().prepare(
+      "SELECT payload FROM audit_events WHERE kind = 'fmp_transcript_ingest' ORDER BY rowid DESC LIMIT 1"
+    ).get() as { payload: string };
+    expect(JSON.parse(auditRow.payload)).toMatchObject({
+      chunks: 4,
+      indexedThisAttempt: 0,
+      reusedCommitted: true,
+      deduplicatedCompletion: true,
+      exactReplayWasAlreadyComplete: false
+    });
+  });
+
+  it("counts a real provider-generation repair as ingested even when source ledgers were complete", async () => {
+    const dates = [{ symbol: "AAPL", year: 2025, quarter: 1, date: "2025-01-30" }];
+    const transcript = {
+      ...dates[0],
+      content: "Operator introduction. Management discusses results and outlook. ".repeat(8)
+    };
+    mocks.fetchWithRetry
+      .mockResolvedValueOnce(jsonResponse(dates))
+      .mockResolvedValueOnce(jsonResponse([transcript]))
+      .mockResolvedValueOnce(jsonResponse(dates))
+      .mockResolvedValueOnce(jsonResponse([transcript]));
+    mocks.storeDocument
+      .mockResolvedValueOnce({
+        attempted: 4,
+        indexed: 4,
+        documentComplete: true,
+        managedCommitProof: { commitId: "test:fmp:first", attemptToken: "test:fmp:first" }
+      })
+      .mockResolvedValueOnce({
+        attempted: 4,
+        indexed: 4,
+        documentComplete: true,
+        managedCommitProof: { commitId: "test:fmp:repair", attemptToken: "test:fmp:repair" }
+      });
+    const { refreshFmpTranscripts } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+
+    expect(await refreshFmpTranscripts(["AAPL"], Date.UTC(2025, 0, 31), {
+      force: true,
+      maxRequests: 2
+    })).toMatchObject({ ingested: 1, skippedExisting: 0 });
+    expect(await refreshFmpTranscripts(["AAPL"], Date.UTC(2025, 1, 1), {
+      force: true,
+      maxRequests: 2
+    })).toMatchObject({ ingested: 1, skippedExisting: 0 });
+    const auditRow = getDb().prepare(
+      "SELECT payload FROM audit_events WHERE kind = 'fmp_transcript_ingest' ORDER BY rowid DESC LIMIT 1"
+    ).get() as { payload: string };
+    expect(JSON.parse(auditRow.payload)).toMatchObject({
+      reusedCommitted: false,
+      deduplicatedCompletion: false,
+      exactReplayWasAlreadyComplete: false,
+      indexedThisAttempt: 4
+    });
+  });
+
   it("refuses source completion when a caller reports content dedup without occurrence vectors", async () => {
     mocks.fetchWithRetry
       .mockResolvedValueOnce(jsonResponse([
@@ -739,6 +899,27 @@ describe("refreshFmpTranscripts", () => {
   });
 
   it("retains corrected transcript bodies as distinct point-in-time versions and dedupes an exact replay", async () => {
+    mocks.storeDocument
+      .mockResolvedValueOnce({
+        attempted: 2,
+        indexed: 2,
+        documentComplete: true,
+        managedCommitProof: { commitId: "test:fmp:first", attemptToken: "test:fmp:first" }
+      })
+      .mockResolvedValueOnce({
+        attempted: 2,
+        indexed: 2,
+        documentComplete: true,
+        managedCommitProof: { commitId: "test:fmp:corrected", attemptToken: "test:fmp:corrected" }
+      })
+      .mockResolvedValueOnce({
+        attempted: 2,
+        indexed: 0,
+        skipped: true,
+        reusedCommitted: true,
+        documentComplete: true,
+        managedCommitProof: { commitId: "test:fmp:corrected", attemptToken: "test:fmp:corrected" }
+      });
     const dates = [{ symbol: "AAPL", year: 2025, quarter: 1, date: "2025-01-30" }];
     const firstBody = {
       ...dates[0],
@@ -748,14 +929,19 @@ describe("refreshFmpTranscripts", () => {
       ...dates[0],
       content: "Operator introduction. Corrected results and revised outlook. ".repeat(8)
     };
+    const undatedDates = [{ symbol: "AAPL", year: 2025, quarter: 1 }];
+    const undatedCorrectedBody = {
+      ...undatedDates[0],
+      content: correctedBody.content
+    };
     mocks.fetchWithRetry
       .mockResolvedValueOnce(jsonResponse(dates))
       .mockResolvedValueOnce(jsonResponse([firstBody]))
       .mockResolvedValueOnce(jsonResponse(dates))
       .mockResolvedValueOnce(jsonResponse([correctedBody]))
-      .mockResolvedValueOnce(jsonResponse(dates))
-      .mockResolvedValueOnce(jsonResponse([correctedBody]));
-    const { refreshFmpTranscripts, transcriptAccession } = await import(
+      .mockResolvedValueOnce(jsonResponse(undatedDates))
+      .mockResolvedValueOnce(jsonResponse([undatedCorrectedBody]));
+    const { getFmpTranscriptObservation, refreshFmpTranscripts, transcriptAccession } = await import(
       "../src/lib/web-sources/fmp-transcripts"
     );
     const { getDb } = await import("../src/lib/db");
@@ -776,12 +962,29 @@ describe("refreshFmpTranscripts", () => {
     expect(first.ingested).toBe(1);
     expect(corrected.ingested).toBe(1);
     expect(exactReplay).toMatchObject({ ingested: 0, skippedExisting: 1 });
-    expect(mocks.storeDocument).toHaveBeenCalledTimes(2);
+    const replayAudit = getDb().prepare(
+      "SELECT payload FROM audit_events WHERE kind = 'fmp_transcript_ingest' ORDER BY rowid DESC LIMIT 1"
+    ).get() as { payload: string };
+    expect(JSON.parse(replayAudit.payload)).toMatchObject({
+      reusedCommitted: true,
+      deduplicatedCompletion: false,
+      exactReplayWasAlreadyComplete: true
+    });
+    expect(mocks.storeDocument).toHaveBeenCalledTimes(3);
     const storedIds = mocks.storeDocument.mock.calls.map((call) => call[0].doc_id as string);
     expect(new Set(storedIds).size).toBe(2);
     expect(storedIds.every((id) => id.startsWith(
       `${transcriptAccession("AAPL", 2025, 1)}:VERSION:`
     ))).toBe(true);
+    // A later dates/body replay may omit the call date. The durable version retains the first
+    // valid event date, so the exact replay keeps its original PIT metadata and generation id.
+    expect(mocks.storeDocument.mock.calls[2]![0]).toMatchObject({
+      doc_id: mocks.storeDocument.mock.calls[1]![0].doc_id,
+      published_at: "2025-01-30T00:00:00.000Z"
+    });
+    expect(getFmpTranscriptObservation(transcriptAccession("AAPL", 2025, 1))).toMatchObject({
+      callDate: "2025-01-30T00:00:00.000Z"
+    });
     const rows = getDb().prepare(`
       SELECT version_id, content_sha256, first_content_seen_at, state
       FROM fmp_transcript_versions WHERE accession = ? ORDER BY version_id
@@ -790,6 +993,51 @@ describe("refreshFmpTranscripts", () => {
     expect(new Set(rows.map((row) => row.content_sha256)).size).toBe(2);
     expect(rows.every((row) => row.state === "committed" && Boolean(row.first_content_seen_at)))
       .toBe(true);
+  });
+
+  it("does not downgrade a committed transcript when an exact replay hits a transient vector failure", async () => {
+    mocks.storeDocument
+      .mockResolvedValueOnce({
+        attempted: 2,
+        indexed: 2,
+        documentComplete: true,
+        managedCommitProof: { commitId: "test:fmp:stable", attemptToken: "test:fmp:stable" }
+      })
+      .mockResolvedValueOnce({ attempted: 2, indexed: 0, error: "temporary-pinecone-failure" });
+    const dates = [{ symbol: "AAPL", year: 2025, quarter: 1, date: "2025-01-30" }];
+    const body = [{
+      ...dates[0],
+      content: "Operator introduction. Stable reported results and outlook. ".repeat(8)
+    }];
+    mocks.fetchWithRetry
+      .mockResolvedValueOnce(jsonResponse(dates))
+      .mockResolvedValueOnce(jsonResponse(body))
+      .mockResolvedValueOnce(jsonResponse(dates))
+      .mockResolvedValueOnce(jsonResponse(body));
+    const { refreshFmpTranscripts, transcriptAccession } = await import(
+      "../src/lib/web-sources/fmp-transcripts"
+    );
+    const { getDb } = await import("../src/lib/db");
+
+    const first = await refreshFmpTranscripts(["AAPL"], Date.UTC(2025, 0, 31), {
+      force: true,
+      maxRequests: 2
+    });
+    const failedReplay = await refreshFmpTranscripts(["AAPL"], Date.UTC(2025, 0, 31, 1), {
+      force: true,
+      maxRequests: 2
+    });
+
+    expect(first.ingested).toBe(1);
+    expect(failedReplay.errors).toContain("embed:AAPL:failed");
+    expect(getDb().prepare(`
+      SELECT state, vector_commit_id, chunk_count
+      FROM fmp_transcript_versions WHERE accession = ?
+    `).get(transcriptAccession("AAPL", 2025, 1))).toEqual({
+      state: "committed",
+      vector_commit_id: "test:fmp:stable",
+      chunk_count: 2
+    });
   });
 
   it("honors an explicit zero request cap", async () => {
@@ -879,7 +1127,60 @@ describe("refreshFmpTranscripts", () => {
     expect(isFmpTranscriptRefreshDue(now + 60_000)).toBe(false);
   });
 
-  it("inventories rights artifacts and performs a verified provider-first purge with dry-run default", async () => {
+  it("blocks rights erasure when a v3 receipt belongs to an unreachable ledger or provider authority", async () => {
+    const {
+      inventoryFmpTranscriptRightsArtifacts,
+      purgeFmpTranscriptRightsArtifacts
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    mocks.managedVectorReceiptEvidence.mockReturnValue([{
+      id: "occ:v3:historical-ledger:historical-provider:tenant:source:digest",
+      source: "fmp-earnings-transcript",
+      tenantScope: "shared:operator",
+      userId: "local",
+      ledgerAuthority: "ledger:v1:historical-unreachable",
+      providerAuthority: "historical-provider-unreachable",
+      vectorNamespace: "managed"
+    }]);
+
+    const inventory = await inventoryFmpTranscriptRightsArtifacts();
+    expect(inventory.authorityBlockers).toEqual([
+      "historical-ledger-authority-unreachable",
+      "historical-provider-authority-unreachable"
+    ]);
+
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    await expect(purgeFmpTranscriptRightsArtifacts({ dryRun: false }))
+      .rejects.toThrow("blocked by unreachable historical authority");
+    expect(mocks.purgeVectorNamespaceAll).not.toHaveBeenCalled();
+    expect(mocks.purgeVectorRecordIds).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when current provider identity cannot classify a receiptless managed ghost", async () => {
+    const {
+      inventoryFmpTranscriptRightsArtifacts,
+      purgeFmpTranscriptRightsArtifacts
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    mocks.getCurrentVectorProviderAuthority.mockResolvedValue(undefined);
+    mocks.inventoryVectorRecordsByMetadata.mockImplementation(async ({ namespace }) => (
+      namespace === "managed"
+        ? [{ id: "occ:v3:unreachable-provider:receiptless-ghost", metadata: {} }]
+        : []
+    ));
+
+    const inventory = await inventoryFmpTranscriptRightsArtifacts();
+    // The managed ghost cannot be selected without the physical provider token. The blocker is
+    // therefore the critical proof that prevents a false-success local purge.
+    expect(inventory.providerObservedVectorIds).toEqual([]);
+    expect(inventory.authorityBlockers).toContain("current-provider-authority-unreachable");
+
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    await expect(purgeFmpTranscriptRightsArtifacts({ dryRun: false }))
+      .rejects.toThrow("blocked by unreachable historical authority");
+    expect(mocks.purgeVectorNamespaceAll).not.toHaveBeenCalled();
+    expect(mocks.purgeVectorRecordIds).not.toHaveBeenCalled();
+  });
+
+  it("purges immutable-source candidates even when mutable provider source metadata is corrupted", async () => {
     const {
       inventoryFmpTranscriptRightsArtifacts,
       purgeFmpTranscriptRightsArtifacts
@@ -891,15 +1192,35 @@ describe("refreshFmpTranscripts", () => {
     const accession = "FMP-EARNINGS-TRANSCRIPT:AAPL:2026:Q1";
     const versionId = `${accession}:VERSION:test-rights`;
     const commitId = "vcommit:test:rights";
-    const vectorId = "occ:test:rights";
+    const decisionId = "decision:test:fmp-rights";
+    const vectorId = "occ:v2:test:rights";
+    const currentVectorId = "occ:v3:test-current:tenant:source:digest";
     const at = "2026-07-14T12:00:00.000Z";
     db.prepare(`
       INSERT INTO vector_ingest_commits (
-        id, tenant_scope, user_id, source, accession, content_version,
-        parser_revision, embed_revision, expected_vectors, state, created_at, updated_at, committed_at
-      ) VALUES (?, 'shared:operator', 'local', ?, ?, 'hash-rights', 'fmp-transcript-v1', 'v1', 1,
-        'committed', ?, ?, ?)
-    `).run(commitId, source, versionId, at, at, at);
+        id, tenant_scope, user_id, source, accession, document_key, content_version,
+        retrieval_metadata_version, parser_revision, embed_revision, expected_vectors,
+        provider_authority, ledger_authority, vector_namespace, state,
+        attempt_token, attempt_generation, created_at, updated_at, committed_at
+      ) VALUES (?, 'shared:operator', 'local', ?, ?, ?, 'hash-rights', 'metadata-rights',
+        'fmp-transcript-v1', 'v1', 1, 'test-current-authority',
+        'ledger:v1:test-current-authority', 'managed', 'committed',
+        'attempt-rights', 1, ?, ?, ?)
+    `).run(commitId, source, versionId, accession, at, at, at);
+    db.prepare(`
+      INSERT INTO vector_document_heads (tenant_scope, source, accession, commit_id, updated_at)
+      VALUES ('shared:operator', ?, ?, ?, ?)
+    `).run(source, accession, commitId, at);
+    db.prepare(`
+      INSERT INTO vector_document_versions (
+        commit_id, tenant_scope, source, document_key, valid_from, valid_to, updated_at
+      ) VALUES (?, 'shared:operator', ?, ?, ?, NULL, ?)
+    `).run(commitId, source, accession, at, at);
+    db.prepare(`
+      INSERT INTO vector_reconcile_observations (
+        commit_id, fingerprint, observation_count, first_observed_at, last_observed_at
+      ) VALUES (?, 'rights-observation', 1, ?, ?)
+    `).run(commitId, at, at);
     db.prepare(`
       INSERT INTO chunk_occurrences (
         vector_id, content_hash, symbol, source, accession, section, ordinal, accepted_at,
@@ -923,53 +1244,122 @@ describe("refreshFmpTranscripts", () => {
     `).run(accession, docType, at);
     setInternalSetting(`webSource:fmpTranscripts:observation:${accession}`, { accession });
     audit("fmp_transcript_ingest", { source, docType, versionId });
+    const retainedAttribution = { source: "sec-edgar", docType: "10-q", accession: "sec-keep" };
+    const retainedEvidence = { type: "rag", data: retainedAttribution };
+    db.prepare(`
+      INSERT INTO socratic_decisions (
+        id, user_id, status, authority, thesis, rationale, action,
+        evidence, rag_attributions, created_at, updated_at
+      ) VALUES (?, 'local', 'observed', 'system', 'test', 'test', 'hold', ?, ?, ?, ?)
+    `).run(
+      decisionId,
+      JSON.stringify([
+        { type: "rag", data: { source, docType, quote: "licensed transcript excerpt" } },
+        retainedEvidence
+      ]),
+      JSON.stringify([
+        { source, docType, accession: versionId },
+        retainedAttribution
+      ]),
+      at,
+      at
+    );
 
-    mocks.inventoryVectorRecordsByMetadata.mockResolvedValue([{
-      id: vectorId,
-      metadata: { source, doc_type: docType }
-    }]);
+    // v2 is selected from the local FMP receipt despite corrupt mutable source metadata; v3 is
+    // selected from its immutable source-token identity, also despite corrupt metadata.
+    mocks.managedVectorReceiptEvidence.mockImplementation(() => (
+      db.prepare("SELECT 1 AS ok FROM chunk_occurrences WHERE vector_id = ?").get(vectorId)
+        ? [{
+            id: vectorId,
+            source,
+            tenantScope: "shared:operator",
+            userId: "local",
+            ledgerAuthority: "ledger:v1:test-current-authority",
+            providerAuthority: "test-current-authority",
+            vectorNamespace: "managed"
+          }]
+        : []
+    ));
+    mocks.managedOccurrenceVectorIdMatches.mockImplementation(({ id }) => id === currentVectorId);
+    let fmpNamespacePresent = true;
+    let defaultNamespacePresent = true;
+    mocks.inventoryVectorRecordsByMetadata.mockImplementation(async ({ namespace }) => {
+      if (namespace === "fmp-transcripts") {
+        return fmpNamespacePresent
+          ? [{ id: currentVectorId, metadata: { source: "not-fmp" } }]
+          : [];
+      }
+      if (namespace === "managed") return [];
+      return defaultNamespacePresent
+        ? [{ id: vectorId, metadata: { source: "not-fmp" } }]
+        : [];
+    });
+    mocks.purgeVectorNamespaceAll.mockImplementation(async () => {
+      fmpNamespacePresent = false;
+    });
+    mocks.purgeVectorRecordIds.mockImplementation(async ({ ids, namespace }) => {
+      if (namespace === "default" && ids.includes(vectorId)) defaultNamespacePresent = false;
+      return { ids, deleted: ids.length };
+    });
     const inventory = await inventoryFmpTranscriptRightsArtifacts();
     expect(inventory).toMatchObject({
-      providerVectorIds: [vectorId],
+      providerVectorIds: [vectorId, currentVectorId],
+      providerObservedVectorIds: [vectorId, currentVectorId],
+      immutableCurrentSourceIds: [currentVectorId],
       localVectorIds: [vectorId],
       contentHashes: ["hash-rights"],
       commitIds: [commitId],
+      activeHeadCommitIds: [commitId],
+      documentVersionCommitIds: [commitId],
+      reconcileObservationCommitIds: [commitId],
       versionIds: [versionId],
       ingestionRows: 1,
-      derivedArtifactPolicy: "delete-provenance-tagged-retain-unattributable"
+      derivedDecisionIds: [decisionId],
+      authorityBlockers: [],
+      derivedArtifactPolicy: "scrub-exact-provenance"
     });
     const dryRun = await purgeFmpTranscriptRightsArtifacts();
     expect(dryRun).toMatchObject({ dryRun: true, before: inventory, after: inventory });
     expect(mocks.purgeVectorRecordsByMetadata).not.toHaveBeenCalled();
+    expect(mocks.purgeVectorRecordIds).not.toHaveBeenCalled();
+    expect(mocks.purgeVectorNamespaceAll).not.toHaveBeenCalled();
 
-    mocks.inventoryVectorRecordsByMetadata
-      .mockReset()
-      .mockResolvedValueOnce([{ id: vectorId, metadata: { source, doc_type: docType } }])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
-    mocks.purgeVectorRecordsByMetadata.mockResolvedValue({
-      dryRun: false,
-      ids: [vectorId],
-      deleted: 1
-    });
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
     const purged = await purgeFmpTranscriptRightsArtifacts({ dryRun: false });
     expect(purged.dryRun).toBe(false);
     expect(purged.after).toMatchObject({
       providerVectorIds: [],
+      providerObservedVectorIds: [],
+      immutableCurrentSourceIds: [],
       localVectorIds: [],
       contentHashes: [],
       commitIds: [],
+      activeHeadCommitIds: [],
+      documentVersionCommitIds: [],
+      reconcileObservationCommitIds: [],
       versionIds: [],
       ingestionRows: 0,
       observationKeys: [],
-      derivedAuditIds: []
+      derivedAuditIds: [],
+      derivedDecisionIds: [],
+      authorityBlockers: []
     });
-    expect(mocks.purgeVectorRecordsByMetadata).toHaveBeenCalledWith({
+    expect(mocks.purgeVectorNamespaceAll).toHaveBeenCalledWith(expect.objectContaining({
       userId: "local",
-      source,
-      dryRun: false,
-      maxScanned: 250_000
-    });
+      namespace: "fmp-transcripts"
+    }));
+    expect(mocks.purgeVectorRecordIds).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "local",
+      namespace: "default",
+      ids: [vectorId]
+    }));
+    const scrubbedDecision = db.prepare(`
+      SELECT evidence, rag_attributions FROM socratic_decisions WHERE id = ?
+    `).get(decisionId) as { evidence: string; rag_attributions: string };
+    expect(scrubbedDecision.evidence).not.toContain(source);
+    expect(scrubbedDecision.rag_attributions).not.toContain(source);
+    expect(JSON.parse(scrubbedDecision.evidence)).toEqual([retainedEvidence]);
+    expect(JSON.parse(scrubbedDecision.rag_attributions)).toEqual([retainedAttribution]);
   });
 
   it("turns a concurrent shared RAG write into a benign no-marker/no-network busy result", async () => {

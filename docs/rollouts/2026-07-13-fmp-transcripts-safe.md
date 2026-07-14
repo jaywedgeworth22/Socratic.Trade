@@ -494,6 +494,136 @@ re-review found no remaining P0/P1/P2 in the managed-vector budget/receipt/retry
 remains local, uncommitted, and unpushed for root review. No PR, merge, deploy, flag change, FMP/provider
 call, corpus mutation, or Infisical mutation occurred; the activation blockers below are unchanged.
 
+### Round-13/14 receipt, privacy, retrieval, and account-erasure hardening
+
+Round 12 revoked the prior release claim after proving that committed replay could be demoted before an
+early return, concurrent writers could mutate one commit attempt, SEC 8-K could record an incomplete
+budget result as ingested, and empty/duplicate occurrence cases were under-specified. The current local
+remediation preserves committed generations, serializes exact commit attempts, requires exact completion
+at every filing caller, and retains immutable point-in-time versions. Retrieval now makes tenant scope
+authoritative, explicitly stores local decision/experience memory as private, filters legacy account
+memory before receipt/rerank/prompt handling, and raises bounded provider topK by the locally proven stale
+managed-generation upper bound while reporting cap saturation as degraded.
+
+Account deletion now performs provider erasure before local receipt/secret deletion. Preparing deletion
+fences new durable dispatch even before idempotency replay; only the exact prepared request crosses the
+erasure boundary. The operation waits for current dispatches, holds the shared RAG-write lease, inventories
+the provider index within a hard bound using Pinecone without requiring an unrelated Voyage credential,
+deletes exact private/legacy account vectors, fetch-verifies their
+absence, rechecks blockers, and then commits local deletion. The local operator's public SEC/web corpus is
+preserved, and globally deduplicated `document_chunks` text is deleted only when no surviving occurrence
+still references the hash. Any provider or verification error leaves the prepared request and local keys
+retryable. If a process dies after provider deletion but before the local transaction, the next attempt
+recovers exact private content hashes from durable occurrence receipts even though provider inventory is empty.
+
+Files touched by the current local snapshot:
+
+- `app/api/account/deletion/route.ts`
+- `app/api/mobile/account-deletion/confirm/route.ts`
+- `src/lib/account-deletion.ts`
+- `src/lib/db-provider-dispatch.ts`
+- `src/lib/db-vector-commits.ts`
+- `src/lib/db.ts`
+- `src/lib/experience-memory.ts`
+- `src/lib/socratic-memory.ts`
+- `src/lib/vector-db.ts`
+- `src/lib/web-sources/fmp-transcripts.ts`
+- `src/lib/web-sources/sec-filings.ts`
+- `src/lib/web-sources/sec8k.ts`
+- `test/account-deletion.test.ts`
+- `test/experience-memory.test.ts`
+- `test/fmp-transcripts.test.ts`
+- `test/mobile-api.test.ts`
+- `test/outcome-engine.test.ts`
+- `test/persistence-hardening.test.ts`
+- `test/provider-dispatch-durability.test.ts`
+- `test/sec-filings.test.ts`
+- `test/sec8k-full-body.test.ts`
+- `test/socratic-db.test.ts`
+- `test/vector-db-asof-server-filter.test.ts`
+- `test/vector-db-backlog-c-integration.test.ts`
+- `test/vector-db-chunk-cap.test.ts`
+- `test/vector-db-document-receipts.test.ts`
+- `test/vector-db-retrieval.test.ts`
+- `test/vector-db-scope.test.ts`
+- `test/vector-db.test.ts`
+- `test/web-sources-sec8k.test.ts`
+- `STATUS.md`, `PLAN.md`, `docs/EFFORT-LOG.md`, `docs/phase-9-web-sources.md`, and this rollout note
+
+Current Node 24 verification (mocked providers and temporary SQLite only):
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/vector-db-scope.test.ts test/vector-db.test.ts \
+  test/vector-db-asof-server-filter.test.ts test/vector-db-asof-strict.test.ts \
+  test/vector-db-document-receipts.test.ts test/vector-db-retrieval.test.ts \
+  test/vector-db-backlog-c-integration.test.ts test/vector-db-chunk-cap.test.ts \
+  test/experience-memory.test.ts test/socratic-db.test.ts test/outcome-engine.test.ts \
+  test/account-deletion.test.ts test/account-deletion-coverage.test.ts test/mobile-api.test.ts \
+  test/provider-dispatch-durability.test.ts test/fmp-transcripts.test.ts test/sec-filings.test.ts \
+  test/sec8k-full-body.test.ts test/web-sources-sec8k.test.ts test/persistence-hardening.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/vector-db-scope.test.ts test/account-deletion.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit --pretty false
+git diff --check
+```
+
+Results: 20 files / 256 tests green; post-review privacy/deletion subset 2 files / 22 tests green;
+TypeScript and diff-check clean. Independent hostile review and the serialized repository lint/test/build
+gate remain pending. Draft PR #1586 stays HOLD; its current hosted green checks cover an older pushed
+snapshot, not this dirty local remediation. No FMP/provider/corpus/R2/Infisical/production mutation ran.
+
+### Round-15 deletion-generation, trigger, and rights-derived-artifact hardening
+
+The next hostile pass found that a tenant could request shared scope before `storeDocument` derived its
+managed identity, a private write could outlive account deletion because only the lower-level upsert was
+claimed, a receiptless provider ghost could survive when physical-index identity was unavailable, and one
+clean provider read was insufficient under eventual consistency. It also found that pre-change Auth.js
+cookies had no post-deletion login claim, lock contention returned a failed strategy result that the trigger
+still acknowledged, and the settings fence covered only four key families.
+
+The remediation forces every nonlocal document/context write private before tenant and commit IDs exist,
+holds one durable account-operation claim across the complete managed-document workflow, requires current
+physical provider authority even with no local receipts, and uses repeated exact fetch plus managed/default/
+private inventory with a consecutive-clean stability threshold. One canonical settings ownership matcher is
+now shared by deletion counts, deletion cleanup, and prepared/completed SQLite triggers for provider-tier,
+risk, learning-review, auto-tune, regime, model rotation, OAuth, run lock, budget, health/usage alert, and
+other user-owned internal rows. Auth.js generation resolution rejects missing or pre-cutoff provider-login
+claims once a tombstone exists. Event-trigger claims return to the durable queue whenever `runStrategyOnce`
+does not complete, with a real held-lock regression. Transcript rights generations additionally track exact
+derived chat, prompt-safety audit, decision/framework, and provider-work provenance so withdrawal blocks new
+writes and removes only proven derived artifacts after external work is terminal.
+
+Current Node 24 verification uses mocked providers and temporary SQLite only:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/vector-db-scope.test.ts test/account-deletion.test.ts test/fmp-transcripts.test.ts \
+  test/persistence-hardening.test.ts test/vector-db-document-receipts.test.ts \
+  test/sec-filings.test.ts test/web-sources-sec8k.test.ts test/sec8k-full-body.test.ts \
+  test/scheduler-managed-vector-reconcile.test.ts test/trigger-durability.test.ts \
+  test/trigger-lock-contention.test.ts test/middleware-auth.test.ts test/mcp-oauth.test.ts \
+  test/mobile-api.test.ts test/strip-identity.test.ts test/provider-dispatch-durability.test.ts \
+  test/vector-db-chunk-cap.test.ts test/vector-db-retrieval.test.ts test/vector-db.test.ts \
+  test/token-budget-ceiling.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/fmp-rights-derived-artifacts.test.ts
+git diff --check
+```
+
+Results: 20 files / 302 tests and 1 file / 4 tests green; TypeScript and diff-check clean. Fetched
+`origin/main@2dabc7f8` already owns migrations 27-28, so this dirty snapshot must be checkpointed, merged,
+and renumbered to transcript/vector migrations 29-39 before the ordered lint/TypeScript/full-test/build gate.
+PR #1586 remains draft. No FMP/provider/corpus/R2/Infisical/activation/production mutation ran.
+
+The highest-yield 1,000-stock operational plan remains “archive broadly, embed selectively”: exact
+1,000-CIK manifest plus private priority overlay; historical submissions-shard discovery; immutable raw
+archive; structured XBRL/fundamentals; embedded 10-K/10-Q decision sections and material 8-K exhibits;
+entitled transcripts only; CIK/accession checkpoints; and gated 10 -> 25 -> 100 -> 300 -> 1,000 waves.
+Crash repair must not page an exact-set commit reconciliation across page boundaries: use a provider-page
+ghost sweep plus a local keyset whole-commit verifier, preserving existing PIT intervals and heads. No
+backfill is authorized until the source, coverage, evaluation, cost, and reconciliation gates pass.
+
 ## Follow-ups / enablement blockers
 
 - Upgrade to, or otherwise obtain, a plan that exposes both `/stable/earning-call-transcript-dates`

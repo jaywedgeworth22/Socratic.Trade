@@ -102,7 +102,17 @@ import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { startStrategyLockGuard, StrategyLockOwnershipLostError } from "./strategy-lock-guard";
 import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
-import { fmpTranscriptStorageRightsConfirmed, fmpTranscriptsEnabled } from "./web-sources/fmp-transcripts";
+import {
+  assertFmpTranscriptRightsGeneration,
+  captureFmpTranscriptRightsGeneration,
+  completeFmpTranscriptDerivedProviderWork,
+  fmpTranscriptDerivedProvenance,
+  fmpTranscriptsEnabled,
+  persistFmpTranscriptDerivedArtifact,
+  recordFmpTranscriptDerivedAudit,
+  type FmpTranscriptDerivedProvenance,
+  type FmpTranscriptRightsGenerationClaim
+} from "./web-sources/fmp-transcripts";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -858,6 +868,8 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     let socraticRagAttributions: SocraticRagAttribution[] = [];
+    const fmpRightsClaim = captureFmpTranscriptRightsGeneration();
+    const fmpDerivedProvenance: FmpTranscriptDerivedProvenance[] = [];
     // Advisory prompt-safety receipts (CR-H lane): kind-'safety' evidence items attached to every
     // decision case this run records. Populated by the evidence-age check below and the
     // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
@@ -875,7 +887,7 @@ export async function runStrategyOnce(
       "10-k",
       "10-q",
       "8-k",
-      ...(fmpTranscriptStorageRightsConfirmed() ? ["earnings-transcript"] : []),
+      ...(fmpRightsClaim ? ["earnings-transcript"] : []),
       "fundamentals"
     ];
     const coverageCheckedDocTypes = coverageCheckedFilingsDocTypes();
@@ -961,6 +973,15 @@ export async function runStrategyOnce(
         );
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
+        fmpDerivedProvenance.splice(
+          0,
+          fmpDerivedProvenance.length,
+          ...fmpTranscriptDerivedProvenance(socraticRagAttributions)
+        );
+        if (fmpDerivedProvenance.length > 0) {
+          if (!fmpRightsClaim) throw new Error("FMP-derived strategy context has no active rights generation.");
+          assertFmpTranscriptRightsGeneration(fmpRightsClaim);
+        }
         // Evidence-age receipt inputs: a HIGH-relevance chunk dated <24h old is worth a receipt
         // (fresh text steering a same-day decision). Aggregated + audited once below.
         const relevanceFloor = defaultRelevanceFloor();
@@ -989,6 +1010,7 @@ export async function runStrategyOnce(
         }
       } catch (e) {
         if (e instanceof StrategyLockOwnershipLostError) throw e;
+        if (e instanceof Error && /FMP transcript rights generation/i.test(e.message)) throw e;
         console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
         // Typed retrieval-status receipt: this catch covers the WHOLE filings pass (e.g. the
         // dynamic `import("./vector-db")` itself throwing), so no per-symbol onStatus callback may
@@ -1330,7 +1352,10 @@ export async function runStrategyOnce(
         ...(ownerCoaching ? { ownerCoaching } : {}),
         drawdownAdvisory,
         budgetAdvisory,
-        prefetched: prefetchedFills
+        prefetched: prefetchedFills,
+        ...(fmpRightsClaim && fmpDerivedProvenance.length > 0
+          ? { fmpRightsClaim, fmpDerivedProvenance }
+          : {})
       });
       lockGuard.assertOwned();
       llmProposals = proposed.proposals;
@@ -1359,11 +1384,31 @@ export async function runStrategyOnce(
               `Deterministic scan matched ${findings.map((f) => f.pattern).join(", ")}: "${findings[0].excerpt.slice(0, 240)}". ` +
               disposition,
             source: "prompt-safety",
-            data: findings
+            data: {
+              findings,
+              ...(field === "retrievedFinancialContext" && fmpDerivedProvenance.length > 0
+                ? { fmpProvenance: fmpDerivedProvenance }
+                : {})
+            }
           });
         }
       }
     }
+
+    const insertRunProposal = (proposalInput: Parameters<typeof insertProposal>[0]) => {
+      if (fmpRightsClaim && fmpDerivedProvenance.length > 0) {
+        persistFmpTranscriptDerivedArtifact({
+          claim: fmpRightsClaim,
+          artifactType: "strategy-proposal",
+          artifactId: proposalInput.id,
+          userId,
+          provenance: fmpDerivedProvenance,
+          write: () => insertProposal(proposalInput)
+        });
+        return;
+      }
+      insertProposal(proposalInput);
+    };
 
     // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
     // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
@@ -1712,7 +1757,7 @@ export async function runStrategyOnce(
             // paths, so the adversary's most important negative verdict is visible in operator
             // review and learning telemetry, not just the audit feed. Best-effort + non-fatal.
             try {
-              insertProposal({
+              insertRunProposal({
                 userId,
                 executionMode,
                 promptVersion: STRATEGY_PROMPT_VERSION,
@@ -1980,14 +2025,49 @@ export async function runStrategyOnce(
           createdAt: now,
           updatedAt: now
         } satisfies SocraticDecisionCase;
-        upsertSocraticDecisionCase(caseFile);
-        void indexSocraticDecisionMemory(caseFile).catch((err) => {
-          console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
-        });
         const framework = frameworkProposalFromDecision(caseFile);
-        if (framework) createSocraticFrameworkProposal(framework);
+        const writeCase = () => {
+          upsertSocraticDecisionCase(caseFile);
+          if (framework) createSocraticFrameworkProposal(framework);
+        };
+        const hasFmpProvenance = Boolean(fmpRightsClaim && fmpDerivedProvenance.length > 0);
+        const providerWorkId = hasFmpProvenance
+          ? `fmp-derived:index:${caseFile.id}:${fmpRightsClaim!.generation}:${crypto.randomUUID()}`
+          : undefined;
+        if (hasFmpProvenance && fmpRightsClaim) {
+          persistFmpTranscriptDerivedArtifact({
+            claim: fmpRightsClaim,
+            artifactType: "strategy-decision",
+            artifactId: caseFile.id,
+            userId,
+            provenance: fmpDerivedProvenance,
+            ...(providerWorkId ? { providerWorkId } : {}),
+            write: writeCase
+          });
+        } else {
+          writeCase();
+        }
+        let indexAllowed = true;
+        if (hasFmpProvenance && fmpRightsClaim) {
+          try {
+            assertFmpTranscriptRightsGeneration(fmpRightsClaim);
+          } catch {
+            indexAllowed = false;
+            if (providerWorkId) completeFmpTranscriptDerivedProviderWork(providerWorkId);
+          }
+        }
+        if (indexAllowed) {
+          void indexSocraticDecisionMemory(caseFile)
+            .catch((err) => {
+              console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
+            })
+            .finally(() => {
+              if (providerWorkId) completeFmpTranscriptDerivedProviderWork(providerWorkId);
+            });
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (/FMP transcript rights generation/i.test(message)) throw err;
         console.warn("[strategy] Socratic decision recording failed:", message);
         try {
           audit(
@@ -2010,7 +2090,7 @@ export async function runStrategyOnce(
       if (!tradability[normalizedProposal.symbol]?.tradable) {
         const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
@@ -2112,7 +2192,7 @@ export async function runStrategyOnce(
       if (brokerMinimumBlockReason) {
         const decision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review });
         audit(
           "order_skipped_broker_minimum",
@@ -2263,7 +2343,7 @@ export async function runStrategyOnce(
             // DB (approvedEscalationsFromDecision). No client payload can create or alter it.
             escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
           };
-          insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+          insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
           recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: escalatedDecision, status: "proposed", review, overrideResolution });
           audit(
             "proposal_escalated",
@@ -2301,7 +2381,7 @@ export async function runStrategyOnce(
 
         const proposalId = crypto.randomUUID();
         lockGuard.assertOwned();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
@@ -2341,7 +2421,7 @@ export async function runStrategyOnce(
         const heldReason = brokerHeldExitBlockReason(heldExit);
         const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
         const proposalId = crypto.randomUUID();
-        insertProposal({
+        insertRunProposal({
           userId,
           executionMode,
           id: proposalId,
@@ -2379,7 +2459,7 @@ export async function runStrategyOnce(
       // robust to any reordering by the cluster gate.)
       if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         await sendNotification(
@@ -2398,7 +2478,7 @@ export async function runStrategyOnce(
         // de-risk exit reads "surfaced for your approval" under propose authority (never falsely
         // "proceeding") — so no separate corrective note is needed here.
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: [] });
         await sendNotification(
@@ -2431,7 +2511,7 @@ export async function runStrategyOnce(
         const failureKindSuffix = normalizedProposal.redTeamVerdict?.failureKind
           ? ` (${describeRedTeamFailureKind(normalizedProposal.redTeamVerdict.failureKind)})`
           : "";
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
         await sendNotification(
@@ -2473,7 +2553,7 @@ export async function runStrategyOnce(
         // Persist a REJECTED decision, not the earlier approved one — a blocked live order must not
         // leave an `approved: true` row in the decision/audit ledger.
         const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
-        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
         audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
@@ -2497,7 +2577,7 @@ export async function runStrategyOnce(
       // try/catch so one broker outage can't abort the rest of the run's risk exits.
       const refId = crypto.randomUUID();
       const proposalId = crypto.randomUUID();
-      insertProposal({
+      insertRunProposal({
         userId,
         id: proposalId,
         runId,
@@ -3142,6 +3222,9 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
   learnedContext?: string;
+  /** Exact licensed provenance plus the durable generation captured before retrieval. */
+  fmpRightsClaim?: FmpTranscriptRightsGenerationClaim;
+  fmpDerivedProvenance?: FmpTranscriptDerivedProvenance[];
   /**
    * Episodic decision memory blocks (2026-07-04 composite review A1). Pre-formatted, labeled,
    * ADVISORY-ONLY strings injected into BOTH the Bull and Bear userContent (evidence parity):
@@ -3408,6 +3491,9 @@ async function proposeTrades(input: {
     return result.sanitizedText;
   };
   const containedRagContext = containData("rag", "retrievedFinancialContext", input.ragContext);
+  if (input.fmpRightsClaim && (input.fmpDerivedProvenance?.length ?? 0) > 0) {
+    assertFmpTranscriptRightsGeneration(input.fmpRightsClaim);
+  }
   const containedLearnedContext = containData("learned", "learnedContext", input.learnedContext);
   const containedReflection = containData("reflection", "reflection_summary", reflection);
   const containedExperienceAnalogs = containData("learned", "closestHistoricalAnalogs", input.experienceAnalogs);
@@ -3815,21 +3901,33 @@ async function proposeTrades(input: {
     })
   ];
   const promptSafetyFindings = scanForInjectionAttempts(untrustedPromptFields);
+  const writeFmpAwareAudit = (kind: string, payload: unknown) => {
+    if (input.fmpRightsClaim && (input.fmpDerivedProvenance?.length ?? 0) > 0) {
+      recordFmpTranscriptDerivedAudit({
+        claim: input.fmpRightsClaim,
+        kind,
+        payload,
+        userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
+        provenance: input.fmpDerivedProvenance ?? []
+      });
+      return;
+    }
+    audit(kind, payload, input.userId, input.policy.connectedAccountId);
+  };
   if (promptSafetyFindings.length > 0) {
-    audit(
+    writeFmpAwareAudit(
       "prompt_injection_suspected",
       {
         runId: input.runId,
         fields: [...new Set(promptSafetyFindings.map((f) => f.name))],
         patterns: [...new Set(promptSafetyFindings.map((f) => f.pattern))],
         findings: promptSafetyFindings.slice(0, 12).map((f) => ({ ...f, excerpt: f.excerpt.slice(0, 240) }))
-      },
-      input.userId,
-      input.policy.connectedAccountId
+      }
     );
   }
   if (promptContainmentReceipts.length > 0) {
-    audit(
+    writeFmpAwareAudit(
       "prompt_injection_contained",
       {
         runId: input.runId,
@@ -3841,9 +3939,7 @@ async function proposeTrades(input: {
           patterns: result.findings.map((finding) => finding.pattern),
           excerpts: result.quarantinedExcerpts.slice(0, 4).map(({ pattern, excerpt, replacement }) => ({ pattern, excerpt, replacement }))
         }))
-      },
-      input.userId,
-      input.policy.connectedAccountId
+      }
     );
   }
 

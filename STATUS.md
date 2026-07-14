@@ -261,6 +261,43 @@ coverage is 6/6 and the related focused set is 106/106. The repeated ordered Nod
 the real TypeScript phase and 32 static pages; diff-check clean. Scoped hostile re-review found no remaining
 P0/P1/P2. The remediation remains local and unpushed for root review; no PR exists.
 
+Round-12 correctly revoked that release claim: an exact committed replay could be demoted before an early
+budget/client return, concurrent writers could reset/finalize the same commit, SEC 8-K could mark a partial
+budget result ingested, and empty/duplicate occurrence cases were under-proved. Round-13/14 remediates those
+paths with attempt generations and leases, committed-generation preservation, exact caller completion gates,
+empty-document cleanup, immutable PIT history, and expanded concurrency/retry/duplicate tests. Retrieval now
+uses authoritative shared/private tenant metadata, treats local operator decision and experience memory as
+private, filters legacy account memory before prompt/rerank persistence, and compensates Pinecone topK for
+locally proven stale managed generations with a bounded, observable degraded state.
+
+Account deletion now fences new provider dispatch before idempotency replay, permits only the exact durable
+prepared request through the provider erasure path, waits for fresh dispatches to drain, inventories and
+provider-deletes exact private/account-linked vectors, fetch-verifies absence, and only then removes local
+secrets/receipts; provider inventory/erasure requires Pinecone but not an unrelated Voyage credential. Local
+shared SEC/web corpus survives, as does globally deduplicated source text still referenced by a preserved
+public occurrence. Durable local receipts recover private content hashes when a prior attempt deleted provider
+vectors and crashed before local deletion. Current Node 24 receipts: 20 focused RAG/SEC/deletion files / 256 tests; the
+post-review privacy/deletion subset 2 files / 22 tests; TypeScript and diff-check clean. An independent hostile
+review and the serialized full lint/TypeScript/test/build gate remain pending. Draft PR #1586 is open with green
+checks for its older pushed snapshot, but the current remediation is dirty/local; keep the PR draft and do not
+merge or activate it.
+
+Round-15 landing remediation closes the next hostile-review set. Nonlocal writers can no longer request
+shared corpus scope, and `storeDocument` holds one durable account-operation claim across provider discovery,
+managed receipts, and Pinecone writes so prepared deletion cannot race a late vector recreation. Provider
+erasure requires current physical-index authority even when local receipt tables are empty and verifies a
+bounded sequence of consecutive clean fetch/list observations rather than trusting one eventually-consistent
+read. Rights withdrawal now tracks and removes exact transcript-derived chat, prompt-audit, decision, and
+framework artifacts after all derived provider work reaches a terminal receipt. Auth.js sessions missing a
+post-deletion provider-login timestamp fail closed once an identity tombstone exists; a lock-contended or
+otherwise failed event-triggered strategy run returns its claim to the durable queue; and one canonical
+settings ownership registry drives both account deletion and prepared/completed write fences across provider,
+risk, learning-review, auto-tune, regime, model-rotation, alert, and related user-owned keys. Node 24 targeted
+verification is green: 20 files / 302 tests plus 4 derived-rights tests, standalone TypeScript, and diff-check.
+Current `origin/main@2dabc7f8` owns migrations 27-28, so this branch must checkpoint, merge current main,
+renumber its transcript/vector migrations to 29-39, and pass the ordered repository gate before PR #1586 can
+leave draft. No activation flag, FMP call, corpus mutation, Infisical mutation, merge, or production write ran.
+
 Production activation/backfill remains gated on an entitled transcript plan, confirmed commercial
 persistence/embedding/display rights, and one genuinely shared cross-app transactional quota authority;
 matching `PROVIDER_QUOTA_AUTHORITY_ID` strings on separate databases is insufficient. No FMP/provider,

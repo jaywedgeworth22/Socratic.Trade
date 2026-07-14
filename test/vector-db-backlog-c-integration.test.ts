@@ -179,7 +179,7 @@ describe("R9: query-embedding LRU cache", () => {
     await retrieveContextDetailed("AAPL supply chain risk", "AAPL", 3, "local");
 
     expect(mocks.embed).toHaveBeenCalledTimes(1); // cached by default — second call is a hit
-    expect(mocks.query).toHaveBeenCalledTimes(2); // Pinecone query still runs fresh both times
+    expect(mocks.query).toHaveBeenCalledTimes(4); // private + shared Pinecone tiers still run fresh both times
   });
 
   it("opt-out (RAG_QUERY_EMBED_CACHE=off): embeds fresh on every call, even for the identical query", async () => {
@@ -204,7 +204,7 @@ describe("R9: query-embedding LRU cache", () => {
     await retrieveContextDetailed("AAPL supply chain risk", "AAPL", 3, "local");
 
     expect(mocks.embed).toHaveBeenCalledTimes(1); // second call is a cache hit
-    expect(mocks.query).toHaveBeenCalledTimes(2); // Pinecone query still runs fresh both times
+    expect(mocks.query).toHaveBeenCalledTimes(4); // private + shared Pinecone tiers still run fresh both times
   });
 
   it("when ON: per-user filters still apply after a cache hit (cache is vector-only, not results)", async () => {

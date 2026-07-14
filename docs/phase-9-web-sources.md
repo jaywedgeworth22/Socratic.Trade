@@ -80,8 +80,13 @@ disclosures lets the agent act on the same names *before* the copycats pile in.
   vectors remain query-ineligible until exact provider and relational receipts agree. Transcript body
   revisions retain distinct content-version/PIT rows instead of overwriting history. A bounded,
   dry-run-default rights tool inventories provider ghosts plus local receipts/observations/tagged
-  derivatives and performs provider-first verified purge. Commercial rights and a genuinely shared
-  cross-app FMP quota authority remain activation gates.
+  derivatives and performs provider-first verified purge. Rights generations also ledger exact derived
+  chat, prompt-safety audit, decision, and framework artifacts plus unresolved derived provider work, so
+  withdrawal blocks new writes, waits for terminal external receipts, and removes only proven transcript-
+  derived state. Private managed-vector writes hold a durable account-operation claim from provider identity
+  through receipt commit; account erasure requires current index authority and consecutive clean provider
+  observations before deleting local evidence. Commercial rights and a genuinely shared cross-app FMP quota
+  authority remain activation gates.
 - **`index.ts`** — registry + the three entry points the app uses:
   `refreshDueWebSources()` (scheduler), `getSymbolWebSignals()` (scan overlay,
   cache-only / no network), `collectEvidenceBulletins()`, `getWebSourcesStatus()`, plus the separately
@@ -139,7 +144,16 @@ durable pending/retry job or awaiting it, and remains an explicit follow-up rath
   adds a global metadata exclusion so broad Coach/chat retrieval cannot bypass the Strategy filter.
   New `storeDocument` writes materialize repeated content per occurrence, so they retain queryable
   PIT/source provenance without inventing a missing vector ID. Reconcile any corpus written by the older
-  content-only shortcut before treating legacy coverage as complete.
+  content-only shortcut before treating legacy coverage as complete. Shared/public and private/account
+  records now carry authoritative tenant scopes; local operator decision/experience memory is explicitly
+  private, and legacy account-memory markers are exact-user filtered before receipt validation, rerank,
+  candidate persistence, or prompting. Stale managed generations expand bounded provider topK using a
+  local rejected-generation upper bound and emit a typed degraded receipt when the cap can still hide
+  eligible evidence. Account deletion holds the shared RAG-write lease and completes provider inventory,
+  delete, and fetch-verification before removing local vector receipts or provider keys; globally deduplicated
+  chunk text remains while any preserved shared occurrence references it, while durable local receipts recover
+  private hashes on a retry after provider deletion. Provider-only inventory and
+  erasure require the Pinecone credential but do not depend on a Voyage embedding credential.
 
 ## Configuration (env)
 

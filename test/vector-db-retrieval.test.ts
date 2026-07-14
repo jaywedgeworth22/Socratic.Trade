@@ -1,5 +1,18 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildExtraFilters, defaultMinScore, filterMatchesForTranscriptRights, isWithinAsOf, matchToChunk, rerankMatches } from "../src/lib/vector-db";
+
+process.env.DATABASE_URL = `file:${join(tmpdir(), `socratic-vector-retrieval-${randomUUID()}.db`)}`;
+
+const {
+  buildExtraFilters,
+  defaultMinScore,
+  filterMatchesForTranscriptRights,
+  isWithinAsOf,
+  matchToChunk,
+  rerankMatches
+} = await import("../src/lib/vector-db");
 
 describe("buildExtraFilters", () => {
   beforeEach(() => vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "on"));

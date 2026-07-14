@@ -36,7 +36,10 @@ interface RagSummary {
     featureEnabled: boolean;
     storageRightsConfirmed: boolean;
     enabled: boolean;
-    capability: "disabled" | "unknown" | "available" | "endpoint_not_entitled";
+    capability: "disabled" | "unknown" | "available" | "endpoint_not_entitled" | "access_denied";
+    lastCapability?: {
+      httpStatus?: number;
+    };
     ingestedCount: number;
   };
 }
@@ -160,6 +163,11 @@ export default function OperatorDashboard() {
       ? { label: "Rights unconfirmed", tone: "warn" as const }
       : earningsStatus.capability === "endpoint_not_entitled"
         ? { label: "Plan excludes endpoint", tone: "warn" as const }
+        : earningsStatus.capability === "access_denied"
+          ? {
+              label: `Access denied${earningsStatus.lastCapability?.httpStatus ? ` (HTTP ${earningsStatus.lastCapability.httpStatus})` : ""}`,
+              tone: "warn" as const
+            }
         : earningsStatus.capability === "available"
           ? { label: "Available", tone: "pos" as const }
           : { label: "Not checked", tone: "neutral" as const };

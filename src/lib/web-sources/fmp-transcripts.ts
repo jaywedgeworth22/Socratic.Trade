@@ -27,6 +27,7 @@ import {
   observeFmpTranscriptVersion,
   reserveProviderDispatch,
   resolveApiKeyWithSource,
+  runWithActiveVectorCommitProof,
   setFmpTranscriptVersionState,
   settleProviderDispatch,
   setInternalSetting
@@ -73,7 +74,8 @@ export type FmpTranscriptCapability =
   | "disabled"
   | "unknown"
   | "available"
-  | "endpoint_not_entitled";
+  | "endpoint_not_entitled"
+  | "access_denied";
 
 export interface FmpTranscriptCapabilityObservation {
   status: Exclude<FmpTranscriptCapability, "disabled" | "unknown">;
@@ -151,6 +153,7 @@ type FmpRequestFailureKind =
   | "request_budget"
   | "provider_quota"
   | "endpoint_not_entitled"
+  | "access_denied"
   | "response_too_large"
   | "transient"
   | "permanent";
@@ -266,6 +269,277 @@ export function fmpTranscriptsEnabled(
   rightsRaw: string | undefined = process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED
 ): boolean {
   return flagOn(featureRaw) && fmpTranscriptStorageRightsConfirmed(rightsRaw);
+}
+
+export interface FmpTranscriptRightsGenerationClaim {
+  generation: number;
+}
+
+export interface FmpTranscriptDerivedProvenance {
+  source: typeof FMP_TRANSCRIPT_SOURCE;
+  docType: typeof FMP_TRANSCRIPT_DOC_TYPE;
+  vectorId?: string;
+  accession?: string;
+}
+
+export type FmpTranscriptDerivedArtifactType = "chat-turn" | "strategy-decision" | "strategy-proposal" | "audit-event";
+
+interface FmpTranscriptRightsGateRow {
+  generation: number;
+  status: "active" | "revoked";
+  updated_at: string;
+}
+
+interface FmpTranscriptDerivedArtifactRow {
+  id: string;
+  artifact_type: FmpTranscriptDerivedArtifactType;
+  artifact_id: string;
+  user_id: string;
+  generation: number;
+  provenance: string;
+  created_at: string;
+}
+
+/**
+ * This schema intentionally lives beside the licensed producer instead of a generic migration:
+ * the first read/write/purge installs it before any provider work, including on an older database.
+ * A revoked row is never reactivated merely because an environment flag later changes.
+ */
+function ensureFmpTranscriptRightsGate(database = getDb()): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS fmp_transcript_rights_gate (
+      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+      generation INTEGER NOT NULL CHECK(generation > 0),
+      status TEXT NOT NULL CHECK(status IN ('active','revoked')),
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS fmp_transcript_derived_artifacts (
+      id TEXT PRIMARY KEY,
+      artifact_type TEXT NOT NULL CHECK(artifact_type IN ('chat-turn','strategy-decision','strategy-proposal','audit-event')),
+      artifact_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      generation INTEGER NOT NULL CHECK(generation > 0),
+      provenance TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(artifact_type, artifact_id)
+    );
+    CREATE TABLE IF NOT EXISTS fmp_transcript_derived_provider_work (
+      id TEXT PRIMARY KEY,
+      artifact_type TEXT NOT NULL CHECK(artifact_type IN ('strategy-decision')),
+      artifact_id TEXT NOT NULL,
+      generation INTEGER NOT NULL CHECK(generation > 0),
+      status TEXT NOT NULL CHECK(status IN ('pending','complete')),
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_artifacts_type
+      ON fmp_transcript_derived_artifacts (artifact_type, artifact_id);
+    CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_provider_work_status
+      ON fmp_transcript_derived_provider_work (status, created_at);
+  `);
+  const existing = database.prepare(`
+    SELECT generation, status, updated_at
+    FROM fmp_transcript_rights_gate WHERE singleton = 1
+  `).get() as FmpTranscriptRightsGateRow | undefined;
+  if (existing) return;
+  const now = new Date().toISOString();
+  database.prepare(`
+    INSERT INTO fmp_transcript_rights_gate (singleton, generation, status, updated_at)
+    VALUES (1, 1, ?, ?)
+  `).run(fmpTranscriptStorageRightsConfirmed() ? "active" : "revoked", now);
+}
+
+function readFmpTranscriptRightsGate(database = getDb()): FmpTranscriptRightsGateRow {
+  ensureFmpTranscriptRightsGate(database);
+  const row = database.prepare(`
+    SELECT generation, status, updated_at
+    FROM fmp_transcript_rights_gate WHERE singleton = 1
+  `).get() as FmpTranscriptRightsGateRow | undefined;
+  if (!row) throw new Error("FMP transcript rights gate is unavailable.");
+  return row;
+}
+
+/** Capture the durable generation only while both operator rights and the durable gate allow use. */
+export function captureFmpTranscriptRightsGeneration(): FmpTranscriptRightsGenerationClaim | undefined {
+  if (!fmpTranscriptStorageRightsConfirmed()) return undefined;
+  const row = readFmpTranscriptRightsGate();
+  return row.status === "active" ? { generation: row.generation } : undefined;
+}
+
+/** Explicit operator reactivation seam. Purge never calls this and flags alone cannot reactivate. */
+export function activateFmpTranscriptRightsGeneration(): FmpTranscriptRightsGenerationClaim {
+  if (!fmpTranscriptStorageRightsConfirmed()) {
+    throw new Error("FMP transcript storage/display rights must be confirmed before rights activation.");
+  }
+  const database = getDb();
+  ensureFmpTranscriptRightsGate(database);
+  return database.transaction(() => {
+    const current = readFmpTranscriptRightsGate(database);
+    if (current.status === "active") return { generation: current.generation };
+    const next = current.generation + 1;
+    database.prepare(`
+      UPDATE fmp_transcript_rights_gate
+      SET generation = ?, status = 'active', updated_at = ? WHERE singleton = 1
+    `).run(next, new Date().toISOString());
+    return { generation: next };
+  }).immediate();
+}
+
+export function assertFmpTranscriptRightsGeneration(
+  claim: FmpTranscriptRightsGenerationClaim,
+  database = getDb()
+): void {
+  const current = readFmpTranscriptRightsGate(database);
+  if (
+    !fmpTranscriptStorageRightsConfirmed() ||
+    current.status !== "active" ||
+    current.generation !== claim.generation
+  ) {
+    throw new Error("FMP transcript rights generation is revoked or stale.");
+  }
+}
+
+function revokeFmpTranscriptRightsGeneration(database = getDb()): FmpTranscriptRightsGenerationClaim {
+  ensureFmpTranscriptRightsGate(database);
+  return database.transaction(() => {
+    const current = readFmpTranscriptRightsGate(database);
+    if (current.status === "revoked") return { generation: current.generation };
+    const next = current.generation + 1;
+    database.prepare(`
+      UPDATE fmp_transcript_rights_gate
+      SET generation = ?, status = 'revoked', updated_at = ? WHERE singleton = 1
+    `).run(next, new Date().toISOString());
+    return { generation: next };
+  }).immediate();
+}
+
+function exactString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** Extract only explicit source/doc-type identity; never infer licensed provenance from raw text. */
+export function fmpTranscriptDerivedProvenance(values: readonly unknown[]): FmpTranscriptDerivedProvenance[] {
+  const exact = new Map<string, FmpTranscriptDerivedProvenance>();
+  for (const value of values) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    const source = exactString(row.source);
+    const docType = exactString(row.doc_type ?? row.docType)?.toLowerCase();
+    if (source !== FMP_TRANSCRIPT_SOURCE && docType !== FMP_TRANSCRIPT_DOC_TYPE) continue;
+    const vectorId = exactString(row.chunk_id ?? row.chunkId ?? row.vectorId ?? row.id);
+    const accession = exactString(row.accession ?? row.doc_id);
+    const key = `${vectorId ?? ""}\u0000${accession ?? ""}`;
+    exact.set(key, {
+      source: FMP_TRANSCRIPT_SOURCE,
+      docType: FMP_TRANSCRIPT_DOC_TYPE,
+      ...(vectorId ? { vectorId } : {}),
+      ...(accession ? { accession } : {})
+    });
+  }
+  return [...exact.values()].sort((a, b) =>
+    `${a.vectorId ?? ""}:${a.accession ?? ""}`.localeCompare(`${b.vectorId ?? ""}:${b.accession ?? ""}`)
+  );
+}
+
+export function persistFmpTranscriptDerivedArtifact<T>(input: {
+  claim: FmpTranscriptRightsGenerationClaim;
+  artifactType: FmpTranscriptDerivedArtifactType;
+  artifactId: string | ((value: T) => string);
+  userId: string;
+  provenance: readonly FmpTranscriptDerivedProvenance[];
+  providerWorkId?: string;
+  write: () => T;
+}): T {
+  const provenance = fmpTranscriptDerivedProvenance(input.provenance);
+  if (provenance.length === 0) return input.write();
+  const database = getDb();
+  ensureFmpTranscriptRightsGate(database);
+  return database.transaction(() => {
+    assertFmpTranscriptRightsGeneration(input.claim, database);
+    const value = input.write();
+    const artifactId = typeof input.artifactId === "function" ? input.artifactId(value) : input.artifactId;
+    if (!artifactId.trim()) throw new Error("FMP derived artifact identity is required.");
+    database.prepare(`
+      INSERT INTO fmp_transcript_derived_artifacts (
+        id, artifact_type, artifact_id, user_id, generation, provenance, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(artifact_type, artifact_id) DO UPDATE SET
+        user_id = excluded.user_id,
+        generation = excluded.generation,
+        provenance = excluded.provenance,
+        created_at = excluded.created_at
+    `).run(
+      crypto.randomUUID(),
+      input.artifactType,
+      artifactId,
+      input.userId,
+      input.claim.generation,
+      JSON.stringify(provenance),
+      new Date().toISOString()
+    );
+    if (input.providerWorkId) {
+      if (input.artifactType !== "strategy-decision") {
+        throw new Error("Only strategy decisions may reserve FMP-derived provider work.");
+      }
+      database.prepare(`
+        INSERT INTO fmp_transcript_derived_provider_work (
+          id, artifact_type, artifact_id, generation, status, created_at, completed_at
+        ) VALUES (?, 'strategy-decision', ?, ?, 'pending', ?, NULL)
+        ON CONFLICT(id) DO UPDATE SET
+          artifact_id = excluded.artifact_id,
+          generation = excluded.generation,
+          status = 'pending',
+          created_at = excluded.created_at,
+          completed_at = NULL
+      `).run(input.providerWorkId, artifactId, input.claim.generation, new Date().toISOString());
+    }
+    return value;
+  }).immediate();
+}
+
+/** Terminal provider-work receipt. It may settle after revocation so a blocked purge can retry. */
+export function completeFmpTranscriptDerivedProviderWork(workId: string): void {
+  if (!workId.trim()) return;
+  const database = getDb();
+  ensureFmpTranscriptRightsGate(database);
+  database.prepare(`
+    UPDATE fmp_transcript_derived_provider_work
+    SET status = 'complete', completed_at = ?
+    WHERE id = ? AND status = 'pending'
+  `).run(new Date().toISOString(), workId);
+}
+
+export function recordFmpTranscriptDerivedAudit(input: {
+  claim: FmpTranscriptRightsGenerationClaim;
+  kind: string;
+  payload: unknown;
+  userId: string;
+  connectedAccountId?: string;
+  provenance: readonly FmpTranscriptDerivedProvenance[];
+}): string {
+  const id = crypto.randomUUID();
+  persistFmpTranscriptDerivedArtifact({
+    claim: input.claim,
+    artifactType: "audit-event",
+    artifactId: id,
+    userId: input.userId,
+    provenance: input.provenance,
+    write: () => {
+      getDb().prepare(`
+        INSERT INTO audit_events (id, user_id, connected_account_id, created_at, kind, payload)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        input.userId,
+        input.connectedAccountId ?? null,
+        new Date().toISOString(),
+        input.kind,
+        JSON.stringify(input.payload)
+      );
+      return id;
+    }
+  });
+  return id;
 }
 
 function disabledReason(): RefreshFmpTranscriptsResult["disabledReason"] {
@@ -738,7 +1012,7 @@ async function requestFmpJson(
             },
             // Usage remains attributable to FMP, while transcript failures have an isolated health/
             // circuit lane. HTTP 402 is durable entitlement state, not a transient health failure.
-            suppressHealthStatuses: [402]
+            suppressHealthStatuses: [400, 401, 402, 403]
           }
         );
       });
@@ -770,6 +1044,8 @@ async function requestFmpJson(
     if (!response.ok) {
       const kind: FmpRequestFailureKind = response.status === 402
         ? "endpoint_not_entitled"
+        : [400, 401, 403].includes(response.status)
+          ? "access_denied"
         : isTransientStatus(response.status)
           ? "transient"
           : "permanent";
@@ -863,7 +1139,7 @@ export function getFmpTranscriptCapability(): FmpTranscriptCapabilityObservation
   const status = value?.status;
   const checkedAt = validDate(value?.checkedAt);
   const httpStatus = value?.httpStatus;
-  if ((status !== "available" && status !== "endpoint_not_entitled") || !checkedAt) return undefined;
+  if ((status !== "available" && status !== "endpoint_not_entitled" && status !== "access_denied") || !checkedAt) return undefined;
   if (httpStatus !== undefined && (
     typeof httpStatus !== "number" ||
     !Number.isInteger(httpStatus) ||
@@ -900,23 +1176,367 @@ export function getFmpTranscriptStatus(now: number = Date.now()): FmpTranscriptS
 }
 
 export interface FmpTranscriptRightsInventory {
+  /** Exact candidates from provider observations plus durable local receipts. */
   providerVectorIds: string[];
+  /** Records actually fetched from the provider in this inventory pass (never inferred locally). */
+  providerObservedVectorIds: string[];
+  providerFmpNamespaceVectorIds: string[];
+  providerManagedVectorIds: string[];
+  providerDefaultVectorIds: string[];
+  /** Provider candidates selected from immutable managed identity, local evidence, or legacy metadata fallback. */
+  immutableCurrentSourceIds: string[];
   localVectorIds: string[];
   contentHashes: string[];
   commitIds: string[];
+  activeHeadCommitIds: string[];
+  documentVersionCommitIds: string[];
+  reconcileObservationCommitIds: string[];
   versionIds: string[];
   ingestionRows: number;
   observationKeys: string[];
   derivedAuditIds: string[];
-  derivedArtifactPolicy: "delete-provenance-tagged-retain-unattributable";
+  derivedPromptSafetyAuditIds: string[];
+  derivedChatTurnIds: string[];
+  derivedDecisionIds: string[];
+  derivedStrategyProposalIds: string[];
+  derivedFrameworkProposalIds: string[];
+  derivedArtifactIds: string[];
+  pendingDerivedProviderWorkIds: string[];
+  pendingPineconeUpsertAttemptIds: string[];
+  rightsGate: { generation: number; status: "active" | "revoked"; updatedAt: string };
+  authorityBlockers: string[];
+  derivedArtifactPolicy: "scrub-exact-provenance";
+}
+
+interface VectorMetadataInventoryRow {
+  id: string;
+  metadata: Record<string, unknown>;
+}
+
+interface ManagedVectorReceiptEvidence {
+  id: string;
+  source: string;
+  tenantScope: string;
+  userId: string;
+  providerAuthority?: string;
+  ledgerAuthority?: string;
+  vectorNamespace: "managed" | "fmp-transcripts";
+}
+
+interface ManagedVectorSourceCandidateInventory {
+  candidateIds: string[];
+  observedCandidateIds: string[];
+  managedCandidateIds: string[];
+  fmpNamespaceCandidateIds: string[];
+  defaultCandidateIds: string[];
+  immutableCurrentSourceIds: string[];
+  authorityBlockers: string[];
+}
+
+interface ManagedVectorSourceHelpers {
+  getCurrentVectorProviderAuthority(options: {
+    userId?: string;
+    leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
+  }): Promise<string | undefined>;
+  vectorTenantScope(userId?: string): string;
+  managedVectorLedgerAuthority(): string;
+  managedOccurrenceVectorPrefix(input: {
+    ledgerAuthority?: string;
+    providerAuthority: string;
+    tenantScope?: string;
+    source?: string;
+  }): string;
+  managedOccurrenceVectorIdMatches(input: {
+    id: string;
+    ledgerAuthority?: string;
+    providerAuthority: string;
+    tenantScope: string;
+    source?: string;
+  }): boolean;
+  managedVectorReceiptEvidence(options: {
+    source?: string;
+    tenantScope?: string;
+    userId?: string;
+  }): ManagedVectorReceiptEvidence[];
+  inventoryVectorRecordsByMetadata(options: {
+    userId?: string;
+    prefix?: string;
+    namespace?: "default" | "managed" | "fmp-transcripts";
+    maxScanned?: number;
+    leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
+  }): Promise<VectorMetadataInventoryRow[]>;
+  purgeVectorRecordsByMetadata(options: {
+    userId?: string;
+    prefix?: string;
+    namespace?: "default" | "managed" | "fmp-transcripts";
+    dryRun?: boolean;
+    maxScanned?: number;
+    leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
+  }): Promise<{ ids: string[]; deleted: number }>;
+  purgeVectorRecordIds(options: {
+    userId?: string;
+    ids: string[];
+    namespace?: "default" | "managed" | "fmp-transcripts";
+    leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
+  }): Promise<{ ids: string[]; deleted: number }>;
+  purgeVectorNamespaceAll(options: {
+    userId?: string;
+    namespace: "fmp-transcripts";
+    leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
+  }): Promise<void>;
+}
+
+async function managedVectorSourceHelpers(): Promise<ManagedVectorSourceHelpers> {
+  const vectorDb = await import("../vector-db") as unknown as Partial<ManagedVectorSourceHelpers>;
+  if (
+    typeof vectorDb.getCurrentVectorProviderAuthority !== "function" ||
+    typeof vectorDb.vectorTenantScope !== "function" ||
+    typeof vectorDb.managedVectorLedgerAuthority !== "function" ||
+    typeof vectorDb.managedOccurrenceVectorPrefix !== "function" ||
+    typeof vectorDb.managedOccurrenceVectorIdMatches !== "function" ||
+    typeof vectorDb.managedVectorReceiptEvidence !== "function" ||
+    typeof vectorDb.inventoryVectorRecordsByMetadata !== "function" ||
+    typeof vectorDb.purgeVectorRecordsByMetadata !== "function" ||
+    typeof vectorDb.purgeVectorRecordIds !== "function" ||
+    typeof vectorDb.purgeVectorNamespaceAll !== "function"
+  ) {
+    throw new Error("Managed vector source-identity purge helpers are unavailable.");
+  }
+  return vectorDb as ManagedVectorSourceHelpers;
+}
+
+/**
+ * Classify provider records without treating mutable metadata as source proof. Current v3 IDs
+ * carry a provider/tenant/source identity; local receipts prove the pre-v3 v2 population. Only
+ * a legacy record that has neither proof falls back to `metadata.source` for compatibility.
+ */
+async function inventoryManagedFmpTranscriptVectorCandidates(
+  leaseGuard?: import("../vector-db").VectorStoreLeaseGuard
+): Promise<ManagedVectorSourceCandidateInventory> {
+  const vectorDb = await managedVectorSourceHelpers();
+  const userId = "local";
+  const tenantScope = vectorDb.vectorTenantScope(userId);
+  const ledgerAuthority = vectorDb.managedVectorLedgerAuthority();
+  const providerAuthority = await vectorDb.getCurrentVectorProviderAuthority({ userId, leaseGuard });
+  const receiptEvidence = vectorDb.managedVectorReceiptEvidence({
+    source: FMP_TRANSCRIPT_SOURCE,
+    tenantScope,
+    userId
+  });
+  const authorityBlockers = new Set<string>();
+  // Without the current physical provider identity we cannot derive the immutable v3 prefix for
+  // receiptless crash ghosts in the historical managed namespace. Dedicated-namespace deleteAll
+  // is insufficient proof for that population, so rights erasure must remain pending rather than
+  // silently deleting local receipts while provider vectors may survive.
+  if (!providerAuthority) authorityBlockers.add("current-provider-authority-unreachable");
+  for (const receipt of receiptEvidence) {
+    if (!receipt.ledgerAuthority || receipt.ledgerAuthority !== ledgerAuthority) {
+      authorityBlockers.add("historical-ledger-authority-unreachable");
+    }
+    if (!providerAuthority || !receipt.providerAuthority || receipt.providerAuthority !== providerAuthority) {
+      authorityBlockers.add("historical-provider-authority-unreachable");
+    }
+  }
+  // Receipt joins cannot see a crash-left commit with zero occurrences. Inspect every local FMP
+  // commit before any destructive provider call so purging never erases the only route to an old
+  // Pinecone project/ledger authority.
+  const commitAuthorities = getDb().prepare(`
+    SELECT id, provider_authority, ledger_authority
+    FROM vector_ingest_commits
+    WHERE source = ?
+  `).all(FMP_TRANSCRIPT_SOURCE) as Array<{
+    id: string;
+    provider_authority: string | null;
+    ledger_authority: string | null;
+  }>;
+  for (const commit of commitAuthorities) {
+    if (!commit.ledger_authority || commit.ledger_authority !== ledgerAuthority) {
+      authorityBlockers.add("historical-ledger-authority-unreachable");
+    }
+    if (!providerAuthority || !commit.provider_authority || commit.provider_authority !== providerAuthority) {
+      authorityBlockers.add("historical-provider-authority-unreachable");
+    }
+  }
+  const receiptIds = new Set(receiptEvidence.map((row) => row.id));
+  const immutablePrefix = providerAuthority
+    ? vectorDb.managedOccurrenceVectorPrefix({
+        ledgerAuthority,
+        providerAuthority,
+        tenantScope,
+        source: FMP_TRANSCRIPT_SOURCE
+      })
+    : undefined;
+  const fmpNamespaceRows = await vectorDb.inventoryVectorRecordsByMetadata({
+    userId,
+    namespace: "fmp-transcripts",
+    ...(immutablePrefix ? { prefix: immutablePrefix } : {}),
+    maxScanned: rightsInventoryScanMaxRecords(),
+    leaseGuard
+  });
+  // Older v3 branch generations used the general managed namespace. The immutable prefix scopes
+  // that compatibility inventory to this ledger/provider/source instead of scanning the corpus.
+  const managedProviderRows = immutablePrefix ? await vectorDb.inventoryVectorRecordsByMetadata({
+    userId,
+    namespace: "managed",
+    prefix: immutablePrefix,
+    maxScanned: rightsInventoryScanMaxRecords(),
+    leaseGuard
+  }) : [];
+  const defaultProviderRows = await vectorDb.inventoryVectorRecordsByMetadata({
+    userId,
+    namespace: "default",
+    maxScanned: rightsInventoryScanMaxRecords(),
+    leaseGuard
+  });
+  const candidateIds = new Set<string>();
+  const observedCandidateIds = new Set<string>();
+  const managedCandidateIds = new Set<string>();
+  const fmpNamespaceCandidateIds = new Set<string>();
+  const defaultCandidateIds = new Set<string>();
+  const immutableCurrentSourceIds = new Set<string>();
+  const classifyCurrentV3 = (row: VectorMetadataInventoryRow): boolean => Boolean(
+    providerAuthority &&
+    immutablePrefix &&
+    row.id.startsWith(immutablePrefix) &&
+    vectorDb.managedOccurrenceVectorIdMatches({
+      id: row.id,
+      ledgerAuthority,
+      providerAuthority,
+      tenantScope,
+      source: FMP_TRANSCRIPT_SOURCE
+    })
+  );
+  for (const row of fmpNamespaceRows) {
+    candidateIds.add(row.id);
+    observedCandidateIds.add(row.id);
+    fmpNamespaceCandidateIds.add(row.id);
+    if (classifyCurrentV3(row)) immutableCurrentSourceIds.add(row.id);
+  }
+  for (const receipt of receiptEvidence) {
+    candidateIds.add(receipt.id);
+    if (receipt.vectorNamespace === "fmp-transcripts") fmpNamespaceCandidateIds.add(receipt.id);
+    else if (receipt.id.startsWith("occ:v3:")) managedCandidateIds.add(receipt.id);
+    else defaultCandidateIds.add(receipt.id);
+  }
+  for (const row of managedProviderRows) {
+    const isCurrentSource = Boolean(
+      classifyCurrentV3(row)
+    );
+    if (isCurrentSource) {
+      candidateIds.add(row.id);
+      observedCandidateIds.add(row.id);
+      managedCandidateIds.add(row.id);
+      immutableCurrentSourceIds.add(row.id);
+      continue;
+    }
+    if (receiptIds.has(row.id)) {
+      candidateIds.add(row.id);
+      observedCandidateIds.add(row.id);
+      managedCandidateIds.add(row.id);
+    }
+  }
+  for (const row of defaultProviderRows) {
+    // Local receipt/commit evidence proves old default-namespace generations. Legacy IDs had no
+    // immutable source token, so exact source/doc_type metadata is the bounded compatibility
+    // fallback regardless of whether that generation happened to use the v2 ID prefix.
+    if (
+      receiptIds.has(row.id) ||
+      row.metadata.source === FMP_TRANSCRIPT_SOURCE ||
+      String(row.metadata.doc_type ?? "").toLowerCase() === FMP_TRANSCRIPT_DOC_TYPE
+    ) {
+      candidateIds.add(row.id);
+      observedCandidateIds.add(row.id);
+      defaultCandidateIds.add(row.id);
+    }
+  }
+  return {
+    candidateIds: [...candidateIds].sort(),
+    observedCandidateIds: [...observedCandidateIds].sort(),
+    managedCandidateIds: [...managedCandidateIds].sort(),
+    fmpNamespaceCandidateIds: [...fmpNamespaceCandidateIds].sort(),
+    defaultCandidateIds: [...defaultCandidateIds].sort(),
+    immutableCurrentSourceIds: [...immutableCurrentSourceIds].sort(),
+    authorityBlockers: [...authorityBlockers].sort()
+  };
 }
 
 function rightsInventoryScanMaxRecords(): number {
   return positiveInt(process.env.FMP_TRANSCRIPT_RIGHTS_SCAN_MAX_RECORDS, 250_000, 1_000_000);
 }
 
-function localFmpTranscriptRightsInventory(): Omit<FmpTranscriptRightsInventory, "providerVectorIds"> {
+function isFmpRagAttribution(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return row.source === FMP_TRANSCRIPT_SOURCE ||
+    (typeof row.docType === "string" && row.docType.toLowerCase() === FMP_TRANSCRIPT_DOC_TYPE);
+}
+
+function isFmpDerivedEvidence(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  if (isFmpRagAttribution(row) || row.source === FMP_TRANSCRIPT_SOURCE) return true;
+  const data = row.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const payload = data as Record<string, unknown>;
+  if (isFmpRagAttribution(payload)) return true;
+  return Array.isArray(payload.fmpProvenance) && payload.fmpProvenance.some(isFmpRagAttribution);
+}
+
+function parseJsonArray(value: string): unknown[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function scrubFmpDecisionArtifacts(database: ReturnType<typeof getDb>): number {
+  const rows = database.prepare(`
+    SELECT id, rag_attributions, evidence FROM socratic_decisions
+  `).all() as Array<{ id: string; rag_attributions: string; evidence: string }>;
+  const update = database.prepare(`
+    UPDATE socratic_decisions SET rag_attributions = ?, evidence = ?, updated_at = ? WHERE id = ?
+  `);
+  let changed = 0;
+  for (const row of rows) {
+    const rag = parseJsonArray(row.rag_attributions);
+    const evidence = parseJsonArray(row.evidence);
+    const nextRag = rag.filter((item) => !isFmpRagAttribution(item));
+    const nextEvidence = evidence.filter((item) => !isFmpDerivedEvidence(item));
+    if (nextRag.length === rag.length && nextEvidence.length === evidence.length) continue;
+    update.run(JSON.stringify(nextRag), JSON.stringify(nextEvidence), new Date().toISOString(), row.id);
+    changed += 1;
+  }
+  return changed;
+}
+
+function fmpDerivedDecisionIds(database: ReturnType<typeof getDb>): string[] {
+  const rows = database.prepare(`
+    SELECT id, rag_attributions, evidence FROM socratic_decisions ORDER BY id
+  `).all() as Array<{ id: string; rag_attributions: string; evidence: string }>;
+  return rows.filter((row) => (
+    parseJsonArray(row.rag_attributions).some(isFmpRagAttribution) ||
+    parseJsonArray(row.evidence).some(isFmpDerivedEvidence)
+  )).map((row) => row.id);
+}
+
+function localFmpTranscriptRightsInventory(): Omit<
+  FmpTranscriptRightsInventory,
+  | "providerVectorIds"
+  | "providerObservedVectorIds"
+  | "providerFmpNamespaceVectorIds"
+  | "providerManagedVectorIds"
+  | "providerDefaultVectorIds"
+  | "immutableCurrentSourceIds"
+  | "authorityBlockers"
+> {
   const database = getDb();
+  const rightsGate = readFmpTranscriptRightsGate(database);
+  const derivedArtifacts = database.prepare(`
+    SELECT id, artifact_type, artifact_id, user_id, generation, provenance, created_at
+    FROM fmp_transcript_derived_artifacts ORDER BY artifact_type, artifact_id
+  `).all() as FmpTranscriptDerivedArtifactRow[];
   const occurrences = database.prepare(`
     SELECT vector_id, content_hash, commit_id
     FROM chunk_occurrences WHERE source = ? ORDER BY vector_id
@@ -928,6 +1548,22 @@ function localFmpTranscriptRightsInventory(): Omit<FmpTranscriptRightsInventory,
   const versionIds = (database.prepare(`
     SELECT version_id FROM fmp_transcript_versions ORDER BY version_id
   `).all() as Array<{ version_id: string }>).map((row) => row.version_id);
+  const commitIds = (database.prepare(`
+    SELECT id FROM vector_ingest_commits WHERE source = ? ORDER BY id
+  `).all(FMP_TRANSCRIPT_SOURCE) as Array<{ id: string }>).map((row) => row.id);
+  const activeHeadCommitIds = (database.prepare(`
+    SELECT commit_id FROM vector_document_heads WHERE source = ? ORDER BY commit_id
+  `).all(FMP_TRANSCRIPT_SOURCE) as Array<{ commit_id: string }>).map((row) => row.commit_id);
+  const documentVersionCommitIds = (database.prepare(`
+    SELECT commit_id FROM vector_document_versions WHERE source = ? ORDER BY commit_id
+  `).all(FMP_TRANSCRIPT_SOURCE) as Array<{ commit_id: string }>).map((row) => row.commit_id);
+  const reconcileObservationCommitIds = (database.prepare(`
+    SELECT o.commit_id
+    FROM vector_reconcile_observations o
+    JOIN vector_ingest_commits c ON c.id = o.commit_id
+    WHERE c.source = ?
+    ORDER BY o.commit_id
+  `).all(FMP_TRANSCRIPT_SOURCE) as Array<{ commit_id: string }>).map((row) => row.commit_id);
   const observationKeys = (database.prepare(`
     SELECT key FROM settings
     WHERE key LIKE ? OR key IN (?, ?, ?, ?, ?, ?)
@@ -941,40 +1577,97 @@ function localFmpTranscriptRightsInventory(): Omit<FmpTranscriptRightsInventory,
     BODY_RETRY_ACCESSION_KEY,
     EMBED_RETRY_ACCESSION_KEY
   ) as Array<{ key: string }>).map((row) => row.key);
-  const derivedAuditIds = (database.prepare(`
+  // Legacy producer audits are identified by their dedicated kind. New strategy/chat audits are
+  // joined through the exact-provenance artifact ledger; never substring-match arbitrary payloads.
+  const legacyProducerAuditIds = (database.prepare(`
     SELECT id FROM audit_events
     WHERE kind LIKE 'fmp_transcript_%'
-       OR payload LIKE ? OR payload LIKE ?
     ORDER BY id
-  `).all(`%${FMP_TRANSCRIPT_SOURCE}%`, `%${FMP_TRANSCRIPT_DOC_TYPE}%`) as Array<{ id: string }>).map((row) => row.id);
+  `).all() as Array<{ id: string }>).map((row) => row.id);
+  const artifactAuditIds = derivedArtifacts
+    .filter((row) => row.artifact_type === "audit-event")
+    .map((row) => row.artifact_id);
+  const derivedAuditIds = [...new Set([...legacyProducerAuditIds, ...artifactAuditIds])].sort();
+  const derivedPromptSafetyAuditIds = artifactAuditIds.filter((id) => Boolean(database.prepare(`
+    SELECT 1 AS ok FROM audit_events
+    WHERE id = ? AND kind IN ('prompt_injection_suspected','prompt_injection_contained')
+  `).get(id))).sort();
+  const derivedChatTurnIds = derivedArtifacts
+    .filter((row) => row.artifact_type === "chat-turn")
+    .map((row) => row.artifact_id)
+    .sort();
+  const derivedStrategyProposalIds = derivedArtifacts
+    .filter((row) => row.artifact_type === "strategy-proposal")
+    .map((row) => row.artifact_id)
+    .sort();
+  const pendingPineconeUpsertAttemptIds = (database.prepare(`
+    SELECT id FROM provider_dispatch_attempts
+    WHERE provider = 'pinecone'
+      AND operation IN ('upsert','commit managed vectors')
+      AND status IN ('reserved','dispatched','unknown')
+    ORDER BY id
+  `).all() as Array<{ id: string }>).map((row) => row.id);
+  const pendingDerivedProviderWorkIds = (database.prepare(`
+    SELECT id FROM fmp_transcript_derived_provider_work
+    WHERE status = 'pending' ORDER BY id
+  `).all() as Array<{ id: string }>).map((row) => row.id);
   const ingestionRows = (database.prepare(`
     SELECT COUNT(*) AS count FROM ingested_accessions WHERE doc_type = ?
   `).get(FMP_TRANSCRIPT_DOC_TYPE) as { count: number }).count;
+  const derivedDecisionIds = [...new Set([
+    ...fmpDerivedDecisionIds(database),
+    ...derivedArtifacts
+      .filter((row) => row.artifact_type === "strategy-decision")
+      .map((row) => row.artifact_id)
+  ])].sort();
+  const derivedDecisionIdSet = new Set(derivedDecisionIds);
+  const derivedFrameworkProposalIds = (database.prepare(`
+    SELECT id, decision_id FROM socratic_framework_proposals
+    WHERE decision_id IS NOT NULL ORDER BY id
+  `).all() as Array<{ id: string; decision_id: string }> )
+    .filter((row) => derivedDecisionIdSet.has(row.decision_id))
+    .map((row) => row.id);
   return {
     localVectorIds: occurrences.map((row) => row.vector_id),
     contentHashes: [...new Set(occurrences.map((row) => row.content_hash))].sort(),
-    commitIds: [...new Set(occurrences.map((row) => row.commit_id).filter((id): id is string => Boolean(id)))].sort(),
+    commitIds,
+    activeHeadCommitIds,
+    documentVersionCommitIds,
+    reconcileObservationCommitIds,
     versionIds,
     ingestionRows,
     observationKeys,
     derivedAuditIds,
-    // Existing decisions do not carry exact per-evidence provenance and cannot be safely guessed.
-    // Delete every source/doc-type-tagged candidate/audit artifact; retain unattributable aggregate
-    // decisions until provenance exists rather than deleting unrelated owner history.
-    derivedArtifactPolicy: "delete-provenance-tagged-retain-unattributable"
+    derivedPromptSafetyAuditIds,
+    derivedChatTurnIds,
+    derivedDecisionIds,
+    derivedStrategyProposalIds,
+    derivedFrameworkProposalIds,
+    derivedArtifactIds: derivedArtifacts.map((row) => row.id).sort(),
+    pendingDerivedProviderWorkIds,
+    pendingPineconeUpsertAttemptIds,
+    rightsGate: {
+      generation: rightsGate.generation,
+      status: rightsGate.status,
+      updatedAt: rightsGate.updated_at
+    },
+    derivedArtifactPolicy: "scrub-exact-provenance"
   };
 }
 
 /** Provider inventory is authoritative and therefore includes receiptless crash ghosts. */
-export async function inventoryFmpTranscriptRightsArtifacts(): Promise<FmpTranscriptRightsInventory> {
-  const { inventoryVectorRecordsByMetadata } = await import("../vector-db");
-  const provider = await inventoryVectorRecordsByMetadata({
-    userId: "local",
-    source: FMP_TRANSCRIPT_SOURCE,
-    maxScanned: rightsInventoryScanMaxRecords()
-  });
+export async function inventoryFmpTranscriptRightsArtifacts(
+  leaseGuard?: import("../vector-db").VectorStoreLeaseGuard
+): Promise<FmpTranscriptRightsInventory> {
+  const provider = await inventoryManagedFmpTranscriptVectorCandidates(leaseGuard);
   return {
-    providerVectorIds: provider.map((row) => row.id),
+    providerVectorIds: [...new Set(provider.candidateIds)].sort(),
+    providerObservedVectorIds: [...new Set(provider.observedCandidateIds)].sort(),
+    providerFmpNamespaceVectorIds: [...new Set(provider.fmpNamespaceCandidateIds)].sort(),
+    providerManagedVectorIds: [...new Set(provider.managedCandidateIds)].sort(),
+    providerDefaultVectorIds: [...new Set(provider.defaultCandidateIds)].sort(),
+    immutableCurrentSourceIds: [...new Set(provider.immutableCurrentSourceIds)].sort(),
+    authorityBlockers: [...new Set(provider.authorityBlockers)].sort(),
     ...localFmpTranscriptRightsInventory()
   };
 }
@@ -988,45 +1681,153 @@ export async function purgeFmpTranscriptRightsArtifacts(options: { dryRun?: bool
   dryRun: boolean;
   before: FmpTranscriptRightsInventory;
   after: FmpTranscriptRightsInventory;
+  skipped?: boolean;
+  operationLease?: import("../operation-lease").OperationLeaseBusy;
 }> {
   const dryRun = options.dryRun !== false;
-  const before = await inventoryFmpTranscriptRightsArtifacts();
-  if (dryRun) return { dryRun, before, after: before };
-  const { purgeVectorRecordsByMetadata } = await import("../vector-db");
-  await purgeVectorRecordsByMetadata({
-    userId: "local",
-    source: FMP_TRANSCRIPT_SOURCE,
-    dryRun: false,
-    maxScanned: rightsInventoryScanMaxRecords()
-  });
-  const providerVerification = await inventoryFmpTranscriptRightsArtifacts();
-  if (providerVerification.providerVectorIds.length > 0) {
-    throw new Error(`FMP transcript provider purge incomplete (${providerVerification.providerVectorIds.length} vector(s) remain).`);
+  if (dryRun) {
+    const before = await inventoryFmpTranscriptRightsArtifacts();
+    return { dryRun, before, after: before };
   }
+  if (fmpTranscriptStorageRightsConfirmed()) {
+    throw new Error("Withdraw FMP transcript storage/display rights before running a destructive rights purge.");
+  }
+  const guarded = await runWithOperationLease(
+    { group: OPERATION_LEASE_GROUPS.RAG_REINDEX, operation: "purge-fmp-transcript-rights" },
+    async (claim, signal) => {
+      const assertLease = () => {
+        throwIfOperationLeaseCancelled(signal);
+        assertOperationLeaseOwnership(claim);
+      };
+      assertLease();
+      const database = getDb();
+      // This generation change serializes with every exact-provenance artifact transaction. A
+      // writer either committed before this point (and is inventoried below) or its stale claim
+      // fails without persisting after cleanup.
+      revokeFmpTranscriptRightsGeneration(database);
+      const before = await inventoryFmpTranscriptRightsArtifacts({ signal, assertOwnership: assertLease });
+      assertLease();
+      if (before.authorityBlockers.length > 0) {
+        throw new Error(`FMP transcript rights purge is blocked by unreachable historical authority (${before.authorityBlockers.join(",")}).`);
+      }
+      if (before.pendingDerivedProviderWorkIds.length > 0) {
+        throw new Error(`FMP transcript rights purge is blocked by unresolved derived provider work (${before.pendingDerivedProviderWorkIds.join(",")}).`);
+      }
+      if (before.pendingPineconeUpsertAttemptIds.length > 0) {
+        throw new Error(`FMP transcript rights purge is blocked by unresolved Pinecone upsert attempts (${before.pendingPineconeUpsertAttemptIds.join(",")}).`);
+      }
+      const selectedFmpNamespaceIds = [...new Set(before.providerFmpNamespaceVectorIds)].sort();
+      const selectedManagedIds = [...new Set(before.providerManagedVectorIds)].sort();
+      const selectedDefaultIds = [...new Set(before.providerDefaultVectorIds)].sort();
+      const selectedIds = [...new Set([
+        ...selectedFmpNamespaceIds,
+        ...selectedManagedIds,
+        ...selectedDefaultIds
+      ])].sort();
+      const { purgeVectorNamespaceAll, purgeVectorRecordIds } = await managedVectorSourceHelpers();
+      // Current/future licensed content is isolated in a dedicated namespace, so deleteAll is
+      // authoritative even when provider listing omits a crash ghost.
+      await purgeVectorNamespaceAll({
+        userId: "local",
+        namespace: "fmp-transcripts",
+        leaseGuard: { signal, assertOwnership: assertLease }
+      });
+      assertLease();
+      await purgeVectorRecordIds({
+        userId: "local",
+        namespace: "managed",
+        ids: selectedManagedIds,
+        leaseGuard: { signal, assertOwnership: assertLease }
+      });
+      await purgeVectorRecordIds({
+        userId: "local",
+        namespace: "default",
+        ids: selectedDefaultIds,
+        leaseGuard: { signal, assertOwnership: assertLease }
+      });
+      assertLease();
+      const providerVerification = await inventoryFmpTranscriptRightsArtifacts({ signal, assertOwnership: assertLease });
+      assertLease();
+      const remainingSelectedIds = selectedIds.filter((id) => providerVerification.providerObservedVectorIds.includes(id));
+      if (remainingSelectedIds.length > 0) {
+        throw new Error(`FMP transcript provider purge did not verify selected vector IDs absent (${remainingSelectedIds.length} remain).`);
+      }
+      if (
+        providerVerification.providerObservedVectorIds.length > 0 ||
+        providerVerification.immutableCurrentSourceIds.length > 0
+      ) {
+        throw new Error(`FMP transcript provider purge incomplete (${providerVerification.providerObservedVectorIds.length} vector(s) remain).`);
+      }
 
-  const database = getDb();
-  database.transaction(() => {
-    for (const auditId of before.derivedAuditIds) {
-      database.prepare("DELETE FROM audit_events WHERE id = ?").run(auditId);
+      database.transaction(() => {
+        for (const turnId of before.derivedChatTurnIds) {
+          database.prepare("DELETE FROM chat_turns WHERE id = ?").run(turnId);
+        }
+        for (const auditId of before.derivedAuditIds) {
+          database.prepare("DELETE FROM audit_events WHERE id = ?").run(auditId);
+        }
+        for (const frameworkId of before.derivedFrameworkProposalIds) {
+          database.prepare("DELETE FROM socratic_framework_proposals WHERE id = ?").run(frameworkId);
+        }
+        scrubFmpDecisionArtifacts(database);
+        database.prepare("DELETE FROM chunk_occurrences WHERE source = ?").run(FMP_TRANSCRIPT_SOURCE);
+        for (const contentHash of before.contentHashes) {
+          database.prepare(`
+            DELETE FROM document_chunks
+            WHERE content_hash = ?
+              AND NOT EXISTS (SELECT 1 FROM chunk_occurrences WHERE content_hash = ?)
+          `).run(contentHash, contentHash);
+        }
+        database.prepare(`
+          DELETE FROM vector_document_heads
+          WHERE commit_id IN (SELECT id FROM vector_ingest_commits WHERE source = ?)
+        `).run(FMP_TRANSCRIPT_SOURCE);
+        database.prepare(`
+          DELETE FROM vector_reconcile_observations
+          WHERE commit_id IN (SELECT id FROM vector_ingest_commits WHERE source = ?)
+        `).run(FMP_TRANSCRIPT_SOURCE);
+        database.prepare(`
+          DELETE FROM vector_document_versions
+          WHERE commit_id IN (SELECT id FROM vector_ingest_commits WHERE source = ?)
+        `).run(FMP_TRANSCRIPT_SOURCE);
+        database.prepare("DELETE FROM vector_ingest_commits WHERE source = ?").run(FMP_TRANSCRIPT_SOURCE);
+        database.prepare("DELETE FROM fmp_transcript_versions").run();
+        database.prepare("DELETE FROM ingested_accessions WHERE doc_type = ?").run(FMP_TRANSCRIPT_DOC_TYPE);
+        for (const key of before.observationKeys) database.prepare("DELETE FROM settings WHERE key = ?").run(key);
+        database.prepare("DELETE FROM fmp_transcript_derived_provider_work").run();
+        database.prepare("DELETE FROM fmp_transcript_derived_artifacts").run();
+      })();
+      assertLease();
+      const after = await inventoryFmpTranscriptRightsArtifacts({ signal, assertOwnership: assertLease });
+      assertLease();
+      const residual = after.providerVectorIds.length + after.providerObservedVectorIds.length + after.immutableCurrentSourceIds.length +
+        after.providerManagedVectorIds.length + after.providerDefaultVectorIds.length +
+        after.localVectorIds.length + after.versionIds.length +
+        after.commitIds.length +
+        after.activeHeadCommitIds.length + after.documentVersionCommitIds.length +
+        after.reconcileObservationCommitIds.length +
+        after.ingestionRows + after.observationKeys.length + after.derivedAuditIds.length +
+        after.derivedPromptSafetyAuditIds.length + after.derivedChatTurnIds.length +
+        after.derivedDecisionIds.length + after.derivedStrategyProposalIds.length +
+        after.derivedFrameworkProposalIds.length + after.derivedArtifactIds.length +
+        after.pendingDerivedProviderWorkIds.length + after.pendingPineconeUpsertAttemptIds.length +
+        after.authorityBlockers.length;
+      if (after.rightsGate.status !== "revoked") {
+        throw new Error("FMP transcript rights purge verification failed (rights gate reactivated).");
+      }
+      if (residual !== 0) throw new Error(`FMP transcript rights purge verification failed (${residual} artifact(s) remain).`);
+      return { dryRun, before, after };
     }
-    database.prepare("DELETE FROM chunk_occurrences WHERE source = ?").run(FMP_TRANSCRIPT_SOURCE);
-    for (const contentHash of before.contentHashes) {
-      database.prepare(`
-        DELETE FROM document_chunks
-        WHERE content_hash = ?
-          AND NOT EXISTS (SELECT 1 FROM chunk_occurrences WHERE content_hash = ?)
-      `).run(contentHash, contentHash);
-    }
-    database.prepare("DELETE FROM vector_ingest_commits WHERE source = ?").run(FMP_TRANSCRIPT_SOURCE);
-    database.prepare("DELETE FROM fmp_transcript_versions").run();
-    database.prepare("DELETE FROM ingested_accessions WHERE doc_type = ?").run(FMP_TRANSCRIPT_DOC_TYPE);
-    for (const key of before.observationKeys) database.prepare("DELETE FROM settings WHERE key = ?").run(key);
-  })();
-  const after = await inventoryFmpTranscriptRightsArtifacts();
-  const residual = after.providerVectorIds.length + after.localVectorIds.length + after.versionIds.length +
-    after.ingestionRows + after.observationKeys.length + after.derivedAuditIds.length;
-  if (residual !== 0) throw new Error(`FMP transcript rights purge verification failed (${residual} artifact(s) remain).`);
-  return { dryRun, before, after };
+  );
+  if (guarded.acquired) return guarded.value;
+  const snapshot = await inventoryFmpTranscriptRightsArtifacts();
+  return {
+    dryRun,
+    before: snapshot,
+    after: snapshot,
+    skipped: true,
+    operationLease: guarded.busy
+  };
 }
 
 function recordCapability(
@@ -1063,6 +1864,8 @@ function emptyResult(enabled = fmpTranscriptsEnabled()): RefreshFmpTranscriptsRe
 function describeFailure(stage: "dates" | "body", symbol: string, request: FmpRequestResult & { ok: false }): string {
   const suffix = request.kind === "endpoint_not_entitled"
     ? ":endpoint_not_entitled"
+    : request.kind === "access_denied"
+      ? `:access_denied:${request.status ?? "unknown"}`
     : request.status
       ? `:http-${request.status}`
       : request.circuitOpen
@@ -1137,7 +1940,13 @@ export async function refreshFmpTranscripts(
 
   const guarded = await runWithOperationLease(
     { group: OPERATION_LEASE_GROUPS.RAG_REINDEX, operation: "scheduled-fmp-transcripts" },
-    async (claim, signal) => refreshFmpTranscriptsUnlocked(ordered, now, options, claim, signal)
+    async (claim, signal) => {
+      // Install/read the durable gate after acquiring the shared RAG lease and before any API-key,
+      // settings, or provider work. A prior purge's revoked generation is not flag-reactivated.
+      const rightsClaim = captureFmpTranscriptRightsGeneration();
+      if (!rightsClaim) throw new Error("FMP transcript rights generation is revoked; explicit rights activation is required.");
+      return refreshFmpTranscriptsUnlocked(ordered, now, options, claim, signal, rightsClaim);
+    }
   );
   if (!guarded.acquired) return { ...base, operationLease: guarded.busy };
   return guarded.value;
@@ -1148,11 +1957,13 @@ async function refreshFmpTranscriptsUnlocked(
   now: number,
   options: RefreshFmpTranscriptOptions,
   claim: OperationLeaseClaim,
-  leaseSignal: AbortSignal
+  leaseSignal: AbortSignal,
+  rightsClaim: FmpTranscriptRightsGenerationClaim
 ): Promise<RefreshFmpTranscriptsResult> {
   const result = emptyResult(true);
   if (!options.force && !isFmpTranscriptRefreshDue(now)) return result;
   assertOperationLeaseOwnership(claim);
+  assertFmpTranscriptRightsGeneration(rightsClaim);
   const observedAt = new Date(now).toISOString();
   const userId = "local";
   const resolved = resolveApiKeyWithSource("fmp", userId);
@@ -1179,6 +1990,7 @@ async function refreshFmpTranscriptsUnlocked(
   symbolLoop: for (const symbol of orderedSymbols) {
     throwIfOperationLeaseCancelled(leaseSignal);
     assertOperationLeaseOwnership(claim);
+    assertFmpTranscriptRightsGeneration(rightsClaim);
     if (budget.remaining <= 0) {
       result.deferredForRequestBudget += 1;
       break;
@@ -1211,6 +2023,11 @@ async function refreshFmpTranscriptsUnlocked(
       if (dates.kind === "endpoint_not_entitled") {
         result.capability = "endpoint_not_entitled";
         recordCapability("endpoint_not_entitled", observedAt, dates.status ?? 402);
+        break;
+      }
+      if (dates.kind === "access_denied") {
+        result.capability = "access_denied";
+        recordCapability("access_denied", observedAt, dates.status);
         break;
       }
       if (dates.kind === "request_budget" || dates.kind === "provider_quota") break;
@@ -1277,6 +2094,7 @@ async function refreshFmpTranscriptsUnlocked(
       );
       throwIfOperationLeaseCancelled(leaseSignal);
       assertOperationLeaseOwnership(claim);
+      assertFmpTranscriptRightsGeneration(rightsClaim);
       if (!body.ok) {
         markDeferral(result, body);
         result.errors.push(describeFailure("body", ref.symbol, body));
@@ -1284,6 +2102,12 @@ async function refreshFmpTranscriptsUnlocked(
           clearBodyRetryAccession(accession);
           result.capability = "endpoint_not_entitled";
           recordCapability("endpoint_not_entitled", observedAt, body.status ?? 402);
+          break symbolLoop;
+        }
+        if (body.kind === "access_denied") {
+          clearBodyRetryAccession(accession);
+          result.capability = "access_denied";
+          recordCapability("access_denied", observedAt, body.status);
           break symbolLoop;
         }
         if (body.kind === "request_budget" || body.kind === "provider_quota") {
@@ -1318,9 +2142,19 @@ async function refreshFmpTranscriptsUnlocked(
         recordCapability("available", body.receivedAt, 200);
       }
       assertOperationLeaseOwnership(claim);
-      const observation = observeContent(transcript, body.receivedAt);
+      observeContent(transcript, body.receivedAt);
       const { contentSha256, versionIdSuffix } = transcriptContentVersion(transcript.content);
       const versionId = `${accession}:${versionIdSuffix}`;
+      const priorVersion = getFmpTranscriptVersion(accession, contentSha256);
+      // An exact vector-set reuse is still a successful ingestion when it repairs either durable
+      // completion ledger. Only a replay whose version AND source ledger were already complete is
+      // a skip. This distinction makes the operator counters/audit trail reflect durable work,
+      // even when no provider upsert is needed on the retry.
+      const sourceLedgerWasComplete = Boolean(getDb().prepare(`
+        SELECT 1 AS ok FROM ingested_accessions WHERE accession = ? AND doc_type = ?
+      `).get(accession, FMP_TRANSCRIPT_DOC_TYPE));
+      const versionLedgerWasComplete = priorVersion?.state === "committed";
+      const completionLedgersWereAlreadyComplete = sourceLedgerWasComplete && versionLedgerWasComplete;
       const version = observeFmpTranscriptVersion({
         versionId,
         accession,
@@ -1331,14 +2165,16 @@ async function refreshFmpTranscriptsUnlocked(
         callDate: transcript.callDate,
         observedAt: body.receivedAt
       });
-      if (version.state === "committed") {
-        clearEmbedRetryAccession(accession);
-        result.skippedExisting += 1;
-        continue;
-      }
+      const retrievalAvailableAt = priorVersion && priorVersion.callDate !== version.callDate
+        ? body.receivedAt
+        : version.firstContentSeenAt;
+      // Even byte-identical content must reach storeDocument: corrected call/publication metadata
+      // creates a distinct retrieval generation. An exact content+metadata replay is still free;
+      // storeDocument proves/reuses the committed generation without provider I/O.
       setFmpTranscriptVersionState(version.versionId, "indexing", { at: body.receivedAt });
       const { storeDocument } = await import("../vector-db");
       assertOperationLeaseOwnership(claim);
+      assertFmpTranscriptRightsGeneration(rightsClaim);
       const stored = await storeDocument(
         {
           text: transcript.content,
@@ -1348,8 +2184,8 @@ async function refreshFmpTranscriptsUnlocked(
           doc_type: FMP_TRANSCRIPT_DOC_TYPE,
           // The call date remains event metadata. If absent, the first observed availability is the
           // only honest publication timestamp we have.
-          published_at: transcript.callDate ?? observation.firstContentSeenAt,
-          acceptance_datetime: version.firstContentSeenAt,
+          published_at: version.callDate ?? version.firstContentSeenAt,
+          acceptance_datetime: retrievalAvailableAt,
           source: FMP_TRANSCRIPT_SOURCE,
           // Key-free provider locator. It is stored as metadata but never emitted to logs.
           url: endpoint("earning-call-transcript", {
@@ -1361,6 +2197,7 @@ async function refreshFmpTranscriptsUnlocked(
         userId,
         {
           contentVersion: contentSha256,
+          documentKey: accession,
           parserRevision: "fmp-transcript-v1",
           leaseGuard: {
             assertOwnership: () => assertOperationLeaseOwnership(claim),
@@ -1369,6 +2206,7 @@ async function refreshFmpTranscriptsUnlocked(
         }
       );
       assertOperationLeaseOwnership(claim);
+      assertFmpTranscriptRightsGeneration(rightsClaim);
 
       if (stored.error) {
         setFmpTranscriptVersionState(version.versionId, "failed");
@@ -1396,7 +2234,9 @@ async function refreshFmpTranscriptsUnlocked(
         stored.unconfigured === true ||
         (stored.budgetSkipped ?? 0) > 0 ||
         (stored.writeUnitBudgetSkipped ?? 0) > 0;
-      if (stored.indexed <= 0 || outOfCapacity) {
+      const reusedCommitted =
+        stored.reusedCommitted === true && stored.documentComplete === true && stored.attempted > 0;
+      if ((stored.indexed <= 0 && !reusedCommitted) || outOfCapacity) {
         setFmpTranscriptVersionState(version.versionId, "failed");
         if (outOfCapacity) {
           result.deferredForEmbedBudget += 1;
@@ -1410,12 +2250,21 @@ async function refreshFmpTranscriptsUnlocked(
         }
         continue;
       }
-      if (stored.documentComplete !== true || stored.indexed !== stored.attempted) {
+      if (stored.documentComplete !== true || (!reusedCommitted && stored.indexed !== stored.attempted)) {
         setFmpTranscriptVersionState(version.versionId, "failed");
         // Defense in depth: source-level completion requires a real per-occurrence Pinecone write for
         // every chunk plus storeDocument's required local receipt transaction. Content-only dedup or
         // an unexplained partial result stays retryable even if a future caller mislabels it complete.
         result.errors.push(`embed:${transcript.symbol}:incomplete`);
+        if (prioritizeEmbedRetry(accession)) {
+          retrySameSymbol = true;
+          break;
+        }
+        continue;
+      }
+      if (!stored.managedCommitProof) {
+        setFmpTranscriptVersionState(version.versionId, "failed");
+        result.errors.push(`embed:${transcript.symbol}:commit-proof-missing`);
         if (prioritizeEmbedRetry(accession)) {
           retrySameSymbol = true;
           break;
@@ -1428,20 +2277,31 @@ async function refreshFmpTranscriptsUnlocked(
       // `attempted` is the complete document chunk count. A retry after a budget-limited partial
       // write may index only the remaining chunks; persisting only this run's indexed delta would
       // make the completion ledger/admin coverage permanently undercount the transcript.
-      recordIngestedTranscript(accession, transcript.symbol, stored.attempted, body.receivedAt);
-      setFmpTranscriptVersionState(version.versionId, "committed", {
-        vectorCommitId: (() => {
-          const row = getDb().prepare(`
-            SELECT id FROM vector_ingest_commits
-            WHERE source = ? AND accession = ? AND content_version = ? AND state = 'committed'
-            ORDER BY committed_at DESC LIMIT 1
-          `).get(FMP_TRANSCRIPT_SOURCE, version.versionId, contentSha256) as { id: string } | undefined;
-          return row?.id;
-        })(),
-        chunkCount: stored.attempted,
-        at: body.receivedAt
-      });
-      result.ingested += 1;
+      try {
+        runWithActiveVectorCommitProof(stored.managedCommitProof, () => {
+          recordIngestedTranscript(accession, transcript.symbol, stored.attempted, body.receivedAt);
+          setFmpTranscriptVersionState(version.versionId, "committed", {
+            vectorCommitId: stored.managedCommitProof!.commitId,
+            chunkCount: stored.attempted,
+            at: body.receivedAt
+          });
+        });
+      } catch {
+        setFmpTranscriptVersionState(version.versionId, "failed");
+        result.errors.push(`embed:${transcript.symbol}:commit-proof-lost`);
+        if (prioritizeEmbedRetry(accession)) {
+          retrySameSymbol = true;
+          break;
+        }
+        continue;
+      }
+      // A completed source/version ledger is not enough to call this a replay: a provider-authority
+      // change or repaired provider set can require real new vectors. Only storeDocument's exact
+      // committed-set proof turns an already-complete ledger into a true zero-write replay.
+      const exactReplayWasAlreadyComplete = reusedCommitted && completionLedgersWereAlreadyComplete;
+      const deduplicatedCompletion = reusedCommitted && !completionLedgersWereAlreadyComplete;
+      if (exactReplayWasAlreadyComplete) result.skippedExisting += 1;
+      else result.ingested += 1;
       audit("fmp_transcript_ingest", {
         accession,
         versionId: version.versionId,
@@ -1449,11 +2309,14 @@ async function refreshFmpTranscriptsUnlocked(
         symbol: transcript.symbol,
         year: transcript.year,
         quarter: transcript.quarter,
-        callDate: observation.callDate,
+        callDate: version.callDate,
         firstContentSeenAt: version.firstContentSeenAt,
         availabilityBasis: "first_observed_by_app",
         chunks: stored.attempted,
         indexedThisAttempt: stored.indexed,
+        reusedCommitted,
+        deduplicatedCompletion,
+        exactReplayWasAlreadyComplete,
         contentLogged: false
       });
     }
@@ -1463,7 +2326,7 @@ async function refreshFmpTranscriptsUnlocked(
 
   result.requests = budget.used;
   assertOperationLeaseOwnership(claim);
-  if (result.capability === "endpoint_not_entitled") {
+  if (result.capability === "endpoint_not_entitled" || result.capability === "access_denied") {
     setInternalSetting(NEXT_ATTEMPT_KEY, new Date(now + notEntitledRetryMs()).toISOString());
   } else if (!shouldRetrySoon(result)) {
     setInternalSetting(NEXT_ATTEMPT_KEY, new Date(now + ttlMs()).toISOString());

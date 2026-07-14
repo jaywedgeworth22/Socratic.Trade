@@ -36,6 +36,23 @@
 > exact regression 6/6, related focused tests 106/106, lint 0 errors / 458 inherited warnings, TypeScript
 > clean, 369 files / 4,147 tests, production build with real TypeScript and 32 static pages, diff-check
 > clean. Hostile re-review found no remaining P0/P1/P2 in scope. Root review is pending; still no push/PR.
+> Round-12 then rejected publication on committed-replay demotion, same-commit writer races, an SEC 8-K
+> false-complete path, and zero/partial occurrence gaps. Round-13/14 now preserve committed generations,
+> serialize exact commit attempts, gate every filing caller on `documentComplete`, reject empty documents,
+> compensate Pinecone topK for locally proven stale managed generations, and make tenant scope authoritative.
+> Personal decision/experience memory is private even for the local operator; provider-first account deletion
+> inventories and fetch-verifies the subject's vectors before deleting local secrets/receipts, while preserving
+> shared public corpus and globally deduplicated chunk text still referenced by it. Current Node 24 focused
+> evidence is 20 files / 256 tests plus 2 privacy/deletion files / 22 tests, TypeScript clean, and diff-check
+> clean. Round-15 then makes nonlocal/shared scope impossible, holds a durable account-operation claim across
+> every private document provider/receipt write, requires current provider authority plus consecutive-clean
+> account erasure verification, tracks and purges transcript-derived artifacts/provider work, rejects legacy
+> Auth.js cookies after an account-generation tombstone, retries lock-contended trigger events, and centralizes
+> ownership/fencing for all user-scoped internal settings. Current targeted proof is 20 files / 302 tests plus
+> 4 derived-rights tests, TypeScript, and diff-check. Checkpoint this snapshot, merge `origin/main@2dabc7f8`,
+> renumber transcript/vector migrations behind main's versions 27-28, then run the ordered lint/TypeScript/test/
+> build gate and fresh hostile review. Draft PR #1586 stays HOLD until those gates pass; do not enable
+> transcripts or run a corpus backfill regardless of code-merge state.
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
 > TypeScript 5 compiler-API arrangement with one supported TypeScript 6.0.3 graph; remove the
 > postinstall mutation, module-resolution hooks, Next override, and `ignoreBuildErrors` bypass;
@@ -104,6 +121,15 @@
   evidence references.
 - **[ ] Wave E — controlled operations:** only after gates, run shadow 10 -> 25 -> 100 -> 300 -> 1,000 breadth-
   first waves with cost/rate/failure breakers, reconciliation, dual-read/write, rollback, and freshness SLOs.
+
+The highest-yield backfill order remains: freeze the exact 1,000-CIK universe plus a private priority overlay;
+archive immutable raw SEC artifacts broadly; embed 10-K/10-Q decision sections, material 8-K exhibits, and only
+entitled transcripts selectively; retain XBRL/fundamentals as structured facts; checkpoint by CIK/accession; and
+expand only after each 10 -> 25 -> 100 -> 300 -> 1,000 wave passes coverage, citation, PIT, cost, and failure gates.
+The production bulk worker must consume historical submissions shards rather than recent-only discovery. Crash
+repair must combine provider-page ghost cleanup with a local keyset whole-commit verifier; never page an exact-set
+commit reconciliation in a way that can split one commit across pages, and never rewrite PIT intervals/heads during
+repair. No 1,000-stock provider or corpus write is authorized yet.
 
 Node 24 remains the supported runtime. Node 26 is installed on the host but is not adopted while `.nvmrc`, CI,
 production, and the `better-sqlite3` native ABI are pinned to 24.

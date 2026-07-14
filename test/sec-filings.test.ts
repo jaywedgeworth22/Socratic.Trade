@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => ({
     })
   })),
   hasIngestTextBudget: vi.fn(() => true),
+  insertSecArtifact: vi.fn(),
   audit: vi.fn(),
   setInternalSetting: vi.fn(),
   getInternalSetting: vi.fn()
@@ -68,6 +69,22 @@ vi.mock("../src/lib/data-providers", async (importOriginal) => {
 
 // We do NOT mock db here — we use the real SQLite via DATABASE_URL
 // so hasIngestedAccession / insertIngestedAccession go through the real schema.
+vi.mock("../src/lib/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/db")>();
+  return {
+    ...actual,
+    insertSecArtifact: mocks.insertSecArtifact,
+    runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
+  };
+});
+
+vi.mock("../src/lib/db-vector-commits", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/db-vector-commits")>();
+  return {
+    ...actual,
+    runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
+  };
+});
 
 // storeDocument is dynamic-imported inside ingestFiling; partially mock the module so
 // isWithinAsOf (a pure function) is still the real implementation.
@@ -75,7 +92,12 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
   return {
     ...actual,
-    storeDocument: mocks.storeDocument,
+    storeDocument: async (...args: Parameters<typeof actual.storeDocument>) => {
+      const result = await mocks.storeDocument(...args);
+      return result?.documentComplete === true
+        ? { ...result, managedCommitProof: result.managedCommitProof ?? { commitId: "test:sec", attemptToken: "test:sec" } }
+        : result;
+    },
     storeContexts: mocks.storeContexts,
     hasIngestTextBudget: mocks.hasIngestTextBudget
   };
@@ -84,6 +106,19 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
 afterEach(() => {
   vi.clearAllMocks();
   mocks.hasIngestTextBudget.mockImplementation(() => true);
+  mocks.insertSecArtifact.mockImplementation(() => undefined);
+  mocks.storeContexts.mockResolvedValue({ attempted: 1, indexed: 1 });
+  mocks.getEnrichmentProvider.mockImplementation(() => ({
+    name: "test",
+    configured: true,
+    enrich: vi.fn(async (symbols: string[]) => Object.fromEntries(
+      symbols.map((symbol) => [symbol, {
+        companyName: `${symbol} Inc.`,
+        sector: "Technology",
+        asOf: "2024-10-01"
+      }])
+    ))
+  }));
   delete process.env.VECTOR_EMBED_BATCH_DELAY_MS;
 });
 
@@ -284,7 +319,8 @@ describe("ingestFiling", () => {
         source: "sec-edgar",
         acceptance_datetime: ref.acceptanceDateTime
       }),
-      "local"
+      "local",
+      { parserRevision: "sec-edgar-filing-v1" }
     );
   });
 
@@ -323,7 +359,7 @@ describe("ingestFiling", () => {
     expect(mocks.storeDocument).toHaveBeenCalledWith(
       expect.objectContaining({ source: "sec-edgar", doc_id: `AAPL:${ref.accession}:${ref.docType}` }),
       "local",
-      { leaseGuard: guard }
+      { leaseGuard: guard, parserRevision: "sec-edgar-filing-v1" }
     );
   });
 
@@ -337,6 +373,46 @@ describe("ingestFiling", () => {
     expect(result.error).toMatch(/fetch failed/);
     const { hasIngestedAccession } = await import("../src/lib/db");
     expect(hasIngestedAccession(ref.accession, ref.docType)).toBe(false);
+  });
+
+  it("stops after the filing fetch when the shared RAG lease is lost", async () => {
+    const ref = makeRef();
+    let lost = false;
+    mocks.politeFetchText.mockImplementationOnce(async () => {
+      lost = true;
+      return "<p>".concat("Lease-sensitive filing text. ".repeat(30)).concat("</p>");
+    });
+    const guard = {
+      assertOwnership: vi.fn(() => {
+        if (lost) throw new Error("test filing lease lost");
+      })
+    };
+    const { ingestFiling } = await import("../src/lib/web-sources/sec-filings");
+
+    await expect(ingestFiling("AAPL", ref, "local", guard)).rejects.toThrow("test filing lease lost");
+
+    expect(mocks.insertSecArtifact).not.toHaveBeenCalled();
+    expect(mocks.storeDocument).not.toHaveBeenCalled();
+  });
+
+  it("stops after the artifact insert when the shared RAG lease is lost", async () => {
+    const ref = makeRef();
+    let ownershipChecks = 0;
+    mocks.politeFetchText.mockResolvedValueOnce(
+      "<p>".concat("Lease-sensitive filing text. ".repeat(30)).concat("</p>")
+    );
+    const guard = {
+      assertOwnership: vi.fn(() => {
+        ownershipChecks += 1;
+        if (ownershipChecks >= 8) throw new Error("test artifact lease lost");
+      })
+    };
+    const { ingestFiling } = await import("../src/lib/web-sources/sec-filings");
+
+    await expect(ingestFiling("AAPL", ref, "local", guard)).rejects.toThrow("test artifact lease lost");
+
+    expect(ownershipChecks).toBeGreaterThanOrEqual(8);
+    expect(mocks.storeDocument).not.toHaveBeenCalled();
   });
 });
 
@@ -403,6 +479,26 @@ describe("refreshFilingBodies free-tier cap", () => {
 
     expect(result.attempted).toBe(0);
     expect(mocks.loadCikMap).not.toHaveBeenCalled();
+  });
+
+  it("does not issue a submissions request after fundamentals work loses the shared lease", async () => {
+    const { deleteInternalSetting } = await import("../src/lib/db");
+    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.getEnrichmentProvider.mockReturnValue({
+      name: "test",
+      configured: true,
+      enrich: vi.fn(async () => {
+        deleteInternalSetting("operation_lease:rag-reindex");
+        return { AAPL: { companyName: "Apple Inc." } };
+      })
+    });
+    const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
+
+    await expect(
+      refreshFilingBodies(["AAPL"], Date.now(), undefined, { force: true })
+    ).rejects.toThrow(/no longer owns|not active/i);
+
+    expect(mocks.politeFetchText).not.toHaveBeenCalled();
   });
 });
 
@@ -544,6 +640,29 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     expect(result.errors).toEqual([]);
   });
 
+  it("accepts an exact previously committed occurrence set as source completion", async () => {
+    process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
+    mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL" });
+    mocks.politeFetchText
+      .mockResolvedValueOnce(mockSubmissions("320193", 2))
+      .mockResolvedValue("<p>".concat("Annual report content. ".repeat(20)).concat("</p>"));
+    mocks.storeDocument
+      .mockResolvedValueOnce({
+        attempted: 7,
+        indexed: 0,
+        skipped: true,
+        reusedCommitted: true,
+        documentComplete: true
+      })
+      .mockResolvedValueOnce({ attempted: 5, indexed: 5, documentComplete: true });
+
+    const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
+    const result = await refreshFilingBodies(["AAPL"], Date.now(), undefined, { force: true });
+
+    expect(result).toMatchObject({ attempted: 2, ingested: 2, skipped: 0, deferredForBudget: 0 });
+    expect(result.errors).toEqual([]);
+  });
+
   it("keys-unconfigured IS a capacity stop: the run defers the tail", async () => {
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
     mocks.loadCikMap.mockResolvedValue({ "320193": "AAPL", "789019": "MSFT" });
@@ -574,6 +693,18 @@ describe("refreshFilingBodies force + explicit-limit + cadence knobs", () => {
     process.env.SEC_FILING_INGEST_TTL_HOURS = "24";
     expect(isFilingIngestDue()).toBe(true);
   });
+
+  it.each(["not-a-timestamp", { persisted: "state" }])(
+    "fails open when the persisted cadence marker is invalid: %p",
+    async (marker) => {
+      const { setInternalSetting } = await import("../src/lib/db");
+      setInternalSetting("webSource:sec10k:lastAttempt", marker);
+
+      const { isFilingIngestDue } = await import("../src/lib/web-sources/sec-filings");
+      expect(() => isFilingIngestDue()).not.toThrow();
+      expect(isFilingIngestDue()).toBe(true);
+    }
+  );
 });
 
 // ── 6. Point-in-time guard: isWithinAsOf drops look-ahead chunks ─────────────
@@ -703,5 +834,28 @@ describe("Blended Fundamentals Profile Card Ingest", () => {
       "local",
       { dedupKeyPrefix: "fundamentals" }
     );
+  });
+
+  it("rethrows lease loss after enrichment instead of converting it into a normal card error", async () => {
+    let lost = false;
+    mocks.getEnrichmentProvider.mockReturnValue({
+      name: "test",
+      configured: true,
+      enrich: vi.fn(async () => {
+        lost = true;
+        return { AAPL: { companyName: "Apple Inc." } };
+      })
+    });
+    const guard = {
+      assertOwnership: vi.fn(() => {
+        if (lost) throw new Error("test fundamentals lease lost");
+      })
+    };
+    const { ingestFundamentalsCard } = await import("../src/lib/web-sources/sec-filings");
+
+    await expect(ingestFundamentalsCard("AAPL", "local", guard)).rejects.toThrow(
+      "test fundamentals lease lost"
+    );
+    expect(mocks.storeContexts).not.toHaveBeenCalled();
   });
 });

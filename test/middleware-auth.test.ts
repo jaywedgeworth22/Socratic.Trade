@@ -30,9 +30,9 @@ function makeRequest(path: string, extraHeaders: Record<string, string> = {}): N
 }
 
 /** Mint a valid Auth.js-style session JWT signed with the given secret. */
-async function mintSessionJwt(email: string, secret: string): Promise<string> {
+async function mintSessionJwt(email: string, secret: string, loginAt?: number): Promise<string> {
   return await encodeSessionToken({
-    token: { email },
+    token: { email, ...(loginAt !== undefined ? { loginAt } : {}) },
     secret,
     salt: "authjs.session-token",
     maxAge: 60 * 60
@@ -136,6 +136,22 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(200);
     const fwd = res.headers.get("x-middleware-request-x-authenticated-user-email");
     expect(fwd).toBe("owner@example.com");
+  });
+
+  it("forwards the explicit provider-login time used for account-generation binding", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    const loginAt = Date.parse("2026-07-14T20:00:00.123Z");
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "");
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    const jwt = await mintSessionJwt("owner@example.com", secret, loginAt);
+    const middleware = await loadMiddleware();
+    const res = await middleware(makeRequest("/api/dashboard", {
+      cookie: `authjs.session-token=${jwt}`
+    }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-middleware-request-x-authenticated-session-issued-at"))
+      .toBe("2026-07-14T20:00:00.123Z");
   });
 
   it("valid Auth.js session JWT for allowlisted non-primary user → trusted, forwarded", async () => {

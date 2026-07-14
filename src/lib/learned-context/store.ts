@@ -39,6 +39,7 @@ import type {
 } from "../types";
 import { hasPii } from "./classify";
 import { classifyWithSemanticGate, type SemanticGateOptions } from "./semantic-gate";
+import { captureUserWriteEpoch, runWithUserWriteEpoch, type UserWriteEpoch } from "../user-write-fence";
 
 export interface IngestLearnedResult {
   written: LearnedContextRow | null;
@@ -58,6 +59,8 @@ export interface IngestLearnedOptions extends SemanticGateOptions {
   /** Internal override used by the transfer validator when it emits corroborated research. */
   learningScope?: Exclude<LearnedContextLearningScope, "legacy">;
   transferState?: LearnedContextTransferState;
+  /** Captured before any async classifier/provider work; stale operations cannot write after deletion. */
+  writeEpoch?: UserWriteEpoch;
 }
 
 /**
@@ -82,10 +85,13 @@ export async function ingestLearned(
   origin: LearnedContextOrigin,
   opts: IngestLearnedOptions = {}
 ): Promise<IngestLearnedResult> {
+  const writeEpoch = opts.writeEpoch ?? captureUserWriteEpoch(userId);
   // PII gate first — an SSN/card number is never written regardless of tier.
   if (hasPii(candidate.value)) {
-    audit("learned_context.drop", { userId, origin, reason: "pii", subject: candidate.subject }, userId);
-    return { written: null, dropped: "pii", pending: null, pendingId: null, tier: "fact" };
+    return runWithUserWriteEpoch(userId, writeEpoch, () => {
+      audit("learned_context.drop", { userId, origin, reason: "pii", subject: candidate.subject }, userId);
+      return { written: null, dropped: "pii", pending: null, pendingId: null, tier: "fact" };
+    });
   }
 
   // Thread userId so the gate's LLM call uses this user's key + failover and is usage-attributed.
@@ -94,8 +100,10 @@ export async function ingestLearned(
     accountEnvironment,
     learningScope: requestedLearningScope,
     transferState: requestedTransferState,
+    writeEpoch: _ignoredWriteEpoch,
     ...semanticGateOptions
   } = opts;
+  void _ignoredWriteEpoch;
   const learningScope: Exclude<LearnedContextLearningScope, "legacy"> =
     requestedLearningScope ?? (connectedAccountId ? "account" : "portfolio");
   if (learningScope === "account" && !connectedAccountId) {
@@ -112,7 +120,8 @@ export async function ingestLearned(
 
   const tier = await classifyWithSemanticGate(candidate, { ...semanticGateOptions, userId });
 
-  if (tier !== "fact") {
+  return runWithUserWriteEpoch(userId, writeEpoch, () => {
+    if (tier !== "fact") {
     // CHAT origin is HARD-CAPPED at 'fact' — a chat message can NEVER produce a pending risk item.
     // Preserve the audit-drop seam exactly for chat.
     if (origin === "chat") {
@@ -156,7 +165,7 @@ export async function ingestLearned(
     // instead of waiting for the next poll cycle.
     emitDashboardEvent({ type: "pending-learned-change", userId, at: new Date().toISOString(), detail: { pendingId: pending.id } });
     return { written: null, dropped: null, pending, pendingId: pending.id, tier };
-  }
+    }
 
   const symbol = candidate.symbol ? candidate.symbol.toUpperCase() : null;
   const nowIso = new Date().toISOString();
@@ -222,7 +231,8 @@ export async function ingestLearned(
     },
     userId
   );
-  return { written: row, dropped: null, pending: null, pendingId: null, tier };
+    return { written: row, dropped: null, pending: null, pendingId: null, tier };
+  });
 }
 
 /**

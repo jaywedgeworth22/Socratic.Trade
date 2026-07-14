@@ -3,7 +3,45 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const upsert = vi.fn();
   const query = vi.fn();
-  const index = vi.fn(() => ({ upsert, query }));
+  const namespacedIndex = { upsert, query };
+  const namespace = vi.fn(() => namespacedIndex);
+  const index = vi.fn(() => ({ ...namespacedIndex, namespace }));
+  const settings = new Map<string, string>();
+  const manifests = new Map<string, { ledger_authority: string; provider_authority: string }>();
+  const prepare = vi.fn((sql: string) => {
+    if (sql.includes("INSERT OR IGNORE INTO settings")) return {
+      run: vi.fn((key: string, value: string) => {
+        if (!settings.has(key)) settings.set(key, value);
+      })
+    };
+    if (sql.includes("SELECT value FROM settings WHERE key")) return {
+      get: vi.fn((key: string) => settings.has(key) ? { value: settings.get(key) } : undefined)
+    };
+    if (sql.includes("INSERT OR IGNORE INTO vector_private_namespace_manifests")) return {
+      run: vi.fn((tenantScope: string, ledgerAuthority: string, providerAuthority: string) => {
+        if (!manifests.has(tenantScope)) {
+          manifests.set(tenantScope, {
+            ledger_authority: ledgerAuthority,
+            provider_authority: providerAuthority
+          });
+        }
+      })
+    };
+    if (sql.includes("FROM vector_private_namespace_manifests WHERE tenant_scope")) return {
+      get: vi.fn((tenantScope: string) => manifests.get(tenantScope))
+    };
+    if (sql.includes("SELECT DISTINCT ledger_authority FROM vector_private_namespace_manifests")) return {
+      all: vi.fn(() => [...manifests.values()].map(({ ledger_authority }) => ({ ledger_authority })))
+    };
+    if (sql.includes("SELECT DISTINCT ledger_authority") || sql.includes("SELECT COUNT(*) FROM vector_ingest_commits")) {
+      return { all: vi.fn(() => []), get: vi.fn(() => ({ count: 0 })) };
+    }
+    return { run: vi.fn(), get: vi.fn(), all: vi.fn(() => []) };
+  });
+  const database = {
+    transaction: vi.fn((work: () => unknown) => ({ immediate: () => work() })),
+    prepare
+  };
   return {
     upsert,
     query,
@@ -11,7 +49,11 @@ const mocks = vi.hoisted(() => {
     listIndexes: vi.fn(),
     createIndex: vi.fn(),
     embed: vi.fn(),
-    resolveApiKey: vi.fn()
+    resolveApiKey: vi.fn(),
+    namespace,
+    settings,
+    manifests,
+    getDb: vi.fn(() => database)
   };
 });
 
@@ -36,12 +78,30 @@ vi.mock("../src/lib/db", () => ({
   audit: vi.fn(),
   setInternalSetting: vi.fn(),
   filterNewDocumentChunks: vi.fn((chunks) => chunks),
-  insertDocumentChunks: vi.fn()
+  insertDocumentChunks: vi.fn(),
+  getDb: mocks.getDb
+}));
+
+vi.mock("../src/lib/user-write-fence", () => ({
+  assertUserOperationClaim: vi.fn(),
+  withUserWriteOperation: vi.fn(async (
+    userId: string,
+    kind: string,
+    work: (claim: { userId: string; key: string; claimId: string; kind: string; epoch: { generation: string; status: "none" } }) => Promise<unknown>
+  ) => work({
+    userId,
+    key: `claim:${userId}`,
+    claimId: "test-claim",
+    kind,
+    epoch: { generation: "none", status: "none" }
+  }))
 }));
 
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  mocks.settings.clear();
+  mocks.manifests.clear();
   process.env.PINECONE_API_KEY = "pinecone-test";
   process.env.VOYAGE_API_KEY = "voyage-test";
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
@@ -248,14 +308,19 @@ describe("vector-db", () => {
   it("retrieves matching text with query embeddings and tenant-safe public/user filters", async () => {
     mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
-    mocks.query.mockResolvedValue({ matches: [{ metadata: { text: "AAPL retrieved filing context" } }, { metadata: {} }] });
+    mocks.query
+      .mockResolvedValueOnce({
+        matches: [{ metadata: { text: "AAPL retrieved filing context", userId: "user-1", scope: "private" } }]
+      })
+      .mockResolvedValueOnce({ matches: [] })
+      .mockResolvedValueOnce({ matches: [] });
     const { retrieveContext } = await import("../src/lib/vector-db");
 
     const results = await retrieveContext("AAPL catalysts", "AAPL", 2, "user-1");
 
     expect(results).toEqual(["AAPL retrieved filing context"]);
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({ input: ["AAPL catalysts"], inputType: "query" }));
-    expect(mocks.query).toHaveBeenCalledTimes(2);
+    expect(mocks.query).toHaveBeenCalledTimes(3);
     expect(mocks.query.mock.calls[0][0]).toMatchObject({
       // Reranking is on by default, so Pinecone over-fetches on the rerank-path cap
       // (rerankOverFetchK(2), default VECTOR_RERANK_OVERFETCH_K=150) and Voyage reranks back down
@@ -263,18 +328,30 @@ describe("vector-db", () => {
       topK: 150,
       includeMetadata: true
     });
-    expect(unwrapCommittedFilter(mocks.query.mock.calls[0][0].filter)).toEqual({
+    const privateFilter = unwrapCommittedFilter(mocks.query.mock.calls[0][0].filter);
+    expect(privateFilter).toMatchObject({
       symbol: { $eq: "AAPL" },
       userId: { $eq: "user-1" }
     });
-    // The shared-tier query now uses a backward-compat $or: scope:'shared' OR userId:'local'
-    // so that pre-scope (legacy) vectors are still retrieved.
-    const sharedFilter = unwrapCommittedFilter(mocks.query.mock.calls[1][0].filter);
+    expect(privateFilter.$or).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tenant_scope: expect.any(Object) }),
+      { $and: [{ tenant_scope: { $exists: false } }, { scope: { $eq: "private" } }] },
+      { $and: [{ tenant_scope: { $exists: false } }, { scope: { $exists: false } }] }
+    ]));
+    const privateNamespaceFilter = unwrapCommittedFilter(mocks.query.mock.calls[1][0].filter);
+    expect(privateNamespaceFilter).toEqual(privateFilter);
+    // Legacy local vectors are public only when they lack an explicit scope.
+    const sharedFilter = unwrapCommittedFilter(mocks.query.mock.calls[2][0].filter);
     expect(sharedFilter.symbol).toEqual({ $eq: "AAPL" });
     expect(sharedFilter.$or).toEqual(
       expect.arrayContaining([
         { scope: { $eq: "shared" } },
-        { userId: { $eq: "local" } }
+        {
+          $and: [
+            { userId: { $eq: "local" } },
+            { scope: { $exists: false } }
+          ]
+        }
       ])
     );
   });
@@ -309,15 +386,15 @@ describe("vector-db", () => {
     // First query returns records with IDs and scores
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: 0.9, metadata: { text: "High score user doc" } },
-        { id: "doc-2", score: 0.7, metadata: { text: "Medium score user doc" } }
+        { id: "doc-1", score: 0.9, metadata: { text: "High score user doc", userId: "user-1", scope: "private" } },
+        { id: "doc-2", score: 0.7, metadata: { text: "Medium score user doc", userId: "user-1", scope: "private" } }
       ]
     });
     // Second query (public "local") returns overlapping ID with lower score, and a new public doc
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: 0.8, metadata: { text: "High score user doc duplicate" } },
-        { id: "doc-3", score: 0.95, metadata: { text: "Very high score public doc" } }
+        { id: "doc-1", score: 0.8, metadata: { text: "High score user doc duplicate", userId: "local", scope: "shared" } },
+        { id: "doc-3", score: 0.95, metadata: { text: "Very high score public doc", userId: "local", scope: "shared" } }
       ]
     });
 

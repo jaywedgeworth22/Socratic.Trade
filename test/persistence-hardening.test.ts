@@ -58,7 +58,7 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(37);
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -72,7 +72,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
     db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(37);
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 
@@ -89,7 +89,7 @@ describe("runMigrations — versioned schema migrations", () => {
 
     db.pragma("user_version = 25");
     applyVersionedMigrations(db);
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(37);
 
     const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
     const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);
@@ -97,6 +97,180 @@ describe("runMigrations — versioned schema migrations", () => {
     expect(migrated.maxDailyNotional).toBeUndefined();
     expect(preserved).toMatchObject({ maxDailyNotional: 1_000 });
     expect(preserved.maxDailyPctOfNav).toBeUndefined();
+  });
+
+  it("preserves pre-token committed vector rows for explicit backfill", async () => {
+    const { applyVersionedMigrations, getDb, getSchemaVersion } = await import("../src/lib/db");
+    const db = getDb();
+    const at = "2026-07-14T12:00:00.000Z";
+    const accession = "FMP-EARNINGS-TRANSCRIPT:AAPL:2026:Q1";
+    const versionId = `${accession}:VERSION:legacy-upgrade`;
+    const commitId = "vcommit:test:legacy-upgrade";
+    db.prepare(`
+      INSERT OR REPLACE INTO vector_ingest_commits (
+        id, tenant_scope, user_id, source, accession, document_key, content_version,
+        retrieval_metadata_version, parser_revision, embed_revision, expected_vectors,
+        state, attempt_token, attempt_generation, lease_expires_at, created_at, updated_at, committed_at
+      ) VALUES (?, 'shared:operator', 'local', 'fmp-earnings-transcript', ?, ?, 'content',
+        'legacy', 'fmp-transcript-v1', 'v1', 1, 'committed', NULL, 0, NULL, ?, ?, ?)
+    `).run(commitId, versionId, accession, at, at, at);
+    db.prepare(`
+      INSERT OR REPLACE INTO chunk_occurrences (
+        vector_id, content_hash, symbol, source, accession, section, ordinal, accepted_at,
+        tenant_scope, content_version, commit_id, receipt_state, created_at
+      ) VALUES ('occ:test:legacy-upgrade', 'hash', 'AAPL', 'fmp-earnings-transcript', ?,
+        'body', 1, ?, 'shared:operator', 'content', ?, 'committed', ?)
+    `).run(versionId, at, commitId, at);
+    db.prepare(`
+      INSERT OR REPLACE INTO fmp_transcript_versions (
+        version_id, accession, content_sha256, symbol, fiscal_year, fiscal_quarter,
+        first_content_seen_at, state, vector_commit_id, chunk_count, observed_at, indexed_at, updated_at
+      ) VALUES (?, ?, 'hash', 'AAPL', 2026, 1, ?, 'committed', ?, 1, ?, ?, ?)
+    `).run(versionId, accession, at, commitId, at, at, at);
+    db.prepare(`
+      INSERT OR REPLACE INTO ingested_accessions (accession, doc_type, ticker, indexed_at, chunk_count)
+      VALUES (?, 'earnings-transcript', 'AAPL', ?, 1)
+    `).run(accession, at);
+
+    db.pragma("user_version = 27");
+    applyVersionedMigrations(db);
+
+    expect(getSchemaVersion(db)).toBe(37);
+    expect(db.prepare(`
+      SELECT state, attempt_token, ledger_authority FROM vector_ingest_commits WHERE id = ?
+    `).get(commitId)).toEqual({ state: "committed", attempt_token: null, ledger_authority: null });
+    expect(db.prepare(`
+      SELECT state, vector_commit_id FROM fmp_transcript_versions WHERE version_id = ?
+    `).get(versionId)).toEqual({ state: "committed", vector_commit_id: commitId });
+    expect(db.prepare(`
+      SELECT receipt_state FROM chunk_occurrences WHERE vector_id = 'occ:test:legacy-upgrade'
+    `).get()).toEqual({ receipt_state: "committed" });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count FROM ingested_accessions
+      WHERE accession = ? AND doc_type = 'earnings-transcript'
+    `).get(accession)).toEqual({ count: 1 });
+  });
+
+  it("preserves null or blank token lifecycle rows for explicit backfill", async () => {
+    const { applyVersionedMigrations, getDb, getSchemaVersion } = await import("../src/lib/db");
+    const db = getDb();
+    const at = "2026-07-14T12:00:00.000Z";
+    const commits = [
+      { id: "vcommit:test:blank-receipts", state: "receipts_persisted", token: "  " },
+      { id: "vcommit:test:null-committed", state: "committed", token: null },
+      { id: "vcommit:test:null-pending", state: "pending", token: null }
+    ] as const;
+    for (const [index, commit] of commits.entries()) {
+      db.prepare(`
+        INSERT OR REPLACE INTO vector_ingest_commits (
+          id, tenant_scope, user_id, source, accession, document_key, content_version,
+          retrieval_metadata_version, parser_revision, embed_revision, expected_vectors,
+          state, attempt_token, attempt_generation, lease_expires_at, created_at, updated_at, committed_at
+        ) VALUES (?, 'shared:operator', 'local', 'fmp-earnings-transcript', ?, ?, 'content',
+          'metadata', 'parser', 'embed', 1, ?, ?, 0, '2099-01-01T00:00:00.000Z', ?, ?, ?)
+      `).run(commit.id, `VERSION:${commit.id}`, `document:${commit.id}`, commit.state, commit.token, at, at, at);
+      db.prepare(`
+        INSERT OR REPLACE INTO chunk_occurrences (
+          vector_id, content_hash, symbol, source, accession, section, ordinal, accepted_at,
+          tenant_scope, content_version, commit_id, receipt_state, created_at
+        ) VALUES (?, 'hash', 'AAPL', 'fmp-earnings-transcript', ?, 'body', 1, ?,
+          'shared:operator', 'content', ?, 'committed', ?)
+      `).run(`occ:test:tokenless:${index}`, `VERSION:${commit.id}`, at, commit.id, at);
+    }
+
+    db.pragma("user_version = 29");
+    applyVersionedMigrations(db);
+
+    expect(getSchemaVersion(db)).toBe(37);
+    expect(db.prepare(`
+      SELECT id, state, attempt_token, lease_expires_at
+      FROM vector_ingest_commits
+      WHERE id IN (?, ?, ?) ORDER BY id
+    `).all(...commits.map((commit) => commit.id))).toEqual([
+      {
+        id: "vcommit:test:blank-receipts",
+        state: "receipts_persisted",
+        attempt_token: "  ",
+        lease_expires_at: "2099-01-01T00:00:00.000Z"
+      },
+      {
+        id: "vcommit:test:null-committed",
+        state: "committed",
+        attempt_token: null,
+        lease_expires_at: "2099-01-01T00:00:00.000Z"
+      },
+      {
+        id: "vcommit:test:null-pending",
+        state: "pending",
+        attempt_token: null,
+        lease_expires_at: "2099-01-01T00:00:00.000Z"
+      }
+    ]);
+    expect(db.prepare(`
+      SELECT receipt_state FROM chunk_occurrences
+      WHERE commit_id IN (?, ?, ?) ORDER BY commit_id
+    `).all(...commits.map((commit) => commit.id))).toEqual([
+      { receipt_state: "committed" },
+      { receipt_state: "committed" },
+      { receipt_state: "committed" }
+    ]);
+  });
+
+  it("rebuilds equal activation times by committed_at then commit_id", async () => {
+    const { applyVersionedMigrations, getDb, getSchemaVersion } = await import("../src/lib/db");
+    const db = getDb();
+    const suffix = randomUUID();
+    const tenantScope = "shared:operator";
+    const source = `timeline-tie-${suffix}`;
+    const documentKey = `document-${suffix}`;
+    const validFrom = "2026-07-14T12:00:00.000Z";
+    const commits = [
+      { id: `vcommit:timeline:${suffix}:a`, committedAt: "2026-07-14T12:00:01.000Z" },
+      { id: `vcommit:timeline:${suffix}:b`, committedAt: "2026-07-14T12:00:02.000Z" },
+      { id: `vcommit:timeline:${suffix}:c`, committedAt: "2026-07-14T12:00:02.000Z" }
+    ];
+    for (const commit of commits) {
+      db.prepare(`
+        INSERT INTO vector_ingest_commits (
+          id, tenant_scope, user_id, source, accession, document_key, content_version,
+          retrieval_metadata_version, parser_revision, embed_revision, expected_vectors,
+          state, attempt_token, attempt_generation, lease_expires_at, created_at, updated_at, committed_at
+        ) VALUES (?, ?, 'local', ?, ?, ?, 'content', 'metadata', 'parser', 'embed', 0,
+          'committed', ?, 1, NULL, ?, ?, ?)
+      `).run(
+        commit.id,
+        tenantScope,
+        source,
+        `${documentKey}:${commit.id}`,
+        documentKey,
+        `attempt:${commit.id}`,
+        commit.committedAt,
+        commit.committedAt,
+        commit.committedAt
+      );
+      db.prepare(`
+        INSERT INTO vector_document_versions (
+          commit_id, tenant_scope, source, document_key, valid_from, valid_to, updated_at
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+      `).run(commit.id, tenantScope, source, documentKey, validFrom, commit.committedAt);
+    }
+
+    db.pragma("user_version = 30");
+    applyVersionedMigrations(db);
+
+    expect(getSchemaVersion(db)).toBe(37);
+    expect(db.prepare(`
+      SELECT commit_id FROM vector_document_heads
+      WHERE tenant_scope = ? AND source = ? AND accession = ?
+    `).get(tenantScope, source, documentKey)).toEqual({ commit_id: commits[2].id });
+    expect(db.prepare(`
+      SELECT commit_id, valid_to FROM vector_document_versions
+      WHERE commit_id IN (?, ?, ?) ORDER BY commit_id
+    `).all(...commits.map((commit) => commit.id))).toEqual([
+      { commit_id: commits[0].id, valid_to: validFrom },
+      { commit_id: commits[1].id, valid_to: validFrom },
+      { commit_id: commits[2].id, valid_to: null }
+    ]);
   });
 });
 

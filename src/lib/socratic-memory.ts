@@ -115,6 +115,6 @@ export async function indexSocraticDecisionMemory(decision: SocraticDecisionCase
   return storeContexts(
     [buildSocraticMemoryDocument(decision, accountEnvironment)],
     decision.userId,
-    { dedupKeyPrefix: "socratic-decision" }
+    { dedupKeyPrefix: "socratic-decision", scope: "private" }
   );
 }

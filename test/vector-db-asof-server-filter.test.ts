@@ -129,7 +129,12 @@ describe("server-asof-filter: Pinecone query filter shape", () => {
     expect(baseClause).toBeTruthy();
     expect((baseClause as { $or: unknown[] }).$or).toEqual([
       { scope: { $eq: "shared" } },
-      { userId: { $eq: "local" } }
+      {
+        $and: [
+          { userId: { $eq: "local" } },
+          { scope: { $exists: false } }
+        ]
+      }
     ]);
   });
 
@@ -145,9 +150,9 @@ describe("server-asof-filter: Pinecone query filter shape", () => {
     const clauses = filter.$and as Record<string, unknown>[];
     const epochClause = clauses.find((c) => JSON.stringify(c).includes("as_of_epoch_ms"));
     expect(epochClause).toEqual({ as_of_epoch_ms: { $lte: AS_OF_MS } });
-    // The point-in-time clause itself has no $exists branch. The independent committed-receipt
-    // guard deliberately retains one to admit legacy vectors without receipt metadata.
-    expect(JSON.stringify(filter)).not.toContain("$exists");
+    // The point-in-time clause itself has no $exists branch. Independent scope and committed-receipt
+    // compatibility guards deliberately retain theirs for legacy vectors.
+    expect(JSON.stringify(epochClause)).not.toContain("$exists");
   });
 
   it("(d) asOf UNSET: no epoch clause, filter byte-identical to today (top-level scope $or, no $and)", async () => {
@@ -162,7 +167,10 @@ describe("server-asof-filter: Pinecone query filter shape", () => {
     expect(JSON.stringify(filter)).not.toContain("as_of_epoch_ms");
     expect(filter).toEqual({
       symbol: { $eq: "AAPL" },
-      $or: [{ scope: { $eq: "shared" } }, { userId: { $eq: "local" } }]
+      $or: [
+        { scope: { $eq: "shared" } },
+        { $and: [{ userId: { $eq: "local" } }, { scope: { $exists: false } }] }
+      ]
     });
   });
 
@@ -178,7 +186,10 @@ describe("server-asof-filter: Pinecone query filter shape", () => {
     expect(JSON.stringify(filter)).not.toContain("as_of_epoch_ms");
     expect(filter).toEqual({
       symbol: { $eq: "AAPL" },
-      $or: [{ scope: { $eq: "shared" } }, { userId: { $eq: "local" } }]
+      $or: [
+        { scope: { $eq: "shared" } },
+        { $and: [{ userId: { $eq: "local" } }, { scope: { $exists: false } }] }
+      ]
     });
   });
 });

@@ -16,10 +16,35 @@ import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPers
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
 import { alertUsageLimitHit } from "./usage-limit-alerts";
+import {
+  OPERATION_LEASE_GROUPS,
+  assertOperationLeaseOwnership,
+  runWithOperationLease,
+  throwIfOperationLeaseCancelled,
+  type OperationLeaseBusy
+} from "./operation-lease";
+import {
+  assertUserOperationClaim,
+  withUserWriteOperation,
+  type UserOperationClaim
+} from "./user-write-fence";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 const RAG_CONNECTION_ALERT_PREFIX = "vectorStore:connectionAlert";
 const RAG_CONNECTION_ALERT_COOLDOWN_MS = 60 * 60_000;
+const VECTOR_COMMIT_LEASE_MS = 15 * 60_000;
+const VECTOR_RECONCILE_CONFIRMATION_GRACE_MS = 5 * 60_000;
+const MANAGED_VECTOR_LEDGER_SETTING = "vectorStore:managedLedgerAuthority";
+const DEFAULT_ERASURE_VERIFY_ATTEMPTS = 4;
+const DEFAULT_ERASURE_VERIFY_CONSECUTIVE_CLEAN = 3;
+const DEFAULT_ERASURE_VERIFY_DELAY_MS = 500;
+
+const globalForVectorCommitSerializers = globalThis as typeof globalThis & {
+  __socraticVectorCommitSerializers?: Map<string, Promise<void>>;
+};
+const vectorCommitSerializers =
+  globalForVectorCommitSerializers.__socraticVectorCommitSerializers ??
+  (globalForVectorCommitSerializers.__socraticVectorCommitSerializers = new Map());
 
 /** Scope values written into vector metadata. New vectors carry this; legacy vectors lack it. */
 export const SHARED_SCOPE = "shared" as const;
@@ -41,10 +66,18 @@ export interface StoreContextsResult {
    *  a new source occurrence has its own queryable vector; source producers must require
    *  `documentComplete` instead. `storeDocument` never returns this shortcut. */
   dedupComplete?: boolean;
+  /** `storeDocument` found this exact deterministic commit and occurrence set already committed.
+   * No provider call or budget was consumed; `indexed` is therefore zero while `attempted` is the
+   * proven complete source cardinality. Source ledgers may treat this as completed reuse only when
+   * `documentComplete` is also true. */
+  reusedCommitted?: boolean;
+  /** CAS proof required for atomically writing the producer's source-completion ledger. */
+  managedCommitProof?: dbModule.ActiveVectorCommitProof;
   /**
    * Set by storeDocument only when every source occurrence has a successful Pinecone upsert plus
-   * atomic document_chunks/chunk_occurrences receipts. Producers must require this and exact
-   * indexed===attempted cardinality before writing a source-level completion ledger.
+   * atomic document_chunks/chunk_occurrences receipts. Producers must require this plus either
+   * exact indexed===attempted cardinality or an exact reusedCommitted receipt before writing a
+   * source-level completion ledger.
    */
   documentComplete?: boolean;
   /**
@@ -390,6 +423,33 @@ function embedRetryDelayMs(): number {
   return numericEnv("VECTOR_EMBED_RETRY_DELAY_MS", DEFAULT_EMBED_RETRY_DELAY_MS, 0);
 }
 
+function erasureVerifyAttempts(): number {
+  return Math.floor(numericEnv(
+    "VECTOR_ERASURE_VERIFY_ATTEMPTS",
+    DEFAULT_ERASURE_VERIFY_ATTEMPTS,
+    1,
+    10
+  ));
+}
+
+function erasureVerifyConsecutiveClean(attempts: number): number {
+  return Math.min(attempts, Math.floor(numericEnv(
+    "VECTOR_ERASURE_VERIFY_CONSECUTIVE_CLEAN",
+    DEFAULT_ERASURE_VERIFY_CONSECUTIVE_CLEAN,
+    1,
+    10
+  )));
+}
+
+function erasureVerifyDelayMs(): number {
+  return numericEnv(
+    "VECTOR_ERASURE_VERIFY_DELAY_MS",
+    DEFAULT_ERASURE_VERIFY_DELAY_MS,
+    0,
+    30_000
+  );
+}
+
 // Voyage reranking: the single biggest retrieval-quality lever. We over-fetch from Pinecone (cheap
 // cosine recall) then have Voyage's cross-encoder reranker reorder by true query relevance. ON by
 // default; set VECTOR_ENABLE_RERANK=off to disable. Fails safe to cosine order on any error.
@@ -598,6 +658,216 @@ export function sanitizeUserId(userId?: string): string {
  * constructing a new SDK client on every embed/query/rerank call.
  */
 const clientCache = new Map<string, { pc: Pinecone; voyage: VoyageAIClient }>();
+const pineconeClientCache = new Map<string, Pinecone>();
+
+/**
+ * Non-secret identity of the physical Pinecone index currently in use. The preferred input is the
+ * provider-reported index host, which survives API-key rotation while still distinguishing two
+ * projects that happen to use the same index name. Managed writes require this stable identity;
+ * the key-derived fallback is restricted to direct, unreceipted records and is never persisted as
+ * managed physical ownership.
+ */
+const indexAuthorityByInitKey = new Map<string, string>();
+
+function hashProviderAuthority(identity: string): string {
+  return crypto.createHash("sha256").update(`pinecone-index-authority:v1|${identity}`, "utf8").digest("hex");
+}
+
+function fallbackProviderAuthority(initCacheKey: string): string {
+  return hashProviderAuthority(`fallback|${initCacheKey}`);
+}
+
+function rememberProviderAuthority(initCacheKey: string, describedIndex: unknown): string {
+  const host = typeof (describedIndex as { host?: unknown } | undefined)?.host === "string"
+    ? (describedIndex as { host: string }).host.trim().toLowerCase()
+    : "";
+  if (!host && process.env.NODE_ENV !== "test") {
+    throw new Error("Pinecone describeIndex did not return a stable index host.");
+  }
+  // Lightweight unit doubles historically omitted `host`. Production managed writes still fail
+  // closed above; tests get a deterministic nonsecret authority so they exercise the remaining
+  // commit path without embedding fake provider topology in every unrelated fixture.
+  const authority = host
+    ? hashProviderAuthority(`host|${host}|index|${indexName()}`)
+    : fallbackProviderAuthority(initCacheKey);
+  indexAuthorityByInitKey.set(initCacheKey, authority);
+  return authority;
+}
+
+function providerAuthorityForInitKey(initCacheKey: string): string {
+  return indexAuthorityByInitKey.get(initCacheKey) ?? fallbackProviderAuthority(initCacheKey);
+}
+
+function stableProviderAuthorityForInitKey(initCacheKey: string): string | undefined {
+  return indexAuthorityByInitKey.get(initCacheKey);
+}
+
+/**
+ * Immutable, non-PII identity for this SQLite vector ledger. Managed vectors live in the matching
+ * Pinecone namespace and carry the same authority in their id/metadata, so a shared BYOK index can
+ * never make this deployment's reconciler claim another application's records.
+ */
+export function managedVectorLedgerAuthority(): string {
+  try {
+    const database = dbModule.getDb();
+    if (!database) throw new Error("Vector ledger database is unavailable.");
+    return database.transaction(() => {
+      const readAuthority = (value: string | undefined): string | undefined => {
+        try {
+          const parsed = JSON.parse(value ?? "");
+          return typeof parsed === "string" && parsed.startsWith("ledger:v1:") && parsed.length > 20
+            ? parsed
+            : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      const existing = database.prepare("SELECT value FROM settings WHERE key = ?")
+        .get(MANAGED_VECTOR_LEDGER_SETTING) as { value?: string } | undefined;
+      const authorities = new Set<string>();
+      const commitRows = database.prepare(`
+        SELECT DISTINCT ledger_authority
+        FROM vector_ingest_commits
+        WHERE ledger_authority IS NOT NULL AND TRIM(ledger_authority) <> ''
+      `).all() as Array<{ ledger_authority: string }>;
+      for (const row of commitRows) authorities.add(row.ledger_authority);
+      const manifestRows = database.prepare(`
+        SELECT DISTINCT ledger_authority FROM vector_private_namespace_manifests
+      `).all() as Array<{ ledger_authority: string }>;
+      for (const row of manifestRows) authorities.add(row.ledger_authority);
+      if (authorities.size > 1) {
+        throw new Error("Managed vector ledger authority is ambiguous; refusing namespace rotation.");
+      }
+      if (existing) {
+        const parsed = readAuthority(existing.value);
+        if (!parsed) {
+          throw new Error("Managed vector ledger authority is corrupt; refusing namespace rotation.");
+        }
+        if (authorities.size === 1 && !authorities.has(parsed)) {
+          throw new Error("Managed vector ledger authority conflicts with persisted vector evidence.");
+        }
+        return parsed;
+      }
+      const localEvidence = database.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM vector_ingest_commits) +
+          (SELECT COUNT(*) FROM chunk_occurrences) +
+          (SELECT COUNT(*) FROM vector_private_namespace_manifests) AS count
+      `).get() as { count: number };
+      const recovered = [...authorities][0];
+      if (!recovered && localEvidence.count > 0) {
+        throw new Error("Managed vector ledger authority is missing while vector evidence exists.");
+      }
+      const candidate = recovered ?? `ledger:v1:${crypto.randomUUID()}`;
+      const now = new Date().toISOString();
+      // INSERT OR IGNORE is the cross-process winner election. A second process never overwrites
+      // the first authority after both observed an empty table; it reads the durable winner below.
+      database.prepare(`
+        INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+      `).run(MANAGED_VECTOR_LEDGER_SETTING, JSON.stringify(candidate), now);
+      const row = database.prepare("SELECT value FROM settings WHERE key = ?")
+        .get(MANAGED_VECTOR_LEDGER_SETTING) as { value?: string } | undefined;
+      const parsed = readAuthority(row?.value);
+      if (parsed) return parsed;
+      throw new Error("Managed vector ledger authority is missing or corrupt.");
+    })();
+  } catch (error) {
+    // A few isolated unit suites intentionally replace the DB barrel with a tiny mock. Production
+    // must never mint an ephemeral authority, but those tests may use one deterministic seam.
+    if (process.env.NODE_ENV === "test") return "ledger:v1:test-only-authority";
+    throw error;
+  }
+}
+
+export function managedVectorNamespace(): string {
+  return `socratic-${managedOccurrenceToken(managedVectorLedgerAuthority())}`;
+}
+
+export function privateVectorNamespace(
+  userId: string,
+  ledgerAuthority = managedVectorLedgerAuthority()
+): string {
+  return `socratic-private-${managedOccurrenceToken(ledgerAuthority)}-${managedOccurrenceToken(vectorTenantScope(userId, PRIVATE_SCOPE))}`;
+}
+
+function ensurePrivateVectorNamespaceManifest(
+  userId: string,
+  ledgerAuthority: string,
+  providerAuthority: string
+): void {
+  const tenantScope = vectorTenantScope(userId, PRIVATE_SCOPE);
+  const database = dbModule.getDb();
+  const now = new Date().toISOString();
+  database.transaction(() => {
+    database.prepare(`
+      INSERT OR IGNORE INTO vector_private_namespace_manifests
+        (tenant_scope, ledger_authority, provider_authority, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(tenantScope, ledgerAuthority, providerAuthority, now, now);
+    const row = database.prepare(`
+      SELECT ledger_authority, provider_authority
+      FROM vector_private_namespace_manifests WHERE tenant_scope = ?
+    `).get(tenantScope) as { ledger_authority?: string; provider_authority?: string | null } | undefined;
+    if (row?.ledger_authority !== ledgerAuthority || row.provider_authority !== providerAuthority) {
+      throw new Error("Private vector namespace manifest authority mismatch.");
+    }
+  }).immediate();
+}
+
+export function fmpTranscriptVectorNamespace(ledgerAuthority = managedVectorLedgerAuthority()): string {
+  return `socratic-fmp-transcripts-${managedOccurrenceToken(ledgerAuthority)}`;
+}
+
+function hasCommittedManagedRecords(): boolean {
+  try {
+    return Boolean(dbModule.getDb().prepare(`
+      SELECT 1 AS ok
+      FROM vector_ingest_commits
+      WHERE state = 'committed'
+      LIMIT 1
+    `).get());
+  } catch {
+    // Retrieval must stay available during migrations and in lightweight module mocks. A false
+    // result only skips the additive managed-namespace query; legacy/direct retrieval still runs.
+    return false;
+  }
+}
+
+function hasCommittedVectorNamespaceRecords(
+  ledgerAuthority: string,
+  vectorNamespace: "managed" | "fmp-transcripts"
+): boolean {
+  try {
+    return Boolean(dbModule.getDb().prepare(`
+      SELECT 1 AS ok
+      FROM vector_ingest_commits
+      WHERE state = 'committed' AND ledger_authority = ? AND vector_namespace = ?
+      LIMIT 1
+    `).get(ledgerAuthority, vectorNamespace));
+  } catch {
+    return false;
+  }
+}
+
+function hasUnreachableCommittedManagedRecords(
+  ledgerAuthority: string,
+  providerAuthority: string | undefined
+): boolean {
+  try {
+    return Boolean(dbModule.getDb().prepare(`
+      SELECT 1 AS ok
+      FROM vector_ingest_commits
+      WHERE state = 'committed'
+        AND (
+          ledger_authority IS NULL OR ledger_authority <> ? OR
+          provider_authority IS NULL OR provider_authority <> ?
+        )
+      LIMIT 1
+    `).get(ledgerAuthority, providerAuthority ?? ""));
+  } catch {
+    return false;
+  }
+}
 
 function resolveRagKeyWithSource(service: "pinecone" | "voyage", userId: string): { key?: string; source: ApiKeySource; envVar?: string; service: string } {
   let sourceAwareResolver: ((service: "pinecone" | "voyage", userId?: string) => { key?: string; source: ApiKeySource; envVar?: string; service: string }) | undefined;
@@ -652,6 +922,28 @@ async function getClients(userId: string = "local", leaseGuard?: VectorStoreLeas
     pineconeSource: pinecone.source,
     voyageSource: voyage.source
   };
+}
+
+/** Provider-only operations such as inventory and erasure must not require an unrelated Voyage key. */
+async function getPineconeClient(userId: string = "local", leaseGuard?: VectorStoreLeaseGuard) {
+  assertVectorStoreLease(leaseGuard);
+  const lookupUserId = userId || "local";
+  const pinecone = resolveRagKeyWithSource("pinecone", lookupUserId);
+  if (!pinecone.key) {
+    if (leaseGuard) {
+      await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
+      assertVectorStoreLease(leaseGuard);
+    } else {
+      void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
+    }
+    return { pc: null, initCacheKey: "", pineconeSource: pinecone.source };
+  }
+  let pc = pineconeClientCache.get(pinecone.key);
+  if (!pc) {
+    pc = new Pinecone({ apiKey: pinecone.key });
+    pineconeClientCache.set(pinecone.key, pc);
+  }
+  return { pc, initCacheKey: `${pinecone.key}:${indexName()}`, pineconeSource: pinecone.source };
 }
 
 function ragHealthUserId(source: ApiKeySource, userId: string): string {
@@ -811,6 +1103,8 @@ async function captureRagSentryMessage(
 interface RagDispatchOptions {
   units?: number;
   estimatedCostUsd?: number;
+  /** Exact durable account-deletion request authorizing the erasure operation through its fence. */
+  accountDeletionRequestId?: string;
   /** The callback reserves each physical retry itself (used by Voyage's explicit retry loop). */
   durablyTrackedInside?: boolean;
 }
@@ -867,7 +1161,10 @@ async function withDurableRagProviderDispatch<T>(
       // dispatch fuse; request/text/WU budgets remain the tighter normal controls.
       maxEstimatedCostUsdPer24h: typeof configuredCostCap === "number" && Number.isFinite(configuredCostCap) && configuredCostCap >= 0
         ? configuredCostCap
-        : 25
+        : 25,
+      ...(dispatch?.accountDeletionRequestId
+        ? { accountDeletionRequestId: dispatch.accountDeletionRequestId }
+        : {})
     });
     if (!reservation.admitted) throw new Error(`Durable ${provider} ${reservation.reason} reservation denied.`);
     attemptId = reservation.attemptId;
@@ -979,10 +1276,12 @@ async function assertIndexMetric(
   initCacheKey: string,
   source: ApiKeySource,
   userId: string,
-  leaseGuard?: VectorStoreLeaseGuard
+  leaseGuard?: VectorStoreLeaseGuard,
+  accountDeletionRequestId?: string
 ): Promise<void> {
   assertVectorStoreLease(leaseGuard);
-  if (indexMetricChecked.has(initCacheKey)) return;
+  if (indexMetricChecked.has(initCacheKey) && indexAuthorityByInitKey.has(initCacheKey)) return;
+  let described = false;
   try {
     const model = await withRagApiHealth(
       "pinecone",
@@ -990,9 +1289,12 @@ async function assertIndexMetric(
       userId,
       "describeIndex",
       () => pc.describeIndex(indexName()),
-      leaseGuard
+      leaseGuard,
+      accountDeletionRequestId ? { accountDeletionRequestId } : undefined
     );
     assertVectorStoreLease(leaseGuard);
+    rememberProviderAuthority(initCacheKey, model);
+    described = true;
     const metric = (model as { metric?: unknown })?.metric;
     if (metric != null && metric !== "cosine") {
       assertVectorStoreLease(leaseGuard);
@@ -1026,10 +1328,17 @@ async function assertIndexMetric(
       indexName: indexName(),
       reason: err instanceof Error ? err.message : String(err)
     }, leaseGuard);
+    // Unit-only fallback authorities keep unrelated embedding fixtures small, but destructive
+    // account erasure must exercise the same fail-closed identity requirement as production.
+    if (process.env.NODE_ENV === "test" && !accountDeletionRequestId) {
+      indexAuthorityByInitKey.set(initCacheKey, fallbackProviderAuthority(initCacheKey));
+      described = true;
+    }
   }
   assertVectorStoreLease(leaseGuard);
-  // Mark only after the complete guarded path. A lease-aborted attempt must remain retryable.
-  indexMetricChecked.add(initCacheKey);
+  // Mark only after a stable host authority was observed. Provider failures and malformed
+  // describe responses remain retryable and cannot mint key-derived managed identities.
+  if (described && indexAuthorityByInitKey.has(initCacheKey)) indexMetricChecked.add(initCacheKey);
 }
 
 async function initializeIndex(
@@ -1112,9 +1421,50 @@ async function ensureIndex(
   }
 }
 
-async function indexExists(pc: Pinecone, source: ApiKeySource, userId: string): Promise<boolean> {
-  const indexes = await withRagApiHealth("pinecone", source, userId, "listIndexes", () => pc.listIndexes());
+async function indexExists(
+  pc: Pinecone,
+  source: ApiKeySource,
+  userId: string,
+  accountDeletionRequestId?: string,
+  leaseGuard?: VectorStoreLeaseGuard
+): Promise<boolean> {
+  const indexes = await withRagApiHealth(
+    "pinecone",
+    source,
+    userId,
+    "listIndexes",
+    () => pc.listIndexes(),
+    leaseGuard,
+    accountDeletionRequestId ? { accountDeletionRequestId } : undefined
+  );
   return Boolean(indexes.indexes?.some((i) => i.name === indexName()));
+}
+
+/** Resolve the non-secret physical index identity used by managed-vector receipts and ids. */
+export async function getCurrentVectorProviderAuthority(options: {
+  userId?: string;
+  accountDeletionRequestId?: string;
+  leaseGuard?: VectorStoreLeaseGuard;
+} = {}): Promise<string | undefined> {
+  const userId = options.userId ?? "local";
+  const { pc, initCacheKey, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
+  if (!pc || !initCacheKey) return undefined;
+  if (!(await indexExists(
+    pc,
+    pineconeSource,
+    userId,
+    options.accountDeletionRequestId,
+    options.leaseGuard
+  ))) return undefined;
+  await assertIndexMetric(
+    pc,
+    initCacheKey,
+    pineconeSource,
+    userId,
+    options.leaseGuard,
+    options.accountDeletionRequestId
+  );
+  return stableProviderAuthorityForInitKey(initCacheKey);
 }
 
 /**
@@ -1148,11 +1498,15 @@ export function resolveAsOfEpochMs(metadata: Record<string, unknown> | undefined
   return Number.isFinite(t) ? t : undefined;
 }
 
-function cleanMetadata(metadata: ContextDocument["metadata"], text: string, userId: string): RecordMetadata {
-  // Derive scope from the userId sentinel used to signal the shared/public tier.
-  // New vectors carry an explicit `scope` field; legacy vectors written before this change
-  // do NOT have it (backward-compat: they are still matched via the userId filter).
-  const scope: VectorScope = userId === "local" ? SHARED_SCOPE : PRIVATE_SCOPE;
+function cleanMetadata(
+  metadata: ContextDocument["metadata"],
+  text: string,
+  userId: string,
+  scope: VectorScope,
+  tenantScope: string,
+  providerAuthority: string,
+  ledgerAuthority?: string
+): RecordMetadata {
   // Embedding-model/representation version tag (2026-07-04 RAG quick-wins): stamp every new vector
   // with the model that produced it + a representation revision, so a mixed population (e.g. after
   // a VOYAGE_MODEL swap or a VECTOR_EMBED_CLEAN_TEXT flip) can be detected/filtered/migrated later
@@ -1162,6 +1516,8 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
     text,
     userId,
     scope,
+    tenant_scope: tenantScope,
+    provider_authority: providerAuthority,
     embed_model: VOYAGE_MODEL,
     embed_rev: EMBED_REV,
     // Direct/legacy-style writes have no relational receipt protocol and are committed by their
@@ -1170,8 +1526,18 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
     ingest_state: "committed",
     receipt_required: false
   };
+  if (ledgerAuthority) out.ledger_authority = ledgerAuthority;
   for (const [key, value] of Object.entries(metadata)) {
-    if (key === "text" || key === "userId" || key === "scope" || key === "embed_model" || key === "embed_rev") continue;
+    if (
+      key === "text" ||
+      key === "userId" ||
+      key === "scope" ||
+      key === "tenant_scope" ||
+      key === "provider_authority" ||
+      key === "ledger_authority" ||
+      key === "embed_model" ||
+      key === "embed_rev"
+    ) continue;
     // as_of_epoch_ms is DERIVED below from the date precedence, never copied from a caller-supplied
     // value — skip any inbound one so a stray/incorrect field can't override the authoritative
     // derivation (and so the "absent when undated" invariant can't be violated by a caller passing 0).
@@ -1202,13 +1568,64 @@ function vectorUserIdFor(userId: string | undefined): string {
   return sanitizeUserId(userId);
 }
 
-export function vectorTenantScope(userId: string | undefined): string {
+export function vectorTenantScope(userId: string | undefined, scope?: VectorScope): string {
   const exact = String(userId ?? "local");
-  if (exact === "local") return "shared:operator";
+  const effectiveScope = scope ?? (exact === "local" ? SHARED_SCOPE : PRIVATE_SCOPE);
+  if (effectiveScope === SHARED_SCOPE) return "shared:operator";
   return `private:${crypto.createHash("sha256").update(exact, "utf8").digest("hex")}`;
 }
 
+/** Legacy private ids are safe only when sanitization is an identity operation. Otherwise two
+ * distinct raw users can collapse onto the same historical metadata.userId value. */
+export function isUnambiguousLegacyVectorUserId(userId: string | undefined): boolean {
+  const exact = String(userId ?? "local");
+  return exact === sanitizeUserId(exact);
+}
+
+function legacyPrivateMetadataUserMatches(metadataUserId: string | undefined, userId: string | undefined): boolean {
+  const exact = String(userId ?? "local");
+  return isUnambiguousLegacyVectorUserId(exact) && metadataUserId === exact;
+}
+
+function managedOccurrenceToken(value: string): string {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex").slice(0, 20);
+}
+
+export function managedOccurrenceVectorPrefix(input: {
+  ledgerAuthority?: string;
+  providerAuthority: string;
+  tenantScope?: string;
+  source?: string;
+}): string {
+  const ledgerAuthority = input.ledgerAuthority ?? managedVectorLedgerAuthority();
+  let prefix = `${managedLedgerVectorPrefix(ledgerAuthority)}${managedOccurrenceToken(input.providerAuthority)}`;
+  if (input.tenantScope === undefined) return `${prefix}:`;
+  prefix += `:${managedOccurrenceToken(input.tenantScope)}`;
+  if (input.source === undefined) return `${prefix}:`;
+  return `${prefix}:${managedOccurrenceToken(input.source)}:`;
+}
+
+export function managedLedgerVectorPrefix(ledgerAuthority = managedVectorLedgerAuthority()): string {
+  return `occ:v3:${managedOccurrenceToken(ledgerAuthority)}:`;
+}
+
+export function managedOccurrenceVectorIdMatches(input: {
+  id: string;
+  ledgerAuthority?: string;
+  providerAuthority: string;
+  tenantScope: string;
+  source?: string;
+}): boolean {
+  return input.id.startsWith(managedOccurrenceVectorPrefix(input));
+}
+
+export function isManagedOccurrenceVectorId(id: string): boolean {
+  return id.startsWith("occ:v2:") || id.startsWith("occ:v3:");
+}
+
 export function buildOccurrenceVectorId(input: {
+  ledgerAuthority?: string;
+  providerAuthority: string;
   tenantScope: string;
   source: string;
   accession: string;
@@ -1218,7 +1635,10 @@ export function buildOccurrenceVectorId(input: {
   parserRevision: string;
   embedRevision: string;
 }): string {
+  const ledgerAuthority = input.ledgerAuthority ?? managedVectorLedgerAuthority();
   const canonical = JSON.stringify([
+    ledgerAuthority,
+    input.providerAuthority,
     input.tenantScope,
     input.source,
     input.accession,
@@ -1228,7 +1648,13 @@ export function buildOccurrenceVectorId(input: {
     input.parserRevision,
     input.embedRevision
   ]);
-  return `occ:v2:${crypto.createHash("sha256").update(canonical, "utf8").digest("hex")}`;
+  const prefix = managedOccurrenceVectorPrefix({
+    ledgerAuthority,
+    providerAuthority: input.providerAuthority,
+    tenantScope: input.tenantScope,
+    source: input.source
+  });
+  return `${prefix}${crypto.createHash("sha256").update(canonical, "utf8").digest("hex")}`;
 }
 
 export function sanitizeVectorId(id: string): string {
@@ -1253,8 +1679,24 @@ function contextId(document: ContextDocument, fallbackIndex: number): string {
   return sanitizeVectorId(raw);
 }
 
-function estimatePineconeWriteUnitsForDocument(document: ContextDocument, vectorUserId: string): number {
-  const metadata = cleanMetadata(document.metadata, document.text, vectorUserId);
+function estimatePineconeWriteUnitsForDocument(
+  document: ContextDocument,
+  vectorUserId: string,
+  scope: VectorScope,
+  tenantScope: string
+): number {
+  // Physical authority is resolved after the pre-embed budget check. Its persisted representation
+  // is always a 64-character SHA-256 hex digest, so an equal-width placeholder keeps this estimate
+  // conservative and byte-accurate without requiring an early provider call.
+  const metadata = cleanMetadata(
+    document.metadata,
+    document.text,
+    vectorUserId,
+    scope,
+    tenantScope,
+    "0".repeat(64),
+    "ledger:v1:" + "0".repeat(36)
+  );
   const idBytes = Buffer.byteLength(contextId(document, 0), "utf8");
   // Pinecone bills by request size. This pre-embed estimate uses float32 vector bytes plus
   // metadata/id overhead so the budget can stop before paying Voyage to embed doomed writes.
@@ -1287,7 +1729,9 @@ function pineconeReadUnits(result: unknown, fallback: number): number {
 function applyPineconeWriteBudget(
   documents: ContextDocument[],
   userId: string,
-  vectorUserId: string
+  vectorUserId: string,
+  scope: VectorScope,
+  tenantScope: string
 ): { documents: ContextDocument[]; skipped: number; used: number; limit: number; requested: number; allowed: number } {
   const limit = pineconeMaxWriteUnitsPerDay();
   if (!pineconeWriteBudgetEnabled()) {
@@ -1301,7 +1745,7 @@ function applyPineconeWriteBudget(
   const allowedDocuments: ContextDocument[] = [];
 
   for (const document of documents) {
-    const estimated = estimatePineconeWriteUnitsForDocument(document, vectorUserId);
+    const estimated = estimatePineconeWriteUnitsForDocument(document, vectorUserId, scope, tenantScope);
     requested += estimated;
     if (accepting && remaining >= estimated) {
       remaining -= estimated;
@@ -1486,6 +1930,12 @@ export async function storeContext(
 
 export interface StoreContextsOptions {
   /**
+   * Corpus visibility is an explicit content property, not an inference from the operator sentinel.
+   * Public filings/web data may omit this when written as `local` (the backward-compatible shared
+   * default). Account/decision/experience memory must pass `private`, including for `local`.
+   */
+  scope?: VectorScope;
+  /**
    * Per-call override for the trim cap applied to each document's text (chars). Defaults to
    * `contextMaxChars()` (env-tunable `VECTOR_CONTEXT_MAX_CHARS`, 2400) when omitted — so existing
    * callers (8-K summaries, disclosure docs) are byte-for-byte unchanged. `storeDocument` passes a
@@ -1527,6 +1977,10 @@ export interface StoreContextsOptions {
   managedCommit?: {
     /** Full source-document cardinality. Budget/dedup filtering must never shrink this commit set. */
     expectedRecordCount: number;
+    /** Stable physical and logical ownership established before any managed record is built. */
+    providerAuthority: string;
+    ledgerAuthority: string;
+    namespace: "managed" | "fmp-transcripts";
     persistReceipts: () => void;
     markCommitted: () => void;
   };
@@ -1563,6 +2017,32 @@ function assertVectorStoreLease(guard: VectorStoreLeaseGuard | undefined): void 
   }
 }
 
+/** Serialize the complete lifecycle of one deterministic commit inside a process. A concurrent
+ * replay waits for its predecessor, then reuses the proven committed occurrence set. This keeps
+ * same-commit calls from resetting or finalizing each other's local/provider state. */
+async function withSerializedVectorCommit<T>(
+  commitId: string,
+  guard: VectorStoreLeaseGuard | undefined,
+  work: () => Promise<T>
+): Promise<T> {
+  const previous = vectorCommitSerializers.get(commitId) ?? Promise.resolve();
+  let releaseTurn!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    releaseTurn = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => turn);
+  vectorCommitSerializers.set(commitId, tail);
+
+  await previous.catch(() => undefined);
+  try {
+    assertVectorStoreLease(guard);
+    return await work();
+  } finally {
+    releaseTurn();
+    if (vectorCommitSerializers.get(commitId) === tail) vectorCommitSerializers.delete(commitId);
+  }
+}
+
 async function settleRagSideEffect(
   effect: Promise<void>,
   leaseGuard: VectorStoreLeaseGuard | undefined
@@ -1580,13 +2060,60 @@ async function settleRagSideEffect(
  * Store multiple context documents in one embedding/upsert flow. This keeps Pinecone index
  * creation centralized and avoids one Voyage/Pinecone round-trip per SEC filing.
  */
+function effectiveStoreScope(userId: string, requestedScope: VectorScope | undefined): VectorScope {
+  // Shared is an application-managed corpus owned by the local operator. A tenant-controlled
+  // caller can never promote its own data into that cross-user tier, even by passing an internal
+  // option directly rather than spoofing metadata.
+  if (String(userId ?? "local") !== "local") return PRIVATE_SCOPE;
+  return requestedScope ?? SHARED_SCOPE;
+}
+
+function userOperationLeaseGuard(
+  claim: UserOperationClaim,
+  existing: VectorStoreLeaseGuard | undefined
+): VectorStoreLeaseGuard {
+  return {
+    ...(existing?.signal ? { signal: existing.signal } : {}),
+    assertOwnership: () => {
+      existing?.assertOwnership();
+      assertUserOperationClaim(claim);
+    }
+  };
+}
+
 export async function storeContexts(
   documents: ContextDocument[],
   userId: string = "local",
   options?: StoreContextsOptions
 ): Promise<StoreContextsResult> {
   assertVectorStoreLease(options?.leaseGuard);
+  const scope = effectiveStoreScope(userId, options?.scope);
+  const normalizedOptions: StoreContextsOptions = { ...options, scope };
+  if (scope !== PRIVATE_SCOPE) {
+    return storeContextsImpl(documents, userId, normalizedOptions);
+  }
+
+  // Hold one durable per-user operation claim across Voyage and Pinecone. Account deletion sees
+  // the claim as a blocker, and every provider/write boundary reasserts it. A writer admitted
+  // before deletion therefore finishes before the provider purge; one admitted after preparation
+  // is rejected by the durable write epoch and cannot recreate private vectors after erasure.
+  return withUserWriteOperation(userId, "vector-store-contexts", async (claim) => (
+    storeContextsImpl(documents, userId, {
+      ...normalizedOptions,
+      leaseGuard: userOperationLeaseGuard(claim, options?.leaseGuard)
+    })
+  ));
+}
+
+async function storeContextsImpl(
+  documents: ContextDocument[],
+  userId: string,
+  options: StoreContextsOptions
+): Promise<StoreContextsResult> {
+  assertVectorStoreLease(options?.leaseGuard);
   const vectorUserId = vectorUserIdFor(userId);
+  const scope = effectiveStoreScope(userId, options.scope);
+  const tenantScope = vectorTenantScope(userId, scope);
   const validDocuments = documents
     .map((doc) => {
       let text = doc.text;
@@ -1630,7 +2157,9 @@ export async function storeContexts(
     })
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
-
+  const privateLedgerAuthority = scope === PRIVATE_SCOPE && !options?.managedCommit
+    ? managedVectorLedgerAuthority()
+    : undefined;
   // R10 (2026-07-01 RAG backlog): opt-in content_hash dedup for this call, gated on
   // `dedupKeyPrefix` being set. Reuses the same SHA-256-first-16 `hashContent` helper
   // `storeDocument`/`chunk.ts` use, and the same `document_chunks` table/CRUD — keyed on the
@@ -1765,7 +2294,7 @@ export async function storeContexts(
 
   let writeUnitBudgetSkipped = 0;
   assertVectorStoreLease(options?.leaseGuard);
-  const writeBudget = applyPineconeWriteBudget(documentsToStore, userId, vectorUserId);
+  const writeBudget = applyPineconeWriteBudget(documentsToStore, userId, vectorUserId, scope, tenantScope);
   if (writeBudget.skipped > 0) {
     writeUnitBudgetSkipped = writeBudget.skipped;
     const budgetPayload = {
@@ -1843,7 +2372,20 @@ export async function storeContexts(
     assertVectorStoreLease(options?.leaseGuard);
     await ensureIndex(pc, initCacheKey, pineconeSource, userId, options?.leaseGuard);
     assertVectorStoreLease(options?.leaseGuard);
-    const index = pc.Index(indexName());
+    const stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+    if (privateLedgerAuthority) {
+      if (!stableProviderAuthority) throw new Error("private-vector-provider-authority-unavailable");
+      ensurePrivateVectorNamespaceManifest(userId, privateLedgerAuthority, stableProviderAuthority);
+    }
+    if (options?.managedCommit && stableProviderAuthority !== options.managedCommit.providerAuthority) {
+      throw new Error("managed-vector-provider-authority-unavailable");
+    }
+    const providerAuthority = options?.managedCommit?.providerAuthority ?? providerAuthorityForInitKey(initCacheKey);
+    const index = options?.managedCommit
+      ? vectorDataIndex(pc, options.managedCommit.namespace, options.managedCommit.ledgerAuthority)
+      : scope === PRIVATE_SCOPE
+        ? vectorDataIndex(pc, "private", privateLedgerAuthority, userId)
+        : vectorDataIndex(pc, "default");
     const batches = chunks(documentsToStore, embedBatchSize());
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
@@ -1947,7 +2489,15 @@ export async function storeContexts(
         return {
           id: contextId(document, indexInBatch),
           values: embedding,
-          metadata: cleanMetadata(document.metadata, document.text, vectorUserId)
+          metadata: cleanMetadata(
+            document.metadata,
+            document.text,
+            vectorUserId,
+            scope,
+            tenantScope,
+            providerAuthority,
+            options?.managedCommit?.ledgerAuthority
+          )
         };
       });
 
@@ -2086,21 +2636,136 @@ export async function storeContexts(
  * storeContexts for anything longer than a short catalyst summary (e.g. full 10-K risk sections).
  */
 export interface StoreDocumentOptions extends ChunkOptions {
+  /** Explicit corpus visibility. Public `local` documents remain shared by default. */
+  scope?: VectorScope;
   /** Guard inherited from the producer's durable shared vector-ingest lease. */
   leaseGuard?: VectorStoreLeaseGuard;
   /** Full source-content version (normally SHA-256). Defaults to SHA-256 of the input body. */
   contentVersion?: string;
   /** Parser/chunker identity included in every collision-safe occurrence id. */
   parserRevision?: string;
+  /** Stable logical document identity shared by corrected/versioned occurrences. */
+  documentKey?: string;
+}
+
+/** Canonical identity for metadata that changes retrieval eligibility or citation meaning. The
+ * same helper is used before writes and after provider reads, so carrying a stale hash beside
+ * tampered metadata cannot satisfy the relational receipt guard. */
+export function retrievalMetadataVersionFromMetadata(metadata: Record<string, unknown>): string {
+  const stringValue = (value: unknown): string => (
+    typeof value === "string" || typeof value === "number" ? String(value) : ""
+  );
+  const rawTickers = Array.isArray(metadata.ticker)
+    ? metadata.ticker
+    : typeof metadata.ticker === "string"
+      ? metadata.ticker.split(",")
+      : [];
+  const tickers = [...new Set([
+    ...rawTickers.map((value) => canonicalTicker(String(value))),
+    canonicalTicker(stringValue(metadata.symbol))
+  ].filter(Boolean))].sort();
+  return crypto.createHash("sha256").update(JSON.stringify({
+    schema: 1,
+    docType: stringValue(metadata.doc_type).toLowerCase(),
+    publishedAt: stringValue(metadata.timestamp),
+    acceptanceDatetime: stringValue(metadata.acceptance_datetime),
+    asOfEpochMs: resolveAsOfEpochMs(metadata) ?? null,
+    title: stringValue(metadata.document_title),
+    url: stringValue(metadata.url),
+    symbol: canonicalTicker(stringValue(metadata.symbol)),
+    tickers
+  }), "utf8").digest("hex");
 }
 
 type DocumentChunkReceipt = Parameters<typeof insertDocumentChunks>[0][number];
 type ChunkOccurrenceReceipt = Parameters<typeof dbModule.insertManagedChunkOccurrences>[0][number];
 
+function committedVectorCommitDisposition(
+  commitId: string,
+  expected: ChunkOccurrenceReceipt[],
+  providerAuthority: string,
+  ledgerAuthority: string,
+  vectorNamespace: "managed" | "fmp-transcripts"
+): { disposition: "not_committed" | "exact" | "mismatch"; attemptToken?: string } {
+  const database = dbModule.getDb();
+  const commit = database.prepare(`
+    SELECT c.state, c.expected_vectors, c.attempt_token, c.lease_expires_at,
+           c.provider_authority, c.ledger_authority, c.vector_namespace,
+           CASE WHEN h.commit_id IS NULL THEN 0 ELSE 1 END AS is_active
+    FROM vector_ingest_commits c
+    LEFT JOIN vector_document_heads h
+      ON h.commit_id = c.id
+      AND h.tenant_scope = c.tenant_scope
+      AND h.source = c.source
+      AND h.accession = c.document_key
+    WHERE c.id = ?
+  `).get(commitId) as {
+    state?: string;
+    expected_vectors?: number;
+    attempt_token?: string;
+    is_active?: number;
+    lease_expires_at?: string | null;
+    provider_authority?: string | null;
+    ledger_authority?: string | null;
+    vector_namespace?: string;
+  } | undefined;
+  if (commit?.state !== "committed") return { disposition: "not_committed" };
+  if (
+    !commit.is_active ||
+    !commit.attempt_token ||
+    commit.provider_authority !== providerAuthority ||
+    commit.ledger_authority !== ledgerAuthority ||
+    commit.vector_namespace !== vectorNamespace ||
+    commit.lease_expires_at ||
+    commit.expected_vectors !== expected.length
+  ) return { disposition: "mismatch" };
+
+  const rows = database.prepare(`
+    SELECT vector_id, content_hash, symbol, source, accession, section, ordinal,
+           tenant_scope, content_version, receipt_state
+    FROM chunk_occurrences
+    WHERE commit_id = ?
+    ORDER BY vector_id
+  `).all(commitId) as Array<{
+    vector_id: string;
+    content_hash: string;
+    symbol: string;
+    source: string;
+    accession: string;
+    section: string;
+    ordinal: number;
+    tenant_scope: string;
+    content_version: string;
+    receipt_state: string;
+  }>;
+  if (rows.length !== expected.length) return { disposition: "mismatch" };
+
+  const expectedById = new Map(expected.map((item) => [item.vectorId, item]));
+  const exact = rows.every((row) => {
+    const item = expectedById.get(row.vector_id);
+    return Boolean(
+      item &&
+      row.receipt_state === "committed" &&
+      row.content_hash === item.contentHash &&
+      row.symbol === item.symbol &&
+      row.source === item.source &&
+      row.accession === item.accession &&
+      row.section === item.section &&
+      row.ordinal === item.ordinal &&
+      row.tenant_scope === item.tenantScope &&
+      row.content_version === item.contentVersion
+    );
+  });
+  return exact
+    ? { disposition: "exact", attemptToken: commit.attempt_token }
+    : { disposition: "mismatch" };
+}
+
 function persistDocumentReceipts(
   chunksToRecord: DocumentChunkReceipt[],
   occurrencesToRecord: ChunkOccurrenceReceipt[],
-  commitId: string
+  commitId: string,
+  attemptToken: string
 ): void {
   // Both receipts describe one completed external write set. Nested better-sqlite3 transactions use
   // savepoints, so either every local receipt commits or neither does; an idempotent retry can then
@@ -2110,7 +2775,7 @@ function persistDocumentReceipts(
     insertDocumentChunks(chunksToRecord);
     dbModule.insertManagedChunkOccurrences(occurrencesToRecord);
     if (typeof dbModule.markVectorCommitReceiptsPersisted === "function") {
-      dbModule.markVectorCommitReceiptsPersisted(commitId);
+      dbModule.markVectorCommitReceiptsPersisted(commitId, attemptToken);
     } else if (process.env.NODE_ENV !== "test") {
       throw new Error("Vector commit receipt ledger is unavailable.");
     }
@@ -2155,7 +2820,34 @@ export async function storeDocument(
   options?: StoreDocumentOptions
 ): Promise<StoreContextsResult> {
   assertVectorStoreLease(options?.leaseGuard);
+  const scope = effectiveStoreScope(userId, options?.scope);
+  const normalizedOptions: StoreDocumentOptions = { ...options, scope };
+  if (scope !== PRIVATE_SCOPE) {
+    return storeDocumentImpl(doc, userId, normalizedOptions);
+  }
+
+  // `storeDocument` performs provider discovery and creates durable commit/occurrence receipts
+  // before it reaches the lower-level upsert. Hold the account write claim across that entire
+  // workflow so deletion cannot race any of those side effects, and force every tenant document
+  // into its private corpus before deriving tenant/commit identities.
+  return withUserWriteOperation(userId, "vector-store-document", async (claim) => (
+    storeDocumentImpl(doc, userId, {
+      ...normalizedOptions,
+      leaseGuard: userOperationLeaseGuard(claim, options?.leaseGuard)
+    })
+  ));
+}
+
+async function storeDocumentImpl(
+  doc: ChunkInput & { symbol?: string },
+  userId: string,
+  options: StoreDocumentOptions
+): Promise<StoreContextsResult> {
+  assertVectorStoreLease(options.leaseGuard);
   const chunked = chunkDocument(doc, options);
+  // Empty/whitespace-only input has no commit cardinality. Do not leave an unfinishable
+  // expected_vectors=0 row in the durable pending ledger.
+  if (chunked.length === 0) return { attempted: 0, indexed: 0, documentComplete: false };
   const fallbackSymbol = doc.symbol ?? (Array.isArray(doc.ticker) ? doc.ticker[0] : doc.ticker) ?? "";
   const source = doc.source || "sec-edgar";
 
@@ -2172,20 +2864,79 @@ export async function storeDocument(
   const embedRev = `v${EMBED_REV}`;
   const parserRev = options?.parserRevision?.trim() || "v1";
   const accession = doc.doc_id || "unknown_accession";
+  const documentKey = options?.documentKey?.trim() || accession;
   const contentVersion = options?.contentVersion?.trim() ||
     crypto.createHash("sha256").update(doc.text, "utf8").digest("hex");
-  const tenantScope = vectorTenantScope(userId);
+  // Retrieval-significant metadata is version identity, not mutable decoration. A corrected
+  // acceptance/publication stamp or document type must produce a distinct occurrence generation;
+  // otherwise an exact-content replay could retain stale point-in-time filters and citations.
+  const normalizedDocument = chunked[0];
+  const normalizedSymbol = normalizedDocument.ticker[0] ?? canonicalTicker(fallbackSymbol);
+  const retrievalMetadataVersion = retrievalMetadataVersionFromMetadata({
+    doc_type: normalizedDocument.doc_type,
+    timestamp: normalizedDocument.published_at,
+    acceptance_datetime: normalizedDocument.acceptance_datetime,
+    document_title: normalizedDocument.title,
+    url: normalizedDocument.url,
+    symbol: normalizedSymbol,
+    ticker: normalizedDocument.ticker
+  });
+  const scope = effectiveStoreScope(userId, options.scope);
+  const tenantScope = vectorTenantScope(userId, scope);
   const sequence = 1;
   const documentName = doc.title || "main.html";
   const now = new Date().toISOString();
+  // Managed ids and relational receipts are bound to the physical Pinecone index. Resolve that
+  // authority before creating any local commit row, so a control-plane/configuration failure cannot
+  // leave a deterministic receipt for a provider that was never identified.
+  const providerClients = await getClients(userId, options?.leaseGuard);
+  if (!providerClients.pc || !providerClients.voyage || !providerClients.initCacheKey) {
+    audit("vector_store", {
+      ok: false,
+      attempted: chunked.length,
+      indexed: 0,
+      skipped: true,
+      reason: "missing Pinecone/Voyage keys before managed commit"
+    }, userId);
+    return { attempted: chunked.length, indexed: 0, skipped: true, unconfigured: true };
+  }
+  await ensureIndex(
+    providerClients.pc,
+    providerClients.initCacheKey,
+    providerClients.pineconeSource,
+    userId,
+    options?.leaseGuard
+  );
+  assertVectorStoreLease(options?.leaseGuard);
+  const providerAuthority = stableProviderAuthorityForInitKey(providerClients.initCacheKey);
+  if (!providerAuthority) {
+    audit("vector_store", {
+      ok: false,
+      attempted: chunked.length,
+      indexed: 0,
+      skipped: true,
+      reason: "stable Pinecone provider authority unavailable"
+    }, userId);
+    return {
+      attempted: chunked.length,
+      indexed: 0,
+      skipped: true,
+      error: "managed-vector-provider-authority-unavailable",
+      documentComplete: false
+    };
+  }
+  const ledgerAuthority = managedVectorLedgerAuthority();
+  const vectorNamespace = source === "fmp-earnings-transcript" ? "fmp-transcripts" : "managed";
   const occurrenceDescriptors = chunked.map((chunk, index) => {
     const ordinal = index + 1;
     const cleanSection = chunk.section || "body";
     const vectorId = buildOccurrenceVectorId({
+      ledgerAuthority,
+      providerAuthority,
       tenantScope,
       source,
       accession,
-      contentVersion,
+      contentVersion: `${contentVersion}:metadata:${retrievalMetadataVersion}`,
       section: cleanSection,
       ordinal,
       parserRevision: parserRev,
@@ -2193,31 +2944,20 @@ export async function storeDocument(
     });
     return { chunk, ordinal, vectorId };
   });
-  const commitId = `vcommit:v1:${crypto.createHash("sha256").update(JSON.stringify([
+  const commitId = `vcommit:v3:${crypto.createHash("sha256").update(JSON.stringify([
+    ledgerAuthority,
+    providerAuthority,
     tenantScope,
     source,
     accession,
+    documentKey,
     contentVersion,
+    retrievalMetadataVersion,
     parserRev,
     embedRev,
     occurrenceDescriptors.map((item) => item.vectorId)
   ]), "utf8").digest("hex")}`;
-  if (typeof dbModule.beginVectorCommit === "function") {
-    dbModule.beginVectorCommit({
-      id: commitId,
-      tenantScope,
-      userId,
-      source,
-      accession,
-      contentVersion,
-      parserRevision: parserRev,
-      embedRevision: embedRev,
-      expectedVectors: occurrenceDescriptors.length,
-      now
-    });
-  } else if (process.env.NODE_ENV !== "test") {
-    throw new Error("Vector commit ledger is unavailable.");
-  }
+  const attemptToken = crypto.randomUUID();
 
   const documents: ContextDocument[] = occurrenceDescriptors.map(({ chunk, ordinal, vectorId }) => ({
     text: `${chunk.context_header}\n\n${chunk.text}`,
@@ -2231,6 +2971,7 @@ export async function storeDocument(
       accession,
       chunk_id: chunk.chunk_id,
       acceptance_datetime: chunk.acceptance_datetime,
+      document_title: chunk.title,
       section: chunk.section,
       doc_type: chunk.doc_type,
       is_table: chunk.is_table,
@@ -2238,8 +2979,14 @@ export async function storeDocument(
       content_hash: chunk.content_hash,
       vector_id: vectorId,
       tenant_scope: tenantScope,
+      ledger_authority: ledgerAuthority,
+      provider_authority: providerAuthority,
       content_version: contentVersion,
+      retrieval_metadata_version: retrievalMetadataVersion,
       vector_commit_id: commitId,
+      vector_namespace: vectorNamespace,
+      document_key: documentKey,
+      vector_attempt_token: attemptToken,
       chunk_ordinal: ordinal,
       parser_revision: parserRev,
       embed_revision: embedRev,
@@ -2266,42 +3013,151 @@ export async function storeDocument(
     createdAt: now
   }));
 
-  // Align the storeContexts trim cap with the ACTUAL token budget chunkDocument used (plus the
-  // citation header allowance). Table chunks remain untrimmed in storeContexts.
-  const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS;
-  const headerAllowance = 512;
-  const chunkAlignedMaxChars = Math.max(contextMaxChars(), maxTokens * CHARS_PER_TOKEN_CEILING + headerAllowance);
-  const result = await storeContexts(documents, userId, {
-    maxChars: chunkAlignedMaxChars,
-    reuseExactEmbeddings: true,
-    leaseGuard: options?.leaseGuard,
-    managedCommit: {
-      expectedRecordCount: occurrenceDescriptors.length,
-      persistReceipts: () => persistDocumentReceipts(chunkHashes, occurrencesToRecord, commitId),
-      markCommitted: () => {
-        if (typeof dbModule.markVectorCommitCommitted === "function") {
-          dbModule.markVectorCommitCommitted(commitId);
+  return withSerializedVectorCommit(commitId, options?.leaseGuard, async () => {
+    const reuseCommitted = (): StoreContextsResult | undefined => {
+      const committed = committedVectorCommitDisposition(
+        commitId,
+        occurrencesToRecord,
+        providerAuthority,
+        ledgerAuthority,
+        vectorNamespace
+      );
+      if (committed.disposition === "exact" && committed.attemptToken) {
+        return {
+          attempted: chunked.length,
+          indexed: 0,
+          skipped: true,
+          reusedCommitted: true,
+          documentComplete: true,
+          managedCommitProof: { commitId, attemptToken: committed.attemptToken }
+        };
+      }
+      if (committed.disposition === "mismatch") {
+        return {
+          attempted: chunked.length,
+          indexed: 0,
+          error: "document-committed-receipt-integrity-mismatch",
+          documentComplete: false
+        };
+      }
+      return undefined;
+    };
+
+    const existing = reuseCommitted();
+    if (existing) return existing;
+
+    const leaseExpiry = () => new Date(Date.now() + VECTOR_COMMIT_LEASE_MS).toISOString();
+    if (typeof dbModule.beginVectorCommit === "function") {
+      const begun = dbModule.beginVectorCommit({
+        id: commitId,
+        tenantScope,
+        userId,
+        providerAuthority,
+        ledgerAuthority,
+        vectorNamespace,
+        source,
+        accession,
+        documentKey,
+        contentVersion,
+        retrievalMetadataVersion,
+        parserRevision: parserRev,
+        embedRevision: embedRev,
+        expectedVectors: occurrenceDescriptors.length,
+        attemptToken,
+        leaseExpiresAt: leaseExpiry(),
+        now
+      });
+      // Defense in depth for another process committing between the inspection and SQLite claim.
+      if (begun === "already_committed") {
+        return reuseCommitted() ?? {
+          attempted: chunked.length,
+          indexed: 0,
+          error: "document-committed-receipt-integrity-mismatch",
+          documentComplete: false
+        };
+      }
+      if (begun === "busy") {
+        return {
+          attempted: chunked.length,
+          indexed: 0,
+          error: "document-commit-in-progress",
+          documentComplete: false
+        };
+      }
+    } else if (process.env.NODE_ENV !== "test") {
+      throw new Error("Vector commit ledger is unavailable.");
+    }
+
+    const commitLeaseGuard: VectorStoreLeaseGuard = {
+      signal: options?.leaseGuard?.signal,
+      assertOwnership: () => {
+        options?.leaseGuard?.assertOwnership();
+        if (typeof dbModule.renewVectorCommitLease === "function") {
+          dbModule.renewVectorCommitLease(commitId, attemptToken, leaseExpiry());
         } else if (process.env.NODE_ENV !== "test") {
-          throw new Error("Vector commit finalizer is unavailable.");
+          throw new Error("Vector commit lease ledger is unavailable.");
         }
       }
+    };
+    assertVectorStoreLease(commitLeaseGuard);
+
+    // Align the storeContexts trim cap with the ACTUAL token budget chunkDocument used (plus the
+    // citation header allowance). Table chunks remain untrimmed in storeContexts.
+    const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS;
+    const headerAllowance = 512;
+    const chunkAlignedMaxChars = Math.max(contextMaxChars(), maxTokens * CHARS_PER_TOKEN_CEILING + headerAllowance);
+    // The exported storeContexts wrapper acquires the same durable account claim for direct batch
+    // callers. This document workflow already holds it, so call the implementation directly and
+    // retain the claim-bearing lease guard across the managed commit transaction.
+    const result = await storeContextsImpl(documents, userId, {
+      scope,
+      maxChars: chunkAlignedMaxChars,
+      reuseExactEmbeddings: true,
+      leaseGuard: commitLeaseGuard,
+      managedCommit: {
+        expectedRecordCount: occurrenceDescriptors.length,
+        providerAuthority,
+        ledgerAuthority,
+        namespace: vectorNamespace,
+        persistReceipts: () => persistDocumentReceipts(
+          chunkHashes,
+          occurrencesToRecord,
+          commitId,
+          attemptToken
+        ),
+        markCommitted: () => {
+          if (typeof dbModule.markVectorCommitCommitted === "function") {
+            dbModule.markVectorCommitCommitted(commitId, attemptToken);
+          } else if (process.env.NODE_ENV !== "test") {
+            throw new Error("Vector commit finalizer is unavailable.");
+          }
+        }
+      }
+    });
+    assertVectorStoreLease(commitLeaseGuard);
+
+    const vectorsComplete =
+      result.indexed === chunked.length &&
+      !result.error &&
+      (result.rejectedInvalidEmbeddings ?? 0) === 0 &&
+      (result.budgetSkipped ?? 0) === 0 &&
+      (result.writeUnitBudgetSkipped ?? 0) === 0;
+    if (!vectorsComplete) {
+      if (typeof dbModule.abortVectorCommit === "function") {
+        dbModule.abortVectorCommit(commitId, attemptToken);
+      }
+      else if (process.env.NODE_ENV !== "test") throw new Error("Vector commit abort ledger is unavailable.");
+      return { ...result, attempted: chunked.length, documentComplete: false };
     }
+
+    assertVectorStoreLease(commitLeaseGuard);
+    return {
+      ...result,
+      attempted: chunked.length,
+      documentComplete: true,
+      managedCommitProof: { commitId, attemptToken }
+    };
   });
-  assertVectorStoreLease(options?.leaseGuard);
-
-  const vectorsComplete =
-    chunked.length > 0 &&
-    result.indexed === chunked.length &&
-    !result.error &&
-    (result.rejectedInvalidEmbeddings ?? 0) === 0 &&
-    (result.budgetSkipped ?? 0) === 0 &&
-    (result.writeUnitBudgetSkipped ?? 0) === 0;
-  if (!vectorsComplete) {
-    return { ...result, attempted: chunked.length, documentComplete: false };
-  }
-
-  assertVectorStoreLease(options?.leaseGuard);
-  return { ...result, attempted: chunked.length, documentComplete: true };
 }
 
 /**
@@ -2611,6 +3467,31 @@ export interface VectorMetadataInventoryRow {
   metadata: Record<string, unknown>;
 }
 
+export type VectorDataNamespace = "default" | "managed" | "private" | "fmp-transcripts";
+
+function vectorDataIndex(
+  pc: Pinecone,
+  namespace: VectorDataNamespace,
+  ledgerAuthority?: string,
+  userId?: string
+) {
+  const base = pc.Index(indexName());
+  if (namespace === "default") return base;
+  const namespaceMethod = (base as unknown as { namespace?: (name: string) => typeof base }).namespace;
+  if (typeof namespaceMethod === "function") {
+    const name = namespace === "private"
+      ? privateVectorNamespace(userId ?? "local", ledgerAuthority)
+      : namespace === "fmp-transcripts"
+        ? fmpTranscriptVectorNamespace(ledgerAuthority)
+        : ledgerAuthority
+          ? `socratic-${managedOccurrenceToken(ledgerAuthority)}`
+          : managedVectorNamespace();
+    return namespaceMethod.call(base, name);
+  }
+  if (process.env.NODE_ENV === "test") return base;
+  throw new Error("Pinecone namespace support is unavailable for isolated vectors.");
+}
+
 /**
  * Authoritative provider-side metadata inventory. It lists Pinecone itself rather than trusting
  * local receipts, so receiptless crash ghosts are included. Callers must opt into this I/O by
@@ -2618,26 +3499,44 @@ export interface VectorMetadataInventoryRow {
  */
 export async function inventoryVectorRecordsByMetadata(options: {
   userId?: string;
+  /** Immutable id prefix. Prefer this over mutable metadata for v3 managed-corpus inventories. */
+  prefix?: string;
   source?: string;
   docType?: string;
   receiptRequired?: boolean;
   batchSize?: number;
   /** Hard provider-record scan bound. Exceeding it throws rather than returning a partial inventory. */
   maxScanned?: number;
+  /** Exact prepared request authorizing provider reads through the account-deletion fence. */
+  accountDeletionRequestId?: string;
+  leaseGuard?: VectorStoreLeaseGuard;
+  /** Managed corpus is isolated from legacy/direct vectors and other applications in shared BYOK indexes. */
+  namespace?: VectorDataNamespace;
 } = {}): Promise<VectorMetadataInventoryRow[]> {
   const userId = options.userId ?? "local";
   const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
   const maxScanned = Math.max(1, Math.min(1_000_000, Math.floor(options.maxScanned ?? 250_000)));
-  const { pc, pineconeSource } = await getClients(userId);
+  assertVectorStoreLease(options.leaseGuard);
+  const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for vector inventory.");
-  if (!(await indexExists(pc, pineconeSource, userId))) return [];
-  const index = pc.Index(indexName());
+  if (!(await indexExists(pc, pineconeSource, userId, options.accountDeletionRequestId, options.leaseGuard))) return [];
+  const index = vectorDataIndex(pc, options.namespace ?? "default", undefined, userId);
   const found: VectorMetadataInventoryRow[] = [];
   let scanned = 0;
   let paginationToken: string | undefined;
   do {
-    const listed = await withRagApiHealth("pinecone", pineconeSource, userId, "inventory list", () =>
-      index.listPaginated({ ...(paginationToken ? { paginationToken } : {}) })
+    assertVectorStoreLease(options.leaseGuard);
+    const listed = await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      userId,
+      "inventory list",
+      () => index.listPaginated({
+        ...(options.prefix ? { prefix: options.prefix } : {}),
+        ...(paginationToken ? { paginationToken } : {})
+      }),
+      options.leaseGuard,
+      options.accountDeletionRequestId ? { accountDeletionRequestId: options.accountDeletionRequestId } : undefined
     );
     paginationToken = listed.pagination?.next;
     const ids = (listed.vectors ?? []).map((row) => row.id).filter((id): id is string => Boolean(id));
@@ -2646,11 +3545,22 @@ export async function inventoryVectorRecordsByMetadata(options: {
     }
     scanned += ids.length;
     for (const idBatch of chunks(ids, batchSize)) {
-      const fetched = await withRagApiHealth("pinecone", pineconeSource, userId, "inventory fetch", () =>
-        index.fetch({ ids: idBatch })
+      assertVectorStoreLease(options.leaseGuard);
+      const fetched = await withRagApiHealth(
+        "pinecone",
+        pineconeSource,
+        userId,
+        "inventory fetch",
+        () => index.fetch({ ids: idBatch }),
+        options.leaseGuard,
+        options.accountDeletionRequestId ? { accountDeletionRequestId: options.accountDeletionRequestId } : undefined
       );
       for (const id of idBatch) {
-        const raw = fetched.records?.[id]?.metadata;
+        const record = fetched.records?.[id];
+        // Pinecone listing is eventually consistent after deletes. A listed id that the
+        // authoritative fetch no longer returns is absent, not a metadata-less live vector.
+        if (!record) continue;
+        const raw = record.metadata;
         const metadata = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
         if (options.source !== undefined && metadata.source !== options.source) continue;
         if (options.docType !== undefined && String(metadata.doc_type ?? "").toLowerCase() !== options.docType.toLowerCase()) continue;
@@ -2659,35 +3569,515 @@ export async function inventoryVectorRecordsByMetadata(options: {
       }
     }
   } while (paginationToken);
+  assertVectorStoreLease(options.leaseGuard);
   return found.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export async function purgeVectorRecordsByMetadata(options: {
   userId?: string;
+  prefix?: string;
   source?: string;
   docType?: string;
   receiptRequired?: boolean;
   dryRun?: boolean;
   batchSize?: number;
   maxScanned?: number;
+  leaseGuard?: VectorStoreLeaseGuard;
+  accountDeletionRequestId?: string;
+  namespace?: VectorDataNamespace;
 }): Promise<{ dryRun: boolean; ids: string[]; deleted: number }> {
+  assertVectorStoreLease(options.leaseGuard);
   const dryRun = options.dryRun !== false;
   const rows = await inventoryVectorRecordsByMetadata(options);
+  assertVectorStoreLease(options.leaseGuard);
   const ids = rows.map((row) => row.id);
   if (dryRun || ids.length === 0) return { dryRun, ids, deleted: 0 };
   const userId = options.userId ?? "local";
-  const { pc, pineconeSource } = await getClients(userId);
+  const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for vector purge.");
-  const index = pc.Index(indexName());
+  const index = vectorDataIndex(pc, options.namespace ?? "default", undefined, userId);
   const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
   let deleted = 0;
   for (const idBatch of chunks(ids, batchSize)) {
-    await withRagApiHealth("pinecone", pineconeSource, userId, "rights purge delete", () =>
-      index.deleteMany({ ids: idBatch })
+    assertVectorStoreLease(options.leaseGuard);
+    await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      userId,
+      "rights purge delete",
+      () => index.deleteMany({ ids: idBatch }),
+      options.leaseGuard,
+      options.accountDeletionRequestId ? { accountDeletionRequestId: options.accountDeletionRequestId } : undefined
     );
+    assertVectorStoreLease(options.leaseGuard);
     deleted += idBatch.length;
   }
   return { dryRun, ids, deleted };
+}
+
+/** Delete an exact durable id set without first depending on provider list visibility. */
+export async function purgeVectorRecordIds(options: {
+  ids: string[];
+  userId?: string;
+  namespace?: VectorDataNamespace;
+  batchSize?: number;
+  leaseGuard?: VectorStoreLeaseGuard;
+}): Promise<{ ids: string[]; deleted: number }> {
+  const ids = [...new Set(options.ids.filter(Boolean))].sort();
+  if (ids.length === 0) return { ids, deleted: 0 };
+  const userId = options.userId ?? "local";
+  const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
+  if (!pc) throw new Error("Pinecone key not configured for exact vector purge.");
+  const index = vectorDataIndex(pc, options.namespace ?? "default", undefined, userId);
+  const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
+  for (const idBatch of chunks(ids, batchSize)) {
+    assertVectorStoreLease(options.leaseGuard);
+    await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      userId,
+      "rights purge exact delete",
+      () => index.deleteMany({ ids: idBatch }),
+      options.leaseGuard
+    );
+  }
+  assertVectorStoreLease(options.leaseGuard);
+  return { ids, deleted: ids.length };
+}
+
+/** Namespace-wide provider erasure for a corpus isolated specifically for revocable rights. */
+export async function purgeVectorNamespaceAll(options: {
+  userId?: string;
+  namespace: "fmp-transcripts";
+  leaseGuard?: VectorStoreLeaseGuard;
+}): Promise<void> {
+  const userId = options.userId ?? "local";
+  const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
+  if (!pc) throw new Error("Pinecone key not configured for namespace purge.");
+  const index = vectorDataIndex(pc, options.namespace, undefined, userId);
+  assertVectorStoreLease(options.leaseGuard);
+  await withRagApiHealth(
+    "pinecone",
+    pineconeSource,
+    userId,
+    "rights purge namespace delete",
+    () => index.deleteAll(),
+    options.leaseGuard
+  );
+  assertVectorStoreLease(options.leaseGuard);
+}
+
+/** Exact private-corpus ownership predicate shared by account erasure and its network-free tests. */
+export function vectorMetadataBelongsToPrivateUser(
+  metadata: Record<string, unknown>,
+  userId: string
+): boolean {
+  const vectorUserId = vectorUserIdFor(userId);
+  const metadataUserId = typeof metadata.userId === "string" ? metadata.userId : undefined;
+  const tenantScope = typeof metadata.tenant_scope === "string" ? metadata.tenant_scope : undefined;
+  const exactPrivateTenant = vectorTenantScope(userId, PRIVATE_SCOPE);
+
+  if (tenantScope === exactPrivateTenant) return true;
+  // Before tenant ids were hashed, account-private rows used the exact raw user id. Only the exact
+  // owner value is accepted; other private:* tenants remain isolated even if sanitized ids collide.
+  if (tenantScope === `private:${userId}`) return true;
+  if (tenantScope?.startsWith("private:")) return false;
+  // Historical operator memories were incorrectly stamped scope=shared. The account marker plus
+  // exact legacy user id distinguishes them from public SEC/web vectors that also use `local`.
+  if (metadata.memory_scope === "account") {
+    return legacyPrivateMetadataUserMatches(metadataUserId, userId);
+  }
+  if (metadata.scope === PRIVATE_SCOPE) {
+    return tenantScope == null && legacyPrivateMetadataUserMatches(metadataUserId, userId);
+  }
+  if (metadata.scope === SHARED_SCOPE) {
+    // Explicit shared/public writes normally belong to the local application corpus. A nonlocal
+    // user id on such a record is still account-linked data and must be erased with that account.
+    return vectorUserId !== "local" && legacyPrivateMetadataUserMatches(metadataUserId, userId);
+  }
+  // Pre-scope non-operator rows were private by construction. A bare local sentinel remains public
+  // unless the account-memory marker above proves otherwise.
+  return vectorUserId !== "local" && legacyPrivateMetadataUserMatches(metadataUserId, userId);
+}
+
+/**
+ * Exact provider-side filters for the historical default namespace. A successful filter delete is
+ * the authority for records that an eventually-consistent list can omit. Every clause is scoped to
+ * an exact tenant/user identity; the local operator's unscoped public SEC corpus is never matched.
+ */
+export function legacyPrivateVectorDeleteFilters(userId: string): Record<string, unknown>[] {
+  const tenantScope = vectorTenantScope(userId, PRIVATE_SCOPE);
+  const rawTenantScope = `private:${userId}`;
+  const filters: Record<string, unknown>[] = [
+    { tenant_scope: { $eq: tenantScope } },
+    ...(rawTenantScope === tenantScope ? [] : [{ tenant_scope: { $eq: rawTenantScope } }])
+  ];
+  if (!isUnambiguousLegacyVectorUserId(userId)) return filters;
+  const metadataUserId = vectorUserIdFor(userId);
+  const withoutTenant = { tenant_scope: { $exists: false } };
+  filters.push(
+    { $and: [withoutTenant, { userId: { $eq: metadataUserId } }, { scope: { $eq: PRIVATE_SCOPE } }] },
+    { $and: [withoutTenant, { userId: { $eq: metadataUserId } }, { memory_scope: { $eq: "account" } }] }
+  );
+  if (metadataUserId !== "local") {
+    filters.push(
+      {
+        $and: [
+          withoutTenant,
+          { userId: { $eq: metadataUserId } },
+          { scope: { $exists: false } }
+        ]
+      },
+      {
+        $and: [
+          withoutTenant,
+          { userId: { $eq: metadataUserId } },
+          { scope: { $eq: SHARED_SCOPE } }
+        ]
+      }
+    );
+  }
+  return filters;
+}
+
+export interface ManagedVectorReceiptEvidence {
+  id: string;
+  contentHash: string;
+  source: string;
+  tenantScope: string;
+  userId: string;
+  providerAuthority?: string;
+  ledgerAuthority?: string;
+  vectorNamespace: "managed" | "fmp-transcripts";
+}
+
+/** Local identity evidence for purge/reconciliation. Provider metadata is mutable and therefore
+ * cannot be the sole authority for proving that a managed vector belongs to a source or tenant. */
+export function managedVectorReceiptEvidence(options: {
+  source?: string;
+  tenantScope?: string;
+  userId?: string;
+} = {}): ManagedVectorReceiptEvidence[] {
+  let rows: Array<{
+    vector_id: string;
+    content_hash: string;
+    source: string;
+    tenant_scope: string;
+    user_id: string;
+    provider_authority: string | null;
+    ledger_authority: string | null;
+    vector_namespace: "managed" | "fmp-transcripts";
+  }>;
+  try {
+    rows = dbModule.getDb().prepare(`
+      SELECT o.vector_id, o.content_hash, c.source, c.tenant_scope, c.user_id,
+             c.provider_authority, c.ledger_authority, c.vector_namespace
+      FROM chunk_occurrences o
+      JOIN vector_ingest_commits c ON c.id = o.commit_id
+      ORDER BY o.vector_id
+    `).all() as typeof rows;
+  } catch (error) {
+    // Isolated unit suites replace the DB barrel with a deliberately tiny mock. Production must
+    // never lose the relational purge authority silently.
+    if (process.env.NODE_ENV === "test") return [];
+    throw error;
+  }
+  return rows
+    .filter((row) => options.source === undefined || row.source === options.source)
+    .filter((row) => options.tenantScope === undefined || row.tenant_scope === options.tenantScope)
+    .filter((row) => options.userId === undefined || row.user_id === options.userId)
+    .map((row) => ({
+      id: row.vector_id,
+      contentHash: row.content_hash,
+      source: row.source,
+      tenantScope: row.tenant_scope,
+      userId: row.user_id,
+      ...(row.provider_authority ? { providerAuthority: row.provider_authority } : {}),
+      ...(row.ledger_authority ? { ledgerAuthority: row.ledger_authority } : {}),
+      vectorNamespace: row.vector_namespace
+    }));
+}
+
+/**
+ * Provider-first account erasure for private RAG data. The exact prepared-request id is required so
+ * only this operation can cross the provider-dispatch fence. Local receipts/API keys are untouched
+ * on any error; retries are idempotent even after a partially completed provider deletion.
+ */
+export async function purgePrivateVectorRecordsForUser(options: {
+  userId: string;
+  accountDeletionRequestId: string;
+  batchSize?: number;
+  maxScanned?: number;
+  leaseGuard: VectorStoreLeaseGuard;
+}): Promise<{ ids: string[]; contentHashes: string[]; deleted: number }> {
+  assertVectorStoreLease(options.leaseGuard);
+  if (!options.accountDeletionRequestId.trim()) {
+    throw new Error("Prepared account-deletion request id is required for private vector purge.");
+  }
+  const tenantScope = vectorTenantScope(options.userId, PRIVATE_SCOPE);
+  const providerAuthority = await getCurrentVectorProviderAuthority({
+    userId: options.userId,
+    accountDeletionRequestId: options.accountDeletionRequestId,
+    leaseGuard: options.leaseGuard
+  });
+  assertVectorStoreLease(options.leaseGuard);
+  const rawLegacyTenantScope = `private:${options.userId}`;
+  const ledgerAuthority = managedVectorLedgerAuthority();
+  const authorityDatabase = dbModule.getDb();
+  const manifestAuthorities = authorityDatabase.prepare(`
+    SELECT tenant_scope, ledger_authority, provider_authority
+    FROM vector_private_namespace_manifests
+    WHERE tenant_scope IN (?, ?)
+  `).all(tenantScope, rawLegacyTenantScope) as Array<{
+    tenant_scope: string;
+    ledger_authority: string;
+    provider_authority: string | null;
+  }>;
+  const commitAuthorities = authorityDatabase.prepare(`
+    SELECT id, ledger_authority, provider_authority
+    FROM vector_ingest_commits
+    WHERE user_id = ? AND tenant_scope IN (?, ?)
+  `).all(options.userId, tenantScope, rawLegacyTenantScope) as Array<{
+    id: string;
+    ledger_authority: string | null;
+    provider_authority: string | null;
+  }>;
+  const localEvidence = managedVectorReceiptEvidence({ userId: options.userId })
+    .filter((row) => row.tenantScope === tenantScope || row.tenantScope === rawLegacyTenantScope);
+  const localManagedEvidence = localEvidence.filter((row) => row.id.startsWith("occ:v3:"));
+  const authorityEvidence = [
+    ...manifestAuthorities.map((row) => ({
+      ledgerAuthority: row.ledger_authority,
+      providerAuthority: row.provider_authority
+    })),
+    ...commitAuthorities.map((row) => ({
+      ledgerAuthority: row.ledger_authority,
+      providerAuthority: row.provider_authority
+    })),
+    ...localEvidence.map((row) => ({
+      ledgerAuthority: row.ledgerAuthority,
+      providerAuthority: row.providerAuthority
+    }))
+  ];
+  const historicalAuthorities = new Set(
+    authorityEvidence.map((row) => row.providerAuthority).filter((value): value is string => Boolean(value))
+  );
+  if (authorityEvidence.some((row) => !row.providerAuthority)) {
+    throw new Error("Private managed vectors lack a deletable provider authority; account deletion remains pending.");
+  }
+  if (authorityEvidence.some((row) => row.ledgerAuthority !== ledgerAuthority)) {
+    throw new Error("Historical vector ledger authority is not currently reachable; account deletion remains pending.");
+  }
+  // Receiptless managed crash ghosts can exist even when every local authority table is empty.
+  // Without the current provider token their immutable prefix cannot be inventoried or deleted,
+  // so a private-account purge must fail closed instead of relying only on namespace deleteAll.
+  if (!providerAuthority) {
+    throw new Error("Current Pinecone authority is unavailable; account deletion remains pending.");
+  }
+  if ([...historicalAuthorities].some((authority) => authority !== providerAuthority)) {
+    throw new Error("Historical Pinecone authority is not currently reachable; account deletion remains pending.");
+  }
+
+  const { pc, pineconeSource } = await getPineconeClient(options.userId, options.leaseGuard);
+  if (!pc) throw new Error("Pinecone key not configured for account vector purge.");
+  const dispatch = { accountDeletionRequestId: options.accountDeletionRequestId };
+  const defaultIndex = vectorDataIndex(pc, "default");
+  // Submit exact metadata-filter deletes before relying on list/fetch inventory. This reaches live
+  // historical rows even when listPaginated omits them; retries are idempotent after a crash.
+  for (const filter of legacyPrivateVectorDeleteFilters(options.userId)) {
+    assertVectorStoreLease(options.leaseGuard);
+    await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      options.userId,
+      "account legacy-private-filter delete",
+      () => defaultIndex.deleteMany({ filter } as any),
+      options.leaseGuard,
+      dispatch
+    );
+  }
+  assertVectorStoreLease(options.leaseGuard);
+
+  const localManagedIds = new Set(localManagedEvidence.map((row) => row.id));
+  const localLegacyIds = new Set(
+    localEvidence.filter((row) => !row.id.startsWith("occ:v3:")).map((row) => row.id)
+  );
+  const managedRows = await inventoryVectorRecordsByMetadata({
+    userId: options.userId,
+    namespace: "managed",
+    prefix: managedOccurrenceVectorPrefix({ ledgerAuthority, providerAuthority, tenantScope }),
+    batchSize: options.batchSize,
+    maxScanned: options.maxScanned,
+    accountDeletionRequestId: options.accountDeletionRequestId,
+    leaseGuard: options.leaseGuard
+  });
+  const legacyRows = await inventoryVectorRecordsByMetadata({
+    userId: options.userId,
+    namespace: "default",
+    batchSize: options.batchSize,
+    maxScanned: options.maxScanned,
+    accountDeletionRequestId: options.accountDeletionRequestId,
+    leaseGuard: options.leaseGuard
+  });
+  const privateNamespaceRows = await inventoryVectorRecordsByMetadata({
+    userId: options.userId,
+    namespace: "private",
+    batchSize: options.batchSize,
+    maxScanned: options.maxScanned,
+    accountDeletionRequestId: options.accountDeletionRequestId,
+    leaseGuard: options.leaseGuard
+  });
+  assertVectorStoreLease(options.leaseGuard);
+  const managedIds = [...new Set([
+    ...localManagedIds,
+    ...managedRows.map((row) => row.id)
+  ])].sort();
+  const privateLegacyRows = legacyRows.filter((row) => (
+    localLegacyIds.has(row.id) || vectorMetadataBelongsToPrivateUser(row.metadata, options.userId)
+  ));
+  const legacyIds = [...new Set([
+    ...localLegacyIds,
+    ...privateLegacyRows.map((row) => row.id)
+  ])].sort();
+  const privateNamespaceIds = [...new Set(privateNamespaceRows.map((row) => row.id))].sort();
+  const ids = [...new Set([...managedIds, ...legacyIds, ...privateNamespaceIds])].sort();
+  const privateRows = [...managedRows, ...privateLegacyRows, ...privateNamespaceRows];
+  const contentHashes = [...new Set([
+    ...localEvidence.map((row) => row.contentHash),
+    ...privateRows.flatMap((row) => {
+    const hashes: string[] = [];
+    if (typeof row.metadata.content_hash === "string" && row.metadata.content_hash) {
+      hashes.push(row.metadata.content_hash);
+    }
+    if (typeof row.metadata.text === "string" && row.metadata.text.trim()) {
+      hashes.push(hashContent(row.metadata.text));
+    }
+    return hashes;
+    })
+  ])].sort();
+  const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
+  let deleted = 0;
+  const purgeExactIds = async (namespace: VectorDataNamespace, targetIds: string[]) => {
+    const index = vectorDataIndex(pc, namespace, undefined, options.userId);
+    for (const idBatch of chunks(targetIds, batchSize)) {
+      assertVectorStoreLease(options.leaseGuard);
+      await withRagApiHealth(
+        "pinecone",
+        pineconeSource,
+        options.userId,
+        "account private-vector delete",
+        () => index.deleteMany({ ids: idBatch }),
+        options.leaseGuard,
+        dispatch
+      );
+      assertVectorStoreLease(options.leaseGuard);
+      deleted += idBatch.length;
+    }
+  };
+  await purgeExactIds("managed", managedIds);
+  await purgeExactIds("default", legacyIds);
+  // New direct private writes are isolated by subject namespace. Namespace-wide deletion is the
+  // provider authority here: it removes even a live record omitted by eventually-consistent list.
+  const privateIndex = vectorDataIndex(pc, "private", undefined, options.userId);
+  assertVectorStoreLease(options.leaseGuard);
+  await withRagApiHealth(
+    "pinecone",
+    pineconeSource,
+    options.userId,
+    "account private-namespace delete",
+    () => privateIndex.deleteAll(),
+    options.leaseGuard,
+    dispatch
+  );
+  assertVectorStoreLease(options.leaseGuard);
+  deleted += privateNamespaceIds.length;
+
+  const fetchExactResiduals = async (namespace: VectorDataNamespace, targetIds: string[]) => {
+    const remaining: string[] = [];
+    const index = vectorDataIndex(pc, namespace, undefined, options.userId);
+    for (const idBatch of chunks(targetIds, batchSize)) {
+      assertVectorStoreLease(options.leaseGuard);
+      const fetched = await withRagApiHealth(
+        "pinecone",
+        pineconeSource,
+        options.userId,
+        "account private-vector stability verify",
+        () => index.fetch({ ids: idBatch }),
+        options.leaseGuard,
+        dispatch
+      );
+      assertVectorStoreLease(options.leaseGuard);
+      for (const id of idBatch) if (fetched.records?.[id]) remaining.push(id);
+    }
+    return remaining;
+  };
+
+  const verifyProviderAbsenceOnce = async (): Promise<string[]> => {
+    const exactResiduals = [
+      ...(await fetchExactResiduals("managed", managedIds)),
+      ...(await fetchExactResiduals("default", legacyIds)),
+      ...(await fetchExactResiduals("private", privateNamespaceIds))
+    ];
+    const remainingManaged = await inventoryVectorRecordsByMetadata({
+      userId: options.userId,
+      namespace: "managed",
+      prefix: managedOccurrenceVectorPrefix({ ledgerAuthority, providerAuthority, tenantScope }),
+      batchSize: options.batchSize,
+      maxScanned: options.maxScanned,
+      accountDeletionRequestId: options.accountDeletionRequestId,
+      leaseGuard: options.leaseGuard
+    });
+    const remainingLegacy = (await inventoryVectorRecordsByMetadata({
+      userId: options.userId,
+      namespace: "default",
+      batchSize: options.batchSize,
+      maxScanned: options.maxScanned,
+      accountDeletionRequestId: options.accountDeletionRequestId,
+      leaseGuard: options.leaseGuard
+    })).filter((row) => (
+      localLegacyIds.has(row.id) || vectorMetadataBelongsToPrivateUser(row.metadata, options.userId)
+    ));
+    const remainingPrivateNamespace = await inventoryVectorRecordsByMetadata({
+      userId: options.userId,
+      namespace: "private",
+      batchSize: options.batchSize,
+      maxScanned: options.maxScanned,
+      accountDeletionRequestId: options.accountDeletionRequestId,
+      leaseGuard: options.leaseGuard
+    });
+    assertVectorStoreLease(options.leaseGuard);
+    return [...new Set([
+      ...exactResiduals,
+      ...remainingManaged.map((row) => row.id),
+      ...remainingLegacy.map((row) => row.id),
+      ...remainingPrivateNamespace.map((row) => row.id)
+    ])].sort();
+  };
+
+  // Pinecone deletion/list/fetch propagation is eventually consistent. Require a stability window
+  // of consecutive clean observations across exact fetches and all relevant inventories. A record
+  // that is briefly absent and then reappears resets the streak; local receipts remain untouched
+  // so the entire account deletion can be retried safely.
+  const verifyAttempts = erasureVerifyAttempts();
+  const requiredClean = erasureVerifyConsecutiveClean(verifyAttempts);
+  const verifyDelay = erasureVerifyDelayMs();
+  let consecutiveClean = 0;
+  let lastResiduals: string[] = [];
+  for (let attempt = 0; attempt < verifyAttempts; attempt++) {
+    if (attempt > 0 && verifyDelay > 0) {
+      await sleep(Math.min(30_000, verifyDelay * (2 ** (attempt - 1))), options.leaseGuard.signal);
+      assertVectorStoreLease(options.leaseGuard);
+    }
+    lastResiduals = await verifyProviderAbsenceOnce();
+    consecutiveClean = lastResiduals.length === 0 ? consecutiveClean + 1 : 0;
+    if (consecutiveClean >= requiredClean) break;
+  }
+  if (consecutiveClean < requiredClean) {
+    throw new Error(
+      `Private vector purge stability verification failed (${lastResiduals.length} vector(s) in final observation; ${consecutiveClean}/${requiredClean} consecutive clean).`
+    );
+  }
+  return { ids, contentHashes, deleted };
 }
 
 /**
@@ -2695,52 +4085,164 @@ export async function purgeVectorRecordsByMetadata(options: {
  * exact local receipt set exists; every other managed provider ghost is deleted. Defaults to a
  * deterministic dry run.
  */
+export interface ReconcileManagedVectorRecordsResult {
+  dryRun: boolean;
+  promoteIds: string[];
+  deleteIds: string[];
+  invalidateCommitIds: string[];
+  /** Proven historical versions whose provider set needs repair but must never be discarded. */
+  repairCommitIds: string[];
+  quarantineIds: string[];
+  promoted: number;
+  deleted: number;
+  skipped?: boolean;
+  operationLease?: OperationLeaseBusy;
+}
+
 export async function reconcileManagedVectorRecords(options: {
   userId?: string;
   source?: string;
   dryRun?: boolean;
-} = {}): Promise<{
-  dryRun: boolean;
-  promoteIds: string[];
-  deleteIds: string[];
-  promoted: number;
-  deleted: number;
-}> {
+} = {}): Promise<ReconcileManagedVectorRecordsResult> {
+  if (options.dryRun !== false) return reconcileManagedVectorRecordsUnlocked(options);
+  const guarded = await runWithOperationLease(
+    { group: OPERATION_LEASE_GROUPS.RAG_REINDEX, operation: "reconcile-managed-vectors" },
+    async (claim, signal) => {
+      const leaseGuard: VectorStoreLeaseGuard = {
+        signal,
+        assertOwnership: () => {
+          throwIfOperationLeaseCancelled(signal);
+          assertOperationLeaseOwnership(claim);
+        }
+      };
+      return reconcileManagedVectorRecordsUnlocked(options, leaseGuard);
+    }
+  );
+  if (guarded.acquired) return guarded.value;
+  return {
+    dryRun: false,
+    promoteIds: [],
+    deleteIds: [],
+    invalidateCommitIds: [],
+    repairCommitIds: [],
+    quarantineIds: [],
+    promoted: 0,
+    deleted: 0,
+    skipped: true,
+    operationLease: guarded.busy
+  };
+}
+
+async function reconcileManagedVectorRecordsUnlocked(
+  options: { userId?: string; source?: string; dryRun?: boolean },
+  operationLeaseGuard?: VectorStoreLeaseGuard
+): Promise<ReconcileManagedVectorRecordsResult> {
+  assertVectorStoreLease(operationLeaseGuard);
   const dryRun = options.dryRun !== false;
   const userId = options.userId ?? "local";
-  const providerRows = await inventoryVectorRecordsByMetadata({
+  const providerAuthority = await getCurrentVectorProviderAuthority({
     userId,
-    receiptRequired: true
+    leaseGuard: operationLeaseGuard
   });
+  assertVectorStoreLease(operationLeaseGuard);
+  if (!providerAuthority) {
+    throw new Error("Stable Pinecone provider authority is unavailable for managed-vector reconciliation.");
+  }
+  const ledgerAuthority = managedVectorLedgerAuthority();
+  const targetNamespace: "managed" | "fmp-transcripts" = options.source === "fmp-earnings-transcript"
+    ? "fmp-transcripts"
+    : "managed";
+  const providerRows = (await inventoryVectorRecordsByMetadata({
+    userId,
+    namespace: targetNamespace,
+    prefix: managedOccurrenceVectorPrefix({ ledgerAuthority, providerAuthority }),
+    leaseGuard: operationLeaseGuard
+  })).filter((row) => (
+    row.metadata.receipt_required === true ||
+    typeof row.metadata.vector_commit_id === "string" ||
+    isManagedOccurrenceVectorId(row.id)
+  ));
+  assertVectorStoreLease(operationLeaseGuard);
+  // Resolve the mutation client before claiming any SQLite reconciliation fences. Inventory uses
+  // the same provider, but this explicit preflight prevents a later configuration/client failure
+  // from parking otherwise untouched commits behind fresh reconciliation leases.
+  const mutationClients = dryRun ? undefined : await getClients(userId, operationLeaseGuard);
+  assertVectorStoreLease(operationLeaseGuard);
+  if (!dryRun && !mutationClients?.pc) {
+    throw new Error("Pinecone key not configured for vector reconciliation.");
+  }
+  const mutationIndex = mutationClients?.pc
+    ? vectorDataIndex(mutationClients.pc, targetNamespace, ledgerAuthority)
+    : undefined;
   const database = dbModule.getDb();
+  const reconciledAt = new Date().toISOString();
+  const knownCommitRows = database.prepare(`
+    SELECT id, source FROM vector_ingest_commits
+  `).all() as Array<{ id: string; source: string }>;
+  const knownCommitSources = new Map(knownCommitRows.map((row) => [row.id, row.source]));
   const commitRows = database.prepare(`
-    SELECT id, source, accession, expected_vectors, state
-    FROM vector_ingest_commits
-    WHERE state IN ('pending','receipts_persisted','committed')
-      ${options.source === undefined ? "" : "AND source = ?"}
-  `).all(...(options.source === undefined ? [] : [options.source])) as Array<{
+    SELECT c.id, c.tenant_scope, c.user_id, c.provider_authority, c.ledger_authority,
+           c.source, c.accession, c.document_key, c.content_version,
+           c.retrieval_metadata_version, c.parser_revision, c.embed_revision,
+           c.expected_vectors, c.state,
+           c.attempt_token, c.lease_expires_at,
+           CASE WHEN h.commit_id IS NULL THEN 0 ELSE 1 END AS is_active
+           ,CASE WHEN v.commit_id IS NULL THEN 0 ELSE 1 END AS is_versioned
+    FROM vector_ingest_commits c
+    LEFT JOIN vector_document_versions v ON v.commit_id = c.id
+    LEFT JOIN vector_document_heads h
+      ON h.commit_id = c.id
+      AND h.tenant_scope = c.tenant_scope
+      AND h.source = c.source
+      AND h.accession = c.document_key
+    WHERE c.state IN ('pending','receipts_persisted','committed','aborted')
+      AND c.ledger_authority = ?
+      AND c.provider_authority = ?
+      AND c.vector_namespace = ?
+      ${options.source === undefined ? "" : "AND c.source = ?"}
+  `).all(ledgerAuthority, providerAuthority, targetNamespace, ...(options.source === undefined ? [] : [options.source])) as Array<{
     id: string;
+    tenant_scope: string;
+    user_id: string;
+    provider_authority: string | null;
+    ledger_authority: string | null;
     source: string;
     accession: string;
+    document_key: string;
+    content_version: string;
+    retrieval_metadata_version: string;
+    parser_revision: string;
+    embed_revision: string;
     expected_vectors: number;
     state: string;
+    attempt_token: string | null;
+    lease_expires_at: string | null;
+    is_active: number;
+    is_versioned: number;
   }>;
   const commits = new Map(commitRows.map((row) => [row.id, row]));
   const localRows = database.prepare(`
     SELECT o.vector_id, o.commit_id, o.content_version, o.tenant_scope,
-           o.source, o.accession,
+           o.content_hash, o.symbol, o.source, o.accession, o.section, o.ordinal,
            o.receipt_state, c.state AS commit_state
     FROM chunk_occurrences o
     JOIN vector_ingest_commits c ON c.id = o.commit_id
     WHERE o.receipt_state IN ('pending','committed')
+      AND c.ledger_authority = ?
+      AND c.provider_authority = ?
+      AND c.vector_namespace = ?
       ${options.source === undefined ? "" : "AND c.source = ?"}
-  `).all(...(options.source === undefined ? [] : [options.source])) as Array<{
+  `).all(ledgerAuthority, providerAuthority, targetNamespace, ...(options.source === undefined ? [] : [options.source])) as Array<{
     vector_id: string;
     commit_id: string;
     content_version: string;
     tenant_scope: string;
+    content_hash: string;
+    symbol: string;
     source: string;
     accession: string;
+    section: string;
+    ordinal: number;
     receipt_state: string;
     commit_state: string;
   }>;
@@ -2752,93 +4254,407 @@ export async function reconcileManagedVectorRecords(options: {
     localByCommit.set(row.commit_id, grouped);
   }
   const providerByCommit = new Map<string, VectorMetadataInventoryRow[]>();
+  const providerCommitIds = new Map<string, string>();
   const consideredProviderRows: VectorMetadataInventoryRow[] = [];
   for (const providerRow of providerRows) {
     const metadata = providerRow.metadata;
-    const commitId = typeof metadata.vector_commit_id === "string" ? metadata.vector_commit_id : "";
-    // A source-scoped repair still inventories every managed record so a row whose source metadata
-    // was corrupted cannot escape merely by no longer matching the requested source. Unrelated
-    // commits remain untouched.
-    if (
-      options.source !== undefined &&
-      metadata.source !== options.source &&
-      !commits.has(commitId)
-    ) continue;
+    // A corrupted/missing provider commit id must not detach a known deterministic vector from its
+    // local receipt and bypass the commit CAS/grace path.
+    const commitId = local.get(providerRow.id)?.commit_id ?? (
+      typeof metadata.vector_commit_id === "string" ? metadata.vector_commit_id : ""
+    );
+    if (options.source !== undefined && !commits.has(commitId)) {
+      // Never let corrupted provider metadata pull a known commit owned by another source into a
+      // source-scoped repair. A genuinely orphaned row can still be deleted by its claimed source.
+      const knownSource = knownCommitSources.get(commitId);
+      if (knownSource !== undefined && knownSource !== options.source) continue;
+      if (knownSource === undefined && metadata.source !== options.source) continue;
+    }
     consideredProviderRows.push(providerRow);
+    providerCommitIds.set(providerRow.id, commitId);
     const grouped = providerByCommit.get(commitId) ?? [];
     grouped.push(providerRow);
     providerByCommit.set(commitId, grouped);
   }
-  const promoteRows: VectorMetadataInventoryRow[] = [];
-  const deleteRows: VectorMetadataInventoryRow[] = [];
-  const commitsToFinalize = new Set<string>();
+  const promoteRows: Array<{ row: VectorMetadataInventoryRow; commitId: string; attemptToken: string }> = [];
+  const deleteRows = new Map<string, VectorMetadataInventoryRow>();
+  const commitsToFinalize = new Map<string, string>();
+  const commitsToInvalidate = new Map<string, string>();
+  const commitsToComplete = new Map<string, string>();
+  const historicalCommitRows = database.prepare(`
+    SELECT id FROM vector_ingest_commits
+    WHERE state = 'committed'
+      AND (ledger_authority IS NULL OR ledger_authority <> ? OR
+           provider_authority IS NULL OR provider_authority <> ?)
+      AND vector_namespace = ?
+      ${options.source === undefined ? "" : "AND source = ?"}
+  `).all(ledgerAuthority, providerAuthority, targetNamespace, ...(options.source === undefined ? [] : [options.source])) as Array<{ id: string }>;
+  const commitsToRepair = new Set(historicalCommitRows.map((row) => row.id));
+  const claimedTokens = new Map<string, string>();
+
+  const claimForMutation = (commit: (typeof commitRows)[number]): string | undefined => {
+    assertVectorStoreLease(operationLeaseGuard);
+    if (!commit.attempt_token) return undefined;
+    if (dryRun) return commit.attempt_token;
+    const token = `reconcile:${crypto.randomUUID()}`;
+    const claimed = dbModule.claimVectorCommitForReconciliation(
+      commit.id,
+      commit.attempt_token,
+      commit.state as dbModule.VectorCommitState,
+      commit.is_active === 1,
+      token,
+      new Date(Date.now() + VECTOR_COMMIT_LEASE_MS).toISOString(),
+      reconciledAt
+    );
+    if (!claimed) return undefined;
+    claimedTokens.set(commit.id, token);
+    return token;
+  };
+
   for (const providerRow of consideredProviderRows) {
-    const metadata = providerRow.metadata;
-    const commitId = typeof metadata.vector_commit_id === "string" ? metadata.vector_commit_id : "";
-    const commit = commits.get(commitId);
-    const receipt = local.get(providerRow.id);
-    const providerGroup = providerByCommit.get(commitId) ?? [];
-    const localGroup = localByCommit.get(commitId) ?? [];
-    const exactRow = Boolean(
-      commit && receipt &&
-      metadata.vector_commit_id === receipt.commit_id &&
-      metadata.content_version === receipt.content_version &&
-      metadata.tenant_scope === receipt.tenant_scope &&
-      metadata.source === commit.source &&
-      metadata.accession === commit.accession &&
-      receipt.source === commit.source &&
-      receipt.accession === commit.accession
+    const commitId = providerCommitIds.get(providerRow.id) ?? "";
+    if (!commits.has(commitId)) deleteRows.set(providerRow.id, providerRow);
+  }
+
+  for (const commit of commitRows) {
+    const providerGroup = providerByCommit.get(commit.id) ?? [];
+    const localGroup = localByCommit.get(commit.id) ?? [];
+    const hasLiveLease = Boolean(
+      commit.lease_expires_at && commit.lease_expires_at > reconciledAt
     );
-    const exactSet = Boolean(
-      commit &&
-      (commit.state === "receipts_persisted" || commit.state === "committed") &&
+    if (hasLiveLease) continue;
+    if (commit.state === "aborted" && providerGroup.length === 0) continue;
+
+    const expectedReceiptState = commit.state === "committed" ? "committed" : "pending";
+    const exactLocalSet =
       localGroup.length === commit.expected_vectors &&
+      new Set(localGroup.map((row) => row.vector_id)).size === commit.expected_vectors &&
+      localGroup.every((row) =>
+        row.commit_id === commit.id &&
+        row.tenant_scope === commit.tenant_scope &&
+        row.content_version === commit.content_version &&
+        row.source === commit.source &&
+        row.accession === commit.accession &&
+        row.receipt_state === expectedReceiptState
+      );
+    const exactProviderSet =
+      Boolean(providerAuthority) &&
+      commit.provider_authority === providerAuthority &&
+      commit.ledger_authority === ledgerAuthority &&
       providerGroup.length === commit.expected_vectors &&
+      new Set(providerGroup.map((row) => row.id)).size === commit.expected_vectors &&
+      localGroup.every((receipt) => providerGroup.some((row) => row.id === receipt.vector_id)) &&
       providerGroup.every((candidate) => {
-        const candidateReceipt = local.get(candidate.id);
+        const receipt = local.get(candidate.id);
+        const metadata = candidate.metadata;
         return Boolean(
-          candidateReceipt &&
-          candidate.metadata.vector_commit_id === commitId &&
-          candidate.metadata.content_version === candidateReceipt.content_version &&
-          candidate.metadata.tenant_scope === candidateReceipt.tenant_scope &&
-          candidate.metadata.source === commit.source &&
-          candidate.metadata.accession === commit.accession &&
-          candidateReceipt.source === commit.source &&
-          candidateReceipt.accession === commit.accession
+          receipt &&
+          candidate.id.startsWith("occ:v3:") &&
+          managedOccurrenceVectorIdMatches({
+            id: candidate.id,
+            ledgerAuthority,
+            providerAuthority: providerAuthority!,
+            tenantScope: commit.tenant_scope,
+            source: commit.source
+          }) &&
+          metadata.receipt_required === true &&
+          metadata.ingest_state === (commit.state === "committed" ? "committed" : "pending") &&
+          metadata.vector_attempt_token === commit.attempt_token &&
+          metadata.scope === (
+            commit.tenant_scope === vectorTenantScope("local", SHARED_SCOPE)
+              ? SHARED_SCOPE
+              : PRIVATE_SCOPE
+          ) &&
+          metadata.userId === vectorUserIdFor(commit.user_id) &&
+          metadata.ledger_authority === ledgerAuthority &&
+          metadata.provider_authority === providerAuthority &&
+          metadata.vector_commit_id === commit.id &&
+          metadata.document_key === commit.document_key &&
+          metadata.content_version === receipt.content_version &&
+          metadata.tenant_scope === receipt.tenant_scope &&
+          metadata.content_hash === receipt.content_hash &&
+          metadata.symbol === receipt.symbol &&
+          metadata.source === receipt.source &&
+          metadata.accession === receipt.accession &&
+          metadata.section === receipt.section &&
+          metadata.chunk_ordinal === receipt.ordinal &&
+          metadata.parser_revision === commit.parser_revision &&
+          metadata.embed_revision === commit.embed_revision &&
+          metadata.retrieval_metadata_version === commit.retrieval_metadata_version &&
+          retrievalMetadataVersionFromMetadata(metadata) === commit.retrieval_metadata_version &&
+          metadata[AS_OF_EPOCH_FIELD] === resolveAsOfEpochMs(metadata)
         );
-      }) &&
-      localGroup.every((candidate) => providerGroup.some((row) => row.id === candidate.vector_id))
-    );
-    if (!exactRow || !exactSet) {
-      deleteRows.push(providerRow);
+      });
+    const canFinalize =
+      Boolean(commit.attempt_token) &&
+      exactLocalSet &&
+      exactProviderSet &&
+      (commit.state === "receipts_persisted" || (commit.state === "committed" && commit.is_versioned === 1));
+
+    if (!canFinalize) {
+      if (commit.state === "committed" && commit.is_versioned === 1) {
+        const provenanceUpgradeRequired = (
+          !providerAuthority ||
+          commit.provider_authority !== providerAuthority ||
+          providerGroup.some((row) => (
+            row.metadata.ledger_authority !== ledgerAuthority ||
+            row.metadata.provider_authority !== providerAuthority ||
+            !managedOccurrenceVectorIdMatches({
+              id: row.id,
+              ledgerAuthority,
+              providerAuthority,
+              tenantScope: commit.tenant_scope,
+              source: commit.source
+            })
+          ))
+        );
+        // Existing committed evidence that predates physical-provider provenance is fail-closed at
+        // retrieval, but routine reconciliation must not erase it. Keep it intact for an explicit
+        // deterministic re-ingest/backfill that can create v3 ids and current-authority receipts.
+        if (provenanceUpgradeRequired) {
+          commitsToRepair.add(commit.id);
+          continue;
+        }
+        const fingerprint = crypto.createHash("sha256").update(JSON.stringify({
+          commitId: commit.id,
+          ledgerAuthority,
+          currentProviderAuthority: providerAuthority ?? null,
+          commitProviderAuthority: commit.provider_authority,
+          expectedVectors: commit.expected_vectors,
+          local: [...localGroup]
+            .sort((a, b) => a.vector_id.localeCompare(b.vector_id))
+            .map((row) => [
+              row.vector_id, row.content_hash, row.symbol, row.source, row.accession,
+              row.section, row.ordinal, row.receipt_state, row.tenant_scope, row.content_version
+            ]),
+          provider: [...providerGroup]
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map((row) => [
+              row.id,
+              row.metadata.vector_commit_id,
+              row.metadata.ledger_authority,
+              row.metadata.provider_authority,
+              row.metadata.receipt_required,
+              row.metadata.ingest_state,
+              row.metadata.vector_attempt_token,
+              row.metadata.userId,
+              row.metadata.scope,
+              row.metadata.content_hash,
+              row.metadata.symbol,
+              row.metadata.source,
+              row.metadata.accession,
+              row.metadata.section,
+              row.metadata.chunk_ordinal,
+              row.metadata.content_version,
+              row.metadata.tenant_scope,
+              row.metadata.parser_revision,
+              row.metadata.embed_revision,
+              row.metadata.retrieval_metadata_version,
+              retrievalMetadataVersionFromMetadata(row.metadata),
+              row.metadata[AS_OF_EPOCH_FIELD]
+            ])
+        }), "utf8").digest("hex");
+        // A dry run must not advance the two-observation confirmation clock or claim that a
+        // committed version is safe to remove. A superseded version is historical evidence: even
+        // after a confirmed anomaly it remains in the interval ledger and is reported for repair,
+        // never invalidated/purged by routine reconciliation.
+        if (dryRun) {
+          commitsToRepair.add(commit.id);
+          continue;
+        }
+        const observation = dbModule.recordVectorReconcileObservation(commit.id, fingerprint, reconciledAt);
+        const ageMs = Date.parse(reconciledAt) - Date.parse(observation.firstObservedAt);
+        if (commit.is_active !== 1) {
+          commitsToRepair.add(commit.id);
+          continue;
+        }
+        if (
+          observation.observationCount < 2 ||
+          !Number.isFinite(ageMs) ||
+          ageMs < VECTOR_RECONCILE_CONFIRMATION_GRACE_MS
+        ) continue;
+        // Pinecone list inventory is eventually consistent and cannot prove an expected id is
+        // absent. Even repeated omissions may only mark an active committed generation for exact
+        // fetch/backfill repair; routine reconciliation must never delete its observed subset or
+        // invalidate the local head from list evidence alone.
+        commitsToRepair.add(commit.id);
+        continue;
+      }
+      const claimedToken = claimForMutation(commit);
+      if (!claimedToken) continue;
+      for (const row of providerGroup) deleteRows.set(row.id, row);
+      commitsToInvalidate.set(commit.id, claimedToken);
       continue;
     }
-    if (metadata.ingest_state !== "committed") promoteRows.push(providerRow);
-    if (commit?.state === "receipts_persisted") commitsToFinalize.add(commitId);
-  }
-  const promoteIds = promoteRows.map((row) => row.id).sort();
-  const deleteIds = deleteRows.map((row) => row.id).sort();
-  if (dryRun) return { dryRun, promoteIds, deleteIds, promoted: 0, deleted: 0 };
 
-  const { pc, pineconeSource } = await getClients(userId);
-  if (!pc) throw new Error("Pinecone key not configured for vector reconciliation.");
-  const index = pc.Index(indexName());
-  for (const row of promoteRows) {
-    await withRagApiHealth("pinecone", pineconeSource, userId, "reconcile commit", () =>
-      index.update({ id: row.id, metadata: { ingest_state: "committed" } })
+    if (!dryRun && commit.state === "committed" && commit.is_versioned === 1) {
+      dbModule.clearVectorReconcileObservation(commit.id);
+    }
+
+    const providerAlreadyCurrent = providerGroup.every((row) =>
+      row.metadata.ingest_state === "committed" &&
+      row.metadata.vector_attempt_token === commit.attempt_token
     );
+    if (commit.state === "committed" && providerAlreadyCurrent) continue;
+
+    const attemptToken = claimForMutation(commit);
+    if (!attemptToken) continue;
+    for (const row of providerGroup) {
+      if (
+        row.metadata.ingest_state !== "committed" ||
+        row.metadata.vector_attempt_token !== attemptToken
+      ) promoteRows.push({ row, commitId: commit.id, attemptToken });
+    }
+    if (commit.state === "receipts_persisted") commitsToFinalize.set(commit.id, attemptToken);
+    else if (!dryRun) commitsToComplete.set(commit.id, attemptToken);
+  }
+
+  const promoteIds = promoteRows.map(({ row }) => row.id).sort();
+  // Rows with neither a provider commit id nor a matching local receipt are fail-closed at query
+  // time, but cannot be deleted safely under a commit CAS. Quarantine/report them for an explicit
+  // operator purge instead of racing a deterministic ingest that began after inventory.
+  const quarantineIds = [...deleteRows.values()]
+    .filter((row) => !(providerCommitIds.get(row.id) ?? ""))
+    .map((row) => row.id)
+    .sort();
+  const quarantined = new Set(quarantineIds);
+  const deleteIds = [...deleteRows.keys()].filter((id) => !quarantined.has(id)).sort();
+  const invalidateCommitIds = [...commitsToInvalidate.keys()].sort();
+  const repairCommitIds = [...commitsToRepair].sort();
+  if (dryRun) {
+    return {
+      dryRun,
+      promoteIds,
+      deleteIds,
+      invalidateCommitIds,
+      repairCommitIds,
+      quarantineIds,
+      promoted: 0,
+      deleted: 0
+    };
+  }
+
+  if (!mutationClients || !mutationIndex) {
+    throw new Error("Pinecone key not configured for vector reconciliation.");
+  }
+  const pineconeSource = mutationClients.pineconeSource;
+  const renewReconciliationLease = (commitId: string, attemptToken: string): void => {
+    dbModule.renewVectorCommitReconciliationLease(
+      commitId,
+      attemptToken,
+      new Date(Date.now() + VECTOR_COMMIT_LEASE_MS).toISOString()
+    );
+  };
+  for (const { row, commitId, attemptToken } of promoteRows) {
+    assertVectorStoreLease(operationLeaseGuard);
+    renewReconciliationLease(commitId, attemptToken);
+    await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      userId,
+      "reconcile commit",
+      () => mutationIndex.update({
+        id: row.id,
+        metadata: { ingest_state: "committed", vector_attempt_token: attemptToken }
+      }),
+      operationLeaseGuard
+    );
+    renewReconciliationLease(commitId, attemptToken);
   }
   // Finalize only after the complete expected provider set was observed. A partial provider set
   // is deleted above and remains locally non-queryable until the deterministic ingest retries.
-  for (const commitId of commitsToFinalize) dbModule.markVectorCommitCommitted(commitId);
-  let deleted = 0;
-  for (const idBatch of chunks(deleteIds, 100)) {
-    await withRagApiHealth("pinecone", pineconeSource, userId, "reconcile delete orphan", () =>
-      index.deleteMany({ ids: idBatch })
-    );
-    deleted += idBatch.length;
+  for (const [commitId, attemptToken] of commitsToFinalize) {
+    renewReconciliationLease(commitId, attemptToken);
+    dbModule.markVectorCommitCommitted(commitId, attemptToken);
   }
-  return { dryRun, promoteIds, deleteIds, promoted: promoteIds.length, deleted };
+
+  const claimedDeleteGroups = new Map<string, { attemptToken: string; ids: string[] }>();
+  const claimedOrphanDeleteGroups = new Map<string, { claimToken: string; ids: string[] }>();
+  for (const row of deleteRows.values()) {
+    const commitId = providerCommitIds.get(row.id) ?? (
+      typeof row.metadata.vector_commit_id === "string" ? row.metadata.vector_commit_id : ""
+    );
+    const attemptToken = claimedTokens.get(commitId);
+    if (!attemptToken) {
+      if (!commitId) continue;
+      let orphanGroup = claimedOrphanDeleteGroups.get(commitId);
+      if (!orphanGroup) {
+        const claimToken = `orphan-reconcile:${crypto.randomUUID()}`;
+        const claimed = dbModule.claimVectorReconcileOrphan(
+          commitId,
+          claimToken,
+          new Date(Date.now() + VECTOR_COMMIT_LEASE_MS).toISOString()
+        );
+        if (!claimed) continue;
+        orphanGroup = { claimToken, ids: [] };
+        claimedOrphanDeleteGroups.set(commitId, orphanGroup);
+      }
+      orphanGroup.ids.push(row.id);
+      continue;
+    }
+    const group = claimedDeleteGroups.get(commitId) ?? { attemptToken, ids: [] };
+    group.ids.push(row.id);
+    claimedDeleteGroups.set(commitId, group);
+  }
+  let deleted = 0;
+  for (const [commitId, group] of claimedOrphanDeleteGroups) {
+    for (const idBatch of chunks(group.ids, 100)) {
+      dbModule.renewVectorReconcileOrphanLease(
+        commitId,
+        group.claimToken,
+        new Date(Date.now() + VECTOR_COMMIT_LEASE_MS).toISOString()
+      );
+      await withRagApiHealth(
+        "pinecone",
+        pineconeSource,
+        userId,
+        "reconcile delete orphan fenced",
+        () => mutationIndex.deleteMany({ ids: idBatch }),
+        operationLeaseGuard
+      );
+      dbModule.renewVectorReconcileOrphanLease(
+        commitId,
+        group.claimToken,
+        new Date(Date.now() + VECTOR_COMMIT_LEASE_MS).toISOString()
+      );
+      deleted += idBatch.length;
+    }
+    dbModule.releaseVectorReconcileOrphan(commitId, group.claimToken);
+  }
+  for (const [commitId, group] of claimedDeleteGroups) {
+    for (const idBatch of chunks(group.ids, 100)) {
+      renewReconciliationLease(commitId, group.attemptToken);
+      await withRagApiHealth(
+        "pinecone",
+        pineconeSource,
+        userId,
+        "reconcile delete fenced",
+        () => mutationIndex.deleteMany({ ids: idBatch }),
+        operationLeaseGuard
+      );
+      renewReconciliationLease(commitId, group.attemptToken);
+      deleted += idBatch.length;
+    }
+  }
+  for (const [commitId, attemptToken] of commitsToInvalidate) {
+    renewReconciliationLease(commitId, attemptToken);
+    dbModule.invalidateVectorCommitForReconciliation(commitId, attemptToken);
+  }
+  for (const [commitId, attemptToken] of commitsToComplete) {
+    renewReconciliationLease(commitId, attemptToken);
+    dbModule.completeVectorCommitReconciliation(commitId, attemptToken);
+  }
+  assertVectorStoreLease(operationLeaseGuard);
+  return {
+    dryRun,
+    promoteIds,
+    deleteIds,
+    invalidateCommitIds,
+    repairCommitIds,
+    quarantineIds,
+    promoted: promoteIds.length,
+    deleted
+  };
 }
 
 export interface RetrievedChunk {
@@ -3045,6 +4861,97 @@ function reportRetrievalStatus(options: RetrieveOptions | undefined, status: Ret
   }
 }
 
+const DEFAULT_MANAGED_VERSION_TOP_K_CAP = 1_000;
+const MAX_MANAGED_VERSION_TOP_K_CAP = 10_000;
+
+function managedVersionTopKCap(limit: number): number {
+  const configured = Math.floor(numericEnv(
+    "RAG_MANAGED_VERSION_TOP_K_CAP",
+    DEFAULT_MANAGED_VERSION_TOP_K_CAP,
+    1
+  ));
+  return Math.max(limit, Math.min(configured, MAX_MANAGED_VERSION_TOP_K_CAP));
+}
+
+/**
+ * Count locally proven managed records that match the coarse provider filter but are not eligible
+ * under the active-head or point-in-time relational receipt rule. This is an upper bound: fields
+ * unavailable in SQLite receipt rows (for example doc_type/account scope) are intentionally not
+ * subtracted. Over-counting spends recall capacity; under-counting could let stale generations
+ * crowd the provider topK and hide eligible evidence.
+ */
+export function managedVersionRejectedUpperBound(
+  symbol: string,
+  userId: string,
+  options?: RetrieveOptions
+): number {
+  try {
+    if (typeof dbModule.getDb !== "function") return 0;
+    const database = dbModule.getDb();
+    if (!database?.prepare) return 0;
+    const parsedAsOf = options?.asOf && Number.isFinite(Date.parse(options.asOf))
+      ? new Date(options.asOf).toISOString()
+      : undefined;
+    const conditions = [
+      "o.receipt_state = 'committed'",
+      "c.state = 'committed'",
+      "c.lease_expires_at IS NULL",
+      "o.tenant_scope = c.tenant_scope",
+      "o.content_version = c.content_version",
+      "c.tenant_scope IN (?, ?)"
+    ];
+    const bindings: Array<string> = [
+      vectorTenantScope(userId, PRIVATE_SCOPE),
+      vectorTenantScope(userId, SHARED_SCOPE)
+    ];
+    if (!options?.matchAllSymbols) {
+      conditions.push("o.symbol = ?");
+      bindings.push(canonicalTicker(symbol));
+    }
+    if (options?.source) {
+      conditions.push("o.source = ?");
+      bindings.push(options.source);
+    }
+    if (options?.section) {
+      conditions.push("o.section = ?");
+      bindings.push(options.section);
+    }
+
+    if (parsedAsOf) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM vector_document_versions v
+        WHERE v.commit_id = c.id
+          AND v.tenant_scope = c.tenant_scope
+          AND v.source = c.source
+          AND v.document_key = c.document_key
+          AND v.valid_from <= ?
+          AND (v.valid_to IS NULL OR v.valid_to > ?)
+      )`);
+      bindings.push(parsedAsOf, parsedAsOf);
+    } else {
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM vector_document_heads h
+        WHERE h.commit_id = c.id
+          AND h.tenant_scope = c.tenant_scope
+          AND h.source = c.source
+          AND h.accession = c.document_key
+      )`);
+    }
+
+    const row = database.prepare(`
+      SELECT COUNT(*) AS rejected
+      FROM chunk_occurrences o
+      JOIN vector_ingest_commits c ON c.id = o.commit_id
+      WHERE ${conditions.join(" AND ")}
+    `).get(...bindings) as { rejected?: number } | undefined;
+    const rejected = Number(row?.rejected ?? 0);
+    return Number.isFinite(rejected) && rejected > 0 ? Math.floor(rejected) : 0;
+  } catch {
+    // Retrieval must remain available during a schema migration or in lightweight test mocks.
+    return 0;
+  }
+}
+
 /**
  * Build the optional metadata-filter clauses (doc_type/section/source) shared by both tiers.
  *
@@ -3073,7 +4980,11 @@ export function buildExtraFilters(options?: RetrieveOptions): Record<string, unk
       : { $eq: RIGHTS_BLOCKED_DOC_TYPE };
   }
   if (options?.section) extra.section = { $eq: options.section };
-  if (options?.source) extra.source = { $eq: options.source };
+  if (options?.source) {
+    extra.source = !transcriptRightsConfirmed && options.source === "fmp-earnings-transcript"
+      ? { $eq: "__fmp_transcript_rights_unconfirmed__" }
+      : { $eq: options.source };
+  }
   if (options?.accountScope === "exact") {
     extra.connected_account_id = { $eq: options.connectedAccountId ?? "__missing_connected_account__" };
   }
@@ -3091,7 +5002,55 @@ export function filterMatchesForTranscriptRights<T extends { metadata?: Record<s
   if (envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false)) return matches;
   return matches.filter((match) => {
     const docType = match?.metadata?.doc_type;
-    return typeof docType !== "string" || docType.toLowerCase() !== EARNINGS_TRANSCRIPT_DOC_TYPE;
+    const source = match?.metadata?.source;
+    return source !== "fmp-earnings-transcript" &&
+      (typeof docType !== "string" || docType.toLowerCase() !== EARNINGS_TRANSCRIPT_DOC_TYPE);
+  });
+}
+
+/**
+ * Enforce tenant visibility on provider results before relational receipt checks, persistence,
+ * reranking, or prompt injection. Pinecone filters reduce the candidate set, but metadata remains
+ * untrusted: legacy personal account memory written as `userId=local` must not ride the public
+ * compatibility fallback into another user's context.
+ */
+export function filterMatchesForTenantVisibility<T extends { metadata?: Record<string, unknown> }>(
+  matches: T[],
+  userId: string = "local"
+): T[] {
+  const vectorUserId = vectorUserIdFor(userId);
+  const privateTenantScope = vectorTenantScope(userId, PRIVATE_SCOPE);
+  return matches.filter((match) => {
+    const metadata = match?.metadata;
+    if (!metadata) return false;
+    const scope = metadata.scope;
+    const tenantScope = typeof metadata.tenant_scope === "string" ? metadata.tenant_scope : undefined;
+    const metadataUserId = typeof metadata.userId === "string" ? metadata.userId : undefined;
+
+    // Some historical account memories were explicitly stamped `scope=shared` before tenant
+    // scopes existed. The account marker is more specific than that stale scope label, so enforce
+    // exact ownership before accepting either the private or shared branches below.
+    if (metadata.memory_scope === "account") {
+      if (tenantScope != null) return tenantScope === privateTenantScope;
+      return legacyPrivateMetadataUserMatches(metadataUserId, userId);
+    }
+
+    if (scope === PRIVATE_SCOPE) {
+      return tenantScope
+        ? tenantScope === privateTenantScope
+        : legacyPrivateMetadataUserMatches(metadataUserId, userId);
+    }
+    if (scope === SHARED_SCOPE) {
+      // Legacy shared/public corpus was written by the local operator. A scope-only nonlocal row
+      // is account-linked data, not public evidence, unless a current authoritative tenant scope
+      // explicitly marks it shared.
+      return tenantScope === "shared:operator" || (tenantScope == null && metadataUserId === "local");
+    }
+    if (tenantScope?.startsWith("private:")) return tenantScope === privateTenantScope;
+    if (tenantScope != null && tenantScope !== "shared:operator") return false;
+
+    // Legacy public corpus used the local sentinel. Other legacy ids are private to that user.
+    return metadataUserId === "local" || legacyPrivateMetadataUserMatches(metadataUserId, userId);
   });
 }
 
@@ -3104,17 +5063,28 @@ export function filterMatchesForTranscriptRights<T extends { metadata?: Record<s
 export function filterMatchesForCommittedReceipts<T extends {
   id?: string;
   metadata?: Record<string, unknown>;
-}>(matches: T[]): T[] {
+}>(
+  matches: T[],
+  asOf?: string,
+  authority?: { userId?: string; providerAuthority?: string; ledgerAuthority?: string }
+): T[] {
+  const requestingUserId = authority?.userId ?? "local";
+  const providerAuthority = authority?.providerAuthority;
+  const visibleTenantScopes = new Set([
+    vectorTenantScope("local", SHARED_SCOPE),
+    vectorTenantScope(requestingUserId, PRIVATE_SCOPE)
+  ]);
   const isManaged = (match: T): boolean => (
     match.metadata?.receipt_required === true ||
     typeof match.metadata?.vector_commit_id === "string" ||
-    (typeof match.id === "string" && match.id.startsWith("occ:v2:"))
+    (typeof match.id === "string" && isManagedOccurrenceVectorId(match.id))
   );
   const managed = matches.filter(isManaged);
   if (managed.length === 0) return matches;
   const ids = managed.map((match) => typeof match.id === "string" ? match.id : "").filter(Boolean);
   try {
-    const receipts = dbModule.committedManagedVectorReceipts(ids);
+    const ledgerAuthority = authority?.ledgerAuthority ?? managedVectorLedgerAuthority();
+    const receipts = dbModule.committedManagedVectorReceipts(ids, asOf);
     return matches.filter((match) => {
       if (!isManaged(match)) return true;
       if (typeof match.id !== "string" || !match.id) return false;
@@ -3122,10 +5092,36 @@ export function filterMatchesForCommittedReceipts<T extends {
       if (!metadata) return false;
       const receipt = receipts.get(match.id);
       if (!receipt) return false;
+      const expectedScope = receipt.tenantScope === vectorTenantScope("local", SHARED_SCOPE)
+        ? SHARED_SCOPE
+        : PRIVATE_SCOPE;
+      const expectedMetadataUserId = expectedScope === SHARED_SCOPE
+        ? "local"
+        : vectorUserIdFor(requestingUserId);
       return (
+        typeof providerAuthority === "string" &&
+        providerAuthority.length > 0 &&
+        visibleTenantScopes.has(receipt.tenantScope) &&
+        match.id.startsWith("occ:v3:") &&
+        managedOccurrenceVectorIdMatches({
+          id: match.id,
+          ledgerAuthority,
+          providerAuthority,
+          tenantScope: receipt.tenantScope,
+          source: receipt.source
+        }) &&
         metadata.receipt_required === true &&
         metadata.ingest_state === "committed" &&
+        metadata.scope === expectedScope &&
+        metadata.userId === expectedMetadataUserId &&
+        metadata.ledger_authority === ledgerAuthority &&
+        metadata.provider_authority === providerAuthority &&
+        receipt.providerAuthority === providerAuthority &&
+        receipt.ledgerAuthority === ledgerAuthority &&
+        receipt.vectorNamespace === metadata.vector_namespace &&
         metadata.vector_commit_id === receipt.commitId &&
+        metadata.document_key === receipt.documentKey &&
+        metadata.vector_attempt_token === receipt.attemptToken &&
         metadata.content_version === receipt.contentVersion &&
         metadata.tenant_scope === receipt.tenantScope &&
         metadata.content_hash === receipt.contentHash &&
@@ -3135,7 +5131,10 @@ export function filterMatchesForCommittedReceipts<T extends {
         metadata.section === receipt.section &&
         metadata.chunk_ordinal === receipt.ordinal &&
         metadata.parser_revision === receipt.parserRevision &&
-        metadata.embed_revision === receipt.embedRevision
+        metadata.embed_revision === receipt.embedRevision &&
+        metadata.retrieval_metadata_version === receipt.retrievalMetadataVersion &&
+        retrievalMetadataVersionFromMetadata(metadata) === receipt.retrievalMetadataVersion &&
+        metadata[AS_OF_EPOCH_FIELD] === resolveAsOfEpochMs(metadata)
       );
     });
   } catch {
@@ -3164,7 +5163,7 @@ export async function retrieveContextDetailed(
     return [];
   }
   const vectorUserId = vectorUserIdFor(userId);
-  const { pc, voyage, pineconeSource, voyageSource } = await getClients(userId);
+  const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId);
   if (!pc || !voyage) {
     void captureRagSentryMessage("warning", "RAG retrieval skipped: missing Pinecone or Voyage key", {
       provider: !pc ? "pinecone" : "voyage",
@@ -3195,7 +5194,12 @@ export async function retrieveContextDetailed(
   // cross-encoder is cheap to run over hundreds of candidates and a modest-50 cap otherwise hides a
   // flip-the-decision chunk at dense rank 51+ from ever reaching it. Non-rerank over-fetch (as-of or
   // hybrid alone) keeps the existing modest `overFetchK` cap — this does not change their Pinecone topK.
-  const fetchK = wantRerank ? rerankOverFetchK(limit) : options?.asOf || wantHybrid ? overFetchK(limit) : limit;
+  const baseFetchK = wantRerank ? rerankOverFetchK(limit) : options?.asOf || wantHybrid ? overFetchK(limit) : limit;
+  const rejectedVersionUpperBound = managedVersionRejectedUpperBound(symbol, userId, options);
+  const managedTopKCap = managedVersionTopKCap(limit);
+  const requestedManagedFetchK = Math.max(baseFetchK, limit + rejectedVersionUpperBound);
+  const fetchK = Math.min(managedTopKCap, requestedManagedFetchK);
+  const managedTopKCapHit = requestedManagedFetchK > managedTopKCap;
   const extraFilter = buildExtraFilters(options);
 
   // server-asof-filter (2026-07-06): the optional server-side point-in-time clause. `undefined`
@@ -3210,22 +5214,50 @@ export async function retrieveContextDetailed(
       reportRetrievalStatus(options, "lookup_failed");
       return [];
     }
-
-    const index = pc.Index(indexName());
+    await assertIndexMetric(pc, initCacheKey, pineconeSource, userId);
+    const stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+    const providerAuthority = stableProviderAuthority;
+    const defaultIndex = vectorDataIndex(pc, "default");
+    const privateIndex = vectorDataIndex(pc, "private", undefined, userId);
+    const ledgerAuthority = managedVectorLedgerAuthority();
+    const managedRecordsExpected = hasCommittedManagedRecords();
+    const currentManagedRecordsExpected = hasCommittedVectorNamespaceRecords(ledgerAuthority, "managed");
+    const currentFmpRecordsExpected = hasCommittedVectorNamespaceRecords(ledgerAuthority, "fmp-transcripts");
+    const managedAuthorityDegraded = managedRecordsExpected && (
+      !stableProviderAuthority ||
+      hasUnreachableCommittedManagedRecords(ledgerAuthority, stableProviderAuthority)
+    );
+    const queryManagedNamespace = Boolean(stableProviderAuthority && currentManagedRecordsExpected);
+    const managedIndex = queryManagedNamespace
+      ? vectorDataIndex(pc, "managed", ledgerAuthority)
+      : undefined;
+    const queryFmpNamespace = Boolean(
+      stableProviderAuthority &&
+      currentFmpRecordsExpected &&
+      envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false)
+    );
+    const fmpIndex = queryFmpNamespace
+      ? vectorDataIndex(pc, "fmp-transcripts", ledgerAuthority)
+      : undefined;
 
     // Episodic cross-symbol mode (matchAllSymbols): omit the symbol clause entirely so decision
     // analogs on OTHER tickers stay retrievable. Default (unset) keeps the per-symbol restriction.
     const symbolFilter: Record<string, unknown> = options?.matchAllSymbols ? {} : { symbol: { $eq: symbol } };
 
-    // The shared-tier filter uses $or to match BOTH new vectors (scope=='shared') and legacy
-    // pre-scope vectors (userId=='local'). This is the backward-compat coexistence strategy:
-    // scope is authoritative for new vectors; userId is the fallback for old ones.
+    // The legacy local sentinel is only a shared fallback when scope is absent. A bare
+    // `userId=local` alternative would also select historical operator decision memory that was
+    // accidentally stamped private content as shared-user data.
     const sharedTierFilter = withCommittedVectorFilter(mergeAsOfEpoch({
       ...symbolFilter,
       ...extraFilter,
       $or: [
         { scope: { $eq: SHARED_SCOPE } },
-        { userId: { $eq: "local" } }
+        {
+          $and: [
+            { userId: { $eq: "local" } },
+            { scope: { $exists: false } }
+          ]
+        }
       ]
     }, asOfEpochFilter));
 
@@ -3276,55 +5308,124 @@ export async function retrieveContextDetailed(
       // Only cache a validated (finite, correctly-shaped) embedding — never a malformed one.
       setCachedQueryEmbedding(VOYAGE_MODEL, q, embedding);
 
-      if (vectorUserId === "local") {
-        const results = await withRagApiHealth("pinecone", pineconeSource, userId, "query", () =>
-          index.query({
-            vector: embedding,
-            topK: fetchK,
-            filter: sharedTierFilter,
-            includeMetadata: true,
-          })
-        );
-        const m = results.matches || [];
-        meterPineconeQuery(pineconeReadUnits(results, 1), userId, m.length);
-        return m;
-      }
-
       // server-asof-filter: the user-tier filter gets the SAME epoch clause as the shared tier.
       // The fail-open epoch clause itself carries an `$or`, so it must go through `mergeAsOfEpoch`
       // (which promotes to `$and`) rather than a spread — a bare spread would be fine here (no
       // pre-existing top-level `$or`), but routing both tiers through one helper keeps them identical.
+      const privateVisibilityClauses: Record<string, unknown>[] = [
+        { tenant_scope: { $eq: vectorTenantScope(userId, PRIVATE_SCOPE) } }
+      ];
+      if (isUnambiguousLegacyVectorUserId(userId)) {
+        privateVisibilityClauses.push(
+          {
+            $and: [
+              { tenant_scope: { $exists: false } },
+              { scope: { $eq: PRIVATE_SCOPE } }
+            ]
+          },
+          {
+            $and: [
+              { tenant_scope: { $exists: false } },
+              { scope: { $exists: false } }
+            ]
+          }
+        );
+      }
       const userTierFilter = withCommittedVectorFilter(mergeAsOfEpoch({
         ...symbolFilter,
         userId: { $eq: vectorUserId },
-        ...extraFilter
+        ...extraFilter,
+        $or: privateVisibilityClauses
       }, asOfEpochFilter));
 
-      const [userResults, localResults] = await Promise.all([
+      const managedAuthorityClause = {
+        ledger_authority: { $eq: ledgerAuthority },
+        provider_authority: { $eq: stableProviderAuthority },
+        receipt_required: { $eq: true },
+        ingest_state: { $eq: "committed" }
+      };
+      const managedUserFilter = { $and: [userTierFilter, managedAuthorityClause] };
+      const managedSharedFilter = { $and: [sharedTierFilter, managedAuthorityClause] };
+      const [userResults, privateResults, localResults, managedUserResults, managedLocalResults, fmpResults] = await Promise.all([
         withRagApiHealth("pinecone", pineconeSource, userId, "query user tier", () =>
-          index.query({
+          defaultIndex.query({
             vector: embedding,
             topK: fetchK,
             filter: userTierFilter,
             includeMetadata: true,
           })
         ),
+        withRagApiHealth("pinecone", pineconeSource, userId, "query private namespace", () =>
+          privateIndex.query({
+            vector: embedding,
+            topK: fetchK,
+            filter: userTierFilter,
+            includeMetadata: true
+          })
+        ),
         withRagApiHealth("pinecone", pineconeSource, userId, "query shared tier", () =>
-          index.query({
+          defaultIndex.query({
             vector: embedding,
             topK: fetchK,
             filter: sharedTierFilter,
             includeMetadata: true,
           })
-        )
+        ),
+        managedIndex
+          ? withRagApiHealth("pinecone", pineconeSource, userId, "query managed user tier", () =>
+              managedIndex.query({
+                vector: embedding,
+                topK: fetchK,
+                filter: managedUserFilter,
+                includeMetadata: true
+              })
+            )
+          : Promise.resolve({ matches: [] }),
+        managedIndex
+          ? withRagApiHealth("pinecone", pineconeSource, userId, "query managed shared tier", () =>
+              managedIndex.query({
+                vector: embedding,
+                topK: fetchK,
+                filter: managedSharedFilter,
+                includeMetadata: true
+              })
+            )
+          : Promise.resolve({ matches: [] }),
+        fmpIndex
+          ? withRagApiHealth("pinecone", pineconeSource, userId, "query FMP transcript tier", () =>
+              fmpIndex.query({
+                vector: embedding,
+                topK: fetchK,
+                filter: managedSharedFilter,
+                includeMetadata: true
+              })
+            )
+          : Promise.resolve({ matches: [] })
       ]);
       meterPineconeQuery(
-        pineconeReadUnits(userResults, 1) + pineconeReadUnits(localResults, 1),
+        pineconeReadUnits(userResults, 1) +
+          pineconeReadUnits(privateResults, 1) +
+          pineconeReadUnits(localResults, 1) +
+          pineconeReadUnits(managedUserResults, managedIndex ? 1 : 0) +
+          pineconeReadUnits(managedLocalResults, managedIndex ? 1 : 0) +
+          pineconeReadUnits(fmpResults, fmpIndex ? 1 : 0),
         userId,
-        (userResults.matches?.length ?? 0) + (localResults.matches?.length ?? 0)
+        (userResults.matches?.length ?? 0) +
+          (privateResults.matches?.length ?? 0) +
+          (localResults.matches?.length ?? 0) +
+          (managedUserResults.matches?.length ?? 0) +
+          (managedLocalResults.matches?.length ?? 0) +
+          (fmpResults.matches?.length ?? 0)
       );
 
-      const combined = [...(userResults.matches || []), ...(localResults.matches || [])];
+      const combined = [
+        ...(userResults.matches || []),
+        ...(privateResults.matches || []),
+        ...(localResults.matches || []),
+        ...(managedUserResults.matches || []),
+        ...(managedLocalResults.matches || []),
+        ...(fmpResults.matches || [])
+      ];
       combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
       const seenIds = new Set<string>();
@@ -3415,10 +5516,44 @@ export async function retrieveContextDetailed(
       matches = single;
     }
 
+    const providerCandidateCount = matches.length;
+
+    // Broad coach/chat retrieval has no docType filter. Enforce tenant visibility and transcript
+    // rights before any candidate-pool persistence, reranking, or prompt injection.
+    matches = filterMatchesForTenantVisibility(matches, userId);
+    const visibleCandidateCount = matches.length;
+    const beforeReceiptCount = matches.length;
+    matches = filterMatchesForCommittedReceipts(matches, options?.asOf, {
+      userId,
+      providerAuthority,
+      ...(ledgerAuthority ? { ledgerAuthority } : {})
+    });
+    const receiptEligibleCount = matches.length;
+    const managedVersionCrowdingDegraded = (
+      managedTopKCapHit ||
+      (providerCandidateCount >= fetchK &&
+        beforeReceiptCount > receiptEligibleCount &&
+        receiptEligibleCount < limit)
+    );
+    if (managedVersionCrowdingDegraded) {
+      audit("managed_version_crowding", {
+        symbol,
+        asOf: options?.asOf ?? null,
+        baseFetchK,
+        fetchK,
+        cap: managedTopKCap,
+        capHit: managedTopKCapHit,
+        rejectedVersionUpperBound,
+        providerCandidateCount,
+        visibleCandidateCount,
+        receiptRejectedCount: beforeReceiptCount - receiptEligibleCount,
+        receiptEligibleCount
+      }, userId);
+    }
+
     // Broad coach/chat retrieval has no docType filter. Enforce transcript rights before any
     // candidate-pool persistence, reranking, or prompt injection while preserving legacy matches
     // whose metadata predates doc_type.
-    matches = filterMatchesForCommittedReceipts(matches);
     matches = filterMatchesForTranscriptRights(matches);
 
     // R12 (2026-07-01 RAG backlog): apply the default cosine floor for a caller that opted in via
@@ -3645,7 +5780,14 @@ export async function retrieveContextDetailed(
     // Final status classification (receipt only — never changes `finalChunks`): a real zero-match
     // result is "no_memory" (pipeline ran cleanly, nothing relevant found); a non-empty result under
     // the R16 per-run budget degrade is "degraded" (lower quality, not absent); everything else "ok".
-    reportRetrievalStatus(options, finalChunks.length === 0 ? "no_memory" : budgetDegraded ? "degraded" : "ok");
+    reportRetrievalStatus(
+      options,
+      managedVersionCrowdingDegraded || managedAuthorityDegraded || budgetDegraded
+        ? "degraded"
+        : finalChunks.length === 0
+          ? "no_memory"
+          : "ok"
+    );
     return finalChunks;
   } catch (err) {
     console.error("[vector-db] Error retrieving context:", err);

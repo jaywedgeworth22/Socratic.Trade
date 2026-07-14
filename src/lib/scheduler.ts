@@ -6,7 +6,7 @@
 
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
-import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
+import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
@@ -23,7 +23,7 @@ import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import type { TradingPolicy } from "./types";
-import { triggerEngineEnabled, triggerMode } from "./triggers";
+import { drainMaterialEventQueue, triggerEngineEnabled, triggerMode } from "./triggers";
 import {
   getTechnicalWatchlist,
   isFilingIngestDue,
@@ -35,8 +35,93 @@ import {
 import { symbolsForPolicyUniverse } from "./index-universes";
 import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
 import { reconcilePendingFills } from "./strategy-execution";
+import { safeErrorMessage } from "./telemetry-sanitize";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
+export const MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY = "scheduler:managedVectorReconcile:lastAttempt";
+export const MANAGED_VECTOR_RECONCILE_LAST_SUCCESS_KEY = "scheduler:managedVectorReconcile:lastSuccess";
+export const MANAGED_VECTOR_RECONCILE_SUCCESS_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+export const MANAGED_VECTOR_RECONCILE_RETRY_INTERVAL_MS = 60 * 60 * 1_000;
+
+type PersistedTimestamp = string | number | null | undefined;
+
+function timestampMs(value: PersistedTimestamp): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function elapsed(now: number, marker: PersistedTimestamp, intervalMs: number): boolean {
+  const markerMs = timestampMs(marker);
+  return markerMs === undefined || now - markerMs >= intervalMs;
+}
+
+/** Pure cadence decision for the global managed-vector repair pass. */
+export function isManagedVectorReconcileDue(
+  now: number,
+  lastAttemptAt?: PersistedTimestamp,
+  lastSuccessAt?: PersistedTimestamp
+): boolean {
+  if (!Number.isFinite(now)) return false;
+  if (!elapsed(now, lastSuccessAt, MANAGED_VECTOR_RECONCILE_SUCCESS_INTERVAL_MS)) return false;
+  return elapsed(now, lastAttemptAt, MANAGED_VECTOR_RECONCILE_RETRY_INTERVAL_MS);
+}
+
+export type ManagedVectorReconcileRun = {
+  status: "success" | "busy" | "failed";
+  result?: { skipped?: boolean };
+};
+
+const managedVectorReconcileGuardHost = globalThis as unknown as {
+  __schedulerManagedVectorReconcileInFlight?: Promise<ManagedVectorReconcileRun | null>;
+};
+
+/**
+ * Run the global managed-vector repair pass when its persisted cadence allows it.
+ *
+ * This is intentionally independent of user/account state: the reconciler's default scope is the
+ * global `local` tenant. The promise guard is pinned to globalThis so HMR/module duplication cannot
+ * start a second provider/SQLite repair in the same process.
+ */
+export async function reconcileManagedVectorRecordsIfDue(now = Date.now()): Promise<ManagedVectorReconcileRun | null> {
+  const existing = managedVectorReconcileGuardHost.__schedulerManagedVectorReconcileInFlight;
+  if (existing) return existing;
+
+  const run = (async (): Promise<ManagedVectorReconcileRun | null> => {
+    try {
+      const lastAttemptAt = getInternalSetting<PersistedTimestamp>(MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY);
+      const lastSuccessAt = getInternalSetting<PersistedTimestamp>(MANAGED_VECTOR_RECONCILE_LAST_SUCCESS_KEY);
+      if (!isManagedVectorReconcileDue(now, lastAttemptAt, lastSuccessAt)) return null;
+
+      setInternalSetting(MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY, new Date(now).toISOString());
+      const { reconcileManagedVectorRecords } = await import("./vector-db");
+      // Scheduled maintenance is observation-only. Provider list inventory is eventually
+      // consistent, so destructive repair requires an explicit operator invocation after review.
+      const result = await reconcileManagedVectorRecords({ dryRun: true });
+      if (result.skipped) {
+        console.warn("[scheduler] managed-vector reconciliation busy; retry deferred");
+        return { status: "busy", result };
+      }
+
+      setInternalSetting(MANAGED_VECTOR_RECONCILE_LAST_SUCCESS_KEY, new Date(now).toISOString());
+      return { status: "success", result };
+    } catch (error) {
+      console.error(`[scheduler] managed-vector reconciliation failed: ${safeErrorMessage(error)}`);
+      return { status: "failed" };
+    }
+  })();
+
+  const guardPromise = run;
+  managedVectorReconcileGuardHost.__schedulerManagedVectorReconcileInFlight = guardPromise;
+  try {
+    return await run;
+  } finally {
+    if (managedVectorReconcileGuardHost.__schedulerManagedVectorReconcileInFlight === guardPromise) {
+      delete managedVectorReconcileGuardHost.__schedulerManagedVectorReconcileInFlight;
+    }
+  }
+}
 
 /**
  * Single-leader is the fail-safe default. Unset, empty, and whitespace-only values stay ON;
@@ -309,6 +394,19 @@ async function tick(): Promise<void> {
   // single-leader gate: only the process actually running the tick body reports "ok", so a dead
   // leader is not masked by idle followers. Fire-and-forget + self-guarded — can't break a tick.
   void sendSentrySchedulerCheckIn();
+
+  // Drain durable material-event inboxes on every leader tick, independent of SEC ingestion
+  // flags. Events may be produced by filings, transcripts, broker state, or operator actions;
+  // gating this on one source would strand queued work indefinitely.
+  try {
+    drainMaterialEventQueue();
+  } catch (err) {
+    console.error("[scheduler] material-event drain error:", err);
+  }
+
+  // Global managed-vector crash repair is cadence-gated and single-flight. It must never block or
+  // throw into trading work; failed or lease-busy attempts persist their hourly retry marker.
+  void reconcileManagedVectorRecordsIfDue();
 
   // Refresh backend web sources (congressional trades, etc.) independently of the
   // trading loop — these are low-frequency (cadence-gated, ~daily) data reads that
