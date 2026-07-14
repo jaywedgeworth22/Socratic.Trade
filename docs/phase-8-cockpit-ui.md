@@ -77,6 +77,10 @@
 > stays aligned through placement, broker rejection, expiry, withdrawal, and reconciliation. An
 > uncertain submission says “Placement pending confirmation” and never invites a retry; final-size
 > Red rejection/unavailability/half-size advice and any explicit owner override remain distinct.
+> Independent rationale-diversity or preference-override holds render in their own “Why your
+> approval is required” panel instead of being mislabeled as a Red Team outage. A synchronous
+> broker fill renders as a completed success in the single/bulk approval flow and Activity feed,
+> never as a failed approval or “awaiting next update.”
 
 
 This phase restructures the dashboard from a long vertical page into a

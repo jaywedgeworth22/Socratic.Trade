@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel, type RedTeamVerdict } from "../app/console/lib/red-team";
-import { deterministicOutcomePresentation, proposalGreenRationale } from "../app/console/lib/thesis";
+import { deterministicOutcomePresentation, isSuccessfulApprovalResult, proposalGreenRationale, proposalHumanReviewReasons } from "../app/console/lib/thesis";
 
 function verdict(overrides: Partial<RedTeamVerdict>): RedTeamVerdict {
   return { rejected: false, available: false, reason: "Red Team evaluation failed.", ...overrides };
@@ -24,6 +24,12 @@ describe("redTeamFailureMeta", () => {
 });
 
 describe("decision evidence presentation", () => {
+  it("treats a synchronous broker fill as a successful approval result", () => {
+    expect(isSuccessfulApprovalResult("filled")).toBe(true);
+    expect(isSuccessfulApprovalResult("placed")).toBe(true);
+    expect(isSuccessfulApprovalResult("blocked")).toBe(false);
+  });
+
   it("keeps appended Red/owner-hold prose out of the Green Team panel", () => {
     expect(
       proposalGreenRationale({
@@ -45,6 +51,28 @@ describe("decision evidence presentation", () => {
     const presentation = deterministicOutcomePresentation("placing");
     expect(presentation?.label).toBe("Placement pending confirmation");
     expect(presentation?.body).not.toMatch(/retry/i);
+  });
+
+  it("keeps an independent owner hold separate from the Red Team verdict", () => {
+    expect(
+      proposalHumanReviewReasons({
+        symbol: "EXE",
+        side: "buy",
+        type: "market",
+        dollarAmount: 4,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "Green thesis.",
+        tradeThesisTag: "Value-Quality",
+        entryMarketRegime: "Neutral",
+        redTeamVerdict: { available: true, rejected: false, verdict: "approve", reason: "Approved." },
+        humanReviewReasons: [
+          { code: "rationale_collapse", title: "Rationale-diversity hold", summary: "The proposals repeated the same reasoning." }
+        ]
+      })
+    ).toEqual([
+      { code: "rationale_collapse", title: "Rationale-diversity hold", summary: "The proposals repeated the same reasoning." }
+    ]);
   });
 });
 

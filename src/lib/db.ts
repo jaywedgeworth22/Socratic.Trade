@@ -129,7 +129,7 @@ const MIGRATIONS: Migration[] = [
           ),
           CASE
             WHEN status = 'paper' THEN 'test/local'
-            WHEN status IN ('placed', 'placing', 'placing_failed') THEN 'broker/live'
+            WHEN status IN ('placed', 'filled', 'placing', 'placing_failed') THEN 'broker/live'
             ELSE NULL
           END
         )

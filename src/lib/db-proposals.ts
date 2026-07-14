@@ -48,6 +48,7 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
  * console and the embedded memory tell materially different stories about what actually happened. */
 function socraticStatusFromProposalStatus(status: string): SocraticDecisionStatus {
   if (status === "placed" || status === "paper") return "placed";
+  if (status === "filled") return "filled";
   if (status === "proposed") return "proposed";
   if (status === "placing") return "placing";
   if (status === "blocked") return "blocked";
@@ -85,6 +86,8 @@ function lifecycleEvidence(input: {
   switch (input.status) {
     case "placed":
       return { kind: "policy", title: "Order placed", summary: `${input.action} was submitted and confirmed by the broker.`, symbol: input.symbol, tone: "positive", data: input.decision };
+    case "filled":
+      return { kind: "policy", title: "Order filled", summary: `${input.action} was filled by the broker.`, symbol: input.symbol, tone: "positive", data: input.decision };
     case "placing":
       return { kind: "policy", title: "Placement pending confirmation", summary: `${input.action} was submitted, but broker acceptance is not yet confirmed${suffix}.`, symbol: input.symbol, tone: "warning", data: input.decision };
     case "proposed":
@@ -446,7 +449,7 @@ export function updateProposalStatus(
   const syncedDecisionId = database.transaction(() => {
     const info = database
       .prepare(
-        "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), error_message = COALESCE(?, error_message), decision = COALESCE(?, decision), placed_at = CASE WHEN ? IN ('placed', 'paper', 'placing') THEN COALESCE(placed_at, CURRENT_TIMESTAMP) ELSE placed_at END WHERE id = ? AND user_id = ?"
+        "UPDATE trade_proposals SET status = ?, order_id = COALESCE(?, order_id), review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), error_message = COALESCE(?, error_message), decision = COALESCE(?, decision), placed_at = CASE WHEN ? IN ('placed', 'filled', 'paper', 'placing') THEN COALESCE(placed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ELSE placed_at END WHERE id = ? AND user_id = ?"
       )
       .run(
         status,
@@ -485,6 +488,9 @@ export function claimProposalForExecution(
     executionMode?: ExecutionMode;
     proposal?: TradeProposal;
     decision?: PolicyDecision;
+    /** Called inside the claim transaction only when the proposal has no durable Socratic case.
+     * The callback must synchronously insert that case or the claim fails closed. */
+    createSocraticDecisionCase?: () => void;
   } = {}
 ): boolean {
   // `proposal` lets the approval path persist EXECUTION-TIME sizing (a broker-minimum bump, an
@@ -493,9 +499,19 @@ export function claimProposalForExecution(
   // actually sent to the broker, not the original ask — and Recent/Activity hydrate from it too.
   const database = getDb();
   const result = database.transaction(() => {
+    const anyDecisionCase = database
+      .prepare("SELECT id FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) LIMIT 1")
+      .get(userId, id, id) as { id: string } | undefined;
+    if (!anyDecisionCase && opts.createSocraticDecisionCase) {
+      opts.createSocraticDecisionCase();
+    }
+    const decisionCase = database
+      .prepare("SELECT id FROM socratic_decisions WHERE user_id = ? AND (id = ? OR proposal_id = ?) AND status = 'proposed' LIMIT 1")
+      .get(userId, id, id) as { id: string } | undefined;
+    if (!decisionCase) return { claimed: false, decisionId: undefined };
     const info = database
       .prepare(
-        "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode), proposal = COALESCE(?, proposal), decision = COALESCE(?, decision) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+        "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode), proposal = COALESCE(?, proposal), decision = COALESCE(?, decision), placed_at = CASE WHEN ? IN ('placed', 'filled', 'paper', 'placing') THEN COALESCE(placed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ELSE placed_at END WHERE id = ? AND user_id = ? AND status = 'proposed' AND EXISTS (SELECT 1 FROM socratic_decisions sd WHERE sd.user_id = trade_proposals.user_id AND (sd.id = trade_proposals.id OR sd.proposal_id = trade_proposals.id) AND sd.status = 'proposed')"
       )
       .run(
         toStatus,
@@ -505,6 +521,7 @@ export function claimProposalForExecution(
         opts.executionMode ?? null,
         opts.proposal ? JSON.stringify(opts.proposal) : null,
         opts.decision ? JSON.stringify(opts.decision) : null,
+        toStatus,
         id,
         userId
       );

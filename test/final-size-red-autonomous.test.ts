@@ -278,7 +278,7 @@ describe("autonomous broker-minimum final-size Red review", () => {
 
     expect(result.status).toBe("completed");
     expect(placeEquityOrder).toHaveBeenCalledTimes(1);
-    expect(listRecentProposals(ACCOUNT, 10, userId)[0]).toMatchObject({ status: "placed", estimatedNotional: 1 });
+    expect(listRecentProposals(ACCOUNT, 10, userId)[0]).toMatchObject({ status: "filled", estimatedNotional: 1 });
     expect(listSocraticDecisionCases(userId, { connectedAccountId: "autonomous-final-size-account" })[0]).toMatchObject({ status: "filled", notional: 1 });
   }, 30_000);
 
@@ -304,7 +304,7 @@ describe("autonomous broker-minimum final-size Red review", () => {
     await configureAutonomousAccount(userId, true);
 
     const { runStrategyOnce } = await import("../src/lib/strategy");
-    const { listRecentProposals } = await import("../src/lib/db");
+    const { listNotificationEvents, listRecentProposals, listSocraticDecisionCases } = await import("../src/lib/db");
     const result = await runStrategyOnce(userId);
 
     expect(result.status).toBe("completed");
@@ -313,6 +313,13 @@ describe("autonomous broker-minimum final-size Red review", () => {
     expect(row?.status).toBe("proposed");
     expect(row?.proposal.finalSizeReview).toMatchObject({ ownerApprovalRequired: false, toNotional: 1 });
     expect(row?.proposal.rationale).toContain("Rationale-diversity gate");
+    expect(row?.proposal.humanReviewReasons).toEqual([
+      expect.objectContaining({ code: "rationale_collapse", title: "Rationale-diversity hold" })
+    ]);
+    expect(result.proposals[0]?.reasons.join(" ")).toContain("Rationale-diversity hold");
+    expect(result.proposals[0]?.reasons.join(" ")).not.toContain("Red Team review unavailable");
+    expect(listNotificationEvents(userId).find((event) => event.type === "pending_approval")?.title).toContain("Rationale-diversity hold");
+    expect(listSocraticDecisionCases(userId, { connectedAccountId: "autonomous-final-size-account" })[0]).toMatchObject({ status: "proposed" });
   }, 30_000);
 
   it("keeps both proposal and Socratic case in placing when autonomous broker acceptance is uncertain", async () => {
@@ -346,6 +353,10 @@ describe("autonomous broker-minimum final-size Red review", () => {
 
     expect(result.status).toBe("completed");
     expect(listRecentProposals(ACCOUNT, 10, userId)[0]?.status).toBe("placing");
-    expect(listSocraticDecisionCases(userId, { connectedAccountId: "autonomous-final-size-account" })[0]?.status).toBe("placing");
+    const decisionCase = listSocraticDecisionCases(userId, { connectedAccountId: "autonomous-final-size-account" })[0];
+    expect(decisionCase?.status).toBe("placing");
+    expect(decisionCase?.evidence[0]).toMatchObject({ title: "Placement pending confirmation" });
+    expect(decisionCase?.evidence[0]?.summary).toContain("network timeout during placement");
+    expect(decisionCase?.evidence[0]?.title).not.toBe("Policy approved");
   }, 30_000);
 });

@@ -12,6 +12,7 @@ import {
   setPolicy,
   transitionProposalIfPending,
   updateProposalStatus,
+  upsertSocraticDecisionCase,
   upsertSyntheticStop,
   listSyntheticStops
 } from "../src/lib/db";
@@ -22,30 +23,62 @@ beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-deepfix-${randomUUID()}.db`)}`;
 });
 
-function seedProposed(userId = "local"): string {
+function seedProposed(userId = "local", withDecisionCase = false): string {
   const id = randomUUID();
   insertProposal({
     id,
     userId,
     runId: "r1",
     accountNumber: "ACC1",
-    proposal: { side: "buy", symbol: "AAPL" } as never,
+    proposal: {
+      side: "buy",
+      symbol: "AAPL",
+      type: "market",
+      dollarAmount: 1000,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      rationale: "Atomic claim test.",
+      tradeThesisTag: "test",
+      entryMarketRegime: "test"
+    },
     decision: { approved: true, reasons: [] },
     estimatedNotional: 1000,
     status: "proposed"
   });
+  if (withDecisionCase) {
+    upsertSocraticDecisionCase({
+      id,
+      userId,
+      proposalId: id,
+      runId: "r1",
+      accountNumber: "ACC1",
+      symbol: "AAPL",
+      side: "buy",
+      status: "proposed",
+      authority: "decide",
+      thesis: "test",
+      rationale: "test",
+      action: "BUY AAPL $1,000"
+    });
+  }
   return id;
 }
 
 // ── Fix T4: executeProposal double-execution (atomic CAS claim) ──────────────
 describe("claimProposalForExecution — atomic proposal claim", () => {
   it("only the first concurrent claim of a 'proposed' row wins; the loser sees false", () => {
-    const id = seedProposed();
+    const id = seedProposed("local", true);
     expect(claimProposalForExecution(id, "placing", "local", { refId: "rid-1" })).toBe(true);
     // Second claim loses — status is no longer 'proposed'.
     expect(claimProposalForExecution(id, "placing", "local", { refId: "rid-2" })).toBe(false);
     const row = getProposal(id, "local");
     expect(row?.status).toBe("placing");
+  });
+
+  it("fails closed when the proposal has no Socratic intent receipt", () => {
+    const id = seedProposed();
+    expect(claimProposalForExecution(id, "placing", "local", { refId: "rid-missing-case" })).toBe(false);
+    expect(getProposal(id, "local")?.status).toBe("proposed");
   });
 
   it("refuses to claim a proposal that is not 'proposed'", () => {

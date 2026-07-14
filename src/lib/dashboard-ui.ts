@@ -373,7 +373,8 @@ export function formatNotificationDisplay(
     // Red-Team-unavailable signal must survive into the feed — append the indicator instead of
     // discarding it with the generic overwrite.
     const adversaryUnavailable = payload.adversaryUnavailable === true;
-    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval${adversaryUnavailable ? " — Red Team Unavailable" : ""}`;
+    const humanReviewReasonTitle = stringValue(payload.humanReviewReasonTitle);
+    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval${humanReviewReasonTitle ? ` — ${humanReviewReasonTitle}` : adversaryUnavailable ? " — Red Team Unavailable" : ""}`;
   } else if (event.type === "kill_switch") {
     title = "Kill Switch Triggered";
   } else if (event.type === "run_failed") {

@@ -18,20 +18,22 @@ broker-reviewed size. That one-shot state machine supports full approval, one ha
 unavailable/reject owner holds, and one explicit owner override without floor/haircut loops; exits
 remain exempt. Independent human-review reasons are tracked separately so a successful final Red
 review cannot erase a rationale-collapse or owner-preference hold. The proposal row and its initial
-Socratic `placing` case are committed in one SQLite transaction before the broker call, all later
+Socratic `proposed` case are committed in one SQLite transaction before the broker call, the case is
+required by the atomic `proposed -> placing` claim, all later
 proposal transitions update the case in the same transaction, uncertain submissions stay
 `placing`, and per-decision vector writes are serialized while re-reading current SQLite truth.
 Approval and Live Thesis surfaces render exact Green text separately from Red/owner-hold prose and
 reserve retry wording for broker-confirmed non-placement.
 
-Focused Node 24 verification after hostile review is green: TypeScript passed; 6 files / 53 tests
-passed, including successful/rejected/unavailable/half-size final review, unrelated hold
-preservation, pre-broker atomic case visibility, uncertain-placement truth, lifecycle sync, vector
-ordering, migration coverage, and UI labels. Repository lint passed earlier in this continuation
-with 0 errors / 458 inherited warnings. Current `origin/main@86971ec4` is now integrated, preserving
-its `filled` lifecycle and clearer console action vocabulary; the post-merge focused gate passed
-TypeScript plus 8 files / 68 tests. The authoritative lint/tsc/test/build gate, ready PR,
-auto-merge, original-thread resolution, and exact production verification remain.
+The resumed hostile review's four blockers are implemented: `filled` orders continue consuming
+daily/hourly caps; structured owner holds never invent a Red outage; lifecycle sync updates only
+execution-owned case fields and preserves outcome/lessons/coach notes; and approval cannot submit
+without a durable proposed Socratic intent receipt. A broader `filled` audit also corrected bulk
+approval success, toasts, strategy summaries, ops counts, audit-feed details, outcome coverage, and
+legacy execution-mode inference. Node 24 TypeScript plus 15 focused files / 132 tests pass. PR #1578
+restored the supported TypeScript toolchain and merged as `4432c2bc`; integrate that current main,
+obtain the fresh independent acceptance, then restart the authoritative lint/tsc/test/build gate.
+Ready PR, auto-merge, original-thread resolution, and exact production verification remain.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.

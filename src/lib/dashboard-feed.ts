@@ -189,7 +189,9 @@ function formatAuditEvent(
     const title =
       result === "blocked"
         ? `${titlePrefix} Blocked`
-        : result === "placed" || result === "paper"
+        : result === "filled"
+          ? `${titlePrefix} Filled`
+          : result === "placed" || result === "paper"
           ? `${titlePrefix} Approved`
           : `${titlePrefix} ${capitalize(result)}`;
     const orderId = stringValue(payload.orderId);
@@ -198,9 +200,10 @@ function formatAuditEvent(
         // "paper" here is a legacy result value from before the local-simulation execution path was
         // removed — no code path writes it anymore, but old audit rows can still carry it.
         result === "paper" ? "Local simulation (legacy)" : undefined,
+        result === "filled" ? "Order filled" : undefined,
         result === "placed" && stringValue(payload.fillStatus) === "pending_reconciliation" ? "Broker accepted order; pending execution" : undefined,
         result === "placed" && stringValue(payload.fillStatus) !== "pending_reconciliation" ? "Order placed" : undefined,
-        result === "placed" && stringValue(payload.brokerState) ? `Broker state ${readableBrokerState(stringValue(payload.brokerState))}` : undefined,
+        (result === "placed" || result === "filled") && stringValue(payload.brokerState) ? `Broker state ${readableBrokerState(stringValue(payload.brokerState))}` : undefined,
         orderIdFragment,
         firstReason(payload)
       ]);

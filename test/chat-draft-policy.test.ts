@@ -61,7 +61,7 @@ describe("chat draft policy bridge", () => {
 
   it("stages a draft blocked ONLY by preview staleness (approval-time gate re-checks fresh data)", async () => {
     const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
-    const { getPolicy, listPendingProposals, setPolicy } = await import("../src/lib/db");
+    const { getPolicy, getSocraticDecisionCase, listPendingProposals, setPolicy } = await import("../src/lib/db");
     const { POST } = await import("../app/api/proposals/from-draft/route");
 
     // Staleness gate ON but caps generous: the scan-less preview treats the missing quote timestamp
@@ -111,11 +111,12 @@ describe("chat draft policy bridge", () => {
     // Proves staleness DID fire (reason present) but we staged anyway rather than failing closed.
     expect((body.decision?.reasons ?? []).join(" ")).toContain("staleness_gate");
     expect(listPendingProposals("TEST", DEFAULT_REQUEST_USER_ID)).toHaveLength(1);
+    expect(getSocraticDecisionCase(body.proposalId, DEFAULT_REQUEST_USER_ID)).toMatchObject({ status: "proposed", proposalId: body.proposalId });
   });
 
   it("returns the existing proposalId (200 deduped) on retry even if the preview is now blocked", async () => {
     const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
-    const { getPolicy, setPolicy } = await import("../src/lib/db");
+    const { getDb, getPolicy, getSocraticDecisionCase, setPolicy } = await import("../src/lib/db");
     const { POST } = await import("../app/api/proposals/from-draft/route");
 
     const draft = {
@@ -153,6 +154,8 @@ describe("chat draft policy bridge", () => {
     const first = await POST(mkReq());
     expect(first.status).toBe(201);
     const firstBody = await first.json();
+    getDb().prepare("DELETE FROM socratic_decisions WHERE user_id = ? AND proposal_id = ?").run(DEFAULT_REQUEST_USER_ID, firstBody.proposalId);
+    expect(getSocraticDecisionCase(firstBody.proposalId, DEFAULT_REQUEST_USER_ID)).toBeUndefined();
 
     // Tighten the cap so the preview would now block, then retry the same draft_id.
     setPolicy({ ...base, maxOrderNotional: 4.99 }, DEFAULT_REQUEST_USER_ID);
@@ -161,6 +164,7 @@ describe("chat draft policy bridge", () => {
     const retryBody = await retry.json();
     expect(retryBody.deduped).toBe(true);
     expect(retryBody.proposalId).toBe(firstBody.proposalId);
+    expect(getSocraticDecisionCase(firstBody.proposalId, DEFAULT_REQUEST_USER_ID)).toMatchObject({ status: "proposed" });
   });
 
   it("dry-run preview reports approved when a draft is blocked ONLY by staleness (so the UI shows Stage)", async () => {

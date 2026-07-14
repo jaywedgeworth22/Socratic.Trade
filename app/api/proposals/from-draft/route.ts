@@ -12,9 +12,13 @@ import {
   dailyExecutionStats,
   findProposedIdByRunId,
   getActiveConnectedAccount,
+  getDb,
   getPolicy,
+  getProposal,
+  getSocraticDecisionCase,
   insertProposal,
-  notionalInLastMinutes
+  notionalInLastMinutes,
+  upsertSocraticDecisionCase
 } from "@/lib/db";
 import { getBrokerGateway } from "@/lib/broker";
 import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
@@ -22,6 +26,8 @@ import { allowedSymbolsForPolicy, evaluateTradeProposal } from "@/lib/policy";
 import { emitDashboardEvent } from "@/lib/events";
 import { chatDraftToProposal } from "@/lib/chat/promote-draft";
 import { deriveExecutionState } from "@/lib/execution-mode";
+import { indexSocraticDecisionMemory } from "@/lib/socratic-memory";
+import { buildSocraticDecisionCase } from "@/lib/socratic-runtime";
 import type { ChatDraft } from "@/lib/chat/types";
 import type { PolicyDecision, ReviewedOrder } from "@/lib/types";
 import { shouldEscalateDecision } from "@/lib/strategy-risk";
@@ -46,6 +52,7 @@ export async function POST(request: Request) {
   if (!policy.accountNumber) {
     return NextResponse.json({ error: "NO_ACCOUNT", reasons: ["No account is selected."] }, { status: 400 });
   }
+  const accountNumber = policy.accountNumber;
   if (policy.systemState === "halted") {
     return NextResponse.json({ error: "HALTED", reasons: ["System is stopped — press Start to enable orders."] }, { status: 409 });
   }
@@ -152,8 +159,44 @@ export async function POST(request: Request) {
   // BEFORE the policy rejection below so a normal retry of an already-staged draft returns the existing
   // proposalId (200) rather than a 409 if the preview has since become blocked. (Review: PR #278.)
   const runId = `chat:${body.draft.draft_id}`;
+  const buildChatCaseFile = (
+    id: string,
+    caseProposal: typeof proposal,
+    caseDecision: PolicyDecision,
+    caseReview?: ReviewedOrder
+  ) => {
+    const timestamp = new Date().toISOString();
+    return {
+      ...buildSocraticDecisionCase({
+        userId,
+        connectedAccountId: policy.connectedAccountId ?? activeAccount?.id,
+        runId,
+        proposalId: id,
+        accountNumber,
+        proposal: caseProposal,
+        status: "proposed",
+        authority: policy.strategyAuthority,
+        decision: caseDecision,
+        review: caseReview,
+        ragAttributions: []
+      }),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  };
   const existing = findProposedIdByRunId(runId, userId);
   if (existing) {
+    const existingRow = getProposal(existing, userId);
+    let repairedCase: ReturnType<typeof buildChatCaseFile> | undefined;
+    if (existingRow?.status === "proposed" && !getSocraticDecisionCase(existing, userId)) {
+      repairedCase = buildChatCaseFile(existing, existingRow.proposal, existingRow.decision, existingRow.review);
+      getDb().transaction(() => {
+        if (!getSocraticDecisionCase(existing, userId)) upsertSocraticDecisionCase(repairedCase!);
+      })();
+      void indexSocraticDecisionMemory(repairedCase).catch((error) => {
+        console.warn("[from-draft] repaired Socratic case indexing failed:", error instanceof Error ? error.message : String(error));
+      });
+    }
     return NextResponse.json({ proposalId: existing, deduped: true, decision: effectiveDecision, estimatedNotional, proposal }, { status: 200 });
   }
 
@@ -176,19 +219,26 @@ export async function POST(request: Request) {
     : decision;
 
   const proposalId = crypto.randomUUID();
-  insertProposal({
-    userId,
-    id: proposalId,
-    runId,
-    accountNumber: policy.accountNumber,
-    proposal,
-    decision: storedDecision,
-    review,
-    estimatedNotional,
-    status: "proposed",
-    tradeThesisTag: proposal.tradeThesisTag,
-    entryMarketRegime: proposal.entryMarketRegime,
-    executionMode
+  const caseFile = buildChatCaseFile(proposalId, proposal, storedDecision, review);
+  getDb().transaction(() => {
+    insertProposal({
+      userId,
+      id: proposalId,
+      runId,
+      accountNumber,
+      proposal,
+      decision: storedDecision,
+      review,
+      estimatedNotional,
+      status: "proposed",
+      tradeThesisTag: proposal.tradeThesisTag,
+      entryMarketRegime: proposal.entryMarketRegime,
+      executionMode
+    });
+    upsertSocraticDecisionCase(caseFile);
+  })();
+  void indexSocraticDecisionMemory(caseFile).catch((error) => {
+    console.warn("[from-draft] Socratic case indexing failed:", error instanceof Error ? error.message : String(error));
   });
   if (escalatable) {
     audit(

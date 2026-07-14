@@ -9,6 +9,7 @@ import { listPendingBrokerReconciliationFills, updateFillEvent, listFillEventsBy
 import { resolveBrokerVerificationNotifications } from "./db-notifications";
 import { getPolicy } from "./db-profiles";
 import { getProposal, updatePendingProposalReprice, updateProposalStatus, transitionProposalIfPending, claimProposalForExecution, listStalePlacingProposals } from "./db-proposals";
+import { upsertSocraticDecisionCase } from "./db-socratic";
 import { emitDashboardEvent } from "./events";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import {
@@ -28,6 +29,7 @@ import { assertLivePreflight } from "./preflight-live-guard";
 import { repriceStoredProtectiveExit, assessProtectiveExitRepriceDrift } from "./protective-exit-routing";
 import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
 import { describeRedTeamFailureKind } from "./red-team-routing";
+import { buildSocraticDecisionCase } from "./socratic-runtime";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { getUserWashSaleLockProvenance } from "./tax";
 import { ExecutionMode, FillEvent, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, FillSource } from "./types";
@@ -785,7 +787,44 @@ export async function executeProposal(
     // `proposal` persists execution-time sizing (broker-minimum bump / approval-time reprice) into
     // the row before placement, so crash-recovery books any fill at the size actually sent and
     // Recent/Activity show the executed order rather than the stale original ask.
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal, decision })) {
+    const decisionCaseNow = new Date().toISOString();
+    const fallbackDecisionCase = {
+      ...buildSocraticDecisionCase({
+        userId,
+        connectedAccountId: policy.connectedAccountId,
+        runId: row.runId,
+        proposalId,
+        accountNumber: row.accountNumber,
+        proposal,
+        status: "proposed",
+        authority: policy.strategyAuthority,
+        decision,
+        review,
+        marketScan: approvalScan,
+        ragAttributions: []
+      }),
+      createdAt: decisionCaseNow,
+      updatedAt: decisionCaseNow
+    };
+    let claimed = false;
+    try {
+      claimed = claimProposalForExecution(proposalId, "placing", userId, {
+        review,
+        estimatedNotional: review.estimatedNotional,
+        refId,
+        executionMode,
+        proposal,
+        decision,
+        createSocraticDecisionCase: () => {
+          upsertSocraticDecisionCase(fallbackDecisionCase);
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      audit("proposal_claim_receipt_failed", { proposalId, symbol: proposal.symbol, side: proposal.side, error: message }, userId, policy.connectedAccountId);
+      return { status: "error", reasons: [`Decision receipt could not be persisted; no order was submitted: ${message}`] };
+    }
+    if (!claimed) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
@@ -868,8 +907,9 @@ export async function executeProposal(
       return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
     }
 
-    updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
     const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
+    const proposalStatus = fillStatus === "filled" ? "filled" : "placed";
+    updateProposalStatus(proposalId, proposalStatus, execution.orderId, review, review.estimatedNotional, userId);
     const preFillPosition = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
     const fill = recordFillFromProposal({
       userId,
@@ -891,7 +931,7 @@ export async function executeProposal(
       symbol: proposal.symbol,
       side: proposal.side,
       action: "approval",
-      result: "placed",
+      result: proposalStatus,
       orderId: execution.orderId,
       brokerState: execution.state,
       fillStatus
@@ -907,7 +947,7 @@ export async function executeProposal(
     // Push so other open dashboards refresh immediately (the approving client refreshes via its
     // own response).
     emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
-    return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
+    return { status: proposalStatus, orderId: execution.orderId, brokerState: execution.state, fillStatus };
   } catch (error) {
     if (error instanceof StrategyLockOwnershipLostError) {
       return { status: "busy", reasons: [error.message] };

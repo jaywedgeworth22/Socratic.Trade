@@ -2,7 +2,8 @@
  * Inline placement-error reconciliation (the "always uncertain" fix). When placeEquityOrder THROWS,
  * we no longer immediately fire a perpetual "verify with broker" alert — we ask the broker (via the
  * refId idempotency key) what actually happened and map to a DEFINITE status where we can:
- *   - order present + live/filled → "placed" (recovered), fill booked, NO uncertain alert
+ *   - order present + live        → "placed" (recovered), fill booked, NO uncertain alert
+ *   - order present + filled      → "filled" (recovered), fill booked, caps remain consumed
  *   - order present + declined    → "rejected_by_broker"
  *   - order absent                → "not_placed" (safe to retry)
  *   - broker unreachable          → stays "placing" + the (protected) "verify with broker" alert
@@ -224,7 +225,7 @@ describe("inline placement-error reconciliation via executeProposal", () => {
     expect(notifs.some((n) => n.type === "fill" && (n.payload as Record<string, unknown>).reconcile === "recovered")).toBe(true);
   });
 
-  it("throw + order PRESENT (filled) → placed, fill status filled at broker price/qty", async () => {
+  it("throw + order PRESENT (filled) → filled, caps consumed, fill booked at broker price/qty", async () => {
     const userId = `reco-filled-${randomUUID()}`;
     const proposalId = await seedApprovedProposal(userId);
     getEquityOrders.mockImplementation(async () => {
@@ -233,7 +234,7 @@ describe("inline placement-error reconciliation via executeProposal", () => {
     });
 
     const { executeProposal } = await import("../src/lib/strategy");
-    const { getProposal, listFillEventsByProposalId } = await import("../src/lib/db");
+    const { dailyExecutionStats, getProposal, getSocraticDecisionCase, listFillEventsByProposalId, notionalInLastMinutes } = await import("../src/lib/db");
 
     const result = await executeProposal(proposalId, userId);
     expect(result.status).toBe("filled");
@@ -243,6 +244,10 @@ describe("inline placement-error reconciliation via executeProposal", () => {
     expect(fills[0].status).toBe("filled");
     expect(fills[0].quantity).toBe(1);
     expect(fills[0].price).toBe(201.5);
+    expect(dailyExecutionStats(ACCOUNT, new Date(), userId)).toMatchObject({ orderCount: 1, openingOrderCount: 1, notional: 200 });
+    expect(notionalInLastMinutes(ACCOUNT, 60, new Date(), userId)).toMatchObject({ orderCount: 1, openingOrderCount: 1, notional: 200 });
+    expect(getSocraticDecisionCase(proposalId, userId)).toMatchObject({ status: "filled" });
+    expect(getSocraticDecisionCase(proposalId, userId)?.evidence[0]).toMatchObject({ title: "Order filled" });
   });
 
   it("throw + order PRESENT (declined) → rejected_by_broker, decline alert, NO fill", async () => {

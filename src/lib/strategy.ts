@@ -147,7 +147,7 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillEvent, FillSource, HumanReviewReasonCode, HumanReviewReasonReceipt, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
 import type { PositionStopPlan } from "./db-api-keys";
 import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
@@ -1533,20 +1533,26 @@ export async function runStrategyOnce(
     // but route it to a human rather than auto-executing an un-reviewed opening with real capital.
     // The live placement path below checks this set and downgrades these to status "proposed".
     const requiresHumanReview = new Set<TradeProposal>();
-    const humanReviewReasons = new Map<TradeProposal, Set<string>>();
-    const requireHumanReview = (proposal: TradeProposal, reason: string): void => {
-      const reasons = humanReviewReasons.get(proposal) ?? new Set<string>();
-      reasons.add(reason);
+    const humanReviewReasons = new Map<TradeProposal, Map<HumanReviewReasonCode, HumanReviewReasonReceipt>>();
+    const requireHumanReview = (proposal: TradeProposal, receipt: HumanReviewReasonReceipt): void => {
+      const reasons = humanReviewReasons.get(proposal) ?? new Map<HumanReviewReasonCode, HumanReviewReasonReceipt>();
+      reasons.set(receipt.code, receipt);
       humanReviewReasons.set(proposal, reasons);
       requiresHumanReview.add(proposal);
     };
-    const clearHumanReviewReason = (proposal: TradeProposal, reason: string): void => {
+    const clearHumanReviewReason = (proposal: TradeProposal, reason: HumanReviewReasonCode): void => {
       const reasons = humanReviewReasons.get(proposal);
       if (!reasons) return;
       reasons.delete(reason);
       if (reasons.size > 0) return;
       humanReviewReasons.delete(proposal);
       requiresHumanReview.delete(proposal);
+    };
+    const stampHumanReviewReasons = (source: TradeProposal, target: TradeProposal): HumanReviewReasonReceipt[] => {
+      const receipts = [...(humanReviewReasons.get(source)?.values() ?? [])];
+      if (receipts.length > 0) target.humanReviewReasons = receipts;
+      else delete target.humanReviewReasons;
+      return receipts;
     };
 
     // ── The SINGLE Red Team review (docs/single-adversary-consolidation.md §3) ──────────────────
@@ -1721,7 +1727,13 @@ export async function runStrategyOnce(
             `[RedTeam] review unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`
           );
           proposal.rationale += routing.note;
-          if (routing.holdForHuman) requireHumanReview(proposal, "initial_red_team");
+          if (routing.holdForHuman) {
+            requireHumanReview(proposal, {
+              code: "initial_red_team",
+              title: "Red Team review unavailable",
+              summary: `The adversarial review could not run (${describeRedTeamFailureKind(redTeamResult.failureKind)}): ${redTeamResult.reason}. No model critiqued this opening, so it requires your review.`
+            });
+          }
           audit(
             "strategy_red_team_unavailable",
             { runId, symbol: proposal.symbol, side: proposal.side, reason: redTeamResult.reason, failureKind: redTeamResult.failureKind, heldForHuman: routing.holdForHuman },
@@ -1755,7 +1767,11 @@ export async function runStrategyOnce(
             );
           } else {
             proposal.rationale += `\n\nRed Team review — approved at half size: ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
-            requireHumanReview(proposal, "initial_red_team");
+            requireHumanReview(proposal, {
+              code: "initial_red_team",
+              title: "Red Team half-size cannot be placed",
+              summary: `Red approved only half size, but the broker cannot place that haircut: ${haircut.note}. The full-size order requires your decision.`
+            });
             audit(
               "red_team_half_size_unplaceable",
               { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model, why: haircut.note, heldForHuman: true },
@@ -1791,8 +1807,13 @@ export async function runStrategyOnce(
       const openingDiversity = computeRationaleDiversity(gatedOpenings.map((p) => p.rationale));
       if (openingDiversity.collapsed) {
         for (const p of gatedOpenings) {
-          p.rationale += `\n\nRationale-diversity gate: this run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); routed to human approval.`;
-          requireHumanReview(p, "rationale_collapse");
+          const collapseSummary = `This run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); the strategy could be repeating boilerplate rather than independent evidence.`;
+          p.rationale += `\n\nRationale-diversity gate: ${collapseSummary} Routed to human approval.`;
+          requireHumanReview(p, {
+            code: "rationale_collapse",
+            title: "Rationale-diversity hold",
+            summary: collapseSummary
+          });
         }
         if (gatedOpenings.length > 0) {
           console.warn(`[strategy] Rationale-collapse gate ON — routing ${gatedOpenings.length} opening proposal(s) to human review.`);
@@ -1820,7 +1841,11 @@ export async function runStrategyOnce(
       for (const p of debatedProposals) {
         const isOpening = p.side === "buy" || p.side === "short";
         if (isOpening && p.preVetoReasons?.length && p.autonomyOverride?.requested === true && !!p.autonomyOverride.thesis?.trim()) {
-          requireHumanReview(p, "pre_veto_override");
+          requireHumanReview(p, {
+            code: "pre_veto_override",
+            title: "Owner-preference override requested",
+            summary: `The strategy requested an override of: ${p.preVetoReasons.join(" | ")}. Under the configured propose mode, only you can authorize it.`
+          });
         }
       }
     }
@@ -1979,6 +2004,24 @@ export async function runStrategyOnce(
         if (framework) createSocraticFrameworkProposal(framework);
       } catch (err) {
         reportSocraticCaseWriteFailure(input, err);
+      }
+    };
+    const insertProposalWithSocraticDecision = (
+      proposalInput: Parameters<typeof insertProposal>[0],
+      caseInput: SocraticDecisionRecordInput
+    ): void => {
+      const caseFile = buildSocraticCaseFile(caseInput);
+      const database = getDb();
+      database.transaction(() => {
+        insertProposal(proposalInput);
+        upsertSocraticDecisionCase(caseFile);
+      })();
+      indexSocraticCaseFile(caseFile);
+      try {
+        const framework = frameworkProposalFromDecision(caseFile);
+        if (framework) createSocraticFrameworkProposal(framework);
+      } catch (err) {
+        reportSocraticCaseWriteFailure(caseInput, err);
       }
     };
 
@@ -2184,7 +2227,11 @@ export async function runStrategyOnce(
               clearHumanReviewReason(proposal, "initial_red_team");
               clearHumanReviewReason(proposal, "final_size_red_team");
               if (ownerApprovalReason) {
-                requireHumanReview(proposal, "final_size_red_team");
+                requireHumanReview(proposal, {
+                  code: "final_size_red_team",
+                  title: "Final-size Red review needs your decision",
+                  summary: ownerApprovalReason
+                });
                 normalizedProposal.rationale += `\n\nRed Team review — final broker-adjusted size requires owner approval: ${ownerApprovalReason}`;
               }
               normalizedProposal.finalSizeReview = {
@@ -2344,7 +2391,13 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
-        if (overrideResolution.routeToHuman) requireHumanReview(proposal, "override_resolution");
+        if (overrideResolution.routeToHuman) {
+          requireHumanReview(proposal, {
+            code: "override_resolution",
+            title: "Socratic override needs your decision",
+            summary: `The strategy wants to override the configured preference${overrideResolution.conflicts.length > 0 ? `: ${overrideResolution.conflicts.join(" | ")}` : "."}`
+          });
+        }
       } else if (overrideResolution.requested) {
         audit(
           "socratic_override_refused",
@@ -2360,6 +2413,8 @@ export async function runStrategyOnce(
           connectedAccountId
         );
       }
+
+      const activeHumanReviewReasons = stampHumanReviewReasons(proposal, normalizedProposal);
 
       if (!decision.approved) {
         // ── Escalation framework ─────────────────────────────────────────────────────────────
@@ -2378,8 +2433,10 @@ export async function runStrategyOnce(
             // DB (approvedEscalationsFromDecision). No client payload can create or alter it.
             escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
           };
-          insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: escalatedDecision, status: "proposed", review, overrideResolution });
+          insertProposalWithSocraticDecision(
+            { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
+            { proposalId, proposal: normalizedProposal, decision: escalatedDecision, status: "proposed", review, overrideResolution }
+          );
           audit(
             "proposal_escalated",
             {
@@ -2494,8 +2551,10 @@ export async function runStrategyOnce(
       // robust to any reordering by the cluster gate.)
       if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
+        insertProposalWithSocraticDecision(
+          { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
+          { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
+        );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
@@ -2513,13 +2572,16 @@ export async function runStrategyOnce(
         // de-risk exit reads "surfaced for your approval" under propose authority (never falsely
         // "proceeding") — so no separate corrective note is needed here.
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [] });
+        const primaryHumanReviewReason = activeHumanReviewReasons[0];
+        insertProposalWithSocraticDecision(
+          { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
+          { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
+        );
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`) });
         await sendNotification(
           {
             type: "pending_approval",
-            title: `${normalizedProposal.symbol} awaiting approval`,
+            title: `${normalizedProposal.symbol} awaiting approval${primaryHumanReviewReason ? ` (${primaryHumanReviewReason.title})` : ""}`,
             // R18 — a propose-mode insert must carry the adversary-unavailable flag too (this
             // branch runs BEFORE the requiresHumanReview one, so without this the flag would only
             // ever surface under decide authority).
@@ -2528,6 +2590,7 @@ export async function runStrategyOnce(
               proposalId,
               proposal: normalizedProposal,
               review,
+              ...(primaryHumanReviewReason ? { humanReviewReasonTitle: primaryHumanReviewReason.title, humanReviewReasons: activeHumanReviewReasons } : {}),
               ...(decision.adversaryUnavailable
                 ? { adversaryUnavailable: true, adversaryUnavailableReason: decision.adversaryUnavailableReason }
                 : {})
@@ -2543,22 +2606,17 @@ export async function runStrategyOnce(
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
-        const failureKindSuffix = normalizedProposal.redTeamVerdict?.failureKind
-          ? ` (${describeRedTeamFailureKind(normalizedProposal.redTeamVerdict.failureKind)})`
-          : "";
-        const finalSizeReason = normalizedProposal.finalSizeReview?.ownerApprovalReason;
-        const pendingReason = finalSizeReason
-          ? `Final broker-adjusted size requires owner approval: ${finalSizeReason}`
-          : `Red Team review unavailable${failureKindSuffix}; routed to human approval.`;
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
+        const primaryHumanReviewReason = activeHumanReviewReasons[0];
+        const pendingReason = activeHumanReviewReasons.map((reason) => `${reason.title}: ${reason.summary}`).join(" ");
+        insertProposalWithSocraticDecision(
+          { userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" },
+          { proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution }
+        );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: [pendingReason] });
         await sendNotification(
           {
             type: "pending_approval",
-            title: finalSizeReason
-              ? `${normalizedProposal.symbol} awaiting approval (final size re-reviewed)`
-              : `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`,
+            title: `${normalizedProposal.symbol} awaiting approval (${primaryHumanReviewReason?.title ?? "owner review required"})`,
             // §5.2 — payload metadata flag so formatNotificationDisplay can PRESERVE this title
             // instead of unconditionally overwriting pending_approval titles.
             payload: {
@@ -2566,6 +2624,8 @@ export async function runStrategyOnce(
               proposalId,
               proposal: normalizedProposal,
               review,
+              humanReviewReasonTitle: primaryHumanReviewReason?.title ?? "Owner review required",
+              humanReviewReasons: activeHumanReviewReasons,
               ...(decision.adversaryUnavailable
                 ? { adversaryUnavailable: true, adversaryUnavailableReason: decision.adversaryUnavailableReason }
                 : {})
@@ -2675,8 +2735,9 @@ export async function runStrategyOnce(
         // Neither case is "uncertain", so we abort the placement loop immediately.
         if (placeError instanceof OrderValidationError || /\bHTTP 4\d\d\b/i.test(message)) {
           const status = placeError instanceof OrderValidationError ? "blocked" : "rejected_by_broker";
-          updateProposalStatus(proposalId, status, undefined, review, review.estimatedNotional, userId, undefined, message);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: { ...decision, approved: false, reasons: [...decision.reasons, message] }, status, review, overrideResolution });
+          const transitionDecision =
+            status === "blocked" ? { ...decision, approved: false, reasons: [...decision.reasons, message] } : decision;
+          updateProposalStatus(proposalId, status, undefined, review, review.estimatedNotional, userId, undefined, message, transitionDecision);
           if (status === "rejected_by_broker") {
             audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
           } else {
@@ -2709,12 +2770,12 @@ export async function runStrategyOnce(
           runId
         });
         if (outcome.kind === "placed") {
-          updateProposalStatus(proposalId, "placed", outcome.orderId, review, review.estimatedNotional, userId);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
+          const recoveredStatus = outcome.state === "filled" ? "filled" : "placed";
+          updateProposalStatus(proposalId, recoveredStatus, outcome.orderId, review, review.estimatedNotional, userId);
           auditWashSaleProceed(decision, { runId, proposalId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
           audit("order_placement_recovered_inline", { runId, proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: normalizedProposal.side }, userId, connectedAccountId);
           resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
-          results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: outcome.orderId });
+          results.push({ proposal: normalizedProposal, status: recoveredStatus, reasons: [], orderId: outcome.orderId });
           await sendNotification(
             { type: "fill", title: `${sym} live order ${outcome.state} (recovered after placement error)`, payload: { runId, proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
             { policy, userId }
@@ -2726,7 +2787,6 @@ export async function runStrategyOnce(
         if (outcome.kind === "declined") {
           const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;
           updateProposalStatus(proposalId, "rejected_by_broker", outcome.orderId, review, review.estimatedNotional, userId, undefined, declinedMsg);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: { ...decision, approved: false, reasons: [...decision.reasons, declinedMsg] }, status: "rejected_by_broker", review, overrideResolution });
           audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, orderId: outcome.orderId, brokerState: outcome.state, via: "inline_reconcile" }, userId, connectedAccountId);
           results.push({ proposal: normalizedProposal, status: "error", reasons: [declinedMsg] });
           await sendNotification(
@@ -2739,7 +2799,6 @@ export async function runStrategyOnce(
         if (outcome.kind === "not_placed") {
           const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
           updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "not_placed", review, overrideResolution });
           audit("order_confirmed_not_placed", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
           results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
           await sendNotification(
@@ -2753,7 +2812,6 @@ export async function runStrategyOnce(
         // retries next run, and emit the (protected) "verify with broker" alert. This is the ONLY
         // path that still produces a perpetual-until-confirmed alert.
         updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing", review, overrideResolution });
         audit("order_placement_uncertain", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
         await sendNotification(
@@ -2773,14 +2831,6 @@ export async function runStrategyOnce(
       if (isRejectedOrCanceledState(execution.state)) {
         const message = `Broker declined the order (state: ${execution.state}).`;
         updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
-        recordSocraticDecision({
-          proposalId,
-          proposal: normalizedProposal,
-          decision: { ...decision, approved: false, reasons: [...decision.reasons, message] },
-          status: "rejected_by_broker",
-          review,
-          overrideResolution
-        });
         audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
         await sendNotification(
@@ -2791,8 +2841,7 @@ export async function runStrategyOnce(
         continue;
       }
 
-      updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
-      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: execution.state === "filled" ? "filled" : "placed", review, overrideResolution });
+      updateProposalStatus(proposalId, execution.state === "filled" ? "filled" : "placed", execution.orderId, review, review.estimatedNotional, userId);
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
       auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const preFillPosition = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
@@ -2811,7 +2860,7 @@ export async function runStrategyOnce(
         status: execution.state === "filled" ? "filled" : "pending_reconciliation",
         existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
       });
-      results.push({ proposal: normalizedProposal, status: "placed", reasons: [], orderId: execution.orderId });
+      results.push({ proposal: normalizedProposal, status: execution.state === "filled" ? "filled" : "placed", reasons: [], orderId: execution.orderId });
       await sendNotification(
         { type: "fill", title: `${normalizedProposal.symbol} live order ${execution.state}`, payload: { runId, proposalId, fill } },
         { policy, userId }
@@ -2891,12 +2940,14 @@ export async function runStrategyOnce(
       .catch((e) => console.error("[outcome-engine] maturation error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
+    const filled = results.filter((r) => r.status === "filled").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
-    const tradeCount = placed + proposed;
+    const tradeCount = placed + filled + proposed;
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
       `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} Trade${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
+      filled > 0 ? `Filled: ${filled}.` : "",
       proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
       expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
       revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)

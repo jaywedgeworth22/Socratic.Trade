@@ -488,7 +488,7 @@ export interface SocraticOutcomeCoverage {
 }
 
 export function getSocraticOutcomeCoverage(userId: string = "local", connectedAccountId?: string): SocraticOutcomeCoverage {
-  const clauses = ["user_id = ?", "status IN ('placed', 'blocked', 'rejected')"];
+  const clauses = ["user_id = ?", "status IN ('placed', 'filled', 'blocked', 'rejected')"];
   const args: unknown[] = [userId];
   if (connectedAccountId) {
     clauses.push("connected_account_id = ?");

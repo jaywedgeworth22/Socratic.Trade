@@ -13,9 +13,12 @@
 > override request from a final applied override. It also reruns Red exactly once after a
 > broker-minimum size mutation, preserves independent human-review reasons, atomically commits the
 > broker intent with its Socratic case, synchronizes lifecycle truth transactionally, serializes
-> same-decision vector updates, and keeps uncertain submissions in `placing`. Current
-> `origin/main@86971ec4` is integrated and focused hostile-review/mainline regressions plus
-> TypeScript are green. Run the authoritative full gate, land
+> same-decision vector updates, and keeps uncertain submissions in `placing`. The latest hostile
+> blockers are implemented: `filled` orders remain in caps and every success/count/UI/outcome
+> consumer; independent holds have structured owner-facing reasons; lifecycle sync preserves
+> learned fields; and an atomic approval claim requires a proposed Socratic case. Node 24 TypeScript
+> plus 15 focused files / 132 tests are green. PR #1578's TypeScript-toolchain repair has merged;
+> integrate current main, obtain fresh independent acceptance, run the authoritative full gate, land
 > through a ready PR, and verify the exact production release.
 > See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
 > `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.

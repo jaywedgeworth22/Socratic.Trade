@@ -1,4 +1,4 @@
-import type { OrderSide, PolicyDecision, TradeProposal } from "@/lib/types";
+import type { HumanReviewReasonReceipt, OrderSide, PolicyDecision, TradeProposal } from "@/lib/types";
 
 const RED_TEAM_MARKERS = [
   "\n\nRed Team Review Survived:",
@@ -46,6 +46,13 @@ export function deterministicOutcomePresentation(
   const reasons = decision?.reasons?.filter(Boolean) ?? [];
   const reasonText = reasons.length > 0 ? reasons.join(" ") : "";
 
+  if (status === "filled") {
+    return {
+      label: "Order filled",
+      body: reasonText || "The broker reports that the order filled.",
+      tone: "pos"
+    };
+  }
   if (status === "placed") {
     return {
       label: "Order placed",
@@ -136,10 +143,22 @@ const INTENT_SIDE_LABEL: Record<OrderSide, string> = {
 
 /** Past tense is reserved for a confirmed placement; blocked/proposed rows describe intent. */
 export function decisionActionLabel(side: OrderSide, status: string): string {
-  return status === "placed" ? PLACED_SIDE_LABEL[side] : INTENT_SIDE_LABEL[side];
+  return status === "placed" || status === "filled" ? PLACED_SIDE_LABEL[side] : INTENT_SIDE_LABEL[side];
+}
+
+/** Approval endpoints return `filled` when the broker completes synchronously and `placed` while
+ * execution is still pending. Both are successful submissions; `paper` remains for legacy rows. */
+export function isSuccessfulApprovalResult(status: string): boolean {
+  return status === "placed" || status === "filled" || status === "paper";
 }
 
 export function proposalGreenRationale(proposal?: TradeProposal): string | undefined {
   if (!proposal?.rationale) return undefined;
   return splitThesisRationale(proposal.rationale, proposal.greenTeamRationale).greenTeam;
+}
+
+export function proposalHumanReviewReasons(proposal?: TradeProposal): HumanReviewReasonReceipt[] {
+  return (proposal?.humanReviewReasons ?? []).filter(
+    (reason) => reason.title.trim().length > 0 && reason.summary.trim().length > 0
+  );
 }

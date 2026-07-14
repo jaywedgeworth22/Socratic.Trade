@@ -1125,6 +1125,22 @@ export interface ProposalSizingSnapshot {
   remainingDailyNotional?: number;
 }
 
+export type HumanReviewReasonCode =
+  | "initial_red_team"
+  | "rationale_collapse"
+  | "pre_veto_override"
+  | "final_size_red_team"
+  | "override_resolution";
+
+/** Durable explanation for why an otherwise reviewable proposal requires an owner decision.
+ * Keeping these structured prevents a rationale-diversity or override hold from being mislabeled
+ * as a Red Team outage after the proposal leaves the strategy loop. */
+export interface HumanReviewReasonReceipt {
+  code: HumanReviewReasonCode;
+  title: string;
+  summary: string;
+}
+
 export interface TradeProposal {
   symbol: string;
   side: OrderSide;
@@ -1264,6 +1280,8 @@ export interface TradeProposal {
     ownerApprovalReason?: string;
     ownerOverrideAppliedAt?: string;
   };
+  /** Every independent hold that must be resolved before placement, in strategy evaluation order. */
+  humanReviewReasons?: HumanReviewReasonReceipt[];
   /**
    * Advisory PRE-POLICY veto reasons (deterministic-bear filter, approval-time Red Team) attached to a
    * TAGGED-not-dropped candidate. They are folded into the single sized PolicyDecision as OVERRIDABLE

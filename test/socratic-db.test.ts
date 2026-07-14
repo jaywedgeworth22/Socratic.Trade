@@ -120,7 +120,10 @@ describe("Socratic decision persistence", () => {
       policyDecision: approved,
       evidence: [{ kind: "policy", title: "Proposed decision", summary: "Policy approved BUY EXE $4." }],
       ragAttributions: [],
-      dissent: []
+      dissent: [],
+      outcome: { status: "open", note: "Still maturing.", outcomes: [] },
+      lessons: ["Preserve this learned lesson."],
+      coachNotes: ["Preserve this coach note."]
     });
 
     const appliedProposal = {
@@ -158,6 +161,9 @@ describe("Socratic decision persistence", () => {
     expect(rejected?.status).toBe("rejected_by_broker");
     expect(rejected?.evidence[0]).toMatchObject({ title: "Rejected by broker" });
     expect(rejected?.evidence[0]?.summary).toContain("Broker declined the fractional order");
+    expect(rejected?.outcome).toMatchObject({ status: "open", note: "Still maturing." });
+    expect(rejected?.lessons).toContain("Preserve this learned lesson.");
+    expect(rejected?.coachNotes).toContain("Preserve this coach note.");
 
     await vi.waitFor(() => {
       expect(

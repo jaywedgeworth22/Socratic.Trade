@@ -53,9 +53,15 @@ invariants, and residual gaps.
 - Before any autonomous broker submission, the durable `trade_proposals` intent and initial
   `socratic_decisions` case commit in one SQLite transaction. Subsequent placement, broker decline,
   expiry, withdrawal, and recovery transitions update both ledgers transactionally.
+- Human approval uses the same invariant: the atomic `proposed -> placing` claim requires a
+  proposed Socratic case, creates a legacy fallback case inside that transaction when necessary,
+  and fails before the broker boundary when the receipt cannot be committed.
 - Uncertain submissions remain `placing` until reconciliation proves the result. Same-decision
   vector-memory writes are serialized and re-read current SQLite state before embedding, preventing
   a slow older lifecycle write from overwriting a newer terminal result.
+- A synchronous broker fill remains `filled` end to end while still consuming daily/hourly limits
+  and placement counts. Outcome coverage, run summaries, ops diagnostics, and the decision-memory
+  lifecycle include it rather than dropping the most useful realized cases.
 
 ## 1. Strategy Architecture: Evaluation Lenses
 
