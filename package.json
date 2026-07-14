@@ -8,7 +8,7 @@
     "dev:secrets": "node scripts/infisical-run.mjs -- npm run dev",
     "dev:codex": "node scripts/codex-dev-server.mjs",
     "dev:clean": "lsof -ti:3000 | xargs kill -9 2>/dev/null || true && next dev",
-    "postinstall": "node -e 'const fs = require(\"fs\"); const path = require(\"path\"); const dir = \"node_modules/typescript/lib\"; if (fs.existsSync(path.dirname(dir))) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, \"typescript.js\"), \"module.exports = require(\\\"typescript-v5\\\");\\n\"); }'",
+    "postinstall": "node -e 'const fs = require(\"fs\"); const path = require(\"path\"); const dir = \"node_modules/typescript/lib\"; if (fs.existsSync(path.dirname(dir))) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, \"typescript.js\"), \"module.exports = require(\\\"typescript-v5\\\");\\n\"); fs.writeFileSync(path.join(dir, \"package.json\"), \"{\\n  \\\"type\\\": \\\"commonjs\\\"\\n}\\n\"); }'",
     "build": "next build --webpack",
     "build:secrets": "node scripts/infisical-run.mjs -- npm run build",
     "start": "next start",
