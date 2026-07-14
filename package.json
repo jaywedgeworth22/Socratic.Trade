@@ -79,7 +79,10 @@
   },
   "overrides": {
     "axios": "^1.18.0",
-    "postcss": "^8.5.15"
+    "postcss": "^8.5.15",
+    "next": {
+      "typescript": "npm:typescript@^5.5.4"
+    }
   },
   "allowScripts": {
     "@sentry/cli@2.58.6": true,
