@@ -12,6 +12,15 @@
 > 4,043 tests, and a production build with the real TypeScript phase). Reconcile current main, then
 > publish a ready PR and require hosted verification.
 > See `docs/rollouts/2026-07-13-typescript-toolchain-gate-repair.md`.
+> **2026-07-13 - Development background-worker safety gate (CODEX).** Preserve production's
+> default-on scheduler/usage-replay/stream boot while making every non-production runtime fail
+> closed unless `DEV_BACKGROUND_WORKERS=on` is explicit. Centralize the decision and startup receipt,
+> test both disabled and explicit opt-in paths without importing real workers, document the flag,
+> and require disposable local smoke plus the full ordered gate before a ready PR. Independent
+> review and the Node 24 local gate are green; publish through `scripts/land.sh`, require hosted
+> verify, then confirm the production boot receipt and scheduler health after auto-deploy. This prevents
+> UI-only localhost QA from launching broker/provider/RAG work against copied or credentialed data.
+> See `docs/rollouts/2026-07-13-development-background-workers.md`.
 
 > **2026-07-13 - Account-relative daily risk and decision clarity (CODEX).** Replace the fixed $500
 > daily-opening default with one canonical dollar-or-percent mode (20% NAV default), preserve
