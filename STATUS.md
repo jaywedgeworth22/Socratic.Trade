@@ -750,8 +750,7 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## Current Status
 
-- Discovered why `Congress.Trade` congressional trades were stuck in June for Socratic.Trade: App A (`Congress.Trade`) recently enabled a `botDefense.ts` guard on `/api/v1/transactions` that blocks standard node `fetch` UAs. Fixed Socratic.Trade by providing a custom `User-Agent: SocraticTrade/1.0`.
-- Applied an IPv6 DNS force-ipv4 fix to `congress-scout.mjs` on Congress.Trade to fix its own scrape failures.
+- PRs #1584, #1583, #1580, #1582, and #1575 were all successfully verified and merged into main, clearing the open PR backlog.
 
 ## Next Action
-- Land branch `agent/ag-update-status-effort-log` and await production auto-deploy.
+- Await any further user instructions.
