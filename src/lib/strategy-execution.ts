@@ -152,8 +152,8 @@ function reconciledFillStatus(
   existing?: FillEvent
 ): ReconciledFillStatus {
   const merged = mergedExecutionTruth(order, existing);
-  if (existing?.status === "filled" && merged.truth) return "filled";
   if (merged.unresolvedGrowth) return merged.truth ? "partially_filled" : "pending_reconciliation";
+  if (existing?.status === "filled" && merged.truth) return "filled";
   if (!merged.truth) return "pending_reconciliation";
   if (order.state === "filled" || isRejectedOrCanceledState(order.state)) return "filled";
   if (order.state === "partially_filled" || existing?.status === "partially_filled") return "partially_filled";

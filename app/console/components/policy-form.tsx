@@ -7,7 +7,7 @@
  *  commit a change. The diff/classification logic lives in ../lib/policy-diff
  *  (pure, unit-tested); this file is the React skin over it. */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Lock, Unlock } from "lucide-react";
 import { DEFAULT_POLICY } from "@/lib/defaults";
 import type { TradingPolicy } from "@/lib/types";
@@ -186,6 +186,9 @@ export function PolicyDualModeRow({
   const policyMode: "money" | "pct" = !isBlank(getAtPath(policy, pctDef.path)) ? "pct" : "money";
   const [draftMode, setDraftMode] = useState<"money" | "pct">(policyMode);
   const [editText, setEditText] = useState<string | null>(null);
+  // Sync draft mode when the policy mode changes (e.g. account switch) so the first
+  // keystroke after the switch doesn't snap back to the stale previous account's mode.
+  useEffect(() => { setDraftMode(policyMode); }, [policyMode]);
   // A mode choice is interaction state only while this field pair has an active draft. After
   // discard/save or an account switch, derive from that account's persisted policy immediately;
   // this avoids a stale selector without an effect-driven synchronization render.
