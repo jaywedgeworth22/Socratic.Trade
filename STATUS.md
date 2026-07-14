@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-07-14 — Watchlist & Order Row Button Tooltip Alignment (AG, branch `agent/ag-watchlist-tooltip-fix`)
+
+Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 is open, and auto-merge is armed. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
 ## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
 
 An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent
