@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
+
+The decision trace now treats the structured Red Team verdict as the canonical explanation and
+suppresses only exact generic echoes plus known generated policy wrappers around that same reason.
+Distinct policy objections and Red Team override context remain visible. The change is display-only;
+persisted cases and other consumers are unchanged. Browser QA passed at desktop and 390 px mobile,
+including the coach-note interaction and zero horizontal overflow. The exact-tree Node 24 gate is
+green: focused 4/4, lint, standalone TypeScript, 369 files / 4,132 tests, production build with 32
+static pages, and diff-check. Review PR publication remains; production is unchanged.
+
+Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
+
 ## 2026-07-14 — Final hosted-review remediation (PR #1587)
 
 The hosted autofix pushed two independent review fixes. Both remaining money-path
