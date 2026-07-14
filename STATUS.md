@@ -30,6 +30,35 @@ stays logo-less). New test `test/console-action-rows.test.ts`. Rollout:
   executed, not infinitive ("Buy [Placed]"). Added `"filled"` to `SocraticDecisionStatus`,
   `socraticStatusFromProposalStatus`, outcome-engine queries, lesson guidance, and labels.
   All four Codex review threads resolved. Auto-merge enabled.
+## 2026-07-14 — [codex-autofix] Add AbortSignal timeout to usage-monitor replay sends (PR #1563)
+
+Codex P2 review flagged that a hung POST in the usage-monitor replay worker
+would permanently block the inFlight promise guard, preventing all future
+replay passes until process restart. Fixed by wrapping the replay POST in an
+AbortController with a 30-second timeout. One other P2 finding (same-millisecond
+rows) is architecturally significant — maintainer asked for input. The cursor
+indexes finding (P2) is a performance concern, not a correctness bug.
+
+Verify trio: lint 0 errors / 455 warnings, tsc clean, 2 files / 16 tests pass,
+build clean.
+
+Rollout: `docs/rollouts/2026-07-14-codex-autofix-replay-timeout.md`.
+
+## 2026-07-13 — Crash-durable Usage Monitor ledger replay (CODEX, branch `codex/socratic-usage-replay`)
+
+Implemented and verified in an isolated worktree from current `origin/main@3e105e17`. All new
+usage-monitor events now carry `project:"socratic-trade"` without rewriting raw provider names.
+Persisted `llm_usage` and `rag_usage` rows replay on startup and every minute using their existing
+row IDs/timestamps, ordered per-ledger settings watermarks, acknowledged-batch advancement, one-row
+safe overlap, and monotonic `BEGIN IMMEDIATE` updates. No schema, `db.ts`, or env-var change was
+needed.
+
+Node 24 verification is green: focused 16/16 tests, scoped ESLint, TypeScript, diff-check, and the
+production webpack build. This is a checkpoint only: no merge/deploy is authorized, and the paired
+API Usage Monitor receiver backfill must deploy first so deterministic replays can attach canonical
+provider/project identity to already-accepted rows.
+
+Rollout: `docs/rollouts/2026-07-13-usage-monitor-durable-replay.md`.
 ## 2026-07-13 — [codex-autofix] Fix 3 Codex P2 findings on PR #1548 (agent/ag-alpaca-stop-fix)
 
 Codex review flagged 3 P2 findings. All 3 addressed:
