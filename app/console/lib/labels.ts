@@ -60,10 +60,12 @@ const DECISION_STATUS_LABELS: Record<SocraticDecisionStatus, string> = {
   planned: "Planned",
   proposed: "Proposed",
   placed: "Placed",
+  filled: "Filled",
   blocked: "Blocked",
   rejected: "Rejected",
   error: "Failed",
-  observed: "Observed (no action)"
+  observed: "Observed (no action)",
+  not_placed: "Not Placed"
 };
 
 /** Decision-case status. `DecisionRowData.status` on the home page is a mixed
@@ -102,9 +104,14 @@ export function frameworkPriorityLabel(raw?: string | null): string {
 
 // ── Strategy authority ───────────────────────────────────────────────────────
 
+// These match the run-state vocabulary the rest of the app uses for the same two
+// authority modes ("Ask-first"/"Autopilot" — see derive.ts authorityWord). The
+// trace header renders this chip right next to the decision-STATUS chip, so the
+// old "Propose"/"Decide" labels collided with the status word "Proposed" and read
+// like a typo. "Ask-first"/"Autopilot" are different concepts, worded differently.
 const AUTHORITY_LABELS: Record<StrategyAuthority, { label: string; title: string }> = {
-  propose: { label: "Propose", title: "Proposals wait for your approval" },
-  decide: { label: "Decide", title: "The agent may act autonomously within policy" }
+  propose: { label: "Ask-first", title: "Proposals wait for your approval" },
+  decide: { label: "Autopilot", title: "The agent may act autonomously within policy" }
 };
 
 export function authorityLabel(authority?: string | null): { label: string; title: string } {

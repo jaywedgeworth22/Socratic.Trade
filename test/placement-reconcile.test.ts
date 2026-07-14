@@ -236,8 +236,8 @@ describe("inline placement-error reconciliation via executeProposal", () => {
     const { getProposal, listFillEventsByProposalId } = await import("../src/lib/db");
 
     const result = await executeProposal(proposalId, userId);
-    expect(result.status).toBe("placed");
-    expect(getProposal(proposalId, userId)?.status).toBe("placed");
+    expect(result.status).toBe("filled");
+    expect(getProposal(proposalId, userId)?.status).toBe("filled");
     const fills = listFillEventsByProposalId(proposalId, userId);
     expect(fills.length).toBe(1);
     expect(fills[0].status).toBe("filled");
