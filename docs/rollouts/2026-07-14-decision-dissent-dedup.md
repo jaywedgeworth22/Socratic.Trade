@@ -87,6 +87,7 @@ and reason, so it must own the status label as well.
 
 ### Follow-ups
 
-- Commit and run `scripts/land.sh`, request final review, then reply to and resolve only
-  `PRRT_kwDOS7mOVM6Q6zNL` and `PRRT_kwDOS7mOVM6Q6zNO`.
+- Commit `40853f3e` contains the two fixes. Run `scripts/land.sh` after the active fleet gate clears,
+  request final review, then reply to and resolve only `PRRT_kwDOS7mOVM6Q6zNL` and
+  `PRRT_kwDOS7mOVM6Q6zNO`.
 - Do not merge or deploy; auto-merge remains disabled and production remains unchanged.
