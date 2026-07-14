@@ -114,9 +114,29 @@ describe("runMigrations — versioned schema migrations", () => {
       JSON.stringify({ maxDailyNotional: 500 }),
       now
     );
+    db.prepare("INSERT INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, 'policy', ?, ?)").run(
+      "legacy-user-policy",
+      "legacy-user",
+      JSON.stringify({ maxDailyNotional: 500 }),
+      now
+    );
+    db.prepare("INSERT INTO account_strategy_state (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
+    db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 25");
 
     expect(applyVersionedMigrations(db)).toBe(27);
+
+    for (const json of [
+      (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
+      (db.prepare("SELECT value AS json FROM user_settings WHERE id = 'legacy-user-policy'").get() as { json: string }).json,
+      (db.prepare("SELECT policy AS json FROM account_strategy_state").get() as { json: string }).json,
+      (db.prepare("SELECT policy AS json FROM strategy_profiles").get() as { json: string }).json
+    ]) {
+      const migrated = JSON.parse(json);
+      expect(migrated).toMatchObject({ maxDailyPctOfNav: 20 });
+      expect(migrated.maxDailyNotional).toBeUndefined();
+    }
+
     migrateGlobalPolicyToLocalUser(db, now);
 
     const legacy = JSON.parse((db.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string }).value);
@@ -131,26 +151,44 @@ describe("runMigrations — versioned schema migrations", () => {
     const { applyVersionedMigrations } = await import("../src/lib/db");
     const db = new RawDatabase(":memory:");
     db.exec(`
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE user_settings (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE account_strategy_state (policy TEXT NOT NULL);
+      CREATE TABLE strategy_profiles (policy TEXT NOT NULL);
       CREATE TABLE socratic_decisions (id TEXT PRIMARY KEY);
     `);
     const now = new Date().toISOString();
     db.prepare(
       "INSERT INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, 'policy', ?, ?)"
     ).run("cap-intentional-500", "cap-intentional-user", JSON.stringify({ maxDailyNotional: 500 }), now);
+    db.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('policy', ?, ?)").run(JSON.stringify({ maxDailyNotional: 500 }), now);
+    db.prepare("INSERT INTO account_strategy_state (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
+    db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 26");
 
     expect(applyVersionedMigrations(db)).toBe(27);
 
-    const preserved = JSON.parse(
-      (db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-intentional-500") as { value: string }).value
-    );
-    expect(preserved).toMatchObject({ maxDailyNotional: 500 });
-    expect(preserved.maxDailyPctOfNav).toBeUndefined();
+    for (const json of [
+      (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
+      (db.prepare("SELECT value AS json FROM user_settings WHERE id = 'cap-intentional-500'").get() as { json: string }).json,
+      (db.prepare("SELECT policy AS json FROM account_strategy_state").get() as { json: string }).json,
+      (db.prepare("SELECT policy AS json FROM strategy_profiles").get() as { json: string }).json
+    ]) {
+      const preserved = JSON.parse(json);
+      expect(preserved).toMatchObject({ maxDailyNotional: 500 });
+      expect(preserved.maxDailyPctOfNav).toBeUndefined();
+    }
     expect(
       (db.prepare("PRAGMA table_info(socratic_decisions)").all() as Array<{ name: string }>).map((column) => column.name)
     ).toEqual(expect.arrayContaining(["green_team_rationale", "sizing_snapshot"]));
     db.close();
+  });
+
+  it("preserves an explicitly configured large dollar cap instead of treating it as a sentinel", async () => {
+    const { mergePolicy } = await import("../src/lib/db-profiles");
+    const merged = mergePolicy({ ...DEFAULT_POLICY, maxDailyNotional: 750_000, maxDailyPctOfNav: undefined });
+    expect(merged.maxDailyNotional).toBe(750_000);
+    expect(merged.maxDailyPctOfNav).toBeUndefined();
   });
 });
 

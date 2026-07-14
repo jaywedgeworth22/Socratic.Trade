@@ -11,6 +11,12 @@ import { getPolicy } from "./db-profiles";
 import { getProposal, updatePendingProposalReprice, updateProposalStatus, transitionProposalIfPending, claimProposalForExecution, listStalePlacingProposals } from "./db-proposals";
 import { emitDashboardEvent } from "./events";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
+import {
+  captureProposalSizingSnapshot,
+  proposalForFinalSizeRedReview,
+  redTeamSizingFromSnapshot,
+  stampRedTeamResult
+} from "./finalized-sizing-review";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { scanMarket, mergeQuoteData } from "./market";
 import { normalizeSymbol } from "./money";
@@ -20,10 +26,12 @@ import { allowedSymbolsForPolicy, estimateNotional, applyOpeningOrderHeadroom, e
 import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { repriceStoredProtectiveExit, assessProtectiveExitRepriceDrift } from "./protective-exit-routing";
+import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
+import { describeRedTeamFailureKind } from "./red-team-routing";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { getUserWashSaleLockProvenance } from "./tax";
 import { ExecutionMode, FillEvent, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, FillSource } from "./types";
-import { approvedEscalationsFromDecision, shouldEscalateDecision } from "./strategy-risk";
+import { applyRedTeamHalfSize, approvedEscalationsFromDecision, isRiskAddingOpening, shouldEscalateDecision } from "./strategy-risk";
 import {
   createExecuteProposalLockOwner,
   startStrategyLockGuard,
@@ -88,6 +96,10 @@ export async function executeProposal(
 
   // `let`: an approval-held protective exit is repriced against the fresh approval-time quote below.
   let proposal = row.proposal;
+  // A prior approval attempt can persist a fresh Red objection against an execution-time broker
+  // bump. This click explicitly confirms THAT stored size/verdict. Consume it once below only if
+  // the order shape stays unchanged; a new bump gets its own review and cannot inherit consent.
+  let ownerApprovedStoredFinalSize = proposal.finalSizeReview?.ownerApprovalRequired === true;
   assertLiveApprovalConfirmation({
     executionMode,
     confirmation: options.liveConfirmation,
@@ -286,6 +298,179 @@ export async function executeProposal(
             userId,
             policy.connectedAccountId
           );
+
+          // Consent attached to an earlier execution shape does not carry over to this new one.
+          ownerApprovedStoredFinalSize = false;
+          if (isRiskAddingOpening(proposal, account.positions)) {
+            const fullBumpedReview = review;
+            const fullBumpedSizing = { quantity: proposal.quantity, dollarAmount: proposal.dollarAmount };
+            proposal.sizingSnapshot = captureProposalSizingSnapshot({
+              proposal,
+              estimatedNotional: fullBumpedReview.estimatedNotional,
+              policy,
+              portfolioValue: account.portfolio.totalMarketValue,
+              dailyNotionalUsed: daily.notional
+            });
+            const quote = approvalScan.topCandidates.find(
+              (candidate) => normalizeSymbol(candidate.symbol) === normalizeSymbol(proposal.symbol)
+            );
+            const approvalRedContext: RedTeamReviewContext = {
+              currentDate: new Date().toISOString().slice(0, 10),
+              currentMarketRegime: proposal.entryMarketRegime,
+              portfolio: account.portfolio,
+              positions: account.positions,
+              limits: {
+                maxOrderNotional: policy.maxOrderNotional,
+                maxDailyNotional: policy.maxDailyNotional,
+                maxDailyPctOfNav: policy.maxDailyPctOfNav,
+                dailyNotionalUsed: daily.notional,
+                hourlyNotionalUsed: hourly.notional
+              },
+              candidatesUnderReview: quote ? [quote] : []
+            };
+            let finalRed: RedTeamDebateResult;
+            try {
+              finalRed = await debateProposal(
+                proposalForFinalSizeRedReview(proposal),
+                quote,
+                userId,
+                policy,
+                {
+                  context: approvalRedContext,
+                  sizing: redTeamSizingFromSnapshot(proposal.sizingSnapshot)
+                }
+              );
+            } catch (error) {
+              finalRed = {
+                rejected: false,
+                available: false,
+                reason: `Final-size Red Team review threw unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
+                failureKind: "provider_error"
+              };
+            }
+            lockGuard.assertOwned();
+            stampRedTeamResult(proposal, finalRed);
+            proposal.preVetoReasons = proposal.preVetoReasons?.filter(
+              (reason) => !reason.startsWith("red_team_veto:")
+            );
+            if (proposal.preVetoReasons?.length === 0) delete proposal.preVetoReasons;
+
+            let ownerApprovalReason: string | undefined;
+            if (!finalRed.available) {
+              ownerApprovalReason = `The final broker-adjusted size could not be re-reviewed by Red (${describeRedTeamFailureKind(finalRed.failureKind)}): ${finalRed.reason}`;
+            } else if (finalRed.rejected || finalRed.verdict === "reject") {
+              ownerApprovalReason = `Red rejected the final broker-adjusted size: ${finalRed.reason}`;
+            } else if (finalRed.verdict === "approve-at-half") {
+              const haircut = applyRedTeamHalfSize(proposal);
+              if (!haircut.applied) {
+                ownerApprovalReason = `Red authorized only half size, but that size is not executable: ${haircut.note}`;
+              } else {
+                const haircutReview = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+                lockGuard.assertOwned();
+                const haircutBlock = describeBrokerMinimumOrderBlock(haircutReview, policy.activeBroker, {
+                  ...proposal,
+                  positionQuantity: heldForMinimumGuard?.quantity
+                });
+                if (haircutBlock) {
+                  // Restore the full, already broker-reviewed bump. Never feed the haircut back into
+                  // the bump planner: that would negate Red's one allowed down-only intervention.
+                  Object.assign(proposal, fullBumpedSizing);
+                  review = fullBumpedReview;
+                  proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                    proposal,
+                    estimatedNotional: fullBumpedReview.estimatedNotional,
+                    policy,
+                    portfolioValue: account.portfolio.totalMarketValue,
+                    dailyNotionalUsed: daily.notional
+                  });
+                  ownerApprovalReason = `Red authorized only half size, but the broker rejects that haircut: ${haircutBlock}`;
+                } else {
+                  review = haircutReview;
+                  proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                    proposal,
+                    estimatedNotional: haircutReview.estimatedNotional,
+                    policy,
+                    portfolioValue: account.portfolio.totalMarketValue,
+                    dailyNotionalUsed: daily.notional
+                  });
+                  proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at half: ${finalRed.reason} [${haircut.note}]`;
+                  audit(
+                    "red_team_approved_at_half_after_broker_minimum",
+                    { proposalId, symbol: proposal.symbol, side: proposal.side, model: finalRed.model, haircut: haircut.note, finalNotional: haircutReview.estimatedNotional, action: "approval" },
+                    userId,
+                    policy.connectedAccountId
+                  );
+                }
+              }
+            } else {
+              proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at full size: ${finalRed.reason}`;
+            }
+
+            proposal.finalSizeReview = {
+              trigger: "broker_minimum_bump",
+              fromNotional: bumpPlan.fromNotional,
+              toNotional: fullBumpedReview.estimatedNotional,
+              reviewedAt: new Date().toISOString(),
+              ownerApprovalRequired: Boolean(ownerApprovalReason),
+              ...(ownerApprovalReason ? { ownerApprovalReason } : {})
+            };
+            audit(
+              "red_team_rereview_after_broker_minimum",
+              {
+                proposalId,
+                symbol: proposal.symbol,
+                side: proposal.side,
+                fromNotional: bumpPlan.fromNotional,
+                bumpedNotional: fullBumpedReview.estimatedNotional,
+                finalNotional: review.estimatedNotional,
+                verdict: finalRed.verdict,
+                available: finalRed.available,
+                model: finalRed.model,
+                ownerApprovalRequired: Boolean(ownerApprovalReason),
+                ownerApprovalReason,
+                action: "approval"
+              },
+              userId,
+              policy.connectedAccountId
+            );
+
+            if (ownerApprovalReason) {
+              proposal.rationale += `\n\nRed Team review — final broker-adjusted size requires owner approval: ${ownerApprovalReason}`;
+              const pendingDecision: PolicyDecision = {
+                ...row.decision,
+                approved: false,
+                reasons: [...new Set([...(row.decision.reasons ?? []), ownerApprovalReason])],
+                ...(!finalRed.available
+                  ? { adversaryUnavailable: true, adversaryUnavailableReason: ownerApprovalReason }
+                  : { adversaryUnavailable: undefined, adversaryUnavailableReason: undefined })
+              };
+              const persisted = updatePendingProposalReprice(
+                proposalId,
+                { proposal, review, estimatedNotional: review.estimatedNotional, decision: pendingDecision },
+                userId
+              );
+              if (!persisted) {
+                const current = getProposal(proposalId, userId)?.status ?? "removed";
+                return { status: current, reasons: [`Proposal was ${current} before the final-size review could be saved.`] };
+              }
+              await sendNotification(
+                {
+                  type: "pending_approval",
+                  title: `${proposal.symbol} broker-adjusted size needs your approval`,
+                  payload: { proposalId, proposal, review, decision: pendingDecision, reason: ownerApprovalReason }
+                },
+                { policy, userId }
+              );
+              return { status: "proposed", reasons: [ownerApprovalReason] };
+            }
+          }
+
+          // Persist successful execution-time sizing before later policy checks. If one of those
+          // checks blocks, the ledger/case still describes the exact order it evaluated.
+          if (!updatePendingProposalReprice(proposalId, { proposal, review, estimatedNotional: review.estimatedNotional }, userId)) {
+            const current = getProposal(proposalId, userId)?.status ?? "removed";
+            return { status: current, reasons: [`Proposal was ${current} before the broker-adjusted size could be saved.`] };
+          }
         } else {
           Object.assign(proposal, originalSizing);
           review = originalReview;
@@ -314,6 +499,37 @@ export async function executeProposal(
         );
       }
       return { status: "blocked", reasons: [brokerMinimumBlockReason] };
+    }
+
+    if (ownerApprovedStoredFinalSize) {
+      const approvedAt = new Date().toISOString();
+      proposal.finalSizeReview = {
+        ...(proposal.finalSizeReview as NonNullable<TradeProposal["finalSizeReview"]>),
+        ownerApprovalRequired: false,
+        ownerOverrideAppliedAt: approvedAt
+      };
+      if (proposal.redTeamVerdict) {
+        proposal.redTeamVerdict = { ...proposal.redTeamVerdict, humanOverrideApplied: true };
+      }
+      if (!updatePendingProposalReprice(proposalId, { proposal, review, estimatedNotional: review.estimatedNotional }, userId)) {
+        const current = getProposal(proposalId, userId)?.status ?? "removed";
+        return { status: current, reasons: [`Proposal was ${current} before owner approval could be recorded.`] };
+      }
+      audit(
+        "final_size_red_review_owner_override",
+        {
+          proposalId,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          reviewedAt: proposal.finalSizeReview.reviewedAt,
+          approvedAt,
+          reason: proposal.finalSizeReview.ownerApprovalReason,
+          verdict: proposal.redTeamVerdict?.verdict,
+          available: proposal.redTeamVerdict?.available
+        },
+        userId,
+        policy.connectedAccountId
+      );
     }
 
     const isLiveExecution = executionState.environment === "live";
@@ -569,7 +785,7 @@ export async function executeProposal(
     // `proposal` persists execution-time sizing (broker-minimum bump / approval-time reprice) into
     // the row before placement, so crash-recovery books any fill at the size actually sent and
     // Recent/Activity show the executed order rather than the stale original ask.
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal })) {
+    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal, decision })) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }

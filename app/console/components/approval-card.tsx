@@ -23,6 +23,7 @@ import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
 import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel } from "../lib/red-team";
+import { proposalGreenRationale } from "../lib/thesis";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
@@ -266,10 +267,10 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                     title={
                       greenPolicyRotates
                         ? "The policy rotates models each run; this legacy proposal predates per-proposal model stamping, so the concrete rotation pick was not recorded."
-                        : "No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."
+                        : "This legacy proposal has no served-model stamp and no model is currently configured. The app has no hidden Green Team default."
                     }
                   >
-                    ({greenPolicyRotates ? "policy rotates models" : "policy default"})
+                    ({greenPolicyRotates ? "policy rotates models" : "model not recorded"})
                   </span>
                 )}
               </div>
@@ -302,7 +303,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
               failover
             </Chip>
           </div>
-          <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{p.rationale}</p>
+          <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{proposalGreenRationale(p)}</p>
         </div>
 
         {/* Red team: the single adversarial reviewer + its verdict — including the FAILURE state,

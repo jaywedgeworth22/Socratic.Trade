@@ -1108,6 +1108,12 @@ export interface TradingPolicy {
 export interface ProposalSizingSnapshot {
   portfolioValue: number;
   estimatedNotional: number;
+  /** Exact broker-routing basis reviewed by Red (quantity wins when present). */
+  sizeBasis?: "quantity" | "notional";
+  /** Exact routed quantity when sizeBasis is quantity. */
+  quantity?: number;
+  /** Exact routed dollar amount when sizeBasis is notional. */
+  dollarAmount?: number;
   estimatedPctOfNav?: number;
   dailyOpeningCap?: {
     mode: "pct_nav" | "dollar";
@@ -1234,6 +1240,10 @@ export interface TradeProposal {
      * (or the final SocraticOverrideResolution) for that claim.
      */
     overridden?: boolean;
+    /** A human explicitly approved the final broker-adjusted size after a fresh Red objection,
+     * unavailable review, or incompatible half-size recommendation. Unlike `overridden`, this is
+     * a consumed owner action, not merely an agent request. */
+    humanOverrideApplied?: boolean;
     /**
      * Structured reason the debate was unavailable (`available: false`) — mirrors
      * `RedTeamDebateResult.failureKind` (src/lib/red-team.ts), persisted onto the decision case so
@@ -1241,6 +1251,18 @@ export interface TradeProposal {
      * Absent when `available: true`.
      */
     failureKind?: "not_configured" | "timeout" | "provider_error" | "rate_limited" | "malformed_response";
+  };
+  /** One-shot receipt for a broker-minimum size mutation that required a fresh Red review. When
+   * ownerApprovalRequired is true the updated card must be approved once more; that next click
+   * consumes the marker instead of rerunning Red indefinitely. */
+  finalSizeReview?: {
+    trigger: "broker_minimum_bump";
+    fromNotional: number;
+    toNotional: number;
+    reviewedAt: string;
+    ownerApprovalRequired: boolean;
+    ownerApprovalReason?: string;
+    ownerOverrideAppliedAt?: string;
   };
   /**
    * Advisory PRE-POLICY veto reasons (deterministic-bear filter, approval-time Red Team) attached to a
@@ -1274,9 +1296,14 @@ export interface TradeProposal {
 export type SocraticDecisionStatus =
   | "planned"
   | "proposed"
+  | "placing"
   | "placed"
   | "blocked"
   | "rejected"
+  | "rejected_by_broker"
+  | "not_placed"
+  | "expired"
+  | "withdrawn"
   | "error"
   | "observed";
 

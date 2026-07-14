@@ -71,6 +71,12 @@
 > explicitly labeled as requested rather than applied.
 > The Guardrails cap selector derives from the persisted account whenever no draft is active, so
 > discard/save/account changes cannot leave the Dollar/Percent control displaying stale local mode.
+>
+> 2026-07-14: approval cards and Live Thesis use the structured Green-only rationale rather than
+> relabeling appended Red or owner-hold prose as Green evidence. Proposal/case lifecycle status now
+> stays aligned through placement, broker rejection, expiry, withdrawal, and reconciliation. An
+> uncertain submission says “Placement pending confirmation” and never invites a retry; final-size
+> Red rejection/unavailability/half-size advice and any explicit owner override remain distinct.
 
 
 This phase restructures the dashboard from a long vertical page into a

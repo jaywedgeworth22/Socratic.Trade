@@ -121,6 +121,27 @@ describe("buildLlmRequestBody", () => {
     expect(body.text).toEqual({ format: { type: "json_schema", name: "trade_proposals", strict: true, schema: SCHEMA.schema } });
   });
 
+  it("GPT-5.6 preserves the exact tier and reasoning effort on the OpenAI Responses transport", () => {
+    const body = buildLlmRequestBody(
+      { provider: "openai", transport: "responses" },
+      {
+        model: "gpt-5.6-terra",
+        systemPrompt: "sys",
+        userContent: "{}",
+        schema: SCHEMA,
+        maxOutputTokens: 1500,
+        reasoningEffort: "high"
+      }
+    ) as Record<string, any>;
+
+    expect(body.model).toBe("gpt-5.6-terra");
+    expect(body.reasoning).toEqual({ effort: "high" });
+    expect(body.max_output_tokens).toBeGreaterThanOrEqual(1500);
+    expect(body.text).toEqual({ format: { type: "json_schema", name: "trade_proposals", strict: true, schema: SCHEMA.schema } });
+    expect(body.messages).toBeUndefined();
+    expect(body.max_completion_tokens).toBeUndefined();
+  });
+
   it("Anthropic: system field + forced tool-use for the schema, max_tokens set, no response_format", () => {
     const body = buildLlmRequestBody(
       { provider: "anthropic", transport: "anthropic-messages" },

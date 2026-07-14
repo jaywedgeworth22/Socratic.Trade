@@ -53,16 +53,54 @@ export function deterministicOutcomePresentation(
       tone: "pos"
     };
   }
-  if (status === "blocked" || status === "rejected") {
+  if (status === "placing") {
+    return {
+      label: "Placement pending confirmation",
+      body: "The order was submitted, but broker acceptance has not yet been confirmed.",
+      tone: "warn"
+    };
+  }
+  if (status === "blocked") {
     return {
       label: "Blocked before placement",
       body: reasonText || "A deterministic policy or execution check prevented the order from being submitted.",
       tone: "neg"
     };
   }
-  if (status === "error" || status === "failed" || status === "placing_failed" || status === "rejected_by_broker") {
+  if (status === "rejected") {
     return {
-      label: status === "rejected_by_broker" ? "Rejected by broker" : "Placement failed",
+      label: "Rejected by user",
+      body: "The pending proposal was declined before placement.",
+      tone: "neg"
+    };
+  }
+  if (status === "rejected_by_broker") {
+    return {
+      label: "Rejected by broker",
+      body: "The broker declined the order; no placement is being claimed.",
+      tone: "neg"
+    };
+  }
+  if (status === "not_placed" || status === "placing_failed") {
+    return {
+      label: "Order not placed",
+      body: "No broker order was confirmed. The proposal can be reviewed and retried if it still makes sense.",
+      tone: "neg"
+    };
+  }
+  if (status === "expired" || status === "withdrawn") {
+    return {
+      label: status === "expired" ? "Proposal expired" : "Proposal withdrawn",
+      body:
+        status === "expired"
+          ? "The proposal aged out before placement."
+          : "The strategy withdrew the proposal before placement.",
+      tone: "warn"
+    };
+  }
+  if (status === "error" || status === "failed") {
+    return {
+      label: "Placement failed",
       body: reasonText || "The trade was not confirmed as placed.",
       tone: "neg"
     };

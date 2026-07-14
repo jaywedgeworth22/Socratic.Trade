@@ -15,10 +15,18 @@ export type RedTeamVerdict = NonNullable<TradeProposal["redTeamVerdict"]>;
  * it does not claim the order was placed. A model-requested override is only called overridden when
  * the final policy decision confirms it was applied. */
 export function redTeamVerdictLabel(verdict: RedTeamVerdict, overrideApplied?: boolean): string {
+  if (verdict.humanOverrideApplied) {
+    if (!verdict.available) return "Review unavailable — approved by user";
+    if (verdict.verdict === "approve-at-half") return "Half-size advice overridden by user";
+    if (verdict.rejected || verdict.verdict === "reject") return "Objection overridden by user";
+  }
   if (!verdict.available) return "Review unavailable — held for human approval";
   if (verdict.rejected && overrideApplied === true) return "Objection overridden";
   if (verdict.rejected && verdict.overridden && overrideApplied === undefined) return "Rejected — override requested";
-  if (verdict.rejected || verdict.verdict === "reject") return "Rejected — blocked";
+  // The reviewer verdict and the deterministic/broker outcome are separate sections. A Red reject
+  // may be queued for an owner decision, overridden by policy, or ultimately blocked, so do not
+  // claim the later outcome here.
+  if (verdict.rejected || verdict.verdict === "reject") return "Rejected by Red Team";
   if (verdict.verdict === "approve-at-half") return "Approved at half size";
   return "Approved at full size";
 }

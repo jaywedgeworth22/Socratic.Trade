@@ -1,6 +1,6 @@
 # Current Status
 
-## 2026-07-13 — Account-relative risk post-merge review fixes (CODEX, branch `codex/account-relative-risk-review-fixes`)
+## 2026-07-14 — Final-size Red review and lifecycle truth (CODEX, branch `codex/account-relative-risk-review-fixes`)
 
 PR #1561 merged as `3e105e17` and production was verified on that exact SHA with one healthy
 container, zero restarts, current scheduler/DB/Litestream checks, and roughly 358 MiB runtime
@@ -8,19 +8,32 @@ memory. Its required hosted verify, Playwright smoke, and gitleaks checks passed
 posted after auto-merge and found three non-outdated P2 gaps; the optional autofix workflow then
 hit its 60-turn cap without changing code.
 
-The focused follow-up makes migration v26 cover the legacy `settings.policy` copy sequence while
-keeping v27 schema-only so a later intentional fixed `$500` choice is never reinterpreted. Migration
-v27 adds durable columns for exact Green Team text and app-computed sizing receipts. All “Objection
-overridden” decision evidence/UI now uses the final applied policy override; the earlier model path
-emits a truthful `red_team_veto_override_requested` audit while historical events remain readable.
-The Guardrails Dollar/Percent selector now also re-derives from the persisted active account after
-discard/save/account changes, and console/API/mobile tests prove exclusive mode persistence. Focused
-verification is green: the cap-setting suite passed 54/54; 64/65 tests passed in the combined load run, its one unchanged
-20-second dashboard timeout passed alone (3/3), touched lint has 0 errors, TypeScript is clean, and
-diff-check passes. Full Node 24 gate, ready PR, original-thread resolution, merge/autodeploy, and
-exact production verification remain.
+The follow-up now closes the original review plus the later final-size/lifecycle audit. Explicit
+large dollar caps remain dollar caps; migration v26 covers all four legacy stores while v27 is
+schema-only, so an intentional post-migration `$500` choice survives. The configurable Guardrails
+Dollar/Percent selector follows persisted account state after discard/save/account changes.
+
+Every risk-adding opening that a broker minimum changes is Red-reviewed once more at the exact
+broker-reviewed size. That one-shot state machine supports full approval, one half-size haircut,
+unavailable/reject owner holds, and one explicit owner override without floor/haircut loops; exits
+remain exempt. Independent human-review reasons are tracked separately so a successful final Red
+review cannot erase a rationale-collapse or owner-preference hold. The proposal row and its initial
+Socratic `placing` case are committed in one SQLite transaction before the broker call, all later
+proposal transitions update the case in the same transaction, uncertain submissions stay
+`placing`, and per-decision vector writes are serialized while re-reading current SQLite truth.
+Approval and Live Thesis surfaces render exact Green text separately from Red/owner-hold prose and
+reserve retry wording for broker-confirmed non-placement.
+
+Focused Node 24 verification after hostile review is green: TypeScript passed; 6 files / 53 tests
+passed, including successful/rejected/unavailable/half-size final review, unrelated hold
+preservation, pre-broker atomic case visibility, uncertain-placement truth, lifecycle sync, vector
+ordering, migration coverage, and UI labels. Repository lint passed earlier in this continuation
+with 0 errors / 458 inherited warnings. Current `origin/main@86971ec4` still needs reconciliation,
+then the authoritative lint/tsc/test/build gate, ready PR, auto-merge, original-thread resolution,
+and exact production verification remain.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
+Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
 ## 2026-07-14 — [codex-autofix] Round 7: Preserve filed_at + batch deletes + limit respects + chunk_occurrences (PR #1493 `ag/troubleshoot-sentry`)
 
 Codex review flagged 4 P2 findings on the round-6 clearCache logic:

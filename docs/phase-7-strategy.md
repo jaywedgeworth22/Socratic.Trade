@@ -40,6 +40,23 @@ invariants, and residual gaps.
 - Alpaca sub-share dollar entries clear whole-share bracket fields when the app declares the native
   bracket skipped, preventing the receipt/transport contradiction that previously blocked EXE.
 
+## 2026-07-14 final-size and lifecycle invariant update
+
+- A successful broker-minimum bump on a risk-adding opening refreshes the exact sizing receipt and
+  reruns Red once on Green-only prose plus structured evidence. Red's half-size result may apply one
+  down-only haircut; the broker reviews that haircut, and the strategy never bumps it back up.
+- Reject, unavailable, or broker-unplaceable half-size results hold the final broker-adjusted order
+  for one explicit owner decision. That second approval is stamped and audited as an override
+  without recursively rerunning Red. Risk-reducing exits remain exempt.
+- Human-review reasons are independent. A later Red approval clears only the superseded Red hold,
+  never rationale-collapse or owner-preference holds.
+- Before any autonomous broker submission, the durable `trade_proposals` intent and initial
+  `socratic_decisions` case commit in one SQLite transaction. Subsequent placement, broker decline,
+  expiry, withdrawal, and recovery transitions update both ledgers transactionally.
+- Uncertain submissions remain `placing` until reconciliation proves the result. Same-decision
+  vector-memory writes are serialized and re-read current SQLite state before embedding, preventing
+  a slow older lifecycle write from overwriting a newer terminal result.
+
 ## 1. Strategy Architecture: Evaluation Lenses
 
 To ensure balanced and resilient trade proposals, the LLM evaluates candidates

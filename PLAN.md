@@ -8,12 +8,17 @@
 > submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
 > sections with explicit verdict wording. PR #1561 merged as `3e105e17`; required hosted checks passed
 > and that exact release is healthy in production. A review posted after auto-merge found three P2
-> gaps. The active focused follow-up persists Green/sizing receipts across refreshes, makes v26
-> cover the legacy global-policy sequence without reinterpreting a later intentional `$500` choice,
-> and separates a Red override request from a final applied override in storage and UI. Targeted
-> console/API/mobile cap-mode tests, touched lint, and TypeScript are green; full gate/PR/deploy remain.
+> gaps. The active follow-up persists Green/sizing receipts across refreshes, makes v26 cover every
+> legacy policy store without reinterpreting later intentional dollar choices, and separates a Red
+> override request from a final applied override. It also reruns Red exactly once after a
+> broker-minimum size mutation, preserves independent human-review reasons, atomically commits the
+> broker intent with its Socratic case, synchronizes lifecycle truth transactionally, serializes
+> same-decision vector updates, and keeps uncertain submissions in `placing`. Focused hostile-review
+> regressions and TypeScript are green. Reconcile current main, run the authoritative full gate, land
+> through a ready PR, and verify the exact production release.
 > See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
 > `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
+> Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
 
 > **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
 > complete source-to-decision boundary before adding more feeds: wider bounded enrichment;

@@ -1,6 +1,12 @@
 import type { ContextDocument, StoreContextsResult } from "./vector-db";
 import type { SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution } from "./types";
 
+// Every lifecycle update targets one stable Pinecone identity. Keep writes for a decision ordered
+// inside this process so a slow older embed cannot finish after a newer terminal-state embed and
+// overwrite it. Each queued write re-reads the current durable case, which also coalesces bursts of
+// placing/placed/outcome updates onto the newest SQLite truth.
+const decisionIndexQueues = new Map<string, Promise<StoreContextsResult>>();
+
 function compact(value: string | undefined, fallback: string = "n/a"): string {
   const trimmed = value?.replace(/\s+/g, " ").trim();
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
@@ -69,7 +75,9 @@ export function buildSocraticMemoryDocument(
     `authority: ${decision.authority}`,
     `thesis_tag: ${decision.thesisTag ?? "n/a"}`,
     `entry_market_regime: ${decision.regime ?? "n/a"}`,
-    `broker_argument: ${compact(decision.thesis)} -- ${compact(decision.rationale)}`,
+    // Legacy rationale strings may contain an appended Red critique. Keep the institutional-memory
+    // Green argument clean whenever the structured Green text exists; Red has its own field below.
+    `broker_argument: ${compact(decision.thesis)} -- ${compact(decision.greenTeamRationale ?? decision.rationale)}`,
     `critic_counter_argument: ${compact(criticCounterArgument)}`,
     `policy_outcome: ${policyOutcome}`,
     `autonomy_override: ${override}`,
@@ -106,15 +114,25 @@ export function buildSocraticMemoryDocument(
   };
 }
 
-export async function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Promise<StoreContextsResult> {
-  const { getConnectedAccount } = await import("./db");
-  const { storeContexts } = await import("./vector-db");
-  const accountEnvironment = decision.connectedAccountId
-    ? getConnectedAccount(decision.connectedAccountId, decision.userId)?.environment
-    : undefined;
-  return storeContexts(
-    [buildSocraticMemoryDocument(decision, accountEnvironment)],
-    decision.userId,
-    { dedupKeyPrefix: "socratic-decision" }
-  );
+export function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Promise<StoreContextsResult> {
+  const key = `${decision.userId}:${decision.id}`;
+  const prior = decisionIndexQueues.get(key);
+  const run = (prior ? prior.catch(() => undefined) : Promise.resolve()).then(async () => {
+    const { getConnectedAccount, getSocraticDecisionCase } = await import("./db");
+    const { storeContexts } = await import("./vector-db");
+    const current = getSocraticDecisionCase(decision.id, decision.userId) ?? decision;
+    const accountEnvironment = current.connectedAccountId
+      ? getConnectedAccount(current.connectedAccountId, current.userId)?.environment
+      : undefined;
+    return storeContexts(
+      [buildSocraticMemoryDocument(current, accountEnvironment)],
+      current.userId,
+      { dedupKeyPrefix: "socratic-decision" }
+    );
+  });
+  decisionIndexQueues.set(key, run);
+  void run.finally(() => {
+    if (decisionIndexQueues.get(key) === run) decisionIndexQueues.delete(key);
+  }).catch(() => undefined);
+  return run;
 }

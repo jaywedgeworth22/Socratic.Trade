@@ -409,10 +409,15 @@ export function frameworkProposalFromDecision(decision: SocraticDecisionCase): O
 }
 
 export function socraticStatusFromProposalStatus(status: string): SocraticDecisionStatus {
-  if (status === "placed") return "placed";
+  if (status === "placed" || status === "paper") return "placed";
   if (status === "proposed") return "proposed";
+  if (status === "placing") return "placing";
   if (status === "blocked") return "blocked";
-  if (status === "rejected" || status === "rejected_by_broker") return "rejected";
-  if (status === "error" || status === "placing_failed") return "error";
+  if (status === "rejected" || status === "rejected_by_red_team") return "rejected";
+  if (status === "rejected_by_broker") return "rejected_by_broker";
+  if (status === "not_placed" || status === "placing_failed") return "not_placed";
+  if (status === "expired") return "expired";
+  if (status === "withdrawn") return "withdrawn";
+  if (status === "error" || status === "failed") return "error";
   return "planned";
 }

@@ -27,6 +27,7 @@ import {
   transitionProposalIfPending,
   upsertSocraticDecisionCase,
   createSocraticFrameworkProposal,
+  getDb,
   updatePendingProposalReprice,
   updateProposalStatus,
   updateFillEvent
@@ -125,6 +126,12 @@ import {
   type UntrustedPromptField
 } from "./prompt-safety";
 import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
+import {
+  captureProposalSizingSnapshot,
+  proposalForFinalSizeRedReview,
+  redTeamSizingFromSnapshot,
+  stampRedTeamResult
+} from "./finalized-sizing-review";
 import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-team-routing";
 import { isEscalationRegime } from "./regime-watch";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
@@ -1526,6 +1533,21 @@ export async function runStrategyOnce(
     // but route it to a human rather than auto-executing an un-reviewed opening with real capital.
     // The live placement path below checks this set and downgrades these to status "proposed".
     const requiresHumanReview = new Set<TradeProposal>();
+    const humanReviewReasons = new Map<TradeProposal, Set<string>>();
+    const requireHumanReview = (proposal: TradeProposal, reason: string): void => {
+      const reasons = humanReviewReasons.get(proposal) ?? new Set<string>();
+      reasons.add(reason);
+      humanReviewReasons.set(proposal, reasons);
+      requiresHumanReview.add(proposal);
+    };
+    const clearHumanReviewReason = (proposal: TradeProposal, reason: string): void => {
+      const reasons = humanReviewReasons.get(proposal);
+      if (!reasons) return;
+      reasons.delete(reason);
+      if (reasons.size > 0) return;
+      humanReviewReasons.delete(proposal);
+      requiresHumanReview.delete(proposal);
+    };
 
     // ── The SINGLE Red Team review (docs/single-adversary-consolidation.md §3) ──────────────────
     // Universal coverage (O2): every risk-adding opening is reviewed — no conviction gate, no
@@ -1545,33 +1567,16 @@ export async function runStrategyOnce(
         // re-read the user-level getPolicy) so the account-scoped Red model/reasoning AND any
         // usage-budget Phase 2 downgrade actually reach the reviewer's model resolution.
         const finalizedNotional = estimateNotional(proposal);
-        const dailyCap = resolveDailyOpeningCap(policy, workingPortfolio.totalMarketValue);
-        proposal.sizingSnapshot = {
-          portfolioValue: workingPortfolio.totalMarketValue,
+        proposal.sizingSnapshot = captureProposalSizingSnapshot({
+          proposal,
           estimatedNotional: finalizedNotional,
-          estimatedPctOfNav:
-            workingPortfolio.totalMarketValue > 0
-              ? Number(((finalizedNotional / workingPortfolio.totalMarketValue) * 100).toFixed(4))
-              : undefined,
-          dailyOpeningCap: dailyCap
-            ? {
-                mode: dailyCap.mode,
-                configuredValue: dailyCap.configuredValue,
-                effectiveNotional: Number(dailyCap.notional.toFixed(2)),
-                pctOfNav: dailyCap.pctOfNav != null ? Number(dailyCap.pctOfNav.toFixed(2)) : undefined
-              }
-            : undefined,
-          dailyNotionalUsed: Number(daily.notional.toFixed(2)),
-          remainingDailyNotional: dailyCap
-            ? Number(Math.max(0, dailyCap.notional - daily.notional).toFixed(2))
-            : undefined
-        };
+          policy,
+          portfolioValue: workingPortfolio.totalMarketValue,
+          dailyNotionalUsed: daily.notional
+        });
         const result = await debateProposal(proposal, quote, userId, runPolicy, {
           context: adversaryContext,
-          sizing: {
-            sizeBasis: typeof proposal.quantity === "number" && proposal.quantity > 0 ? "quantity" : "notional",
-            ...proposal.sizingSnapshot
-          }
+          sizing: redTeamSizingFromSnapshot(proposal.sizingSnapshot)
         });
         reviewResults.set(proposal, result);
       } catch (error) {
@@ -1599,23 +1604,7 @@ export async function runStrategyOnce(
       {
         // First-class verdict for the approval card's "Red Team Review" block. Keep the
         // rationale-append text below too for backward compatibility with anything reading the string.
-        proposal.redTeamVerdict = {
-          ...(redTeamResult.verdict ? { verdict: redTeamResult.verdict } : {}),
-          rejected: redTeamResult.rejected,
-          available: redTeamResult.available,
-          reason: redTeamResult.reason,
-          // The model that actually served the review — persisted so the approval card's red-team
-          // badge doesn't drift with later policy edits.
-          ...(redTeamResult.model ? { model: redTeamResult.model } : {}),
-          // Universal coverage: every review since the consolidation runs because the trade is a
-          // risk-adding opening. (Legacy persisted verdicts carry the old dissent-trigger values.)
-          trigger: "all_openings",
-          // Structured failure classification ("RED TEAM FAILED" flag) — absent when available.
-          ...(redTeamResult.failureKind ? { failureKind: redTeamResult.failureKind } : {})
-        };
-        if (redTeamResult.model) {
-          proposal.reviewedByModel = redTeamResult.model;
-        }
+        stampRedTeamResult(proposal, redTeamResult);
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Pre-veto override (Veto B): an available-and-rejecting Bear is ADVISORY when the agent
@@ -1732,7 +1721,7 @@ export async function runStrategyOnce(
             `[RedTeam] review unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`
           );
           proposal.rationale += routing.note;
-          if (routing.holdForHuman) requiresHumanReview.add(proposal);
+          if (routing.holdForHuman) requireHumanReview(proposal, "initial_red_team");
           audit(
             "strategy_red_team_unavailable",
             { runId, symbol: proposal.symbol, side: proposal.side, reason: redTeamResult.reason, failureKind: redTeamResult.failureKind, heldForHuman: routing.holdForHuman },
@@ -1766,7 +1755,7 @@ export async function runStrategyOnce(
             );
           } else {
             proposal.rationale += `\n\nRed Team review — approved at half size: ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
-            requiresHumanReview.add(proposal);
+            requireHumanReview(proposal, "initial_red_team");
             audit(
               "red_team_half_size_unplaceable",
               { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model, why: haircut.note, heldForHuman: true },
@@ -1803,7 +1792,7 @@ export async function runStrategyOnce(
       if (openingDiversity.collapsed) {
         for (const p of gatedOpenings) {
           p.rationale += `\n\nRationale-diversity gate: this run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); routed to human approval.`;
-          requiresHumanReview.add(p);
+          requireHumanReview(p, "rationale_collapse");
         }
         if (gatedOpenings.length > 0) {
           console.warn(`[strategy] Rationale-collapse gate ON — routing ${gatedOpenings.length} opening proposal(s) to human review.`);
@@ -1831,7 +1820,7 @@ export async function runStrategyOnce(
       for (const p of debatedProposals) {
         const isOpening = p.side === "buy" || p.side === "short";
         if (isOpening && p.preVetoReasons?.length && p.autonomyOverride?.requested === true && !!p.autonomyOverride.thesis?.trim()) {
-          requiresHumanReview.add(p);
+          requireHumanReview(p, "pre_veto_override");
         }
       }
     }
@@ -1929,56 +1918,67 @@ export async function runStrategyOnce(
     // full-set warning above remains here.)
 
     const results = completedProposalResults;
-    const recordSocraticDecision = (input: {
+    type SocraticDecisionRecordInput = {
       proposalId: string;
       proposal: TradeProposal;
       decision: PolicyDecision;
       status: string;
       review?: ReviewedOrder;
       overrideResolution?: SocraticOverrideResolution;
-    }) => {
+    };
+    const buildSocraticCaseFile = (input: SocraticDecisionRecordInput): SocraticDecisionCase => {
+      const now = new Date().toISOString();
+      return {
+        ...buildSocraticDecisionCase({
+          userId,
+          connectedAccountId,
+          runId,
+          proposalId: input.proposalId,
+          accountNumber: policy.accountNumber,
+          proposal: input.proposal,
+          status: socraticStatusFromProposalStatus(input.status),
+          authority: policy.strategyAuthority,
+          decision: input.decision,
+          review: input.review,
+          marketScan,
+          ragAttributions: socraticRagAttributions,
+          overrideResolution: input.overrideResolution,
+          // Run-level advisory prompt-safety receipts (injection scan + evidence-age anomalies).
+          ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {}),
+          // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06) — persistence only.
+          ...(ragRetrievalStatusRows.length > 0 ? { ragRetrievalStatus: ragRetrievalStatusRows } : {})
+        }),
+        createdAt: now,
+        updatedAt: now
+      } satisfies SocraticDecisionCase;
+    };
+    const indexSocraticCaseFile = (caseFile: SocraticDecisionCase): void => {
+      void indexSocraticDecisionMemory(caseFile).catch((err) => {
+        console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
+      });
+    };
+    const reportSocraticCaseWriteFailure = (input: SocraticDecisionRecordInput, err: unknown): string => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[strategy] Socratic decision recording failed:", message);
       try {
-        const now = new Date().toISOString();
-        const caseFile = {
-          ...buildSocraticDecisionCase({
-            userId,
-            connectedAccountId,
-            runId,
-            proposalId: input.proposalId,
-            accountNumber: policy.accountNumber,
-            proposal: input.proposal,
-            status: socraticStatusFromProposalStatus(input.status),
-            authority: policy.strategyAuthority,
-            decision: input.decision,
-            review: input.review,
-            marketScan,
-            ragAttributions: socraticRagAttributions,
-            overrideResolution: input.overrideResolution,
-            // Run-level advisory prompt-safety receipts (injection scan + evidence-age anomalies).
-            ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {}),
-            // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06) — persistence only.
-            ...(ragRetrievalStatusRows.length > 0 ? { ragRetrievalStatus: ragRetrievalStatusRows } : {})
-          }),
-          createdAt: now,
-          updatedAt: now
-        } satisfies SocraticDecisionCase;
+        audit(
+          "socratic_case_write_failed",
+          { runId, proposalId: input.proposalId, symbol: input.proposal.symbol, status: input.status, error: message },
+          userId,
+          connectedAccountId
+        );
+      } catch { /* audit itself must not throw */ }
+      return message;
+    };
+    const recordSocraticDecision = (input: SocraticDecisionRecordInput): void => {
+      try {
+        const caseFile = buildSocraticCaseFile(input);
         upsertSocraticDecisionCase(caseFile);
-        void indexSocraticDecisionMemory(caseFile).catch((err) => {
-          console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
-        });
+        indexSocraticCaseFile(caseFile);
         const framework = frameworkProposalFromDecision(caseFile);
         if (framework) createSocraticFrameworkProposal(framework);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn("[strategy] Socratic decision recording failed:", message);
-        try {
-          audit(
-            "socratic_case_write_failed",
-            { runId, proposalId: input.proposalId, symbol: input.proposal.symbol, status: input.status, error: message },
-            userId,
-            connectedAccountId
-          );
-        } catch { /* audit itself must not throw */ }
+        reportSocraticCaseWriteFailure(input, err);
       }
     };
 
@@ -2081,6 +2081,139 @@ export async function runStrategyOnce(
               userId,
               connectedAccountId
             );
+
+            // The universal Red review contract is "the FINALIZED trade." A broker-floor bump is
+            // a later size mutation, so refresh the deterministic receipt and rerun Red ONCE on
+            // the exact broker-reviewed shape. Exits remain structurally exempt. A Red haircut is
+            // reviewed by the broker but never bumped back up, preventing a floor/haircut loop.
+            if (isRiskAddingOpening(normalizedProposal, workingPositions)) {
+              const fullBumpedReview = review;
+              const fullBumpedSizing = {
+                quantity: normalizedProposal.quantity,
+                dollarAmount: normalizedProposal.dollarAmount
+              };
+              normalizedProposal.sizingSnapshot = captureProposalSizingSnapshot({
+                proposal: normalizedProposal,
+                estimatedNotional: fullBumpedReview.estimatedNotional,
+                policy,
+                portfolioValue: workingPortfolio.totalMarketValue,
+                dailyNotionalUsed: dailyNow.notional
+              });
+              const quote = marketScan.topCandidates.find(
+                (candidate) => normalizeSymbol(candidate.symbol) === normalizeSymbol(normalizedProposal.symbol)
+              );
+              let finalRed: RedTeamDebateResult;
+              try {
+                finalRed = await debateProposal(
+                  proposalForFinalSizeRedReview(normalizedProposal),
+                  quote,
+                  userId,
+                  runPolicy,
+                  {
+                    context: adversaryContext,
+                    sizing: redTeamSizingFromSnapshot(normalizedProposal.sizingSnapshot)
+                  }
+                );
+              } catch (error) {
+                finalRed = {
+                  rejected: false,
+                  available: false,
+                  reason: `Final-size Red Team review threw unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
+                  failureKind: "provider_error"
+                };
+              }
+              lockGuard.assertOwned();
+              stampRedTeamResult(normalizedProposal, finalRed);
+              normalizedProposal.preVetoReasons = normalizedProposal.preVetoReasons?.filter(
+                (reason) => !reason.startsWith("red_team_veto:")
+              );
+              if (normalizedProposal.preVetoReasons?.length === 0) delete normalizedProposal.preVetoReasons;
+
+              let ownerApprovalReason: string | undefined;
+              if (!finalRed.available) {
+                ownerApprovalReason = `The final broker-adjusted size could not be re-reviewed by Red (${describeRedTeamFailureKind(finalRed.failureKind)}): ${finalRed.reason}`;
+              } else if (finalRed.rejected || finalRed.verdict === "reject") {
+                ownerApprovalReason = `Red rejected the final broker-adjusted size: ${finalRed.reason}`;
+              } else if (finalRed.verdict === "approve-at-half") {
+                const haircut = applyRedTeamHalfSize(normalizedProposal);
+                if (!haircut.applied) {
+                  ownerApprovalReason = `Red authorized only half size, but that size is not executable: ${haircut.note}`;
+                } else {
+                  const haircutReview = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+                  lockGuard.assertOwned();
+                  const haircutBlock = describeBrokerMinimumOrderBlock(haircutReview, policy.activeBroker, {
+                    ...normalizedProposal,
+                    positionQuantity: heldForMinimumGuard?.quantity
+                  });
+                  if (haircutBlock) {
+                    Object.assign(normalizedProposal, fullBumpedSizing);
+                    review = fullBumpedReview;
+                    normalizedProposal.sizingSnapshot = captureProposalSizingSnapshot({
+                      proposal: normalizedProposal,
+                      estimatedNotional: fullBumpedReview.estimatedNotional,
+                      policy,
+                      portfolioValue: workingPortfolio.totalMarketValue,
+                      dailyNotionalUsed: dailyNow.notional
+                    });
+                    ownerApprovalReason = `Red authorized only half size, but the broker rejects that haircut: ${haircutBlock}`;
+                  } else {
+                    review = haircutReview;
+                    normalizedProposal.sizingSnapshot = captureProposalSizingSnapshot({
+                      proposal: normalizedProposal,
+                      estimatedNotional: haircutReview.estimatedNotional,
+                      policy,
+                      portfolioValue: workingPortfolio.totalMarketValue,
+                      dailyNotionalUsed: dailyNow.notional
+                    });
+                    normalizedProposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at half: ${finalRed.reason} [${haircut.note}]`;
+                    audit(
+                      "red_team_approved_at_half_after_broker_minimum",
+                      { runId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, model: finalRed.model, haircut: haircut.note, finalNotional: haircutReview.estimatedNotional },
+                      userId,
+                      connectedAccountId
+                    );
+                  }
+                }
+              } else {
+                normalizedProposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at full size: ${finalRed.reason}`;
+              }
+
+              // The exact-size review supersedes only the earlier Red hold. It must never clear
+              // independent gates such as rationale collapse or an unresolved owner-preference
+              // override merely because Red approved the broker-adjusted notional.
+              clearHumanReviewReason(proposal, "initial_red_team");
+              clearHumanReviewReason(proposal, "final_size_red_team");
+              if (ownerApprovalReason) {
+                requireHumanReview(proposal, "final_size_red_team");
+                normalizedProposal.rationale += `\n\nRed Team review — final broker-adjusted size requires owner approval: ${ownerApprovalReason}`;
+              }
+              normalizedProposal.finalSizeReview = {
+                trigger: "broker_minimum_bump",
+                fromNotional: bumpPlan.fromNotional,
+                toNotional: fullBumpedReview.estimatedNotional,
+                reviewedAt: new Date().toISOString(),
+                ownerApprovalRequired: Boolean(ownerApprovalReason),
+                ...(ownerApprovalReason ? { ownerApprovalReason } : {})
+              };
+              audit(
+                "red_team_rereview_after_broker_minimum",
+                {
+                  runId,
+                  symbol: normalizedProposal.symbol,
+                  side: normalizedProposal.side,
+                  fromNotional: bumpPlan.fromNotional,
+                  bumpedNotional: fullBumpedReview.estimatedNotional,
+                  finalNotional: review.estimatedNotional,
+                  verdict: finalRed.verdict,
+                  available: finalRed.available,
+                  model: finalRed.model,
+                  ownerApprovalRequired: Boolean(ownerApprovalReason),
+                  ownerApprovalReason
+                },
+                userId,
+                connectedAccountId
+              );
+            }
           } else {
             // Failed bump: restore the original sizing + review so the skip receipt shows what
             // the strategy actually proposed, and record that a bump was attempted.
@@ -2211,7 +2344,7 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
-        if (overrideResolution.routeToHuman) requiresHumanReview.add(proposal);
+        if (overrideResolution.routeToHuman) requireHumanReview(proposal, "override_resolution");
       } else if (overrideResolution.requested) {
         audit(
           "socratic_override_refused",
@@ -2413,13 +2546,19 @@ export async function runStrategyOnce(
         const failureKindSuffix = normalizedProposal.redTeamVerdict?.failureKind
           ? ` (${describeRedTeamFailureKind(normalizedProposal.redTeamVerdict.failureKind)})`
           : "";
+        const finalSizeReason = normalizedProposal.finalSizeReview?.ownerApprovalReason;
+        const pendingReason = finalSizeReason
+          ? `Final broker-adjusted size requires owner approval: ${finalSizeReason}`
+          : `Red Team review unavailable${failureKindSuffix}; routed to human approval.`;
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [pendingReason] });
         await sendNotification(
           {
             type: "pending_approval",
-            title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`,
+            title: finalSizeReason
+              ? `${normalizedProposal.symbol} awaiting approval (final size re-reviewed)`
+              : `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`,
             // §5.2 — payload metadata flag so formatNotificationDisplay can PRESERVE this title
             // instead of unconditionally overwriting pending_approval titles.
             payload: {
@@ -2479,20 +2618,49 @@ export async function runStrategyOnce(
       // try/catch so one broker outage can't abort the rest of the run's risk exits.
       const refId = crypto.randomUUID();
       const proposalId = crypto.randomUUID();
-      insertProposal({
-        userId,
-        id: proposalId,
-        runId,
-        accountNumber: policy.accountNumber,
+      const placingCaseInput: SocraticDecisionRecordInput = {
+        proposalId,
         proposal: normalizedProposal,
         decision,
-        review,
-        estimatedNotional: review.estimatedNotional,
-        refId,
         status: "placing",
-        executionMode,
-        promptVersion: STRATEGY_PROMPT_VERSION
-      });
+        review,
+        overrideResolution
+      };
+      try {
+        const placingCase = buildSocraticCaseFile(placingCaseInput);
+        const database = getDb();
+        database.transaction(() => {
+          insertProposal({
+            userId,
+            id: proposalId,
+            runId,
+            accountNumber: policy.accountNumber,
+            proposal: normalizedProposal,
+            decision,
+            review,
+            estimatedNotional: review.estimatedNotional,
+            refId,
+            status: "placing",
+            executionMode,
+            promptVersion: STRATEGY_PROMPT_VERSION
+          });
+          upsertSocraticDecisionCase(placingCase);
+        })();
+        indexSocraticCaseFile(placingCase);
+      } catch (error) {
+        const message = reportSocraticCaseWriteFailure(placingCaseInput, error);
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [`Decision evidence could not be persisted before placement: ${message}`] });
+        await sendNotification(
+          {
+            type: "run_failed",
+            title: `${normalizedProposal.symbol} order not submitted — decision receipt persistence failed`,
+            payload: { runId, proposalId, refId, error: message, reconcile: "not_submitted" }
+          },
+          { policy, userId }
+        );
+        lockGuard.assertOwned();
+        continue;
+      }
 
       let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
       try {
@@ -2585,7 +2753,7 @@ export async function runStrategyOnce(
         // retries next run, and emit the (protected) "verify with broker" alert. This is the ONLY
         // path that still produces a perpetual-until-confirmed alert.
         updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, outcome.error);
-        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing", review, overrideResolution });
         audit("order_placement_uncertain", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: outcome.error, brokerUnreachable: true }, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order placement failed/uncertain: ${outcome.error}`] });
         await sendNotification(
