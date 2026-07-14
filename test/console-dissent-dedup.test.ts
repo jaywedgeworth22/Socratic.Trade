@@ -50,7 +50,20 @@ describe("dissentItemsForDisplay", () => {
     ).toEqual([]);
   });
 
-  it("preserves Red Team rows that add meaningful override context", () => {
+  it("preserves Red Team rows that add meaningful override context even when summary matches the bare verdict reason", () => {
+    // The override context is only in the title ("overridden"), not the
+    // summary text. Production override items keep `redTeamVerdict.reason`
+    // as-is for summary — the "overridden" annotation is title-only.
+    const overridden = item(
+      "red_team",
+      "Red Team rejection (overridden)",
+      REASON
+    );
+
+    expect(dissentItemsForDisplay(decision([overridden]))).toEqual([overridden]);
+  });
+
+  it("preserves Red Team rows that add meaningful override context with an annotated summary", () => {
     const overridden = item(
       "red_team",
       "Red Team rejection (overridden)",

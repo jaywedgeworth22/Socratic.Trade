@@ -17,10 +17,10 @@ objections and override context remain visible. Persisted decision data is uncha
 
 ## Verification
 
-- Node 24 focused Vitest: 1 file / 4 tests passed.
+- Node 24 focused Vitest: 1 file / 5 tests passed.
 - `npm run lint`: passed.
 - `npx tsc --noEmit`: passed.
-- `npm test`: 369 files / 4,132 tests passed.
+- `npm test`: 369 files / 4,133 tests passed.
 - `npm run build`: passed, including TypeScript and 32 static pages. Existing middleware,
   documentation-token CSS scanning, webpack cache, and Sentry Edge warnings remain unrelated.
 - `git diff --check`: passed.
@@ -32,3 +32,18 @@ objections and override context remain visible. Persisted decision data is uncha
 
 - Review and merge ready PR #1593, then verify the automatic production deployment. Production
   was not changed by this work.
+
+## Round 1 autofix — preserve overridden Red Team dissent rows (P2, Codex review)
+
+**What changed:** `dissentItemsForDisplay` previously seeded its `seen` set with the canonical
+Red Team verdict reason, then dropped ALL dissent items whose summary matched — including
+`red_team` items whose title said "overridden" but whose summary was the bare reason text. The
+override context was lost from the trace.
+
+**Fix:** Skip the exact-summary dedup check for `red_team` items whose title contains
+"overridden" — they carry meaningful context the canonical verdict card doesn't show.
+
+**Test gap closed:** The original test used a modified summary with the override annotation
+appended to the reason text. The real `syncSocraticDecisionLifecycle` keeps `redTeamVerdict.reason`
+as the summary verbatim, so the original test didn't actually catch the bug. Added a test case
+that matches production behavior (bare reason as summary).

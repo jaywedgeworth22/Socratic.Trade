@@ -33,6 +33,15 @@ export function dissentItemsForDisplay(
   const seen = new Set<string>(redTeamReason ? [redTeamReason] : []);
 
   return decision.dissent.filter((item) => {
+    // When the Red Team verdict was overridden, the dissent item carries context
+    // the canonical verdict card doesn't show ("overridden" in title) even though
+    // the summary text is identical — preserve it rather than dropping it as a
+    // redundant echo of the verdict reason.
+    if (item.kind === "red_team" && item.title?.toLowerCase().includes("overridden")) {
+      seen.add(normalizedSummary(item.summary));
+      return true;
+    }
+
     const summary = normalizedSummary(item.summary);
     if (seen.has(summary)) return false;
     if (redTeamReason && isGeneratedRedTeamPolicyEcho(item, redTeamReason)) return false;
