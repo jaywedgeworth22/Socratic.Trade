@@ -3,6 +3,11 @@
 ## 2026-07-14 — Watchlist & Order Row Button Tooltip Alignment (AG, branch `agent/ag-watchlist-tooltip-fix`)
 
 Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 merged to main. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+## 2026-07-14 — [codex-autofix] Update stale STATUS.md entries for merged PRs #1576 and #1561 (PR #1589)
+
+Codex review flagged that STATUS.md still described PR #1576 and PR #1561 as open when both were merged. Updated both entries to reflect merged state. All verification gates passed (lint 0 errors, tsc clean, 4056 tests pass, build clean). Codex thread resolved, auto-merge enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
 ## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
 
 An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent
