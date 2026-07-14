@@ -51,3 +51,42 @@ that matches production behavior (bare reason as summary).
 Post-fix focused Vitest (5/5), scoped ESLint, standalone TypeScript, and diff-check passed. Required
 hosted CI, Playwright smoke, and gitleaks passed on the pre-autofix head; final-head reruns remain.
 Auto-merge is disabled and production is unchanged.
+
+## Round 2 autofix — keep verdict status explicit without duplicate rationale (two P2s)
+
+### Summary
+
+The canonical Red Team card now renders the shared verdict label next to its trigger. An
+`approve-at-half` verdict therefore remains visibly “Approved at half size,” and an available
+rejecting verdict remains visibly “Rejected by Red Team.” The generic half-size policy wrapper and
+matching Red Team dissent row stay filtered, so the reviewer rationale still appears exactly once.
+
+### Why
+
+Filtering the duplicate rows was correct for rationale deduplication, but those rows previously
+carried the only explicit status wording. The canonical card already owns the structured verdict
+and reason, so it must own the status label as well.
+
+### Files
+
+- `app/console/decisions/[id]/page.tsx` — renders `redTeamVerdictLabel(...)` on the canonical card.
+- `test/console-dissent-dedup.test.ts` — proves both half-size and rejection labels remain explicit
+  while their duplicate rationale rows remain hidden.
+- `STATUS.md`, `PLAN.md`, `docs/phase-8-cockpit-ui.md`, `docs/EFFORT-LOG.md`, and this note — record
+  the two review fixes and current verification state.
+
+### Verification
+
+- Node 24 (`v24.18.0`) focused Vitest: 2 files / 24 tests passed.
+- `npm run lint`: passed.
+- `npx tsc --noEmit`: passed.
+- `npm test`: 369 files / 4,135 tests passed.
+- `npm run build`: passed, including the real TypeScript phase and 32 static pages. The inherited
+  generated-CSS token warning remains non-fatal and unrelated.
+- `git diff --check`: passed.
+
+### Follow-ups
+
+- Commit and run `scripts/land.sh`, request final review, then reply to and resolve only
+  `PRRT_kwDOS7mOVM6Q6zNL` and `PRRT_kwDOS7mOVM6Q6zNO`.
+- Do not merge or deploy; auto-merge remains disabled and production remains unchanged.

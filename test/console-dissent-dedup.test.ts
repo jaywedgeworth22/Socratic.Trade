@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dissentItemsForDisplay } from "../app/console/lib/dissent";
+import { redTeamVerdictLabel } from "../app/console/lib/red-team";
 import type { SocraticDecisionCase, SocraticEvidenceItem } from "../src/lib/types";
 
 const REASON = "approve-at-half: Strong fundamentals, but execution risk warrants half size.";
@@ -8,13 +9,18 @@ function item(kind: SocraticEvidenceItem["kind"], title: string, summary: string
   return { kind, title, summary, tone: "warning" };
 }
 
-function decision(dissent: SocraticEvidenceItem[], reason: string | null = REASON) {
+function decision(
+  dissent: SocraticEvidenceItem[],
+  reason: string | null = REASON,
+  verdict: "approve" | "approve-at-half" | "reject" = "approve-at-half"
+) {
   return {
     dissent,
     ...(reason
       ? {
           redTeamVerdict: {
-            rejected: false,
+            verdict,
+            rejected: verdict === "reject",
             available: true,
             reason,
             model: "gpt-5.6-terra",
@@ -37,6 +43,27 @@ describe("dissentItemsForDisplay", () => {
     );
 
     expect(visible).toEqual([distinct]);
+  });
+
+  it("keeps the half-size verdict explicit while suppressing its duplicate policy rationale", () => {
+    const caseWithHalfSizeVerdict = decision([
+      item("policy", "Policy counterargument", `Red Team approve-at-half haircut applied: ${REASON}`)
+    ]);
+
+    expect(dissentItemsForDisplay(caseWithHalfSizeVerdict)).toEqual([]);
+    expect(redTeamVerdictLabel(caseWithHalfSizeVerdict.redTeamVerdict!)).toBe("Approved at half size");
+  });
+
+  it("keeps the rejection status explicit while suppressing its duplicate Red Team rationale", () => {
+    const rejectionReason = "Execution risk makes the downside asymmetric.";
+    const rejectedCase = decision(
+      [item("red_team", "Red Team rejection", rejectionReason)],
+      rejectionReason,
+      "reject"
+    );
+
+    expect(dissentItemsForDisplay(rejectedCase)).toEqual([]);
+    expect(redTeamVerdictLabel(rejectedCase.redTeamVerdict!)).toBe("Rejected by Red Team");
   });
 
   it("also removes generated failure and veto wrappers around the shown verdict reason", () => {

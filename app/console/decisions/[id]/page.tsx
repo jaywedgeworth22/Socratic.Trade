@@ -8,7 +8,7 @@ import { fmtMoney, fmtPct, timeAgo, EM_DASH } from "../../lib/format";
 import { authorityLabel, decisionStatusLabel, evidenceKindLabel, feedStatusLabel, frameworkStatusLabel, plainLabel, thesisTagLabel } from "../../lib/labels";
 import { dissentItemsForDisplay } from "../../lib/dissent";
 import { CONSOLE_PAGE_WIDTH } from "../../lib/page-width";
-import { redTeamFailureMeta } from "../../lib/red-team";
+import { redTeamFailureMeta, redTeamVerdictLabel } from "../../lib/red-team";
 import { Btn, Card, Chip, SignedText, TextArea } from "../../ui/primitives";
 import { ModelBadge } from "../../ui/provider-logo";
 import { SymbolButton } from "../../ui/symbol-drilldown";
@@ -247,7 +247,22 @@ export default function DecisionTracePage() {
                       title="The adversarial reviewer model that produced this verdict"
                     />
                   </strong>
-                  <span>{redTeamTriggerLabel(decision.redTeamVerdict.trigger)}</span>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Chip
+                      tone={decision.redTeamVerdict.rejected
+                        ? "neg"
+                        : decision.redTeamVerdict.verdict === "approve-at-half"
+                          ? "warn"
+                          : "pos"}
+                      title="Red Team verdict"
+                    >
+                      {redTeamVerdictLabel(
+                        decision.redTeamVerdict,
+                        decision.policyDecision?.socraticOverride?.applied
+                      )}
+                    </Chip>
+                    <span>{redTeamTriggerLabel(decision.redTeamVerdict.trigger)}</span>
+                  </div>
                 </div>
                 <p>{decision.redTeamVerdict.reason}</p>
               </article>

@@ -4,16 +4,26 @@
 
 The decision trace now treats the structured Red Team verdict as the canonical explanation and
 suppresses only exact generic echoes plus known generated policy wrappers around that same reason.
-Distinct policy objections and Red Team override context remain visible. The change is display-only;
-persisted cases and other consumers are unchanged. Required hosted CI, Playwright smoke, and
-gitleaks passed on the pre-autofix head. The accepted review fix is locally green (focused 5/5,
-scoped ESLint, standalone TypeScript, and diff-check); final-head hosted reruns remain. PR #1593 is
+Distinct policy objections and Red Team override context remain visible. The canonical card also
+shows the shared explicit verdict label, so an approve-at-half review still says “Approved at half
+size” and a rejection still says “Rejected by Red Team” even when its duplicate rationale row is
+hidden. The change is display-only; persisted cases and other consumers are unchanged. PR #1593 is
 open, auto-merge is disabled, and production is unchanged.
 
 **[codex-autofix] Round 1:**
 - P2 — preserve overridden Red Team dissent rows when the summary matches the canonical verdict
   reason but the title carries override context. Fixed in `app/console/lib/dissent.ts` and
   `test/console-dissent-dedup.test.ts` (added real-world test case where summary is unchanged).
+
+**[codex-autofix] Round 2:**
+- P2 — preserve the approve-at-half verdict label while continuing to suppress its generated
+  policy rationale echo.
+- P2 — preserve explicit Red Team rejection status while continuing to suppress its identical
+  dissent rationale echo.
+- Exact-tree Node 24 verification: focused 2 files / 24 tests, lint, TypeScript, full 369 files /
+  4,135 tests, production build with TypeScript + 32 static pages, and diff-check passed. Commit,
+  `scripts/land.sh`, final hosted review/checks, replies, and resolution of threads
+  `PRRT_kwDOS7mOVM6Q6zNL` and `PRRT_kwDOS7mOVM6Q6zNO` remain.
 
 Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 

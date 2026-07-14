@@ -89,7 +89,9 @@
 > 2026-07-14: the decision trace treats the structured Red Team verdict card as the
 > canonical explanation. Exact generic dissent copies and known generated policy
 > wrappers around that same reason are hidden, while genuinely distinct policy
-> objections and override context remain visible.
+> objections and override context remain visible. The canonical card owns the explicit
+> verdict status too, preserving “Approved at half size” and “Rejected by Red Team”
+> without restoring duplicate rationale rows.
 
 
 This phase restructures the dashboard from a long vertical page into a
