@@ -1,5 +1,17 @@
 # Active Implementation Plan
 
+> **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
+> TypeScript 5 compiler-API arrangement with one supported TypeScript 6.0.3 graph; remove the
+> postinstall mutation, module-resolution hooks, Next override, and `ignoreBuildErrors` bypass;
+> enforce Node 24 across hosted/self CI, landing, and Node declarations; and prevent unsupported
+> automated compiler/runtime-type upgrades. Hostile-review remediation is complete: parsed lock/YAML
+> and active-source policy coverage is 5/5, clean-install/lock determinism, scoped lint, standalone
+> TypeScript, Bash 3/runtime guards, YAML parsing, and diff-check pass. The earlier repo-wide lint,
+> 4,041-test run, and two production builds prove the restored Next `Running TypeScript` phase. Fresh
+> review accepted the remediation and the final ordered full gate is green (lint, TypeScript,
+> 4,043 tests, and a production build with the real TypeScript phase). Reconcile current main, then
+> publish a ready PR and require hosted verification.
+> See `docs/rollouts/2026-07-13-typescript-toolchain-gate-repair.md`.
 > **2026-07-13 - Development background-worker safety gate (CODEX).** Preserve production's
 > default-on scheduler/usage-replay/stream boot while making every non-production runtime fail
 > closed unless `DEV_BACKGROUND_WORKERS=on` is explicit. Centralize the decision and startup receipt,
