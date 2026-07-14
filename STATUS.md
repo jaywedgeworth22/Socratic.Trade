@@ -1,5 +1,25 @@
 # Current Status
 
+## 2026-07-13 — Non-production background workers fail closed (CODEX, branch `codex/dev-background-workers`)
+
+`next dev`, tests, and ad-hoc non-production runtimes no longer start the autonomous scheduler,
+Usage Monitor replay, or outbound stream workers unless `DEV_BACKGROUND_WORKERS=on` is explicit.
+Production preserves the prior default-on contract regardless of the dev-only flag. One shared boot
+decision emits an enabled/disabled startup receipt, and injected starter tests prove the disabled
+path imports/calls no worker family while the opt-in path starts each exactly once. Local focused
+proof is green (22 tests, scoped ESLint, TypeScript, diff-check). Fresh independent review accepted
+the implementation. The final ordered Node 24 gate is green: repository lint has zero errors (458
+grandfathered warnings), standalone TypeScript passes, 363 files / 4,051 tests pass, and the
+production build exits zero. A first accidental Node 26 test attempt failed only at the expected
+`better-sqlite3` ABI boundary (Node ABI 147 vs installed ABI 137); the complete Node 24 rerun proves
+the app change itself. A stripped-environment disposable
+`next dev` emitted the disabled receipt and no scheduler-start line; `/login` then hit the separate
+known invalid Tailwind wildcard on current `main`, already fixed in the console lane. Independent
+review and the local gate are complete. Ready PR #1576 is open; hosted verify, merge/autodeploy,
+and production verification remain.
+No provider, broker, corpus, or production configuration call was made. Rollout:
+`docs/rollouts/2026-07-13-development-background-workers.md`.
+
 ## 2026-07-13 — Autonomous-action row clarity: tense-matched verbs + de-collided authority labels + ticker logo (CLAUDE/Fable, branch `claude/autonomous-action-row-clarity`)
 
 Display-only console trust fix, three parts, no logic touched. (1) The Home "Autonomous actions" feed
