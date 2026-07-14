@@ -386,7 +386,7 @@ export function listSocraticDecisionCasesNeedingOutcome(
   const measuredBefore = opts.measuredBefore ?? new Date().toISOString();
   const clauses = [
     "user_id = ?",
-    "status IN ('placed', 'blocked', 'rejected')",
+    "status IN ('placed', 'blocked', 'rejected', 'filled')",
     "(outcome IS NULL OR (json_extract(outcome, '$.status') = 'open' AND COALESCE(json_extract(outcome, '$.measuredAt'), '') <= ?))"
   ];
   const args: unknown[] = [userId, measuredBefore];

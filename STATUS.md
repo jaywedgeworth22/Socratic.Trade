@@ -28,12 +28,43 @@ Focused Node 24 verification after hostile review is green: TypeScript passed; 6
 passed, including successful/rejected/unavailable/half-size final review, unrelated hold
 preservation, pre-broker atomic case visibility, uncertain-placement truth, lifecycle sync, vector
 ordering, migration coverage, and UI labels. Repository lint passed earlier in this continuation
-with 0 errors / 458 inherited warnings. Current `origin/main@86971ec4` still needs reconciliation,
-then the authoritative lint/tsc/test/build gate, ready PR, auto-merge, original-thread resolution,
-and exact production verification remain.
+with 0 errors / 458 inherited warnings. Current `origin/main@86971ec4` is now integrated, preserving
+its `filled` lifecycle and clearer console action vocabulary; the post-merge focused gate passed
+TypeScript plus 8 files / 68 tests. The authoritative lint/tsc/test/build gate, ready PR,
+auto-merge, original-thread resolution, and exact production verification remain.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
+## 2026-07-13 — Autonomous-action row clarity: tense-matched verbs + de-collided authority labels + ticker logo (CLAUDE/Fable, branch `claude/autonomous-action-row-clarity`)
+
+Display-only console trust fix, three parts, no logic touched. (1) The Home "Autonomous actions" feed
+(`app/console/page.tsx`) rendered each row as `{SYMBOL} {verb} [status-chip]` where `verb` was always
+PAST TENSE (`SIDE_LABEL[side]` = "Bought"/"Sold"/"Shorted"/"Covered"), derived purely from order side
+regardless of whether anything executed. So a merely-proposed or BLOCKED decision read "AAPL Bought
+[Proposed]" / "AAPL Bought [Blocked]" — falsely claiming a completed purchase (owner's exact confusion:
+"Bought + Blocked — did it really buy it?"). Fix: extracted pure helpers to
+`app/console/lib/action-verbs.ts` — `sideVerb(side,status)` returns past tense ONLY when
+`isExecutedStatus` (`/^(filled|executed)$/i`), else infinitive intent ("Buy"/"Sell"), falls back
+to raw side, no-side → "Observed"; `DecisionRow` also renders a muted "· not placed" cue when
+`isNotPlacedStatus` (blocked/rejected/failed/not_placed). Net: proposed/blocked rows now say "Buy AAPL",
+executed rows still say "Bought AAPL". (2) Trace-header (`decisions/[id]/page.tsx`) authority chip
+relabeled in `labels.ts` `AUTHORITY_LABELS` from "Propose"/"Decide" → "Ask-first"/"Autopilot" (tooltips
+unchanged) so it no longer collides with the adjacent "Proposed" status chip; matches the app-wide
+vocabulary (`derive.ts` `authorityWord`), and `authorityLabel` is used only there. (3) Ticker company
+logo now shows before the symbol on those rows (removed `showLogo={false}`; Portfolio pseudo-symbol
+stays logo-less). New test `test/console-action-rows.test.ts`. Rollout:
+`docs/rollouts/2026-07-13-autonomous-action-row-clarity.md`.
+
+**[codex-autofix] rounds on this PR:**
+- Round 2 (commit `61af9725`): Preserved distinct `not_placed` status so broker-verified
+  failures show the "· not placed" cue — `isNotPlacedStatus` gained `not_placed` alongside
+  `blocked`/`rejected`/`failed`, and the broker-confirmed no-order path in `strategy.ts:2508-2513`
+  persists `not_placed` instead of `error`.
+- Round 3 (commit `cb1372c1`): Persist `filled` status when the broker returns a synchronous
+  fill, so the action-row renders past-tense verb ("Bought [Filled]") for orders that actually
+  executed, not infinitive ("Buy [Placed]"). Added `"filled"` to `SocraticDecisionStatus`,
+  `socraticStatusFromProposalStatus`, outcome-engine queries, lesson guidance, and labels.
+  All four Codex review threads resolved. Auto-merge enabled.
 ## 2026-07-14 — [codex-autofix] Round 7: Preserve filed_at + batch deletes + limit respects + chunk_occurrences (PR #1493 `ag/troubleshoot-sentry`)
 
 Codex review flagged 4 P2 findings on the round-6 clearCache logic:

@@ -1298,6 +1298,7 @@ export type SocraticDecisionStatus =
   | "proposed"
   | "placing"
   | "placed"
+  | "filled"
   | "blocked"
   | "rejected"
   | "rejected_by_broker"

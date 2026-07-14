@@ -279,7 +279,7 @@ describe("autonomous broker-minimum final-size Red review", () => {
     expect(result.status).toBe("completed");
     expect(placeEquityOrder).toHaveBeenCalledTimes(1);
     expect(listRecentProposals(ACCOUNT, 10, userId)[0]).toMatchObject({ status: "placed", estimatedNotional: 1 });
-    expect(listSocraticDecisionCases(userId, { connectedAccountId: "autonomous-final-size-account" })[0]).toMatchObject({ status: "placed", notional: 1 });
+    expect(listSocraticDecisionCases(userId, { connectedAccountId: "autonomous-final-size-account" })[0]).toMatchObject({ status: "filled", notional: 1 });
   }, 30_000);
 
   it("does not clear an independent rationale-collapse hold when final-size Red approves", async () => {

@@ -366,7 +366,7 @@ export function buildSocraticDecisionCase(input: {
     dissent: dissentForDecision(input.proposal, input.decision, input.overrideResolution),
     ...(override ? { autonomyOverride: override } : {}),
     lessons: [
-      input.status === "placed" ? "Track realized outcome against the stated thesis and invalidation note." : "",
+      input.status === "placed" || input.status === "filled" ? "Track realized outcome against the stated thesis and invalidation note." : "",
       input.status === "blocked" && input.proposal.autonomyOverride?.requested ? "Override request did not clear the hard/preference split; review classifier or mandate." : "",
       input.overrideResolution?.applied ? "Owner preference gate was explicitly overridden; measure whether the autonomy judgment improved returns." : ""
     ].filter(Boolean),
@@ -410,6 +410,7 @@ export function frameworkProposalFromDecision(decision: SocraticDecisionCase): O
 
 export function socraticStatusFromProposalStatus(status: string): SocraticDecisionStatus {
   if (status === "placed" || status === "paper") return "placed";
+  if (status === "filled") return "filled";
   if (status === "proposed") return "proposed";
   if (status === "placing") return "placing";
   if (status === "blocked") return "blocked";

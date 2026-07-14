@@ -3,7 +3,7 @@
 Date: 2026-07-14
 Owner: CODEX
 Branch: `codex/account-relative-risk-review-fixes`
-Landing base target: `origin/main@86971ec4`
+Landing base: `origin/main@86971ec4` (integrated)
 
 ## Summary
 
@@ -89,6 +89,15 @@ npx vitest run test/final-size-red-autonomous.test.ts test/socratic-db.test.ts \
   test/finalized-sizing-review.test.ts test/persistence-hardening.test.ts
 # passed: 6 files / 53 tests
 
+npx tsc --noEmit
+# passed after merging origin/main@86971ec4
+
+npx vitest run test/final-size-red-autonomous.test.ts test/socratic-db.test.ts \
+  test/console-red-team-labels.test.ts test/broker-minimum-bump-execute.test.ts \
+  test/finalized-sizing-review.test.ts test/persistence-hardening.test.ts \
+  test/console-action-rows.test.ts test/placement-reconcile.test.ts
+# passed after merge: 8 files / 68 tests
+
 git diff --check
 # passed before the latest hostile-review remediations; rerun in the final gate
 ```
@@ -97,7 +106,6 @@ The full test/build gate will be appended after current-main reconciliation.
 
 ## Follow-ups
 
-- Reconcile current `origin/main`, including the TypeScript 7 and console wording changes.
 - Run lint, TypeScript, all Vitest tests, and the production build in the required order.
 - Land through `scripts/land.sh`, open a ready PR, auto-merge after hosted verification, resolve the
   original PR #1561 review threads, and verify the exact production SHA plus DB/scheduler/Litestream

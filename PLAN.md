@@ -13,8 +13,9 @@
 > override request from a final applied override. It also reruns Red exactly once after a
 > broker-minimum size mutation, preserves independent human-review reasons, atomically commits the
 > broker intent with its Socratic case, synchronizes lifecycle truth transactionally, serializes
-> same-decision vector updates, and keeps uncertain submissions in `placing`. Focused hostile-review
-> regressions and TypeScript are green. Reconcile current main, run the authoritative full gate, land
+> same-decision vector updates, and keeps uncertain submissions in `placing`. Current
+> `origin/main@86971ec4` is integrated and focused hostile-review/mainline regressions plus
+> TypeScript are green. Run the authoritative full gate, land
 > through a ready PR, and verify the exact production release.
 > See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
 > `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.

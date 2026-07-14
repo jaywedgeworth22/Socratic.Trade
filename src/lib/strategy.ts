@@ -2739,7 +2739,7 @@ export async function runStrategyOnce(
         if (outcome.kind === "not_placed") {
           const note = "Broker reachable; no order carries our idempotency key — the order never reached the broker. Safe to retry.";
           updateProposalStatus(proposalId, "not_placed", undefined, review, review.estimatedNotional, userId, undefined, note);
-          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "not_placed", review, overrideResolution });
           audit("order_confirmed_not_placed", { runId, proposalId, refId, symbol: sym, side: normalizedProposal.side, error: message }, userId, connectedAccountId);
           results.push({ proposal: normalizedProposal, status: "error", reasons: [`Order not placed (safe to retry): ${message}`] });
           await sendNotification(
@@ -2792,7 +2792,7 @@ export async function runStrategyOnce(
       }
 
       updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
-      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
+      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: execution.state === "filled" ? "filled" : "placed", review, overrideResolution });
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
       auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const preFillPosition = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
