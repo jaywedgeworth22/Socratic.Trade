@@ -596,17 +596,17 @@ export async function executeProposal(
         runId: row.runId
       });
       if (outcome.kind === "placed") {
-        updateProposalStatus(proposalId, "placed", outcome.orderId, review, review.estimatedNotional, userId);
+        const fillStatus = outcome.state === "filled" ? "filled" : "pending_reconciliation";
+        updateProposalStatus(proposalId, fillStatus === "filled" ? "filled" : "placed", outcome.orderId, review, review.estimatedNotional, userId);
         auditWashSaleProceed(decision, { proposalId, symbol: sym, side: proposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId: policy.connectedAccountId });
         audit("order_placement_recovered_inline", { proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: proposal.side, path: "approval" }, userId, policy.connectedAccountId);
         resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
-        const fillStatus = outcome.state === "filled" ? "filled" : "pending_reconciliation";
         await sendNotification(
           { type: "fill", title: `${sym} order ${outcome.state} (recovered after placement error)`, payload: { proposalId, refId, fill: outcome.fill, reconcile: "recovered" } },
           { policy, userId }
         );
         emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: outcome.orderId, symbol: sym } });
-        return { status: "placed", orderId: outcome.orderId, brokerState: outcome.state, fillStatus };
+        return { status: fillStatus === "filled" ? "filled" : "placed", orderId: outcome.orderId, brokerState: outcome.state, fillStatus };
       }
       if (outcome.kind === "declined") {
         const declinedMsg = `Broker declined the order (state: ${outcome.state}).`;

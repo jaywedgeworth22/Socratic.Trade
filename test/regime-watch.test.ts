@@ -63,8 +63,8 @@ describe("checkRegimeFlip — material-event gating", () => {
     vi.doMock("../src/lib/triggers", () => ({ submitMaterialEvent: submit }));
     vi.doMock("../src/lib/events", () => ({ emitDashboardEvent: vi.fn() }));
     vi.doMock("../src/lib/macro", () => ({
-      fetchMacroData: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "26.00" }), // Risk-Off
-      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "26.00" }), // Risk-Off
+      fetchMacroData: vi.fn().mockResolvedValue({ ...BASE_MACRO, vix: "26.00" }), // Risk-Off
+      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValue({ ...BASE_MACRO, vix: "26.00" }), // Risk-Off
       determineMarketRegime: (m: { vix: string }) => {
         const v = parseFloat(m.vix);
         if (v >= 30) return "Crisis (Extreme Volatility)";

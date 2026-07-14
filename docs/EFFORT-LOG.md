@@ -1730,6 +1730,18 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Autonomous-action row clarity: tense-matched verbs + de-collided authority labels + ticker
+  logo (CLAUDE/Fable, branch `claude/autonomous-action-row-clarity`) — IN PROGRESS 2026-07-13,
+  landing.** Display-only console trust fix. (1) Home "Autonomous actions" rows used a PAST-TENSE
+  side verb ("Bought"/"Sold") regardless of execution, so a proposed/blocked decision read "AAPL
+  Bought [Blocked]" — falsely asserting a purchase; now `sideVerb(side,status)` uses past tense
+  only when `placed`/`filled`/`executed`, infinitive intent ("Buy") otherwise, plus a muted
+  "· not placed" cue on blocked/rejected/error/failed rows. (2) Trace-header authority chip
+  relabeled "Propose"/"Decide" → "Ask-first"/"Autopilot" (matches `derive.ts` `authorityWord`;
+  `authorityLabel` used only there) so it stops colliding with the "Proposed" status chip. (3)
+  Ticker logo now shows before the symbol on those rows (dropped `showLogo={false}`). New pure
+  module `app/console/lib/action-verbs.ts` + `test/console-action-rows.test.ts`. Rollout:
+  `docs/rollouts/2026-07-13-autonomous-action-row-clarity.md`.
 - **Account-relative risk limits + Green/Red decision clarity (CODEX, branch `codex/account-relative-risk-clarity`, PR #1561, claimed 2026-07-13) — READY PR; LOCAL GATE GREEN, HOSTED CHECKS RUNNING.** Implemented one canonical dollar-or-percent daily opening cap with a 20%-NAV default and exact-$500 legacy migration; preserved explicit dollar mode; fixed the EXE fractional-Alpaca bracket receipt/transport contradiction; persisted app-computed sizing arithmetic for Red Team/UI; split Live Thesis into Green, deterministic sizing, Red, and final outcome sections; replaced “survived” wording and false “Bought / Blocked” copy. Node 24 `scripts/land.sh` passed TypeScript, 359 files / 4,021 tests, and the production build; commit `2cfd7ca8` is pushed. Hosted checks, merge/autodeploy, and production verification remain. `src/lib/broker-protective-stops.ts` remains excluded pending open AG PR #1548.
 - **Evidence architecture and full-source decision-quality program (CODEX, branch `codex/evidence-architecture-program`, PR #1544) — READY PR OPEN, CI GREEN 2026-07-13.** Implemented account-scoped relational/vector learning and sample-gated paper-to-live research transfer; product Test Account create/UI/read removal plus purge migration; exact opening-candidate enforcement; one immutable Green/Red evidence pack; field provenance/freshness/availability/conflicts/provider failures; field-specific arbitration and wider two-stage enrichment; point-in-time RAG, global context budgets and prompt-data containment; shared evidence contracts for chat/review/tuning/Framework; source coverage, outcome-linked source value and shadow ablation; and GPT-5.6 Luna/Terra/Sol with role-specific effort controls across every LLM surface. Curated full GPT-5.4/5.5 are removed while Mini/Nano and legacy IDs remain. Merged current `origin/main` at `1a90281b`, preserving Red Team fallback behavior and exit-replacement migrations 20–22 before this lane's migrations 23–24. Final gate, `scripts/land.sh`, hosted verify, Playwright smoke, and gitleaks are green: lint 0 errors, TypeScript clean, 3,980/3,980 tests, production build pass. Branch pushed; not merged, deployed, or production-verified. Keepouts unchanged: active Kalshi K1 and unrelated open agent branches; no production config/corpus writes or merge/deploy outside the normal PR path.
 - **shared-package-pin-check: resolve refs to commit SHAs before comparing (CLAUDE, branch
