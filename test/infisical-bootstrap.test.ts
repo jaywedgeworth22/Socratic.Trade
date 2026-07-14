@@ -631,8 +631,10 @@ if (args[0] === "--version") {
 if (args[0] === "login") { console.log("short-lived-test-token"); process.exit(0); }
 if (args[0] === "export") {
   const projectIndex = args.indexOf("--projectId");
-  const output = { REMOTE_PROJECT: args[projectIndex + 1] };
-  for (const key of finalMaskKeys) output[key] = "exported-bootstrap-must-not-reach-child";
+  const output = [{ key: "REMOTE_PROJECT", value: args[projectIndex + 1] }];
+  for (const key of finalMaskKeys) {
+    output.push({ key, value: "exported-bootstrap-must-not-reach-child" });
+  }
   console.log(JSON.stringify(output));
   process.exit(0);
 }
@@ -730,14 +732,14 @@ if (args[0] === "login") {
   process.exit(0);
 }
 if (args[0] === "export") {
-  console.log(JSON.stringify({
-    REMOTE_VALUE: "remote-ok",
-    ROUND_TRIP_VALUE: ${JSON.stringify(roundTripValue)},
-    INFISICAL_TOKEN: "remote-token-must-not-reach-app",
-    INFISICAL_CLIENT_SECRET: "remote-client-secret-must-not-reach-app",
-    INFISICAL_CT_CLIENT_SECRET: "remote-cross-app-secret-must-not-reach-app",
-    INFISICAL_ENV: "remote-runtime-must-not-reach-app",
-  }));
+  console.log(JSON.stringify([
+    { key: "REMOTE_VALUE", value: "remote-ok", workspace: "test", type: "shared", tags: [] },
+    { key: "ROUND_TRIP_VALUE", value: ${JSON.stringify(roundTripValue)} },
+    { key: "INFISICAL_TOKEN", value: "remote-token-must-not-reach-app" },
+    { key: "INFISICAL_CLIENT_SECRET", value: "remote-client-secret-must-not-reach-app" },
+    { key: "INFISICAL_CT_CLIENT_SECRET", value: "remote-cross-app-secret-must-not-reach-app" },
+    { key: "INFISICAL_ENV", value: "remote-runtime-must-not-reach-app" },
+  ]));
   process.exit(0);
 }
 process.exit(3);
@@ -813,7 +815,7 @@ if (args[0] === "login") {
   process.exit(17);
 }
 if (args[0] === "export") {
-  console.log(JSON.stringify({ REMOTE_VALUE: "stored-session-export" }));
+  console.log(JSON.stringify([{ key: "REMOTE_VALUE", value: "stored-session-export" }]));
   process.exit(0);
 }
 process.exit(3);
@@ -1038,7 +1040,7 @@ process.exit(3);
 const args = process.argv.slice(2);
 if (args[0] === "--version") process.exit(0);
 if (args[0] === "export") {
-  console.log(JSON.stringify({ BAD_VALUE: ${JSON.stringify("prefix\0secret-never-print")} }));
+  console.log(JSON.stringify([{ key: "BAD_VALUE", value: ${JSON.stringify("prefix\0secret-never-print")} }]));
   process.exit(0);
 }
 process.exit(3);
@@ -1064,6 +1066,51 @@ process.exit(3);
     expect(result.stderr).not.toContain("secret-never-print");
   });
 
+  it.each([
+    ["flat key/value objects", JSON.stringify({ SAFE_KEY: "value" })],
+    [
+      "duplicate secret keys",
+      JSON.stringify([
+        { key: "DUPLICATE_KEY", value: "first" },
+        { key: "DUPLICATE_KEY", value: "second" },
+      ]),
+    ],
+    ["records without string values", JSON.stringify([{ key: "MISSING_VALUE" }])],
+    ["records without non-empty keys", JSON.stringify([{ key: "", value: "value" }])],
+  ])("rejects %s from the pinned CLI JSON boundary", (_label, payload) => {
+    const root = tempRoot();
+    const bin = join(root, "bin");
+    const fakeInfisical = join(bin, "infisical");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(fakeInfisical, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "--version") process.exit(0);
+if (args[0] === "export") {
+  console.log(${JSON.stringify(payload)});
+  process.exit(0);
+}
+process.exit(3);
+`);
+    chmodSync(fakeInfisical, 0o755);
+
+    const result = spawnSync(
+      process.execPath,
+      [resolve(repoRoot, "scripts/infisical-run.mjs"), "--", process.execPath, "-e", "process.exit(0)"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: isolatedProcessEnv({
+          PATH: `${bin}:${process.env.PATH || ""}`,
+          HOME: root,
+        }),
+      }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("returned invalid JSON");
+    expect(result.stdout).toBe("");
+  });
+
   it("forwards termination through the runner and final wrapper", async () => {
     const root = tempRoot();
     const bin = join(root, "bin");
@@ -1075,7 +1122,7 @@ process.exit(3);
     writeFileSync(fakeInfisical, `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "--version") process.exit(0);
-if (args[0] === "export") { console.log("{}"); process.exit(0); }
+if (args[0] === "export") { console.log("[]"); process.exit(0); }
 process.exit(3);
 `);
     chmodSync(fakeInfisical, 0o755);

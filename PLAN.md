@@ -1,5 +1,13 @@
 # Active Implementation Plan
 
+> **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
+> but its automatic Coolify deployment failed health checks and rolled back because pinned
+> Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the
+> merged runner expected a flat object. Parse only validated `{ key, value }` records, reject
+> malformed or duplicate keys without exposing output, repeat the full Node 24 landing gate,
+> and verify the exact corrective merge SHA in production before releasing dependent work.
+> See `docs/rollouts/2026-07-14-infisical-export-json-compat.md`.
+
 > **2026-07-14 - Local Infisical bootstrap wiring (CODEX).** Resolve the Socratic and shared
 > machine identities before the Infisical runner authenticates, with process env > `.env.local` >
 > secure global-file precedence; support both the owner-provided `INFIISICAL_ST_*` spelling and its
