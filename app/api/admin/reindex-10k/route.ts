@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     if (clearCache) {
       const { getDb } = await import("@/lib/db");
 
-      const accessionsToClear = new Set<string>();
+      let accessionsToClear = new Set<string>();
       for (const symbol of symbols) {
         // Query ingested_accessions (legacy)
         const legacyRows = getDb().prepare(`
@@ -70,7 +70,10 @@ export async function POST(request: Request) {
         `).all(symbol, symbol) as { accession: string }[];
         for (const r of legacyRows) accessionsToClear.add(r.accession);
 
-        // Query sec_filings (new schema)
+        // Query sec_filings (new schema).
+        // filed_at now preserves the original SEC filing date (see insertIngestedAccession
+        // in db-learning.ts), so ORDER BY filed_at DESC picks the same recent-10-per-form
+        // set that refreshFilingBodies will refetch from SEC Edgar.
         const filingRows = getDb().prepare(`
           SELECT accession FROM (
             SELECT accession FROM sec_filings WHERE ticker = ? AND form = '10-K'
@@ -85,27 +88,59 @@ export async function POST(request: Request) {
         for (const r of filingRows) accessionsToClear.add(r.accession);
       }
 
+      // If an explicit limit was provided, cap the cleared set so that we do not remove
+      // filings that this run cannot rebuild (refreshFilingBodies stops at `limit` total).
+      if (limit !== undefined && Number.isFinite(limit) && accessionsToClear.size > limit) {
+        const trimmed = Array.from(accessionsToClear).slice(0, limit);
+        accessionsToClear = new Set(trimmed);
+      }
+
       if (accessionsToClear.size > 0) {
         const acns = Array.from(accessionsToClear);
-        const acnPlaceholders = acns.map(() => "?").join(",");
+
+        // Batch operations in groups of 50 to avoid SQLite's expression-depth limit
+        // (~1000) when a broad reindex with many tickers generates hundreds of terms.
+        const BATCH_SIZE = 50;
 
         // Delete from ingested_accessions
-        getDb().prepare(
-          `DELETE FROM ingested_accessions WHERE accession IN (${acnPlaceholders})`
-        ).run(...acns);
+        for (let i = 0; i < acns.length; i += BATCH_SIZE) {
+          const batch = acns.slice(i, i + BATCH_SIZE);
+          const ph = batch.map(() => "?").join(",");
+          getDb().prepare(
+            `DELETE FROM ingested_accessions WHERE accession IN (${ph})`
+          ).run(...batch);
+        }
 
         // Delete from document_chunks using a chunk_id LIKE pattern for precise scoping
-        const chunkQueries = acns.map(() => "chunk_id LIKE '%:' || ? || ':%'").join(" OR ");
-        getDb().prepare(
-          `DELETE FROM document_chunks WHERE content_hash IN (
-            SELECT content_hash FROM document_chunks WHERE (${chunkQueries}) AND source = 'sec-edgar'
-          )`
-        ).run(...acns);
+        for (let i = 0; i < acns.length; i += BATCH_SIZE) {
+          const batch = acns.slice(i, i + BATCH_SIZE);
+          const chunkQueries = batch.map(() => "chunk_id LIKE '%:' || ? || ':%'").join(" OR ");
+          getDb().prepare(
+            `DELETE FROM document_chunks WHERE content_hash IN (
+              SELECT content_hash FROM document_chunks WHERE (${chunkQueries}) AND source = 'sec-edgar'
+            )`
+          ).run(...batch);
+        }
+
+        // Delete from chunk_occurrences (coverage helpers read this table and would
+        // report stale data after a cache reset if rows were left behind)
+        for (let i = 0; i < acns.length; i += BATCH_SIZE) {
+          const batch = acns.slice(i, i + BATCH_SIZE);
+          const ph = batch.map(() => "?").join(",");
+          getDb().prepare(
+            `DELETE FROM chunk_occurrences WHERE accession IN (${ph})`
+          ).run(...batch);
+        }
 
         // Update in sec_filings
-        getDb().prepare(
-          `UPDATE sec_filings SET status = 'discovered', updated_at = ? WHERE accession IN (${acnPlaceholders}) AND status = 'complete'`
-        ).run(new Date().toISOString(), ...acns);
+        const now = new Date().toISOString();
+        for (let i = 0; i < acns.length; i += BATCH_SIZE) {
+          const batch = acns.slice(i, i + BATCH_SIZE);
+          const ph = batch.map(() => "?").join(",");
+          getDb().prepare(
+            `UPDATE sec_filings SET status = 'discovered', updated_at = ? WHERE accession IN (${ph}) AND status = 'complete'`
+          ).run(now, ...batch);
+        }
 
         console.log(`[reindex-10k] Cleared local RAG metadata cache for ${acns.length} accession(s) across ${symbols.length} symbol(s): ${symbols.join(", ")}.`);
       } else {
