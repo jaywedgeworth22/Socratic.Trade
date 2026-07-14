@@ -40,12 +40,13 @@ dedupe by tenant/account/replacement identity; counts working partial fills as r
 repairs legacy chat cases against their historical account and doctrine. A final adversarial pass
 also required finite positive realized prices, monotonic broker-reported quantity floors, recoverable
 unpriced/no-id replacement partials, and user-scoped active replacement uniqueness; all findings are
-implemented and the independent re-review reports no P0-P2 findings. Current `main@4432c2bc` is
-integrated. The final ordered Node 24 gate is green: lint has 0 errors / 458 inherited warnings,
+implemented and the independent re-review reports no P0-P2 findings. Current `main@f331b28a` is
+integrated. The pre-merge ordered Node 24 gate is green: lint has 0 errors / 458 inherited warnings,
 standalone TypeScript is clean, all 368 files / 4,124 tests pass, and the production build completes
 its real TypeScript phase and generates 32 static pages. A diagnostic full-suite pass also passed the
-same 4,124 tests before the authoritative gate. Ready PR, auto-merge, original-thread resolution,
-and exact production verification remain.
+same 4,124 tests before the authoritative gate. The current-main `scripts/land.sh` TypeScript/test/
+build gate, ready PR, auto-merge, original-thread resolution, and exact production verification
+remain.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.

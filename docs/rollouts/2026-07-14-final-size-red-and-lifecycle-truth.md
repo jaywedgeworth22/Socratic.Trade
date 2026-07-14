@@ -3,7 +3,7 @@
 Date: 2026-07-14
 Owner: CODEX
 Branch: `codex/account-relative-risk-review-fixes`
-Landing base: `origin/main@4432c2bc` (integrated)
+Landing base: `origin/main@f331b28a` (integrated)
 
 ## Summary
 
