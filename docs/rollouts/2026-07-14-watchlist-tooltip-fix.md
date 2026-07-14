@@ -17,15 +17,14 @@ Fixed edge cropping of action tooltips in the Watchlist and Order table rows by 
 - `app/console/ui/primitives.tsx` — Added optional `align` prop to `Btn` and `IconButton` components, forwarded to the inner `Tooltip`.
 - `app/console/watchlist/page.tsx` — Set `align="right"` on watchlist action tooltips.
 - `app/console/orders/page.tsx` — Set `align="right"` on order row action tooltips.
-- `package.json` — Removed stale postinstall script and restored `~6.0.3` TypeScript pin.
-- `package-lock.json` — Updated lockfile state.
 - `STATUS.md` — Added entry.
-- `docs/EFFORT-LOG.md` — Added Completed entry.
+- `docs/EFFORT-LOG.md` — Added In Progress entry.
 
 ## Verification
 
 ```bash
-npx tsc --noEmit    → clean (no errors outside test/ — pre-existing)
+npm run lint         → clean (0 errors, 458 warnings)
+npx tsc --noEmit     → clean (no errors outside test/ — pre-existing)
 npm test             → 362 files / 4038 tests passed
 npm run build        → compiled successfully, no errors (32/32 static pages generated)
 ```
