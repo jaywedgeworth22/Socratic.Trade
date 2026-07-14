@@ -163,7 +163,7 @@ function listOpsStrategyRuns(userId: string, limit: number, labels: Map<string, 
         sr.status,
         sr.summary,
         sr.connected_account_id,
-        COUNT(CASE WHEN tp.status = 'placed' THEN 1 END) AS placed_count,
+        COUNT(CASE WHEN tp.status IN ('placed', 'filled') THEN 1 END) AS placed_count,
         COUNT(CASE WHEN tp.status = 'paper' THEN 1 END) AS paper_count,
         COUNT(CASE WHEN tp.status = 'blocked' THEN 1 END) AS blocked_count,
         COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count

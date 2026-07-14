@@ -78,6 +78,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   "budget_alert",
   "learning_review",
   "deterministic_bear_veto",
+  "red_team_veto_override_requested",
   "red_team_veto_overridden",
   "prompt_injection_suspected",
   "evidence_age_anomaly",
@@ -1107,6 +1108,12 @@ export interface TradingPolicy {
 export interface ProposalSizingSnapshot {
   portfolioValue: number;
   estimatedNotional: number;
+  /** Exact broker-routing basis reviewed by Red (quantity wins when present). */
+  sizeBasis?: "quantity" | "notional";
+  /** Exact routed quantity when sizeBasis is quantity. */
+  quantity?: number;
+  /** Exact routed dollar amount when sizeBasis is notional. */
+  dollarAmount?: number;
   estimatedPctOfNav?: number;
   dailyOpeningCap?: {
     mode: "pct_nav" | "dollar";
@@ -1116,6 +1123,22 @@ export interface ProposalSizingSnapshot {
   };
   dailyNotionalUsed?: number;
   remainingDailyNotional?: number;
+}
+
+export type HumanReviewReasonCode =
+  | "initial_red_team"
+  | "rationale_collapse"
+  | "pre_veto_override"
+  | "final_size_red_team"
+  | "override_resolution";
+
+/** Durable explanation for why an otherwise reviewable proposal requires an owner decision.
+ * Keeping these structured prevents a rationale-diversity or override hold from being mislabeled
+ * as a Red Team outage after the proposal leaves the strategy loop. */
+export interface HumanReviewReasonReceipt {
+  code: HumanReviewReasonCode;
+  title: string;
+  summary: string;
 }
 
 export interface TradeProposal {
@@ -1227,13 +1250,16 @@ export interface TradeProposal {
     model?: string;
     trigger?: "all_openings" | "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime";
     /**
-     * True when the Bear REJECTED this opening but an agent-authored `autonomyOverride` thesis made
-     * the veto advisory (folded into the sized PolicyDecision as an overridable reason and then
-     * applied at resolveSocraticOverride). Lets the decision card distinguish "Bear rejected AND
-     * blocked" from "Bear rejected but overridden & executed". See the pre-veto override flow in
-     * strategy.ts (the Red Team veto branch + the preVetoReasons fold-in before resolveSocraticOverride).
+     * Legacy-named marker that the Bear REJECTED and an agent-authored `autonomyOverride` requested
+     * the advisory path. It is set before `resolveSocraticOverride`, so it does NOT prove the final
+     * override applied. Renderers and decision evidence must use `PolicyDecision.socraticOverride.applied`
+     * (or the final SocraticOverrideResolution) for that claim.
      */
     overridden?: boolean;
+    /** A human explicitly approved the final broker-adjusted size after a fresh Red objection,
+     * unavailable review, or incompatible half-size recommendation. Unlike `overridden`, this is
+     * a consumed owner action, not merely an agent request. */
+    humanOverrideApplied?: boolean;
     /**
      * Structured reason the debate was unavailable (`available: false`) — mirrors
      * `RedTeamDebateResult.failureKind` (src/lib/red-team.ts), persisted onto the decision case so
@@ -1242,6 +1268,26 @@ export interface TradeProposal {
      */
     failureKind?: "not_configured" | "timeout" | "provider_error" | "rate_limited" | "malformed_response";
   };
+  /** One-shot receipt for a broker-minimum size mutation that required a fresh Red review. When
+   * ownerApprovalRequired is true the updated card must be approved once more; that next click
+   * consumes the marker instead of rerunning Red indefinitely. */
+  finalSizeReview?: {
+    trigger: "broker_minimum_bump";
+    fromNotional: number;
+    toNotional: number;
+    reviewedAt: string;
+    ownerApprovalRequired: boolean;
+    ownerApprovalReason?: string;
+    /** Broker estimate the pending owner consent currently covers. Defaults to toNotional on
+     * legacy receipts. It can advance only after a material upward requote is shown again. */
+    ownerApprovalNotional?: number;
+    /** Explains why a prior click was not consumed after the broker estimate increased. */
+    ownerApprovalRequoteReason?: string;
+    ownerApprovalRequotedAt?: string;
+    ownerOverrideAppliedAt?: string;
+  };
+  /** Every independent hold that must be resolved before placement, in strategy evaluation order. */
+  humanReviewReasons?: HumanReviewReasonReceipt[];
   /**
    * Advisory PRE-POLICY veto reasons (deterministic-bear filter, approval-time Red Team) attached to a
    * TAGGED-not-dropped candidate. They are folded into the single sized PolicyDecision as OVERRIDABLE
@@ -1274,13 +1320,17 @@ export interface TradeProposal {
 export type SocraticDecisionStatus =
   | "planned"
   | "proposed"
+  | "placing"
   | "placed"
   | "filled"
   | "blocked"
   | "rejected"
+  | "rejected_by_broker"
+  | "not_placed"
+  | "expired"
+  | "withdrawn"
   | "error"
-  | "observed"
-  | "not_placed";
+  | "observed";
 
 /** Forward-return measurement horizons for decision outcomes. 15m/1h resolve only when a live-quote
  * sampling window was actually hit (no intraday history source exists); 1d/1w resolve from daily

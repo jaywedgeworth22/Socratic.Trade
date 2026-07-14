@@ -263,11 +263,6 @@ export function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
   const explicitDailyNotional = typeof policyWithoutLegacyFields.maxDailyNotional === "number" && policyWithoutLegacyFields.maxDailyNotional > 0;
   if (explicitDailyPct) delete merged.maxDailyNotional;
   else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
-  if ((merged.maxDailyNotional ?? 0) >= 500_000) {
-    delete merged.maxDailyNotional;
-    merged.maxDailyPctOfNav = DEFAULT_POLICY.maxDailyPctOfNav;
-    if (merged.maxDailyOrders > DEFAULT_POLICY.maxDailyOrders) merged.maxDailyOrders = DEFAULT_POLICY.maxDailyOrders;
-  }
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
   return merged;
 }

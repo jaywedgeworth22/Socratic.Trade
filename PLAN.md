@@ -28,10 +28,48 @@
 > rechecks, prompts, capital posture, mobile data, and AI strategy review. Persist app-computed
 > notional/NAV arithmetic; clear impossible Alpaca whole-share bracket fields before fractional
 > submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
-> sections with explicit verdict wording. Implementation, lint, TypeScript, Swift contract checking,
-> 4,021/4,021 tests, and the production build are complete. Ready PR #1561 is open; hosted acceptance,
-> merge/autodeploy, and production verification remain. See
-> `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
+> sections with explicit verdict wording. PR #1561 merged as `3e105e17`; required hosted checks passed
+> and that exact release is healthy in production. A review posted after auto-merge found three P2
+> gaps. The active follow-up persists Green/sizing receipts across refreshes, makes v26 cover every
+> legacy policy store without reinterpreting later intentional dollar choices, and separates a Red
+> override request from a final applied override. It also reruns Red exactly once after a
+> broker-minimum size mutation, preserves independent human-review reasons, atomically commits the
+> broker intent with its Socratic case, synchronizes lifecycle truth transactionally, serializes
+> same-decision vector updates, and keeps uncertain submissions in `placing`. The latest hostile
+> blockers are implemented: `filled` orders remain in caps and every success/count/UI/outcome
+> consumer; independent holds have structured owner-facing reasons; lifecycle sync preserves
+> learned fields; and an atomic approval claim requires a proposed Socratic case. The final two
+> race/recovery defects are closed: chat draft idempotency spans proposed through filled under an
+> immediate transaction, and stale broker-filled orders finalize an existing pending receipt with
+> proposal/case truth atomically. A final audit also handles terminal partial executions everywhere,
+> makes direct broker receipt + lifecycle commits atomic/recoverable, scopes replacement dedupe, and
+> binds legacy chat-case repair to the historical account. The final price/quantity review is also
+> closed: unpriced broker receipts store zero rather than estimates, cumulative execution is
+> monotonic, replacement partials remain refId-recoverable, and the active replacement index is
+> user-scoped. Current `main@07c2da3f` is integrated and independent re-review reports no P0-P2
+> findings on that snapshot. The later hosted review found one P1 ordering gap: sell-to-fund could
+> liquidate a holding before a broker-minimum-adjusted buy entered a final-size Red hold. The fix
+> now correlation-gates and caches tradability, broker minimum, exact-size Red, policy, and override
+> preflight before funding notional is calculated. Correlation-dropped, broker-unplaceable,
+> human-held, and non-funding policy-blocked openings fund `$0`; a valid cumulative buying-power
+> shortfall remains eligible. Regressions cover both no-sale-on-hold and exact cumulative funding,
+> and placement reuses the cached shape. Hosted autofix also synchronized account-switch cap-mode drafts and kept unpriced
+> fill growth pending. The prior ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
+> standalone TypeScript clean, 368 files / 4,124 tests, and a production build with the real
+> TypeScript phase plus 32 static pages. `scripts/land.sh` repeated current-main TypeScript, all
+> 4,124 tests, and the build before opening ready PR #1587. The local ordering remediation passes
+> TypeScript and 3 focused files / 20 tests. The combined-tree ordered Node 24 gate is green:
+> lint exit 0, standalone TypeScript clean, 368 files / 4,128 tests, and a production build with
+> the real TypeScript phase plus 32 static pages. Push, resolve the review, merge after hosted
+> verification, and verify the exact production release.
+> The last hosted P2 is also closed: final-size owner consent carries the exact broker estimate it
+> covers. A fresh upward estimate above the greater of 1% or $0.01 is persisted and re-queued for
+> one new click; downward/immaterial drift remains within the approved envelope. Focused final-size
+> verification is green (3 files / 21 tests plus standalone TypeScript); the repeated full gate
+> passes lint, TypeScript, 368 files / 4,128 tests, and the production build.
+> See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
+> `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
+> Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
 
 > **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
 > complete source-to-decision boundary before adding more feeds: wider bounded enrichment;

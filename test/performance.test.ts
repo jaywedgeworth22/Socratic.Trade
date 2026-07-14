@@ -63,6 +63,50 @@ describe("calculatePnl", () => {
     // execution (status flips to "filled") — verified above via calculatePnl directly.
   });
 
+  it("does not substitute proposal or review prices into an unpriced broker receipt", () => {
+    const pending = recordFillFromProposal({
+      accountNumber: `UNPRICED-${randomUUID()}`,
+      source: "live",
+      executionMode: "broker/live",
+      proposal: {
+        symbol: "AAPL",
+        side: "buy",
+        type: "limit",
+        quantity: 1,
+        limitPrice: 200,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "broker price still unknown",
+        tradeThesisTag: "test",
+        entryMarketRegime: "test"
+      },
+      review: { estimatedNotional: 200, alerts: [], raw: { price: 200 } },
+      marketScan: marketScanWithQuote("AAPL", 201),
+      execution: { orderId: "unpriced-order", refId: "unpriced-ref", state: "filled", filledQuantity: 1, raw: {} },
+      status: "pending_reconciliation"
+    });
+
+    expect(pending).toMatchObject({ status: "pending_reconciliation", quantity: 1, price: 0, notional: 0 });
+  });
+
+  it("accounts for the executed quantity of a still-working partial fill", () => {
+    const partial = fill({
+      id: "live-partial",
+      source: "live",
+      executionMode: "broker/live",
+      brokerOrderId: "broker-partial-1",
+      status: "partially_filled",
+      side: "buy",
+      quantity: 2,
+      price: 100,
+      notional: 200
+    });
+
+    const pnl = calculatePnl([partial], { AAPL: 110 });
+    expect(pnl.openLots).toMatchObject([{ symbol: "AAPL", quantity: 2, entryPrice: 100 }]);
+    expect(pnl.unrealized).toBe(20);
+  });
+
   it("turns approved dollar Paper orders into quantity fills when a market quote is present", () => {
     const fill = recordFillFromProposal({
       accountNumber: "APPROVAL1",

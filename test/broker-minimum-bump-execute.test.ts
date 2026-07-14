@@ -16,6 +16,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { MarketQuote, MarketScan, ReviewedOrder } from "../src/lib/types";
 
+const { debateProposal } = vi.hoisted(() => ({ debateProposal: vi.fn() }));
+
+vi.mock("../src/lib/red-team", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/red-team")>();
+  return { ...actual, debateProposal };
+});
+
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
@@ -149,6 +156,14 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   reviewEquityOrder.mockReset();
   placeEquityOrder.mockReset();
+  debateProposal.mockReset();
+  debateProposal.mockResolvedValue({
+    verdict: "approve",
+    rejected: false,
+    available: true,
+    reason: "Final broker-adjusted size remains sound.",
+    model: "gpt-5.6-terra"
+  });
   portfolioOverrides = {};
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-broker-min-bump-exec-${randomUUID()}.db`)}`;
 });
@@ -156,7 +171,7 @@ beforeEach(() => {
 describe("executeProposal — broker-minimum bump-to-floor wiring", () => {
   it("bumps a below-minimum dollar buy to the $1 floor, re-reviews once, places at the bumped size, audits it, and persists the executed sizing to the row", async () => {
     reviewEquityOrder.mockImplementation(async (i) => echoReview(i));
-    placeEquityOrder.mockImplementation(async (i) => ({ id: `ord-${randomUUID()}`, state: "confirmed", raw: {}, ...i }));
+    placeEquityOrder.mockImplementation(async (i) => ({ orderId: `ord-${randomUUID()}`, state: "confirmed", raw: {}, ...i }));
 
     const userId = `bump-happy-${randomUUID()}`;
     const proposalId = await seedApprovedProposal(userId);
@@ -185,6 +200,196 @@ describe("executeProposal — broker-minimum bump-to-floor wiring", () => {
     const row = getProposal(proposalId, userId);
     expect(row?.proposal?.dollarAmount).toBe(1);
     expect(row?.proposal?.rationale).toContain("Sized up from $0.25");
+    expect(row?.proposal?.sizingSnapshot).toMatchObject({
+      estimatedNotional: 1,
+      estimatedPctOfNav: 0.02,
+      sizeBasis: "notional",
+      dollarAmount: 1
+    });
+    expect(row?.proposal?.finalSizeReview).toMatchObject({
+      trigger: "broker_minimum_bump",
+      fromNotional: 0.25,
+      toNotional: 1,
+      ownerApprovalRequired: false
+    });
+    expect(debateProposal).toHaveBeenCalledTimes(1);
+    expect(debateProposal.mock.calls[0][0].redTeamVerdict).toBeUndefined();
+    expect(debateProposal.mock.calls[0][4]?.sizing).toMatchObject({
+      estimatedNotional: 1,
+      estimatedPctOfNav: 0.02
+    });
+  });
+
+  it("persists a fresh Red rejection against the bumped size, then consumes one explicit owner override without rerunning or looping", async () => {
+    reviewEquityOrder.mockImplementation(async (i) => echoReview(i));
+    placeEquityOrder.mockImplementation(async (i) => ({ orderId: `ord-${randomUUID()}`, state: "confirmed", raw: {}, ...i }));
+    debateProposal.mockResolvedValue({
+      verdict: "reject",
+      rejected: true,
+      available: true,
+      reason: "The broker floor makes this position too large for the thesis.",
+      model: "gpt-5.6-terra"
+    });
+
+    const userId = `bump-red-reject-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, listAudit } = await import("../src/lib/db");
+
+    const first = await executeProposal(proposalId, userId);
+    expect(first.status).toBe("proposed");
+    expect(first.reasons?.[0]).toContain("Red rejected the final broker-adjusted size");
+    expect(placeEquityOrder).not.toHaveBeenCalled();
+    expect(debateProposal).toHaveBeenCalledTimes(1);
+
+    const pending = getProposal(proposalId, userId);
+    expect(pending?.proposal.dollarAmount).toBe(1);
+    expect(pending?.estimatedNotional).toBe(1);
+    expect(pending?.proposal.finalSizeReview?.ownerApprovalRequired).toBe(true);
+    expect(pending?.proposal.redTeamVerdict).toMatchObject({ verdict: "reject", rejected: true });
+    expect(pending?.proposal.redTeamVerdict?.humanOverrideApplied).toBeUndefined();
+
+    const second = await executeProposal(proposalId, userId);
+    expect(second.status).toBe("placed");
+    expect(placeEquityOrder).toHaveBeenCalledTimes(1);
+    expect(placeEquityOrder.mock.calls[0][0]).toMatchObject({ dollarAmount: 1 });
+    expect(debateProposal).toHaveBeenCalledTimes(1);
+
+    const placed = getProposal(proposalId, userId);
+    expect(placed?.decision.approved).toBe(true);
+    expect(placed?.proposal.finalSizeReview).toMatchObject({
+      ownerApprovalRequired: false,
+      ownerApprovalReason: expect.stringContaining("Red rejected"),
+      ownerOverrideAppliedAt: expect.any(String)
+    });
+    expect(placed?.proposal.redTeamVerdict?.humanOverrideApplied).toBe(true);
+    expect(listAudit(100, userId).filter((event) => event.kind === "final_size_red_review_owner_override")).toHaveLength(1);
+  });
+
+  it("does not consume final-size consent after a material upward requote; it shows the new notional and requires one fresh click", async () => {
+    reviewEquityOrder.mockImplementation(async (input) => ({
+      estimatedNotional: input.dollarAmount ?? (input.quantity ?? 0) * 204,
+      alerts: [],
+      raw: {}
+    }));
+    placeEquityOrder.mockImplementation(async (input) => ({
+      orderId: `ord-${randomUUID()}`,
+      state: "confirmed",
+      raw: {},
+      ...input
+    }));
+
+    const userId = `bump-red-requote-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal, listAudit, updatePendingProposalReprice } = await import("../src/lib/db");
+    const seeded = getProposal(proposalId, userId)!;
+    updatePendingProposalReprice(
+      proposalId,
+      {
+        proposal: {
+          ...seeded.proposal,
+          quantity: 0.005,
+          dollarAmount: undefined,
+          finalSizeReview: {
+            trigger: "broker_minimum_bump",
+            fromNotional: 0.25,
+            toNotional: 1,
+            reviewedAt: new Date().toISOString(),
+            ownerApprovalRequired: true,
+            ownerApprovalReason: "Red rejected the final broker-adjusted size.",
+            ownerApprovalNotional: 1
+          },
+          redTeamVerdict: {
+            verdict: "reject",
+            rejected: true,
+            available: true,
+            reason: "The broker floor makes this position too large for the thesis."
+          }
+        },
+        estimatedNotional: 1
+      },
+      userId
+    );
+
+    const first = await executeProposal(proposalId, userId);
+    expect(first.status).toBe("proposed");
+    expect(first.reasons?.[0]).toContain("increased from $1.00 to $1.02");
+    expect(placeEquityOrder).not.toHaveBeenCalled();
+    expect(debateProposal).not.toHaveBeenCalled();
+    expect(getProposal(proposalId, userId)?.proposal.finalSizeReview).toMatchObject({
+      ownerApprovalRequired: true,
+      ownerApprovalNotional: 1.02,
+      ownerApprovalRequoteReason: expect.stringContaining("Approve the updated amount again")
+    });
+    expect(listAudit(100, userId).filter((event) => event.kind === "final_size_owner_consent_requoted")).toHaveLength(1);
+
+    const second = await executeProposal(proposalId, userId);
+    expect(second.status).toBe("placed");
+    expect(placeEquityOrder).toHaveBeenCalledTimes(1);
+    expect(placeEquityOrder.mock.calls[0][0]).toMatchObject({ quantity: 0.005 });
+    expect(getProposal(proposalId, userId)?.proposal.finalSizeReview).toMatchObject({
+      ownerApprovalRequired: false,
+      ownerApprovalNotional: 1.02,
+      ownerOverrideAppliedAt: expect.any(String)
+    });
+  });
+
+  it("holds an unavailable final-size review for owner approval and records that failure on the pending decision", async () => {
+    reviewEquityOrder.mockImplementation(async (i) => echoReview(i));
+    debateProposal.mockResolvedValue({
+      rejected: false,
+      available: false,
+      reason: "provider timed out",
+      failureKind: "timeout",
+      model: "gpt-5.6-terra"
+    });
+
+    const userId = `bump-red-unavailable-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal } = await import("../src/lib/db");
+
+    const result = await executeProposal(proposalId, userId);
+    expect(result.status).toBe("proposed");
+    expect(placeEquityOrder).not.toHaveBeenCalled();
+    const pending = getProposal(proposalId, userId);
+    expect(pending?.decision).toMatchObject({
+      approved: false,
+      adversaryUnavailable: true,
+      adversaryUnavailableReason: expect.stringContaining("timeout")
+    });
+    expect(pending?.proposal.redTeamVerdict).toMatchObject({
+      available: false,
+      failureKind: "timeout"
+    });
+  });
+
+  it("does not bump Red's half-size advice back to the broker floor; an unplaceable haircut is held for the owner", async () => {
+    reviewEquityOrder.mockImplementation(async (i) => echoReview(i));
+    debateProposal.mockResolvedValue({
+      verdict: "approve-at-half",
+      rejected: false,
+      available: true,
+      reason: "Proceed only at half the broker-adjusted size.",
+      model: "gpt-5.6-terra"
+    });
+
+    const userId = `bump-red-half-${randomUUID()}`;
+    const proposalId = await seedApprovedProposal(userId);
+    const { executeProposal } = await import("../src/lib/strategy");
+    const { getProposal } = await import("../src/lib/db");
+
+    const result = await executeProposal(proposalId, userId);
+    expect(result.status).toBe("proposed");
+    expect(result.reasons?.[0]).toContain("not executable");
+    expect(reviewEquityOrder).toHaveBeenCalledTimes(2);
+    expect(placeEquityOrder).not.toHaveBeenCalled();
+    expect(getProposal(proposalId, userId)?.proposal).toMatchObject({
+      dollarAmount: 1,
+      finalSizeReview: { ownerApprovalRequired: true },
+      redTeamVerdict: { verdict: "approve-at-half" }
+    });
   });
 
   it("declines the bump (skip path, no re-review) when the per-order cap can't fit the floor — never manufactures a policy rejection", async () => {
@@ -200,6 +405,7 @@ describe("executeProposal — broker-minimum bump-to-floor wiring", () => {
 
     expect(result.status).toBe("blocked");
     expect(reviewEquityOrder).toHaveBeenCalledTimes(1); // declined BEFORE any bump re-review
+    expect(debateProposal).not.toHaveBeenCalled();
     expect(placeEquityOrder).not.toHaveBeenCalled();
     expect(listAudit(50, userId).some((e) => e.kind === "order_skipped_broker_minimum")).toBe(true);
   });
