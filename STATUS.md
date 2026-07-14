@@ -1,22 +1,31 @@
 # Current Status
 
-## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle (PR #1587)
+## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle + final-size input cleanliness + broker-rejection measurability (PR #1587)
 
-Latest autofix on PR #1587: two codex review findings fixed and pushed, one
-architectural question deferred to the maintainer.
+**[codex-autofix] Round 2 (this commit):** two more Codex review findings fixed,
+two architectural questions posted to the maintainer.
 
-**Fixed:**
+**Fixed this round:**
+- P2 — strip prior `red_team_veto` prejudgment from `proposalForFinalSizeRedReview`
+  so the fresh final-size Red Team judge sees only Green's adjusted size, not an
+  overridden prior adversary's objection.
+- P2 — add `'rejected_by_broker'` to the status filter in both
+  `listSocraticDecisionCasesNeedingOutcome` and `getSocraticOutcomeCoverage` so
+  broker-rejected orders are measured by the outcome engine.
+
+**Fixed previously:**
 - P2 — sync `draftMode` on account switch: `useEffect` now resets the cap-mode
   selector when `policyMode` changes, preventing first-keystroke unit flip.
 - P1 — keep unpriced fill growth pending: `reconciledFillStatus` now checks
   `merged.unresolvedGrowth` before returning `"filled"`, so a broker snapshot
   with larger quantity but no price stays `partially_filled`.
 
-**Deferred:**
-- P1 — final-size holds vs sell-to-fund ordering: posted a comment asking the
-  maintainer how to proceed.
+**Deferred (asked maintainer):**
+- P1 — final-size holds vs sell-to-fund ordering.
+- P2 — revalidate final-size consent against fresh notional on price drift.
 
-Verify gate: `npx tsc --noEmit` clean, all 4124 tests pass, `npm run build` clean.
+Verify gate: `npm run lint` (0 errors), `npm run build` (includes tsc) clean,
+all 4124 tests pass.
 Auto-merge enabled via `--auto`.
 
 PR #1561 merged as `3e105e17` and production was verified on that exact SHA with one healthy
