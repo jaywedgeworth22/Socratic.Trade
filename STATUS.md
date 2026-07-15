@@ -11,6 +11,26 @@ results under `docs/benchmarks/` (date-prefixed) are unaffected. (3) Recorded bl
 cannot be benchmarked** — all 18 calls returned HTTP 403 `model_not_found` on the prod OpenAI key (newest
 accessible gpt-5 is gpt-5.5/5.5-pro; no gpt-5.6 exists for this account). Not a code bug — an access/existence
 issue; awaiting owner direction. Details: `docs/rollouts/2026-07-11-session-closeout-gpt56-blocked.md`.
+## 2026-07-15 — Post-Codex/AG audit + app evaluation → MONET handoff (CLAUDE)
+
+Owner-directed evaluation sweep on isolated branch `claude/adoring-hopper-4ff51e`. Verified
+production current + healthy (`main@294694ae`, all providers green), no open ST PRs (all
+Codex/AG work through #1624 merged + auto-deployed), and `congress-trading-shared` current on
+BOTH consumers (pin `0bc26ab9` = v1.7.1, no drift). Audited 73 branches (dispositions), 54
+merged CODEX/AG PRs (board hygiene), the API-Usage-Monitor integration, and ran a 5-lane app
+evaluation (UI/UX, data-streams, RAG/learning, autonomy, backend) with adversarial verification.
+
+Two fixes LANDED this session: Congress.Trade `Shared package pin check` false-positive
+([PR #450](https://github.com/jaywedgeworth22/Congress.Trade/pull/450), MERGED — `git+ssh` vs
+`git+https` transport, same commit); and `agent-sync-push` pm2 crash-loop repaired
+(janitor-reaped `node_modules`, `.janitor-keep` added).
+
+Full synthesized, adversarially-verified findings + prioritized action list for MONET:
+**`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`**. Headline opportunities: a real
+~2× Voyage dollar double-count in the usage monitor (§7.1); FMP price-targets + ROE/ROA
+fetched-but-unwired (§3.1/3.2); live closed lots never write episodic memory (§4.3); the
+retrieval-usefulness join is unwired (§4.1); `global-error.tsx` dark-mode bug (§5.1). Read-only
+audit + docs; all code fixes handed to MONET to land via separate PRs.
 
 ## 2026-07-15 — Primary-account Usage Monitor credential bridge writer (CODEX)
 
