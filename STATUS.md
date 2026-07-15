@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-15 — Browser tab title consistency (CODEX)
+
+PR #1586 merged as `2f5c986a`, leaving AG PR #1610 as a stale/conflicted carrier for one still-useful
+UI change: browser tabs should read simply "Socratic Trade". This branch reapplies only that current-main
+change by removing the console layout's "Autonomy Desk" title template and the Coach route's `"Coach"`
+title override. Hosted verification, merge, production auto-deploy, and live verification remain.
+
+Rollout: `docs/rollouts/2026-07-15-tab-title-socratic-trade.md`.
+
 ## 2026-07-15 - Branch integration labeling and PR #1586 landing gate (CODEX)
 
 Main is aligned with `origin/main@58de276e`. The FMP/RAG transcript branch

@@ -3,7 +3,6 @@ import { AssistantChat } from "./chat";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 
 export const metadata: Metadata = {
-  title: "Coach",
   description: "Coach Socratic Trade's market thesis, decision logic, remembered evidence, and framework improvements."
 };
 
