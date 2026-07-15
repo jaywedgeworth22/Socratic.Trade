@@ -107,8 +107,8 @@ changed.
 - `src/lib/strategy-prompts.ts` — `compactCandidateForPrompt` fields + `selectBalancedCounterfactuals`
 - `src/lib/derived-metrics.ts` — real-ROE preference
 - `src/lib/data-providers.ts` — AV registration gate
-- `src/lib/vector-db.ts` — Voyage dispatch call sites (estimates restored; push-boundary cost zeroing)
-- `src/lib/usage-monitor-push.ts` (or the dispatch settle/replay emit site — see final diff) — provider-dispatch pushed cost 0 invariant
+- `src/lib/vector-db.ts` — NET UNCHANGED (first-cut zeroing reverted after review; file is byte-identical to main, which also eliminated the #1632 merge surface)
+- `src/lib/usage-monitor-push.ts` — `createProviderDispatchUsageMonitorEvent` no longer threads cost into the outbound event (single provider-dispatch emission choke point; covers live pushes and crash-replay by construction)
 - `app/global-error.tsx` — dark-mode styles
 - `app/console/ui/drilldown-data.ts` — `returnOnEquity` through QuoteView/deriveForView + ROE tile tooltip
 - `docs/usage-monitor-integration.md` — dispatch-lane cost invariant
@@ -118,7 +118,29 @@ changed.
 
 ## Verification
 
-<!-- GATE-RESULTS-PLACEHOLDER -->
+Full gate run on the merged tree (wave commit `d2fb2208` + merge of `origin/main` @ `e841e9bb`,
+which brought in #1629/#1630/#1631/#1632/#1636/#1637 — the `origin/main` merge auto-resolved
+with zero conflicts; overlapping files touched disjoint regions as coordinated on #agent-sync),
+under node@24 (`PATH=/opt/homebrew/opt/node@24/bin:$PATH`, node v24.18.0 — system node v26
+ABI-breaks better-sqlite3):
+
+```
+npm run lint       # 0 errors (500 grandfathered warnings)
+npx tsc --noEmit   # clean
+npm test           # 390 files, 4470 tests — all passed (245s)
+npm run build      # clean
+```
+
+Per-item targeted suites were also run by each implementing agent before the gate
+(scheduler-boot-halt-notify 3/3; pending-fill-reconcile-refire 9/9 + reconciliation-risk 35/35 +
+synthetic-stops 47/47; strategy-prompt-wiring-counterfactuals 9/9 + derived-metrics +
+strategy-prompt-safety; vector-db-voyage-dispatch-cost 5/5 + usage-monitor push/replay/dispatch
+family 495 total; data-providers 110).
+
+Review process: 3-lens adversarial review (money-path on the frontier model, cross-file
+consistency traps, product-philosophy/docs) over the pre-fix diff produced 3 must-fix findings,
+all fixed and re-tested (see Why); a focused post-merge re-review then re-checked the two
+rewritten regions and the semantic sanity of the origin/main auto-merge.
 
 ## Follow-ups / owner decisions surfaced
 

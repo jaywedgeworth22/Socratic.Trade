@@ -1,5 +1,42 @@
 # Current Status
 
+## 2026-07-15 — ST-audit execution wave 1: handoff §8 do-first/do-now items landed (MONET, subagent team)
+
+Owner-directed pickup of the CLAUDE cap handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`).
+Executed the do-first P0 + all do-now items via 6 implementer agents + 3-lens adversarial
+review + 2 fix agents (2 of 3 must-fix review findings were real money-path/ops defects in the
+first-cut implementations — an unsound position-delta auto-flip and a Voyage local cost-fuse
+kill — both fixed before landing):
+
+1. **§6b.1(a) P0** — every auto-deploy silently halted live autonomy with zero signal; boot
+   reconcile now sends one summary notification per user (new `autonomy_halted_on_boot` type,
+   forced-delivery pattern). Interlock + `autoResumeOnBoot` default unchanged — **owner
+   decision still open: enable auto-resume in prod?**
+2. **§4.3+§6b.3** — live closed lots finally write episodic memory (re-fire on matched
+   pending→filled sell/cover flips, idempotent); genuinely-stuck pending fills (absent from
+   listing / terminal-without-data) escalate once with position-evidence diagnostics; NO
+   auto-flip from position deltas (review-killed as unsound vs manual/MCP trades).
+3. **§3.1+§3.2** — FMP price targets (`tgtMean`/`tgtUpsidePct`) + ratios-ttm quality fields
+   (`roa`/`grossMarginPct`, real ROE preferred over eps×pb) now reach the LLM prompt; console
+   drilldown ROE tile shows the same value the model sees. (`FMP_PRICE_TARGETS_ENABLED` still
+   off in prod — owner flag decision.)
+4. **§4.4** — counterfactual feedback balanced: avoided losers injected alongside missed
+   winners (4/4 split, SPY-relative), ending the one-sided "be bolder" training signal.
+5. **§3.7** — Alpha Vantage enrichment provider not registered when an Alpaca data key is
+   configured (kills the daily 25/day cap burn + alert; AV intact without Alpaca).
+6. **§7.1** — Voyage ~2× dollar double-count in the external usage monitor fixed at the push
+   boundary (`createProviderDispatchUsageMonitorEvent` emits cost 0; local dispatch fuse keeps
+   real estimates; `vector-db.ts` net-unchanged). No receiver change needed.
+7. **§5.1** — root `global-error.tsx` supports dark mode (prefers-color-scheme, app palette).
+8. **§2** — effort-board hygiene pass (both boards): back-filled #1482/#1614, flipped stale
+   #1593/#1594/#1604/#1492×4/TS-7.0.2 rows, collapsed the #1587 duplicate.
+
+Gate on the merged tree (node@24): lint 0 errors, tsc clean, **390 files / 4470 tests pass**,
+build clean. Rollout: `docs/rollouts/2026-07-15-st-audit-exec-wave1.md` (incl. deferred-items
+list + owner decisions). Remaining handoff backlog (§4.1 retrieval-usefulness join, §4.2/§1b
+branch fates, §3.3 Quiver, §6b.2/4/7 autonomy observability, §5.2/§5.4, §3.8, §7.2/§7.3) is
+tracked in the handoff doc §8 — wave 2 candidates.
+
 ## 2026-07-15 — Today's-errors triage: P1 RAG-outage fix + notification/alert truth-and-noise fixes (CLAUDE)
 
 Owner-directed from an SMS error review. Six fixes on `claude/todays-app-errors-716a45`, all
