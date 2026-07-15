@@ -385,12 +385,21 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // AFTER a stop was already registered is actually honored, not just silently skipped by the
   // registration guard below (which only ever prevents a FRESH registration, not an existing one —
   // Codex review, PR #1371). A 'triggered' row is left alone — its protective exit may still be
-  // resting/executing at the broker.
+  // resting/executing at the broker. A RESET to "default" (an explicit `stopPlan: {style:
+  // "default"}` fill clears the row, so the symbol is simply absent from stopPlanBySymbol) is
+  // handled the same way when the account itself has no trailing % configured — otherwise the old
+  // row (armed under the plan's own fallback distance) would keep trailing at that stale distance
+  // even though the position was reset to an account default that wants no trailing lane at all
+  // (Codex review, PR #1371). When the account DOES have its own trailingStopPct > 0, leave the
+  // row alone — it already trails at a real, still-applicable account distance.
+  const accountTrailPctForReset = policy.riskRules?.trailingStopPct ?? 0;
   for (const stop of listSyntheticStops(accountNumber, userId)) {
     const plan = stopPlanBySymbol[normalizeSymbol(stop.symbol)];
-    if (plan === "none" || plan === "fixed" || plan === "atr") {
+    const isPlanExcluded = plan === "none" || plan === "fixed" || plan === "atr";
+    const isResetWithNoAccountTrail = (plan === undefined || plan === "default") && accountTrailPctForReset <= 0;
+    if (isPlanExcluded || isResetWithNoAccountTrail) {
       deleteSyntheticStop(stop.id, userId);
-      audit("synthetic_stop_purged_by_plan", { symbol: stop.symbol, plan, note: `per-position stop plan is '${plan}' — trailing protection removed` }, userId, policy.connectedAccountId);
+      audit("synthetic_stop_purged_by_plan", { symbol: stop.symbol, plan: plan ?? "default", note: isPlanExcluded ? `per-position stop plan is '${plan}' — trailing protection removed` : "per-position stop plan reset to account default with no account-wide trailing % configured — trailing protection removed" }, userId, policy.connectedAccountId);
     }
   }
 
