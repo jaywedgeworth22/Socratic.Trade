@@ -44,6 +44,11 @@ Hosted PR #1586 status check update: gitleaks failed on a false-positive determi
 needs a normal branch push and hosted recheck. PR #1586 is ready/open but merge-blocked until hosted
 checks pass.
 
+Hosted verify then failed one test: `test/vector-db-chunk-cap.test.ts` expected transcript retrieval to
+work while its DB mock lacked the new durable active rights-gate row. The mock now exposes
+`fmp_transcript_rights_gate` as `{ generation: 1, status: "active" }` plus basic `all/run` seams, matching
+current product retrieval requirements. Focused Node 24 verification passes 14/14.
+
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
 
 The decision trace now treats the structured Red Team verdict as the canonical explanation and

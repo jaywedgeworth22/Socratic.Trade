@@ -904,6 +904,22 @@ dd63ba35cbd5023f3571992380454dad22225536:test/rag-doc-type-coverage.test.ts:gene
 This is a branch-local fake test fixture, not a real secret. The next normal branch push should rerun
 hosted gitleaks without rewriting PR history.
 
+### Round-27 hosted vector chunk-cap fixture repair
+
+Hosted verify then failed one test in `test/vector-db-chunk-cap.test.ts`: the product retrieval path now
+requires an active durable transcript-rights generation before returning FMP transcript records, but this
+isolated vector mock still returned only `{ ok: 1 }` for every DB query. The mock now returns
+`{ generation: 1, status: "active" }` for `fmp_transcript_rights_gate` queries and supplies basic `all`
+and `run` seams needed by current authority helpers.
+
+Verification:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/vector-db-chunk-cap.test.ts --reporter=dot
+```
+
+Result: 1 file / 14 tests green.
+
 No transcript flag, FMP request, corpus/vector provider write, Infisical mutation, merge, or
 production action ran in this step. The remaining release path is the ordered Node 24 lint,
 hosted TypeScript/full test/build gate, ready PR #1586, protected merge, and exact production verification.

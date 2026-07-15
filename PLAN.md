@@ -94,6 +94,8 @@
 > and passes focused 10/10; standalone TypeScript is clean after the import split.
 > Hosted gitleaks then failed on the historical deterministic `ENCRYPTION_KEY` fixture commit even though the current
 > tree uses `"0".repeat(64)`; `.gitleaksignore` now includes the exact false-positive fingerprint for a normal recheck.
+> Round-27 fixes the hosted vector chunk-cap test fixture by adding the durable active transcript-rights gate row to
+> its DB mock; focused verification passes 14/14.
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
 > but its automatic Coolify deployment failed health checks and rolled back because pinned
 > Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the

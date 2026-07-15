@@ -22,8 +22,18 @@ const mocks = vi.hoisted(() => {
   const namespace = vi.fn(() => namespacedIndex);
   const index = vi.fn(() => ({ ...namespacedIndex, namespace }));
   const transaction = vi.fn((callback: () => void) => () => callback());
-  const prepare = vi.fn<(sql?: unknown) => { get: (...args: unknown[]) => unknown }>(() => ({
-    get: vi.fn<(...args: unknown[]) => unknown>(() => ({ ok: 1 }))
+  const prepare = vi.fn<(sql?: unknown) => {
+    get: (...args: unknown[]) => unknown;
+    all: (...args: unknown[]) => unknown[];
+    run: (...args: unknown[]) => { changes: number };
+  }>((sql?: unknown) => ({
+    get: vi.fn<(...args: unknown[]) => unknown>(() => (
+      typeof sql === "string" && sql.includes("fmp_transcript_rights_gate")
+        ? { generation: 1, status: "active" }
+        : { ok: 1 }
+    )),
+    all: vi.fn<(...args: unknown[]) => unknown[]>(() => []),
+    run: vi.fn<(...args: unknown[]) => { changes: number }>(() => ({ changes: 1 }))
   }));
   const committedManagedVectorReceipts = vi.fn((ids: string[]) => {
     const records = upsert.mock.calls.flatMap((call) => call[0].records) as Array<{
