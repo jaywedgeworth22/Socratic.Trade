@@ -22,6 +22,7 @@ import { EquityChart } from "../components/equity-chart";
 import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
 import { thesisTagLabel } from "../lib/labels";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Card, Chip, Dash, Empty, Select, SignedText, Stat } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -151,7 +152,7 @@ export default function ResultsPage() {
   );
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Results</h1>
         <Chip tone={reality.tone}>
