@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   managedOccurrenceVectorIdMatches: vi.fn(),
   managedVectorReceiptEvidence: vi.fn(),
   inventoryVectorRecordsByMetadata: vi.fn(),
+  fetchExistingVectorRecordIds: vi.fn(),
   purgeVectorRecordsByMetadata: vi.fn(),
   purgeVectorRecordIds: vi.fn(),
   purgeVectorNamespaceAll: vi.fn()
@@ -76,6 +77,7 @@ vi.mock("../src/lib/vector-db", () => ({
   managedOccurrenceVectorIdMatches: mocks.managedOccurrenceVectorIdMatches,
   managedVectorReceiptEvidence: mocks.managedVectorReceiptEvidence,
   inventoryVectorRecordsByMetadata: mocks.inventoryVectorRecordsByMetadata,
+  fetchExistingVectorRecordIds: mocks.fetchExistingVectorRecordIds,
   purgeVectorRecordsByMetadata: mocks.purgeVectorRecordsByMetadata,
   purgeVectorRecordIds: mocks.purgeVectorRecordIds,
   purgeVectorNamespaceAll: mocks.purgeVectorNamespaceAll
@@ -126,6 +128,7 @@ beforeEach(async () => {
   mocks.managedOccurrenceVectorIdMatches.mockReturnValue(false);
   mocks.managedVectorReceiptEvidence.mockReturnValue([]);
   mocks.inventoryVectorRecordsByMetadata.mockResolvedValue([]);
+  mocks.fetchExistingVectorRecordIds.mockResolvedValue([]);
   mocks.purgeVectorRecordIds.mockImplementation(async ({ ids }) => ({ ids, deleted: ids.length }));
   mocks.purgeVectorNamespaceAll.mockResolvedValue(undefined);
   mocks.storeDocument.mockResolvedValue({

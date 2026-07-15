@@ -43,6 +43,26 @@ describe("buildExtraFilters", () => {
     const matches = [{ id: "transcript", metadata: { doc_type: "earnings-transcript" } }];
     expect(filterMatchesForTranscriptRights(matches)).toBe(matches);
   });
+  it("admits only the active generation of FMP-derived decision memory", async () => {
+    const {
+      activateFmpTranscriptRightsGeneration,
+      captureFmpTranscriptRightsGeneration
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    activateFmpTranscriptRightsGeneration();
+    const generation = captureFmpTranscriptRightsGeneration()!.generation;
+    const current = {
+      id: "current-derived",
+      metadata: { fmp_derived: true, fmp_rights_generation: generation }
+    };
+    const stale = {
+      id: "stale-derived",
+      metadata: { fmp_derived: true, fmp_rights_generation: generation - 1 }
+    };
+
+    expect(filterMatchesForTranscriptRights([current, stale])).toEqual([current]);
+    vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "off");
+    expect(filterMatchesForTranscriptRights([current, stale])).toEqual([]);
+  });
   it("matches doc_type across casings (stored values are inconsistent: '10-K' vs '8-k')", () => {
     // Each requested type expands to original + lower + upper, deduped — so a lowercase filter still
     // matches uppercase-stored "10-K"/"10-Q" chunks (the bug this fixes), and vice-versa.

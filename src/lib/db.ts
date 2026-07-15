@@ -49,6 +49,7 @@ function accountSettingMatchesSubject(key: unknown, subjectToken: unknown): numb
     "reflection_signature:",
     "model_rotation:",
     "stale_limit_order_alert:",
+    "subMinimumOrderAlertSent:",
     "usageLimitAlert:lastSent:",
     "recoverable_issue:",
     "last_macro_sent:"
@@ -243,6 +244,38 @@ export function installAccountWriteFenceTriggers(database: Database.Database): v
   }
 }
 
+/** Convert only the former product-default daily cap. Keeping this as a shared, idempotent helper
+ * applies the same exact-value rule to every policy store that exists when migration v26 runs. */
+function migrateLegacyDailyOpeningCapRows(database: Database.Database): number {
+  const targets = [
+    { table: "account_strategy_state", column: "policy", where: "1=1" },
+    { table: "strategy_profiles", column: "policy", where: "1=1" },
+    { table: "user_settings", column: "value", where: "key = 'policy'" },
+    { table: "settings", column: "value", where: "key = 'policy'" }
+  ] as const;
+  let changed = 0;
+  for (const target of targets) {
+    const rows = database
+      .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
+      .all() as Array<{ rowid: number; json: string }>;
+    const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
+    for (const row of rows) {
+      try {
+        const policy = JSON.parse(row.json) as Record<string, unknown>;
+        if (policy.maxDailyNotional !== 500 || (typeof policy.maxDailyPctOfNav === "number" && policy.maxDailyPctOfNav > 0)) continue;
+        delete policy.maxDailyNotional;
+        policy.maxDailyPctOfNav = 20;
+        update.run(JSON.stringify(policy), row.rowid);
+        changed += 1;
+      } catch {
+        // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
+        // make the database unbootable while trying to repair an unrelated row.
+      }
+    }
+  }
+  return changed;
+}
+
 const MIGRATIONS: Migration[] = [
   {
     // Per-attached-key LLM usage attribution: usage/cost measured per distinct key (user or
@@ -289,7 +322,7 @@ const MIGRATIONS: Migration[] = [
           ),
           CASE
             WHEN status = 'paper' THEN 'test/local'
-            WHEN status IN ('placed', 'placing', 'placing_failed') THEN 'broker/live'
+            WHEN status IN ('placed', 'filled', 'placing', 'placing_failed') THEN 'broker/live'
             ELSE NULL
           END
         )
@@ -1141,31 +1174,7 @@ const MIGRATIONS: Migration[] = [
     version: 26,
     name: "daily_opening_cap_percent_default",
     up: (database) => {
-      const targets = [
-        { table: "account_strategy_state", column: "policy", where: "1=1" },
-        { table: "strategy_profiles", column: "policy", where: "1=1" },
-        { table: "user_settings", column: "value", where: "key = 'policy'" }
-      ] as const;
-      let changed = 0;
-      for (const target of targets) {
-        const rows = database
-          .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
-          .all() as Array<{ rowid: number; json: string }>;
-        const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
-        for (const row of rows) {
-          try {
-            const policy = JSON.parse(row.json) as Record<string, unknown>;
-            if (policy.maxDailyNotional !== 500 || (typeof policy.maxDailyPctOfNav === "number" && policy.maxDailyPctOfNav > 0)) continue;
-            delete policy.maxDailyNotional;
-            policy.maxDailyPctOfNav = 20;
-            update.run(JSON.stringify(policy), row.rowid);
-            changed += 1;
-          } catch {
-            // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
-            // make the database unbootable while trying to repair an unrelated row.
-          }
-        }
-      }
+      const changed = migrateLegacyDailyOpeningCapRows(database);
       if (changed > 0) console.log(`[db] migration 26: moved ${changed} legacy $500 daily cap row(s) to 20% of NAV`);
     }
   },
@@ -1173,7 +1182,7 @@ const MIGRATIONS: Migration[] = [
     // Crash-durable provider dispatch/quota receipts and two-phase vector document commits. New
     // managed vectors are queryable only after their exact local receipt set and provider-side
     // committed metadata both succeed. Legacy occurrence rows retain an explicit legacy state.
-    version: 27,
+    version: 29,
     name: "provider_dispatch_and_vector_commit_receipts",
     up: (database) => {
       const occurrenceColumns = database
@@ -1262,8 +1271,6 @@ const MIGRATIONS: Migration[] = [
           ON provider_dispatch_attempts (authority_id, provider, credential_ref, created_at, status);
         CREATE INDEX IF NOT EXISTS idx_provider_dispatch_status
           ON provider_dispatch_attempts (status, updated_at);
-        CREATE INDEX IF NOT EXISTS idx_provider_dispatch_lease
-          ON provider_dispatch_attempts (status, dispatch_lease_expires_at);
 
         CREATE TABLE IF NOT EXISTS provider_usage_outbox (
           id TEXT PRIMARY KEY,
@@ -1311,7 +1318,7 @@ const MIGRATIONS: Migration[] = [
     // retryable commit only when no live lease exists; every receipt/finalization write is then
     // compare-and-swapped by the opaque token. Provider metadata carries the same token so a stale
     // writer fails closed even if an in-flight upsert completes after ownership changes.
-    version: 28,
+    version: 30,
     name: "vector_commit_attempt_leases",
     up: (database) => {
       const columns = database
@@ -1337,7 +1344,7 @@ const MIGRATIONS: Migration[] = [
     // parser, embedding, or point-in-time metadata generation becomes queryable atomically only
     // after its complete receipt set is committed; the prior proven generation remains available
     // until that handoff succeeds.
-    version: 29,
+    version: 31,
     name: "vector_document_active_heads",
     up: (database) => {
       const commitColumns = database
@@ -1413,7 +1420,7 @@ const MIGRATIONS: Migration[] = [
     // Persist the hash of every retrieval-significant metadata field so Pinecone metadata cannot
     // independently claim a valid PIT/citation version. Reconciliation anomalies require two
     // matching observations before an active committed head is invalidated.
-    version: 30,
+    version: 32,
     name: "vector_retrieval_metadata_and_reconcile_observations",
     up: (database) => {
       const columns = database
@@ -1453,7 +1460,7 @@ const MIGRATIONS: Migration[] = [
     // Provider authority is deliberately nonsecret and nullable for backwards compatibility. It
     // binds a receipt set to the physical provider authority that produced it, while the timeline
     // rebuild repairs old equal-time ordering deterministically.
-    version: 31,
+    version: 33,
     name: "vector_commit_provider_authority_and_deterministic_timeline",
     up: (database) => {
       const columns = database
@@ -1508,7 +1515,7 @@ const MIGRATIONS: Migration[] = [
     // Bind each managed commit to the immutable local ledger whose namespace and vector-id prefix
     // own it. Nullable legacy rows remain quarantined/read-only until explicitly backfilled; they
     // must never be silently claimed by a newly minted ledger authority.
-    version: 32,
+    version: 34,
     name: "vector_commit_ledger_authority",
     up: (database) => {
       const columns = database
@@ -1523,7 +1530,7 @@ const MIGRATIONS: Migration[] = [
     // Persist the exact provider namespace class for each commit and every direct-private tenant.
     // This makes rights/account erasure independent of an eventually-consistent provider list and
     // prevents a missing global setting from silently rotating away from historical namespaces.
-    version: 33,
+    version: 35,
     name: "vector_namespace_manifests",
     up: (database) => {
       const columns = database
@@ -1547,7 +1554,7 @@ const MIGRATIONS: Migration[] = [
     // A non-PII subject tombstone is the database-level authority for account deletion. Runtime
     // guards improve diagnostics, but these triggers keep an uninstrumented/stale handler from
     // recreating user rows after deletion completes.
-    version: 34,
+    version: 36,
     name: "account_write_fence_tombstones",
     up: (database) => {
       database.exec(`
@@ -1579,7 +1586,7 @@ const MIGRATIONS: Migration[] = [
     // Durable owner generations distinguish a live slow provider call from a process that died
     // after crossing the network boundary. Expiry records unknown billing truth, but remains an
     // account-deletion blocker until an operator attests the old process is gone.
-    version: 35,
+    version: 37,
     name: "provider_dispatch_owner_leases",
     up: (database) => {
       const columns = database.prepare("PRAGMA table_info(provider_dispatch_attempts)").all() as Array<{ name: string }>;
@@ -1611,7 +1618,7 @@ const MIGRATIONS: Migration[] = [
     // A private namespace lives in one physical Pinecone index. Persist that authority so an API
     // key/project rotation cannot make account deletion erase local evidence while leaving the old
     // project's private vectors unreachable.
-    version: 36,
+    version: 38,
     name: "private_vector_provider_authority",
     up: (database) => {
       const columns = database.prepare("PRAGMA table_info(vector_private_namespace_manifests)").all() as Array<{ name: string }>;
@@ -1628,7 +1635,7 @@ const MIGRATIONS: Migration[] = [
     // Re-created accounts receive a new opaque user-id generation. The prior generation's
     // completed fence is permanent, so stale cookies/mobile tokens can never gain access to the
     // new account merely because one newer session signed in.
-    version: 37,
+    version: 39,
     name: "account_identity_generations",
     up: (database) => {
       database.exec(`
@@ -1642,6 +1649,157 @@ const MIGRATIONS: Migration[] = [
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_account_identity_current_user
           ON account_identity_generations (current_user_id);
+      `);
+    }
+  },
+  {
+    // Persist the exact Green Team text and deterministic sizing arithmetic carried by each
+    // Socratic case. This migration is deliberately schema-only: by the time a database is stamped
+    // v26, a fixed $500 cap may be an intentional user choice and must never be reinterpreted.
+    version: 27,
+    name: "socratic_decision_narrative_receipts",
+    up: (database) => {
+      const columns = database.prepare("PRAGMA table_info(socratic_decisions)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "green_team_rationale")) {
+        database.exec("ALTER TABLE socratic_decisions ADD COLUMN green_team_rationale TEXT");
+      }
+      if (!columns.some((column) => column.name === "sizing_snapshot")) {
+        database.exec("ALTER TABLE socratic_decisions ADD COLUMN sizing_snapshot TEXT");
+      }
+    }
+  },
+  {
+    // Replacement dedupe is tenant-scoped. Migration v21/v22 created an unscoped partial UNIQUE
+    // index, so replace it in place after collapsing any same-user duplicates that may predate the
+    // corrected key. Cross-user rows with the same broker account/order remain valid.
+    version: 28,
+    name: "order_replacements_user_scoped_active_unique",
+    up: (database) => {
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'order_replacements'")
+        .get();
+      if (!tableExists) return;
+
+      const dupGroups = database
+        .prepare(
+          `WITH ranked AS (
+             SELECT rowid, user_id, account_number, original_order_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY user_id, account_number, original_order_id
+                      ORDER BY
+                        CASE status
+                          WHEN 'replacement_submitted' THEN 1
+                          WHEN 'replacement_claiming' THEN 2
+                          WHEN 'cancel_confirmed' THEN 3
+                          WHEN 'cancel_requested' THEN 4
+                          ELSE 5
+                        END ASC,
+                        CASE WHEN replacement_order_id IS NOT NULL THEN 0 ELSE 1 END ASC,
+                        rowid DESC
+                    ) AS rn
+             FROM order_replacements
+             WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+           )
+           SELECT user_id, account_number, original_order_id,
+                  MAX(CASE WHEN rn = 1 THEN rowid END) AS keep_rowid
+           FROM ranked
+           GROUP BY user_id, account_number, original_order_id
+           HAVING COUNT(*) > 1`
+        )
+        .all() as Array<{ user_id: string; account_number: string; original_order_id: string; keep_rowid: number }>;
+      const terminalizeExtras = database.prepare(
+        `UPDATE order_replacements
+         SET status = 'failed', error = 'superseded by duplicate active replacement', updated_at = ?
+         WHERE user_id = ? AND account_number = ? AND original_order_id = ? AND rowid != ?
+         AND status NOT IN ('replacement_confirmed', 'failed', 'aborted')`
+      );
+      const now = new Date().toISOString();
+      for (const group of dupGroups) {
+        terminalizeExtras.run(now, group.user_id, group.account_number, group.original_order_id, group.keep_rowid);
+      }
+
+      database.exec("DROP INDEX IF EXISTS idx_order_replacements_active_unique");
+      database.exec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (user_id, account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')"
+      );
+    }
+  },
+  {
+    // The old broker-minimum cooldown key omitted user ownership
+    // (`subMinimumOrderAlertSent:<account>:<symbol>`). It cannot be assigned safely when broker
+    // account identifiers collide across users, and it only suppresses a repeat notification for
+    // 24 hours, so clear all pre-user-scope rows once at rollout. New writes use the user-first key
+    // and are fenced/erased by accountSettingMatchesSubject.
+    version: 40,
+    name: "purge_legacy_broker_minimum_alert_cooldowns",
+    up: (database) => {
+      database.prepare("DELETE FROM settings WHERE key LIKE 'subMinimumOrderAlertSent:%'").run();
+    }
+  },
+  {
+    // Install licensed-transcript provenance/provider receipts in the versioned schema so account
+    // deletion coverage and the generic user write-fence triggers can see them at boot. The
+    // producer retains a defensive idempotent ensure for isolated/legacy databases.
+    version: 41,
+    name: "fmp_transcript_derived_rights_receipts",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS fmp_transcript_rights_gate (
+          singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+          generation INTEGER NOT NULL CHECK(generation > 0),
+          status TEXT NOT NULL CHECK(status IN ('active','revoked')),
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS fmp_transcript_derived_artifacts (
+          id TEXT PRIMARY KEY,
+          artifact_type TEXT NOT NULL CHECK(artifact_type IN ('chat-turn','strategy-decision','strategy-proposal','audit-event')),
+          artifact_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          generation INTEGER NOT NULL CHECK(generation > 0),
+          provenance TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(artifact_type, artifact_id)
+        );
+        CREATE TABLE IF NOT EXISTS fmp_transcript_derived_provider_work (
+          id TEXT PRIMARY KEY,
+          artifact_type TEXT NOT NULL CHECK(artifact_type IN ('strategy-decision')),
+          artifact_id TEXT NOT NULL,
+          user_id TEXT,
+          vector_id TEXT,
+          provider_authority TEXT,
+          ledger_authority TEXT,
+          generation INTEGER NOT NULL CHECK(generation > 0),
+          status TEXT NOT NULL CHECK(status IN ('pending','complete')),
+          created_at TEXT NOT NULL,
+          completed_at TEXT,
+          lease_expires_at TEXT,
+          terminal_outcome TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_artifacts_type
+          ON fmp_transcript_derived_artifacts (artifact_type, artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_provider_work_status
+          ON fmp_transcript_derived_provider_work (status, created_at);
+      `);
+      const columns = database.prepare(
+        "PRAGMA table_info(fmp_transcript_derived_provider_work)"
+      ).all() as Array<{ name: string }>;
+      for (const column of [
+        ["user_id", "TEXT"],
+        ["vector_id", "TEXT"],
+        ["provider_authority", "TEXT"],
+        ["ledger_authority", "TEXT"],
+        ["lease_expires_at", "TEXT"],
+        ["terminal_outcome", "TEXT"]
+      ] as const) {
+        if (!columns.some((existing) => existing.name === column[0])) {
+          database.exec(
+            `ALTER TABLE fmp_transcript_derived_provider_work ADD COLUMN ${column[0]} ${column[1]}`
+          );
+        }
+      }
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_provider_work_lease
+          ON fmp_transcript_derived_provider_work (status, lease_expires_at)
       `);
     }
   }
@@ -2301,135 +2459,6 @@ function migrate(database: Database.Database): void {
       PRIMARY KEY (content_hash)
     );
     CREATE INDEX IF NOT EXISTS idx_document_chunks_symbol ON document_chunks (symbol);
-    CREATE TABLE IF NOT EXISTS vector_ingest_commits (
-      id TEXT PRIMARY KEY,
-      tenant_scope TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      source TEXT NOT NULL,
-      accession TEXT NOT NULL,
-      document_key TEXT NOT NULL,
-      content_version TEXT NOT NULL,
-      retrieval_metadata_version TEXT NOT NULL DEFAULT 'legacy',
-      parser_revision TEXT NOT NULL,
-      embed_revision TEXT NOT NULL,
-      expected_vectors INTEGER NOT NULL CHECK(expected_vectors >= 0),
-      provider_authority TEXT,
-      ledger_authority TEXT,
-      vector_namespace TEXT NOT NULL DEFAULT 'managed',
-      state TEXT NOT NULL CHECK(state IN ('pending','receipts_persisted','committed','aborted')),
-      attempt_token TEXT,
-      attempt_generation INTEGER NOT NULL DEFAULT 0,
-      lease_expires_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      committed_at TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_state ON vector_ingest_commits (state, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_source ON vector_ingest_commits (source, accession, content_version);
-    CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_lease ON vector_ingest_commits (state, lease_expires_at);
-    CREATE TABLE IF NOT EXISTS vector_private_namespace_manifests (
-      tenant_scope TEXT PRIMARY KEY,
-      ledger_authority TEXT NOT NULL,
-      provider_authority TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_private_vector_manifest_provider
-      ON vector_private_namespace_manifests (provider_authority, ledger_authority);
-    CREATE TABLE IF NOT EXISTS vector_document_heads (
-      tenant_scope TEXT NOT NULL,
-      source TEXT NOT NULL,
-      accession TEXT NOT NULL,
-      commit_id TEXT NOT NULL UNIQUE,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_scope, source, accession)
-    );
-    CREATE INDEX IF NOT EXISTS idx_vector_document_heads_commit ON vector_document_heads (commit_id);
-    CREATE TABLE IF NOT EXISTS vector_document_versions (
-      commit_id TEXT PRIMARY KEY,
-      tenant_scope TEXT NOT NULL,
-      source TEXT NOT NULL,
-      document_key TEXT NOT NULL,
-      valid_from TEXT NOT NULL,
-      valid_to TEXT,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_vector_document_versions_lookup
-      ON vector_document_versions (tenant_scope, source, document_key, valid_from, valid_to);
-    CREATE TABLE IF NOT EXISTS vector_reconcile_observations (
-      commit_id TEXT PRIMARY KEY,
-      fingerprint TEXT NOT NULL,
-      observation_count INTEGER NOT NULL CHECK(observation_count > 0),
-      first_observed_at TEXT NOT NULL,
-      last_observed_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS vector_reconcile_orphan_claims (
-      commit_id TEXT PRIMARY KEY,
-      claim_token TEXT NOT NULL,
-      lease_expires_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_vector_reconcile_orphan_claims_lease
-      ON vector_reconcile_orphan_claims (lease_expires_at);
-    CREATE TABLE IF NOT EXISTS provider_dispatch_attempts (
-      id TEXT PRIMARY KEY,
-      authority_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      operation TEXT NOT NULL,
-      credential_ref TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      units INTEGER NOT NULL CHECK(units > 0),
-      estimated_cost_usd REAL NOT NULL DEFAULT 0 CHECK(estimated_cost_usd >= 0),
-      actual_cost_usd REAL,
-      status TEXT NOT NULL CHECK(status IN ('reserved','dispatched','succeeded','failed','unknown','cancelled')),
-      idempotency_key TEXT,
-      outcome_code TEXT,
-      created_at TEXT NOT NULL,
-      dispatched_at TEXT,
-      completed_at TEXT,
-      dispatch_owner_token TEXT,
-      dispatch_heartbeat_at TEXT,
-      dispatch_lease_expires_at TEXT,
-      updated_at TEXT NOT NULL,
-      UNIQUE(authority_id, idempotency_key)
-    );
-    CREATE INDEX IF NOT EXISTS idx_provider_dispatch_quota ON provider_dispatch_attempts (authority_id, provider, credential_ref, created_at, status);
-    CREATE INDEX IF NOT EXISTS idx_provider_dispatch_status ON provider_dispatch_attempts (status, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_provider_dispatch_lease ON provider_dispatch_attempts (status, dispatch_lease_expires_at);
-    CREATE TABLE IF NOT EXISTS provider_usage_outbox (
-      id TEXT PRIMARY KEY,
-      attempt_id TEXT NOT NULL UNIQUE,
-      provider TEXT NOT NULL,
-      operation TEXT NOT NULL,
-      credential_ref TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      outcome TEXT NOT NULL CHECK(outcome IN ('succeeded','failed','unknown')),
-      requests INTEGER NOT NULL DEFAULT 1,
-      estimated_cost_usd REAL NOT NULL DEFAULT 0,
-      actual_cost_usd REAL,
-      occurred_at TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_provider_usage_outbox_created ON provider_usage_outbox (created_at, id);
-    CREATE TABLE IF NOT EXISTS fmp_transcript_versions (
-      version_id TEXT PRIMARY KEY,
-      accession TEXT NOT NULL,
-      content_sha256 TEXT NOT NULL,
-      symbol TEXT NOT NULL,
-      fiscal_year INTEGER NOT NULL,
-      fiscal_quarter INTEGER NOT NULL,
-      call_date TEXT,
-      first_content_seen_at TEXT NOT NULL,
-      state TEXT NOT NULL CHECK(state IN ('observed','indexing','committed','failed')),
-      vector_commit_id TEXT,
-      chunk_count INTEGER NOT NULL DEFAULT 0,
-      observed_at TEXT NOT NULL,
-      indexed_at TEXT,
-      updated_at TEXT NOT NULL,
-      UNIQUE(accession, content_sha256)
-    );
-    CREATE INDEX IF NOT EXISTS idx_fmp_transcript_versions_accession ON fmp_transcript_versions (accession, first_content_seen_at);
-    CREATE INDEX IF NOT EXISTS idx_fmp_transcript_versions_state ON fmp_transcript_versions (state, updated_at);
     CREATE TABLE IF NOT EXISTS learned_context (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -2481,6 +2510,8 @@ function migrate(database: Database.Database): void {
       authority TEXT NOT NULL,
       thesis TEXT NOT NULL,
       rationale TEXT NOT NULL,
+      green_team_rationale TEXT,
+      sizing_snapshot TEXT,
       action TEXT NOT NULL,
       thesis_tag TEXT,
       regime TEXT,
@@ -3033,11 +3064,6 @@ function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
   const explicitDailyNotional = typeof policyWithoutLegacyFields.maxDailyNotional === "number" && policyWithoutLegacyFields.maxDailyNotional > 0;
   if (explicitDailyPct) delete merged.maxDailyNotional;
   else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
-  if ((merged.maxDailyNotional ?? 0) >= 500_000) {
-    delete merged.maxDailyNotional;
-    merged.maxDailyPctOfNav = DEFAULT_POLICY.maxDailyPctOfNav;
-    if (merged.maxDailyOrders > DEFAULT_POLICY.maxDailyOrders) merged.maxDailyOrders = DEFAULT_POLICY.maxDailyOrders;
-  }
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
   return merged;
 }

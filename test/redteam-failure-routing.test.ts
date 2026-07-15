@@ -303,7 +303,7 @@ describe("Red Team unavailable — exits are STRUCTURALLY EXEMPT (§3.5: never r
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplSell = proposals.find((p) => p.proposal.symbol === "AAPL" && p.proposal.side === "sell");
     expect(aaplSell).toBeDefined();
-    expect(aaplSell?.status).toBe("placed");
+    expect(aaplSell?.status).toBe("filled");
     // No verdict is ever stamped on an exit (it was never reviewed) and no unavailable audit fires.
     expect(aaplSell?.proposal.redTeamVerdict).toBeUndefined();
     const unavailableAudits = listAudit(500).filter(

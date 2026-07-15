@@ -616,6 +616,125 @@ Results: 20 files / 302 tests and 1 file / 4 tests green; TypeScript and diff-ch
 and renumbered to transcript/vector migrations 29-39 before the ordered lint/TypeScript/full-test/build gate.
 PR #1586 remains draft. No FMP/provider/corpus/R2/Infisical/activation/production mutation ran.
 
+### Round-16 current-main reconciliation and final identity/settings review
+
+Fetched `origin/main@2dabc7f8` was merged additively. Its Socratic narrative and user-scoped order-
+replacement migrations remain versions 27-28; this lane's provider/vector/fence/account-generation
+migrations are renumbered 29-39. Main's atomic proposal-plus-decision persistence is combined with the
+transcript lane's rights-generation artifact ledger and asynchronous provider-work receipt, so no proposal
+can reach placement without its decision receipt and rights withdrawal can still identify derived state.
+
+The hostile pass found two remaining P2 ownership gaps. Cloudflare Access had priority in middleware but
+did not forward a provider-session timestamp, so even a fresh Access login could not leave a deleted base
+generation. Middleware now extracts `iat` from the trusted Access assertion only when its embedded email
+matches the trusted Access email; request resolution applies the same fresh/post-cutoff generation rule to
+Auth.js and Cloudflare identities. Separately, broker-minimum notification cooldowns omitted user identity;
+their keys now begin with user ID and are part of the canonical settings ownership matcher used by both
+SQLite write fences and account erasure.
+
+Verification used Node 24 with mocked providers and temporary SQLite only:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/persistence-hardening.test.ts test/socratic-db.test.ts \
+  test/fmp-rights-derived-artifacts.test.ts test/account-deletion.test.ts \
+  test/middleware-auth.test.ts test/broker-minimum-guard.test.ts \
+  test/strategy-money-path-f-g.test.ts test/final-size-red-autonomous.test.ts \
+  test/finalized-sizing-review.test.ts
+git diff --check
+```
+
+Results: TypeScript clean; 9 files / 99 tests green; diff-check clean. Fresh hostile re-review and the
+ordered full lint/TypeScript/test/build gate remain required before PR #1586 leaves draft. No feature flag,
+FMP/provider request, corpus/vector write, Infisical mutation, activation, or production write occurred.
+
+### Round-17 final authority, erasure-stability, and retrieval-recall hardening
+
+Round 16's Cloudflare Access `iat` design was rejected after checking the token lifecycle: an Access
+application token can refresh without a fresh IdP login. Middleware now treats it only as authorization;
+post-deletion identity regeneration requires a matching signed Auth.js session with a post-cutoff
+`loginAt`. Migration 40 clears all unowned legacy broker-minimum cooldown keys once; new keys are
+user-first and therefore covered by the canonical settings write fence and eraser.
+
+The final transcript hostile review found two provider-erasure P1s and one retrieval P2. Each licensed
+decision-memory write now resolves and records the exact physical Pinecone authority, logical SQLite
+ledger authority, immutable generation-bound vector ID, and durable heartbeat lease before upsert.
+Every provider boundary re-proves the rights/work lease and store-time provider/ledger identity. Exact
+private purge and verification select the recorded historical namespace and reject current-provider or
+manifest mismatch, preserving local receipts when a rotated credential makes the old provider
+unreachable. Provider absence must be observed cleanly for a configurable consecutive window; a vector
+that disappears and reappears resets the streak, and SQLite provenance is not removed on failure.
+
+Private and shared retrieval now query separate bounded pools and combine them only for ranking. The
+regression deliberately gives shared evidence a low dense score behind a saturated private tier, then
+proves the reranker can still promote it. Migration 41 installs the FMP rights gate, derived-provenance
+ledger, and provider-work receipts in the versioned schema so account-deletion coverage and automatic
+user write-fence triggers see them at boot; the producer's idempotent schema ensure remains only as a
+legacy/isolated-database defense.
+
+Files added or materially changed in this round: `src/lib/socratic-memory.ts`,
+`src/lib/vector-db.ts`, `src/lib/web-sources/fmp-transcripts.ts`, `src/lib/db.ts`,
+`src/lib/account-deletion.ts`, `middleware.ts`, `src/lib/request-user.ts`,
+`src/lib/broker-minimum-guard.ts`, `test/fmp-rights-derived-artifacts.test.ts`,
+`test/vector-db-scope.test.ts`, `test/socratic-db.test.ts`,
+`test/persistence-hardening.test.ts`, `test/account-deletion-coverage.test.ts`,
+`test/db-migration-old-schema.test.ts`, and the status/phase/effort documents.
+
+Current Node 24 verification (mocked providers and temporary SQLite only):
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/fmp-rights-derived-artifacts.test.ts test/socratic-db.test.ts \
+  test/vector-db-scope.test.ts test/fmp-transcripts.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/persistence-hardening.test.ts test/db-migration-old-schema.test.ts \
+  test/account-deletion-coverage.test.ts test/account-deletion.test.ts \
+  test/fmp-rights-derived-artifacts.test.ts test/socratic-db.test.ts \
+  test/vector-db-scope.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit
+git diff --check
+```
+
+Results: 4 files / 69 tests and 7 files / 71 tests green; TypeScript and diff-check clean. The ordered
+full lint/TypeScript/test/build gate and fresh hostile re-review remain before PR #1586 leaves draft.
+No FMP request, feature activation, provider/corpus write, Infisical mutation, or production action ran.
+
+### Round-18 no-write settlement and bounded fair reranking
+
+The next hostile pass found two P2 edge cases. A licensed provider-work reservation could settle after
+dedup, an exhausted budget, or missing provider configuration without ever upserting a vector; requiring
+its absent private-namespace manifest during purge would then block rights erasure forever. Provider work
+now records one of `completed`, `no_provider_write`, or `provider_write_unknown`. Only proven no-write
+receipts are excluded from provider inventory; unknown outcomes remain exact-delete obligations. Tests
+cover both indexer settlement and successful rights purge without an invented private vector.
+
+Separately, six independently over-fetched tiers could form a union larger than Voyage's 1,000-document
+rerank contract. The union is now deduplicated and, only when needed, rank-round-robin capped so every
+non-empty tier retains quota; selected candidates return to global cosine order for fail-open fallback.
+`rerankMatches` also applies a final 1,000-document provider-contract defense. A 2,000-candidate
+private/shared regression proves the reranker receives exactly 1,000 documents (500 from each tier) and
+can promote low-dense-score shared evidence.
+
+Verification:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/fmp-rights-derived-artifacts.test.ts test/socratic-db.test.ts \
+  test/vector-db-scope.test.ts test/vector-db-rerank-floor.test.ts \
+  test/vector-db-rerank-overfetch.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/persistence-hardening.test.ts test/db-migration-old-schema.test.ts \
+  test/account-deletion-coverage.test.ts test/account-deletion.test.ts \
+  test/fmp-rights-derived-artifacts.test.ts test/socratic-db.test.ts \
+  test/vector-db-scope.test.ts
+git diff --check
+```
+
+Results: 5 files / 46 tests and 7 files / 74 tests green; TypeScript and diff-check clean. Fresh hostile
+re-review and the ordered full repository gate remain. No external provider/config/production mutation ran.
+
 The highest-yield 1,000-stock operational plan remains “archive broadly, embed selectively”: exact
 1,000-CIK manifest plus private priority overlay; historical submissions-shard discovery; immutable raw
 archive; structured XBRL/fundamentals; embedded 10-K/10-Q decision sections and material 8-K exhibits;

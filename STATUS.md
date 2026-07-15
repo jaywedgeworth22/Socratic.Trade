@@ -1,8 +1,141 @@
 # Current Status
 
+## 2026-07-14 — Final hosted-review remediation (PR #1587)
+
+The hosted autofix pushed two independent review fixes. Both remaining money-path
+findings are now implemented locally: funding sells are downstream of exact-size
+eligibility, and a stored owner override cannot be consumed after a material upward
+broker requote. Focused verification is green; the final ordered gate and push remain.
+## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle + final-size input cleanliness + broker-rejection measurability (PR #1587)
+
+**[codex-autofix] Round 2 (this commit):** two more Codex review findings fixed,
+two architectural questions posted to the maintainer.
+
+**Fixed this round:**
+- P2 — strip prior `red_team_veto` prejudgment from `proposalForFinalSizeRedReview`
+  so the fresh final-size Red Team judge sees only Green's adjusted size, not an
+  overridden prior adversary's objection.
+- P2 — add `'rejected_by_broker'` to the status filter in both
+  `listSocraticDecisionCasesNeedingOutcome` and `getSocraticOutcomeCoverage` so
+  broker-rejected orders are measured by the outcome engine.
+
+**Fixed previously:**
+- P2 — sync `draftMode` on account switch: `useEffect` now resets the cap-mode
+  selector when `policyMode` changes, preventing first-keystroke unit flip.
+- P1 — keep unpriced fill growth pending: `reconciledFillStatus` now checks
+  `merged.unresolvedGrowth` before returning `"filled"`, so a broker snapshot
+  with larger quantity but no price stays `partially_filled`.
+
+**Resolved locally:**
+- P1 — final-size holds vs sell-to-fund ordering: every otherwise autonomous
+  opening now completes broker-minimum adjustment, exact-size Red review, and a
+  final policy/override preflight before it contributes notional to sell-to-fund
+  planning. Correlation-dropped, broker-unplaceable, human-held, and non-funding
+  policy-blocked openings contribute `$0`; the expected cumulative buying-power
+  shortfall remains eligible. Placement reuses the cached broker shape, so a
+  second review cycle cannot create a post-sale hold.
+- Regression coverage proves both directions: a final-size Red hold emits and
+  executes no `Sell-to-Fund` order, while two valid openings whose combined
+  notional exceeds buying power still produce the exact funding sale.
+
+Hosted-autofix gate: `npx tsc --noEmit` clean, all 4,124 tests pass, and
+`npm run build` clean. Local remediation checks: standalone TypeScript clean and
+3 ordering-focused files / 20 tests pass. After the final consent-drift fix, the authoritative
+Node 24 gate is green: lint exit 0, standalone TypeScript clean, 368 files / 4,128 tests, and a production build
+with the real TypeScript phase and 32 static pages. Auto-merge remains armed.
+**Resolved after hosted review:**
+- P1 — final-size holds resolve before sell-to-fund planning.
+- P2 — final-size owner consent is bound to the shown broker estimate. Downward or
+  at-most-1%/$0.01 upward quote noise can proceed; a larger increase persists the fresh
+  amount and requires one new approval before placement.
+
+Verify gate: `npm run lint` (0 errors), `npm run build` (includes tsc) clean,
+all 4124 tests pass.
+Auto-merge enabled via `--auto`.
+
+PR #1561 merged as `3e105e17` and production was verified on that exact SHA with one healthy
+container, zero restarts, current scheduler/DB/Litestream checks, and roughly 358 MiB runtime
+memory. Its required hosted verify, Playwright smoke, and gitleaks checks passed. A Codex review
+posted after auto-merge and found three non-outdated P2 gaps; the optional autofix workflow then
+hit its 60-turn cap without changing code.
+
+The follow-up now closes the original review plus the later final-size/lifecycle audit. Explicit
+large dollar caps remain dollar caps; migration v26 covers all four legacy stores while v27 is
+schema-only, so an intentional post-migration `$500` choice survives. The configurable Guardrails
+Dollar/Percent selector follows persisted account state after discard/save/account changes.
+
+Every risk-adding opening that a broker minimum changes is Red-reviewed once more at the exact
+broker-reviewed size. That one-shot state machine supports full approval, one half-size haircut,
+unavailable/reject owner holds, and one explicit owner override without floor/haircut loops; exits
+remain exempt. Independent human-review reasons are tracked separately so a successful final Red
+review cannot erase a rationale-collapse or owner-preference hold. The proposal row and its initial
+Socratic `proposed` case are committed in one SQLite transaction before the broker call, the case is
+required by the atomic `proposed -> placing` claim, all later
+proposal transitions update the case in the same transaction, uncertain submissions stay
+`placing`, and per-decision vector writes are serialized while re-reading current SQLite truth.
+Approval and Live Thesis surfaces render exact Green text separately from Red/owner-hold prose and
+reserve retry wording for broker-confirmed non-placement.
+
+The resumed hostile review's four blockers are implemented: `filled` orders continue consuming
+daily/hourly caps; structured owner holds never invent a Red outage; lifecycle sync updates only
+execution-owned case fields and preserves outcome/lessons/coach notes; and approval cannot submit
+without a durable proposed Socratic intent receipt. A broader `filled` audit also corrected bulk
+approval success, toasts, strategy summaries, ops counts, audit-feed details, outcome coverage, and
+legacy execution-mode inference. Two later race/recovery findings are also closed: a chat draft now
+maps to one proposal through its entire lifecycle, with both preflight and write-locked dedupe; and a
+stale `placing` intent whose existing receipt advances from `pending_reconciliation` to broker-filled
+atomically finalizes fill accounting, proposal status, and Socratic status. The final money-path
+audit also closes terminal-partial execution loss in direct, inline, delayed, stale, and replacement
+paths; makes direct broker success plus fill/proposal/case persistence atomic; scopes replacement
+dedupe by tenant/account/replacement identity; counts working partial fills as real exposure; and
+repairs legacy chat cases against their historical account and doctrine. A final adversarial pass
+also required finite positive realized prices, monotonic broker-reported quantity floors, recoverable
+unpriced/no-id replacement partials, and user-scoped active replacement uniqueness; all findings are
+implemented. A later hosted review found that sell-to-fund planning still preceded the final-size
+hold. The remediation now correlation-gates and caches tradability, broker minimum, exact-size Red,
+policy, and override routing before funding notional is calculated, while preserving legitimate
+cumulative buying-power demand. Current `main@07c2da3f` is integrated. The prior ordered
+Node 24 gate is green: lint has 0 errors / 458 inherited warnings,
+standalone TypeScript is clean, all 368 files / 4,124 tests pass, and the production build completes
+its real TypeScript phase and generates 32 static pages. A diagnostic full-suite pass also passed the
+same 4,124 tests before the authoritative gate. `scripts/land.sh` repeated current-main TypeScript,
+all 4,124 tests, and the build before opening ready PR #1587. Hosted verification, auto-merge,
+original-thread resolution, and exact production verification remain after pushing the green tree.
+
+Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
+Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
 ## 2026-07-14 — Watchlist & Order Row Button Tooltip Alignment (AG, branch `agent/ag-watchlist-tooltip-fix`)
 
-Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 is open, and auto-merge is armed. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 merged to main. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+## 2026-07-14 — [codex-autofix] Update stale STATUS.md entries for merged PRs #1576 and #1561 (PR #1589)
+
+Codex review flagged that STATUS.md still described PR #1576 and PR #1561 as open when both were merged. Updated both entries to reflect merged state. All verification gates passed (lint 0 errors, tsc clean, 4056 tests pass, build clean). Codex thread resolved, auto-merge enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
+## 2026-07-14 — [codex-autofix] Round 4: Fix EFFORT-LOG stale tails and #1578 merge status (PR #1589)
+
+Codex review flagged 4 remaining P2 findings on the round-3 cleanup:
+
+1. **EFFORT-LOG #1575 wrong merge reference**: "#1575 Merged via PR #1589" was incorrect — #1575 was merged on its own. Fixed to "Merged via PR #1575."
+2. **EFFORT-LOG #1561 stale completed tail**: Removed "Hosted checks, merge/autodeploy, and production verification remain." from the completed row.
+3. **EFFORT-LOG #1576 stale completed tail**: Removed "Hosted verify, merge/autodeploy, and production verification remain." from the completed row.
+4. **STATUS.md + EFFORT-LOG #1578 merge status**: TypeScript toolchain entry showed pending status; updated both STATUS.md and EFFORT-LOG.md to reflect that PR #1578 merged to main.
+
+Verify trio passed. Codex threads resolved, auto-merge enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
+## 2026-07-14 — [codex-autofix] Round 5: Move completed out of Planned + update stale #1544 (PR #1589)
+
+Codex review flagged 3 remaining P2 threads:
+1. EFFORT-LOG #1578/#1576 marked COMPLETED but under `## Planned` — moved to `## Completed` section.
+2. EFFORT-LOG #1544 still showed "READY PR OPEN ... Branch pushed; not merged" — updated to COMPLETED (merged as `60703dfe`).
+3. Original commit author email — verified directly from Git: `db9f0acd` already uses the
+   repository noreply address for both author and committer, so no rewrite is needed.
+
+Verify trio passed. Codex threads fixed, resolved. Auto-merge remains enabled.
+Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+
+Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="right"`). Passed verification gate (tsc, lint, test, build); PR #1575 merged to `main` as `07c2da3f` and auto-deploy verification is pending. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
 ## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
 
 An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent
@@ -30,16 +163,7 @@ parsing, and diff-check. The earlier full gate remains 0 lint errors, 363 files 
 production webpack build; an independent review build also executed `Running TypeScript` and
 `Finished TypeScript`. The final full suite/build is intentionally deferred until fresh review to
 avoid duplicating an expensive gate. The inherited invalid console Tailwind wildcard warning
-remains owned by the separate console-usage lane. Fresh review, final ordered gate, commit, ready PR,
-merge/autodeploy, and live verification remain.
-
-Fresh independent re-review accepts the remediation. It confirmed one installed TypeScript 6.0.3
-graph, aligned Node 24 declarations, structural lock/YAML policy checks, Node 24 enforcement in both
-CI routes and the landing script, and a byte-identical clean-install lock. The final ordered Node 24
-gate is green: lint 0 errors / 458 inherited warnings, standalone TypeScript, 363 files / 4,043
-tests, and the production build pass; the build explicitly logged `Running TypeScript` and
-`Finished TypeScript`. Current-main reconciliation, commit, ready PR, hosted verification,
-merge/autodeploy, and live verification remain.
+remains owned by the separate console-usage lane. PR #1578 merged to main.
 
 Rollout: `docs/rollouts/2026-07-13-typescript-toolchain-gate-repair.md`.
 ## 2026-07-13 — Non-production background workers fail closed (CODEX, branch `codex/dev-background-workers`)
@@ -57,8 +181,7 @@ production build exits zero. A first accidental Node 26 test attempt failed only
 the app change itself. A stripped-environment disposable
 `next dev` emitted the disabled receipt and no scheduler-start line; `/login` then hit the separate
 known invalid Tailwind wildcard on current `main`, already fixed in the console lane. Independent
-review and the local gate are complete. Ready PR #1576 is open; hosted verify, merge/autodeploy,
-and production verification remain.
+review and the local gate are complete. PR #1576 merged to main.
 No provider, broker, corpus, or production configuration call was made. Rollout:
 `docs/rollouts/2026-07-13-development-background-workers.md`.
 
@@ -298,6 +421,15 @@ Current `origin/main@2dabc7f8` owns migrations 27-28, so this branch must checkp
 renumber its transcript/vector migrations to 29-39, and pass the ordered repository gate before PR #1586 can
 leave draft. No activation flag, FMP call, corpus mutation, Infisical mutation, merge, or production write ran.
 
+Round-16 has now reconciled `origin/main@2dabc7f8` without dropping either migration family: main remains
+27-28 and transcript/vector/account-generation migrations are 29-39. The merged strategy path atomically
+persists proposal plus Socratic decision while retaining FMP rights-generation and provider-work receipts.
+The first hostile re-review found two P2s and both are remediated: an explicitly trusted Cloudflare Access
+assertion forwards its matching `iat` for post-deletion identity generation, and broker-minimum alert
+cooldowns include user ownership so the canonical settings matcher fences and erases them. Node 24
+TypeScript plus the merged targeted set (9 files / 99 tests) are green. Fresh hostile re-review and the
+ordered lint/TypeScript/full-test/build gate remain pending; PR #1586 stays draft/default-off.
+
 Production activation/backfill remains gated on an entitled transcript plan, confirmed commercial
 persistence/embedding/display rights, and one genuinely shared cross-app transactional quota authority;
 matching `PROVIDER_QUOTA_AUTHORITY_ID` strings on separate databases is insufficient. No FMP/provider,
@@ -326,8 +458,10 @@ Focused verification is green (8 files / 63 tests, then 5 files / 39 tests and 2
 Repository lint passed with 0 errors / 452 inherited warnings; TypeScript and the native Swift
 snapshot model are clean. After documenting and isolating earlier host-contention timeouts, the
 canonical Node 24 `scripts/land.sh` gate passed completely: 359 files / 4,021 tests and the production
-build. Commit `2cfd7ca8` is pushed in ready PR #1561; hosted CI/security/smoke checks, merge/autodeploy,
-and production verification remain.
+build. Commit `2cfd7ca8` pushed; PR #1561 merged to main.
+build. PR #1561 merged as `3e105e17`; required hosted verification/security/smoke checks passed and
+production reported that exact release healthy. The later post-merge Codex findings are tracked in
+the follow-up section above.
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
 
@@ -393,7 +527,7 @@ follow-up now validates/falls back malformed lease durations before date arithme
 failure reasons, and preserves the first accepted raw/normalized SHA-256 values across later checkpoints. Focused
 regressions pass (2 files / 29 tests). The full Node 24 gate is green: lint 0 errors / 452 inherited warnings,
 TypeScript clean, 352 files / 3,963 tests, production build, and diff-check. No provider, object-store, vector, or
-corpus writes ran. Ready PR #1559 is open with auto-merge pending hosted acceptance.
+corpus writes ran. PR #1559 merged as `af087a1f` and auto-deployed.
 
 Rollout: `docs/rollouts/2026-07-13-sec-rag-foundation-postmerge.md`.
 
@@ -590,8 +724,8 @@ backfill architecture. Blocking fixes are occurrence-level provenance (global co
 later filing instances), durable artifact/job state, DOM/iXBRL table parsing, exact acceptance-time safety,
 historical/exhibit discovery, real-corpus evaluation, and truthful coverage/config reporting. Plan:
 `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. Rollout:
-`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete; ready
-PR #1494; unmerged; production unchanged**.
+`docs/rollouts/2026-07-12-sec-rag-1000-stock-backfill-plan.md`. State: **docs-only design complete;
+PR #1494 merged as `1dbe9b42` on 2026-07-13**. Bulk ingestion remains a separate gated effort.
 ## 2026-07-12 — Capability & Platform Program: Phase 1 plan + iOS status-doc truth-fix (CLAUDE, branch `claude/capability-program-docs`)
 
 Phase 1 (recon + design + feasibility + synthesis) of the owner-directed capability/platform
@@ -850,16 +984,33 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## 2026-07-11 — Truthful notification delivery status (CODEX, current-main replacement branch)
 ## What was just completed
-- Native iOS App: Implemented Apple Sign-in with backend verification and token validation.
-- UI Updates: Updated the Login page to use the Socratic.Trade candlestick logo and stripped unnecessary text. Reduced the height of the HeaderLogo and prevented it from overflowing on small mobile screens.
-- Console UI: Changed the Model Stats UI from a Sheet to a Drawer, formatting model row labels to display grouped company names vertically on mobile devices, and removing redundant parenthetical names.
-- Settings UI: Addressed overlapping text in the "Broker Connections" section by allowing the action buttons to wrap on mobile, and wrapping the account subtitle in a flex-col layout.
-- PR opened and waiting for review/merge.
+- Native Apple sign-in, login/logo updates, Model Stats drawer changes, and mobile overlap fixes
+  were recorded by the AG lane. Their original PRs #1525 and #1526 are closed without merge, so
+  there is no pending branch handoff to land from either PR.
 
 ## Current Status
 
-- Discovered why `Congress.Trade` congressional trades were stuck in June for Socratic.Trade: App A (`Congress.Trade`) recently enabled a `botDefense.ts` guard on `/api/v1/transactions` that blocks standard node `fetch` UAs. Fixed Socratic.Trade by providing a custom `User-Agent: SocraticTrade/1.0`.
-- Applied an IPv6 DNS force-ipv4 fix to `congress-scout.mjs` on Congress.Trade to fix its own scrape failures.
+- PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, and #1589 are merged. Two PRs remain:
+  draft #1586 (this default-off FMP/RAG/privacy/account-risk consolidation) and ready #1593
+  (decision-dissent deduplication, owned by its separate Codex lane).
+- #1586 is reconciled with `main@2dabc7f8`. The final hostile-review fixes bind every licensed
+  private-memory vector receipt to its exact Pinecone provider plus SQLite ledger authority, reject
+  provider/manifest rotation, require consecutive clean provider observations before local erasure,
+  and preserve independent private/shared retrieval pools through reranking. Versioned migration 41
+  makes the derived-artifact/provider-work tables visible to account-deletion coverage and durable
+  user write-fence triggers.
+- The earlier Cloudflare Access `iat` approach is superseded: reusable Access application-token time
+  is not fresh IdP-login proof. A Cloudflare request may reopen a deleted identity generation only
+  when a matching signed Auth.js session carries a post-cutoff `loginAt`.
+- Current Node 24 focused verification is green: the final retrieval/provider subset is 5 files /
+  46 tests; the migration/deletion subset is 7 files / 74 tests; TypeScript and diff-check pass.
+  The latest review findings are fixed: no-op indexing settles as `no_provider_write` without
+  inventing an erasure obligation, while unknown writes stay purgeable; saturated tier unions retain
+  fair representation under Voyage's 1,000-document rerank ceiling. Fresh re-review and the ordered full
+  lint/TypeScript/test/build gate are still running; #1586 remains draft and no FMP flag/provider/
+  corpus/Infisical mutation has occurred.
 
 ## Next Action
-- Land branch `agent/ag-update-status-effort-log` and await production auto-deploy.
+- Close the hostile review, run the ordered full gate, land and merge #1586, merge #1593 after its
+  current-main reconciliation/checks, require zero open PRs, then verify the exact final `main` SHA
+  through the production health/readiness and Coolify runtime surfaces.

@@ -39,6 +39,12 @@ async function mintSessionJwt(email: string, secret: string, loginAt?: number): 
   });
 }
 
+function fakeCfAccessAssertion(email: string, issuedAtMs: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ email, iat: Math.floor(issuedAtMs / 1_000) })).toString("base64url");
+  return `${header}.${payload}.test-signature`;
+}
+
 describe("middleware — fail-closed arming (Phase-11 M6)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -79,6 +85,63 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     const res = await middleware(req);
     expect(res.status).toBe(200);
     expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBe("verified@example.com");
+  });
+
+  it("does not treat a Cloudflare application-token issue time as a fresh provider login", async () => {
+    const issuedAt = Date.parse("2026-07-14T20:00:00.000Z");
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", "");
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      "cf-access-authenticated-user-email": "verified@example.com",
+      "cf-access-jwt-assertion": fakeCfAccessAssertion("verified@example.com", issuedAt)
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-middleware-request-x-authenticated-session-issued-at")).toBeNull();
+    expect(res.headers.get("x-middleware-request-x-authenticated-identity-source"))
+      .toBe("cloudflare-access");
+  });
+
+  it("uses a matching signed Auth.js login proof alongside Cloudflare Access", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    const loginAt = Date.parse("2026-07-14T20:00:00.000Z");
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    const jwt = await mintSessionJwt("verified@example.com", secret, loginAt);
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      "cf-access-authenticated-user-email": "verified@example.com",
+      cookie: `authjs.session-token=${jwt}`
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-middleware-request-x-authenticated-session-issued-at"))
+      .toBe("2026-07-14T20:00:00.000Z");
+    expect(res.headers.get("x-middleware-request-x-authenticated-identity-source"))
+      .toBe("authjs-session");
+  });
+
+  it("ignores a signed Auth.js login proof for a different Cloudflare identity", async () => {
+    const secret = "test-secret-at-least-32-bytes-long!!";
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", secret);
+    vi.stubEnv("PRIMARY_USER_EMAIL", "owner@example.com");
+    const jwt = await mintSessionJwt("other@example.com", secret, Date.parse("2026-07-14T20:00:00.000Z"));
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/api/dashboard", {
+      "cf-access-authenticated-user-email": "verified@example.com",
+      cookie: `authjs.session-token=${jwt}`
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-middleware-request-x-authenticated-user-email"))
+      .toBe("verified@example.com");
+    expect(res.headers.get("x-middleware-request-x-authenticated-session-issued-at")).toBeNull();
+    expect(res.headers.get("x-middleware-request-x-authenticated-identity-source"))
+      .toBe("cloudflare-access");
   });
 
   it("explicit CF flag alone arms CF identity", async () => {

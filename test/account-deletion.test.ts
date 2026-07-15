@@ -411,6 +411,7 @@ describe("account deletion", () => {
       `reflection_signature:${userId}:ACCOUNT`,
       `model_rotation:${userId}:account-id:green`,
       `stale_limit_order_alert:${userId}:account-id:order-id:30`,
+      `subMinimumOrderAlertSent:${userId}:ACCOUNT:AAPL`,
       `usageLimitAlert:lastSent:${userId}:pinecone:query:daily`,
       `recoverable_issue:${userId}:hash`,
       `last_macro_sent:${userId}`,
@@ -489,14 +490,32 @@ describe("account deletion", () => {
     expect(() => fence.resolveAuthenticatedAccountGeneration(userId, completed.updated_at))
       .toThrow("predates account deletion");
     const { resolveRequestUser, AUTHENTICATED_EMAIL_HEADER } = await import("../src/lib/request-user");
-    const { AUTHENTICATED_IDENTITY_SOURCE_HEADER, AUTHENTICATED_IDENTITY_SOURCES } = await import("../src/lib/auth/strip-identity");
+    const {
+      AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+      AUTHENTICATED_IDENTITY_SOURCES,
+      AUTHENTICATED_SESSION_ISSUED_AT_HEADER
+    } = await import("../src/lib/auth/strip-identity");
     expect(() => resolveRequestUser(new Request("https://example.test/api/dashboard", { headers: {
       [AUTHENTICATED_EMAIL_HEADER]: email,
       [AUTHENTICATED_IDENTITY_SOURCE_HEADER]: AUTHENTICATED_IDENTITY_SOURCES.authJsSession
     } }))).toThrow("fresh provider sign-in");
     const freshLoginAt = new Date(Date.parse(completed.updated_at) + 1_000).toISOString();
-    const recreatedUserId = fence.resolveAuthenticatedAccountGeneration(userId, freshLoginAt);
+    expect(() => resolveRequestUser(new Request("https://example.test/api/dashboard", { headers: {
+      [AUTHENTICATED_EMAIL_HEADER]: email,
+      [AUTHENTICATED_IDENTITY_SOURCE_HEADER]: AUTHENTICATED_IDENTITY_SOURCES.cloudflareAccess
+    } }))).toThrow("fresh provider sign-in");
+    expect(() => resolveRequestUser(new Request("https://example.test/api/dashboard", { headers: {
+      [AUTHENTICATED_EMAIL_HEADER]: email,
+      [AUTHENTICATED_IDENTITY_SOURCE_HEADER]: AUTHENTICATED_IDENTITY_SOURCES.cloudflareAccess,
+      [AUTHENTICATED_SESSION_ISSUED_AT_HEADER]: completed.updated_at
+    } }))).toThrow("predates account deletion");
+    const recreatedUserId = resolveRequestUser(new Request("https://example.test/api/dashboard", { headers: {
+      [AUTHENTICATED_EMAIL_HEADER]: email,
+      [AUTHENTICATED_IDENTITY_SOURCE_HEADER]: AUTHENTICATED_IDENTITY_SOURCES.authJsSession,
+      [AUTHENTICATED_SESSION_ISSUED_AT_HEADER]: freshLoginAt
+    } })).userId;
     expect(recreatedUserId).not.toBe(userId);
+    expect(fence.resolveAuthenticatedAccountGeneration(userId, freshLoginAt)).toBe(recreatedUserId);
     // A later fresh login does not remove the prior cutoff. Replaying the old timestamp remains
     // rejected, while the new account has a clean write epoch.
     expect(() => fence.resolveAuthenticatedAccountGeneration(userId, completed.updated_at))

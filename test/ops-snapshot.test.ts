@@ -68,6 +68,27 @@ describe("ops diagnostic snapshot", () => {
       userId,
       rothId
     );
+    db.insertProposal({
+      id: randomUUID(),
+      userId,
+      runId,
+      accountNumber: "ROTH-2",
+      proposal: {
+        symbol: "EXE",
+        side: "buy",
+        type: "market",
+        dollarAmount: 4,
+        timeInForce: "gfd",
+        marketHours: "regular_hours",
+        rationale: "Ops snapshot filled-state regression.",
+        tradeThesisTag: "Value-Quality",
+        entryMarketRegime: "Neutral"
+      },
+      decision: { approved: true, reasons: [] },
+      estimatedNotional: 4,
+      status: "filled",
+      executionMode: "broker/live"
+    });
 
     const { buildOpsSnapshot } = await import("../src/lib/ops-snapshot");
     const snapshot = buildOpsSnapshot({ runsPerUser: 5, auditPerUser: 5 });
@@ -80,6 +101,7 @@ describe("ops diagnostic snapshot", () => {
     expect(user!.accounts).toHaveLength(2);
     expect(user!.accounts.find((a) => a.connectedAccountId === rothId)?.label).toBe("Roth IRA");
     expect(user!.recentRuns.some((r) => r.connectedAccountId === rothId && r.summary?.includes("not available"))).toBe(true);
+    expect(user!.recentRuns.find((r) => r.id === runId)?.placedCount).toBe(1);
     expect(user!.recentAudit.some((a) => a.kind === "strategy_run" && a.accountLabel === "Roth IRA")).toBe(true);
 
     const { GET } = await import("../app/api/ops/snapshot/route");

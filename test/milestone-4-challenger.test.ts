@@ -107,15 +107,15 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
     // User query returns doc-1 with score 0.7
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: 0.7, metadata: { text: "Doc 1 User Version" } },
-        { id: "doc-2", score: 0.5, metadata: { text: "Doc 2 User Version" } }
+        { id: "doc-1", score: 0.7, metadata: { text: "Doc 1 User Version", userId: "user-1", scope: "private" } },
+        { id: "doc-2", score: 0.5, metadata: { text: "Doc 2 User Version", userId: "user-1", scope: "private" } }
       ]
     });
     // Local query returns doc-1 with score 0.9 (higher) and doc-3 with score 0.4
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: 0.9, metadata: { text: "Doc 1 Local/Public Version" } },
-        { id: "doc-3", score: 0.4, metadata: { text: "Doc 3 Local Version" } }
+        { id: "doc-1", score: 0.9, metadata: { text: "Doc 1 Local/Public Version", userId: "local", scope: "shared" } },
+        { id: "doc-3", score: 0.4, metadata: { text: "Doc 3 Local Version", userId: "local", scope: "shared" } }
       ]
     });
 
@@ -134,12 +134,12 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
 
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: 0.95, metadata: { text: "Doc 1 User Version" } }
+        { id: "doc-1", score: 0.95, metadata: { text: "Doc 1 User Version", userId: "user-1", scope: "private" } }
       ]
     });
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: 0.8, metadata: { text: "Doc 1 Local/Public Version" } }
+        { id: "doc-1", score: 0.8, metadata: { text: "Doc 1 Local/Public Version", userId: "local", scope: "shared" } }
       ]
     });
 
@@ -153,13 +153,13 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
 
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: undefined, metadata: { text: "Doc 1 User Version" } },
-        { id: "doc-2", score: 0.5, metadata: { text: "Doc 2 User Version" } }
+        { id: "doc-1", score: undefined, metadata: { text: "Doc 1 User Version", userId: "user-1", scope: "private" } },
+        { id: "doc-2", score: 0.5, metadata: { text: "Doc 2 User Version", userId: "user-1", scope: "private" } }
       ]
     });
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-3", score: 0.2, metadata: { text: "Doc 3 Local Version" } }
+        { id: "doc-3", score: 0.2, metadata: { text: "Doc 3 Local Version", userId: "local", scope: "shared" } }
       ]
     });
 
@@ -178,13 +178,13 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
 
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: 0.9, metadata: { text: "Doc 1" } },
-        { id: "doc-2", score: 0.8, metadata: { text: "Doc 2" } }
+        { id: "doc-1", score: 0.9, metadata: { text: "Doc 1", userId: "user-1", scope: "private" } },
+        { id: "doc-2", score: 0.8, metadata: { text: "Doc 2", userId: "user-1", scope: "private" } }
       ]
     });
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-3", score: 0.7, metadata: { text: "Doc 3" } }
+        { id: "doc-3", score: 0.7, metadata: { text: "Doc 3", userId: "local", scope: "shared" } }
       ]
     });
 
@@ -198,8 +198,8 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
 
     mocks.query.mockResolvedValueOnce({
       matches: [
-        { id: "doc-1", score: 0.9, metadata: {} },
-        { id: "doc-2", score: 0.8, metadata: { text: "Doc 2" } }
+        { id: "doc-1", score: 0.9, metadata: { userId: "user-1", scope: "private" } },
+        { id: "doc-2", score: 0.8, metadata: { text: "Doc 2", userId: "user-1", scope: "private" } }
       ]
     });
     mocks.query.mockResolvedValueOnce({

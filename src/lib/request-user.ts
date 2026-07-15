@@ -35,7 +35,10 @@ export function resolveRequestUser(request: Request): ResolvedRequestUser {
   const resolved = resolveRequestUserFromEmail(request.headers.get(AUTHENTICATED_EMAIL_HEADER));
   const identitySource = request.headers.get(AUTHENTICATED_IDENTITY_SOURCE_HEADER);
   const issuedAt = request.headers.get(AUTHENTICATED_SESSION_ISSUED_AT_HEADER);
-  if (identitySource === AUTHENTICATED_IDENTITY_SOURCES.authJsSession) {
+  if (
+    identitySource === AUTHENTICATED_IDENTITY_SOURCES.authJsSession ||
+    identitySource === AUTHENTICATED_IDENTITY_SOURCES.cloudflareAccess
+  ) {
     // Legacy cookies have no explicit provider-login time. They remain valid for accounts that
     // have never been deleted, but once an identity tombstone exists the generation resolver must
     // reject a missing/stale claim instead of silently mapping it back to the fenced base account.

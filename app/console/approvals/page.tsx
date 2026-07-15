@@ -8,6 +8,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { bulkApproveProposals, LiveConfirmationRequiredError, rejectProposal, type ApproveResult } from "../lib/api";
 import { fmtMoney } from "../lib/format";
 import { fetchPendingLearnedContext } from "../lib/learned-context";
+import { isSuccessfulApprovalResult } from "../lib/thesis";
 import { ApprovalCard } from "../components/approval-card";
 import { AlertCenter } from "../components/alert-center";
 import { Card, Chip, Btn, Select, TextInput } from "../ui/primitives";
@@ -171,8 +172,7 @@ export default function ApprovalsPage() {
   const resetSelection = () => setSelectedIds(new Set());
 
   const finishApproval = (result: ApproveResult) => {
-    if (result.status === "placed") return "placed";
-    if (result.status === "paper") return "placed";
+    if (isSuccessfulApprovalResult(result.status)) return "placed";
     if (result.status === "blocked") return "blocked";
     return "other";
   };

@@ -149,7 +149,14 @@ durable pending/retry job or awaiting it, and remains an explicit follow-up rath
   private, and legacy account-memory markers are exact-user filtered before receipt validation, rerank,
   candidate persistence, or prompting. Stale managed generations expand bounded provider topK using a
   local rejected-generation upper bound and emit a typed degraded receipt when the cap can still hide
-  eligible evidence. Account deletion holds the shared RAG-write lease and completes provider inventory,
+  eligible evidence. Private and shared query tiers retain independent bounded candidate pools until
+  cross-encoder reranking so dense-score saturation in one tier cannot erase recall from the other.
+  Transcript-derived decision memory uses an immutable rights-generation vector ID plus a durable work
+  lease bound to the exact Pinecone provider and SQLite namespace authority. Retrieval requires the
+  currently active rights generation; provider/manifest rotation fails closed. Rights withdrawal keeps
+  local receipts until provider delete/fetch/list verification is clean for multiple consecutive
+  observations, resetting the streak if an eventually-consistent vector reappears. Account deletion
+  holds the shared RAG-write lease and completes provider inventory,
   delete, and fetch-verification before removing local vector receipts or provider keys; globally deduplicated
   chunk text remains while any preserved shared occurrence references it, while durable local receipts recover
   private hashes on a retry after provider deletion. Provider-only inventory and
@@ -180,6 +187,9 @@ durable pending/retry job or awaiting it, and remains an explicit follow-up rath
 | `FMP_TRANSCRIPT_TTL_HOURS` | 24h | independent successful-refresh cadence |
 | `FMP_TRANSCRIPT_MAX_REQUESTS_PER_RUN` | 12 | exact cap across discovery, body requests, and retries; `0` pauses calls |
 | `FMP_TRANSCRIPT_MAX_PER_SYMBOL` | 2 | newest un-ingested fiscal periods attempted per symbol |
+| `VECTOR_ERASURE_VERIFY_ATTEMPTS` | 4 | bounded provider-absence observations before erasure may commit |
+| `VECTOR_ERASURE_VERIFY_CONSECUTIVE_CLEAN` | 3 | required consecutive clean observations; reappearance resets the streak |
+| `VECTOR_ERASURE_VERIFY_DELAY_MS` | 500 | initial delay between erasure observations (bounded exponential backoff) |
 
 ## Adding another source
 

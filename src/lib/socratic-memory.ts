@@ -1,5 +1,12 @@
+import { createHash, randomUUID } from "node:crypto";
 import type { ContextDocument, StoreContextsResult } from "./vector-db";
 import type { SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution } from "./types";
+
+// Every lifecycle update targets one stable Pinecone identity. Keep writes for a decision ordered
+// inside this process so a slow older embed cannot finish after a newer terminal-state embed and
+// overwrite it. Each queued write re-reads the current durable case, which also coalesces bursts of
+// placing/placed/outcome updates onto the newest SQLite truth.
+const decisionIndexQueues = new Map<string, Promise<StoreContextsResult>>();
 
 function compact(value: string | undefined, fallback: string = "n/a"): string {
   const trimmed = value?.replace(/\s+/g, " ").trim();
@@ -32,7 +39,8 @@ function finalAction(decision: SocraticDecisionCase): string {
 
 export function buildSocraticMemoryDocument(
   decision: SocraticDecisionCase,
-  accountEnvironment?: "paper" | "live"
+  accountEnvironment?: "paper" | "live",
+  options?: { fmpRightsGeneration?: number }
 ): ContextDocument {
   const symbol = decision.symbol ?? "PORTFOLIO";
   const criticCounterArgument =
@@ -69,7 +77,9 @@ export function buildSocraticMemoryDocument(
     `authority: ${decision.authority}`,
     `thesis_tag: ${decision.thesisTag ?? "n/a"}`,
     `entry_market_regime: ${decision.regime ?? "n/a"}`,
-    `broker_argument: ${compact(decision.thesis)} -- ${compact(decision.rationale)}`,
+    // Legacy rationale strings may contain an appended Red critique. Keep the institutional-memory
+    // Green argument clean whenever the structured Green text exists; Red has its own field below.
+    `broker_argument: ${compact(decision.thesis)} -- ${compact(decision.greenTeamRationale ?? decision.rationale)}`,
     `critic_counter_argument: ${compact(criticCounterArgument)}`,
     `policy_outcome: ${policyOutcome}`,
     `autonomy_override: ${override}`,
@@ -91,6 +101,11 @@ export function buildSocraticMemoryDocument(
       memory_scope: "account",
       decision_id: decision.id,
       final_action: finalAction(decision),
+      ...(options?.fmpRightsGeneration ? {
+        vector_id: fmpDerivedSocraticMemoryVectorId(decision, options.fmpRightsGeneration),
+        fmp_derived: true,
+        fmp_rights_generation: options.fmpRightsGeneration
+      } : {}),
       ...(decision.proposalId ? { proposal_id: decision.proposalId } : {}),
       ...(decision.runId ? { run_id: decision.runId } : {}),
       ...(decision.side ? { side: decision.side } : {}),
@@ -106,15 +121,123 @@ export function buildSocraticMemoryDocument(
   };
 }
 
-export async function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Promise<StoreContextsResult> {
-  const { getConnectedAccount } = await import("./db");
-  const { storeContexts } = await import("./vector-db");
-  const accountEnvironment = decision.connectedAccountId
-    ? getConnectedAccount(decision.connectedAccountId, decision.userId)?.environment
-    : undefined;
-  return storeContexts(
-    [buildSocraticMemoryDocument(decision, accountEnvironment)],
-    decision.userId,
-    { dedupKeyPrefix: "socratic-decision", scope: "private" }
-  );
+/** A licensed decision generation gets its own immutable provider identity. */
+export function fmpDerivedSocraticMemoryVectorId(
+  decision: Pick<SocraticDecisionCase, "id" | "userId">,
+  generation: number
+): string {
+  const digest = createHash("sha256")
+    .update(`${decision.userId}\u0000${decision.id}\u0000${generation}`, "utf8")
+    .digest("hex");
+  return `fmp-derived-socratic:v1:${digest}`;
+}
+
+export function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Promise<StoreContextsResult> {
+  const key = `${decision.userId}:${decision.id}`;
+  const prior = decisionIndexQueues.get(key);
+  const run = (prior ? prior.catch(() => undefined) : Promise.resolve()).then(async () => {
+    const { getConnectedAccount, getSocraticDecisionCase } = await import("./db");
+    const {
+      getCurrentVectorProviderAuthority,
+      managedVectorLedgerAuthority,
+      storeContexts
+    } = await import("./vector-db");
+    const current = getSocraticDecisionCase(decision.id, decision.userId) ?? decision;
+    const accountEnvironment = current.connectedAccountId
+      ? getConnectedAccount(current.connectedAccountId, current.userId)?.environment
+      : undefined;
+    const fmp = await import("./web-sources/fmp-transcripts");
+    const provenance = fmp.fmpTranscriptDerivedProvenance([
+      ...current.ragAttributions,
+      ...current.evidence,
+      ...current.dissent
+    ]);
+    if (provenance.length === 0) {
+      return storeContexts(
+        [buildSocraticMemoryDocument(current, accountEnvironment)],
+        current.userId,
+        { dedupKeyPrefix: "socratic-decision", scope: "private" }
+      );
+    }
+
+    // Centralize licensed-memory indexing here so initial decisions and every later lifecycle
+    // re-index use the same generation/work fence. A secondary call site cannot accidentally
+    // create an untracked FMP-derived vector by omitting an option.
+    const claim = fmp.captureFmpTranscriptRightsGeneration();
+    if (!claim) return { attempted: 0, indexed: 0, skipped: true };
+    const authorityGuard = {
+      assertOwnership: () => fmp.assertFmpTranscriptRightsGeneration(claim)
+    };
+    const providerAuthority = await getCurrentVectorProviderAuthority({
+      userId: current.userId,
+      leaseGuard: authorityGuard
+    });
+    authorityGuard.assertOwnership();
+    // A durable deletion receipt must identify the physical provider before any upsert can occur.
+    // If the index does not yet exist or cannot be described, skip this derivative rather than
+    // creating provider work whose future erasure cannot be proved.
+    if (!providerAuthority) {
+      return { attempted: 0, indexed: 0, skipped: true, unconfigured: true };
+    }
+    const ledgerAuthority = managedVectorLedgerAuthority();
+    const providerWorkId = `fmp-derived:index:${current.id}:${claim.generation}:${randomUUID()}`;
+    const providerVectorId = fmpDerivedSocraticMemoryVectorId(current, claim.generation);
+    fmp.persistFmpTranscriptDerivedArtifact({
+      claim,
+      artifactType: "strategy-decision",
+      artifactId: current.id,
+      userId: current.userId,
+      provenance,
+      providerWorkId,
+      providerVectorId,
+      providerAuthority,
+      ledgerAuthority,
+      write: () => undefined
+    });
+
+    const abortController = new AbortController();
+    const abortLostWork = (reason: unknown) => {
+      if (!abortController.signal.aborted) {
+        abortController.abort(reason instanceof Error ? reason : new Error(String(reason)));
+      }
+    };
+    const leaseGuard = {
+      signal: abortController.signal,
+      expectedProviderAuthority: providerAuthority,
+      expectedLedgerAuthority: ledgerAuthority,
+      assertOwnership: () => fmp.assertFmpTranscriptDerivedProviderWorkOwnership(providerWorkId, claim)
+    };
+    leaseGuard.assertOwnership();
+    const heartbeat = setInterval(() => {
+      try {
+        if (!fmp.renewFmpTranscriptDerivedProviderWork(providerWorkId, claim)) {
+          throw new Error("FMP transcript derived provider-work lease was lost.");
+        }
+      } catch (error) {
+        abortLostWork(error);
+      }
+    }, 5 * 60_000);
+    heartbeat.unref?.();
+    let terminalOutcome: "completed" | "no_provider_write" | "provider_write_unknown" =
+      "provider_write_unknown";
+    try {
+      const result = await storeContexts(
+        [buildSocraticMemoryDocument(current, accountEnvironment, {
+          fmpRightsGeneration: claim.generation
+        })],
+        current.userId,
+        { dedupKeyPrefix: "socratic-decision", scope: "private", leaseGuard }
+      );
+      terminalOutcome = result.indexed > 0 ? "completed" : "no_provider_write";
+      return result;
+    } finally {
+      clearInterval(heartbeat);
+      fmp.completeFmpTranscriptDerivedProviderWork(providerWorkId, terminalOutcome);
+    }
+  });
+  decisionIndexQueues.set(key, run);
+  void run.finally(() => {
+    if (decisionIndexQueues.get(key) === run) decisionIndexQueues.delete(key);
+  }).catch(() => undefined);
+  return run;
 }

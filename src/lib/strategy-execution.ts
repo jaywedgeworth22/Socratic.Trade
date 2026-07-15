@@ -1,16 +1,24 @@
 import { getBrokerGateway } from "./broker";
 import { evaluateBrokerHeldExitAvailability, brokerHeldExitBlockReason } from "./broker-held-orders";
 import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
-import { isRejectedOrCanceledState } from "./broker-side";
-import { audit, clearStopPlans, recordStopPlan } from "./db";
+import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState } from "./broker-side";
+import { audit, clearStopPlans, getDb, recordStopPlan } from "./db";
 import { getActiveConnectedAccount } from "./db-api-keys";
 import { acquireStrategyLock, dailyExecutionStats, notionalInLastMinutes, countDayTradesInLastBusinessDays, releaseStrategyLock } from "./db-execution";
 import { listPendingBrokerReconciliationFills, updateFillEvent, listFillEventsByProposalId } from "./db-fills";
 import { resolveBrokerVerificationNotifications } from "./db-notifications";
 import { getPolicy } from "./db-profiles";
 import { getProposal, updatePendingProposalReprice, updateProposalStatus, transitionProposalIfPending, claimProposalForExecution, listStalePlacingProposals } from "./db-proposals";
+import { upsertSocraticDecisionCase } from "./db-socratic";
 import { emitDashboardEvent } from "./events";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
+import {
+  assessFinalSizeConsentDrift,
+  captureProposalSizingSnapshot,
+  proposalForFinalSizeRedReview,
+  redTeamSizingFromSnapshot,
+  stampRedTeamResult
+} from "./finalized-sizing-review";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { scanMarket, mergeQuoteData } from "./market";
 import { normalizeSymbol } from "./money";
@@ -20,10 +28,13 @@ import { allowedSymbolsForPolicy, estimateNotional, applyOpeningOrderHeadroom, e
 import { effectiveDailyOpeningNotionalCap } from "./policy-caps";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { repriceStoredProtectiveExit, assessProtectiveExitRepriceDrift } from "./protective-exit-routing";
+import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
+import { describeRedTeamFailureKind } from "./red-team-routing";
+import { buildSocraticDecisionCase } from "./socratic-runtime";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { getUserWashSaleLockProvenance } from "./tax";
 import { ExecutionMode, FillEvent, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, FillSource } from "./types";
-import { approvedEscalationsFromDecision, shouldEscalateDecision } from "./strategy-risk";
+import { applyRedTeamHalfSize, approvedEscalationsFromDecision, isRiskAddingOpening, shouldEscalateDecision } from "./strategy-risk";
 import {
   createExecuteProposalLockOwner,
   startStrategyLockGuard,
@@ -50,10 +61,147 @@ export class LiveApprovalConfirmationError extends Error {
   }
 }
 export type PlacementReconcileOutcome =
-  | { kind: "placed"; orderId: string; state: string; fill?: FillEvent; alreadyBooked: boolean }
+  | { kind: "placed"; orderId: string; state: string; fillStatus: ReconciledFillStatus; fill?: FillEvent; alreadyBooked: boolean }
   | { kind: "declined"; orderId: string; state: string }
   | { kind: "not_placed" }
   | { kind: "uncertain"; error: string };
+
+type ReconciledFillStatus = "filled" | "partially_filled" | "pending_reconciliation";
+
+type ExecutionTruth = {
+  quantity: number;
+  price: number;
+  notional: number;
+};
+
+function bookedExecutionTruth(fill: FillEvent | undefined): ExecutionTruth | undefined {
+  if (!fill || (fill.status !== "partially_filled" && fill.status !== "filled")) return undefined;
+  if (!Number.isFinite(fill.quantity) || fill.quantity <= 0 || !Number.isFinite(fill.price) || fill.price <= 0) return undefined;
+  return { quantity: fill.quantity, price: fill.price, notional: Math.abs(fill.quantity * fill.price) };
+}
+
+function positiveFinite(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function persistedBrokerQuantityFloor(fill: FillEvent | undefined): number {
+  if (!fill) return 0;
+  const raw = (fill.raw ?? {}) as {
+    maxBrokerFilledQuantity?: unknown;
+    execution?: { filledQuantity?: unknown };
+    reconciliation?: { filledQuantity?: unknown };
+    order?: { filledQuantity?: unknown };
+  };
+  const candidates = [
+    fill.status === "filled" || fill.status === "partially_filled" ? positiveFinite(fill.quantity) : undefined,
+    positiveFinite(raw.maxBrokerFilledQuantity),
+    positiveFinite(raw.execution?.filledQuantity),
+    positiveFinite(raw.reconciliation?.filledQuantity),
+    positiveFinite(raw.order?.filledQuantity)
+  ].filter((value): value is number => value !== undefined);
+  return candidates.length > 0 ? Math.max(...candidates) : 0;
+}
+
+function reconciliationRaw(fill: FillEvent, order: EquityOrder, knownQuantity: number): Record<string, unknown> {
+  return {
+    ...((fill.raw as Record<string, unknown>) ?? {}),
+    reconciliation: order,
+    ...(knownQuantity > 0 ? { maxBrokerFilledQuantity: knownQuantity } : {})
+  };
+}
+
+function brokerExecutionTruth(order: { filledQuantity?: number | null; averagePrice?: number | null }): ExecutionTruth | undefined {
+  if (!hasBrokerReportedPricedFill(order)) return undefined;
+  const quantity = order.filledQuantity!;
+  const price = order.averagePrice!;
+  return { quantity, price, notional: Math.abs(quantity * price) };
+}
+
+/** Merge cumulative broker execution monotonically. Broker order snapshots can arrive out of
+ * order, so a smaller/later-zero snapshot must never unbook exposure already persisted from a
+ * priced partial fill. Conversely, a larger quantity without a realized average price remains
+ * unresolved instead of borrowing the old/proposal price for shares whose execution cost is
+ * unknown. */
+function mergedExecutionTruth(
+  order: { filledQuantity?: number | null; averagePrice?: number | null },
+  existing?: FillEvent
+): { truth?: ExecutionTruth; knownQuantity: number; unresolvedGrowth: boolean } {
+  const prior = bookedExecutionTruth(existing);
+  const reported = brokerExecutionTruth(order);
+  const reportedQuantity = hasBrokerReportedFill(order) ? order.filledQuantity! : 0;
+  const knownQuantity = Math.max(persistedBrokerQuantityFloor(existing), reportedQuantity);
+
+  if (reported && reported.quantity >= knownQuantity && (!prior || reported.quantity >= prior.quantity)) {
+    return { truth: reported, knownQuantity, unresolvedGrowth: false };
+  }
+  if (prior) {
+    return {
+      truth: prior,
+      knownQuantity,
+      unresolvedGrowth: knownQuantity > prior.quantity
+    };
+  }
+  return { truth: undefined, knownQuantity, unresolvedGrowth: knownQuantity > 0 };
+}
+
+/** Convert raw broker lifecycle into accounting truth. A terminal state with positive executed
+ * quantity AND a realized broker price is a final execution, not a decline. Existing booked
+ * execution is monotonic: stale snapshots cannot downgrade it, while unpriced growth remains
+ * pending reconciliation. */
+function reconciledFillStatus(
+  order: { state: string; filledQuantity?: number | null; averagePrice?: number | null },
+  existing?: FillEvent
+): ReconciledFillStatus {
+  const merged = mergedExecutionTruth(order, existing);
+  if (merged.unresolvedGrowth) return merged.truth ? "partially_filled" : "pending_reconciliation";
+  if (existing?.status === "filled" && merged.truth) return "filled";
+  if (!merged.truth) return "pending_reconciliation";
+  if (order.state === "filled" || isRejectedOrCanceledState(order.state)) return "filled";
+  if (order.state === "partially_filled" || existing?.status === "partially_filled") return "partially_filled";
+  return "pending_reconciliation";
+}
+
+function brokerExecutedNotional(order: { filledQuantity?: number | null; averagePrice?: number | null }): number | undefined {
+  return brokerExecutionTruth(order)?.notional;
+}
+
+/** Commit an opening stop plan only after broker truth proves some execution. Reconciliation paths
+ * may be the first point where that proof exists, including a terminal partial fill. */
+async function commitRecoveredOpeningStopPlan(input: {
+  gateway: BrokerGateway;
+  accountNumber: string;
+  userId: string;
+  proposal: TradeProposal;
+  price: number;
+}): Promise<void> {
+  const { proposal } = input;
+  if (!proposal.stopPlan || (proposal.side !== "buy" && proposal.side !== "short")) return;
+  try {
+    if (proposal.stopPlan.style === "default") {
+      clearStopPlans(input.accountNumber, [proposal.symbol], input.userId);
+      return;
+    }
+    let basis = input.price;
+    try {
+      const positions = await input.gateway.getEquityPositions(input.accountNumber);
+      basis = positions.find((position) => normalizeSymbol(position.symbol) === normalizeSymbol(proposal.symbol))?.averageCost ?? basis;
+    } catch {
+      // The broker fill price remains a valid fallback for a fresh position.
+    }
+    recordStopPlan(
+      input.accountNumber,
+      proposal.symbol,
+      proposal.stopPlan.style,
+      proposal.stopPlan.rationale,
+      basis,
+      input.userId,
+      undefined,
+      proposal.side === "short" ? "short" : "long"
+    );
+  } catch {
+    // Stop-plan bookkeeping must never reverse a durable broker-fill receipt.
+  }
+}
 export async function executeProposal(
   proposalId: string,
   userId: string = "local",
@@ -88,6 +236,10 @@ export async function executeProposal(
 
   // `let`: an approval-held protective exit is repriced against the fresh approval-time quote below.
   let proposal = row.proposal;
+  // A prior approval attempt can persist a fresh Red objection against an execution-time broker
+  // bump. This click explicitly confirms THAT stored size/verdict. Consume it once below only if
+  // the order shape stays unchanged; a new bump gets its own review and cannot inherit consent.
+  let ownerApprovedStoredFinalSize = proposal.finalSizeReview?.ownerApprovalRequired === true;
   assertLiveApprovalConfirmation({
     executionMode,
     confirmation: options.liveConfirmation,
@@ -286,6 +438,181 @@ export async function executeProposal(
             userId,
             policy.connectedAccountId
           );
+
+          // Consent attached to an earlier execution shape does not carry over to this new one.
+          ownerApprovedStoredFinalSize = false;
+          if (isRiskAddingOpening(proposal, account.positions)) {
+            const fullBumpedReview = review;
+            const fullBumpedSizing = { quantity: proposal.quantity, dollarAmount: proposal.dollarAmount };
+            proposal.sizingSnapshot = captureProposalSizingSnapshot({
+              proposal,
+              estimatedNotional: fullBumpedReview.estimatedNotional,
+              policy,
+              portfolioValue: account.portfolio.totalMarketValue,
+              dailyNotionalUsed: daily.notional
+            });
+            const quote = approvalScan.topCandidates.find(
+              (candidate) => normalizeSymbol(candidate.symbol) === normalizeSymbol(proposal.symbol)
+            );
+            const approvalRedContext: RedTeamReviewContext = {
+              currentDate: new Date().toISOString().slice(0, 10),
+              currentMarketRegime: proposal.entryMarketRegime,
+              portfolio: account.portfolio,
+              positions: account.positions,
+              limits: {
+                maxOrderNotional: policy.maxOrderNotional,
+                maxDailyNotional: policy.maxDailyNotional,
+                maxDailyPctOfNav: policy.maxDailyPctOfNav,
+                dailyNotionalUsed: daily.notional,
+                hourlyNotionalUsed: hourly.notional
+              },
+              candidatesUnderReview: quote ? [quote] : []
+            };
+            let finalRed: RedTeamDebateResult;
+            try {
+              finalRed = await debateProposal(
+                proposalForFinalSizeRedReview(proposal),
+                quote,
+                userId,
+                policy,
+                {
+                  context: approvalRedContext,
+                  sizing: redTeamSizingFromSnapshot(proposal.sizingSnapshot)
+                }
+              );
+            } catch (error) {
+              finalRed = {
+                rejected: false,
+                available: false,
+                reason: `Final-size Red Team review threw unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
+                failureKind: "provider_error"
+              };
+            }
+            lockGuard.assertOwned();
+            stampRedTeamResult(proposal, finalRed);
+            proposal.preVetoReasons = proposal.preVetoReasons?.filter(
+              (reason) => !reason.startsWith("red_team_veto:")
+            );
+            if (proposal.preVetoReasons?.length === 0) delete proposal.preVetoReasons;
+
+            let ownerApprovalReason: string | undefined;
+            if (!finalRed.available) {
+              ownerApprovalReason = `The final broker-adjusted size could not be re-reviewed by Red (${describeRedTeamFailureKind(finalRed.failureKind)}): ${finalRed.reason}`;
+            } else if (finalRed.rejected || finalRed.verdict === "reject") {
+              ownerApprovalReason = `Red rejected the final broker-adjusted size: ${finalRed.reason}`;
+            } else if (finalRed.verdict === "approve-at-half") {
+              const haircut = applyRedTeamHalfSize(proposal);
+              if (!haircut.applied) {
+                ownerApprovalReason = `Red authorized only half size, but that size is not executable: ${haircut.note}`;
+              } else {
+                const haircutReview = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+                lockGuard.assertOwned();
+                const haircutBlock = describeBrokerMinimumOrderBlock(haircutReview, policy.activeBroker, {
+                  ...proposal,
+                  positionQuantity: heldForMinimumGuard?.quantity
+                });
+                if (haircutBlock) {
+                  // Restore the full, already broker-reviewed bump. Never feed the haircut back into
+                  // the bump planner: that would negate Red's one allowed down-only intervention.
+                  Object.assign(proposal, fullBumpedSizing);
+                  review = fullBumpedReview;
+                  proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                    proposal,
+                    estimatedNotional: fullBumpedReview.estimatedNotional,
+                    policy,
+                    portfolioValue: account.portfolio.totalMarketValue,
+                    dailyNotionalUsed: daily.notional
+                  });
+                  ownerApprovalReason = `Red authorized only half size, but the broker rejects that haircut: ${haircutBlock}`;
+                } else {
+                  review = haircutReview;
+                  proposal.sizingSnapshot = captureProposalSizingSnapshot({
+                    proposal,
+                    estimatedNotional: haircutReview.estimatedNotional,
+                    policy,
+                    portfolioValue: account.portfolio.totalMarketValue,
+                    dailyNotionalUsed: daily.notional
+                  });
+                  proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at half: ${finalRed.reason} [${haircut.note}]`;
+                  audit(
+                    "red_team_approved_at_half_after_broker_minimum",
+                    { proposalId, symbol: proposal.symbol, side: proposal.side, model: finalRed.model, haircut: haircut.note, finalNotional: haircutReview.estimatedNotional, action: "approval" },
+                    userId,
+                    policy.connectedAccountId
+                  );
+                }
+              }
+            } else {
+              proposal.rationale += `\n\nRed Team review — final broker-adjusted size approved at full size: ${finalRed.reason}`;
+            }
+
+            proposal.finalSizeReview = {
+              trigger: "broker_minimum_bump",
+              fromNotional: bumpPlan.fromNotional,
+              toNotional: fullBumpedReview.estimatedNotional,
+              reviewedAt: new Date().toISOString(),
+              ownerApprovalRequired: Boolean(ownerApprovalReason),
+              ...(ownerApprovalReason
+                ? { ownerApprovalReason, ownerApprovalNotional: review.estimatedNotional }
+                : {})
+            };
+            audit(
+              "red_team_rereview_after_broker_minimum",
+              {
+                proposalId,
+                symbol: proposal.symbol,
+                side: proposal.side,
+                fromNotional: bumpPlan.fromNotional,
+                bumpedNotional: fullBumpedReview.estimatedNotional,
+                finalNotional: review.estimatedNotional,
+                verdict: finalRed.verdict,
+                available: finalRed.available,
+                model: finalRed.model,
+                ownerApprovalRequired: Boolean(ownerApprovalReason),
+                ownerApprovalReason,
+                action: "approval"
+              },
+              userId,
+              policy.connectedAccountId
+            );
+
+            if (ownerApprovalReason) {
+              proposal.rationale += `\n\nRed Team review — final broker-adjusted size requires owner approval: ${ownerApprovalReason}`;
+              const pendingDecision: PolicyDecision = {
+                ...row.decision,
+                approved: false,
+                reasons: [...new Set([...(row.decision.reasons ?? []), ownerApprovalReason])],
+                ...(!finalRed.available
+                  ? { adversaryUnavailable: true, adversaryUnavailableReason: ownerApprovalReason }
+                  : { adversaryUnavailable: undefined, adversaryUnavailableReason: undefined })
+              };
+              const persisted = updatePendingProposalReprice(
+                proposalId,
+                { proposal, review, estimatedNotional: review.estimatedNotional, decision: pendingDecision },
+                userId
+              );
+              if (!persisted) {
+                const current = getProposal(proposalId, userId)?.status ?? "removed";
+                return { status: current, reasons: [`Proposal was ${current} before the final-size review could be saved.`] };
+              }
+              await sendNotification(
+                {
+                  type: "pending_approval",
+                  title: `${proposal.symbol} broker-adjusted size needs your approval`,
+                  payload: { proposalId, proposal, review, decision: pendingDecision, reason: ownerApprovalReason }
+                },
+                { policy, userId }
+              );
+              return { status: "proposed", reasons: [ownerApprovalReason] };
+            }
+          }
+
+          // Persist successful execution-time sizing before later policy checks. If one of those
+          // checks blocks, the ledger/case still describes the exact order it evaluated.
+          if (!updatePendingProposalReprice(proposalId, { proposal, review, estimatedNotional: review.estimatedNotional }, userId)) {
+            const current = getProposal(proposalId, userId)?.status ?? "removed";
+            return { status: current, reasons: [`Proposal was ${current} before the broker-adjusted size could be saved.`] };
+          }
         } else {
           Object.assign(proposal, originalSizing);
           review = originalReview;
@@ -303,7 +630,7 @@ export async function executeProposal(
         userId,
         policy.connectedAccountId
       );
-      if (shouldAlertBrokerMinimumOrderBlock(policy.accountNumber, proposal.symbol)) {
+      if (shouldAlertBrokerMinimumOrderBlock(userId, policy.accountNumber, proposal.symbol)) {
         await sendNotification(
           {
             type: "block",
@@ -314,6 +641,99 @@ export async function executeProposal(
         );
       }
       return { status: "blocked", reasons: [brokerMinimumBlockReason] };
+    }
+
+    if (ownerApprovedStoredFinalSize) {
+      const storedFinalSizeReview = proposal.finalSizeReview as NonNullable<TradeProposal["finalSizeReview"]>;
+      const consentedNotional = storedFinalSizeReview.ownerApprovalNotional ?? storedFinalSizeReview.toNotional;
+      const consentDrift = assessFinalSizeConsentDrift(consentedNotional, review.estimatedNotional);
+      if (consentDrift.materialIncrease) {
+        const requotedAt = new Date().toISOString();
+        const driftReason = `The broker's fresh estimate increased from $${consentedNotional.toFixed(2)} to $${review.estimatedNotional.toFixed(2)} (${(consentDrift.increasePct ?? 0).toFixed(2)}%) after your final-size approval. Approve the updated amount again before placement.`;
+        proposal.finalSizeReview = {
+          ...storedFinalSizeReview,
+          ownerApprovalRequired: true,
+          ownerApprovalNotional: review.estimatedNotional,
+          ownerApprovalRequoteReason: driftReason,
+          ownerApprovalRequotedAt: requotedAt
+        };
+        proposal.sizingSnapshot = captureProposalSizingSnapshot({
+          proposal,
+          estimatedNotional: review.estimatedNotional,
+          policy,
+          portfolioValue: account.portfolio.totalMarketValue,
+          dailyNotionalUsed: daily.notional
+        });
+        const pendingDecision: PolicyDecision = {
+          ...row.decision,
+          approved: false,
+          reasons: [...new Set([...(row.decision.reasons ?? []), driftReason])]
+        };
+        const persisted = updatePendingProposalReprice(
+          proposalId,
+          { proposal, review, estimatedNotional: review.estimatedNotional, decision: pendingDecision },
+          userId
+        );
+        audit(
+          "final_size_owner_consent_requoted",
+          {
+            proposalId,
+            symbol: proposal.symbol,
+            side: proposal.side,
+            consentedNotional,
+            freshNotional: review.estimatedNotional,
+            increase: consentDrift.increase,
+            increasePct: consentDrift.increasePct,
+            tolerance: consentDrift.tolerance,
+            persisted,
+            action: "approval"
+          },
+          userId,
+          policy.connectedAccountId
+        );
+        if (!persisted) {
+          const current = getProposal(proposalId, userId)?.status ?? "removed";
+          return { status: current, reasons: [`Proposal was ${current} before the updated owner consent could be saved.`] };
+        }
+        await sendNotification(
+          {
+            type: "pending_approval",
+            title: `${proposal.symbol} final size increased — approval needed again`,
+            payload: { proposalId, proposal, review, decision: pendingDecision, reason: driftReason }
+          },
+          { policy, userId }
+        );
+        return { status: "proposed", reasons: [driftReason] };
+      }
+
+      const approvedAt = new Date().toISOString();
+      proposal.finalSizeReview = {
+        ...(proposal.finalSizeReview as NonNullable<TradeProposal["finalSizeReview"]>),
+        ownerApprovalRequired: false,
+        ownerOverrideAppliedAt: approvedAt
+      };
+      if (proposal.redTeamVerdict) {
+        proposal.redTeamVerdict = { ...proposal.redTeamVerdict, humanOverrideApplied: true };
+      }
+      if (!updatePendingProposalReprice(proposalId, { proposal, review, estimatedNotional: review.estimatedNotional }, userId)) {
+        const current = getProposal(proposalId, userId)?.status ?? "removed";
+        return { status: current, reasons: [`Proposal was ${current} before owner approval could be recorded.`] };
+      }
+      audit(
+        "final_size_red_review_owner_override",
+        {
+          proposalId,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          reviewedAt: proposal.finalSizeReview.reviewedAt,
+          approvedAt,
+          reason: proposal.finalSizeReview.ownerApprovalReason,
+          verdict: proposal.redTeamVerdict?.verdict,
+          available: proposal.redTeamVerdict?.available
+        },
+        userId,
+        policy.connectedAccountId
+      );
     }
 
     const isLiveExecution = executionState.environment === "live";
@@ -569,7 +989,44 @@ export async function executeProposal(
     // `proposal` persists execution-time sizing (broker-minimum bump / approval-time reprice) into
     // the row before placement, so crash-recovery books any fill at the size actually sent and
     // Recent/Activity show the executed order rather than the stale original ask.
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal })) {
+    const decisionCaseNow = new Date().toISOString();
+    const fallbackDecisionCase = {
+      ...buildSocraticDecisionCase({
+        userId,
+        connectedAccountId: policy.connectedAccountId,
+        runId: row.runId,
+        proposalId,
+        accountNumber: row.accountNumber,
+        proposal,
+        status: "proposed",
+        authority: policy.strategyAuthority,
+        decision,
+        review,
+        marketScan: approvalScan,
+        ragAttributions: []
+      }),
+      createdAt: decisionCaseNow,
+      updatedAt: decisionCaseNow
+    };
+    let claimed = false;
+    try {
+      claimed = claimProposalForExecution(proposalId, "placing", userId, {
+        review,
+        estimatedNotional: review.estimatedNotional,
+        refId,
+        executionMode,
+        proposal,
+        decision,
+        createSocraticDecisionCase: () => {
+          upsertSocraticDecisionCase(fallbackDecisionCase);
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      audit("proposal_claim_receipt_failed", { proposalId, symbol: proposal.symbol, side: proposal.side, error: message }, userId, policy.connectedAccountId);
+      return { status: "error", reasons: [`Decision receipt could not be persisted; no order was submitted: ${message}`] };
+    }
+    if (!claimed) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
@@ -596,8 +1053,15 @@ export async function executeProposal(
         runId: row.runId
       });
       if (outcome.kind === "placed") {
-        const fillStatus = outcome.state === "filled" ? "filled" : "pending_reconciliation";
-        updateProposalStatus(proposalId, fillStatus === "filled" ? "filled" : "placed", outcome.orderId, review, review.estimatedNotional, userId);
+        const fillStatus = outcome.fillStatus;
+        updateProposalStatus(
+          proposalId,
+          fillStatus === "filled" ? "filled" : "placed",
+          outcome.orderId,
+          review,
+          fillStatus === "filled" ? outcome.fill?.notional ?? review.estimatedNotional : review.estimatedNotional,
+          userId
+        );
         auditWashSaleProceed(decision, { proposalId, symbol: sym, side: proposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId: policy.connectedAccountId });
         audit("order_placement_recovered_inline", { proposalId, refId, orderId: outcome.orderId, state: outcome.state, alreadyBooked: outcome.alreadyBooked, symbol: sym, side: proposal.side, path: "approval" }, userId, policy.connectedAccountId);
         resolveBrokerVerificationNotifications(userId, { proposalId, refId, resolution: "recovered" });
@@ -641,7 +1105,7 @@ export async function executeProposal(
     // See the matching comment in the autonomous run-loop placement path above: a non-throwing
     // broker response can still be a synchronous rejection/cancellation, and that must not be
     // recorded as "placed".
-    if (isRejectedOrCanceledState(execution.state)) {
+    if (isRejectedOrCanceledState(execution.state) && !hasBrokerReportedFill(execution)) {
       const message = `Broker declined the order (state: ${execution.state}).`;
       updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
       audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, policy.connectedAccountId);
@@ -652,30 +1116,67 @@ export async function executeProposal(
       return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
     }
 
-    updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
-    const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
+    const fillStatus = reconciledFillStatus(execution);
+    const proposalStatus = fillStatus === "filled" ? "filled" : "placed";
+    if (!execution.orderId && fillStatus !== "filled") {
+      const message = `Broker returned ${execution.state} without an order id; keeping the idempotent intent pending until refId reconciliation confirms the order.`;
+      updateProposalStatus(proposalId, "placing", undefined, review, review.estimatedNotional, userId, undefined, message);
+      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, brokerState: execution.state, missingOrderId: true }, userId, policy.connectedAccountId);
+      await sendNotification(
+        { type: "run_failed", title: `${proposal.symbol} order accepted without broker id — recovery pending`, payload: { proposalId, refId, state: execution.state, reconcile: "uncertain" } },
+        { policy, userId }
+      );
+      return { status: "error", reasons: [message], brokerState: execution.state };
+    }
+    const executedNotional = brokerExecutedNotional(execution);
     const preFillPosition = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
-    const fill = recordFillFromProposal({
-      userId,
-      connectedAccountId: policy.connectedAccountId,
-      accountNumber: row.accountNumber,
-      proposalId,
-      runId: row.runId,
-      source: executionSource,
-      executionMode,
-      proposal,
-      review,
-      execution,
-      marketScan: approvalScan,
-      status: fillStatus,
-      existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
-    });
+    let fill!: FillEvent;
+    // The broker call has already succeeded. Commit its receipt FIRST and the proposal/case status
+    // in the same transaction; if receipt persistence fails, the transaction leaves `placing` so
+    // the refId-based stale sweep can recover the real broker order instead of stranding it.
+    try {
+      getDb().transaction(() => {
+        fill = recordFillFromProposal({
+          userId,
+          connectedAccountId: policy.connectedAccountId,
+          accountNumber: row.accountNumber,
+          proposalId,
+          runId: row.runId,
+          source: executionSource,
+          executionMode,
+          proposal,
+          review,
+          execution,
+          marketScan: approvalScan,
+          status: fillStatus,
+          existingPosition: preFillPosition ? { averageCost: preFillPosition.averageCost, quantity: preFillPosition.quantity } : undefined
+        });
+        updateProposalStatus(
+          proposalId,
+          proposalStatus,
+          execution.orderId,
+          review,
+          fillStatus === "filled" ? executedNotional ?? fill.notional : review.estimatedNotional,
+          userId
+        );
+      }).immediate();
+    } catch (receiptError) {
+      const detail = receiptError instanceof Error ? receiptError.message : String(receiptError);
+      const message = `Broker confirmed order ${execution.orderId}, but its local fill receipt could not be committed: ${detail}`;
+      updateProposalStatus(proposalId, "placing", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+      audit("order_placement_uncertain", { proposalId, refId, orderId: execution.orderId, symbol: proposal.symbol, side: proposal.side, brokerState: execution.state, receiptPersistenceFailed: true, error: detail }, userId, policy.connectedAccountId);
+      await sendNotification(
+        { type: "run_failed", title: `${proposal.symbol} broker order confirmed — local receipt recovery pending`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state, error: detail, reconcile: "uncertain" } },
+        { policy, userId }
+      );
+      return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
+    }
     audit("proposal_approved", {
       proposalId,
       symbol: proposal.symbol,
       side: proposal.side,
       action: "approval",
-      result: "placed",
+      result: proposalStatus,
       orderId: execution.orderId,
       brokerState: execution.state,
       fillStatus
@@ -683,7 +1184,9 @@ export async function executeProposal(
     await sendNotification(
       {
         type: "fill",
-        title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
+        title: isRejectedOrCanceledState(execution.state) && hasBrokerReportedFill(execution)
+          ? `${proposal.symbol} partially filled, then ${execution.state}`
+          : `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} ${execution.state}`,
         payload: { proposalId, fill }
       },
       { policy, userId }
@@ -691,7 +1194,7 @@ export async function executeProposal(
     // Push so other open dashboards refresh immediately (the approving client refreshes via its
     // own response).
     emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
-    return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
+    return { status: proposalStatus, orderId: execution.orderId, brokerState: execution.state, fillStatus };
   } catch (error) {
     if (error instanceof StrategyLockOwnershipLostError) {
       return { status: "busy", reasons: [error.message] };
@@ -730,8 +1233,6 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
       const matched = brokerOrders.find((bo) => bo.id === fill.brokerOrderId);
       if (!matched) continue;
 
-      const execQty = matched.filledQuantity ?? 0;
-      const execPrice = matched.averagePrice ?? fill.price;
       // The stop plan couldn't be committed at placement time — this order was still
       // pending_reconciliation then, and a canceled/expired-with-nothing-executed order must never
       // leave a plan row governing a lot that never opened (Codex review, PR #1371). Any executed
@@ -767,55 +1268,60 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           }
         }
       };
-      // Book the executed portion of an order. Idempotent: reconcile UPDATES the
-      // existing fill record (by fill.id), so a later poll overwriting with a larger
-      // executed quantity never double counts; the realtime trade_updates stream funnels
-      // into the same record too.
-      const bookExecuted = async (auditStatus: string) => {
-        updateFillEvent(fill.id, {
-          status: matched.state === "partially_filled" ? "partially_filled" : "filled",
-          price: execPrice,
-          quantity: execQty,
-          notional: execPrice * execQty,
-          filledAt: matched.updatedAt ?? new Date().toISOString(),
-          raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
-        }, userId);
-        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId, connectedAccountId);
-        await commitStopPlanIfOpening(execPrice);
-      };
+      const merged = mergedExecutionTruth(matched, fill);
+      const receiptStatus = reconciledFillStatus(matched, fill);
+      const raw = reconciliationRaw(fill, matched, merged.knownQuantity);
 
-      if (matched.state === "filled") {
-        const price = matched.averagePrice ?? fill.price;
-        const qty = matched.filledQuantity ?? fill.quantity;
-        updateFillEvent(fill.id, {
-          status: "filled",
-          price,
-          quantity: qty,
-          notional: price * qty,
-          filledAt: matched.updatedAt ?? new Date().toISOString(),
-          raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
+      if (merged.truth && (receiptStatus === "filled" || receiptStatus === "partially_filled")) {
+        const truth = merged.truth;
+        const writeReceipt = () => updateFillEvent(fill.id, {
+          status: receiptStatus,
+          price: truth.price,
+          quantity: truth.quantity,
+          notional: truth.notional,
+          filledAt: matched.updatedAt ?? fill.filledAt,
+          raw
         }, userId);
-        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId, connectedAccountId);
-        await commitStopPlanIfOpening(price);
-        // An order reaching "filled" PROVES it was placed, so clear any lingering "verify with
-        // broker" uncertain alert for that proposal (only on a full fill — not while still working).
-        if (fill.proposalId) resolveBrokerVerificationNotifications(userId, { proposalId: fill.proposalId, resolution: "placed" });
-      } else if (matched.state === "partially_filled") {
-        // A live order that has executed some-but-not-all shares: book the executed
-        // portion now so it enters P&L/exposure instead of being silently dropped.
-        if (execQty > 0) await bookExecuted("partially_filled");
-      } else if (isRejectedOrCanceledState(matched.state)) {
-        if (execQty > 0) {
-          // Order terminated AFTER a partial execution — book the executed shares
-          // rather than marking the whole fill cancelled and losing them.
-          await bookExecuted(`${matched.state}_partial`);
+        if (receiptStatus === "filled" && fill.proposalId) {
+          getDb().transaction(() => {
+            writeReceipt();
+            updateProposalStatus(fill.proposalId!, "filled", matched.id, undefined, truth.notional, userId);
+          }).immediate();
         } else {
-          updateFillEvent(fill.id, {
-            status: matched.state,
-            raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
-          }, userId);
-          audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: matched.state }, userId, connectedAccountId);
+          writeReceipt();
         }
+        const auditStatus = receiptStatus === "filled" && isRejectedOrCanceledState(matched.state)
+          ? `${matched.state}_partial`
+          : receiptStatus;
+        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: truth.price, quantity: truth.quantity }, userId, connectedAccountId);
+        await commitStopPlanIfOpening(truth.price);
+        if (receiptStatus === "filled" && fill.proposalId) {
+          resolveBrokerVerificationNotifications(userId, { proposalId: fill.proposalId, resolution: "placed" });
+        }
+      } else if (isRejectedOrCanceledState(matched.state) && merged.knownQuantity <= 0) {
+        const declinedMessage = `Broker terminated the order without a fill (state: ${matched.state}).`;
+        getDb().transaction(() => {
+          updateFillEvent(fill.id, { status: matched.state, raw }, userId);
+          if (fill.proposalId) {
+            updateProposalStatus(fill.proposalId, "rejected_by_broker", matched.id, undefined, undefined, userId, undefined, declinedMessage);
+          }
+        }).immediate();
+        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: matched.state }, userId, connectedAccountId);
+        if (fill.proposalId) resolveBrokerVerificationNotifications(userId, { proposalId: fill.proposalId, resolution: "recovered" });
+      } else {
+        // The broker reports execution growth but not a usable realized price (or reports a final
+        // state with an unpriced cumulative quantity larger than the already-booked partial). Keep
+        // the prior accounting truth and leave this receipt eligible for another reconciliation.
+        updateFillEvent(fill.id, { raw }, userId);
+        audit("fill_reconciliation_pending_price", {
+          fillId: fill.id,
+          symbol: fill.symbol,
+          brokerState: matched.state,
+          brokerQuantity: matched.filledQuantity,
+          knownBrokerQuantity: merged.knownQuantity,
+          priorBookedQuantity: bookedExecutionTruth(fill)?.quantity,
+          unresolvedGrowth: merged.unresolvedGrowth
+        }, userId, connectedAccountId);
       }
     }
   } catch (error) {
@@ -862,12 +1368,34 @@ export async function reconcilePlacementError(p: {
       error: `${p.placeErrorMessage} (broker reachable but its order list may omit recently-terminal orders — cannot confirm the order was never placed)`
     };
   }
-  if (isRejectedOrCanceledState(matched.state)) return { kind: "declined", orderId: matched.id, state: matched.state };
   // Live / filled / any non-terminal state: the order reached the broker. Book it (deduped).
   try {
     const existing = listFillEventsByProposalId(p.proposalId, p.userId);
     const dup = existing.find((f) => f.brokerOrderId === matched.id);
-    if (dup) return { kind: "placed", orderId: matched.id, state: matched.state, fill: dup, alreadyBooked: true };
+    const merged = mergedExecutionTruth(matched, dup);
+    if (isRejectedOrCanceledState(matched.state) && merged.knownQuantity <= 0) {
+      return { kind: "declined", orderId: matched.id, state: matched.state };
+    }
+    const fillStatus = reconciledFillStatus(matched, dup);
+    if (dup) {
+      let reconciled = dup;
+      if (merged.truth && (fillStatus === "filled" || fillStatus === "partially_filled")) {
+        const { price, quantity, notional } = merged.truth;
+        updateFillEvent(dup.id, {
+          status: fillStatus,
+          price,
+          quantity,
+          notional,
+          filledAt: matched.updatedAt ?? dup.filledAt,
+          raw: reconciliationRaw(dup, matched, merged.knownQuantity)
+        }, p.userId);
+        reconciled = { ...dup, status: fillStatus, price, quantity, notional, filledAt: matched.updatedAt ?? dup.filledAt };
+        await commitRecoveredOpeningStopPlan({ gateway: p.gateway, accountNumber: p.accountNumber, userId: p.userId, proposal: p.proposal, price });
+      } else {
+        updateFillEvent(dup.id, { raw: reconciliationRaw(dup, matched, merged.knownQuantity) }, p.userId);
+      }
+      return { kind: "placed", orderId: matched.id, state: matched.state, fillStatus, fill: reconciled, alreadyBooked: true };
+    }
     const source: FillSource = p.executionMode === "broker/live" ? "live" : "paper";
     const fill = recordFillFromProposal({
       userId: p.userId,
@@ -881,9 +1409,9 @@ export async function reconcilePlacementError(p: {
       review: p.review,
       marketScan: p.marketScan,
       execution: { orderId: matched.id, refId: p.refId, state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
-      status: matched.state === "filled" ? "filled" : "pending_reconciliation"
+      status: fillStatus
     });
-    return { kind: "placed", orderId: matched.id, state: matched.state, fill, alreadyBooked: false };
+    return { kind: "placed", orderId: matched.id, state: matched.state, fillStatus, fill, alreadyBooked: false };
   } catch (bookError) {
     // We KNOW the order exists but booking failed — degrade to uncertain so the 'placing' intent +
     // alert survive for the sweep to retry, rather than dropping a real order on the floor (MP-8).
@@ -938,24 +1466,64 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
   for (const row of stale) {
     const p = row.proposal as TradeProposal | undefined;
     const matched = row.refId ? brokerOrders.find((o) => o.clientOrderId && o.clientOrderId === row.refId) : undefined;
-    if (matched && isRejectedOrCanceledState(matched.state)) {
-      // The order reached the broker but was REJECTED/CANCELED — a terminal decline, NOT a placed
-      // order. Mirror reconcilePlacementError (:declined) and reconcilePendingFills (:isRejectedOr…):
-      // mark the proposal rejected_by_broker and DO NOT book a fill or clear the uncertain alert as
-      // "placed" (booking a phantom fill / silently claiming placement is the money-path hazard the
-      // matched branch below must never do for a declined order).
-      const declinedMsg = `Broker declined the order (state: ${matched.state}).`;
-      updateProposalStatus(row.id, "rejected_by_broker", matched.id, undefined, undefined, userId, undefined, declinedMsg);
-      audit("order_rejected_by_broker", { proposalId: row.id, refId: row.refId, orderId: matched.id, brokerState: matched.state, symbol: p?.symbol, side: p?.side, via: "sweep" }, userId, connectedAccountId);
-    } else if (matched) {
-      updateProposalStatus(row.id, "placed", matched.id, undefined, undefined, userId);
+    if (matched) {
+      const existingReceipt = listFillEventsByProposalId(row.id, userId).find((fill) => fill.brokerOrderId === matched.id);
+      const merged = mergedExecutionTruth(matched, existingReceipt);
+      if (isRejectedOrCanceledState(matched.state) && merged.knownQuantity <= 0) {
+        // A terminal zero snapshot is a decline only when no earlier priced partial execution was
+        // booked. Broker snapshots can regress; an existing partial is durable execution truth.
+        const declinedMsg = `Broker declined the order (state: ${matched.state}).`;
+        updateProposalStatus(row.id, "rejected_by_broker", matched.id, undefined, undefined, userId, undefined, declinedMsg);
+        audit("order_rejected_by_broker", { proposalId: row.id, refId: row.refId, orderId: matched.id, brokerState: matched.state, symbol: p?.symbol, side: p?.side, via: "sweep" }, userId, connectedAccountId);
+        continue;
+      }
+
+      const fillStatus = reconciledFillStatus(matched, existingReceipt);
+      const recoveredProposalStatus = fillStatus === "filled" ? "filled" : "placed";
+      let lifecycleCommitted = false;
+
+      // A crash can leave the durable receipt at pending_reconciliation while the broker later
+      // reports a full fill. Dedupe must not mean "skip reconciliation": finalize that SAME receipt
+      // and the proposal/case lifecycle together, otherwise accounting omits the execution while the
+      // UI claims it filled. This also makes a second sweep a true no-op.
+      if (existingReceipt && merged.truth && (fillStatus === "filled" || fillStatus === "partially_filled")) {
+        const { price, quantity, notional } = merged.truth;
+        const shouldUpdateReceipt = existingReceipt.status !== fillStatus
+          || existingReceipt.quantity !== quantity
+          || existingReceipt.price !== price
+          || existingReceipt.notional !== notional;
+        const updateExistingReceipt = () => {
+          updateFillEvent(existingReceipt.id, {
+            status: fillStatus,
+            price,
+            quantity,
+            notional,
+            filledAt: matched.updatedAt ?? existingReceipt.filledAt,
+            raw: reconciliationRaw(existingReceipt, matched, merged.knownQuantity)
+          }, userId);
+        };
+        if (fillStatus === "filled") {
+          getDb().transaction(() => {
+            if (shouldUpdateReceipt) updateExistingReceipt();
+            updateProposalStatus(row.id, "filled", matched.id, undefined, notional, userId);
+          }).immediate();
+          lifecycleCommitted = true;
+        } else if (shouldUpdateReceipt) {
+          updateExistingReceipt();
+        }
+
+        if (p) {
+          await commitRecoveredOpeningStopPlan({ gateway, accountNumber, userId, proposal: p, price });
+        }
+      } else if (existingReceipt) {
+        updateFillEvent(existingReceipt.id, { raw: reconciliationRaw(existingReceipt, matched, merged.knownQuantity) }, userId);
+      }
       if (p) {
         // Layer-B dedupe (crash window): if a prior inline reconcile / sweep already booked this
         // order (same brokerOrderId) but the status flip didn't persist, don't book a second fill.
         // Dedupe key = (proposalId, brokerOrderId); the same physical order always yields the same
         // brokerOrderId (we place with client_order_id = refId), so re-entry matches and no-ops.
-        const existing = listFillEventsByProposalId(row.id, userId);
-        const alreadyBooked = existing.some((f) => f.brokerOrderId === matched.id);
+        const alreadyBooked = Boolean(existingReceipt);
         if (!alreadyBooked) {
           const recoveredExecutionMode = row.executionMode ?? "broker/live";
           const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
@@ -969,13 +1537,20 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
             executionMode: recoveredExecutionMode,
             proposal: p,
             execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
-            status: matched.state === "filled" ? "filled" : "pending_reconciliation",
+            status: fillStatus,
             // The order already executed at the broker, so the live position's averageCost IS the
             // correct post-fill blended basis already — bypass the pre-fill blend math entirely rather
             // than re-deriving it from the single recovered fill price.
             stopPlanBasisOverride: existingAvgCost
           });
         }
+      }
+      // Book first, then close the placing intent. If the process dies between these writes, the
+      // next sweep sees `placing` plus the broker-order dedupe receipt and finishes the status only;
+      // the inverse order could permanently lose a real fill.
+      const recoveredNotional = fillStatus === "filled" ? merged.truth?.notional : undefined;
+      if (!lifecycleCommitted) {
+        updateProposalStatus(row.id, recoveredProposalStatus, matched.id, undefined, recoveredNotional, userId);
       }
       audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId, connectedAccountId);
       // A recovered order is a CONFIRMED placement — clear any perpetual "verify with broker" alert

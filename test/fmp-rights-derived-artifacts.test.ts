@@ -11,6 +11,7 @@ const vectorMocks = vi.hoisted(() => ({
   managedOccurrenceVectorIdMatches: vi.fn(() => false),
   managedVectorReceiptEvidence: vi.fn(() => []),
   inventoryVectorRecordsByMetadata: vi.fn(async () => []),
+  fetchExistingVectorRecordIds: vi.fn(async (_options?: unknown): Promise<string[]> => []),
   purgeVectorRecordsByMetadata: vi.fn(async () => ({ ids: [], deleted: 0 })),
   purgeVectorRecordIds: vi.fn(async ({ ids }: { ids: string[] }) => ({ ids, deleted: ids.length })),
   purgeVectorNamespaceAll: vi.fn(async () => undefined)
@@ -30,8 +31,19 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vectorMocks.getCurrentVectorProviderAuthority.mockResolvedValue("provider:test");
+  vectorMocks.managedVectorLedgerAuthority.mockReturnValue("ledger:test");
+  vectorMocks.fetchExistingVectorRecordIds.mockResolvedValue([]);
+  vectorMocks.purgeVectorRecordIds.mockImplementation(async ({ ids }: { ids: string[] }) => ({
+    ids,
+    deleted: ids.length
+  }));
+  vectorMocks.purgeVectorNamespaceAll.mockResolvedValue(undefined);
   process.env.WEB_SOURCE_FMP_TRANSCRIPTS = "off";
   process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "on";
+  process.env.VECTOR_ERASURE_VERIFY_ATTEMPTS = "1";
+  process.env.VECTOR_ERASURE_VERIFY_CONSECUTIVE_CLEAN = "1";
+  process.env.VECTOR_ERASURE_VERIFY_DELAY_MS = "0";
   const {
     activateFmpTranscriptRightsGeneration,
     captureFmpTranscriptRightsGeneration
@@ -211,6 +223,9 @@ describe("FMP rights-derived artifact gate", () => {
       userId: "local",
       provenance,
       providerWorkId: workId,
+      providerVectorId: "fmp-derived-socratic:v1:provider-work",
+      providerAuthority: "provider:test",
+      ledgerAuthority: "ledger:test",
       write: () => undefined
     });
 
@@ -226,6 +241,194 @@ describe("FMP rights-derived artifact gate", () => {
     const purged = await purgeFmpTranscriptRightsArtifacts({ dryRun: false });
     expect(purged.after.pendingDerivedProviderWorkIds).toEqual([]);
     expect(vectorMocks.purgeVectorNamespaceAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not invent a private provider-vector obligation for a settled no-write reservation", async () => {
+    const {
+      captureFmpTranscriptRightsGeneration,
+      completeFmpTranscriptDerivedProviderWork,
+      fmpTranscriptDerivedProvenance,
+      inventoryFmpTranscriptRightsArtifacts,
+      persistFmpTranscriptDerivedArtifact,
+      purgeFmpTranscriptRightsArtifacts
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const workId = "fmp-rights-test:no-provider-write";
+    const claim = captureFmpTranscriptRightsGeneration()!;
+    persistFmpTranscriptDerivedArtifact({
+      claim,
+      artifactType: "strategy-decision",
+      artifactId: "fmp-rights-test:no-provider-write-decision",
+      userId: "local",
+      provenance: fmpTranscriptDerivedProvenance([{
+        source: "fmp-earnings-transcript",
+        docType: "earnings-transcript",
+        chunkId: "occ:v3:fmp:no-provider-write"
+      }]),
+      providerWorkId: workId,
+      providerVectorId: "fmp-derived-socratic:v1:no-provider-write",
+      providerAuthority: "provider:test",
+      ledgerAuthority: "ledger:test",
+      write: () => undefined
+    });
+    completeFmpTranscriptDerivedProviderWork(workId, "no_provider_write");
+
+    const inventory = await inventoryFmpTranscriptRightsArtifacts();
+    expect(inventory.providerPrivateVectorRefs).toEqual([]);
+    expect(inventory.authorityBlockers).not.toContain("derived-private-provider-authority-unreachable");
+    expect(vectorMocks.fetchExistingVectorRecordIds).not.toHaveBeenCalled();
+
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    const purged = await purgeFmpTranscriptRightsArtifacts({ dryRun: false });
+    expect(purged.after.derivedArtifactIds).toEqual([]);
+    expect(vectorMocks.purgeVectorRecordIds).not.toHaveBeenCalledWith(expect.objectContaining({
+      namespace: "private"
+    }));
+  });
+
+  it("expires crash-abandoned derived provider work after its durable lease", async () => {
+    const {
+      assertFmpTranscriptDerivedProviderWorkOwnership,
+      captureFmpTranscriptRightsGeneration,
+      fmpTranscriptDerivedProvenance,
+      persistFmpTranscriptDerivedArtifact,
+      purgeFmpTranscriptRightsArtifacts
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    const claim = captureFmpTranscriptRightsGeneration()!;
+    const workId = "fmp-rights-test:abandoned-provider-work";
+    const providerVectorId = "fmp-derived-socratic:v1:abandoned-provider-work";
+    persistFmpTranscriptDerivedArtifact({
+      claim,
+      artifactType: "strategy-decision",
+      artifactId: "fmp-rights-test:abandoned-provider-work-decision",
+      userId: "local",
+      provenance: fmpTranscriptDerivedProvenance([{
+        source: "fmp-earnings-transcript",
+        docType: "earnings-transcript",
+        chunkId: "occ:v3:fmp:abandoned-provider-work"
+      }]),
+      providerWorkId: workId,
+      providerVectorId,
+      providerAuthority: "provider:test",
+      ledgerAuthority: "ledger:test",
+      write: () => undefined
+    });
+    assertFmpTranscriptDerivedProviderWorkOwnership(workId, claim);
+    vectorMocks.fetchExistingVectorRecordIds
+      .mockResolvedValueOnce([providerVectorId])
+      .mockResolvedValueOnce([]);
+    getDb().prepare(`
+      UPDATE fmp_transcript_derived_provider_work
+      SET lease_expires_at = '2000-01-01T00:00:00.000Z'
+      WHERE id = ?
+    `).run(workId);
+
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    const purged = await purgeFmpTranscriptRightsArtifacts({ dryRun: false });
+    expect(purged.after.pendingDerivedProviderWorkIds).toEqual([]);
+    expect(vectorMocks.purgeVectorNamespaceAll).toHaveBeenCalledTimes(1);
+    expect(vectorMocks.purgeVectorRecordIds).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "local",
+      namespace: "private",
+      ids: [providerVectorId]
+    }));
+    expect(() => assertFmpTranscriptDerivedProviderWorkOwnership(workId, claim))
+      .toThrow("rights generation is revoked or stale");
+  });
+
+  it("blocks local receipt deletion when the recorded private-vector authority is no longer reachable", async () => {
+    const {
+      captureFmpTranscriptRightsGeneration,
+      completeFmpTranscriptDerivedProviderWork,
+      fmpTranscriptDerivedProvenance,
+      inventoryFmpTranscriptRightsArtifacts,
+      persistFmpTranscriptDerivedArtifact,
+      purgeFmpTranscriptRightsArtifacts
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    const workId = "fmp-rights-test:rotated-private-authority";
+    const claim = captureFmpTranscriptRightsGeneration()!;
+    persistFmpTranscriptDerivedArtifact({
+      claim,
+      artifactType: "strategy-decision",
+      artifactId: "fmp-rights-test:rotated-private-authority-decision",
+      userId: "local",
+      provenance: fmpTranscriptDerivedProvenance([{
+        source: "fmp-earnings-transcript",
+        docType: "earnings-transcript",
+        chunkId: "occ:v3:fmp:rotated-private-authority"
+      }]),
+      providerWorkId: workId,
+      providerVectorId: "fmp-derived-socratic:v1:rotated-private-authority",
+      providerAuthority: "provider:historical",
+      ledgerAuthority: "ledger:test",
+      write: () => undefined
+    });
+    completeFmpTranscriptDerivedProviderWork(workId);
+    vectorMocks.getCurrentVectorProviderAuthority.mockResolvedValue("provider:current");
+    vectorMocks.fetchExistingVectorRecordIds.mockRejectedValue(
+      new Error("Exact vector verification provider authority mismatch.")
+    );
+
+    const inventory = await inventoryFmpTranscriptRightsArtifacts();
+    expect(inventory.authorityBlockers).toContain("derived-private-provider-authority-unreachable");
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    await expect(purgeFmpTranscriptRightsArtifacts({ dryRun: false }))
+      .rejects.toThrow("unreachable historical authority");
+    expect(vectorMocks.purgeVectorNamespaceAll).not.toHaveBeenCalled();
+    expect(getDb().prepare(`
+      SELECT 1 AS ok FROM fmp_transcript_derived_provider_work WHERE id = ?
+    `).get(workId)).toBeDefined();
+  });
+
+  it("requires consecutive clean provider observations before deleting durable receipts", async () => {
+    const {
+      captureFmpTranscriptRightsGeneration,
+      completeFmpTranscriptDerivedProviderWork,
+      fmpTranscriptDerivedProvenance,
+      persistFmpTranscriptDerivedArtifact,
+      purgeFmpTranscriptRightsArtifacts
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    const workId = "fmp-rights-test:eventual-consistency";
+    const providerVectorId = "fmp-derived-socratic:v1:eventual-consistency";
+    const claim = captureFmpTranscriptRightsGeneration()!;
+    persistFmpTranscriptDerivedArtifact({
+      claim,
+      artifactType: "strategy-decision",
+      artifactId: "fmp-rights-test:eventual-consistency-decision",
+      userId: "local",
+      provenance: fmpTranscriptDerivedProvenance([{
+        source: "fmp-earnings-transcript",
+        docType: "earnings-transcript",
+        chunkId: "occ:v3:fmp:eventual-consistency"
+      }]),
+      providerWorkId: workId,
+      providerVectorId,
+      providerAuthority: "provider:test",
+      ledgerAuthority: "ledger:test",
+      write: () => undefined
+    });
+    completeFmpTranscriptDerivedProviderWork(workId);
+    process.env.VECTOR_ERASURE_VERIFY_ATTEMPTS = "3";
+    process.env.VECTOR_ERASURE_VERIFY_CONSECUTIVE_CLEAN = "2";
+    vectorMocks.fetchExistingVectorRecordIds
+      .mockResolvedValueOnce([providerVectorId])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([providerVectorId])
+      .mockResolvedValueOnce([]);
+
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    await expect(purgeFmpTranscriptRightsArtifacts({ dryRun: false }))
+      .rejects.toThrow(/stability verification failed.*1\/2 consecutive clean/i);
+    expect(getDb().prepare(`
+      SELECT 1 AS ok FROM fmp_transcript_derived_provider_work WHERE id = ?
+    `).get(workId)).toBeDefined();
+    expect(vectorMocks.purgeVectorRecordIds).toHaveBeenCalledWith(expect.objectContaining({
+      expectedProviderAuthority: "provider:test",
+      ledgerAuthority: "ledger:test",
+      ids: [providerVectorId]
+    }));
   });
 
   it("does not cross provider deletion while a Pinecone upsert is unresolved", async () => {

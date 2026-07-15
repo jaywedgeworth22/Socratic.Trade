@@ -182,7 +182,9 @@ describe("retrieveContextDetailed: a malformed query embedding returns an empty 
 
   it("proceeds normally with a healthy query embedding (byte-for-byte unaffected)", async () => {
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
-    mocks.query.mockResolvedValue({ matches: [{ id: "a", score: 0.9, metadata: { text: "hello" } }] });
+    mocks.query.mockResolvedValue({
+      matches: [{ id: "a", score: 0.9, metadata: { text: "hello", userId: "local", scope: "shared" } }]
+    });
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
     const chunks = await retrieveContextDetailed("query", "AAPL", 3, "local");
     expect(chunks.map((c) => c.id)).toEqual(["a"]);

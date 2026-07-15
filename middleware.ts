@@ -222,12 +222,26 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   }
 
   // Source 2: Auth.js v5 session JWT (verified with the shared edge-safe helper).
-  if (!trustedEmail && process.env.AUTH_SECRET) {
+  // Even when Cloudflare supplied the access identity, inspect a signed Auth.js session for the
+  // SAME email. Cloudflare application tokens can refresh without a fresh IdP login, so their
+  // `iat` is not account-recreation proof. A matching Auth.js `loginAt` is the provider-login
+  // timestamp; a missing/mismatched cookie leaves the request on the Cloudflare-only path and a
+  // deleted identity will fail closed in resolveRequestUser().
+  if (process.env.AUTH_SECRET) {
     const cookieHeader = req.headers.get("cookie");
     const identity = await getSessionIdentity(cookieHeader, process.env.AUTH_SECRET);
-    trustedEmail = identity?.email ?? null;
-    sessionIssuedAt = identity?.loginAt ?? null;
-    if (trustedEmail) identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    if (!trustedEmail && identity?.email) {
+      trustedEmail = identity.email;
+      sessionIssuedAt = identity.loginAt ?? null;
+      identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    } else if (
+      trustedEmail &&
+      identity?.email === trustedEmail &&
+      identity.loginAt != null
+    ) {
+      sessionIssuedAt = identity.loginAt;
+      identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    }
   }
 
   // Source 3: Dev/local fallback — ONLY when auth is NOT configured.

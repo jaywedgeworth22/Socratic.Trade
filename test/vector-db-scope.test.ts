@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
   const fetchRecords = vi.fn();
   const deleteMany = vi.fn();
   const deleteAll = vi.fn();
+  const rerank = vi.fn();
   const namespacedIndex = { upsert, query, listPaginated, fetch: fetchRecords, deleteMany, deleteAll };
   const namespace = vi.fn(() => namespacedIndex);
   const index = vi.fn(() => ({ ...namespacedIndex, namespace }));
@@ -40,6 +41,14 @@ const mocks = vi.hoisted(() => {
             provider_authority: providerAuthority
           });
         }
+      })
+    };
+    if (sql.includes("SELECT 1 AS ok") && sql.includes("FROM vector_private_namespace_manifests WHERE tenant_scope")) return {
+      get: vi.fn((tenantScope: string, ledgerAuthority: string, providerAuthority: string) => {
+        const manifest = manifests.get(tenantScope);
+        return manifest?.ledger_authority === ledgerAuthority && manifest.provider_authority === providerAuthority
+          ? { ok: 1 }
+          : undefined;
       })
     };
     if (sql.includes("FROM vector_private_namespace_manifests WHERE tenant_scope")) return {
@@ -66,6 +75,7 @@ const mocks = vi.hoisted(() => {
     describeIndex: vi.fn(),
     createIndex: vi.fn(),
     embed: vi.fn(),
+    rerank,
     resolveApiKey: vi.fn(),
     getDb,
     audit: vi.fn(),
@@ -108,7 +118,7 @@ vi.mock("@pinecone-database/pinecone", () => ({
 
 vi.mock("voyageai", () => ({
   VoyageAIClient: vi.fn(function VoyageAIClient() {
-    return { embed: mocks.embed };
+    return { embed: mocks.embed, rerank: mocks.rerank };
   })
 }));
 
@@ -137,6 +147,7 @@ beforeEach(() => {
   delete process.env.VECTOR_EMBED_RETRY_DELAY_MS;
   delete process.env.VECTOR_CONTEXT_MAX_CHARS;
   delete process.env.RAG_MANAGED_VERSION_TOP_K_CAP;
+  delete process.env.VECTOR_RERANK_OVERFETCH_K;
   delete process.env.VECTOR_ENABLE_RERANK;
   process.env.VECTOR_ERASURE_VERIFY_ATTEMPTS = "1";
   process.env.VECTOR_ERASURE_VERIFY_CONSECUTIVE_CLEAN = "1";
@@ -302,6 +313,41 @@ describe("vector-db scope metadata", () => {
         tenant_scope: vectorTenantScope("local", "private")
       });
     });
+
+    it("refuses exact private-vector verification under a different provider or manifest authority", async () => {
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+      mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+      mocks.upsert.mockResolvedValue(undefined);
+      const {
+        fetchExistingVectorRecordIds,
+        getCurrentVectorProviderAuthority,
+        managedVectorLedgerAuthority,
+        storeContexts
+      } = await import("../src/lib/vector-db");
+
+      await storeContexts([{
+        text: "Private authority-bound context",
+        metadata: { symbol: "AAPL", source: "socratic-memory", timestamp: "2026-07-14" }
+      }], "user-42", { scope: "private" });
+      const providerAuthority = await getCurrentVectorProviderAuthority({ userId: "user-42" });
+      const ledgerAuthority = managedVectorLedgerAuthority();
+
+      await expect(fetchExistingVectorRecordIds({
+        userId: "user-42",
+        namespace: "private",
+        ids: ["authority-bound-id"],
+        expectedProviderAuthority: "provider:rotated",
+        ledgerAuthority
+      })).rejects.toThrow("provider authority mismatch");
+      await expect(fetchExistingVectorRecordIds({
+        userId: "user-42",
+        namespace: "private",
+        ids: ["authority-bound-id"],
+        expectedProviderAuthority: providerAuthority,
+        ledgerAuthority: "ledger:v1:historical"
+      })).rejects.toThrow("manifest authority mismatch");
+      expect(mocks.fetchRecords).not.toHaveBeenCalled();
+    });
   });
 
   describe("read path — shared-tier query filter (backward-compat $or)", () => {
@@ -309,10 +355,19 @@ describe("vector-db scope metadata", () => {
       mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
       mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
       mocks.query.mockResolvedValue({ matches: [] });
-      const { retrieveContext } = await import("../src/lib/vector-db");
+      mocks.upsert.mockResolvedValue(undefined);
+      const { retrieveContext, storeContexts } = await import("../src/lib/vector-db");
+
+      await storeContexts([{
+        text: "Private operator decision",
+        metadata: { symbol: "AAPL", source: "socratic-memory", timestamp: "2026-07-14" }
+      }], "local", { scope: "private" });
+      mocks.query.mockClear();
 
       await retrieveContext("AAPL catalysts", "AAPL", 3);
 
+      // Each tier gets its own topK pool so a saturated private tier cannot starve shared evidence
+      // (or vice versa) before reranking.
       expect(mocks.query).toHaveBeenCalledTimes(3);
       const privateFilter = unwrapCommittedFilter(mocks.query.mock.calls[0][0].filter);
       expect(privateFilter).toMatchObject({
@@ -343,11 +398,141 @@ describe("vector-db scope metadata", () => {
       );
     });
 
+    it("preserves shared recall when the local private tier saturates its candidate quota", async () => {
+      process.env.VECTOR_ENABLE_RERANK = "on";
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+      mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+      mocks.upsert.mockResolvedValue(undefined);
+      const { retrieveContext, storeContexts, vectorTenantScope } = await import("../src/lib/vector-db");
+
+      await storeContexts([{
+        text: "Private operator decision",
+        metadata: { symbol: "AAPL", source: "socratic-memory", timestamp: "2026-07-14" }
+      }], "local", { scope: "private" });
+      mocks.query.mockReset();
+      mocks.query
+        .mockResolvedValueOnce({
+          matches: Array.from({ length: 3 }, (_, index) => ({
+            id: `private-${index}`,
+            score: 0.9 - index / 100,
+            metadata: {
+              text: `private-${index}`,
+              userId: "local",
+              scope: "private",
+              tenant_scope: vectorTenantScope("local", "private")
+            }
+          }))
+        })
+        .mockResolvedValueOnce({ matches: [] })
+        .mockResolvedValueOnce({
+          matches: [{
+            id: "shared-catalyst",
+            score: 0.1,
+            metadata: {
+              text: "shared-catalyst",
+              userId: "local",
+              scope: "shared",
+              tenant_scope: "shared:operator"
+            }
+          }]
+        });
+      mocks.rerank.mockImplementation(async ({ documents }: { documents: string[] }) => {
+        const sharedIndex = documents.findIndex((document) => document.includes("shared-catalyst"));
+        const remaining = documents
+          .map((_document, index) => index)
+          .filter((index) => index !== sharedIndex);
+        return {
+          data: [
+            { index: sharedIndex, relevanceScore: 0.99 },
+            ...remaining.map((index, rank) => ({ index, relevanceScore: 0.8 - rank / 10 }))
+          ]
+        };
+      });
+
+      const results = await retrieveContext("AAPL catalysts", "AAPL", 3);
+
+      expect(mocks.query).toHaveBeenCalledTimes(3);
+      expect(mocks.query.mock.calls.map(([request]) => request.topK)).toEqual([150, 150, 150]);
+      expect(mocks.rerank).toHaveBeenCalledWith(expect.objectContaining({
+        documents: expect.arrayContaining([
+          expect.stringContaining("shared-catalyst"),
+          expect.stringContaining("private-0")
+        ])
+      }));
+      expect(results).toContain("shared-catalyst");
+      expect(results.indexOf("shared-catalyst")).toBeLessThan(results.indexOf("private-0"));
+    });
+
+    it("fairly caps a saturated multi-tier union at Voyage's 1,000-document rerank limit", async () => {
+      process.env.VECTOR_ENABLE_RERANK = "on";
+      process.env.VECTOR_RERANK_OVERFETCH_K = "1000";
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+      mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+      mocks.upsert.mockResolvedValue(undefined);
+      const { retrieveContext, storeContexts, vectorTenantScope } = await import("../src/lib/vector-db");
+
+      await storeContexts([{
+        text: "Private operator decision",
+        metadata: { symbol: "AAPL", source: "socratic-memory", timestamp: "2026-07-14" }
+      }], "local", { scope: "private" });
+      mocks.query.mockReset();
+      const privateMatches = Array.from({ length: 1_000 }, (_, index) => ({
+        id: `private-saturated-${index}`,
+        score: 0.99 - index / 100_000,
+        metadata: {
+          text: `private-saturated-${index}`,
+          userId: "local",
+          scope: "private",
+          tenant_scope: vectorTenantScope("local", "private")
+        }
+      }));
+      const sharedMatches = Array.from({ length: 1_000 }, (_, index) => ({
+        id: `shared-saturated-${index}`,
+        score: 0.1 - index / 100_000,
+        metadata: {
+          text: `shared-saturated-${index}`,
+          userId: "local",
+          scope: "shared",
+          tenant_scope: "shared:operator"
+        }
+      }));
+      mocks.query
+        .mockResolvedValueOnce({ matches: privateMatches })
+        .mockResolvedValueOnce({ matches: [] })
+        .mockResolvedValueOnce({ matches: sharedMatches });
+      mocks.rerank.mockImplementation(async ({ documents }: { documents: string[] }) => {
+        const sharedIndex = documents.findIndex((document) => document === "shared-saturated-0");
+        return {
+          data: [
+            { index: sharedIndex, relevanceScore: 0.99 },
+            { index: 0, relevanceScore: 0.8 },
+            { index: 1, relevanceScore: 0.7 }
+          ]
+        };
+      });
+
+      const results = await retrieveContext("AAPL catalysts", "AAPL", 3);
+
+      expect(mocks.query.mock.calls.map(([request]) => request.topK)).toEqual([1000, 1000, 1000]);
+      const documents = mocks.rerank.mock.calls[0][0].documents as string[];
+      expect(documents).toHaveLength(1_000);
+      expect(documents.filter((document) => document.startsWith("private-saturated-"))).toHaveLength(500);
+      expect(documents.filter((document) => document.startsWith("shared-saturated-"))).toHaveLength(500);
+      expect(results).toContain("shared-saturated-0");
+    });
+
     it("private-tier query includes the user's own userId filter (not $or)", async () => {
       mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
       mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
       mocks.query.mockResolvedValue({ matches: [] });
-      const { retrieveContext } = await import("../src/lib/vector-db");
+      mocks.upsert.mockResolvedValue(undefined);
+      const { retrieveContext, storeContexts } = await import("../src/lib/vector-db");
+
+      await storeContexts([{
+        text: "Private user decision",
+        metadata: { symbol: "AAPL", source: "socratic-memory", timestamp: "2026-07-14" }
+      }], "user-42", { scope: "private" });
+      mocks.query.mockClear();
 
       await retrieveContext("AAPL catalysts", "AAPL", 3, "user-42");
 
@@ -596,7 +781,7 @@ describe("vector-db scope metadata", () => {
 
       await retrieveContext("AAPL catalysts", "AAPL", 3, "user-42");
 
-      expect(mocks.query).toHaveBeenCalledTimes(3);
+      expect(mocks.query).toHaveBeenCalledTimes(2);
       for (const [request] of mocks.query.mock.calls) expect(request.topK).toBe(10);
     });
 

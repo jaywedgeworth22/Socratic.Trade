@@ -185,10 +185,9 @@ describe("E2E money-path integration test", () => {
     const aaplProposal = result.proposals.find((p) => p.proposal.symbol === "AAPL");
     expect(aaplProposal).toBeDefined();
 
-    // On the broker/live decide path a successfully submitted order is surfaced in result.proposals
-    // with the terminal status "placed" (the DB-only "placing"/"filled" states are never pushed here),
-    // so assert that exact status to actually validate the money-path execution.
-    expect(aaplProposal?.status).toBe("placed");
+    // The Test broker completes synchronously, so result.proposals keeps the terminal `filled`
+    // truth instead of collapsing it back to the less-specific `placed` state.
+    expect(aaplProposal?.status).toBe("filled");
     
     // Check audit logs for the money path success
     const runKinds = listAudit(500)

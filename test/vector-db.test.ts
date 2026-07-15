@@ -312,7 +312,6 @@ describe("vector-db", () => {
       .mockResolvedValueOnce({
         matches: [{ metadata: { text: "AAPL retrieved filing context", userId: "user-1", scope: "private" } }]
       })
-      .mockResolvedValueOnce({ matches: [] })
       .mockResolvedValueOnce({ matches: [] });
     const { retrieveContext } = await import("../src/lib/vector-db");
 
@@ -320,7 +319,10 @@ describe("vector-db", () => {
 
     expect(results).toEqual(["AAPL retrieved filing context"]);
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({ input: ["AAPL catalysts"], inputType: "query" }));
-    expect(mocks.query).toHaveBeenCalledTimes(3);
+    // No durable private-namespace manifest exists in this fixture, so retrieval uses only
+    // the default-index private and shared tiers. Querying an unproven namespace would add
+    // latency and could surface rows from a stale provider authority.
+    expect(mocks.query).toHaveBeenCalledTimes(2);
     expect(mocks.query.mock.calls[0][0]).toMatchObject({
       // Reranking is on by default, so Pinecone over-fetches on the rerank-path cap
       // (rerankOverFetchK(2), default VECTOR_RERANK_OVERFETCH_K=150) and Voyage reranks back down
@@ -338,10 +340,8 @@ describe("vector-db", () => {
       { $and: [{ tenant_scope: { $exists: false } }, { scope: { $eq: "private" } }] },
       { $and: [{ tenant_scope: { $exists: false } }, { scope: { $exists: false } }] }
     ]));
-    const privateNamespaceFilter = unwrapCommittedFilter(mocks.query.mock.calls[1][0].filter);
-    expect(privateNamespaceFilter).toEqual(privateFilter);
     // Legacy local vectors are public only when they lack an explicit scope.
-    const sharedFilter = unwrapCommittedFilter(mocks.query.mock.calls[2][0].filter);
+    const sharedFilter = unwrapCommittedFilter(mocks.query.mock.calls[1][0].filter);
     expect(sharedFilter.symbol).toEqual({ $eq: "AAPL" });
     expect(sharedFilter.$or).toEqual(
       expect.arrayContaining([

@@ -480,9 +480,64 @@ function overFetchK(limit: number): number {
  * existing modest `overFetchK` cap — this does not change their Pinecone topK.
  */
 const DEFAULT_RERANK_OVERFETCH_K = 150;
+const VOYAGE_RERANK_MAX_DOCUMENTS = 1_000;
 function rerankOverFetchK(limit: number): number {
   const cap = Math.floor(numericEnv("VECTOR_RERANK_OVERFETCH_K", DEFAULT_RERANK_OVERFETCH_K, 1));
   return Math.max(limit, cap);
+}
+
+/**
+ * Deduplicate several independently bounded provider tiers without allowing their union to exceed
+ * Voyage's rerank request limit. When a cap is needed, rank-round-robin preserves quota from every
+ * non-empty tier; selected candidates are then restored to global cosine order for fail-open fallback.
+ */
+function boundedTierCandidateUnion(tiers: any[][], maxDocuments: number): any[] {
+  const sortedTiers = tiers.map((tier) => [...tier].sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0)));
+  const globallySorted = sortedTiers.flat().sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
+  const bestById = new Map<string, any>();
+  const unique: any[] = [];
+  const idlessSeen = new Set<any>();
+  for (const match of globallySorted) {
+    const id = typeof match?.id === "string" && match.id.length > 0 ? match.id : undefined;
+    if (id) {
+      if (bestById.has(id)) continue;
+      bestById.set(id, match);
+      unique.push(match);
+    } else if (!idlessSeen.has(match)) {
+      idlessSeen.add(match);
+      unique.push(match);
+    }
+  }
+  if (unique.length <= maxDocuments) return unique;
+
+  const cursors = sortedTiers.map(() => 0);
+  const selected: any[] = [];
+  const selectedIds = new Set<string>();
+  const selectedIdless = new Set<any>();
+  while (selected.length < maxDocuments) {
+    let progressed = false;
+    for (let tierIndex = 0; tierIndex < sortedTiers.length && selected.length < maxDocuments; tierIndex++) {
+      const tier = sortedTiers[tierIndex]!;
+      while (cursors[tierIndex]! < tier.length) {
+        const match = tier[cursors[tierIndex]!]!;
+        cursors[tierIndex] = cursors[tierIndex]! + 1;
+        const id = typeof match?.id === "string" && match.id.length > 0 ? match.id : undefined;
+        if (id) {
+          if (selectedIds.has(id)) continue;
+          selectedIds.add(id);
+          selected.push(bestById.get(id) ?? match);
+        } else {
+          if (selectedIdless.has(match)) continue;
+          selectedIdless.add(match);
+          selected.push(match);
+        }
+        progressed = true;
+        break;
+      }
+    }
+    if (!progressed) break;
+  }
+  return selected.sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
 }
 
 /** Hybrid dense+BM25 retrieval via Reciprocal Rank Fusion. OFF by default — set HYBRID_RETRIEVAL=on to enable.
@@ -844,6 +899,24 @@ function hasCommittedVectorNamespaceRecords(
       WHERE state = 'committed' AND ledger_authority = ? AND vector_namespace = ?
       LIMIT 1
     `).get(ledgerAuthority, vectorNamespace));
+  } catch {
+    return false;
+  }
+}
+
+function hasCurrentPrivateVectorNamespaceRecords(
+  userId: string,
+  ledgerAuthority: string,
+  providerAuthority: string | undefined
+): boolean {
+  if (!providerAuthority) return false;
+  try {
+    return Boolean(dbModule.getDb().prepare(`
+      SELECT 1 AS ok
+      FROM vector_private_namespace_manifests WHERE tenant_scope = ?
+        AND ledger_authority = ? AND provider_authority = ?
+      LIMIT 1
+    `).get(vectorTenantScope(userId, PRIVATE_SCOPE), ledgerAuthority, providerAuthority));
   } catch {
     return false;
   }
@@ -1873,11 +1946,14 @@ export async function rerankMatches(
   source: ApiKeySource = "env"
 ): Promise<any[]> {
   if (matches.length <= 1) return matches;
-  const documents = matches.map((m) => {
+  // Retrieval performs a tier-aware cap before reaching this helper. Keep a final provider-contract
+  // defense for direct/internal callers so Voyage never rejects an oversized request outright.
+  const rerankableMatches = matches.slice(0, VOYAGE_RERANK_MAX_DOCUMENTS);
+  const documents = rerankableMatches.map((m) => {
     const t = (m?.metadata as Record<string, unknown> | undefined)?.text;
     return typeof t === "string" ? t : "";
   });
-  if (documents.every((d) => !d)) return matches;
+  if (documents.every((d) => !d)) return rerankableMatches;
   try {
     const resp = await withRagApiHealth(
       "voyage-rerank",
@@ -1888,7 +1964,7 @@ export async function rerankMatches(
         query,
         documents,
         model: rerankModel(),
-        topK: Math.min(topK, matches.length),
+        topK: Math.min(topK, rerankableMatches.length),
         truncation: true
       }),
       undefined,
@@ -1897,19 +1973,23 @@ export async function rerankMatches(
     meterRerank(query, documents, rerankModel(), userId);
     recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
     const data = resp.data ?? [];
-    if (data.length === 0) return matches;
+    if (data.length === 0) return rerankableMatches;
     const reordered: any[] = [];
     for (const item of data) {
       const idx = item.index;
       const relevanceScore = typeof item.relevanceScore === "number" ? item.relevanceScore : undefined;
-      if (typeof idx === "number" && matches[idx]) {
-        reordered.push(relevanceScore != null ? { ...matches[idx], _rerankScore: relevanceScore } : matches[idx]);
+      if (typeof idx === "number" && rerankableMatches[idx]) {
+        reordered.push(
+          relevanceScore != null
+            ? { ...rerankableMatches[idx], _rerankScore: relevanceScore }
+            : rerankableMatches[idx]
+        );
       }
     }
-    return reordered.length > 0 ? reordered : matches;
+    return reordered.length > 0 ? reordered : rerankableMatches;
   } catch (err) {
     console.warn("[vector-db] rerank failed; falling back to cosine order:", err instanceof Error ? err.message : String(err));
-    return matches;
+    return rerankableMatches;
   }
 }
 
@@ -1989,6 +2069,10 @@ export interface StoreContextsOptions {
 export interface VectorStoreLeaseGuard {
   assertOwnership: () => void;
   signal?: AbortSignal;
+  /** Pin long-running licensed writes to the physical Pinecone index observed before work began. */
+  expectedProviderAuthority?: string;
+  /** Pin private writes to the durable SQLite namespace authority observed before work began. */
+  expectedLedgerAuthority?: string;
 }
 
 function documentEmbeddingInput(document: ContextDocument): string {
@@ -2074,6 +2158,12 @@ function userOperationLeaseGuard(
 ): VectorStoreLeaseGuard {
   return {
     ...(existing?.signal ? { signal: existing.signal } : {}),
+    ...(existing?.expectedProviderAuthority
+      ? { expectedProviderAuthority: existing.expectedProviderAuthority }
+      : {}),
+    ...(existing?.expectedLedgerAuthority
+      ? { expectedLedgerAuthority: existing.expectedLedgerAuthority }
+      : {}),
     assertOwnership: () => {
       existing?.assertOwnership();
       assertUserOperationClaim(claim);
@@ -2373,6 +2463,18 @@ async function storeContextsImpl(
     await ensureIndex(pc, initCacheKey, pineconeSource, userId, options?.leaseGuard);
     assertVectorStoreLease(options?.leaseGuard);
     const stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+    if (
+      options?.leaseGuard?.expectedProviderAuthority &&
+      stableProviderAuthority !== options.leaseGuard.expectedProviderAuthority
+    ) {
+      throw new VectorStoreLeaseLostError("Private vector provider authority changed during licensed work.");
+    }
+    if (
+      options?.leaseGuard?.expectedLedgerAuthority &&
+      privateLedgerAuthority !== options.leaseGuard.expectedLedgerAuthority
+    ) {
+      throw new VectorStoreLeaseLostError("Private vector ledger authority changed during licensed work.");
+    }
     if (privateLedgerAuthority) {
       if (!stableProviderAuthority) throw new Error("private-vector-provider-authority-unavailable");
       ensurePrivateVectorNamespaceManifest(userId, privateLedgerAuthority, stableProviderAuthority);
@@ -3622,13 +3724,42 @@ export async function purgeVectorRecordIds(options: {
   namespace?: VectorDataNamespace;
   batchSize?: number;
   leaseGuard?: VectorStoreLeaseGuard;
+  /** Exact physical index authority recorded when these ids were created. */
+  expectedProviderAuthority?: string;
+  /** Exact logical namespace authority recorded when these ids were created. */
+  ledgerAuthority?: string;
 }): Promise<{ ids: string[]; deleted: number }> {
   const ids = [...new Set(options.ids.filter(Boolean))].sort();
   if (ids.length === 0) return { ids, deleted: 0 };
   const userId = options.userId ?? "local";
-  const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
+  const { pc, initCacheKey, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
   if (!pc) throw new Error("Pinecone key not configured for exact vector purge.");
-  const index = vectorDataIndex(pc, options.namespace ?? "default", undefined, userId);
+  if (!(await indexExists(pc, pineconeSource, userId, undefined, options.leaseGuard))) {
+    throw new Error("Pinecone index is unavailable for exact vector purge.");
+  }
+  await assertIndexMetric(pc, initCacheKey, pineconeSource, userId, options.leaseGuard);
+  const providerAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+  if (options.expectedProviderAuthority && providerAuthority !== options.expectedProviderAuthority) {
+    throw new Error("Exact vector purge provider authority mismatch.");
+  }
+  if (
+    options.namespace === "private" &&
+    options.ledgerAuthority &&
+    options.expectedProviderAuthority &&
+    !hasCurrentPrivateVectorNamespaceRecords(
+      userId,
+      options.ledgerAuthority,
+      options.expectedProviderAuthority
+    )
+  ) {
+    throw new Error("Exact private-vector purge manifest authority mismatch.");
+  }
+  const index = vectorDataIndex(
+    pc,
+    options.namespace ?? "default",
+    options.ledgerAuthority,
+    userId
+  );
   const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
   for (const idBatch of chunks(ids, batchSize)) {
     assertVectorStoreLease(options.leaseGuard);
@@ -3643,6 +3774,71 @@ export async function purgeVectorRecordIds(options: {
   }
   assertVectorStoreLease(options.leaseGuard);
   return { ids, deleted: ids.length };
+}
+
+/** Exact provider verification for durable identities that may live in a user-private namespace. */
+export async function fetchExistingVectorRecordIds(options: {
+  ids: string[];
+  userId?: string;
+  namespace?: VectorDataNamespace;
+  batchSize?: number;
+  leaseGuard?: VectorStoreLeaseGuard;
+  /** Exact physical index authority recorded when these ids were created. */
+  expectedProviderAuthority?: string;
+  /** Exact logical namespace authority recorded when these ids were created. */
+  ledgerAuthority?: string;
+}): Promise<string[]> {
+  const ids = [...new Set(options.ids.filter(Boolean))].sort();
+  if (ids.length === 0) return [];
+  const userId = options.userId ?? "local";
+  assertVectorStoreLease(options.leaseGuard);
+  const { pc, initCacheKey, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
+  if (!pc) throw new Error("Pinecone key not configured for exact vector verification.");
+  if (!(await indexExists(pc, pineconeSource, userId, undefined, options.leaseGuard))) {
+    if (options.expectedProviderAuthority) {
+      throw new Error("Expected Pinecone authority is unavailable for exact vector verification.");
+    }
+    return [];
+  }
+  await assertIndexMetric(pc, initCacheKey, pineconeSource, userId, options.leaseGuard);
+  const providerAuthority = stableProviderAuthorityForInitKey(initCacheKey);
+  if (options.expectedProviderAuthority && providerAuthority !== options.expectedProviderAuthority) {
+    throw new Error("Exact vector verification provider authority mismatch.");
+  }
+  if (
+    options.namespace === "private" &&
+    options.ledgerAuthority &&
+    options.expectedProviderAuthority &&
+    !hasCurrentPrivateVectorNamespaceRecords(
+      userId,
+      options.ledgerAuthority,
+      options.expectedProviderAuthority
+    )
+  ) {
+    throw new Error("Exact private-vector verification manifest authority mismatch.");
+  }
+  const index = vectorDataIndex(
+    pc,
+    options.namespace ?? "default",
+    options.ledgerAuthority,
+    userId
+  );
+  const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
+  const existing: string[] = [];
+  for (const idBatch of chunks(ids, batchSize)) {
+    assertVectorStoreLease(options.leaseGuard);
+    const fetched = await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      userId,
+      "rights exact verification",
+      () => index.fetch({ ids: idBatch }),
+      options.leaseGuard
+    );
+    for (const id of idBatch) if (fetched.records?.[id]) existing.push(id);
+  }
+  assertVectorStoreLease(options.leaseGuard);
+  return existing.sort();
 }
 
 /** Namespace-wide provider erasure for a corpus isolated specifically for revocable rights. */
@@ -4999,10 +5195,30 @@ export function buildExtraFilters(options?: RetrieveOptions): Record<string, unk
  * matches before ranking, persistence, or prompt injection without changing missing-field recall.
  */
 export function filterMatchesForTranscriptRights<T extends { metadata?: Record<string, unknown> }>(matches: T[]): T[] {
-  if (envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false)) return matches;
+  const rightsConfirmed = envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false);
+  const hasMarkedDerivative = matches.some((match) => match?.metadata?.fmp_derived === true);
+  if (rightsConfirmed && !hasMarkedDerivative) return matches;
+  let activeGeneration: number | undefined;
+  if (rightsConfirmed && hasMarkedDerivative) {
+    try {
+      const row = dbModule.getDb().prepare(`
+        SELECT generation, status FROM fmp_transcript_rights_gate WHERE singleton = 1
+      `).get() as { generation?: number; status?: string } | undefined;
+      if (row?.status === "active" && Number.isInteger(row.generation) && Number(row.generation) > 0) {
+        activeGeneration = Number(row.generation);
+      }
+    } catch {
+      // A marked licensed derivative without an authoritative gate is not eligible for retrieval.
+    }
+  }
   return matches.filter((match) => {
     const docType = match?.metadata?.doc_type;
     const source = match?.metadata?.source;
+    if (match?.metadata?.fmp_derived === true) {
+      const generation = Number(match.metadata.fmp_rights_generation);
+      return rightsConfirmed && activeGeneration !== undefined && generation === activeGeneration;
+    }
+    if (rightsConfirmed) return true;
     return source !== "fmp-earnings-transcript" &&
       (typeof docType !== "string" || docType.toLowerCase() !== EARNINGS_TRANSCRIPT_DOC_TYPE);
   });
@@ -5218,7 +5434,6 @@ export async function retrieveContextDetailed(
     const stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
     const providerAuthority = stableProviderAuthority;
     const defaultIndex = vectorDataIndex(pc, "default");
-    const privateIndex = vectorDataIndex(pc, "private", undefined, userId);
     const ledgerAuthority = managedVectorLedgerAuthority();
     const managedRecordsExpected = hasCommittedManagedRecords();
     const currentManagedRecordsExpected = hasCommittedVectorNamespaceRecords(ledgerAuthority, "managed");
@@ -5230,6 +5445,14 @@ export async function retrieveContextDetailed(
     const queryManagedNamespace = Boolean(stableProviderAuthority && currentManagedRecordsExpected);
     const managedIndex = queryManagedNamespace
       ? vectorDataIndex(pc, "managed", ledgerAuthority)
+      : undefined;
+    const queryPrivateNamespace = hasCurrentPrivateVectorNamespaceRecords(
+      userId,
+      ledgerAuthority,
+      stableProviderAuthority
+    );
+    const privateIndex = queryPrivateNamespace
+      ? vectorDataIndex(pc, "private", ledgerAuthority, userId)
       : undefined;
     const queryFmpNamespace = Boolean(
       stableProviderAuthority &&
@@ -5346,6 +5569,10 @@ export async function retrieveContextDetailed(
       };
       const managedUserFilter = { $and: [userTierFilter, managedAuthorityClause] };
       const managedSharedFilter = { $and: [sharedTierFilter, managedAuthorityClause] };
+      // Keep private and shared pools separate even for the local operator. A single union query
+      // can fill topK entirely from one high-scoring tier and starve the other before reranking.
+      // The dedicated private namespace is queried only when its durable manifest proves it exists
+      // under the current physical provider authority.
       const [userResults, privateResults, localResults, managedUserResults, managedLocalResults, fmpResults] = await Promise.all([
         withRagApiHealth("pinecone", pineconeSource, userId, "query user tier", () =>
           defaultIndex.query({
@@ -5355,14 +5582,16 @@ export async function retrieveContextDetailed(
             includeMetadata: true,
           })
         ),
-        withRagApiHealth("pinecone", pineconeSource, userId, "query private namespace", () =>
-          privateIndex.query({
-            vector: embedding,
-            topK: fetchK,
-            filter: userTierFilter,
-            includeMetadata: true
-          })
-        ),
+        privateIndex
+          ? withRagApiHealth("pinecone", pineconeSource, userId, "query private namespace", () =>
+              privateIndex.query({
+                vector: embedding,
+                topK: fetchK,
+                filter: userTierFilter,
+                includeMetadata: true
+              })
+            )
+          : Promise.resolve({ matches: [] }),
         withRagApiHealth("pinecone", pineconeSource, userId, "query shared tier", () =>
           defaultIndex.query({
             vector: embedding,
@@ -5404,7 +5633,7 @@ export async function retrieveContextDetailed(
       ]);
       meterPineconeQuery(
         pineconeReadUnits(userResults, 1) +
-          pineconeReadUnits(privateResults, 1) +
+          pineconeReadUnits(privateResults, privateIndex ? 1 : 0) +
           pineconeReadUnits(localResults, 1) +
           pineconeReadUnits(managedUserResults, managedIndex ? 1 : 0) +
           pineconeReadUnits(managedLocalResults, managedIndex ? 1 : 0) +
@@ -5418,29 +5647,20 @@ export async function retrieveContextDetailed(
           (fmpResults.matches?.length ?? 0)
       );
 
-      const combined = [
-        ...(userResults.matches || []),
-        ...(privateResults.matches || []),
-        ...(localResults.matches || []),
-        ...(managedUserResults.matches || []),
-        ...(managedLocalResults.matches || []),
-        ...(fmpResults.matches || [])
+      const tiers = [
+        userResults.matches || [],
+        privateResults.matches || [],
+        localResults.matches || [],
+        managedUserResults.matches || [],
+        managedLocalResults.matches || [],
+        fmpResults.matches || []
       ];
-      combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-
-      const seenIds = new Set<string>();
-      const unique: any[] = [];
-      for (const m of combined) {
-        if (m.id) {
-          if (!seenIds.has(m.id)) {
-            seenIds.add(m.id);
-            unique.push(m);
-          }
-        } else {
-          unique.push(m);
-        }
-      }
-      return unique.slice(0, fetchK);
+      // Every provider tier enforces its own topK. Preserve each non-empty tier's quota while keeping
+      // the combined rerank request within Voyage's documented 1,000-document ceiling.
+      return boundedTierCandidateUnion(
+        tiers,
+        wantRerank ? VOYAGE_RERANK_MAX_DOCUMENTS : Number.MAX_SAFE_INTEGER
+      );
     };
 
     // Additive multi-query fan-out (hyde-multiquery-retrieval, 2026-07-05): when the caller passes

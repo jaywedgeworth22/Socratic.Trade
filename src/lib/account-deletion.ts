@@ -74,7 +74,12 @@ const DELETE_TABLES_BY_USER_ID = [
   // a future migration adds the natural foreign key between them.
   "provider_usage_outbox",
   "provider_dispatch_attempts",
-  "vector_ingest_commits"
+  "vector_ingest_commits",
+  // Licensed transcript derivatives and exact private-vector provider receipts are user-scoped.
+  // They must survive until provider-first vector erasure succeeds, then leave in the same local
+  // deletion transaction as the decision/chat rows they describe.
+  "fmp_transcript_derived_provider_work",
+  "fmp_transcript_derived_artifacts"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];

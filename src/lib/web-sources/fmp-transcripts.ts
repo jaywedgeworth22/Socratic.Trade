@@ -11,6 +11,7 @@
 //  - Empty/transient responses never enter the ingestion ledger and therefore remain retryable.
 
 import crypto from "crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { CircuitOpenError } from "../api-circuit-breaker";
 import { fetchWithRetry, apiKeyFingerprint } from "../data-providers";
 import { logApiHealth } from "../db-health";
@@ -300,10 +301,16 @@ interface FmpTranscriptDerivedArtifactRow {
   created_at: string;
 }
 
+const FMP_DERIVED_PROVIDER_WORK_LEASE_MS = 30 * 60_000;
+
+function fmpDerivedProviderWorkLeaseExpiresAt(now = Date.now()): string {
+  return new Date(now + FMP_DERIVED_PROVIDER_WORK_LEASE_MS).toISOString();
+}
+
 /**
- * This schema intentionally lives beside the licensed producer instead of a generic migration:
- * the first read/write/purge installs it before any provider work, including on an older database.
- * A revoked row is never reactivated merely because an environment flag later changes.
+ * The versioned migration installs this schema at boot so account-deletion triggers cover it. This
+ * defensive ensure also supports isolated/legacy databases before any provider work. A revoked row
+ * is never reactivated merely because an environment flag later changes.
  */
 function ensureFmpTranscriptRightsGate(database = getDb()): void {
   database.exec(`
@@ -327,6 +334,10 @@ function ensureFmpTranscriptRightsGate(database = getDb()): void {
       id TEXT PRIMARY KEY,
       artifact_type TEXT NOT NULL CHECK(artifact_type IN ('strategy-decision')),
       artifact_id TEXT NOT NULL,
+      user_id TEXT,
+      vector_id TEXT,
+      provider_authority TEXT,
+      ledger_authority TEXT,
       generation INTEGER NOT NULL CHECK(generation > 0),
       status TEXT NOT NULL CHECK(status IN ('pending','complete')),
       created_at TEXT NOT NULL,
@@ -336,6 +347,41 @@ function ensureFmpTranscriptRightsGate(database = getDb()): void {
       ON fmp_transcript_derived_artifacts (artifact_type, artifact_id);
     CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_provider_work_status
       ON fmp_transcript_derived_provider_work (status, created_at);
+  `);
+  const providerWorkColumns = database.prepare(
+    "PRAGMA table_info(fmp_transcript_derived_provider_work)"
+  ).all() as Array<{ name: string }>;
+  if (!providerWorkColumns.some((column) => column.name === "lease_expires_at")) {
+    database.exec("ALTER TABLE fmp_transcript_derived_provider_work ADD COLUMN lease_expires_at TEXT");
+  }
+  if (!providerWorkColumns.some((column) => column.name === "terminal_outcome")) {
+    database.exec("ALTER TABLE fmp_transcript_derived_provider_work ADD COLUMN terminal_outcome TEXT");
+  }
+  if (!providerWorkColumns.some((column) => column.name === "user_id")) {
+    database.exec("ALTER TABLE fmp_transcript_derived_provider_work ADD COLUMN user_id TEXT");
+  }
+  if (!providerWorkColumns.some((column) => column.name === "vector_id")) {
+    database.exec("ALTER TABLE fmp_transcript_derived_provider_work ADD COLUMN vector_id TEXT");
+  }
+  if (!providerWorkColumns.some((column) => column.name === "provider_authority")) {
+    database.exec("ALTER TABLE fmp_transcript_derived_provider_work ADD COLUMN provider_authority TEXT");
+  }
+  if (!providerWorkColumns.some((column) => column.name === "ledger_authority")) {
+    database.exec("ALTER TABLE fmp_transcript_derived_provider_work ADD COLUMN ledger_authority TEXT");
+  }
+  database.exec(`
+    UPDATE fmp_transcript_derived_provider_work
+    SET user_id = (
+      SELECT a.user_id FROM fmp_transcript_derived_artifacts a
+      WHERE a.artifact_type = fmp_transcript_derived_provider_work.artifact_type
+        AND a.artifact_id = fmp_transcript_derived_provider_work.artifact_id
+    )
+    WHERE user_id IS NULL;
+    UPDATE fmp_transcript_derived_provider_work
+    SET lease_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+30 minutes')
+    WHERE status = 'pending' AND lease_expires_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_provider_work_lease
+      ON fmp_transcript_derived_provider_work (status, lease_expires_at);
   `);
   const existing = database.prepare(`
     SELECT generation, status, updated_at
@@ -448,6 +494,9 @@ export function persistFmpTranscriptDerivedArtifact<T>(input: {
   userId: string;
   provenance: readonly FmpTranscriptDerivedProvenance[];
   providerWorkId?: string;
+  providerVectorId?: string;
+  providerAuthority?: string;
+  ledgerAuthority?: string;
   write: () => T;
 }): T {
   const provenance = fmpTranscriptDerivedProvenance(input.provenance);
@@ -481,32 +530,125 @@ export function persistFmpTranscriptDerivedArtifact<T>(input: {
       if (input.artifactType !== "strategy-decision") {
         throw new Error("Only strategy decisions may reserve FMP-derived provider work.");
       }
+      const providerVectorId = input.providerVectorId?.trim();
+      if (!providerVectorId) {
+        throw new Error("FMP-derived provider work requires an exact vector identity.");
+      }
+      const providerAuthority = input.providerAuthority?.trim();
+      const ledgerAuthority = input.ledgerAuthority?.trim();
+      if (!providerAuthority || !ledgerAuthority) {
+        throw new Error("FMP-derived provider work requires exact provider and ledger authority.");
+      }
       database.prepare(`
         INSERT INTO fmp_transcript_derived_provider_work (
-          id, artifact_type, artifact_id, generation, status, created_at, completed_at
-        ) VALUES (?, 'strategy-decision', ?, ?, 'pending', ?, NULL)
+          id, artifact_type, artifact_id, user_id, vector_id, provider_authority, ledger_authority,
+          generation, status, created_at, completed_at, lease_expires_at, terminal_outcome
+        ) VALUES (?, 'strategy-decision', ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, ?, NULL)
         ON CONFLICT(id) DO UPDATE SET
           artifact_id = excluded.artifact_id,
+          user_id = excluded.user_id,
+          vector_id = excluded.vector_id,
+          provider_authority = excluded.provider_authority,
+          ledger_authority = excluded.ledger_authority,
           generation = excluded.generation,
           status = 'pending',
           created_at = excluded.created_at,
-          completed_at = NULL
-      `).run(input.providerWorkId, artifactId, input.claim.generation, new Date().toISOString());
+          completed_at = NULL,
+          lease_expires_at = excluded.lease_expires_at,
+          terminal_outcome = NULL
+      `).run(
+        input.providerWorkId,
+        artifactId,
+        input.userId,
+        providerVectorId,
+        providerAuthority,
+        ledgerAuthority,
+        input.claim.generation,
+        new Date().toISOString(),
+        fmpDerivedProviderWorkLeaseExpiresAt()
+      );
     }
     return value;
   }).immediate();
 }
 
+/** Prove both rights generation and the unexpired durable work token at every provider boundary. */
+export function assertFmpTranscriptDerivedProviderWorkOwnership(
+  workId: string,
+  claim: FmpTranscriptRightsGenerationClaim,
+  database = getDb()
+): void {
+  assertFmpTranscriptRightsGeneration(claim, database);
+  ensureFmpTranscriptRightsGate(database);
+  const row = database.prepare(`
+    SELECT generation, status, lease_expires_at
+    FROM fmp_transcript_derived_provider_work WHERE id = ?
+  `).get(workId) as {
+    generation: number;
+    status: "pending" | "complete";
+    lease_expires_at: string | null;
+  } | undefined;
+  const expiresAt = Date.parse(row?.lease_expires_at ?? "");
+  if (
+    !row ||
+    row.generation !== claim.generation ||
+    row.status !== "pending" ||
+    !Number.isFinite(expiresAt) ||
+    expiresAt <= Date.now()
+  ) {
+    throw new Error("FMP transcript derived provider-work lease is stale or lost.");
+  }
+}
+
 /** Terminal provider-work receipt. It may settle after revocation so a blocked purge can retry. */
-export function completeFmpTranscriptDerivedProviderWork(workId: string): void {
+export function completeFmpTranscriptDerivedProviderWork(
+  workId: string,
+  terminalOutcome: "completed" | "no_provider_write" | "provider_write_unknown" = "completed"
+): void {
   if (!workId.trim()) return;
   const database = getDb();
   ensureFmpTranscriptRightsGate(database);
   database.prepare(`
     UPDATE fmp_transcript_derived_provider_work
-    SET status = 'complete', completed_at = ?
+    SET status = 'complete', completed_at = ?, terminal_outcome = ?
     WHERE id = ? AND status = 'pending'
-  `).run(new Date().toISOString(), workId);
+  `).run(new Date().toISOString(), terminalOutcome, workId);
+}
+
+/** Keep a live async provider call distinguishable from a process that died after reserving it. */
+export function renewFmpTranscriptDerivedProviderWork(
+  workId: string,
+  claim: FmpTranscriptRightsGenerationClaim
+): boolean {
+  if (!workId.trim()) return false;
+  const database = getDb();
+  ensureFmpTranscriptRightsGate(database);
+  return database.transaction(() => {
+    assertFmpTranscriptDerivedProviderWorkOwnership(workId, claim, database);
+    const now = new Date().toISOString();
+    return database.prepare(`
+      UPDATE fmp_transcript_derived_provider_work
+      SET lease_expires_at = ?
+      WHERE id = ? AND generation = ? AND status = 'pending'
+        AND lease_expires_at IS NOT NULL AND lease_expires_at > ?
+    `).run(fmpDerivedProviderWorkLeaseExpiresAt(), workId, claim.generation, now).changes === 1;
+  }).immediate();
+}
+
+/**
+ * After rights have been revoked, a lease with no heartbeat is a crash receipt rather than a
+ * permanent purge blocker. The subsequent provider-first purge removes any vector whose final
+ * upsert outcome was unknown. Live work renews this lease from strategy.ts until it settles.
+ */
+function expireAbandonedFmpTranscriptDerivedProviderWork(database = getDb()): number {
+  const gate = readFmpTranscriptRightsGate(database);
+  if (gate.status !== "revoked" || fmpTranscriptStorageRightsConfirmed()) return 0;
+  const now = new Date().toISOString();
+  return database.prepare(`
+    UPDATE fmp_transcript_derived_provider_work
+    SET status = 'complete', completed_at = ?, terminal_outcome = 'lease_expired'
+    WHERE status = 'pending' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
+  `).run(now, now).changes;
 }
 
 export function recordFmpTranscriptDerivedAudit(input: {
@@ -1183,6 +1325,8 @@ export interface FmpTranscriptRightsInventory {
   providerFmpNamespaceVectorIds: string[];
   providerManagedVectorIds: string[];
   providerDefaultVectorIds: string[];
+  /** Exact generation-bound decision-memory identities, including their private namespace owner. */
+  providerPrivateVectorRefs: FmpTranscriptPrivateVectorRef[];
   /** Provider candidates selected from immutable managed identity, local evidence, or legacy metadata fallback. */
   immutableCurrentSourceIds: string[];
   localVectorIds: string[];
@@ -1208,6 +1352,13 @@ export interface FmpTranscriptRightsInventory {
   derivedArtifactPolicy: "scrub-exact-provenance";
 }
 
+export interface FmpTranscriptPrivateVectorRef {
+  userId: string;
+  vectorId: string;
+  providerAuthority: string;
+  ledgerAuthority: string;
+}
+
 interface VectorMetadataInventoryRow {
   id: string;
   metadata: Record<string, unknown>;
@@ -1229,6 +1380,7 @@ interface ManagedVectorSourceCandidateInventory {
   managedCandidateIds: string[];
   fmpNamespaceCandidateIds: string[];
   defaultCandidateIds: string[];
+  privateVectorRefs: FmpTranscriptPrivateVectorRef[];
   immutableCurrentSourceIds: string[];
   authorityBlockers: string[];
 }
@@ -1261,14 +1413,14 @@ interface ManagedVectorSourceHelpers {
   inventoryVectorRecordsByMetadata(options: {
     userId?: string;
     prefix?: string;
-    namespace?: "default" | "managed" | "fmp-transcripts";
+    namespace?: "default" | "managed" | "private" | "fmp-transcripts";
     maxScanned?: number;
     leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
   }): Promise<VectorMetadataInventoryRow[]>;
   purgeVectorRecordsByMetadata(options: {
     userId?: string;
     prefix?: string;
-    namespace?: "default" | "managed" | "fmp-transcripts";
+    namespace?: "default" | "managed" | "private" | "fmp-transcripts";
     dryRun?: boolean;
     maxScanned?: number;
     leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
@@ -1276,9 +1428,19 @@ interface ManagedVectorSourceHelpers {
   purgeVectorRecordIds(options: {
     userId?: string;
     ids: string[];
-    namespace?: "default" | "managed" | "fmp-transcripts";
+    namespace?: "default" | "managed" | "private" | "fmp-transcripts";
     leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
+    expectedProviderAuthority?: string;
+    ledgerAuthority?: string;
   }): Promise<{ ids: string[]; deleted: number }>;
+  fetchExistingVectorRecordIds(options: {
+    userId?: string;
+    ids: string[];
+    namespace?: "default" | "managed" | "private" | "fmp-transcripts";
+    leaseGuard?: import("../vector-db").VectorStoreLeaseGuard;
+    expectedProviderAuthority?: string;
+    ledgerAuthority?: string;
+  }): Promise<string[]>;
   purgeVectorNamespaceAll(options: {
     userId?: string;
     namespace: "fmp-transcripts";
@@ -1298,6 +1460,7 @@ async function managedVectorSourceHelpers(): Promise<ManagedVectorSourceHelpers>
     typeof vectorDb.inventoryVectorRecordsByMetadata !== "function" ||
     typeof vectorDb.purgeVectorRecordsByMetadata !== "function" ||
     typeof vectorDb.purgeVectorRecordIds !== "function" ||
+    typeof vectorDb.fetchExistingVectorRecordIds !== "function" ||
     typeof vectorDb.purgeVectorNamespaceAll !== "function"
   ) {
     throw new Error("Managed vector source-identity purge helpers are unavailable.");
@@ -1388,12 +1551,78 @@ async function inventoryManagedFmpTranscriptVectorCandidates(
     maxScanned: rightsInventoryScanMaxRecords(),
     leaseGuard
   });
+  const derivedProviderRows = getDb().prepare(`
+    SELECT user_id, vector_id, provider_authority, ledger_authority, status, terminal_outcome
+    FROM fmp_transcript_derived_provider_work
+    ORDER BY user_id, vector_id, provider_authority, ledger_authority
+  `).all() as Array<{
+    user_id: string | null;
+    vector_id: string | null;
+    provider_authority: string | null;
+    ledger_authority: string | null;
+    status: "pending" | "complete";
+    terminal_outcome: string | null;
+  }>;
+  const privateVectorRefs = [...new Map(
+    derivedProviderRows
+      .filter((row) => {
+        // This reservation settled before any Pinecone upsert (dedup, budget, or missing-provider
+        // short circuit). Keep the local provenance row for scrubbing, but do not invent a provider
+        // deletion obligation or require a namespace manifest for a vector that was never written.
+        if (row.status === "complete" && row.terminal_outcome === "no_provider_write") return false;
+        const identityPresent = Boolean(row.user_id?.trim() && row.vector_id?.trim());
+        const authorityPresent = Boolean(row.provider_authority?.trim() && row.ledger_authority?.trim());
+        if (!identityPresent) authorityBlockers.add("derived-private-vector-identity-missing");
+        if (!authorityPresent) authorityBlockers.add("derived-private-vector-authority-missing");
+        return identityPresent && authorityPresent;
+      })
+      .map((row) => {
+        const ref = {
+          userId: row.user_id!.trim(),
+          vectorId: row.vector_id!.trim(),
+          providerAuthority: row.provider_authority!.trim(),
+          ledgerAuthority: row.ledger_authority!.trim()
+        };
+        return [
+          `${ref.userId}\u0000${ref.vectorId}\u0000${ref.providerAuthority}\u0000${ref.ledgerAuthority}`,
+          ref
+        ] as const;
+      })
+  ).values()].sort((a, b) => (
+    `${a.userId}:${a.vectorId}:${a.providerAuthority}:${a.ledgerAuthority}`
+      .localeCompare(`${b.userId}:${b.vectorId}:${b.providerAuthority}:${b.ledgerAuthority}`)
+  ));
   const candidateIds = new Set<string>();
   const observedCandidateIds = new Set<string>();
   const managedCandidateIds = new Set<string>();
   const fmpNamespaceCandidateIds = new Set<string>();
   const defaultCandidateIds = new Set<string>();
   const immutableCurrentSourceIds = new Set<string>();
+  const refsByAuthority = new Map<string, FmpTranscriptPrivateVectorRef[]>();
+  for (const ref of privateVectorRefs) {
+    candidateIds.add(ref.vectorId);
+    const key = `${ref.userId}\u0000${ref.providerAuthority}\u0000${ref.ledgerAuthority}`;
+    const refs = refsByAuthority.get(key) ?? [];
+    refs.push(ref);
+    refsByAuthority.set(key, refs);
+  }
+  const privateObservations = await Promise.all([...refsByAuthority.values()].map(async (refs) => {
+    const first = refs[0]!;
+    try {
+      return await vectorDb.fetchExistingVectorRecordIds({
+        userId: first.userId,
+        namespace: "private",
+        ids: refs.map((ref) => ref.vectorId),
+        expectedProviderAuthority: first.providerAuthority,
+        ledgerAuthority: first.ledgerAuthority,
+        leaseGuard
+      });
+    } catch {
+      authorityBlockers.add("derived-private-provider-authority-unreachable");
+      return [];
+    }
+  }));
+  for (const id of privateObservations.flat()) observedCandidateIds.add(id);
   const classifyCurrentV3 = (row: VectorMetadataInventoryRow): boolean => Boolean(
     providerAuthority &&
     immutablePrefix &&
@@ -1455,6 +1684,7 @@ async function inventoryManagedFmpTranscriptVectorCandidates(
     managedCandidateIds: [...managedCandidateIds].sort(),
     fmpNamespaceCandidateIds: [...fmpNamespaceCandidateIds].sort(),
     defaultCandidateIds: [...defaultCandidateIds].sort(),
+    privateVectorRefs,
     immutableCurrentSourceIds: [...immutableCurrentSourceIds].sort(),
     authorityBlockers: [...authorityBlockers].sort()
   };
@@ -1528,6 +1758,7 @@ function localFmpTranscriptRightsInventory(): Omit<
   | "providerFmpNamespaceVectorIds"
   | "providerManagedVectorIds"
   | "providerDefaultVectorIds"
+  | "providerPrivateVectorRefs"
   | "immutableCurrentSourceIds"
   | "authorityBlockers"
 > {
@@ -1666,6 +1897,7 @@ export async function inventoryFmpTranscriptRightsArtifacts(
     providerFmpNamespaceVectorIds: [...new Set(provider.fmpNamespaceCandidateIds)].sort(),
     providerManagedVectorIds: [...new Set(provider.managedCandidateIds)].sort(),
     providerDefaultVectorIds: [...new Set(provider.defaultCandidateIds)].sort(),
+    providerPrivateVectorRefs: provider.privateVectorRefs,
     immutableCurrentSourceIds: [...new Set(provider.immutableCurrentSourceIds)].sort(),
     authorityBlockers: [...new Set(provider.authorityBlockers)].sort(),
     ...localFmpTranscriptRightsInventory()
@@ -1705,6 +1937,7 @@ export async function purgeFmpTranscriptRightsArtifacts(options: { dryRun?: bool
       // writer either committed before this point (and is inventoried below) or its stale claim
       // fails without persisting after cleanup.
       revokeFmpTranscriptRightsGeneration(database);
+      expireAbandonedFmpTranscriptDerivedProviderWork(database);
       const before = await inventoryFmpTranscriptRightsArtifacts({ signal, assertOwnership: assertLease });
       assertLease();
       if (before.authorityBlockers.length > 0) {
@@ -1719,10 +1952,12 @@ export async function purgeFmpTranscriptRightsArtifacts(options: { dryRun?: bool
       const selectedFmpNamespaceIds = [...new Set(before.providerFmpNamespaceVectorIds)].sort();
       const selectedManagedIds = [...new Set(before.providerManagedVectorIds)].sort();
       const selectedDefaultIds = [...new Set(before.providerDefaultVectorIds)].sort();
+      const selectedPrivateRefs = before.providerPrivateVectorRefs;
       const selectedIds = [...new Set([
         ...selectedFmpNamespaceIds,
         ...selectedManagedIds,
-        ...selectedDefaultIds
+        ...selectedDefaultIds,
+        ...selectedPrivateRefs.map((ref) => ref.vectorId)
       ])].sort();
       const { purgeVectorNamespaceAll, purgeVectorRecordIds } = await managedVectorSourceHelpers();
       // Current/future licensed content is isolated in a dedicated namespace, so deleteAll is
@@ -1745,18 +1980,59 @@ export async function purgeFmpTranscriptRightsArtifacts(options: { dryRun?: bool
         ids: selectedDefaultIds,
         leaseGuard: { signal, assertOwnership: assertLease }
       });
-      assertLease();
-      const providerVerification = await inventoryFmpTranscriptRightsArtifacts({ signal, assertOwnership: assertLease });
-      assertLease();
-      const remainingSelectedIds = selectedIds.filter((id) => providerVerification.providerObservedVectorIds.includes(id));
-      if (remainingSelectedIds.length > 0) {
-        throw new Error(`FMP transcript provider purge did not verify selected vector IDs absent (${remainingSelectedIds.length} remain).`);
+      const privateRefsByAuthority = new Map<string, FmpTranscriptPrivateVectorRef[]>();
+      for (const ref of selectedPrivateRefs) {
+        const key = `${ref.userId}\u0000${ref.providerAuthority}\u0000${ref.ledgerAuthority}`;
+        const refs = privateRefsByAuthority.get(key) ?? [];
+        refs.push(ref);
+        privateRefsByAuthority.set(key, refs);
       }
-      if (
-        providerVerification.providerObservedVectorIds.length > 0 ||
-        providerVerification.immutableCurrentSourceIds.length > 0
-      ) {
-        throw new Error(`FMP transcript provider purge incomplete (${providerVerification.providerObservedVectorIds.length} vector(s) remain).`);
+      for (const refs of privateRefsByAuthority.values()) {
+        const first = refs[0]!;
+        await purgeVectorRecordIds({
+          userId: first.userId,
+          namespace: "private",
+          ids: refs.map((ref) => ref.vectorId),
+          expectedProviderAuthority: first.providerAuthority,
+          ledgerAuthority: first.ledgerAuthority,
+          leaseGuard: { signal, assertOwnership: assertLease }
+        });
+      }
+      assertLease();
+      // Pinecone delete/list/fetch visibility is eventually consistent. A briefly absent vector can
+      // reappear, so retain every local receipt until a bounded stability window is clean.
+      const verifyAttempts = positiveInt(process.env.VECTOR_ERASURE_VERIFY_ATTEMPTS, 4, 10);
+      const requiredClean = Math.min(
+        verifyAttempts,
+        positiveInt(process.env.VECTOR_ERASURE_VERIFY_CONSECUTIVE_CLEAN, 3, 10)
+      );
+      const verifyDelayMs = nonNegativeInt(process.env.VECTOR_ERASURE_VERIFY_DELAY_MS, 500, 30_000);
+      let consecutiveClean = 0;
+      let providerVerification = before;
+      let remainingSelectedIds: string[] = selectedIds;
+      for (let attempt = 0; attempt < verifyAttempts; attempt++) {
+        if (attempt > 0 && verifyDelayMs > 0) {
+          await sleep(Math.min(30_000, verifyDelayMs * (2 ** (attempt - 1))), undefined, { signal });
+          assertLease();
+        }
+        providerVerification = await inventoryFmpTranscriptRightsArtifacts({ signal, assertOwnership: assertLease });
+        assertLease();
+        remainingSelectedIds = selectedIds.filter((id) => (
+          providerVerification.providerObservedVectorIds.includes(id)
+        ));
+        const clean = remainingSelectedIds.length === 0 &&
+          providerVerification.providerObservedVectorIds.length === 0 &&
+          providerVerification.immutableCurrentSourceIds.length === 0 &&
+          providerVerification.authorityBlockers.length === 0;
+        consecutiveClean = clean ? consecutiveClean + 1 : 0;
+        if (consecutiveClean >= requiredClean) break;
+      }
+      if (consecutiveClean < requiredClean) {
+        throw new Error(
+          `FMP transcript provider purge stability verification failed (` +
+          `${remainingSelectedIds.length} selected vector(s) in final observation; ` +
+          `${consecutiveClean}/${requiredClean} consecutive clean).`
+        );
       }
 
       database.transaction(() => {
@@ -1802,6 +2078,7 @@ export async function purgeFmpTranscriptRightsArtifacts(options: { dryRun?: bool
       assertLease();
       const residual = after.providerVectorIds.length + after.providerObservedVectorIds.length + after.immutableCurrentSourceIds.length +
         after.providerManagedVectorIds.length + after.providerDefaultVectorIds.length +
+        after.providerPrivateVectorRefs.length +
         after.localVectorIds.length + after.versionIds.length +
         after.commitIds.length +
         after.activeHeadCommitIds.length + after.documentVersionCommitIds.length +
