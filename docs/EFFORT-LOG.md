@@ -647,8 +647,10 @@ As of 2026-07-08 (assignment-rule update).
   `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
 
 - **Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch
-  `monet/privacy-terms-pages`) — IN PROGRESS 2026-07-10, code+tests+full gate done, PR opening
-  next.** Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added
+  `monet/privacy-terms-pages`) — ✅ DEPLOYED TO PROD 2026-07-10: PR #1374 squash-merged to `main`
+  (`1c7f2376`), auto-deployed. Verified live in production 2026-07-15: `/privacy-policy` and
+  `/terms-and-conditions` both return HTTP 200 unauthenticated with correct titles/content.**
+  Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added
   `/privacy-policy` + `/terms-and-conditions` (boilerplate, matches the existing
   `/how-it-works`/`/welcome` page pattern exactly), describing the app's real opt-in Twilio SMS
   notification channel (`src/lib/notify.ts`) with the specific language Twilio's compliance review
@@ -732,6 +734,10 @@ As of 2026-07-08 (assignment-rule update).
   pattern). Rollout: `docs/rollouts/2026-07-10-per-team-reasoning.md` (Follow-ups section).
 - **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — IN PROGRESS 2026-07-10, owner-assigned.** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team: (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rides here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row). Full gate under node@24 + land.sh.
 - **Learning-review legacy-seed default-blob edge — #1278 deferred finding #3 (MONET, branch
+  `monet/learning-review-legacy-seed-99138a`) — ✅ DEPLOYED TO PROD 2026-07-10: PR #1326 squash-merged
+  to `main` (`505475c5`), auto-deployed. Re-verified intact on `main` 2026-07-15 (5 days later, 46/46
+  learning-review tests including both dedicated regression tests pass on current tree).**
+  `seedLegacyLearningReviewFields`
   `monet/learning-review-legacy-seed-99138a`) — ✅ COMPLETED 2026-07-10, MERGED as PR #1326.**
   (Row corrected 2026-07-15 — MONET, was stuck at IN PROGRESS after merge; the mirror never got
   flipped since #1278 squash-merged to `main` mid-work, `6f1aaf87`.) `seedLegacyLearningReviewFields`
@@ -745,6 +751,10 @@ As of 2026-07-08 (assignment-rule update).
   clobber a later deliberate disable (the fail-OPEN danger the naive fix risked). +2 tests
   (full-blob recovered; tiered-disable NOT clobbered), pre-fix falsified. node@24: tsc clean,
   learning-review 32/32, policy-scope 53/53 (pr7-merge-gate green), build clean, eslint 0-err. Built off
+  #1278 tip 150257ae (target code only exists on the unmerged PR). Deferred finding #2 (unshown-item
+  orphaning) was later found to have 2 more adjacent gaps of its own on adversarial re-review; ALL
+  fixed via PR #1363 (2026-07-10/11, "Learning-review orphan hardening" row, this file). No known open
+  #1278 deferred items remain. See docs/rollouts/2026-07-09-learning-review-model-fixes.md addendum 3.
   #1278 tip 150257ae (target code only exists on the unmerged PR). #2 (unshown-item orphaning) ALSO
   landed since, as PR #1328 (merged 2026-07-10) — every #1278 deferred item is now closed.
   See docs/rollouts/2026-07-09-learning-review-model-fixes.md addendum 3.
