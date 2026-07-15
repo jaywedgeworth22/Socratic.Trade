@@ -1,5 +1,26 @@
 # Current Status
 
+## 2026-07-15 — Primary-account Usage Monitor credential bridge writer (CODEX)
+
+Branch `codex/st-primary-bridge-writer` adds the default-off Socratic writer
+for API Usage Monitor PR #286's isolated bridge. The source is compile-time
+fixed to `LOCAL_USER=local` and exact services Gemini + DeepSeek; the target is
+fixed to the Socratic.Trade Infisical project, `prod`, and
+`/usage-monitor/st-primary/v1`. Active values are verified before a strict
+monotonic manifest-last commit. Revocations are delete-free tombstones. The
+scheduler and primary-key routes are wired, while other users/providers cannot
+trigger an export. Hostile review found four writer issues; all were fixed with
+regressions: response-body lifetime timeout, redirect rejection, post-commit
+active-value coherence, and forced mutation draining during an in-flight sync.
+The exact final tree passes lint (0 errors; baseline warnings), TypeScript, 382
+test files / 4,400 tests, and production build. A cross-repo release blocker
+remains: API Usage Monitor's live reader must switch to the writer-compatible
+unexpanded-value contract (`expandSecretReferences=false`) before this branch
+can be pushed or activated. No push, identity creation, Infisical mutation,
+production configuration, merge, or deployment occurred.
+
+Rollout: `docs/rollouts/2026-07-15-st-primary-bridge-writer.md`.
+
 ## 2026-07-15 — Open-PR cleanup and production verification (CODEX)
 
 PR #1586 merged as `2f5c986a` and PR #1612 merged as `3c015a52`; production `/api/health`
