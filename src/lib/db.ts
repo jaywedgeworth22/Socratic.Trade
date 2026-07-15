@@ -2648,6 +2648,21 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_strategy_tuning_reviews_user_account_status
       ON strategy_tuning_reviews (user_id, connected_account_id, status);
+
+    -- Generic durable backing store for in-memory rate-limiter / circuit-breaker / cooldown state
+    -- (src/lib/durable-state.ts's createDurableMap) that must survive a process restart — the app
+    -- now auto-deploys on every merge to main, which replaces the running container mid-session, so
+    -- any in-memory guard against a real external cap or a real safety cooldown needs to come back
+    -- with its pre-restart state intact rather than resetting to "everything is fresh". One JSON
+    -- value per (namespace, key); namespace scopes an owning module (e.g. "provider-request-quota",
+    -- "order-remediation-cooldown"), key is that module's own key shape (e.g. "provider|credKey").
+    CREATE TABLE IF NOT EXISTS durable_state (
+      namespace TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (namespace, key)
+    );
   `);
 
   // Migrate tables to include user_id
@@ -3110,3 +3125,4 @@ export * from "./db-rag-ingest";
 export * from "./db-tuning-reviews";
 export * from "./db-provider-dispatch";
 export * from "./db-vector-commits";
+export * from "./db-durable-state";

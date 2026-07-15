@@ -294,6 +294,13 @@ export default function ApprovalsPage() {
 
   if (!snapshot || !state) return null;
 
+  // Intentionally wider than CONSOLE_PAGE_WIDTH: this is a two-column layout (main
+  // approvals column + a 360px-fixed aside, xl:grid-cols-[minmax(0,1fr)_360px]),
+  // not a single reading column like the other console pages. Capping it to
+  // CONSOLE_PAGE_WIDTH's 1024px would starve the main column to satisfy the
+  // aside's fixed 360px. Same reasoning as the console home page and the
+  // decision-trace ready state — see ./lib/page-width.ts and
+  // docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="mx-auto grid max-w-6xl gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="flex min-w-0 flex-col gap-4">

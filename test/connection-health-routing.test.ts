@@ -236,4 +236,93 @@ describe("Connection Health & Failure Routing", () => {
     });
     expect(body.checks.storageDegraded).toBe(true);
   });
+
+  // Alpha Vantage daily-cap exhaustion is a quota failure, not a transient connection blip: it
+  // cannot clear before the provider's own daily reset, so re-alerting every generic 6h window is
+  // pure noise for the SAME still-ongoing exhaustion (confirmed prod pattern: 1:31 AM and 8:02 AM
+  // alerts for one exhausted key pool). `opts.cooldownUntil` lets the AV call site stretch the
+  // suppression window to that reset instant instead of the fixed 6h; every other caller (no
+  // cooldownUntil) keeps the fixed window unchanged.
+  describe("alertConnectionFailure cooldown: quota-exhaustion vs generic", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a quota-exhaustion cooldownUntil suppresses a second alert 7h later, same cap-day", async () => {
+      const { health, notificationsMod } = await load();
+      const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+      const start = Date.parse("2026-07-15T05:31:00Z"); // 1:31 AM ET
+      vi.useFakeTimers();
+      vi.setSystemTime(start);
+      // Simulate the AV call site's actual reset-instant computation: ~12h away, well past a 7h check.
+      const cooldownUntil = new Date(start + 12 * 60 * 60_000).toISOString();
+
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      // 7h later: past the GENERIC 6h window, but still well before this cap-day's reset.
+      vi.setSystemTime(start + 7 * 60 * 60_000);
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1); // still suppressed — no 8:02 AM repeat
+    });
+
+    it("a non-quota failure (no cooldownUntil) still re-alerts after the generic 6h window", async () => {
+      const { health, notificationsMod } = await load();
+      const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+      const start = Date.parse("2026-07-15T05:31:00Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(start);
+
+      await health.alertConnectionFailure("finnhub", "env", null, "HTTP 500");
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(start + 7 * 60 * 60_000); // 7h later — past the 6h generic window
+      await health.alertConnectionFailure("finnhub", "env", null, "HTTP 500");
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(2); // re-alerts — behavior unchanged
+    });
+
+    it("alerts again once the cap-day's cooldownUntil instant itself has passed (next reset)", async () => {
+      const { health, notificationsMod } = await load();
+      const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+      const start = Date.parse("2026-07-15T05:31:00Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(start);
+      const firstReset = new Date(start + 2 * 60 * 60_000).toISOString(); // reset only 2h away
+
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: firstReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      // Still before the reset — stays suppressed.
+      vi.setSystemTime(start + 60 * 60_000);
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: firstReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      // Past the reset instant — this is a NEW cap-day's exhaustion, so it alerts again.
+      vi.setSystemTime(start + 2 * 60 * 60_000 + 1000);
+      const nextReset = new Date(start + 26 * 60 * 60_000).toISOString();
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: nextReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("falls back to the generic 6h window when cooldownUntil is already in the past", async () => {
+      const { health, notificationsMod } = await load();
+      const sendNotificationSpy = vi.spyOn(notificationsMod, "sendNotification").mockResolvedValue({} as any);
+
+      const start = Date.parse("2026-07-15T05:31:00Z");
+      vi.useFakeTimers();
+      vi.setSystemTime(start);
+      const pastReset = new Date(start - 1000).toISOString(); // already elapsed — defensive/malformed input
+
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: pastReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+
+      // 1h later — well inside the generic 6h fallback window — stays suppressed.
+      vi.setSystemTime(start + 60 * 60_000);
+      await health.alertConnectionFailure("alpha-vantage", "env", null, "entire key pool exhausted", { cooldownUntil: pastReset });
+      expect(sendNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

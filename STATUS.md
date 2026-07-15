@@ -11,6 +11,100 @@ results under `docs/benchmarks/` (date-prefixed) are unaffected. (3) Recorded bl
 cannot be benchmarked** — all 18 calls returned HTTP 403 `model_not_found` on the prod OpenAI key (newest
 accessible gpt-5 is gpt-5.5/5.5-pro; no gpt-5.6 exists for this account). Not a code bug — an access/existence
 issue; awaiting owner direction. Details: `docs/rollouts/2026-07-11-session-closeout-gpt56-blocked.md`.
+## 2026-07-15 — Durable state: in-memory rate-limiters/cooldowns survive a restart (MONET, branch `monet/durable-state-restart-survival`)
+
+Owner directive after auto-deploy went live fleet-wide ("persist all variables/counts... have that be
+the standard... for all things"): a redeploy replaces the running container mid-session, so any
+in-memory guard against a real external cap or a real duplicate-action risk needs to come back with
+its pre-restart state intact. Built ONE shared write-behind SQLite-backed primitive
+(`createDurableMap`, `src/lib/durable-state.ts`; new `durable_state` table via `src/lib/db-durable-state.ts`)
+after a 4-way parallel discovery sweep of 32 candidate in-memory sites app-wide. Persisted:
+`provider-rate-limit.ts`'s `RequestQuota` (already flagged — see the unified-quota rollout),
+`usage-budget.ts`'s alert cooldown (was the one inconsistent bare-Map cooldown vs. every sibling's
+durable pattern), `congress-share.ts`'s per-symbol send throttle. Left alone (confirmed correct,
+not a gap): the pacer, the AV key-pool's harmless rotation pointer, the circuit breaker's thin cache
+in front of a durable table, and every in-flight lock/Set tied to live async work.
+
+**Two supersession collisions found during rebase** (this branch was cherry-picked onto a fresh
+`origin/main` rather than merged — all 6 touched files had also changed upstream, `db.ts` alone 16
+times): `order-replacement.ts`'s double-sell cooldown and `triggers.ts`'s hourly/daily caps were BOTH
+independently rebuilt by another agent with more complete designs (a full DB-backed resumable
+state machine for order-replacement; a durable pending-event queue with claim/retry semantics for
+triggers) while this branch was in flight. Deferred to both; dropped my now-redundant wiring/tests
+for those two files rather than reintroducing a competing mechanism.
+
+**Fixed during the gate:** module-top-level `createDurableMap()` calls (data-provider quota,
+congress-share throttle, usage-budget cooldown) risked a circular-import TDZ crash
+("Cannot access 'host' before initialization") since this module's evaluation could nest inside
+`durable-state.ts`'s own still-in-progress top-level evaluation — converted all three to lazy
+singletons, created on first real call instead of at import time. Also hardened
+`durable-state.ts`'s hydration read with a try/catch (matching the write path's existing best-effort
+philosophy) after finding it crashed a pre-existing test whose `vi.mock("../src/lib/db", ...)` didn't
+provide `getDb` — that test never intended to exercise persistence at all.
+
+Full gate: `npm run lint` 0 errors, `tsc --noEmit` clean, targeted retest of every file the two bugs
+touched all green (151/151); full-suite re-run in progress. Node ABI trap applies here too — this
+was a completely fresh worktree checkout (`node_modules` didn't exist), `npm ci` built for the
+Mac's default node26, rebuilt for node24 to match `.nvmrc`. Rollout:
+`docs/rollouts/2026-07-10-durable-state-restart-survival.md`. Next: full suite confirmation, `npm run
+build`, land via PR.
+## 2026-07-15 — Today's-errors triage: P1 RAG-outage fix + notification/alert truth-and-noise fixes (CLAUDE)
+
+Owner-directed from an SMS error review. Six fixes on `claude/todays-app-errors-716a45`, all
+KEEPOUT-aware (no `strategy.ts`/`types.ts` — AG safety-maintenance lane holds them):
+
+1. **P1 — production RAG retrieval was 100% down** (Sentry `SOCRATIC-TRADE-X`, 150 events
+   escalating since 11:27Z). `managedVectorLedgerAuthority()` counted pre-authority
+   `legacy_committed` `chunk_occurrences` rows as blocking evidence, so a deployment upgrading
+   with legacy RAG data could never mint its first ledger authority — every retrieval AND ingest
+   threw `Managed vector ledger authority is missing while vector evidence exists`. Fix counts only
+   authority-bearing evidence (`receipt_state <> 'legacy_committed'`); fail-closed on genuine
+   managed evidence preserved. `test/vector-ledger-authority-legacy.test.ts` (7 tests).
+2. `run_failed`/`kill_switch` notification body now surfaces the real broker/breaker reason
+   (`payload.reason`/`error`) instead of duplicating the title (SMS showed "BAC order rejected by
+   broker" twice); Discord parity. `test/notification-body-fixes.test.ts`.
+3. Placeholder `pending_reconciliation` fills stop rendering "BUY 0 SYM ($0.00)"; render an
+   intent-truthful body with an estimate only when a real one exists.
+4. Stale-limit alerts skip unactivated Alpaca `"held"` bracket exit legs (SELL TP legs alerted
+   beside their unfilled BUY entries). `test/stale-limit-orders.test.ts`.
+5. Alpha Vantage daily-cap exhaustion alert cools down until the next US/Eastern daily reset
+   instead of re-firing every 6h. `test/connection-health-routing.test.ts` +
+   `test/alpha-vantage-quota-alert-cooldown.test.ts`.
+6. Alpaca adapter no longer sets `stop_price` on non-stop order types (limit/market) — the
+   probable cause of today's repeated "order rejected by broker" (Alpaca 422 40010001 "limit
+   orders require no stop price"). Both REST and MCP paths guarded.
+   `test/alpaca-limit-stop-price-guard.test.ts` (6 tests, both paths).
+
+Sentry board cleaned (`X` resolvedInNextRelease → auto-closes on this merge; `W`/`T`/`B` resolved;
+`F` ignored). PagerDuty: 14 stale-snapshot warnings all auto-resolved (external usage-monitor).
+Owner-only follow-ups surfaced: Robinhood investor-profile questionnaire on the Agentic account
+(400-blocking 2nd+ trades), Alpha Vantage key pool expansion, multi-provider LLM quota review.
+
+Rollout: `docs/rollouts/2026-07-15-todays-errors-triage-handoff.md` (records the full triage;
+CLAUDE completed the land in-session rather than handing off).
+## 2026-07-15 — Learning-review settings follow-ups + verified UI-wave closeout (MONET)
+
+Closed out the remaining open items from the model-attribution/Alert-Center/learning-review chat
+thread. Added the missing threshold/max-wait UI knobs to the Daily learning review card
+(`app/console/settings/learning-review.tsx`) for the trigger backend that landed via #1278 with
+no UI; fixed `LearningReviewCard`'s `save()` helper to report success/failure so numeric fields
+can revert on a failed save. Ran a 10-claim adversarial verification workflow against live code
+(not memory) for the earlier UI wave: 7/10 confirmed already correct and un-regressed (Alert
+Center pill redesign, LRCX ticker-spacing fix, sparse-drawer fallback, compact finished-order
+cards, mobile active-tab color, desktop rail Configure-last ordering + width). Fixed the 3 gaps
+found: mobile section spacing was never actually implemented (`app/ui/ios-components.tsx`'s
+`List` now `gap-8 sm:gap-6`); container-width normalization had 2 undocumented offenders
+(`results/page.tsx` now uses `CONSOLE_PAGE_WIDTH`; `approvals/page.tsx`'s two-column layout got a
+documented exception comment matching the two that already existed); model attribution never
+reached the post-mortem/reflection surface (an explicitly-deferred follow-up in #1076's own
+rollout note) — `generateReflectionSummary` now audits `model`/`provider` on success AND (net-new)
+on a failed LLM call, surfaced in the Journal via the same text-attribution pattern `llm_step`
+already uses. Also verified: the "Global Settings" section ask was already satisfied
+architecturally by #1340 (global-only Settings page); the learning-review cost-line
+plain-English label was already fixed by another session (`app/ui/llm-usage-labels.ts`). tsc
+clean, lint 0 errors, 90/90 targeted tests pass; full suite/build run under heavy fleet
+contention — see rollout note for exact command outcomes at land time. Rollout:
+`docs/rollouts/2026-07-15-learning-review-settings-followups.md`.
 ## 2026-07-15 — Per-position stop plans round 8: 2 post-merge Codex fixes (CLAUDE, branch `claude/stop-plans-round8-followups`)
 PR #1371 (per-position stop plans) merged; Codex reviewed the shipped merge commit and posted 4
 more findings afterward, against code that had since been heavily reworked by several intervening
