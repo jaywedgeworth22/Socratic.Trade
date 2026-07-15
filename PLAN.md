@@ -118,10 +118,11 @@
 > while the current subscription returns HTTP 402. Complete focused/full gates, browser QA, ready PR,
 > hosted verification, protected merge, and exact auto-deploy verification. See
 > `docs/rollouts/2026-07-15-fmp-market-data-reliability.md` and `docs/fmp-capabilities.md`.
-> Local browser QA is green. Current `origin/main@ede902f5` is reconciled, the hostile-review
-> freshness/fallback/coalescing findings are fixed, and Node 24 lint, TypeScript, plus 9 files / 201 focused
-> tests pass. Run the current-main full gate through `scripts/land.sh`, require hosted checks, then
-> verify the exact auto-deployed release.
+> Local browser QA is green. The first landing gate passed 4,375 tests/build and opened ready PR #1618.
+> `main` advanced during that gate through PR #1616's broader FMP adapters; `d3efc9a6` is now reconciled,
+> the shared adapter path has header auth plus durable endpoint accounting, and scoped lint/TypeScript
+> plus 5 files / 163 overlap tests pass. Repeat the single post-reconciliation landing gate, require
+> hosted checks, then verify the exact auto-deployed release.
 
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
 > initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged

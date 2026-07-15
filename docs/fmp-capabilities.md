@@ -43,6 +43,16 @@ Crash-durable provider-dispatch events carry the scrubbed stable operation name
 provider/credential scope, so Socratic.Trade's endpoint mix is distinguishable
 without exposing API keys.
 
+PR #1616 also landed typed capability adapters for FMP quote/index/ETF,
+macro/treasury/economic, calendar/news/congressional, DCF, financial-score, and
+historical-grade routes. They now share header authentication, the same durable
+credential-wide request reservations, and `capability-<endpoint>` outcome
+labels. These adapters are callable infrastructure and a manual entitlement
+probe—not evidence that the production scheduler consumes every dataset.
+Production integration should wire only non-duplicative fields into a durable
+point-in-time store on the cadence below; calling wrappers merely to increase
+the vendor dashboard count is explicitly not utilization.
+
 ## Scan versus ingestion
 
 Endpoint count is not a utilization goal. A cold 150-symbol scan previously
@@ -83,11 +93,12 @@ and macro series remain structured and time-indexed.
 ## Entitlement boundary
 
 The current FMP subscription does not entitle earnings transcripts: the stable
-transcript request returns HTTP 402. The legacy `src/lib/fmp-gamma.ts` helpers
-still have no caller and the three calls visible in the screenshot were test or
-manual attempts. PR #1586 has since added a separate stable, durable,
-rights-gated producer, but every ingestion/backfill flag remains default-off
-until the owner upgrades the plan and confirms corpus/storage/display rights.
+transcript request returns HTTP 402. The generic `src/lib/fmp-gamma.ts` adapter
+is reached only by the manual capability probe, not an app ingestion path; the
+three calls visible in the screenshot were test or manual attempts. PR #1586
+has since added a separate stable, durable, rights-gated producer, but every
+ingestion/backfill flag remains default-off until the owner upgrades the plan
+and confirms corpus/storage/display rights.
 
 FMP currently lists transcripts, ETF/mutual-fund holdings, 13F datasets, and
 bulk/batch delivery under its Ultimate plan. Premium unlocks broader statement

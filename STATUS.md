@@ -82,8 +82,11 @@ Congress.Trade remains the congressional source of truth, avoiding duplicate sha
 Durable provider-dispatch events retain the scrubbed FMP operation name, so future endpoint coverage
 is observable by Socratic.Trade credential lane instead of only as an aggregate `fmp` counter.
 The three transcript attempts visible in the screenshot predated the newly merged, safety-gated
-producer and were not ingestion: the current plan returns HTTP 402 and the legacy Gamma helpers have
-no caller. The production transcript producer/backfill remains default-off pending entitlement and rights.
+producer and were not ingestion: the current plan returns HTTP 402 and the generic Gamma adapter is
+only reached by a manual capability probe. The production transcript producer/backfill remains
+default-off pending entitlement and rights. PR #1616's broader FMP capability adapters were reconciled
+during this effort; their shared helper now uses verified header auth plus the same crash-durable,
+per-endpoint quota/outcome ledger instead of query-key URLs.
 
 Out-of-scan ticker sheets now fetch a bounded Yahoo identity/current-quote floor in parallel with
 the rich cascade, preserve completed rich fields, omit synthetic bid/ask, and update the open sheet's
@@ -91,10 +94,12 @@ header when the company name arrives. Browser QA passed the exact absent-from-sc
 the sheet resolved Lam Research, current quote, classification, analyst rating, and derived
 fundamentals with zero browser-console errors. A hostile review then caught and closed four issues:
 fresh-quote timestamp arbitration, quote-cascade coalescing, 24-hour/slow-field-only persisted seed
-reuse, and a clearly stale last-strategy fallback when Nasdaq is unavailable. Current
-`origin/main@ede902f5` (including PR #1586's durable FMP dispatch/transcript safety lane) is reconciled;
-Node 24 lint and TypeScript pass, along with 9 files / 201 focused tests. The current-main full landing gate, ready PR,
-hosted checks, protected merge, and exact production verification remain.
+reuse, and a clearly stale last-strategy fallback when Nasdaq is unavailable. The first current-main
+landing gate passed TypeScript, 380 files / 4,375 tests, and the production build, opening ready PR
+#1618. `main` then advanced through PR #1616 to `d3efc9a6`; that overlapping FMP lane is now reconciled,
+scoped lint/TypeScript plus 5 files / 163 tests pass, and production health serves exact `d3efc9a6`.
+The final post-reconciliation landing gate/push, hosted checks, protected merge, and exact production
+verification remain.
 
 Rollout: `docs/rollouts/2026-07-15-fmp-market-data-reliability.md`.
 

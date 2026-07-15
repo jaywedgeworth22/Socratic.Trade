@@ -21,6 +21,9 @@
 - Closed hostile-review freshness/reliability findings with timestamp-aware
   quote arbitration, per-user/symbol quote single-flight, 24-hour slow-only
   seed reuse, and an explicitly stale last-strategy fallback for Nasdaq outages.
+- Reconciled PR #1616's concurrently landed FMP capability adapters and moved
+  their shared request helper to verified header authentication plus the same
+  durable per-endpoint quota/outcome ledger as production enrichment.
 - Corrected prior documentation that claimed two unused v3 endpoints were live.
 
 ## Why
@@ -63,6 +66,7 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
 - `app/console/ui/symbol-drilldown.tsx`
 - `app/console/console.css`
 - `src/lib/data-providers.ts`
+- `src/lib/fmp-common.ts`
 - `src/lib/market.ts`
 - `src/lib/quote-singleflight.ts`
 - `src/lib/scan-singleflight.ts`
@@ -71,6 +75,7 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
 - `test/alternative-data.test.ts`
 - `test/console-drilldown.test.ts`
 - `test/data-providers.test.ts`
+- `test/fmp-common.test.ts`
 - `test/market-preselection.test.ts`
 - `test/quote-route.test.ts`
 - `test/scan-singleflight.test.ts`
@@ -120,6 +125,17 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
   freshness regression: lint and standalone TypeScript passed; 9 focused files / 201 tests
   passed; diff-check clean.
 - Current-main full landing gate remains before publish.
+- The first `scripts/land.sh` gate passed TypeScript, 380 files / 4,375 tests,
+  and the production build with 32 static pages, then pushed `d0220578` and
+  opened ready PR #1618.
+- While that gate ran, PR #1616 advanced `main` to `d3efc9a6` with overlapping
+  FMP capability adapters. Merged that exact baseline, preserved both lanes,
+  and hardened the adapter helper. A production-key read-only probe confirmed
+  FMP accepts header authentication (HTTP 200; no key emitted). Post-merge
+  scoped lint and TypeScript pass; 5 overlap files / 163 tests pass.
+- Production `/api/health` serves exact `d3efc9a6` with DB healthy, a current
+  scheduler lease, FMP healthy, and Litestream replicating. The final
+  post-reconciliation landing gate remains before updating PR #1618.
 
 ## Follow-ups
 
