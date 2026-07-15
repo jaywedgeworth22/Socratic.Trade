@@ -78,6 +78,15 @@ function approxTokens(texts: string[]): number {
   return texts.reduce((sum, t) => sum + Math.max(1, Math.ceil(Buffer.byteLength(t, "utf8") / 4)), 0);
 }
 
+/** Pre-dispatch cost reservation using the same estimator later written to `rag_usage`. */
+export function estimateVoyageDispatchCost(
+  texts: string[],
+  operation: "embed" | "rerank",
+  model?: string
+): number {
+  return estimateRagCost("voyage", model, operation, approxTokens(texts)) ?? 0;
+}
+
 // ── Record ───────────────────────────────────────────────────────────────────
 
 /** Record a RAG operation against a user. Never throws. */

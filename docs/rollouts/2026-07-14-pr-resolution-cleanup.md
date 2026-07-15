@@ -4,7 +4,7 @@
 Resolved conflicts, fixed failing tests, and merged a batch of 5 open PRs to clear the open PR backlog.
 
 ## Why
-The user requested all open PRs to be resolved and merged. 
+The user requested all open PRs to be resolved and merged.
 The PRs processed and merged in this batch include:
 - #1584: chore(deps-dev): bump eslint-config-next from 16.2.9 to 16.2.10
 - #1583: chore(deps): bump react-virtuoso from 4.18.7 to 4.18.10

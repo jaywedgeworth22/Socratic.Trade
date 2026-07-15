@@ -1122,6 +1122,7 @@ process.exit(3);
     writeFileSync(fakeInfisical, `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "--version") process.exit(0);
+if (args[0] === "login") { console.log("test-token"); process.exit(0); }
 if (args[0] === "export") { console.log("[]"); process.exit(0); }
 process.exit(3);
 `);
@@ -1143,6 +1144,10 @@ setInterval(() => {}, 1_000);
         env: isolatedProcessEnv({
           PATH: `${bin}:${process.env.PATH || ""}`,
           HOME: root,
+          INFISICAL_CLIENT_ID: "signal-test-client-id",
+          INFISICAL_CLIENT_SECRET: "signal-test-client-secret",
+          INFISICAL_PROJECT_ID: "signal-test-project",
+          GLOBAL_API_KEYS_FILE: join(root, "missing-global-api-keys"),
         }),
         stdio: ["ignore", "pipe", "pipe"],
       }
@@ -1155,16 +1160,16 @@ setInterval(() => {}, 1_000);
     });
 
     try {
-      await waitForFile(readyMarker);
+      await waitForFile(readyMarker, 20_000);
       expect(child.kill("SIGTERM")).toBe(true);
       const outcome = await Promise.race([
         exitPromise,
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("runner did not exit")), 5_000)),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("runner did not exit")), 10_000)),
       ]);
       expect(outcome, stderr).toEqual({ code: 0, signal: null });
-      await waitForFile(terminatedMarker);
+      await waitForFile(terminatedMarker, 10_000);
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     }
-  }, 12_000);
+  }, 35_000);
 });

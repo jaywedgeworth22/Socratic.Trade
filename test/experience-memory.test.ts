@@ -146,10 +146,11 @@ describe("closed-lot write hook (recordFillFromProposal → recordClosedLotExper
     const [documents, userId, options] = mocks.storeContexts.mock.calls[0]! as unknown as [
       Array<{ text: string; metadata: Record<string, unknown> }>,
       string,
-      { dedupKeyPrefix?: string }
+      { dedupKeyPrefix?: string; scope?: string }
     ];
     expect(userId).toBe("local");
     expect(options?.dedupKeyPrefix).toBe("experience-memory");
+    expect(options?.scope).toBe("private");
     expect(documents).toHaveLength(1);
     const doc = documents[0]!;
 

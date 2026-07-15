@@ -309,7 +309,10 @@ export async function recordClosedLotExperience(
       });
     });
 
-    return await storeContexts(documents, userId, { dedupKeyPrefix: EXPERIENCE_MEMORY_SOURCE });
+    return await storeContexts(documents, userId, {
+      dedupKeyPrefix: EXPERIENCE_MEMORY_SOURCE,
+      scope: "private"
+    });
   } catch (err) {
     // The experience write must never affect fill recording or the money path.
     console.warn(

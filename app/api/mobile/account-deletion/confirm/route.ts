@@ -22,7 +22,7 @@ export async function POST(request: Request) {
 
   try {
     return NextResponse.json(
-      confirmAndDeleteAccount({
+      await confirmAndDeleteAccount({
         userId: user.userId,
         email: user.email,
         body: {

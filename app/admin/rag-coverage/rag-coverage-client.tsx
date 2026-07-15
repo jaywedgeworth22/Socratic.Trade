@@ -149,6 +149,7 @@ function getSourceLabel(src: string): string {
   if (src.startsWith("disclosure:insider")) return "Insider";
   if (src.includes("socratic-memory")) return "Coach";
   if (src.startsWith("sec8k-summary")) return "8-K Summary";
+  if (src === "fmp-earnings-transcript") return "Earnings Transcript";
   return src.split(":").pop() || src;
 }
 
@@ -159,6 +160,7 @@ function getSourceTone(src: string): "neutral" | "pos" | "neg" | "warn" | "info"
   if (src.startsWith("disclosure:insider")) return "neutral";
   if (src.includes("socratic-memory")) return "pos";
   if (src.startsWith("sec8k-summary")) return "neg";
+  if (src === "fmp-earnings-transcript") return "info";
   return "neutral";
 }
 

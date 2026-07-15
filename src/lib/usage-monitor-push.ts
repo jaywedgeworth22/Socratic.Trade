@@ -287,6 +287,45 @@ export async function createRagUsageMonitorEvent(
   };
 }
 
+/** Build the exact deterministic event for one crash-durable provider dispatch outcome. */
+export async function createProviderDispatchUsageMonitorEvent(entry: {
+  sourceEventId: string;
+  occurredAt: string;
+  provider: string;
+  operation: string;
+  credentialRef: string;
+  userId: string;
+  outcome: "succeeded" | "failed" | "unknown";
+  requests?: number;
+  estimatedCostUsd?: number;
+  actualCostUsd?: number;
+}): Promise<UsageMonitorEvent> {
+  const costUsd = entry.actualCostUsd ?? entry.estimatedCostUsd;
+  return {
+    sourceApp: SOURCE_APP,
+    environment: usageMonitorEnv(),
+    provider: entry.provider,
+    service: "provider-dispatch",
+    project: PROJECT,
+    label: entry.operation,
+    keyRef: entry.credentialRef,
+    billingMode: entry.actualCostUsd !== undefined ? "actual" : "estimated",
+    metricType: typeof costUsd === "number" && costUsd > 0 ? "cost" : "usage",
+    unit: "request",
+    requests: entry.requests ?? 1,
+    ...(typeof costUsd === "number" && costUsd > 0 ? { costUsd } : {}),
+    confidence: entry.outcome === "unknown" ? "estimated" : "actual",
+    occurredAt: entry.occurredAt,
+    metadata: cleanMetadata({
+      operation: entry.operation,
+      userId: entry.userId,
+      outcome: entry.outcome,
+      unknownOutcome: entry.outcome === "unknown",
+    }),
+    idempotencyKey: await telemetryIdempotencyKey("provider-dispatch", entry.sourceEventId),
+  };
+}
+
 function maskAccountNumber(acc: string): string {
   const clean = acc.trim();
   if (clean.length <= 4) return clean;

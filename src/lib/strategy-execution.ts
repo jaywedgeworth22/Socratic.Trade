@@ -630,7 +630,7 @@ export async function executeProposal(
         userId,
         policy.connectedAccountId
       );
-      if (shouldAlertBrokerMinimumOrderBlock(policy.accountNumber, proposal.symbol)) {
+      if (shouldAlertBrokerMinimumOrderBlock(userId, policy.accountNumber, proposal.symbol)) {
         await sendNotification(
           {
             type: "block",

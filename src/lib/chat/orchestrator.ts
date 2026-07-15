@@ -34,6 +34,21 @@ import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
 import { buildTools, type ToolDeps } from "./tools";
 import type { ChatDraft, ChatLLM, ChatQuote, ChatReply, ToolSchema } from "./types";
+import {
+  assertUserOperationClaim,
+  runWithUserWriteEpoch,
+  withUserWriteOperation
+} from "../user-write-fence";
+import {
+  assertFmpTranscriptRightsGeneration,
+  captureFmpTranscriptRightsGeneration,
+  FMP_TRANSCRIPT_DOC_TYPE,
+  FMP_TRANSCRIPT_SOURCE,
+  fmpTranscriptDerivedProvenance,
+  persistFmpTranscriptDerivedArtifact,
+  recordFmpTranscriptDerivedAudit,
+  type FmpTranscriptDerivedProvenance
+} from "../web-sources/fmp-transcripts";
 
 function toolEvidenceFamily(name: string): EvidenceSourceFamily {
   if (name === "kb_search") return "filings";
@@ -75,35 +90,58 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
   }));
 
   return async function handleTurn(args: { userId: string; message: string; clientTurnId?: string }): Promise<ChatReply> {
+    return withUserWriteOperation(args.userId, "chat-turn", async (operationClaim) => {
     const { userId, message, clientTurnId } = args;
+    const writeEpoch = operationClaim.epoch;
+    const assertTurnActive = () => assertUserOperationClaim(operationClaim);
+    const fmpRightsClaim = captureFmpTranscriptRightsGeneration();
+    const fmpProvenance: FmpTranscriptDerivedProvenance[] = [];
+    const rememberFmpProvenance = (values: readonly unknown[]) => {
+      const next = fmpTranscriptDerivedProvenance([...fmpProvenance, ...values]);
+      fmpProvenance.splice(0, fmpProvenance.length, ...next);
+    };
     const policy = getPolicy(userId);
     const connectedAccountId = policy.connectedAccountId;
+    const writeAudit = (kind: string, payload: Record<string, unknown>) =>
+      runWithUserWriteEpoch(userId, writeEpoch, () => audit(kind, payload, userId, connectedAccountId));
+    const turnDeps: ToolDeps = {
+      ...deps,
+      createAlert(targetUserId, input) {
+        if (targetUserId !== userId) throw new Error("Chat tool user identity mismatch.");
+        return runWithUserWriteEpoch(userId, writeEpoch, () => deps.createAlert(targetUserId, input));
+      },
+      watchlistAdd(targetUserId, symbol) {
+        if (targetUserId !== userId) throw new Error("Chat tool user identity mismatch.");
+        return runWithUserWriteEpoch(userId, writeEpoch, () => deps.watchlistAdd(targetUserId, symbol));
+      }
+    };
     const turnKey = `chat:${userId}:${clientTurnId ?? globalThis.crypto.randomUUID()}`;
     // Per-user model: an injected llm (already user-scoped by the route) or one resolved for THIS
     // user — so the per-user key, operator failover, and usage attribution always apply.
     const model = llm ?? getLLM(userId);
-    audit("chat.turn", { userId, message_len: message.length, prompt_version: PROMPT_VERSION, turnKey }, userId, connectedAccountId);
+    writeAudit("chat.turn", { userId, message_len: message.length, prompt_version: PROMPT_VERSION, turnKey });
     // Prior turns (redacted) for multi-turn context — fetched BEFORE appending the current message.
     const history = listTurns(userId, 10).map((t) => ({ role: t.role, text: t.text }));
     // Idempotent user-turn recording: a Retry reuses the same clientTurnId, so when that id is
     // already in the transcript we skip the duplicate append but STILL run the provider call —
     // the retry's whole point is getting the reply the failed attempt never produced.
     const alreadyRecorded = clientTurnId != null && findChatTurnByClientId(userId, clientTurnId) != null;
-    if (!alreadyRecorded) appendTurn(userId, { role: "user", text: message, clientTurnId: clientTurnId ?? null });
+    if (!alreadyRecorded) appendTurn(userId, { role: "user", text: message, clientTurnId: clientTurnId ?? null }, writeEpoch);
 
-    const mem = ingestMessage(userId, message);
+    const mem = ingestMessage(userId, message, writeEpoch);
     // Extract learned-context candidates from the message for both the write path (ingest) and
     // the read path (retrieve facts already in store to inject into the system prompt).
     // extractLearnedCandidatesLLM is regex (extractLearnedCandidates) unless LLM_SALIENCE_EXTRACTOR=on
     // AND a credential resolves for this user — falls back to regex on any LLM-path failure, and
     // validates any LLM-proposed symbol against the real known-ticker universe (see salience-llm.ts).
     const learnedCandidates = await extractLearnedCandidatesLLM(message, userId);
+    assertTurnActive();
     // Fire-and-forget write path: the semantic classifier runs 3+ sequential LLM calls — awaiting
     // it on the hot path would add 1–3 s of latency to every chat turn. Errors are benign: advisory
     // writes, never critical. The chat hard-cap (risk-adjacent prose is DROPPED) holds inside
     // ingestLearned regardless.
     for (const candidate of learnedCandidates) {
-      ingestLearned(userId, candidate, "chat").catch((e) => {
+      ingestLearned(userId, candidate, "chat", { writeEpoch }).catch((e) => {
         console.warn("[orchestrator] learned-context ingest failed:", e);
       });
     }
@@ -182,7 +220,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
         status: ref.source.status
       }))
     };
-    audit(
+    writeAudit(
       "chat.evidence_pack",
       {
         turnKey,
@@ -197,20 +235,45 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
           status: result.status,
           patterns: result.findings.map((finding) => finding.pattern)
         }))
-      },
-      userId,
-      connectedAccountId
+      }
     );
 
     // The only path to a tool — it has no execution capability.
     const executeTool = async (name: string, input: unknown) => {
       const tool = tools[name];
       if (!tool) return { error: "UNKNOWN_TOOL", name };
-      audit("tool.call", { userId, tool: name, turnKey }, userId, connectedAccountId);
-      const raw = await tool.execute(input, { userId, deps });
+      assertTurnActive();
+      writeAudit("tool.call", { userId, tool: name, turnKey });
+      const raw = await tool.execute(input, { userId, deps: turnDeps });
+      assertTurnActive();
       const containment: Array<{ path: string; result: PromptContainmentResult }> = [];
       const source: PromptTextSource = name === "kb_search" ? "rag" : "unknown";
-      const sanitized = containPromptData(raw, source, `tool.${name}`, containment);
+      let sanitized = containPromptData(raw, source, `tool.${name}`, containment);
+      if (name === "kb_search" && Array.isArray(sanitized)) {
+        const exactFmp = fmpTranscriptDerivedProvenance(sanitized);
+        if (exactFmp.length > 0) {
+          let generationActive = Boolean(fmpRightsClaim);
+          if (fmpRightsClaim) {
+            try {
+              assertFmpTranscriptRightsGeneration(fmpRightsClaim);
+            } catch {
+              generationActive = false;
+            }
+          }
+          if (!generationActive) {
+            // Retrieval may have started just before revocation. Do not expose licensed chunks to
+            // the model once the durable generation is stale.
+            sanitized = sanitized.filter((item) => {
+              if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+              const row = item as Record<string, unknown>;
+              return row.source !== FMP_TRANSCRIPT_SOURCE &&
+                String(row.doc_type ?? "").toLowerCase() !== FMP_TRANSCRIPT_DOC_TYPE;
+            });
+          } else {
+            rememberFmpProvenance(exactFmp);
+          }
+        }
+      }
       const failed = Boolean(
         sanitized && typeof sanitized === "object" && !Array.isArray(sanitized) && "error" in sanitized
       );
@@ -230,7 +293,7 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
         content: JSON.stringify(sanitized)
       });
       const pack = createEvidencePack({ decisionKey: `${turnKey}:tool:${name}:${retrievedAt}`, evidence: [ref] });
-      audit(
+      writeAudit(
         "chat.tool_evidence_pack",
         {
           turnKey,
@@ -242,13 +305,12 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
             status: result.status,
             patterns: result.findings.map((finding) => finding.pattern)
           }))
-        },
-        userId,
-        connectedAccountId
+        }
       );
       return sanitized;
     };
 
+    assertTurnActive();
     const result = await model.run({
       system: buildSystem(boundedMemory, boundedLearned, {
         manifest: contextManifest,
@@ -260,6 +322,12 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       context: { memorySummary: boundedMemory },
       history
     });
+    assertTurnActive();
+    rememberFmpProvenance(result.citations ?? []);
+    if (fmpProvenance.length > 0) {
+      if (!fmpRightsClaim) throw new Error("FMP-derived chat result has no active rights generation.");
+      assertFmpTranscriptRightsGeneration(fmpRightsClaim);
+    }
 
     // Server-side disclaimer guarantee (provider-independent): the system prompt asks for it, but we
     // never rely on the model to remember it — append if missing so compliance holds on every provider.
@@ -280,15 +348,36 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
       promptVersion: PROMPT_VERSION,
       model: usedModel
     };
-    appendTurn(userId, {
+    const persistAssistantTurn = () => appendTurn(userId, {
       role: "assistant",
       text: reply.text,
       citations: reply.citations.map((c) => c.chunk_id ?? c.source),
       intent: reply.intent,
       model: usedModel
-    });
-    audit("chat.reply", { userId, turnKey, has_draft: !!draft, citations: reply.citations.length }, userId, connectedAccountId);
+    }, writeEpoch);
+    if (fmpProvenance.length > 0 && fmpRightsClaim) {
+      persistFmpTranscriptDerivedArtifact({
+        claim: fmpRightsClaim,
+        artifactType: "chat-turn",
+        artifactId: (turn) => turn.id,
+        userId,
+        provenance: fmpProvenance,
+        write: persistAssistantTurn
+      });
+      runWithUserWriteEpoch(userId, writeEpoch, () => recordFmpTranscriptDerivedAudit({
+        claim: fmpRightsClaim,
+        kind: "chat.reply",
+        payload: { userId, turnKey, has_draft: !!draft, citations: reply.citations.length },
+        userId,
+        connectedAccountId,
+        provenance: fmpProvenance
+      }));
+    } else {
+      persistAssistantTurn();
+      writeAudit("chat.reply", { userId, turnKey, has_draft: !!draft, citations: reply.citations.length });
+    }
     return reply;
+    });
   };
 }
 

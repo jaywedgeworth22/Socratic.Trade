@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/lib/vector-db", () => ({
+  purgePrivateVectorRecordsForUser: vi.fn(async () => ({ ids: [], contentHashes: [], deleted: 0 }))
+}));
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-mobile-api-${randomUUID()}.db`)}`;
@@ -132,9 +136,11 @@ describe("mobile command gateway", () => {
 describe("mobile account deletion", () => {
   it("requires a current request, exact identity, and exact phrase before deleting user data", async () => {
     const { ACCOUNT_DELETE_PHRASE, confirmAndDeleteAccount, prepareAccountDeletion } = await import("../src/lib/account-deletion");
+    const { userIdForEmail } = await import("../src/lib/auth/identity");
     const { getDb, setUserSetting, upsertConnectedAccount } = await import("../src/lib/db");
     const { addToWatchlist, listWatchlist } = await import("../src/lib/watchlist");
-    const user = { userId: `delete-user-${randomUUID()}`, email: "delete@example.com" };
+    const email = "delete@example.com";
+    const user = { userId: userIdForEmail(email), email };
     const acknowledgements = {
       deleteAppData: true,
       deleteBrokerConnections: true,
@@ -155,7 +161,7 @@ describe("mobile account deletion", () => {
     });
     addToWatchlist(user.userId, "AAPL");
 
-    expect(() =>
+    await expect(
       confirmAndDeleteAccount({
         userId: user.userId,
         email: user.email,
@@ -165,10 +171,10 @@ describe("mobile account deletion", () => {
           ...acknowledgements
         }
       })
-    ).toThrow("Prepare account deletion first.");
+    ).rejects.toThrow("Prepare account deletion first.");
 
     prepareAccountDeletion(user);
-    expect(() =>
+    await expect(
       confirmAndDeleteAccount({
         userId: user.userId,
         email: user.email,
@@ -178,9 +184,9 @@ describe("mobile account deletion", () => {
           ...acknowledgements
         }
       })
-    ).toThrow("Typed email does not match the signed-in account.");
+    ).rejects.toThrow("Typed email does not match the signed-in account.");
 
-    const result = confirmAndDeleteAccount({
+    const result = await confirmAndDeleteAccount({
       userId: user.userId,
       email: user.email,
       body: {

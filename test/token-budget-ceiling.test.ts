@@ -7,7 +7,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const runStrategyOnceMock = vi.fn().mockResolvedValue(undefined);
+const runStrategyOnceMock = vi.fn().mockResolvedValue({
+  runId: "test-run",
+  status: "completed" as const,
+  summary: "test strategy run completed",
+  proposals: []
+});
 vi.mock("../src/lib/strategy", () => ({
   runStrategyOnce: (...args: unknown[]) => runStrategyOnceMock(...args)
 }));

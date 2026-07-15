@@ -11,7 +11,11 @@ process.env.DATABASE_URL = `file:${tmpDbPath}`;
 
 const push = await import("../src/lib/usage-monitor-push");
 const replay = await import("../src/lib/usage-monitor-replay");
-const { getDb } = await import("../src/lib/db");
+const {
+  getDb,
+  markProviderDispatchStarted,
+  reserveProviderDispatch
+} = await import("../src/lib/db");
 
 const BASE_URL = "https://usage.example.test";
 
@@ -20,7 +24,7 @@ interface CapturedRequest {
   rawBody: string;
 }
 
-function telemetryKey(kind: "llm" | "rag", sourceId: string): string {
+function telemetryKey(kind: "llm" | "rag" | "provider-dispatch", sourceId: string): string {
   const digest = createHash("sha256")
     .update(`${kind}\0${sourceId}`)
     .digest("hex");
@@ -82,12 +86,16 @@ beforeEach(() => {
   process.env.USAGE_MONITOR_BASE_URL = BASE_URL;
   process.env.USAGE_INGEST_TOKEN = "test-token";
   process.env.USAGE_MONITOR_ENV = "test";
-  getDb().exec("DELETE FROM llm_usage; DELETE FROM rag_usage;");
+  getDb().exec(
+    "DELETE FROM llm_usage; DELETE FROM rag_usage; " +
+    "DELETE FROM provider_usage_outbox; DELETE FROM provider_dispatch_attempts;"
+  );
   getDb()
-    .prepare("DELETE FROM settings WHERE key IN (?, ?)")
+    .prepare("DELETE FROM settings WHERE key IN (?, ?, ?)")
     .run(
       replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
-      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag
+      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag,
+      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider
     );
 });
 
@@ -129,6 +137,7 @@ describe("usage monitor durable replay", () => {
       configured: true,
       llm: { sent: 1, complete: true, failed: false },
       rag: { sent: 1, complete: true, failed: false },
+      provider: { sent: 0, complete: true, failed: false },
     });
     const events = captured.flatMap((request) => request.body.events);
     expect(events).toHaveLength(2);
@@ -205,6 +214,51 @@ describe("usage monitor durable replay", () => {
     const second = await replay.runUsageMonitorReplay();
     expect(second.llm).toEqual({ sent: 1, complete: true, failed: false });
     expect(retried[0]!.rawBody).toBe(failed[0]!.rawBody);
+  });
+
+  it("reconciles a crash-left dispatched provider call as unknown and replays it idempotently", async () => {
+    const reserved = reserveProviderDispatch({
+      provider: "fmp",
+      operation: "earnings-transcript-dates",
+      credentialRef: "fmp-key:test",
+      userId: "local",
+      now: "2026-07-10T12:00:00.000Z"
+    });
+    expect(reserved.admitted).toBe(true);
+    if (!reserved.admitted) throw new Error("Expected provider reservation admission.");
+    markProviderDispatchStarted(reserved.attemptId, "2026-07-10T12:00:01.000Z");
+
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+    const first = await replay.runUsageMonitorReplay();
+
+    expect(first.provider).toEqual({ sent: 1, complete: true, failed: false });
+    const event = captured.flatMap((request) => request.body.events)
+      .find((candidate) => candidate.service === "provider-dispatch");
+    expect(event).toMatchObject({
+      provider: "fmp",
+      service: "provider-dispatch",
+      label: "earnings-transcript-dates",
+      requests: 1,
+      confidence: "estimated",
+      metadata: { outcome: "unknown", unknownOutcome: true, userId: "local" },
+      idempotencyKey: telemetryKey(
+        "provider-dispatch",
+        `provider-attempt:${reserved.attemptId}`
+      )
+    });
+    expect(getDb().prepare(
+      "SELECT status, outcome_code FROM provider_dispatch_attempts WHERE id = ?"
+    ).get(reserved.attemptId)).toEqual({
+      status: "unknown",
+      outcome_code: "stale-owner-unresolved"
+    });
+
+    const firstRaw = captured[0]!.rawBody;
+    captured.length = 0;
+    const second = await replay.runUsageMonitorReplay();
+    expect(second.provider).toEqual({ sent: 1, complete: true, failed: false });
+    expect(captured[0]!.rawBody).toBe(firstRaw);
   });
 
   it("does not regress a watermark advanced by an overlapping process", async () => {

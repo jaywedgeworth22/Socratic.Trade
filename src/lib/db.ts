@@ -13,6 +13,68 @@ import type { TradingPolicy } from "./types";
 let db: Database.Database | undefined;
 const SP500_DEFAULT_UNIVERSE_MIGRATION_KEY = "migration:sp500_default_universe:2026-06-19";
 
+export function accountSubjectToken(userId: string): string {
+  // User IDs are already opaque (or the literal local operator id). This non-PII lookup token must
+  // survive ENCRYPTION_KEY/audit-salt rotation; a rotatable secret would orphan completed fences.
+  return crypto.createHash("sha256").update(`account-subject:v1|${String(userId)}`, "utf8").digest("hex");
+}
+
+function accountSettingMatchesSubject(key: unknown, subjectToken: unknown): number {
+  if (typeof key !== "string" || typeof subjectToken !== "string") return 0;
+  if (key.startsWith("account_user_operation:")) {
+    return key.slice("account_user_operation:".length).startsWith(`${subjectToken}:`) ? 1 : 0;
+  }
+  // Canonical ownership registry for rows in the otherwise-global `settings` table. Keep the user
+  // segment immediately after one of these prefixes; optional account/provider/hash suffixes are
+  // allowed. The same matcher powers both the deletion sweep and the prepared/completed write
+  // fence, so adding a new user-owned internal setting cannot be fixed in one path but missed in
+  // the other.
+  for (const prefix of [
+    "strategy_run_lock:",
+    "robinhood_mcp_oauth_token:",
+    "robinhood_mcp_oauth_state:",
+    "llm_budget_reservation:",
+    "providerTier:status:",
+    "providerTier:lastCheckAt:",
+    "risk:hwm:",
+    "risk:sod:",
+    "learning_review:lastRunDate:",
+    "learning_review:lastFingerprint:",
+    "learning_review:lastReviewedAt:",
+    "learning_review:lastConfig:",
+    "learning_review:legacySeedDone:",
+    "last_auto_tune_at:",
+    "regime:current:",
+    "congress_score_verdict:",
+    "reflection_signature:",
+    "model_rotation:",
+    "stale_limit_order_alert:",
+    "subMinimumOrderAlertSent:",
+    "usageLimitAlert:lastSent:",
+    "recoverable_issue:",
+    "last_macro_sent:"
+  ]) {
+    if (!key.startsWith(prefix)) continue;
+    let candidate = key.slice(prefix.length);
+    while (candidate) {
+      if (accountSubjectToken(candidate) === subjectToken) return 1;
+      const separator = candidate.lastIndexOf(":");
+      if (separator < 0) break;
+      candidate = candidate.slice(0, separator);
+    }
+  }
+  // A few provider-health keys predate the user-first convention. They are still account-owned;
+  // recognize the final segment without treating global env/operator lanes as user data.
+  if (key.startsWith("healthAlertSent:") && key.includes(":user:")) {
+    return accountSubjectToken(key.slice(key.lastIndexOf(":user:") + ":user:".length)) === subjectToken ? 1 : 0;
+  }
+  if (key.startsWith("vectorStore:connectionAlert:")) {
+    const candidate = key.slice(key.lastIndexOf(":") + 1);
+    return accountSubjectToken(candidate) === subjectToken ? 1 : 0;
+  }
+  return 0;
+}
+
 export function databasePath(): string {
   const value = process.env.DATABASE_URL ?? "file:./data/app.db";
   return resolve(value.replace(/^file:/, ""));
@@ -23,6 +85,8 @@ export function getDb(): Database.Database {
   const path = databasePath();
   mkdirSync(dirname(path), { recursive: true });
   db = new Database(path);
+  db.function("account_subject_token", { deterministic: true }, (value: unknown) => accountSubjectToken(String(value ?? "")));
+  db.function("account_setting_matches_subject", { deterministic: true }, accountSettingMatchesSubject);
   db.pragma("journal_mode = WAL");
   // With WAL, a concurrent writer otherwise throws SQLITE_BUSY immediately; wait
   // up to 5s for the lock instead. NORMAL durability is the WAL-recommended pairing.
@@ -38,6 +102,7 @@ export function getDb(): Database.Database {
   db.pragma("foreign_keys = ON");
   migrate(db);
   applyVersionedMigrations(db);
+  installAccountWriteFenceTriggers(db);
   assertEncryptionKeyAvailable(db);
   return db;
 }
@@ -50,6 +115,134 @@ export function getDb(): Database.Database {
 // migrate() (no ordering/stamp; diverged across worktrees).
 const SCHEMA_BASELINE = 1;
 type Migration = { version: number; name: string; up: (db: Database.Database) => void };
+
+function quoteSqlIdentifier(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+/** Install fail-closed INSERT/UPDATE guards for every current user_id table plus user settings. */
+export function installAccountWriteFenceTriggers(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS account_write_fences (
+      subject_token TEXT PRIMARY KEY,
+      generation TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('prepared','completed')),
+      updated_at TEXT NOT NULL
+    )
+  `);
+  const tables = (database.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+    ORDER BY name
+  `).all() as Array<{ name: string }>).filter(({ name }) => (
+    database.prepare(`PRAGMA table_info(${quoteSqlIdentifier(name)})`).all() as Array<{ name: string }>
+  ).some((column) => column.name === "user_id"));
+  const noFence = new Set(["account_deletion_requests"]);
+  const preparedUpdateAllowed = new Set([
+    "api_health_log",
+    "audit_events",
+    "fill_events",
+    "mobile_commands",
+    "order_replacements",
+    "provider_dispatch_attempts",
+    "provider_usage_outbox",
+    "rag_usage",
+    "strategy_runs",
+    "trade_proposals"
+  ]);
+  const preparedInsertAllowed = new Set([
+    "api_health_log",
+    "audit_events",
+    "provider_usage_outbox",
+    "rag_usage"
+  ]);
+  for (const { name } of tables) {
+    if (noFence.has(name)) continue;
+    const table = quoteSqlIdentifier(name);
+    const triggerBase = name.replace(/[^A-Za-z0-9_]/g, "_");
+    const insertStatuses = preparedInsertAllowed.has(name) ? "('completed')" : "('prepared','completed')";
+    const updateStatuses = preparedUpdateAllowed.has(name) ? "('completed')" : "('prepared','completed')";
+    database.exec(`
+      CREATE TRIGGER IF NOT EXISTS account_write_fence_${triggerBase}_insert
+      BEFORE INSERT ON ${table}
+      WHEN NEW.user_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM account_write_fences f
+        WHERE f.subject_token = account_subject_token(NEW.user_id)
+          AND f.status IN ${insertStatuses}
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'account-write-fenced');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS account_write_fence_${triggerBase}_update
+      BEFORE UPDATE ON ${table}
+      WHEN EXISTS (
+        SELECT 1 FROM account_write_fences f
+        WHERE (
+          (NEW.user_id IS NOT NULL AND f.subject_token = account_subject_token(NEW.user_id)) OR
+          (OLD.user_id IS NOT NULL AND f.subject_token = account_subject_token(OLD.user_id))
+        ) AND f.status IN ${updateStatuses}
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'account-write-fenced');
+      END;
+    `);
+  }
+  database.exec(`
+    CREATE TRIGGER IF NOT EXISTS account_write_fence_settings_insert
+    BEFORE INSERT ON settings
+    WHEN EXISTS (
+      SELECT 1 FROM account_write_fences f
+      WHERE f.status IN ('prepared','completed')
+        AND account_setting_matches_subject(NEW.key, f.subject_token) = 1
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'account-write-fenced');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS account_write_fence_settings_update
+    BEFORE UPDATE ON settings
+    WHEN EXISTS (
+      SELECT 1 FROM account_write_fences f
+      WHERE f.status IN ('prepared','completed')
+        AND (
+          account_setting_matches_subject(NEW.key, f.subject_token) = 1 OR
+          account_setting_matches_subject(OLD.key, f.subject_token) = 1
+        )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'account-write-fenced');
+    END;
+  `);
+  const learnedColumns = database.prepare("PRAGMA table_info(learned_context)").all() as Array<{ name: string }>;
+  if (learnedColumns.some((column) => column.name === "contributor_user_id")) {
+    database.exec(`
+      CREATE TRIGGER IF NOT EXISTS account_write_fence_learned_context_contributor_insert
+      BEFORE INSERT ON learned_context
+      WHEN NEW.contributor_user_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM account_write_fences f
+        WHERE f.subject_token = account_subject_token(NEW.contributor_user_id)
+          AND f.status IN ('prepared','completed')
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'account-write-fenced');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS account_write_fence_learned_context_contributor_update
+      BEFORE UPDATE ON learned_context
+      WHEN EXISTS (
+        SELECT 1 FROM account_write_fences f
+        WHERE f.status IN ('prepared','completed') AND (
+          (NEW.contributor_user_id IS NOT NULL AND f.subject_token = account_subject_token(NEW.contributor_user_id)) OR
+          (OLD.contributor_user_id IS NOT NULL AND f.subject_token = account_subject_token(OLD.contributor_user_id))
+        )
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'account-write-fenced');
+      END;
+    `);
+  }
+}
 
 /** Convert only the former product-default daily cap. Keeping this as a shared, idempotent helper
  * applies the same exact-value rule to every policy store that exists when migration v26 runs. */
@@ -565,6 +758,11 @@ const MIGRATIONS: Migration[] = [
           section TEXT NOT NULL,
           ordinal INTEGER NOT NULL,
           accepted_at TEXT NOT NULL,
+          tenant_scope TEXT NOT NULL DEFAULT 'legacy',
+          content_version TEXT NOT NULL DEFAULT 'legacy',
+          commit_id TEXT,
+          receipt_state TEXT NOT NULL DEFAULT 'legacy_committed'
+            CHECK(receipt_state IN ('pending','committed','legacy_committed')),
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_hash ON chunk_occurrences (content_hash);
@@ -981,6 +1179,480 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    // Crash-durable provider dispatch/quota receipts and two-phase vector document commits. New
+    // managed vectors are queryable only after their exact local receipt set and provider-side
+    // committed metadata both succeed. Legacy occurrence rows retain an explicit legacy state.
+    version: 29,
+    name: "provider_dispatch_and_vector_commit_receipts",
+    up: (database) => {
+      const occurrenceColumns = database
+        .prepare("PRAGMA table_info(chunk_occurrences)")
+        .all() as Array<{ name: string }>;
+      const addOccurrenceColumn = (name: string, sql: string) => {
+        if (!occurrenceColumns.some((column) => column.name === name)) database.exec(sql);
+      };
+      addOccurrenceColumn(
+        "tenant_scope",
+        "ALTER TABLE chunk_occurrences ADD COLUMN tenant_scope TEXT NOT NULL DEFAULT 'legacy'"
+      );
+      addOccurrenceColumn(
+        "content_version",
+        "ALTER TABLE chunk_occurrences ADD COLUMN content_version TEXT NOT NULL DEFAULT 'legacy'"
+      );
+      addOccurrenceColumn("commit_id", "ALTER TABLE chunk_occurrences ADD COLUMN commit_id TEXT");
+      addOccurrenceColumn(
+        "receipt_state",
+        "ALTER TABLE chunk_occurrences ADD COLUMN receipt_state TEXT NOT NULL DEFAULT 'legacy_committed'"
+      );
+
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS vector_ingest_commits (
+          id TEXT PRIMARY KEY,
+          tenant_scope TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          document_key TEXT NOT NULL,
+          content_version TEXT NOT NULL,
+          retrieval_metadata_version TEXT NOT NULL DEFAULT 'legacy',
+          parser_revision TEXT NOT NULL,
+          embed_revision TEXT NOT NULL,
+          expected_vectors INTEGER NOT NULL CHECK(expected_vectors >= 0),
+          provider_authority TEXT,
+          ledger_authority TEXT,
+          vector_namespace TEXT NOT NULL DEFAULT 'managed',
+          state TEXT NOT NULL CHECK(state IN ('pending','receipts_persisted','committed','aborted')),
+          attempt_token TEXT,
+          attempt_generation INTEGER NOT NULL DEFAULT 0,
+          lease_expires_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          committed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_state
+          ON vector_ingest_commits (state, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_source
+          ON vector_ingest_commits (source, accession, content_version);
+        CREATE TABLE IF NOT EXISTS vector_private_namespace_manifests (
+          tenant_scope TEXT PRIMARY KEY,
+          ledger_authority TEXT NOT NULL,
+          provider_authority TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_commit
+          ON chunk_occurrences (commit_id, receipt_state);
+        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_tenant
+          ON chunk_occurrences (tenant_scope, vector_id);
+
+        CREATE TABLE IF NOT EXISTS provider_dispatch_attempts (
+          id TEXT PRIMARY KEY,
+          authority_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          credential_ref TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          units INTEGER NOT NULL CHECK(units > 0),
+          estimated_cost_usd REAL NOT NULL DEFAULT 0 CHECK(estimated_cost_usd >= 0),
+          actual_cost_usd REAL,
+          status TEXT NOT NULL CHECK(status IN ('reserved','dispatched','succeeded','failed','unknown','cancelled')),
+          idempotency_key TEXT,
+          outcome_code TEXT,
+          created_at TEXT NOT NULL,
+          dispatched_at TEXT,
+          completed_at TEXT,
+          dispatch_owner_token TEXT,
+          dispatch_heartbeat_at TEXT,
+          dispatch_lease_expires_at TEXT,
+          updated_at TEXT NOT NULL,
+          UNIQUE(authority_id, idempotency_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_provider_dispatch_quota
+          ON provider_dispatch_attempts (authority_id, provider, credential_ref, created_at, status);
+        CREATE INDEX IF NOT EXISTS idx_provider_dispatch_status
+          ON provider_dispatch_attempts (status, updated_at);
+
+        CREATE TABLE IF NOT EXISTS provider_usage_outbox (
+          id TEXT PRIMARY KEY,
+          attempt_id TEXT NOT NULL UNIQUE,
+          provider TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          credential_ref TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          outcome TEXT NOT NULL CHECK(outcome IN ('succeeded','failed','unknown')),
+          requests INTEGER NOT NULL DEFAULT 1,
+          estimated_cost_usd REAL NOT NULL DEFAULT 0,
+          actual_cost_usd REAL,
+          occurred_at TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_provider_usage_outbox_created
+          ON provider_usage_outbox (created_at, id);
+
+        CREATE TABLE IF NOT EXISTS fmp_transcript_versions (
+          version_id TEXT PRIMARY KEY,
+          accession TEXT NOT NULL,
+          content_sha256 TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          fiscal_year INTEGER NOT NULL,
+          fiscal_quarter INTEGER NOT NULL,
+          call_date TEXT,
+          first_content_seen_at TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('observed','indexing','committed','failed')),
+          vector_commit_id TEXT,
+          chunk_count INTEGER NOT NULL DEFAULT 0,
+          observed_at TEXT NOT NULL,
+          indexed_at TEXT,
+          updated_at TEXT NOT NULL,
+          UNIQUE(accession, content_sha256)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_versions_accession
+          ON fmp_transcript_versions (accession, first_content_seen_at);
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_versions_state
+          ON fmp_transcript_versions (state, updated_at);
+      `);
+    }
+  },
+  {
+    // Cross-process ownership for deterministic provider vector ids. A fresh attempt can claim a
+    // retryable commit only when no live lease exists; every receipt/finalization write is then
+    // compare-and-swapped by the opaque token. Provider metadata carries the same token so a stale
+    // writer fails closed even if an in-flight upsert completes after ownership changes.
+    version: 30,
+    name: "vector_commit_attempt_leases",
+    up: (database) => {
+      const columns = database
+        .prepare("PRAGMA table_info(vector_ingest_commits)")
+        .all() as Array<{ name: string }>;
+      const addColumn = (name: string, sql: string) => {
+        if (!columns.some((column) => column.name === name)) database.exec(sql);
+      };
+      addColumn("attempt_token", "ALTER TABLE vector_ingest_commits ADD COLUMN attempt_token TEXT");
+      addColumn(
+        "attempt_generation",
+        "ALTER TABLE vector_ingest_commits ADD COLUMN attempt_generation INTEGER NOT NULL DEFAULT 0"
+      );
+      addColumn("lease_expires_at", "ALTER TABLE vector_ingest_commits ADD COLUMN lease_expires_at TEXT");
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_vector_ingest_commits_lease
+          ON vector_ingest_commits (state, lease_expires_at);
+      `);
+    }
+  },
+  {
+    // One authoritative committed generation per logical source document. A corrected content,
+    // parser, embedding, or point-in-time metadata generation becomes queryable atomically only
+    // after its complete receipt set is committed; the prior proven generation remains available
+    // until that handoff succeeds.
+    version: 31,
+    name: "vector_document_active_heads",
+    up: (database) => {
+      const commitColumns = database
+        .prepare("PRAGMA table_info(vector_ingest_commits)")
+        .all() as Array<{ name: string }>;
+      if (!commitColumns.some((column) => column.name === "document_key")) {
+        database.exec("ALTER TABLE vector_ingest_commits ADD COLUMN document_key TEXT");
+        database.exec("UPDATE vector_ingest_commits SET document_key = accession WHERE document_key IS NULL");
+      }
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS vector_document_heads (
+          tenant_scope TEXT NOT NULL,
+          source TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          commit_id TEXT NOT NULL UNIQUE,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_scope, source, accession)
+        );
+        CREATE INDEX IF NOT EXISTS idx_vector_document_heads_commit
+          ON vector_document_heads (commit_id);
+
+        CREATE TABLE IF NOT EXISTS vector_document_versions (
+          commit_id TEXT PRIMARY KEY,
+          tenant_scope TEXT NOT NULL,
+          source TEXT NOT NULL,
+          document_key TEXT NOT NULL,
+          valid_from TEXT NOT NULL,
+          valid_to TEXT,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_vector_document_versions_lookup
+          ON vector_document_versions (tenant_scope, source, document_key, valid_from, valid_to);
+
+        INSERT OR IGNORE INTO vector_document_versions (
+          commit_id, tenant_scope, source, document_key, valid_from, valid_to, updated_at
+        )
+        SELECT c.id, c.tenant_scope, c.source, c.document_key,
+               COALESCE(MIN(o.accepted_at), c.committed_at, c.updated_at), NULL, c.updated_at
+        FROM vector_ingest_commits c
+        LEFT JOIN chunk_occurrences o ON o.commit_id = c.id
+        WHERE c.state = 'committed'
+        GROUP BY c.id;
+
+        DELETE FROM vector_document_heads;
+      `);
+      const documents = database.prepare(`
+        SELECT DISTINCT tenant_scope, source, document_key FROM vector_document_versions
+      `).all() as Array<{ tenant_scope: string; source: string; document_key: string }>;
+      for (const document of documents) {
+        const rows = database.prepare(`
+          SELECT commit_id, valid_from FROM vector_document_versions
+          WHERE tenant_scope = ? AND source = ? AND document_key = ?
+          ORDER BY valid_from, commit_id
+        `).all(document.tenant_scope, document.source, document.document_key) as Array<{
+          commit_id: string;
+          valid_from: string;
+        }>;
+        const updateInterval = database.prepare(`
+          UPDATE vector_document_versions SET valid_to = ?, updated_at = ? WHERE commit_id = ?
+        `);
+        rows.forEach((row, index) => updateInterval.run(rows[index + 1]?.valid_from ?? null, row.valid_from, row.commit_id));
+        const active = rows.at(-1);
+        if (active) {
+          database.prepare(`
+            INSERT INTO vector_document_heads (tenant_scope, source, accession, commit_id, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(document.tenant_scope, document.source, document.document_key, active.commit_id, active.valid_from);
+        }
+      }
+    }
+  },
+  {
+    // Persist the hash of every retrieval-significant metadata field so Pinecone metadata cannot
+    // independently claim a valid PIT/citation version. Reconciliation anomalies require two
+    // matching observations before an active committed head is invalidated.
+    version: 32,
+    name: "vector_retrieval_metadata_and_reconcile_observations",
+    up: (database) => {
+      const columns = database
+        .prepare("PRAGMA table_info(vector_ingest_commits)")
+        .all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "retrieval_metadata_version")) {
+        database.exec(`
+          ALTER TABLE vector_ingest_commits
+          ADD COLUMN retrieval_metadata_version TEXT NOT NULL DEFAULT 'legacy'
+        `);
+      }
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS vector_reconcile_observations (
+          commit_id TEXT PRIMARY KEY,
+          fingerprint TEXT NOT NULL,
+          observation_count INTEGER NOT NULL CHECK(observation_count > 0),
+          first_observed_at TEXT NOT NULL,
+          last_observed_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS vector_reconcile_orphan_claims (
+          commit_id TEXT PRIMARY KEY,
+          claim_token TEXT NOT NULL,
+          lease_expires_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_vector_reconcile_orphan_claims_lease
+          ON vector_reconcile_orphan_claims (lease_expires_at);
+      `);
+
+      // Existing committed evidence remains available until a replacement generation is fully
+      // written and atomically promoted. Tokenless legacy rows are rejected by the v3 receipt
+      // validator and reported for explicit backfill; a schema migration must never create an
+      // availability cliff by aborting the only proven copy of the corpus.
+    }
+  },
+  {
+    // Provider authority is deliberately nonsecret and nullable for backwards compatibility. It
+    // binds a receipt set to the physical provider authority that produced it, while the timeline
+    // rebuild repairs old equal-time ordering deterministically.
+    version: 33,
+    name: "vector_commit_provider_authority_and_deterministic_timeline",
+    up: (database) => {
+      const columns = database
+        .prepare("PRAGMA table_info(vector_ingest_commits)")
+        .all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "provider_authority")) {
+        database.exec("ALTER TABLE vector_ingest_commits ADD COLUMN provider_authority TEXT");
+      }
+
+      database.prepare("DELETE FROM vector_document_heads").run();
+      const documents = database.prepare(`
+        SELECT DISTINCT v.tenant_scope, v.source, v.document_key
+        FROM vector_document_versions v
+        JOIN vector_ingest_commits c ON c.id = v.commit_id AND c.state = 'committed'
+      `).all() as Array<{ tenant_scope: string; source: string; document_key: string }>;
+      const updateInterval = database.prepare(`
+        UPDATE vector_document_versions SET valid_to = ?, updated_at = ? WHERE commit_id = ?
+      `);
+      const insertHead = database.prepare(`
+        INSERT INTO vector_document_heads (tenant_scope, source, accession, commit_id, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const document of documents) {
+        const rows = database.prepare(`
+          SELECT v.commit_id, v.valid_from, c.committed_at
+          FROM vector_document_versions v
+          JOIN vector_ingest_commits c ON c.id = v.commit_id AND c.state = 'committed'
+          WHERE v.tenant_scope = ? AND v.source = ? AND v.document_key = ?
+          ORDER BY v.valid_from, c.committed_at, v.commit_id
+        `).all(document.tenant_scope, document.source, document.document_key) as Array<{
+          commit_id: string;
+          valid_from: string;
+          committed_at: string | null;
+        }>;
+        rows.forEach((row, index) => {
+          updateInterval.run(rows[index + 1]?.valid_from ?? null, row.committed_at ?? row.valid_from, row.commit_id);
+        });
+        const active = rows.at(-1);
+        if (active) {
+          insertHead.run(
+            document.tenant_scope,
+            document.source,
+            document.document_key,
+            active.commit_id,
+            active.committed_at ?? active.valid_from
+          );
+        }
+      }
+    }
+  },
+  {
+    // Bind each managed commit to the immutable local ledger whose namespace and vector-id prefix
+    // own it. Nullable legacy rows remain quarantined/read-only until explicitly backfilled; they
+    // must never be silently claimed by a newly minted ledger authority.
+    version: 34,
+    name: "vector_commit_ledger_authority",
+    up: (database) => {
+      const columns = database
+        .prepare("PRAGMA table_info(vector_ingest_commits)")
+        .all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "ledger_authority")) {
+        database.exec("ALTER TABLE vector_ingest_commits ADD COLUMN ledger_authority TEXT");
+      }
+    }
+  },
+  {
+    // Persist the exact provider namespace class for each commit and every direct-private tenant.
+    // This makes rights/account erasure independent of an eventually-consistent provider list and
+    // prevents a missing global setting from silently rotating away from historical namespaces.
+    version: 35,
+    name: "vector_namespace_manifests",
+    up: (database) => {
+      const columns = database
+        .prepare("PRAGMA table_info(vector_ingest_commits)")
+        .all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "vector_namespace")) {
+        database.exec("ALTER TABLE vector_ingest_commits ADD COLUMN vector_namespace TEXT NOT NULL DEFAULT 'managed'");
+      }
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS vector_private_namespace_manifests (
+          tenant_scope TEXT PRIMARY KEY,
+          ledger_authority TEXT NOT NULL,
+          provider_authority TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+    }
+  },
+  {
+    // A non-PII subject tombstone is the database-level authority for account deletion. Runtime
+    // guards improve diagnostics, but these triggers keep an uninstrumented/stale handler from
+    // recreating user rows after deletion completes.
+    version: 36,
+    name: "account_write_fence_tombstones",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS account_write_fences (
+          subject_token TEXT PRIMARY KEY,
+          generation TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('prepared','completed')),
+          updated_at TEXT NOT NULL
+        );
+
+        INSERT OR IGNORE INTO account_write_fences (subject_token, generation, status, updated_at)
+        SELECT
+          substr(key, length('account_write_epoch:') + 1),
+          json_extract(value, '$.generation'),
+          json_extract(value, '$.status'),
+          COALESCE(json_extract(value, '$.updatedAt'), updated_at)
+        FROM settings
+        WHERE key LIKE 'account_write_epoch:%'
+          AND json_valid(value) = 1
+          AND json_type(value, '$.generation') = 'text'
+          AND json_extract(value, '$.status') IN ('prepared','completed');
+
+        CREATE INDEX IF NOT EXISTS idx_account_write_fences_status
+          ON account_write_fences (status, updated_at);
+      `);
+    }
+  },
+  {
+    // Durable owner generations distinguish a live slow provider call from a process that died
+    // after crossing the network boundary. Expiry records unknown billing truth, but remains an
+    // account-deletion blocker until an operator attests the old process is gone.
+    version: 37,
+    name: "provider_dispatch_owner_leases",
+    up: (database) => {
+      const columns = database.prepare("PRAGMA table_info(provider_dispatch_attempts)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "dispatch_owner_token")) {
+        database.exec("ALTER TABLE provider_dispatch_attempts ADD COLUMN dispatch_owner_token TEXT");
+      }
+      if (!columns.some((column) => column.name === "dispatch_heartbeat_at")) {
+        database.exec("ALTER TABLE provider_dispatch_attempts ADD COLUMN dispatch_heartbeat_at TEXT");
+      }
+      if (!columns.some((column) => column.name === "dispatch_lease_expires_at")) {
+        database.exec("ALTER TABLE provider_dispatch_attempts ADD COLUMN dispatch_lease_expires_at TEXT");
+      }
+      database.exec(`
+        UPDATE provider_dispatch_attempts
+        SET dispatch_owner_token = COALESCE(dispatch_owner_token, 'legacy-unleased:' || id),
+            dispatch_heartbeat_at = COALESCE(dispatch_heartbeat_at, dispatched_at, updated_at),
+            dispatch_lease_expires_at = COALESCE(
+              dispatch_lease_expires_at,
+              strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+15 minutes')
+            )
+        WHERE status = 'dispatched' AND dispatched_at IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_provider_dispatch_lease
+          ON provider_dispatch_attempts (status, dispatch_lease_expires_at);
+      `);
+    }
+  },
+  {
+    // A private namespace lives in one physical Pinecone index. Persist that authority so an API
+    // key/project rotation cannot make account deletion erase local evidence while leaving the old
+    // project's private vectors unreachable.
+    version: 38,
+    name: "private_vector_provider_authority",
+    up: (database) => {
+      const columns = database.prepare("PRAGMA table_info(vector_private_namespace_manifests)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "provider_authority")) {
+        database.exec("ALTER TABLE vector_private_namespace_manifests ADD COLUMN provider_authority TEXT");
+      }
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_private_vector_manifest_provider
+          ON vector_private_namespace_manifests (provider_authority, ledger_authority)
+      `);
+    }
+  },
+  {
+    // Re-created accounts receive a new opaque user-id generation. The prior generation's
+    // completed fence is permanent, so stale cookies/mobile tokens can never gain access to the
+    // new account merely because one newer session signed in.
+    version: 39,
+    name: "account_identity_generations",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS account_identity_generations (
+          base_subject_token TEXT PRIMARY KEY,
+          current_user_id TEXT NOT NULL,
+          generation INTEGER NOT NULL CHECK(generation >= 0),
+          status TEXT NOT NULL CHECK(status IN ('active','deleted')),
+          session_cutoff_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_account_identity_current_user
+          ON account_identity_generations (current_user_id);
+      `);
+    }
+  },
+  {
     // Persist the exact Green Team text and deterministic sizing arithmetic carried by each
     // Socratic case. This migration is deliberately schema-only: by the time a database is stamped
     // v26, a fixed $500 cap may be an intentional user choice and must never be reinterpreted.
@@ -1050,6 +1722,85 @@ const MIGRATIONS: Migration[] = [
       database.exec(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (user_id, account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')"
       );
+    }
+  },
+  {
+    // The old broker-minimum cooldown key omitted user ownership
+    // (`subMinimumOrderAlertSent:<account>:<symbol>`). It cannot be assigned safely when broker
+    // account identifiers collide across users, and it only suppresses a repeat notification for
+    // 24 hours, so clear all pre-user-scope rows once at rollout. New writes use the user-first key
+    // and are fenced/erased by accountSettingMatchesSubject.
+    version: 40,
+    name: "purge_legacy_broker_minimum_alert_cooldowns",
+    up: (database) => {
+      database.prepare("DELETE FROM settings WHERE key LIKE 'subMinimumOrderAlertSent:%'").run();
+    }
+  },
+  {
+    // Install licensed-transcript provenance/provider receipts in the versioned schema so account
+    // deletion coverage and the generic user write-fence triggers can see them at boot. The
+    // producer retains a defensive idempotent ensure for isolated/legacy databases.
+    version: 41,
+    name: "fmp_transcript_derived_rights_receipts",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS fmp_transcript_rights_gate (
+          singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+          generation INTEGER NOT NULL CHECK(generation > 0),
+          status TEXT NOT NULL CHECK(status IN ('active','revoked')),
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS fmp_transcript_derived_artifacts (
+          id TEXT PRIMARY KEY,
+          artifact_type TEXT NOT NULL CHECK(artifact_type IN ('chat-turn','strategy-decision','strategy-proposal','audit-event')),
+          artifact_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          generation INTEGER NOT NULL CHECK(generation > 0),
+          provenance TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(artifact_type, artifact_id)
+        );
+        CREATE TABLE IF NOT EXISTS fmp_transcript_derived_provider_work (
+          id TEXT PRIMARY KEY,
+          artifact_type TEXT NOT NULL CHECK(artifact_type IN ('strategy-decision')),
+          artifact_id TEXT NOT NULL,
+          user_id TEXT,
+          vector_id TEXT,
+          provider_authority TEXT,
+          ledger_authority TEXT,
+          generation INTEGER NOT NULL CHECK(generation > 0),
+          status TEXT NOT NULL CHECK(status IN ('pending','complete')),
+          created_at TEXT NOT NULL,
+          completed_at TEXT,
+          lease_expires_at TEXT,
+          terminal_outcome TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_artifacts_type
+          ON fmp_transcript_derived_artifacts (artifact_type, artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_provider_work_status
+          ON fmp_transcript_derived_provider_work (status, created_at);
+      `);
+      const columns = database.prepare(
+        "PRAGMA table_info(fmp_transcript_derived_provider_work)"
+      ).all() as Array<{ name: string }>;
+      for (const column of [
+        ["user_id", "TEXT"],
+        ["vector_id", "TEXT"],
+        ["provider_authority", "TEXT"],
+        ["ledger_authority", "TEXT"],
+        ["lease_expires_at", "TEXT"],
+        ["terminal_outcome", "TEXT"]
+      ] as const) {
+        if (!columns.some((existing) => existing.name === column[0])) {
+          database.exec(
+            `ALTER TABLE fmp_transcript_derived_provider_work ADD COLUMN ${column[0]} ${column[1]}`
+          );
+        }
+      }
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_fmp_transcript_derived_provider_work_lease
+          ON fmp_transcript_derived_provider_work (status, lease_expires_at)
+      `);
     }
   }
 ];
@@ -1243,6 +1994,26 @@ function migrate(database: Database.Database): void {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS account_write_fences (
+      subject_token TEXT PRIMARY KEY,
+      generation TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('prepared','completed')),
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_account_write_fences_status
+      ON account_write_fences (status, updated_at);
+
+    CREATE TABLE IF NOT EXISTS account_identity_generations (
+      base_subject_token TEXT PRIMARY KEY,
+      current_user_id TEXT NOT NULL,
+      generation INTEGER NOT NULL CHECK(generation >= 0),
+      status TEXT NOT NULL CHECK(status IN ('active','deleted')),
+      session_cutoff_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_account_identity_current_user
+      ON account_identity_generations (current_user_id);
 
     CREATE TABLE IF NOT EXISTS audit_events (
       id TEXT PRIMARY KEY,
@@ -2324,3 +3095,5 @@ export * from "./db-socratic";
 export * from "./db-jobs";
 export * from "./db-rag-ingest";
 export * from "./db-tuning-reviews";
+export * from "./db-provider-dispatch";
+export * from "./db-vector-commits";

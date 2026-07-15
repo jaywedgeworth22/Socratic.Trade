@@ -1,5 +1,54 @@
 # Current Status
 
+## 2026-07-15 - Branch integration labeling and PR #1586 landing gate (CODEX)
+
+Main is aligned with `origin/main@58de276e`. The FMP/RAG transcript branch
+`codex/fmp-transcripts-safe` is reconciled locally with that baseline and remains the only active
+landing candidate for this lane. The remote PR #1586 head is stale until `scripts/land.sh` pushes
+the verified tree.
+
+Focused Node 24 blockers from the previous handoff are no longer reproducing:
+`test/rag-doc-type-coverage.test.ts` passes 15/15 and `test/infisical-bootstrap.test.ts` passes
+37/37. A durable branch disposition ledger now lives at `docs/BRANCH-INTEGRATION-LEDGER.md` so future
+agents can see which branches are active, stale, duplicate, or selective-review only. Full ordered
+lint, TypeScript, test, build, `scripts/land.sh`, hosted verification, protected merge, and exact
+production verification still remain before this can be called complete.
+
+The focused read-only subagent review then found three rights-boundary regressions before landing:
+raw transcript retrieval trusted the env flag without requiring the durable active rights generation;
+FMP-derived Socratic-memory dedup hashes were not in the rights purge inventory; and unrelated Pinecone
+upserts could block transcript rights erasure. All three are patched locally. Focused Node 24 remediation
+verification passes `test/vector-db-retrieval.test.ts` + `test/fmp-rights-derived-artifacts.test.ts`
+(31/31).
+
+The later strategy/regime compatibility fixes are also green in focused verification:
+`test/regime-severity.test.ts` + `test/strategy-moneypath-drawdown-flip.test.ts` pass 23/23 after
+adding the current vector-authority mocks, Red Team fixture routing, and timeout headroom. Standalone
+Node 24 TypeScript is clean, and an earlier lint run on this tree exited 0 with inherited warnings only.
+Under current host contention, later full/grouped local gates are not authoritative: grouped `npm test`
+and grouped changed-test runs ended with SIGTERM 143 without assertion summaries, and multiple
+`npm run build` attempts, including `NEXT_PRIVATE_BUILD_WORKER=1 NODE_OPTIONS=--max-old-space-size=4096`,
+were OS-killed with 137 while other agent build/test processes were respawning. Push/hosted `verify`
+must therefore be the full repository gate authority for PR #1586. Build, landing, PR-ready,
+hosted checks, merge, and exact production verification remain pending.
+
+Additional cleanup from this pass: `src/lib/web-sources/fmp-transcripts.ts` no longer imports the broad
+DB barrel, which removed the `FMP_TRANSCRIPT_SOURCE` temporal-dead-zone warning in
+`test/rag-doc-type-coverage.test.ts`; the focused file now passes 15/15 without that warning. The
+migration-heavy FMP rights-derived artifact setup timeout is now 120s and the focused file passes 10/10.
+Standalone TypeScript also passed after the import split.
+
+Hosted PR #1586 status check update: gitleaks failed on a false-positive deterministic
+`ENCRYPTION_KEY` fixture from historical branch commit `dd63ba35` even though the current tree now uses
+`"0".repeat(64)`. Added the exact fingerprint to `.gitleaksignore` with a false-positive note; this
+needs a normal branch push and hosted recheck. PR #1586 is ready/open but merge-blocked until hosted
+checks pass.
+
+Hosted verify then failed one test: `test/vector-db-chunk-cap.test.ts` expected transcript retrieval to
+work while its DB mock lacked the new durable active rights-gate row. The mock now exposes
+`fmp_transcript_rights_gate` as `{ generation: 1, status: "active" }` plus basic `all/run` seams, matching
+current product retrieval requirements. Focused Node 24 verification passes 14/14.
+
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
 
 The decision trace now treats the structured Red Team verdict as the canonical explanation and
@@ -7,8 +56,8 @@ suppresses only exact generic echoes plus known generated policy wrappers around
 Distinct policy objections and Red Team override context remain visible. The canonical card also
 shows the shared explicit verdict label, so an approve-at-half review still says “Approved at half
 size” and a rejection still says “Rejected by Red Team” even when its duplicate rationale row is
-hidden. The change is display-only; persisted cases and other consumers are unchanged. PR #1593 is
-open with squash auto-merge armed; production is unchanged until merge auto-deploys.
+hidden. The change is display-only; persisted cases and other consumers are unchanged. PR #1593
+merged as `3df405e6`; production health reported that exact SHA after the automatic deployment.
 
 **[codex-autofix] Round 1:**
 - P2 — preserve overridden Red Team dissent rows when the summary matches the canonical verdict
@@ -27,12 +76,24 @@ open with squash auto-merge armed; production is unchanged until merge auto-depl
   autofix `02c03fe5` advanced the branch. That one-file delta is now merged without force; the
   conflict preserves the tested Chip, status tone, and applied-override semantics. Exact-head Codex
   review is clean and every actionable thread is replied to and resolved. After `main` advanced
-  through #1604, commit `f54e43aa` was merged additively at `a84a9dfd`; the final current-main
-  landing gate, refreshed hosted checks, auto-merge, and merged-SHA/production verification remain.
+  through #1604, commit `f54e43aa` was merged additively at `a84a9dfd`; the repeated landing gate and
+  hosted checks passed, and #1593 auto-merged and deployed as `3df405e6`.
 
 Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 ## 2026-07-14 — Infisical JSON-export production compatibility (CODEX)
 
+PR #1594 merged as `48bd191c`, but Coolify deployment `trxqzfunxctpy440ozbyt5if` failed its
+new-container health check and rolled back cleanly. Redacted deployment logs repeatedly reported
+invalid Infisical export JSON. The
+pinned Infisical CLI v0.43.98 source confirms `--format json` serializes an array of
+`SingleEnvironmentVariable` records, not a flat key/value object. The corrective parser accepts
+only an array of object records with non-empty string `key` and string `value`, copies no metadata,
+and rejects duplicate keys, NULs, malformed records, and the incorrect flat-object shape without
+printing raw output. Focused Node 24 verification is green: 37 tests, scoped ESLint, standalone
+TypeScript, and `git diff --check`. Independent hostile review reports LAND with no P0-P2 findings.
+Its nonblocking P3 is to make the production bootstrap compare the cached Infisical executable's
+version instead of only checking its presence; the current cache is known to be v0.43.98. Corrective
+PR #1604 merged as `f54e43aa`; later production verification on `3df405e6` includes that fix.
 The initial PR #1594 deployment failed its new-container health check and rolled back cleanly.
 Corrective PR #1604 merged as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8` after independent
 LAND/no-P0-P2 review, Node 24 TypeScript, 369 files / 4,165 tests, production build, hosted verify,
@@ -76,12 +137,12 @@ deploy, provider, broker, secret, or corpus mutation has occurred from this lane
 
 Rollout: `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 
-## 2026-07-14 — Final hosted-review remediation (PR #1587)
+## 2026-07-14 — Final hosted-review remediation (PR #1587, merged as `acd67a5c`)
 
 The hosted autofix pushed two independent review fixes. Both remaining money-path
 findings are now implemented locally: funding sells are downstream of exact-size
 eligibility, and a stored owner override cannot be consumed after a material upward
-broker requote. Focused verification is green; the final ordered gate and push remain.
+broker requote. The final ordered and hosted gates passed; the PR merged and auto-deployed.
 ## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle + final-size input cleanliness + broker-rejection measurability (PR #1587)
 
 **[codex-autofix] Round 2 (this commit):** two more Codex review findings fixed,
@@ -425,6 +486,148 @@ Addressed 15 Codex P2 threads across four autofix rounds:
 - Round 4 (3 threads): fixed local fallback key source classification (`source: "user"` → `"env"` to preserve shared cache scope), added `local` user fallback to `resolveAlphaVantageKeyPool`, resolved STATUS.md Infisical activation contradiction (dev/staging only, prod is manual).
 Rollout: `docs/rollouts/2026-07-13-congress-trade-integration.md`.
 Auto-merge enabled.
+## 2026-07-14 — FMP earnings-call transcripts (CODEX, branch `codex/fmp-transcripts-safe`)
+
+Implemented a production-inert, default-off transcript producer on FMP's stable dates/body APIs.
+It is dual-gated on the feature flag and explicit storage/display-rights confirmation; every real
+provider attempt is metered through the redacted wrapper, with bounded responses, exact retry/request
+budgets, a shared durable RAG lease plus independent cadence/cursor, ticker-period identities, and first-content-seen
+point-in-time metadata. Retrieval fails closed across Strategy and broad Coach/chat queries when rights
+are unconfirmed. Content hashes remain content-derived while ticker-period occurrences retain source
+identity, and dashboard/RAG status exposes capability and coverage without content or credentials.
+
+Production remains disabled: the current Starter credential returns typed HTTP 402 for the stable
+transcript endpoint despite 0% over-limit status, and commercial storage/display rights still require
+confirmation. Rounds 3-7 hardened Voyage response mapping, lease fencing, retry fairness, bounded JSON,
+and delayed notification/terminal-body boundaries. Round-8 independent review rejected the remaining
+draft on three truth gaps: global content dedup could complete a new occurrence whose vector ID did not
+exist; lossy UTF-8 and schema-less HTTP-200 handling could still write false-green evidence; and local
+receipt faults were non-fatal after the external write.
+
+All three are remediated locally. `storeDocument` now materializes a deterministic Pinecone record for
+every ticker/accession/PIT occurrence, reusing only exact model/revision/text-matched embeddings and
+never manufacturing a completion vector ID. Source completion requires exact upsert cardinality plus
+an atomic `document_chunks`/`chunk_occurrences` receipt transaction. Fatal UTF-8 decoding and strict
+dates/body envelope validation happen before the single green health/usage event; malformed bytes,
+oversized/malformed JSON, wrong endpoint rows, and embedded provider errors produce one bounded redacted
+failure and no green event. Same-content cross-ticker retrieval, pre-acceptance PIT exclusion, Pinecone
+failure, receipt-fault, and real SQLite rollback/retry regressions are covered.
+
+Round-9 remediates the subsequent nine-finding durability/rights rejection. Every FMP, Voyage, and
+Pinecone boundary reserves durable credential-wide request/cost capacity before dispatch; usage outcome
+settles independently of the producer lease, crash-left dispatches reconcile to `unknown`, and a durable
+outbox replays deterministic provider events. Generic FMP enrichment shares the same ledger as transcripts
+inside this app. Managed vectors now use pending provider metadata plus exact local commit/occurrence
+receipts; server filters exclude pending rows and local retrieval fails closed on any tenant, commit,
+version, content, source, accession, section, ordinal, parser, or embedding mismatch. Transcript body
+revisions retain distinct full-SHA/PIT versions, ingestion is operator-only, SEC propagates the same
+lease, embedding revision remains v1 pending a real migration, and Strategy copy is source-neutral.
+Bounded dry-run rights inventory scans Pinecone itself (including receiptless ghosts); real purge is
+provider-first, verified, then transactionally removes exact local/observation/tagged derivative rows.
+Account deletion now removes the new user-scoped provider/vector receipts and linked occurrences.
+
+Round-10 preserves the complete Round-9 implementation in local-only checkpoint `52cfcbec` (parent
+`86971ec4`) and cleanly merges fetched `origin/main@4432c2bc` in `0713a254` with zero conflicts. Node 24
+`npm ci` resolves Node 24.18.0, npm 11.16.0, TypeScript 6.0.3, and `@types/node` 24.13.3. The first
+current-main full suite passed 369 files / 4,144 tests, then the production build found a real Edge
+boundary: `data-providers.ts` imported `node:crypto` through the scheduler graph. Credential identity now
+uses awaited Web Crypto SHA-256 with an exact known-digest regression. The final ordered Node 24 gate is
+green: lint 0 errors / 458 inherited warnings; TypeScript clean; full suite 369 files / 4,145 tests;
+production build clean with the real `Running TypeScript` / `Finished TypeScript` phase and 32 generated
+static pages; diff-check clean. Fresh current-main hostile review found no remaining P0/P1/P2 code
+finding across durable provider dispatch/outbox, managed-vector two-phase receipts and reconciliation,
+immutable transcript/PIT versions, operator scope, rights inventory/purge, scheduler gating, usage replay,
+or account deletion. The lane is locally code-ready but remains unpushed with no PR.
+
+Round-11 landing review corrected one managed-vector cardinality flaw missed by Round 10. A nonzero
+ingest-text or Pinecone write-unit budget could shrink `documentsToStore` to a prefix, while the managed
+commit compared the successful upsert count only with that shrunken set and then persisted/promoted the
+full source-document receipt set. `storeDocument` now supplies the immutable full occurrence count, and
+receipt persistence plus provider promotion require both the post-budget set and successful upsert count
+to equal it. Partial prefixes stay provider-`pending`, have no local occurrence receipts, fail retrieval,
+and a later deterministic SEC retry commits the complete document when capacity returns. Exact regression
+coverage is 6/6 and the related focused set is 106/106. The repeated ordered Node 24 gate is green: lint
+0 errors / 458 inherited warnings; TypeScript clean; 369 files / 4,147 tests; production build clean with
+the real TypeScript phase and 32 static pages; diff-check clean. Scoped hostile re-review found no remaining
+P0/P1/P2. The remediation remains local and unpushed for root review; no PR exists.
+
+Round-12 correctly revoked that release claim: an exact committed replay could be demoted before an early
+budget/client return, concurrent writers could reset/finalize the same commit, SEC 8-K could mark a partial
+budget result ingested, and empty/duplicate occurrence cases were under-proved. Round-13/14 remediates those
+paths with attempt generations and leases, committed-generation preservation, exact caller completion gates,
+empty-document cleanup, immutable PIT history, and expanded concurrency/retry/duplicate tests. Retrieval now
+uses authoritative shared/private tenant metadata, treats local operator decision and experience memory as
+private, filters legacy account memory before prompt/rerank persistence, and compensates Pinecone topK for
+locally proven stale managed generations with a bounded, observable degraded state.
+
+Account deletion now fences new provider dispatch before idempotency replay, permits only the exact durable
+prepared request through the provider erasure path, waits for fresh dispatches to drain, inventories and
+provider-deletes exact private/account-linked vectors, fetch-verifies absence, and only then removes local
+secrets/receipts; provider inventory/erasure requires Pinecone but not an unrelated Voyage credential. Local
+shared SEC/web corpus survives, as does globally deduplicated source text still referenced by a preserved
+public occurrence. Durable local receipts recover private content hashes when a prior attempt deleted provider
+vectors and crashed before local deletion. Current Node 24 receipts: 20 focused RAG/SEC/deletion files / 256 tests; the
+post-review privacy/deletion subset 2 files / 22 tests; TypeScript and diff-check clean. An independent hostile
+review and the serialized full lint/TypeScript/test/build gate remain pending. Draft PR #1586 is open with green
+checks for its older pushed snapshot, but the current remediation is dirty/local; keep the PR draft and do not
+merge or activate it.
+
+Round-15 landing remediation closes the next hostile-review set. Nonlocal writers can no longer request
+shared corpus scope, and `storeDocument` holds one durable account-operation claim across provider discovery,
+managed receipts, and Pinecone writes so prepared deletion cannot race a late vector recreation. Provider
+erasure requires current physical-index authority even when local receipt tables are empty and verifies a
+bounded sequence of consecutive clean fetch/list observations rather than trusting one eventually-consistent
+read. Rights withdrawal now tracks and removes exact transcript-derived chat, prompt-audit, decision, and
+framework artifacts after all derived provider work reaches a terminal receipt. Auth.js sessions missing a
+post-deletion provider-login timestamp fail closed once an identity tombstone exists; a lock-contended or
+otherwise failed event-triggered strategy run returns its claim to the durable queue; and one canonical
+settings ownership registry drives both account deletion and prepared/completed write fences across provider,
+risk, learning-review, auto-tune, regime, model-rotation, alert, and related user-owned keys. Node 24 targeted
+verification is green: 20 files / 302 tests plus 4 derived-rights tests, standalone TypeScript, and diff-check.
+Current `origin/main@2dabc7f8` owns migrations 27-28, so this branch must checkpoint, merge current main,
+renumber its transcript/vector migrations to 29-39, and pass the ordered repository gate before PR #1586 can
+leave draft. No activation flag, FMP call, corpus mutation, Infisical mutation, merge, or production write ran.
+
+Round-16 has now reconciled `origin/main@2dabc7f8` without dropping either migration family: main remains
+27-28 and transcript/vector/account-generation migrations are 29-39. The merged strategy path atomically
+persists proposal plus Socratic decision while retaining FMP rights-generation and provider-work receipts.
+The first hostile re-review found two P2s and both are remediated: an explicitly trusted Cloudflare Access
+assertion forwards its matching `iat` for post-deletion identity generation, and broker-minimum alert
+cooldowns include user ownership so the canonical settings matcher fences and erases them. Node 24
+TypeScript plus the merged targeted set (9 files / 99 tests) are green. Fresh hostile re-review and the
+ordered lint/TypeScript/full-test/build gate remain pending; PR #1586 stays draft/default-off.
+
+Rounds 17-19 replace the Access-token freshness assumption with a matching signed Auth.js `loginAt`,
+bind every licensed private decision-memory write and erasure receipt to its immutable rights generation
+plus exact provider/ledger authority, and require consecutive clean provider observations before local
+receipt deletion. A provider timeout after dispatch now settles as `provider_write_unknown`, never as a
+proven no-write; that preserves the exact purge obligation if the remote upsert succeeded before the
+client lost its acknowledgement. Retrieval keeps private/shared provider tiers separate, removes tenant-,
+receipt-, and rights-ineligible candidates before applying Voyage's 1,000-document fair quota, and carries
+provider-tier identity through multi-query RRF so fan-out cannot re-truncate a fair pool to one tier. It
+also carries raw-vs-eligible counts forward for degraded-state telemetry. Migration 41 puts rights and provider-work
+tables under versioned account deletion/write fences. Current Node 24 focused verification is green:
+  5 files / 57 tests, standalone TypeScript, and diff-check. Round-20 then batches high-cardinality managed
+  receipt lookup below SQLite's host-parameter ceiling and proves a 60,000-ID pool keeps its committed match.
+  Round-21 removes production-bundle `node:` imports by using Web Crypto/global UUID and the existing
+  abort-aware retry pause. Current-main reconciliation now includes `origin/main@58de276e`, which merged
+  shared package v1.7.1 adoption in PR #1607. The rag doc-type integration compatibility test now supplies
+  the new vector authority mocks, pins deterministic test encryption, includes the required proposal regime
+  field, and uses realistic strategy-integration timeouts. The Infisical signal-forwarding fixture now supplies
+  its own fake app identity/login path; combined focused blocker verification is green at 52/52.
+  `docs/BRANCH-INTEGRATION-LEDGER.md` records the reviewed branch dispositions so future agents do not repeat stale-branch inventory.
+  Round-23 closes the focused review findings: raw transcript eligibility now requires the durable active
+  rights gate, FMP-derived Socratic-memory `document_chunks` hashes are inventoried and removed after provider
+  verification, and only transcript-associated Pinecone upsert operations block transcript-rights erasure.
+  Focused remediation verification is green at 2 files / 31 tests. The ordered full repository gate
+  remains before #1586 leaves draft; all transcript flags remain default-off.
+
+Production activation/backfill remains gated on an entitled transcript plan, confirmed commercial
+persistence/embedding/display rights, and one genuinely shared cross-app transactional quota authority;
+matching `PROVIDER_QUOTA_AUTHORITY_ID` strings on separate databases is insufficient. No FMP/provider,
+corpus, Infisical, PR, merge, deploy, or production write occurred in this lane.
+
+Rollout: `docs/rollouts/2026-07-13-fmp-transcripts-safe.md`.
 
 ## 2026-07-13 — Account-relative risk limits and Green/Red decision clarity (CODEX, branch `codex/account-relative-risk-clarity`)
 
@@ -979,10 +1182,39 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## Current Status
 
-- PRs #1584, #1583, #1580, #1582, #1575, #1578, and #1587 were verified and merged into
-  `main`. PR #1589 carries this documentation cleanup and its current-main Node 24 gate is green:
-  lint 0 errors/459 inherited warnings, TypeScript clean, 368 files/4,128 tests, and production
-  build with real TypeScript validation plus 32 static pages. PR #1586 remains the only other open PR.
+- PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, #1589, #1593, #1594, #1604, and #1607 are merged.
+  Only draft PR #1586 remains open; it is the default-off FMP/RAG/privacy/account-risk consolidation.
+- #1586 is reconciled with `main@58de276e`. The final hostile-review fixes bind every licensed
+  private-memory vector receipt to its exact Pinecone provider plus SQLite ledger authority, reject
+  provider/manifest rotation, require consecutive clean provider observations before local erasure,
+  and preserve independent private/shared retrieval pools through reranking. Versioned migration 41
+  makes the derived-artifact/provider-work tables visible to account-deletion coverage and durable
+  user write-fence triggers.
+- The earlier Cloudflare Access `iat` approach is superseded: reusable Access application-token time
+  is not fresh IdP-login proof. A Cloudflare request may reopen a deleted identity generation only
+  when a matching signed Auth.js session carries a post-cutoff `loginAt`.
+- Current Node 24 focused verification is green: the final retrieval/provider subset is 6 files /
+  72 tests; the migration/deletion subset is 7 files / 74 tests; TypeScript and diff-check pass.
+  The latest review findings are fixed: no-op indexing settles as `no_provider_write` without
+  inventing an erasure obligation, while unknown writes stay purgeable; saturated tier unions retain
+  fair representation under Voyage's 1,000-document rerank ceiling. Managed receipt lookup is also
+  batched below SQLite's bind limit; a 60,000-candidate regression preserves the committed match.
+  The first full run passed 379 files / 4,362 tests, then the production build found transitive
+  `node:crypto` and `node:timers/promises` imports. Those are now replaced by edge-safe Web Crypto
+  SHA-256/global UUID and the existing abort-aware retry pause; 3 files / 20 tests, TypeScript, and a
+  production build with 32 static pages pass. After #1607 merged, the current branch is ahead of the remote
+  PR head and has final compatibility cleanup: `test/rag-doc-type-coverage.test.ts` now supplies deterministic
+  encryption, vector provider/ledger authority mocks, the required proposal regime field, and 75s timeout
+  headroom for the heavy strategy integration cases. `test/infisical-bootstrap.test.ts` now gives the
+  signal-forwarding fixture an explicit fake app identity/login path. Combined focused blocker verification
+  is green at 52/52. `docs/BRANCH-INTEGRATION-LEDGER.md` records branch/PR dispositions. A focused landing
+  review then found and this tree fixes the durable-rights retrieval gate, derived-memory dedup purge, and
+  unrelated-upsert purge blocker issues; `test/vector-db-retrieval.test.ts` plus
+  `test/fmp-rights-derived-artifacts.test.ts` pass 31/31. Clean ordered full rerun, push, hosted checks/review,
+  merge, and production verification remain; #1586 stays draft and no FMP flag/provider/corpus/Infisical
+  mutation has occurred.
 
 ## Next Action
-- Finish verification and merge of PR #1586, then verify the resulting production release.
+- Run the ordered full gate, push #1586 through `scripts/land.sh`, mark the PR ready, resolve hosted
+  checks/review, merge it, require zero open PRs, then verify the exact final `main` SHA through production
+  health/readiness and Coolify runtime surfaces.

@@ -1,5 +1,107 @@
 # Active Implementation Plan
 
+> **2026-07-13 - FMP transcript producer (CODEX).** Add a production-inert, default-off,
+> rights-confirmed FMP earnings-call transcript source with tracked stable-endpoint requests,
+> independent cadence/lease/cursor/budgets, ticker-period identities, first-observed PIT timing,
+> retryable incomplete states, content-derived dedup plus occurrence identity, rights-aware
+> Strategy/Coach retrieval,
+> source status, and focused telemetry/safety tests. Do not enable production until the FMP plan
+> exposes both endpoints and the agreement permits persistence/embedding/display. Speaker/Q&A
+> segmentation and cited derived briefs require entitled representative fixtures before broad corpus
+> rollout. Starter is below its advertised rate/bandwidth limits but not entitled to transcripts;
+> surface that as a plan exclusion, never as quota exhaustion. See
+> `docs/rollouts/2026-07-13-fmp-transcripts-safe.md`.
+> Round-9 closes the subsequent nine-finding durability/rights review: atomic provider request/cost
+> reservations precede every FMP/Voyage/Pinecone boundary; dispatch outcomes survive lease loss and
+> crash-left calls reconcile to durable `unknown` outbox events; managed vectors remain pending until
+> exact provider plus relational receipts commit and retrieval validates every identity/version field.
+> Transcript revisions retain full SHA-256 content versions and first-content-seen PIT rows, ingestion
+> is operator-only, SEC uses the same lease guard, embedding revision stays at v1 pending a real corpus
+> migration, Strategy language is source-neutral, and rights tooling performs bounded dry-run inventory
+> plus provider-first verified purge. Account deletion covers the new user-scoped receipts/outbox rows.
+> Generic FMP and transcript calls share authority within Socratic.Trade; production remains blocked on
+> confirmed commercial rights and a genuinely shared cross-app transactional quota authority. Round-10
+> captures the complete implementation in local checkpoint `52cfcbec`, cleanly merges
+> `origin/main@4432c2bc` in `0713a254`, and uses an awaited Edge-safe Web Crypto SHA-256 credential
+> fingerprint after the first current-main production build exposed a transitive `node:crypto` import.
+> The final Node 24 gate is green: lint 0 errors / 458 inherited warnings; TypeScript clean; 369 files /
+> 4,145 tests; production build with the real TypeScript phase and 32 static pages; diff-check clean. Fresh
+> hostile review found no remaining P0/P1/P2 code issue. This lane is locally code-ready; no push or PR is
+> authorized yet, and activation/backfill remains blocked on an entitled plan, commercial rights, and the
+> shared authority. A future PR, merge/autodeploy, and live verification require explicit follow-through.
+> Round-11 landing review found and locally remediated one missed managed-commit cardinality defect:
+> nonzero ingest/write-budget prefixes can no longer commit full-document receipts or become retrievable.
+> The immutable original occurrence count now gates receipt persistence and provider promotion; partial
+> prefixes remain pending with zero receipts and a later SEC retry commits the exact full set. Node 24:
+> exact regression 6/6, related focused tests 106/106, lint 0 errors / 458 inherited warnings, TypeScript
+> clean, 369 files / 4,147 tests, production build with real TypeScript and 32 static pages, diff-check
+> clean. Hostile re-review found no remaining P0/P1/P2 in scope. Root review is pending; still no push/PR.
+> Round-12 then rejected publication on committed-replay demotion, same-commit writer races, an SEC 8-K
+> false-complete path, and zero/partial occurrence gaps. Round-13/14 now preserve committed generations,
+> serialize exact commit attempts, gate every filing caller on `documentComplete`, reject empty documents,
+> compensate Pinecone topK for locally proven stale managed generations, and make tenant scope authoritative.
+> Personal decision/experience memory is private even for the local operator; provider-first account deletion
+> inventories and fetch-verifies the subject's vectors before deleting local secrets/receipts, while preserving
+> shared public corpus and globally deduplicated chunk text still referenced by it. Current Node 24 focused
+> evidence is 20 files / 256 tests plus 2 privacy/deletion files / 22 tests, TypeScript clean, and diff-check
+> clean. Round-15 then makes nonlocal/shared scope impossible, holds a durable account-operation claim across
+> every private document provider/receipt write, requires current provider authority plus consecutive-clean
+> account erasure verification, tracks and purges transcript-derived artifacts/provider work, rejects legacy
+> Auth.js cookies after an account-generation tombstone, retries lock-contended trigger events, and centralizes
+> ownership/fencing for all user-scoped internal settings. Current targeted proof is 20 files / 302 tests plus
+> 4 derived-rights tests, TypeScript, and diff-check. Checkpoint this snapshot, merge `origin/main@2dabc7f8`,
+> renumber transcript/vector migrations behind main's versions 27-28, then run the ordered lint/TypeScript/test/
+> build gate and fresh hostile review. Draft PR #1586 stays HOLD until those gates pass; do not enable
+> transcripts or run a corpus backfill regardless of code-merge state.
+> Round-16 reconciles `origin/main@2dabc7f8`: main keeps migrations 27-28 and the transcript/vector
+> lane is renumbered 29-39; proposal plus Socratic-decision writes remain atomic while FMP-derived
+> decisions keep rights-generation/provider-work receipts. Hostile review found and the branch fixes
+> two additional P2s: Cloudflare Access assertion `iat` now participates in post-deletion identity
+> generation, and broker-minimum alert cooldowns are user-scoped for the shared settings fence/eraser.
+> Node 24 TypeScript and the merged targeted set (9 files / 99 tests) are green. Fresh hostile re-review
+> and the ordered full gate remain before #1586 can leave draft.
+> Rounds 17-20 supersede the Access-token freshness design with signed Auth.js `loginAt`, bind licensed
+> private derivative writes and purge receipts to immutable rights generation plus exact provider/ledger
+> authority, and require consecutive clean provider observations before deleting local evidence. Treat
+> an acknowledged zero-write as `no_provider_write`, but any provider error/timeout after dispatch as
+> `provider_write_unknown` and therefore an exact purge obligation. Filter tenant-, receipt-, and
+> transcript-rights-ineligible records inside each provider tier before the fair 1,000-document rerank
+> cap so stale generations cannot crowd out current evidence; carry tier identity through multi-query RRF
+> and apply one final fair cap before reranking. Chunk relational receipt lookups below SQLite's portable
+> host-parameter ceiling so the legal six-tier/60,000-candidate provider pool cannot fail closed by
+> accidentally discarding every managed match. Round 21 removes transitive `node:` imports exposed by
+> the production build: immutable derivative IDs use edge-safe Web Crypto SHA-256, the already-tested
+> abort-aware retry pause owns erasure backoff, and document construction requires the precomputed ID
+> to remain paired with its rights generation. Current-main reconciliation includes `origin/main@58de276e`
+> after PR #1607 merged. The doc-type coverage integration test now supplies deterministic encryption, the
+> vector authority mocks required by the licensed-memory path, the required proposal regime field, and
+> realistic timeout headroom; the Infisical signal-forwarding fixture supplies its own fake app identity/login.
+> Focused verification is green at 15/15 and 37/37, and `docs/BRANCH-INTEGRATION-LEDGER.md` records branch
+> dispositions for future agents. Round-23 fixes the final focused rights review: transcript retrieval requires
+> the durable active rights gate, derived Socratic-memory dedup hashes are included in rights purge, and unrelated
+> Pinecone upserts no longer block transcript erasure. Focused remediation verification is green at 31/31.
+> Round-24 closes the focused strategy/regime and suite-load compatibility fallout: Red Team prompt stubs now
+> distinguish review calls from Green/strategy calls, vector-authority mocks match the current licensed-memory
+> contract, heavy strategy cases have realistic timeout headroom, and the Infisical signal-forwarding regression
+> has enough full-suite load margin. Focused verification is green at 23/23 for regime/drawdown, 37/37 for
+> Infisical, 15/15 for RAG doc-type coverage, 31/31 for transcript rights/retrieval, and standalone TypeScript.
+> Local full/grouped gates are currently host-pressure limited rather than assertion-limited: grouped tests ended
+> with 143 and repeated production builds were OS-killed with 137 while other agent runners respawned. Push the
+> current branch and let hosted `verify` provide the authoritative full lint/test/build result, then mark ready, merge,
+> and verify the automatic production deployment without enabling transcript ingestion or backfill.
+> Round-25 removes a DB-barrel import cycle from the FMP transcript module; the RAG doc-type focused test now passes
+> without the prior `FMP_TRANSCRIPT_SOURCE` TDZ warning. The FMP rights-derived artifact hook has 120s setup headroom
+> and passes focused 10/10; standalone TypeScript is clean after the import split.
+> Hosted gitleaks then failed on the historical deterministic `ENCRYPTION_KEY` fixture commit even though the current
+> tree uses `"0".repeat(64)`; `.gitleaksignore` now includes the exact false-positive fingerprint for a normal recheck.
+> Round-27 fixes the hosted vector chunk-cap test fixture by adding the durable active transcript-rights gate row to
+> its DB mock; focused verification passes 14/14.
+> **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
+> but its automatic Coolify deployment failed health checks and rolled back because pinned
+> Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the
+> merged runner expected a flat object. Parse only validated `{ key, value }` records, reject
+> malformed or duplicate keys without exposing output, repeat the full Node 24 landing gate,
+> and verify the exact corrective merge SHA in production before releasing dependent work.
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
 > initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged
 > as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8`, and Coolify deployment
@@ -41,10 +143,9 @@
 > disposable cache; prove non-empty JS/MJS/DTS/DMTS artifacts and both require/import
 > resolution; then run the serialized lint, standalone TypeScript, full test, and
 > production-build gate on current `origin/main`. Land through `scripts/land.sh`, require
-> hosted verification and protected squash merge, then verify the exact automatic production
-> rollout and dependency health. Ready PR #1607 now has exact-head local and hosted gates
-> green with both review threads resolved; protected squash merge and production verification
-> remain.
+  > hosted verification and protected squash merge, then verify the exact automatic production
+  > rollout and dependency health. Ready PR #1607 merged as `58de276e`; production verification is included
+  > in the final all-PR release check after #1586 lands.
 > See `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
@@ -154,6 +255,15 @@
 - **[ ] Wave E — controlled operations:** only after gates, run shadow 10 -> 25 -> 100 -> 300 -> 1,000 breadth-
   first waves with cost/rate/failure breakers, reconciliation, dual-read/write, rollback, and freshness SLOs.
 
+The highest-yield backfill order remains: freeze the exact 1,000-CIK universe plus a private priority overlay;
+archive immutable raw SEC artifacts broadly; embed 10-K/10-Q decision sections, material 8-K exhibits, and only
+entitled transcripts selectively; retain XBRL/fundamentals as structured facts; checkpoint by CIK/accession; and
+expand only after each 10 -> 25 -> 100 -> 300 -> 1,000 wave passes coverage, citation, PIT, cost, and failure gates.
+The production bulk worker must consume historical submissions shards rather than recent-only discovery. Crash
+repair must combine provider-page ghost cleanup with a local keyset whole-commit verifier; never page an exact-set
+commit reconciliation in a way that can split one commit across pages, and never rewrite PIT intervals/heads during
+repair. No 1,000-stock provider or corpus write is authorized yet.
+
 Node 24 remains the supported runtime. Node 26 is installed on the host but is not adopted while `.nvmrc`, CI,
 production, and the `better-sqlite3` native ABI are pinned to 24.
 
@@ -189,8 +299,9 @@ filling the missing pieces.
 > direction is “archive broadly, embed selectively”: catalog all SEC filings; preserve selected immutable
 > originals; keep XBRL, insider, ownership, and financing facts structured; embed sectioned narrative, tables,
 > and material exhibits with occurrence-level provenance; and expose derived summaries only as cited children.
-> The current recent-10-K/10-Q scheduler is not the bulk runner. Before a 1,000-issuer write, fix global
-> content-hash occurrence loss, artifact/job state, historical/exhibit discovery, DOM/iXBRL tables, PIT dates,
+> The current recent-10-K/10-Q scheduler is not the bulk runner. Round-8 FMP/RAG hardening now materializes
+> each new `storeDocument` occurrence as its own vector; before a 1,000-issuer write, reconcile any legacy
+> content-hash occurrence loss and finish artifact/job state, historical/exhibit discovery, DOM/iXBRL tables, PIT dates,
 > true lexical recall, real-corpus evaluation, coverage truth, and config drift. Then use a shadow corpus and
 > gated 10 -> 25 -> 100 -> 300 -> 1,000 breadth-first waves. See
 > `docs/reviews/2026-07-12-sec-rag-1000-stock-backfill-plan.md` and
@@ -1590,6 +1701,17 @@ scope, timeline, or approach changed.
   lives outside this repo and touching it needs an owner-supervised session.
 
 ## Build Order
+
+### Current landing closure (2026-07-14)
+
+- Finish PR #1586 with immutable generation-bound transcript derivative IDs, exact provider/ledger
+  receipts, heartbeat-fenced writes, active-generation retrieval, provider-first consecutive-clean
+  erasure, account-deletion coverage, and independent private/shared rerank candidate pools.
+- Treat Cloudflare Access application-token timestamps as authorization-token freshness only; require
+  a matching signed Auth.js `loginAt` for post-deletion identity regeneration.
+- Complete the ordered Node 24 gate and hostile re-review, merge #1607 and #1586 through their PRs,
+  then verify zero open PRs plus the exact final production release. Transcript activation remains a
+  separate owner/config decision gated on endpoint entitlement and commercial storage/display rights.
 
 1. Phase 1 hardening: scheduler starts once, run lock works, market-hours state is visible.
 2. Phase 2 correctness: estimated notional is authoritative and sector attribution covers all scan rows.

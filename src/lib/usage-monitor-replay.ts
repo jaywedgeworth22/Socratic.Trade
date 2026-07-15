@@ -7,9 +7,15 @@
 // a crash between remote acknowledgement and the local watermark write is harmless (the receiver
 // dedupes the deterministic idempotency key).
 
-import { getDb } from "./db";
+import {
+  getDb,
+  listProviderUsageOutboxRows,
+  reconcileStaleProviderDispatches,
+  type ProviderUsageOutboxRow,
+} from "./db";
 import {
   createLlmUsageMonitorEvent,
+  createProviderDispatchUsageMonitorEvent,
   createRagUsageMonitorEvent,
   sendUsageMonitorBatch,
   usageMonitorEnabled,
@@ -23,6 +29,7 @@ const DEFAULT_MAX_PAGES_PER_LEDGER = 10;
 export const USAGE_MONITOR_REPLAY_WATERMARK_KEYS = {
   llm: "usage_monitor_replay:llm_usage:watermark:v1",
   rag: "usage_monitor_replay:rag_usage:watermark:v1",
+  provider: "usage_monitor_replay:provider_usage_outbox:watermark:v1",
 } as const;
 
 interface ReplayCursor {
@@ -68,6 +75,7 @@ export interface UsageMonitorReplayResult {
   configured: boolean;
   llm: LedgerReplayResult;
   rag: LedgerReplayResult;
+  provider: LedgerReplayResult;
 }
 
 export interface UsageMonitorReplayOptions {
@@ -84,7 +92,9 @@ interface ReplayState {
 }
 
 const replayHost = globalThis as unknown as { __usageMonitorReplay?: ReplayState };
-const REPLAY_STATE_VERSION = 1;
+// Bump when replay lanes change so HMR cannot leave an older timer running without the provider
+// outbox lane added by the durable-dispatch migration.
+const REPLAY_STATE_VERSION = 2;
 const priorReplayState = replayHost.__usageMonitorReplay;
 if (priorReplayState && priorReplayState.version !== REPLAY_STATE_VERSION && priorReplayState.timer) {
   clearInterval(priorReplayState.timer);
@@ -250,6 +260,33 @@ async function ragEvents(rows: RagUsageLedgerRow[]): Promise<UsageMonitorEvent[]
   );
 }
 
+function readProviderRows(
+  cursor: ReplayCursor | null,
+  inclusive: boolean,
+  limit: number
+): ProviderUsageOutboxRow[] {
+  return listProviderUsageOutboxRows({
+    after: cursor,
+    inclusive,
+    limit,
+  });
+}
+
+async function providerEvents(rows: ProviderUsageOutboxRow[]): Promise<UsageMonitorEvent[]> {
+  return Promise.all(rows.map((row) => createProviderDispatchUsageMonitorEvent({
+    sourceEventId: row.id,
+    occurredAt: row.occurred_at,
+    provider: row.provider,
+    operation: row.operation,
+    credentialRef: row.credential_ref,
+    userId: row.user_id,
+    outcome: row.outcome,
+    requests: row.requests,
+    estimatedCostUsd: row.estimated_cost_usd,
+    ...(row.actual_cost_usd == null ? {} : { actualCostUsd: row.actual_cost_usd }),
+  })));
+}
+
 async function replayLedger<Row extends { id: string; created_at: string }>(input: {
   watermarkKey: string;
   pageSize: number;
@@ -300,8 +337,13 @@ async function executeUsageMonitorReplay(
       configured: false,
       llm: emptyLedgerResult(),
       rag: emptyLedgerResult(),
+      provider: emptyLedgerResult(),
     };
   }
+
+  // A prior process may have died after dispatch but before observing the provider outcome. Keep
+  // the call in usage truth as `unknown`; never guess success/failure or silently release quota.
+  reconcileStaleProviderDispatches();
 
   const pageSize = positiveInteger(options.pageSize, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE);
   const maxPages = positiveInteger(options.maxPagesPerLedger, DEFAULT_MAX_PAGES_PER_LEDGER, 1_000);
@@ -319,7 +361,14 @@ async function executeUsageMonitorReplay(
     readRows: readRagRows,
     toEvents: ragEvents,
   });
-  return { configured: true, llm, rag };
+  const provider = await replayLedger<ProviderUsageOutboxRow>({
+    watermarkKey: USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider,
+    pageSize,
+    maxPages,
+    readRows: readProviderRows,
+    toEvents: providerEvents,
+  });
+  return { configured: true, llm, rag, provider };
 }
 
 /** Run one bounded replay pass. Concurrent callers share the same in-process promise. */

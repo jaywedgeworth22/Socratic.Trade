@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import type { SocraticDecisionCase } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-socratic-${randomUUID()}.db`)}`;
@@ -9,17 +10,204 @@ beforeAll(() => {
 
 // Captures every storeContexts call so we can assert the re-index after a coach-note append
 // carries the note in its embedded text, without needing real Pinecone/Voyage credentials.
-const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string } }> = [];
+const storeContextsCalls: Array<{
+  documents: Array<{ text: string }>;
+  options?: { dedupKeyPrefix?: string; scope?: string; leaseGuard?: { assertOwnership: () => void } };
+}> = [];
 let storeContextsInterceptor: ((text: string) => Promise<void>) | undefined;
+let storeContextsResultOverride:
+  | { attempted: number; indexed: number; skipped?: boolean; unconfigured?: boolean; error?: string }
+  | undefined;
 vi.mock("../src/lib/vector-db", () => ({
-  storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string }) => {
+  getCurrentVectorProviderAuthority: async (options?: { leaseGuard?: { assertOwnership: () => void } }) => {
+    options?.leaseGuard?.assertOwnership();
+    return "provider:test";
+  },
+  managedVectorLedgerAuthority: () => "ledger:test",
+  storeContexts: async (
+    documents: Array<{ text: string }>,
+    _userId?: string,
+    options?: { dedupKeyPrefix?: string; scope?: string; leaseGuard?: { assertOwnership: () => void } }
+  ) => {
+    options?.leaseGuard?.assertOwnership();
     if (storeContextsInterceptor) await storeContextsInterceptor(documents.map((document) => document.text).join("\n"));
+    options?.leaseGuard?.assertOwnership();
     storeContextsCalls.push({ documents, options });
-    return { attempted: documents.length, indexed: documents.length };
+    return storeContextsResultOverride ?? { attempted: documents.length, indexed: documents.length };
   }
 }));
 
+function fmpDerivedDecision(id: string, chunkId: string): SocraticDecisionCase {
+  return {
+    id,
+    userId: "local",
+    status: "proposed",
+    createdAt: "2026-07-14T12:00:00.000Z",
+    updatedAt: "2026-07-14T12:00:00.000Z",
+    symbol: "EXE",
+    side: "buy",
+    authority: "decide",
+    thesis: "FMP-derived case",
+    rationale: "FMP-derived rationale.",
+    action: "BUY EXE",
+    evidence: [],
+    ragAttributions: [{
+      symbol: "EXE",
+      query: "earnings call",
+      source: "fmp-earnings-transcript",
+      docType: "earnings-transcript",
+      chunkId,
+      text: "licensed context",
+      contribution: "licensed context"
+    }],
+    dissent: [],
+    lessons: [],
+    coachNotes: []
+  };
+}
+
 describe("Socratic decision persistence", () => {
+  it("settles a licensed provider reservation as no-write when indexing short-circuits", async () => {
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "on";
+    const { indexSocraticDecisionMemory } = await import("../src/lib/socratic-memory");
+    const { activateFmpTranscriptRightsGeneration } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    activateFmpTranscriptRightsGeneration();
+    storeContextsResultOverride = { attempted: 1, indexed: 0, skipped: true };
+    const id = `fmp-no-write-${randomUUID()}`;
+    try {
+      await indexSocraticDecisionMemory({
+        id,
+        userId: "local",
+        status: "proposed",
+        createdAt: "2026-07-14T12:00:00.000Z",
+        updatedAt: "2026-07-14T12:00:00.000Z",
+        symbol: "EXE",
+        side: "buy",
+        authority: "decide",
+        thesis: "FMP-derived case",
+        rationale: "FMP-derived rationale.",
+        action: "BUY EXE",
+        evidence: [],
+        ragAttributions: [{
+          symbol: "EXE",
+          query: "earnings call",
+          source: "fmp-earnings-transcript",
+          docType: "earnings-transcript",
+          chunkId: "occ:v3:fmp:no-write",
+          text: "licensed context",
+          contribution: "licensed context"
+        }],
+        dissent: [],
+        lessons: [],
+        coachNotes: []
+      });
+    } finally {
+      storeContextsResultOverride = undefined;
+    }
+
+    const row = getDb().prepare(`
+      SELECT status, terminal_outcome
+      FROM fmp_transcript_derived_provider_work WHERE artifact_id = ?
+    `).get(id) as { status: string; terminal_outcome: string };
+    expect(row).toEqual({ status: "complete", terminal_outcome: "no_provider_write" });
+  });
+
+  it("retains a purge obligation when provider-write acknowledgement is ambiguous", async () => {
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "on";
+    const { indexSocraticDecisionMemory } = await import("../src/lib/socratic-memory");
+    const { activateFmpTranscriptRightsGeneration } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    activateFmpTranscriptRightsGeneration();
+    storeContextsResultOverride = {
+      attempted: 1,
+      indexed: 0,
+      // Error presence, not message truthiness, is the durable proof that provider state is unknown.
+      error: ""
+    };
+    const id = `fmp-provider-unknown-${randomUUID()}`;
+    try {
+      await indexSocraticDecisionMemory(fmpDerivedDecision(id, "occ:v3:fmp:provider-unknown"));
+    } finally {
+      storeContextsResultOverride = undefined;
+    }
+
+    const row = getDb().prepare(`
+      SELECT status, terminal_outcome
+      FROM fmp_transcript_derived_provider_work WHERE artifact_id = ?
+    `).get(id) as { status: string; terminal_outcome: string };
+    expect(row).toEqual({ status: "complete", terminal_outcome: "provider_write_unknown" });
+  });
+
+  it("fences a paused FMP-derived memory writer after rights revocation and lease expiry", async () => {
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "on";
+    const { indexSocraticDecisionMemory } = await import("../src/lib/socratic-memory");
+    const {
+      activateFmpTranscriptRightsGeneration,
+      captureFmpTranscriptRightsGeneration
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    activateFmpTranscriptRightsGeneration();
+    expect(captureFmpTranscriptRightsGeneration()).toBeDefined();
+
+    let releaseWriter!: () => void;
+    let reportWriterStarted!: () => void;
+    const writerBlocked = new Promise<void>((resolve) => { releaseWriter = resolve; });
+    const writerStarted = new Promise<void>((resolve) => { reportWriterStarted = resolve; });
+    storeContextsInterceptor = async () => {
+      reportWriterStarted();
+      await writerBlocked;
+    };
+    const id = `fmp-paused-${randomUUID()}`;
+    const indexing = indexSocraticDecisionMemory({
+      id,
+      userId: "local",
+      status: "proposed",
+      createdAt: "2026-07-14T12:00:00.000Z",
+      updatedAt: "2026-07-14T12:00:00.000Z",
+      symbol: "EXE",
+      side: "buy",
+      authority: "decide",
+      thesis: "FMP-derived case",
+      rationale: "FMP-derived rationale.",
+      action: "BUY EXE",
+      evidence: [],
+      ragAttributions: [{
+        symbol: "EXE",
+        query: "earnings call",
+        source: "fmp-earnings-transcript",
+        docType: "earnings-transcript",
+        chunkId: "occ:v3:fmp:paused",
+        text: "licensed context",
+        contribution: "licensed context"
+      }],
+      dissent: [],
+      lessons: [],
+      coachNotes: []
+    });
+    await writerStarted;
+
+    const database = getDb();
+    database.prepare(`
+      UPDATE fmp_transcript_rights_gate
+      SET generation = generation + 1, status = 'revoked', updated_at = ?
+      WHERE singleton = 1
+    `).run(new Date().toISOString());
+    database.prepare(`
+      UPDATE fmp_transcript_derived_provider_work
+      SET lease_expires_at = '2000-01-01T00:00:00.000Z',
+          status = 'complete', terminal_outcome = 'lease_expired', completed_at = ?
+      WHERE artifact_id = ?
+    `).run(new Date().toISOString(), id);
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    releaseWriter();
+
+    await expect(indexing).rejects.toThrow(/rights generation is revoked or stale|lease is stale or lost/i);
+    storeContextsInterceptor = undefined;
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "on";
+    activateFmpTranscriptRightsGeneration();
+  });
+
   it("serializes one decision's vector updates so a slow older lifecycle cannot overwrite the terminal state", async () => {
     const { indexSocraticDecisionMemory } = await import("../src/lib/socratic-memory");
     let releasePlacing!: () => void;
@@ -248,6 +436,7 @@ describe("Socratic decision persistence", () => {
     );
     expect(coachCalls.length).toBeGreaterThanOrEqual(1);
     expect(coachCalls[coachCalls.length - 1].options?.dedupKeyPrefix).toBe("socratic-decision");
+    expect(coachCalls[coachCalls.length - 1].options?.scope).toBe("private");
 
     const promoted = await attachSocraticDecisionCoachPrimitives(
       decisionId,

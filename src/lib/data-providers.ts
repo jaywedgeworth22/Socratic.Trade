@@ -19,7 +19,17 @@ import type { FundamentalRow, AnalystRow } from "@jaywedgeworth22/congress-tradi
 export type AppAFundamentalRow = FundamentalRow & { source?: string | null };
 export type AppAAnalystRow = AnalystRow & { source?: string | null };
 
-import { resolveAlpacaMarketData, resolveApiKeyWithSource, resolveAlphaVantageKeyPool, hasDataPoolConsent, type ApiKeySource } from "./db";
+import {
+  cancelUndispatchedProviderReservation,
+  hasDataPoolConsent,
+  markProviderDispatchStarted,
+  reserveProviderDispatch,
+  resolveAlpacaMarketData,
+  resolveAlphaVantageKeyPool,
+  resolveApiKeyWithSource,
+  settleProviderDispatch,
+  type ApiKeySource
+} from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
 import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
 import { recordProviderCall } from "./usage-monitor-push";
@@ -29,7 +39,7 @@ import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
-import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
+import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, resolveProviderQuota, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
 import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
 import {
   arbitrateFieldObservation,
@@ -400,14 +410,15 @@ function maxSymbols(): number {
   return Number.POSITIVE_INFINITY;
 }
 
-// djb2 fingerprint of an API key — enough to distinguish per-credential rate-budget lanes; NOT a
-// secret store (in-memory only, never logged or persisted). Used to key the shared request quota
-// (provider-rate-limit.ts) so a per-user stored key with its own upstream quota is never gated by
-// the operator key.
-export function apiKeyFingerprint(apiKey: string): string {
-  let h = 5381;
-  for (let i = 0; i < apiKey.length; i++) h = ((h << 5) + h + apiKey.charCodeAt(i)) | 0;
-  return String(h >>> 0);
+// Collision-resistant, one-way credential lane identity. It is now persisted in the durable
+// dispatch ledger, so a 32-bit process-local hash is insufficient: an accidental collision could
+// conflate unrelated account quotas. The literal key is never logged or stored.
+export async function apiKeyFingerprint(apiKey: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(apiKey)
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 // Short negative-cache TTL for symbols a rate-limited provider returns no usable data for, so they
@@ -449,18 +460,92 @@ export function __resetTwelveDataWindowForTests(): void {
   resetProviderQuotaState();
 }
 
+export interface FetchWithRetryGuard {
+  /** Synchronous durable-ownership assertion run at every transport and telemetry boundary. */
+  assertActive: () => void;
+  /** Optional cancellation signal used to interrupt an internal 429 backoff. */
+  signal?: AbortSignal;
+}
+
+function assertFetchWithRetryGuard(guard: FetchWithRetryGuard | undefined): void {
+  if (!guard) return;
+  if (guard.signal?.aborted) {
+    throw guard.signal.reason instanceof Error ? guard.signal.reason : new Error("Provider request cancelled.");
+  }
+  guard.assertActive();
+}
+
+async function guardedFetchBackoff(delayMs: number, guard: FetchWithRetryGuard | undefined): Promise<void> {
+  assertFetchWithRetryGuard(guard);
+  if (delayMs <= 0) return;
+  const signal = guard?.signal;
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    assertFetchWithRetryGuard(guard);
+    return;
+  }
+  const abortSignal = signal;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(finish, delayMs);
+    function finish() {
+      abortSignal.removeEventListener("abort", abort);
+      resolve();
+    }
+    function abort() {
+      clearTimeout(timer);
+      abortSignal.removeEventListener("abort", abort);
+      reject(abortSignal.reason instanceof Error ? abortSignal.reason : new Error("Provider request cancelled."));
+    }
+    abortSignal.addEventListener("abort", abort, { once: true });
+    if (abortSignal.aborted) abort();
+  });
+  assertFetchWithRetryGuard(guard);
+}
+
 // One retry on HTTP 429 (rate limit) with a short backoff before giving up.
-async function fetchWithRetry(
+/**
+ * Central tracked provider request boundary. Exported for provider-specific modules that live
+ * outside this file (for example, earnings-transcript ingestion) so they inherit the same circuit
+ * breaker, secret-scrubbed health logging, and usage.jays.services call-volume telemetry.
+ *
+ * Callers that reserve an exact provider quota should pass `retries: 0` and implement any retry as
+ * another invocation of this function. That way every actual upstream attempt is independently
+ * reserved and metered instead of hiding an uncounted retry inside one logical call.
+ */
+export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   options: {
     retries?: number;
     backoffMs?: number;
+    /**
+     * Optional health/circuit lane when it must be narrower than the billable provider name.
+     * `service` remains the usage-attribution provider; omitting this preserves legacy behavior.
+     */
+    healthService?: string;
     service?: string;
     keySource?: string;
     userId?: string;
     deferSuccessLog?: boolean;
+    /**
+     * Defer successful provider-call telemetry until the caller validates an HTTP-success body.
+     * Failure responses and transport errors remain recorded here. The caller must record exactly
+     * one success or failure usage event after validating each deferred successful response.
+     */
+    deferSuccessUsage?: boolean;
     suppressHealthStatuses?: number[];
+    /**
+     * Optional durable-operation fence. When ownership is lost, the transport result/error is
+     * propagated without writing health or provider-call telemetry for the successor's operation.
+     */
+    guard?: FetchWithRetryGuard;
+    /** Lease-independent durable attempt hooks. They run immediately around the actual global
+     * fetch call, before any post-response ownership assertion can suppress usage truth. */
+    durableAttempt?: {
+      onDispatch: () => void;
+      onResponse?: (response: Response) => void;
+      onTransportError?: (error: unknown) => void;
+    };
     // This provider's own API key (if any) — scrubbed out of any errorText logged below so
     // a leaked query-param or echoed-back value never reaches api_health_log verbatim.
     apiKey?: string;
@@ -468,22 +553,37 @@ async function fetchWithRetry(
 ): Promise<Response> {
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
+  const healthService = options.healthService ?? options.service;
+  assertFetchWithRetryGuard(options.guard);
   // Per-credential-lane circuit breaker: short-circuit a call whose (service, keySource) lane is
   // currently backed off (recently stopped working). Thrown BEFORE the fetch so no health row is
   // written for the skip (which would self-perpetuate the trip); providers catch the rejection and
   // degrade to the next tier exactly like a real fetch failure.
-  if (options.service) {
-    const breaker = apiCircuitBreakerShouldSkip(options.service, options.keySource ?? null);
-    if (breaker.skip) throw new CircuitOpenError(options.service, options.keySource ?? null, breaker.reason);
+  if (healthService) {
+    const breaker = apiCircuitBreakerShouldSkip(healthService, options.keySource ?? null);
+    if (breaker.skip) throw new CircuitOpenError(healthService, options.keySource ?? null, breaker.reason);
   }
   const start = Date.now();
   try {
     for (let attempt = 0; ; attempt++) {
-      const response = await fetch(url, init);
+      assertFetchWithRetryGuard(options.guard);
+      options.durableAttempt?.onDispatch();
+      let response: Response;
+      try {
+        response = await fetch(url, init);
+      } catch (error) {
+        options.durableAttempt?.onTransportError?.(error);
+        throw error;
+      }
+      options.durableAttempt?.onResponse?.(response);
+      // A transport may settle after its caller's durable lease has moved. Fence the response before
+      // any health/provider ledger and before deciding whether an internal retry should run.
+      assertFetchWithRetryGuard(options.guard);
       if (response.status === 429 && attempt < retries) {
-        if (options.service) {
+        if (healthService) {
+          assertFetchWithRetryGuard(options.guard);
           logApiHealth({
-            service: options.service,
+            service: healthService,
             ok: false,
             latencyMs: Date.now() - start,
             errorText: "HTTP 429 (rate limited, retrying)",
@@ -491,16 +591,17 @@ async function fetchWithRetry(
             userId: options.userId,
           });
         }
-        await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+        await guardedFetchBackoff(backoffMs * (attempt + 1), options.guard);
         continue;
       }
       // When deferSuccessLog is set, skip the auto-success row so the caller can log
       // after validating the response body (e.g. providers that embed errors in HTTP 200).
       // HTTP failure rows are still written here regardless of the flag.
       const suppressHealth = !response.ok && (options.suppressHealthStatuses ?? []).includes(response.status);
-      if (options.service && !(response.ok && options.deferSuccessLog) && !suppressHealth) {
+      if (healthService && !(response.ok && options.deferSuccessLog) && !suppressHealth) {
+        assertFetchWithRetryGuard(options.guard);
         logApiHealth({
-          service: options.service,
+          service: healthService,
           ok: response.ok,
           latencyMs: Date.now() - start,
           errorText: response.ok ? undefined : scrubProviderErrorText(`HTTP ${response.status}`, options.apiKey),
@@ -510,24 +611,35 @@ async function fetchWithRetry(
       }
       // Call-volume telemetry: one logical market-data call per fetchWithRetry invocation
       // (no-op unless the usage monitor is configured; never throws).
-      if (options.service) recordProviderCall(options.service, { ok: response.ok, keySource: options.keySource, userId: options.userId });
+      if (options.service && !options.durableAttempt && !(response.ok && options.deferSuccessUsage)) {
+        assertFetchWithRetryGuard(options.guard);
+        recordProviderCall(options.service, { ok: response.ok, keySource: options.keySource, userId: options.userId });
+      }
       return response;
     }
   } catch (err) {
-    if (options.service) {
+    // If this was an abort/lost-ownership race, the guard throws here and deliberately bypasses all
+    // failure telemetry. This check also catches a transport error that won the Promise race just
+    // before the lease signal itself became observable.
+    assertFetchWithRetryGuard(options.guard);
+    if (healthService) {
       const rawMessage = err instanceof Error ? err.message : String(err);
       // err.cause carries the actual network-layer failure (ECONNREFUSED, DNS, etc.) that
       // "fetch failed" alone omits — append it (truncated) before scrubbing so the health
       // row is diagnosable without also leaking a URL-embedded API key.
       const errorText = scrubProviderErrorText(appendErrorCause(rawMessage, err), options.apiKey);
+      assertFetchWithRetryGuard(options.guard);
       logApiHealth({
-        service: options.service,
+        service: healthService,
         ok: false,
         latencyMs: Date.now() - start,
         errorText,
         keySource: options.keySource,
         userId: options.userId,
       });
+    }
+    if (options.service && !options.durableAttempt) {
+      assertFetchWithRetryGuard(options.guard);
       recordProviderCall(options.service, { ok: false, keySource: options.keySource, userId: options.userId });
     }
     throw err;
@@ -2442,7 +2554,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
       const cost = callsPerSymbol("fmp", { skipPe, skipConsensus, wantTargets });
       return { symbol, skipPe, skipConsensus, wantTargets, cost };
     });
-    const credKey = apiKeyFingerprint(this.apiKey);
+    const credKey = await apiKeyFingerprint(this.apiKey);
     const totalWanted = plans.reduce((n, p) => n + p.cost, 0);
     const allowed = admitProviderRequests("fmp", credKey, totalWanted);
     // Greedy best-first prefix walk: misses arrive best-first, so take whole symbols in order until the
@@ -2627,6 +2739,30 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   private async getJson(url: string, logHealth = true, suppressStatuses?: number[]): Promise<unknown> {
+    const operation = (() => {
+      try {
+        return new URL(url).pathname.split("/").filter(Boolean).at(-1) ?? "request";
+      } catch {
+        return "request";
+      }
+    })();
+    const reservation = reserveProviderDispatch({
+      provider: "fmp",
+      operation: `enrichment-${operation}`,
+      credentialRef: await apiKeyFingerprint(this.apiKey),
+      userId: this.userId ?? "local",
+      units: 1,
+      estimatedCostUsd: 0,
+      maxEstimatedCostUsdPer24h: 0,
+      windows: (resolveProviderQuota("fmp") ?? []).map((window) => ({
+        maxUnits: window.maxRequests,
+        windowMs: window.windowMs
+      }))
+    });
+    if (!reservation.admitted) throw new Error(`FMP durable ${reservation.reason} reservation denied.`);
+    let dispatched = false;
+    let settled = false;
+    let classificationAttempted = false;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
@@ -2641,12 +2777,46 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // a built-in 429 retry would emit a second UNCOUNTED call and blow past the 290/min reservation
           // (headroom is only 10). Same rationale as tiingo/twelvedata's getJson.
           retries: 0,
+          durableAttempt: {
+            onDispatch: () => {
+              markProviderDispatchStarted(reservation.attemptId);
+              dispatched = true;
+            },
+            onResponse: (received) => {
+              if (!received.ok) {
+                classificationAttempted = true;
+                settleProviderDispatch(reservation.attemptId, "failed", {
+                  outcomeCode: `http-${received.status}`
+                });
+                settled = true;
+              }
+            },
+            onTransportError: (error) => {
+              classificationAttempted = true;
+              settleProviderDispatch(reservation.attemptId, "failed", {
+                outcomeCode: error instanceof Error ? error.name : "transport-error"
+              });
+              settled = true;
+            }
+          },
           // An explicit suppress list wins; otherwise fall back to the old logHealth behavior (403 only).
           suppressHealthStatuses: suppressStatuses ?? (logHealth ? undefined : [403])
         }
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
+      const payload = await response.json();
+      classificationAttempted = true;
+      settleProviderDispatch(reservation.attemptId, "succeeded", {
+        outcomeCode: "validated-json"
+      });
+      settled = true;
+      return payload;
+    } catch (error) {
+      if (!dispatched) cancelUndispatchedProviderReservation(reservation.attemptId, "pre-dispatch-failure");
+      else if (!settled && !classificationAttempted) settleProviderDispatch(reservation.attemptId, "failed", {
+        outcomeCode: error instanceof SyntaxError ? "invalid-json" : "response-failure"
+      });
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -3345,7 +3515,7 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     // Scan-size-agnostic + per-credential; never stalls. (Owner's Tiingo dashboard showed hourly at
     // -10/50 — an unpaced 30-symbol scan fires ~90 requests and 403s.)
     const perSymbol = callsPerSymbol("tiingo", { dropExtra: dropNews });
-    const credKey = apiKeyFingerprint(this.apiKey);
+    const credKey = await apiKeyFingerprint(this.apiKey);
     const allowedRequests = admitProviderRequests("tiingo", credKey, misses.length * perSymbol);
     const symbolsAllowed = Math.floor(allowedRequests / perSymbol);
     // admit() budgets in REQUESTS but we only dispatch whole symbols — hand back the partial remainder
@@ -3523,7 +3693,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
     // 1 credit per symbol. admit() returns how many fit RIGHT NOW under both windows — scan-size-agnostic
     // (works for any number of tickers) and per-credential — and the rest defer best-effort (the cascade
     // + shared cache cover them; coverage accretes across scans). Never blocks/stalls the scan.
-    const credKey = apiKeyFingerprint(this.apiKey);
+    const credKey = await apiKeyFingerprint(this.apiKey);
     const symbolsAllowed = admitProviderRequests(this.name, credKey, misses.length);
     const toQuery = misses.slice(0, symbolsAllowed);
     const skipped = misses.length - toQuery.length;

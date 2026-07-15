@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { buildSocraticMemoryDocument } from "../src/lib/socratic-memory";
+import {
+  buildSocraticMemoryDocument,
+  fmpDerivedSocraticMemoryVectorId
+} from "../src/lib/socratic-memory";
 import type { SocraticDecisionCase } from "../src/lib/types";
 
 describe("Socratic institutional memory documents", () => {
+  it("derives the licensed provider identity with edge-safe SHA-256", async () => {
+    await expect(fmpDerivedSocraticMemoryVectorId({ id: "case-1", userId: "u1" }, 3))
+      .resolves.toBe(
+        "fmp-derived-socratic:v1:9ecf2499f591755a3bc8ca29a428cd4ee583ba779a5619c3185124b6640c9cc6"
+      );
+  });
+
   it("maps a decision case into a dense RAG memory document", () => {
     const decision: SocraticDecisionCase = {
       id: "case-1",

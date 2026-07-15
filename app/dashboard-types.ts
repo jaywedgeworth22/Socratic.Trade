@@ -7,6 +7,7 @@ import type { MarketSignals } from "@/lib/market-signals";
 import type { MarketNewsItem } from "@/lib/market-signals/massive";
 import type { RedTeamEfficacy, RegimeStat, ThesisStat } from "@/lib/performance";
 import type { TaxSummary } from "@/lib/tax";
+import type { FmpTranscriptStatus } from "@/lib/web-sources/fmp-transcripts";
 import type {
     BrokerageAccount,
     ConnectedAccount,
@@ -87,6 +88,7 @@ export interface DashboardSnapshot {
     insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
     finra?: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
     sec8k?: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+    earningsTranscripts?: FmpTranscriptStatus;
     technical?: { enabled: boolean; source: "tradingview" | "computed"; fetchedAt?: string; recordCount: number; due: boolean; ttlMs: number; secretConfigured: boolean };
   };
   smartMoney?: {

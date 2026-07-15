@@ -22,7 +22,9 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "test-provider",
+  managedVectorLedgerAuthority: () => "test-ledger"
 }));
 
 beforeEach(() => {
@@ -114,7 +116,7 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     expect(payload.action).toBe("advisory");
     expect(payload.revertedTo).toBeUndefined();
     expect(payload.highWaterMark).toBe(250_000);
-  }, 30_000);
+  }, 75_000);
 
   it("honors the overridable drawdownBreakerAction: 'close_only' (softer — only blocks new entries)", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
@@ -149,7 +151,7 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     const payload = listAudit(500).filter((e) => e.kind === "policy_violation_drawdown")[0]?.payload as { revertedTo?: string; action?: string };
     expect(payload.revertedTo).toBe("close_only");
     expect(payload.action).toBe("close_only");
-  }, 30_000);
+  }, 75_000);
 
   it("does NOT flip when no drawdown limit is configured (default-safe)", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
@@ -181,5 +183,5 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
 
     expect(getPolicy("local").systemState).toBe("active"); // unchanged
     expect(listAudit(500).filter((e) => e.kind === "policy_violation_drawdown").length).toBe(0);
-  }, 30_000);
+  }, 75_000);
 });

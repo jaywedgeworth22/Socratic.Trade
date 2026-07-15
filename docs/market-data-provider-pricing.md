@@ -28,7 +28,7 @@ in place when a fact changes.
 |---|---|---|---|---|
 | **Tiingo** | 50 req/hr, 1,000/day, 500 unique symbols/mo; **News API not included** (every news call 403s) | **Power $30/mo** | **$300/yr (2 months free)** — owner-verified 2026-07-10; the $499/yr on their site is the separate *commercial* license | 10,000 req/hr, 100,000 req/day, News API. **Fundamentals are NOT included** — separate contact-sales add-on on every tier |
 | **Massive** (ex-Polygon, rebranded 2025-10-30) | 5 calls/min, EOD only, 2 yr history | **Stocks Starter $29/mo** — **we already pay this** | $288/yr ($24/mo effective) | Unlimited API calls, 15-min delayed, 5 yr history, WS aggregates. Real-time + trades/quotes + financial ratios = Advanced $199/mo |
-| **FMP** | 250 calls/day, EOD | **Starter ~$22/mo billed annually** ($264/yr) — **our key behaves paid** | Annual-first pricing (monthly ≈ $29–34, not displayed) | 300 calls/min, real-time US quotes, **annual-only** fundamentals/ratios. Quarterly fundamentals need **Premium $59/mo-annual** ($708/yr), 750 calls/min |
+| **FMP** | 250 calls/day, EOD | **Starter $22/mo billed annually** ($264/yr) — **our active plan** | Premium $59/mo annual; Ultimate $149/mo annual | Starter: 300 calls/min, 20 GB/30d, real-time US quotes, annual-only fundamentals. Premium: quarterly/full fundamentals, 750/min, 50 GB. **Earnings-call transcripts require Ultimate** (3,000/min, 150 GB); display/redistribution also requires a separate agreement |
 | **Twelve Data** | 8 credits/min, 800/day | Grow $79/mo | $792/yr ($66/mo) | 377 credits/min, no daily cap. Credits = endpoint weight × symbols (fundamentals cost 100 credits/symbol — poor value for us). Real WebSocket starts at Pro $229/mo |
 | **Finnhub** | 60 calls/min (generous), US-only | **All-In-One $3,500/mo** — annual-only ($42,000/yr) | n/a | No affordable paid step exists. Stay free |
 | **Alpha Vantage** | Nominally 25 req/day — **but enforced PER IP**, so key rotation from one box is useless (proven in prod 2026-07-10: exactly 25 OKs, then all 6 pool keys instantly rejected) | $49.99/mo (75 req/min) | $499/yr ($41.58/mo, "2 months off") | Higher rate limits, no daily cap. Total overlap with FMP+Finnhub for us. Skip |
@@ -57,7 +57,12 @@ it is our own prod-observed fact).
 4. **FMP's displayed prices are annual-billed.** The "$22/mo" Starter is $264
    charged yearly; their monthly-billed price is hidden behind a toggle that may
    not render. Starter fundamentals are **annual statements only** — TTM/quarterly
-   depth needs Premium.
+   depth needs Premium. **A paid, below-quota Starter key is still not entitled to
+   transcript endpoints:** the owner's dashboard showed 0/300 calls/min, 3.01/20 GB,
+   and 0% over-limit while the stable transcript endpoints returned HTTP 402. FMP's
+   current matrix places Earnings Call Transcripts only on Ultimate ($149/mo billed
+   annually), and says display/redistribution requires a Data Display and Licensing
+   Agreement.
 5. **Massive ≠ quotes provider for us.** It's history + full-universe breadth +
    FINRA short interest. Real-time per-symbol quotes on Massive start at $199/mo —
    that job belongs to tiingo/brokers here.
@@ -72,13 +77,17 @@ it is our own prod-observed fact).
   Finnhub, Yahoo, Alpha Vantage (effectively dead — per-IP cap).
 - **Under consideration:** tiingo Power ($30/mo or $300/yr) — fixes the enrichment
   quote bottleneck + news; FMP Premium ($59/mo-annual) — only if quarterly-fresh
-  ratios prove necessary after tiingo relieves cascade pressure.
+  ratios prove necessary after tiingo relieves cascade pressure; FMP Ultimate
+  ($149/mo-annual) only if transcript value plus the required content license justify it.
 
 ## Where the dials live
 
 Every quota/pacing/tier flag is an env var in **Infisical prod** (seeded with
 code defaults 2026-07-10; boot-time injection ⇒ changes apply on the next deploy):
 `PROVIDER_QUOTA_{TIINGO,TWELVEDATA,FMP}_PER_{MIN,HOUR,DAY}`,
+`PROVIDER_DISPATCH_{VOYAGE,PINECONE}_PER_MIN`,
+`PROVIDER_DISPATCH_{VOYAGE,PINECONE}_MAX_COST_USD_PER_DAY`,
+`PROVIDER_QUOTA_AUTHORITY_ID`,
 `PROVIDER_RATE_LIMIT_{FINNHUB,ALPHA_VANTAGE,YAHOO_FINANCE,TWELVEDATA}_*`,
 `TIINGO_DROP_NEWS`, `FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`,
 `MASSIVE_{HISTORY,SHORT_INTEREST}_ENABLED`, `MASSIVE_REST_MAX_CALLS_PER_MINUTE`.
@@ -91,6 +100,14 @@ Infisical prod via the proven universal-auth CLI path (allow-listed keys only). 
 **gated on the monitor's `/api/subscriptions` endpoint** (parallel PR) and dry-runs by
 default; the launchd job is not installed yet. See
 `docs/rollouts/2026-07-10-provider-knob-sync.md`.
+
+Socratic.Trade now also commits one durable provider-attempt reservation before each actual FMP,
+Voyage, or Pinecone boundary and replays deterministic outcomes (`succeeded`, `failed`, or crash-
+reconciled `unknown`) through API Usage Monitor. The FMP enrichment and transcript paths therefore
+share the same credential-wide quota inside this app. This does **not** yet prove cross-app quota
+authority: the same `PROVIDER_QUOTA_AUTHORITY_ID` in two separate SQLite databases still yields two
+independent ledgers. Transcript activation remains blocked until every app using the shared FMP
+credential reserves against one transactional authority.
 
 **Known gap, verified 2026-07-10:** `provider-rate-limit.ts`'s `HARD_DEFAULTS` map
 has entries for exactly four providers — `finnhub`, `alpha-vantage`,

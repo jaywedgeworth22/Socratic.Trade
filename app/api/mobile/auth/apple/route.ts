@@ -40,7 +40,9 @@ export async function POST(request: Request) {
     
     // Pass the same fields Auth.js would typically pack in the JWT
     const sessionJwt = await encodeSessionToken({
-      token: { email, name: name ?? payload.email },
+      // Explicit provider-login time is preserved across rolling JWT refreshes. Request identity
+      // uses it to select a post-deletion account generation without freeing older mobile tokens.
+      token: { email, name: name ?? payload.email, loginAt: Date.now() },
       secret: authSecret,
       salt
     });

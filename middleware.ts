@@ -24,12 +24,13 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import {
   AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+  AUTHENTICATED_SESSION_ISSUED_AT_HEADER,
   AUTHENTICATED_IDENTITY_SOURCES,
   stripClientIdentityHeaders,
   type AuthenticatedIdentitySource
 } from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
-import { getSessionEmail } from "./src/lib/auth/session-edge";
+import { getSessionIdentity } from "./src/lib/auth/session-edge";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
 // The primary operator's aliases — additional addresses that map to the same primary account. Kept in sync
@@ -209,6 +210,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // identities (where empty ALLOWED_EMAILS means "only the primary user").
   let trustedEmail: string | null = null;
   let identitySource: AuthenticatedIdentitySource | null = null;
+  let sessionIssuedAt: number | null = null;
   let fromCf = false;
 
   // Source 1: Cloudflare Access header.
@@ -220,10 +222,26 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   }
 
   // Source 2: Auth.js v5 session JWT (verified with the shared edge-safe helper).
-  if (!trustedEmail && process.env.AUTH_SECRET) {
+  // Even when Cloudflare supplied the access identity, inspect a signed Auth.js session for the
+  // SAME email. Cloudflare application tokens can refresh without a fresh IdP login, so their
+  // `iat` is not account-recreation proof. A matching Auth.js `loginAt` is the provider-login
+  // timestamp; a missing/mismatched cookie leaves the request on the Cloudflare-only path and a
+  // deleted identity will fail closed in resolveRequestUser().
+  if (process.env.AUTH_SECRET) {
     const cookieHeader = req.headers.get("cookie");
-    trustedEmail = await getSessionEmail(cookieHeader, process.env.AUTH_SECRET);
-    if (trustedEmail) identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    const identity = await getSessionIdentity(cookieHeader, process.env.AUTH_SECRET);
+    if (!trustedEmail && identity?.email) {
+      trustedEmail = identity.email;
+      sessionIssuedAt = identity.loginAt ?? null;
+      identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    } else if (
+      trustedEmail &&
+      identity?.email === trustedEmail &&
+      identity.loginAt != null
+    ) {
+      sessionIssuedAt = identity.loginAt;
+      identitySource = AUTHENTICATED_IDENTITY_SOURCES.authJsSession;
+    }
   }
 
   // Source 3: Dev/local fallback — ONLY when auth is NOT configured.
@@ -261,6 +279,9 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // Preserve provenance separately from the email. Node handlers use this trusted middleware-set
   // marker to distinguish verified identities from the auth-unconfigured local fallback.
   if (identitySource) headers.set(AUTHENTICATED_IDENTITY_SOURCE_HEADER, identitySource);
+  if (sessionIssuedAt !== null) {
+    headers.set(AUTHENTICATED_SESSION_ISSUED_AT_HEADER, new Date(sessionIssuedAt).toISOString());
+  }
   return withSecurityHeaders(NextResponse.next({ request: { headers } }));
 }
 

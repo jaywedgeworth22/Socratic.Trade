@@ -103,6 +103,16 @@ import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { startStrategyLockGuard, StrategyLockOwnershipLostError } from "./strategy-lock-guard";
 import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
+import {
+  assertFmpTranscriptRightsGeneration,
+  captureFmpTranscriptRightsGeneration,
+  fmpTranscriptDerivedProvenance,
+  fmpTranscriptsEnabled,
+  persistFmpTranscriptDerivedArtifact,
+  recordFmpTranscriptDerivedAudit,
+  type FmpTranscriptDerivedProvenance,
+  type FmpTranscriptRightsGenerationClaim
+} from "./web-sources/fmp-transcripts";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -168,8 +178,8 @@ const MAX_SKIPPED_EVIDENCE = 25;
 /**
  * corpus-coverage-receipt (2026-07-06, redesigned same day — see
  * docs/rollouts/2026-07-06-corpus-coverage-receipt.md for the full history): doc types the
- * empty-corpus receipt (below, near `computeEmptyDocTypes`) checks. Deliberately a STATIC
- * allowlist restricted to types whose PRODUCER LEDGER (`ingested_accessions`, via
+ * empty-corpus receipt (below, near `computeEmptyDocTypes`) checks. The base allowlist is restricted
+ * to types whose PRODUCER LEDGER (`ingested_accessions`, via
  * `ingestedAccessionCountsByDocType`) is COMPLETE — i.e. every writer for that type records an
  * accession row, so "zero ingested rows" reliably means "never produced," not "this writer just
  * doesn't track accessions."
@@ -188,12 +198,21 @@ const MAX_SKIPPED_EVIDENCE = 25;
  * on a large fraction of normal runs. Re-add "8-k" here the day an accurate per-doc_type 8-K corpus
  * signal exists (e.g. a `document_chunks.doc_type` column populated by both writers).
  *
- * "earnings-transcript" is excluded from both coverage checks and live retrieval: no ingestion
- * writer exists anywhere in this repo, so requesting it only creates a permanent empty filter.
- * Re-add it when a producer lands. "fundamentals" has a real producer and is requested below, but
- * its producer ledger is not yet complete enough for the empty-corpus receipt.
+ * "earnings-transcript" has a complete ticker-period ledger through fmp-transcripts.ts, but that
+ * producer is default OFF pending endpoint-plan and content-rights confirmation. It participates in
+ * the empty-corpus receipt only while explicitly enabled; otherwise the default config stays quiet.
+ * Existing transcript chunks remain retrievable after an operator disables future ingestion only
+ * while storage/display rights remain confirmed.
+ * "fundamentals" has a real producer and is requested below, but its producer ledger is not yet
+ * complete enough for the empty-corpus receipt.
  */
-const COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
+const BASE_COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
+
+export function coverageCheckedFilingsDocTypes(): string[] {
+  return fmpTranscriptsEnabled()
+    ? [...BASE_COVERAGE_CHECKED_DOC_TYPES, "earnings-transcript"]
+    : [...BASE_COVERAGE_CHECKED_DOC_TYPES];
+}
 
 // STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
 // can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
@@ -855,6 +874,8 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     let socraticRagAttributions: SocraticRagAttribution[] = [];
+    const fmpRightsClaim = captureFmpTranscriptRightsGeneration();
+    const fmpDerivedProvenance: FmpTranscriptDerivedProvenance[] = [];
     // Advisory prompt-safety receipts (CR-H lane): kind-'safety' evidence items attached to every
     // decision case this run records. Populated by the evidence-age check below and the
     // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
@@ -863,11 +884,19 @@ export async function runStrategyOnce(
     // corpus-coverage-receipt (2026-07-06): the filings doc types requested below, hoisted so the
     // coverage receipt after this block can report "requested" alongside "retrieved this run" /
     // "empty" without re-declaring the literal. Advisory only — never affects the retrieval call
-    // itself. NOTE: the coverage receipt itself only CHECKS the COVERAGE_CHECKED_DOC_TYPES subset
-    // (10-k/10-q — narrower than this request list) against retrievedFilingsDocTypes below. 8-K and
-    // fundamentals both have real producers but incomplete ledgers, so they are retrieved without
-    // participating in the empty-corpus assertion. A nonexistent transcript producer is not queried.
-    const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "fundamentals"];
+    // itself. NOTE: the coverage receipt only checks ledger-complete types. 10-k/10-q always
+    // participate; earnings-transcript joins only while its default-off producer is explicitly on.
+    // 8-K/fundamentals remain retrieval-only because their ledgers are incomplete. Transcript
+    // retrieval is independently rights-gated: turning off future refresh keeps existing evidence
+    // usable, while withdrawing storage/display confirmation removes it from every RAG consumer.
+    const requestedFilingsDocTypes = [
+      "10-k",
+      "10-q",
+      "8-k",
+      ...(fmpRightsClaim ? ["earnings-transcript"] : []),
+      "fundamentals"
+    ];
+    const coverageCheckedDocTypes = coverageCheckedFilingsDocTypes();
     const retrievedFilingsDocTypes = new Set<string>();
     // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): one row per symbol (filings
     // pass) plus one PORTFOLIO row (episodic pass), persisted via the `rag_retrieval_status` audit
@@ -950,6 +979,15 @@ export async function runStrategyOnce(
         );
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
+        fmpDerivedProvenance.splice(
+          0,
+          fmpDerivedProvenance.length,
+          ...fmpTranscriptDerivedProvenance(socraticRagAttributions)
+        );
+        if (fmpDerivedProvenance.length > 0) {
+          if (!fmpRightsClaim) throw new Error("FMP-derived strategy context has no active rights generation.");
+          assertFmpTranscriptRightsGeneration(fmpRightsClaim);
+        }
         // Evidence-age receipt inputs: a HIGH-relevance chunk dated <24h old is worth a receipt
         // (fresh text steering a same-day decision). Aggregated + audited once below.
         const relevanceFloor = defaultRelevanceFloor();
@@ -978,6 +1016,7 @@ export async function runStrategyOnce(
         }
       } catch (e) {
         if (e instanceof StrategyLockOwnershipLostError) throw e;
+        if (e instanceof Error && /FMP transcript rights generation/i.test(e.message)) throw e;
         console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
         // Typed retrieval-status receipt: this catch covers the WHOLE filings pass (e.g. the
         // dynamic `import("./vector-db")` itself throwing), so no per-symbol onStatus callback may
@@ -1073,9 +1112,9 @@ export async function runStrategyOnce(
 
     // ── Corpus-coverage receipt (advisory only) ────────────────────────────
     // ONE aggregated audit + ONE kind-'safety' evidence item when a COVERAGE-CHECKED filings doc
-    // type (COVERAGE_CHECKED_DOC_TYPES — a static allowlist restricted to types whose producer
-    // ledger is COMPLETE, currently 10-k/10-q; see its comment for why "8-k" and
-    // "earnings-transcript" are excluded) is BOTH not retrieved this run AND has zero ever-ingested
+    // type (coverageCheckedDocTypes — ledger-complete 10-k/10-q plus earnings-transcript only while
+    // its producer is explicitly enabled; see the declaration above) is BOTH not retrieved this run
+    // AND has zero ever-ingested
     // producer rows. Both-conditions is load-bearing — see computeEmptyDocTypes's doc comment.
     // Never touches ragContext/sizing/policy — receipt only.
     if (!skipLlmDueToBudget) {
@@ -1091,7 +1130,7 @@ export async function runStrategyOnce(
         }
         return false;
       };
-      const emptyDocTypes = computeEmptyDocTypes(COVERAGE_CHECKED_DOC_TYPES, retrievedFilingsDocTypes, hasProducerForDocType);
+      const emptyDocTypes = computeEmptyDocTypes(coverageCheckedDocTypes, retrievedFilingsDocTypes, hasProducerForDocType);
       if (emptyDocTypes.length > 0) {
         const coverageSymbols = marketScan.topCandidates.slice(0, 3).map((c) => c.symbol);
         audit(
@@ -1102,8 +1141,8 @@ export async function runStrategyOnce(
         );
         // Copy honesty (owner report 2026-07-09): the old title ("Requested filings doc type never
         // ingested") read on every stock as "a document was looked for and not found" — a per-symbol
-        // lookup failure. The real state is a still-warming shared corpus: SEC ingestion is paced,
-        // so say that, with the actual count. Neutral tone: an advisory warm-up receipt on every
+        // lookup failure. The real state is a still-warming shared corpus: source ingestion is bounded,
+        // so say that without falsely attributing non-SEC document types to EDGAR. Neutral tone: an advisory warm-up receipt on every
         // decision card shouldn't wear the same orange as a real safety warning.
         const ingestedFilingsTotal = Object.values(accessionCountsByDocType).reduce((sum, n) => sum + n, 0);
         promptSafetyEvidence.push({
@@ -1111,9 +1150,9 @@ export async function runStrategyOnce(
           tone: "neutral",
           title: "Filings library still warming up",
           summary:
-            `No ${emptyDocTypes.join(" or ")} filings are in the research library yet ` +
-            `(${ingestedFilingsTotal} filing${ingestedFilingsTotal === 1 ? "" : "s"} ingested so far — SEC ingestion is paced ` +
-            `and fills watchlist/held names first). This decision used the other evidence; nothing was altered or blocked.`,
+            `No ${emptyDocTypes.join(" or ")} documents are in the research library yet ` +
+            `(${ingestedFilingsTotal} document${ingestedFilingsTotal === 1 ? "" : "s"} ingested so far — source ingestion is bounded ` +
+            `and prioritizes watchlist/held names). This decision used the other evidence; nothing was altered or blocked.`,
           source: "prompt-safety",
           data: { emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes }
         });
@@ -1319,7 +1358,10 @@ export async function runStrategyOnce(
         ...(ownerCoaching ? { ownerCoaching } : {}),
         drawdownAdvisory,
         budgetAdvisory,
-        prefetched: prefetchedFills
+        prefetched: prefetchedFills,
+        ...(fmpRightsClaim && fmpDerivedProvenance.length > 0
+          ? { fmpRightsClaim, fmpDerivedProvenance }
+          : {})
       });
       lockGuard.assertOwned();
       llmProposals = proposed.proposals;
@@ -1348,11 +1390,31 @@ export async function runStrategyOnce(
               `Deterministic scan matched ${findings.map((f) => f.pattern).join(", ")}: "${findings[0].excerpt.slice(0, 240)}". ` +
               disposition,
             source: "prompt-safety",
-            data: findings
+            data: {
+              findings,
+              ...(field === "retrievedFinancialContext" && fmpDerivedProvenance.length > 0
+                ? { fmpProvenance: fmpDerivedProvenance }
+                : {})
+            }
           });
         }
       }
     }
+
+    const insertRunProposal = (proposalInput: Parameters<typeof insertProposal>[0]) => {
+      if (fmpRightsClaim && fmpDerivedProvenance.length > 0) {
+        persistFmpTranscriptDerivedArtifact({
+          claim: fmpRightsClaim,
+          artifactType: "strategy-proposal",
+          artifactId: proposalInput.id,
+          userId,
+          provenance: fmpDerivedProvenance,
+          write: () => insertProposal(proposalInput)
+        });
+        return;
+      }
+      insertProposal(proposalInput);
+    };
 
     // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
     // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
@@ -1689,7 +1751,7 @@ export async function runStrategyOnce(
             // paths, so the adversary's most important negative verdict is visible in operator
             // review and learning telemetry, not just the audit feed. Best-effort + non-fatal.
             try {
-              insertProposal({
+              insertRunProposal({
                 userId,
                 executionMode,
                 promptVersion: STRATEGY_PROMPT_VERSION,
@@ -2326,11 +2388,6 @@ export async function runStrategyOnce(
         updatedAt: now
       } satisfies SocraticDecisionCase;
     };
-    const indexSocraticCaseFile = (caseFile: SocraticDecisionCase): void => {
-      void indexSocraticDecisionMemory(caseFile).catch((err) => {
-        console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
-      });
-    };
     const reportSocraticCaseWriteFailure = (input: SocraticDecisionRecordInput, err: unknown): string => {
       const message = err instanceof Error ? err.message : String(err);
       console.warn("[strategy] Socratic decision recording failed:", message);
@@ -2344,14 +2401,59 @@ export async function runStrategyOnce(
       } catch { /* audit itself must not throw */ }
       return message;
     };
+
+    const persistSocraticCaseFile = (
+      caseFile: SocraticDecisionCase,
+      caseInput: SocraticDecisionRecordInput,
+      proposalInput?: Parameters<typeof insertProposal>[0]
+    ): void => {
+      const database = getDb();
+      const framework = frameworkProposalFromDecision(caseFile);
+      const writeCore = () => {
+        if (proposalInput) insertProposal(proposalInput);
+        upsertSocraticDecisionCase(caseFile);
+      };
+      const hasFmpProvenance = Boolean(fmpRightsClaim && fmpDerivedProvenance.length > 0);
+
+      if (hasFmpProvenance && fmpRightsClaim) {
+        persistFmpTranscriptDerivedArtifact({
+          claim: fmpRightsClaim,
+          artifactType: "strategy-decision",
+          artifactId: caseFile.id,
+          userId,
+          provenance: fmpDerivedProvenance,
+          write: () => {
+            writeCore();
+            if (framework) createSocraticFrameworkProposal(framework);
+          }
+        });
+      } else {
+        database.transaction(writeCore)();
+        if (framework) {
+          try {
+            createSocraticFrameworkProposal(framework);
+          } catch (err) {
+            reportSocraticCaseWriteFailure(caseInput, err);
+          }
+        }
+      }
+    };
+
+    const indexSocraticCaseFile = (caseFile: SocraticDecisionCase): void => {
+      void indexSocraticDecisionMemory(caseFile)
+        .catch((err) => {
+          console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
+        });
+    };
+
     const recordSocraticDecision = (input: SocraticDecisionRecordInput): void => {
       try {
         const caseFile = buildSocraticCaseFile(input);
-        upsertSocraticDecisionCase(caseFile);
+        persistSocraticCaseFile(caseFile, input);
         indexSocraticCaseFile(caseFile);
-        const framework = frameworkProposalFromDecision(caseFile);
-        if (framework) createSocraticFrameworkProposal(framework);
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/FMP transcript rights generation/i.test(message)) throw err;
         reportSocraticCaseWriteFailure(input, err);
       }
     };
@@ -2360,18 +2462,8 @@ export async function runStrategyOnce(
       caseInput: SocraticDecisionRecordInput
     ): void => {
       const caseFile = buildSocraticCaseFile(caseInput);
-      const database = getDb();
-      database.transaction(() => {
-        insertProposal(proposalInput);
-        upsertSocraticDecisionCase(caseFile);
-      })();
+      persistSocraticCaseFile(caseFile, caseInput, proposalInput);
       indexSocraticCaseFile(caseFile);
-      try {
-        const framework = frameworkProposalFromDecision(caseFile);
-        if (framework) createSocraticFrameworkProposal(framework);
-      } catch (err) {
-        reportSocraticCaseWriteFailure(caseInput, err);
-      }
     };
 
     for (const proposal of proposals) {
@@ -2398,7 +2490,7 @@ export async function runStrategyOnce(
           reasons: [proposalTradability.reason ?? "Symbol is not tradable."]
         };
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
@@ -2442,7 +2534,7 @@ export async function runStrategyOnce(
       if (brokerMinimumBlockReason) {
         const decision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review });
         audit(
           "order_skipped_broker_minimum",
@@ -2451,7 +2543,7 @@ export async function runStrategyOnce(
           connectedAccountId
         );
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
-        if (shouldAlertBrokerMinimumOrderBlock(policy.accountNumber, normalizedProposal.symbol)) {
+        if (shouldAlertBrokerMinimumOrderBlock(userId, policy.accountNumber, normalizedProposal.symbol)) {
           await sendNotification(
             {
               type: "block",
@@ -2641,7 +2733,7 @@ export async function runStrategyOnce(
 
         const proposalId = crypto.randomUUID();
         lockGuard.assertOwned();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         await sendNotification(
@@ -2681,7 +2773,7 @@ export async function runStrategyOnce(
         const heldReason = brokerHeldExitBlockReason(heldExit);
         const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
         const proposalId = crypto.randomUUID();
-        insertProposal({
+        insertRunProposal({
           userId,
           executionMode,
           id: proposalId,
@@ -2822,7 +2914,7 @@ export async function runStrategyOnce(
         // Persist a REJECTED decision, not the earlier approved one — a blocked live order must not
         // leave an `approved: true` row in the decision/audit ledger.
         const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
-        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertRunProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
         audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
@@ -2855,10 +2947,8 @@ export async function runStrategyOnce(
         overrideResolution
       };
       try {
-        const placingCase = buildSocraticCaseFile(placingCaseInput);
-        const database = getDb();
-        database.transaction(() => {
-          insertProposal({
+        insertProposalWithSocraticDecision(
+          {
             userId,
             id: proposalId,
             runId,
@@ -2871,10 +2961,9 @@ export async function runStrategyOnce(
             status: "placing",
             executionMode,
             promptVersion: STRATEGY_PROMPT_VERSION
-          });
-          upsertSocraticDecisionCase(placingCase);
-        })();
-        indexSocraticCaseFile(placingCase);
+          },
+          placingCaseInput
+        );
       } catch (error) {
         const message = reportSocraticCaseWriteFailure(placingCaseInput, error);
         results.push({ proposal: normalizedProposal, status: "error", reasons: [`Decision evidence could not be persisted before placement: ${message}`] });
@@ -3573,6 +3662,9 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
   learnedContext?: string;
+  /** Exact licensed provenance plus the durable generation captured before retrieval. */
+  fmpRightsClaim?: FmpTranscriptRightsGenerationClaim;
+  fmpDerivedProvenance?: FmpTranscriptDerivedProvenance[];
   /**
    * Episodic decision memory blocks (2026-07-04 composite review A1). Pre-formatted, labeled,
    * ADVISORY-ONLY strings injected into BOTH the Bull and Bear userContent (evidence parity):
@@ -3839,6 +3931,9 @@ async function proposeTrades(input: {
     return result.sanitizedText;
   };
   const containedRagContext = containData("rag", "retrievedFinancialContext", input.ragContext);
+  if (input.fmpRightsClaim && (input.fmpDerivedProvenance?.length ?? 0) > 0) {
+    assertFmpTranscriptRightsGeneration(input.fmpRightsClaim);
+  }
   const containedLearnedContext = containData("learned", "learnedContext", input.learnedContext);
   const containedReflection = containData("reflection", "reflection_summary", reflection);
   const containedExperienceAnalogs = containData("learned", "closestHistoricalAnalogs", input.experienceAnalogs);
@@ -4246,21 +4341,33 @@ async function proposeTrades(input: {
     })
   ];
   const promptSafetyFindings = scanForInjectionAttempts(untrustedPromptFields);
+  const writeFmpAwareAudit = (kind: string, payload: unknown) => {
+    if (input.fmpRightsClaim && (input.fmpDerivedProvenance?.length ?? 0) > 0) {
+      recordFmpTranscriptDerivedAudit({
+        claim: input.fmpRightsClaim,
+        kind,
+        payload,
+        userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
+        provenance: input.fmpDerivedProvenance ?? []
+      });
+      return;
+    }
+    audit(kind, payload, input.userId, input.policy.connectedAccountId);
+  };
   if (promptSafetyFindings.length > 0) {
-    audit(
+    writeFmpAwareAudit(
       "prompt_injection_suspected",
       {
         runId: input.runId,
         fields: [...new Set(promptSafetyFindings.map((f) => f.name))],
         patterns: [...new Set(promptSafetyFindings.map((f) => f.pattern))],
         findings: promptSafetyFindings.slice(0, 12).map((f) => ({ ...f, excerpt: f.excerpt.slice(0, 240) }))
-      },
-      input.userId,
-      input.policy.connectedAccountId
+      }
     );
   }
   if (promptContainmentReceipts.length > 0) {
-    audit(
+    writeFmpAwareAudit(
       "prompt_injection_contained",
       {
         runId: input.runId,
@@ -4272,9 +4379,7 @@ async function proposeTrades(input: {
           patterns: result.findings.map((finding) => finding.pattern),
           excerpts: result.quarantinedExcerpts.slice(0, 4).map(({ pattern, excerpt, replacement }) => ({ pattern, excerpt, replacement }))
         }))
-      },
-      input.userId,
-      input.policy.connectedAccountId
+      }
     );
   }
 

@@ -9,11 +9,10 @@
 //   2. collectEvidenceAgeAnomalies — flags evidence that is suspiciously FRESH (first seen <24h
 //      before the run): a high-relevance RAG chunk dated today, or a learned fact asserted today.
 //   3. computeEmptyDocTypes — flags a COVERAGE-CHECKED filings doc type (a static allowlist of
-//      types whose PRODUCER LEDGER IS COMPLETE, currently 10-k/10-q — see COVERAGE_CHECKED_DOC_TYPES
-//      in strategy.ts) that is BOTH not retrieved this run AND has zero ever-ingested producer rows.
-//      "8-k" and "earnings-transcript" are deliberately excluded from that allowlist — see
-//      COVERAGE_CHECKED_DOC_TYPES's comment for why (8-k's default-on writer doesn't record a
-//      producer row at all; earnings-transcript has no producer anywhere).
+//      types whose PRODUCER LEDGER IS COMPLETE — see coverageCheckedFilingsDocTypes in strategy.ts)
+//      that is BOTH not retrieved this run AND has zero ever-ingested producer rows. "8-k" remains
+//      excluded because its default-on writer does not record a producer row. Earnings transcripts
+//      join the allowlist only while their default-off FMP producer is explicitly enabled.
 //   4. containPromptText — classifies a source as owner-authored instructions or untrusted data,
 //      then deterministically quarantines only instruction-like spans from untrusted data.
 //

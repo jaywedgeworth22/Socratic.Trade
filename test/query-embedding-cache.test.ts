@@ -50,6 +50,7 @@ vi.mock("../src/lib/db", () => ({
 
 // Spy on the usage metering so we can assert a cache HIT is not metered as a real Voyage call.
 vi.mock("../src/lib/rag-metering", () => ({
+  estimateVoyageDispatchCost: vi.fn(() => 0),
   meterEmbed: mocks.meterEmbed,
   meterPineconeQuery: vi.fn(),
   meterPineconeUpsert: vi.fn(),
@@ -78,7 +79,9 @@ beforeEach(() => {
   });
   mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
   mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
-  mocks.query.mockResolvedValue({ matches: [{ metadata: { text: "AAPL retrieved filing context" } }] });
+  mocks.query.mockResolvedValue({
+    matches: [{ metadata: { text: "AAPL retrieved filing context", userId: "local", scope: "shared" } }]
+  });
 });
 
 describe("query-embedding LRU cache (G8b)", () => {
@@ -90,7 +93,7 @@ describe("query-embedding LRU cache (G8b)", () => {
 
     expect(mocks.embed).toHaveBeenCalledTimes(1);
     // Pinecone is still queried each time — only the embed call is cached.
-    expect(mocks.query).toHaveBeenCalledTimes(2);
+    expect(mocks.query).toHaveBeenCalledTimes(4); // private + shared pools on each retrieval
   });
 
   it("does NOT meter a cache hit as a Voyage embed call (usage/cost integrity)", async () => {
