@@ -54,6 +54,7 @@ export interface QuoteView {
   dividendYield?: number;
   eps?: number;
   pbRatio?: number;
+  returnOnEquity?: number;
   shortPercentOfFloat?: number;
   beta?: number;
   fiftyTwoWeekHigh?: number;
@@ -129,6 +130,7 @@ export function toQuoteView(full: MarketQuote | undefined, summary: MarketQuoteS
     dividendYield: num(q.dividendYield),
     eps: num(q.eps),
     pbRatio: num(q.pbRatio),
+    returnOnEquity: num(q.returnOnEquity),
     shortPercentOfFloat: num(q.shortPercentOfFloat),
     beta: num(q.beta),
     fiftyTwoWeekHigh: posNum(q.fiftyTwoWeekHigh),
@@ -186,6 +188,7 @@ export function toQuoteViewFromEnrichment(symbol: string, enrichment: Partial<Sy
     dividendYield: num(enrichment.dividendYield),
     eps: num(enrichment.eps),
     pbRatio: num(enrichment.pbRatio),
+    returnOnEquity: num(enrichment.returnOnEquity),
     shortPercentOfFloat: num(enrichment.shortPercentOfFloat),
     beta: num(enrichment.beta),
     fiftyTwoWeekHigh: posNum(enrichment.fiftyTwoWeekHigh),
@@ -273,7 +276,8 @@ export function deriveForView(view: QuoteView, historyBarVolume?: number): Deriv
     volume: view.volume ?? (volumeFromHistory ? historyBarVolume : undefined),
     epsGrowth: view.epsGrowth,
     bid: view.bid,
-    ask: view.ask
+    ask: view.ask,
+    returnOnEquity: view.returnOnEquity
   });
   return { metrics, volumeFromHistory };
 }
@@ -336,7 +340,7 @@ export function buildDerivedTiles(view: QuoteView, derived: DerivedResult): Deri
     key: "roe",
     label: "ROE",
     value: typeof m.roe === "number" ? `${m.roe.toFixed(1)}%` : null,
-    title: `Return on equity = EPS ÷ book value per share. Higher = more efficient use of shareholder capital; 20%+ is excellent, negative means losses. ${COMPUTED}`,
+    title: `Return on equity — provider-reported (FMP ratios-ttm) when available, otherwise EPS ÷ book value per share. Higher = more efficient use of shareholder capital; 20%+ is excellent, negative means losses. ${COMPUTED}`,
     tone: typeof m.roe === "number" ? (m.roe >= 0 ? "pos" : "neg") : undefined
   });
 

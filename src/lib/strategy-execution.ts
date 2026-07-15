@@ -1,11 +1,11 @@
 import { getBrokerGateway } from "./broker";
 import { evaluateBrokerHeldExitAvailability, brokerHeldExitBlockReason } from "./broker-held-orders";
 import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
-import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState } from "./broker-side";
+import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isLiveOrderState, isRejectedOrCanceledState } from "./broker-side";
 import { audit, clearStopPlans, getDb, recordStopPlan } from "./db";
 import { getActiveConnectedAccount } from "./db-api-keys";
 import { acquireStrategyLock, dailyExecutionStats, notionalInLastMinutes, countDayTradesInLastBusinessDays, releaseStrategyLock } from "./db-execution";
-import { listPendingBrokerReconciliationFills, updateFillEvent, listFillEventsByProposalId } from "./db-fills";
+import { listPendingBrokerReconciliationFills, netAccountingFillQuantity, updateFillEvent, listFillEventsByProposalId } from "./db-fills";
 import { resolveBrokerVerificationNotifications } from "./db-notifications";
 import { getPolicy } from "./db-profiles";
 import { getProposal, updatePendingProposalReprice, updateProposalStatus, transitionProposalIfPending, claimProposalForExecution, listStalePlacingProposals } from "./db-proposals";
@@ -33,7 +33,7 @@ import { describeRedTeamFailureKind } from "./red-team-routing";
 import { buildSocraticDecisionCase } from "./socratic-runtime";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { getUserWashSaleLockProvenance } from "./tax";
-import { ExecutionMode, FillEvent, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, FillSource } from "./types";
+import { ExecutionMode, FillEvent, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, EquityPosition, FillSource } from "./types";
 import { applyRedTeamHalfSize, approvedEscalationsFromDecision, isRiskAddingOpening, shouldEscalateDecision } from "./strategy-risk";
 import {
   createExecuteProposalLockOwner,
@@ -1217,21 +1217,41 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
     // in performance.ts that only have the PRE-fill snapshot). Recording the raw single-fill `price`
     // instead would make `filterStopPlansByLiveBasis` discard a scale-in's plan as stale on the very
     // next run (Codex review, PR #1371).
-    let liveBasisBySymbol: Map<string, number> | null = null;
-    const liveBasisFor = async (symbol: string): Promise<number | undefined> => {
-      if (!liveBasisBySymbol) {
+    let livePositions: EquityPosition[] | null | undefined;
+    const positionsSnapshot = async (): Promise<EquityPosition[] | null> => {
+      if (livePositions === undefined) {
         try {
-          const livePositions = await gateway.getEquityPositions(accountNumber);
-          liveBasisBySymbol = new Map(livePositions.map((p) => [normalizeSymbol(p.symbol), p.averageCost]));
+          livePositions = await gateway.getEquityPositions(accountNumber);
         } catch {
-          liveBasisBySymbol = new Map();
+          livePositions = null;
         }
       }
-      return liveBasisBySymbol.get(normalizeSymbol(symbol));
+      return livePositions;
     };
+    const liveBasisFor = async (symbol: string): Promise<number | undefined> => {
+      const positions = await positionsSnapshot();
+      return positions?.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(symbol))?.averageCost;
+    };
+    const escalationCandidates = new Map<string, PendingFillEscalationCandidate>();
     for (const fill of pending) {
       const matched = brokerOrders.find((bo) => bo.id === fill.brokerOrderId);
-      if (!matched) continue;
+      if (!matched) {
+        // Absent from the order listing. fill_events is NOT a complete ledger of the broker
+        // account — the owner trades manually and via the Robinhood MCP outside the app, and
+        // pre-app holdings exist — so no amount of position arithmetic can prove THIS order
+        // executed: an identical position delta is produced by an external trade plus this order
+        // canceling/expiring, and flipping on it would fabricate a fill (wrong P&L, phantom
+        // opening-stop plans). No gateway exposes a direct per-order lookup that could supply
+        // broker truth for a single order id either (BrokerGateway has no getOrder-style method).
+        // So an absent order NEVER auto-flips: the receipt stays pending and, past the age
+        // threshold, escalates to the owner with the observed position evidence attached
+        // (collectAbsentOrderPositionEvidence) so one look at the broker resolves it.
+        escalationCandidates.set(fill.id, {
+          reason: "order_absent_from_listing",
+          listingIncludesTerminal: gateway.ordersListIncludesTerminal === true
+        });
+        continue;
+      }
 
       // The stop plan couldn't be committed at placement time — this order was still
       // pending_reconciliation then, and a canceled/expired-with-nothing-executed order must never
@@ -1298,6 +1318,41 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
         if (receiptStatus === "filled" && fill.proposalId) {
           resolveBrokerVerificationNotifications(userId, { proposalId: fill.proposalId, resolution: "placed" });
         }
+        // Live sell/cover fills insert as pending_reconciliation, so the episodic-memory hook in
+        // recordFillFromProposal saw a non-accounting fill and wrote nothing (calculatePnl matched
+        // no closed lot). Re-fire it now that the receipt flipped to accounting truth — this is the
+        // ONLY point live closed lots ever become experience memory. Idempotent: once "filled" the
+        // row leaves listPendingBrokerReconciliationFills, and even a crash-retry no-ops — the
+        // experience doc's vector id is stable (contextId = source:symbol:accession:timestamp with
+        // accession `exp:<entryProposalId>:<exitProposalId>`, experience-memory.ts) and
+        // storeContexts' content-hash dedup skips byte-identical re-writes (vector-db.ts).
+        if (receiptStatus === "filled" && fill.status !== "filled" && (fill.side === "sell" || fill.side === "cover")) {
+          const closingProposal = (fill.raw as { proposal?: TradeProposal } | undefined)?.proposal;
+          if (closingProposal) {
+            const closingFill: FillEvent = {
+              ...fill,
+              status: receiptStatus,
+              price: truth.price,
+              quantity: truth.quantity,
+              notional: truth.notional,
+              filledAt: matched.updatedAt ?? fill.filledAt
+            };
+            void import("./experience-memory")
+              .then((experienceMemory) =>
+                experienceMemory.recordClosedLotExperience({
+                  userId,
+                  connectedAccountId,
+                  accountNumber,
+                  source: fill.source,
+                  closingFill,
+                  closingProposal
+                })
+              )
+              .catch((err) => {
+                console.warn("[reconciliation] experience-memory re-fire failed:", err instanceof Error ? err.message : String(err));
+              });
+          }
+        }
       } else if (isRejectedOrCanceledState(matched.state) && merged.knownQuantity <= 0) {
         const declinedMessage = `Broker terminated the order without a fill (state: ${matched.state}).`;
         getDb().transaction(() => {
@@ -1322,10 +1377,224 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           priorBookedQuantity: bookedExecutionTruth(fill)?.quantity,
           unresolvedGrowth: merged.unresolvedGrowth
         }, userId, connectedAccountId);
+        // A matched order still LIVE at the broker (working day limit, queued stop, ...) is
+        // healthy — it simply hasn't executed yet, and stale-limit-orders.ts owns the alerting
+        // for a far-from-market resting order. Only a matched order in a TERMINAL state that
+        // still lacks usable execution price/quantity data is genuinely unresolvable here.
+        if (!isLiveOrderState(matched.state)) {
+          escalationCandidates.set(fill.id, {
+            reason: "terminal_state_unusable_execution_data",
+            brokerState: matched.state,
+            knownBrokerQuantity: merged.knownQuantity
+          });
+        }
+      }
+    }
+    // Escalation is gated on THIS pass's classification: only fills proven unresolvable right now
+    // (order absent from the listing, or matched-terminal with unusable execution data) escalate.
+    // When the listing call itself failed we cannot classify, so nothing escalates this pass — a
+    // healthy working order must never be flagged just because the broker API hiccuped.
+    await escalateAgedPendingFills({ accountNumber, userId, connectedAccountId, candidates: escalationCandidates, positionsSnapshot });
+  } catch (error) {
+    console.error("[reconciliation] failed to reconcile pending fills:", error);
+  }
+}
+
+/** Default age (minutes) after which a still-pending fill escalates to an audit event + one
+ *  notification. Override with PENDING_FILL_ESCALATION_MINUTES. */
+export const DEFAULT_PENDING_FILL_ESCALATION_MINUTES = 30;
+
+function pendingFillEscalationMinutes(): number {
+  const parsed = Number(process.env.PENDING_FILL_ESCALATION_MINUTES);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PENDING_FILL_ESCALATION_MINUTES;
+}
+
+/** Why a pending fill is escalation-eligible THIS reconcile pass. Only genuinely-unresolvable
+ *  receipts qualify: the broker order is absent from the listing, or it matched but sits in a
+ *  terminal state with no usable execution price/quantity. A matched order that is still
+ *  live/working never becomes a candidate — that is a healthy resting order (normal for a day
+ *  limit), and stale-limit-orders.ts owns that alerting surface. */
+type PendingFillEscalationCandidate =
+  | { reason: "order_absent_from_listing"; listingIncludesTerminal: boolean }
+  | { reason: "terminal_state_unusable_execution_data"; brokerState: string; knownBrokerQuantity: number };
+
+/** Position evidence attached to an absent-order escalation so the owner can resolve it with one
+ *  look at the broker. DIAGNOSTIC ONLY — never used to flip the receipt: fill_events is not a
+ *  complete ledger of the broker account (the owner trades manually and via the Robinhood MCP
+ *  outside the app, and pre-app holdings exist), so a position delta that "matches" this order
+ *  executing is equally consistent with an external trade plus this order dying unexecuted.
+ *  Flipping on it would fabricate a fill — wrong P&L and possibly a phantom opening-stop plan. */
+type AbsentOrderPositionEvidence = {
+  /** Live broker position quantity for the symbol; null when the positions listing was unavailable. */
+  brokerPositionQuantity: number | null;
+  /** Signed net quantity implied by locally-booked accounting fills (netAccountingFillQuantity). */
+  bookedNetQuantity: number;
+  intendedQuantity?: number;
+  /** True when broker position == booked net + this order's signed quantity — CONSISTENT with
+   *  execution, but not proof (external trades produce the same delta). Undefined when it cannot
+   *  be evaluated (positions unavailable, unknown intended quantity, or a partially_filled
+   *  receipt whose booked portion muddies the delta). */
+  deltaConsistentWithExecution?: boolean;
+  /** True when broker position == booked net — consistent with the order never executing. */
+  positionUnchanged?: boolean;
+  /** The placement response's averagePrice, if it was captured at placement time. */
+  placementAveragePrice?: number;
+  /** Human-readable one-look summary of the above. */
+  summary: string;
+};
+
+async function collectAbsentOrderPositionEvidence(p: {
+  accountNumber: string;
+  userId: string;
+  fill: FillEvent;
+  positionsSnapshot: () => Promise<EquityPosition[] | null>;
+}): Promise<AbsentOrderPositionEvidence> {
+  const { fill } = p;
+  const symbol = normalizeSymbol(fill.symbol);
+  const raw = (fill.raw ?? {}) as { proposal?: TradeProposal; execution?: { averagePrice?: unknown } };
+  const bookedNetQuantity = netAccountingFillQuantity(p.accountNumber, fill.source, symbol, p.userId);
+  const intendedQuantity = positiveFinite(fill.quantity) ?? positiveFinite(raw.proposal?.quantity);
+  const placementAveragePrice = positiveFinite(raw.execution?.averagePrice);
+  const positions = await p.positionsSnapshot();
+  const brokerPositionQuantity = positions
+    ? (positions.find((pos) => normalizeSymbol(pos.symbol) === symbol)?.quantity ?? 0)
+    : null;
+  const QTY_EPS = 1e-4;
+  let deltaConsistentWithExecution: boolean | undefined;
+  let positionUnchanged: boolean | undefined;
+  if (brokerPositionQuantity !== null) {
+    positionUnchanged = Math.abs(brokerPositionQuantity - bookedNetQuantity) <= QTY_EPS;
+    if (fill.status === "pending_reconciliation" && intendedQuantity !== undefined) {
+      const sign = fill.side === "buy" || fill.side === "cover" ? 1 : -1;
+      deltaConsistentWithExecution =
+        Math.abs(brokerPositionQuantity - (bookedNetQuantity + sign * intendedQuantity)) <= QTY_EPS;
+    }
+  }
+  const parts: string[] = [];
+  if (brokerPositionQuantity === null) {
+    parts.push("Live positions listing was unavailable — no position evidence this pass.");
+  } else {
+    parts.push(`Broker position ${brokerPositionQuantity} sh vs ${bookedNetQuantity} sh booked in the app.`);
+    if (deltaConsistentWithExecution) {
+      parts.push(
+        `The delta matches this ${fill.side} ${intendedQuantity} executing, but a manual/external trade produces the same delta — this is NOT proof of execution.`
+      );
+    } else if (positionUnchanged) {
+      parts.push("Position unchanged — consistent with no execution (canceled/expired, or working outside the listing's view).");
+    } else {
+      parts.push("The delta matches neither full execution nor no execution.");
+    }
+  }
+  parts.push(
+    placementAveragePrice !== undefined
+      ? `Placement captured an average price of ${placementAveragePrice}.`
+      : "No broker price was captured at placement."
+  );
+  return {
+    brokerPositionQuantity,
+    bookedNetQuantity,
+    intendedQuantity,
+    deltaConsistentWithExecution,
+    positionUnchanged,
+    placementAveragePrice,
+    summary: parts.join(" ")
+  };
+}
+
+/**
+ * Age-based escalation for fills stuck pending_reconciliation/partially_filled — ADVISORY only:
+ * it informs, and never blocks, cancels, or mutates accounting state. Escalates ONLY fills this
+ * reconcile pass proved genuinely unresolvable (see PendingFillEscalationCandidate): the broker
+ * order was absent from the listing, or matched in a terminal state with no usable execution
+ * data. A fill whose matched order is still open/working NEVER escalates — that is a healthy
+ * resting order (normal for a day limit) already covered by stale-limit-order alerting. Past the
+ * threshold (PENDING_FILL_ESCALATION_MINUTES, default 30) each fill emits one audit event and ONE
+ * notification — once per fill across all reconcile passes AND process restarts, via a marker
+ * persisted in the fill's raw column (reconciliationRaw spreads fill.raw, so the marker survives
+ * later reconcile rewrites). Absent-order escalations attach the observed position evidence
+ * (diagnostic only — see AbsentOrderPositionEvidence) so the owner can resolve with one look.
+ * The alert carries reconcile: "uncertain" so the auto-ack sweep leaves it standing until the
+ * fill actually reconciles, at which point resolveBrokerVerificationNotifications clears it by
+ * proposalId.
+ */
+async function escalateAgedPendingFills(p: {
+  accountNumber: string;
+  userId: string;
+  connectedAccountId?: string;
+  candidates: Map<string, PendingFillEscalationCandidate>;
+  positionsSnapshot: () => Promise<EquityPosition[] | null>;
+}): Promise<void> {
+  if (p.candidates.size === 0) return;
+  try {
+    const thresholdMinutes = pendingFillEscalationMinutes();
+    const cutoffMs = Date.now() - thresholdMinutes * 60_000;
+    for (const fill of listPendingBrokerReconciliationFills(p.accountNumber, p.userId)) {
+      const candidate = p.candidates.get(fill.id);
+      if (!candidate) continue;
+      const placedAtMs = Date.parse(fill.filledAt);
+      if (!Number.isFinite(placedAtMs) || placedAtMs > cutoffMs) continue;
+      const raw = (fill.raw ?? {}) as Record<string, unknown>;
+      if (raw.pendingEscalation) continue;
+      const ageMinutes = Math.round((Date.now() - placedAtMs) / 60_000);
+      const evidence = candidate.reason === "order_absent_from_listing"
+        ? await collectAbsentOrderPositionEvidence({
+            accountNumber: p.accountNumber,
+            userId: p.userId,
+            fill,
+            positionsSnapshot: p.positionsSnapshot
+          })
+        : undefined;
+      // Marker first: an at-most-once informational alert beats a repeat-on-notify-failure one
+      // (the audit row below still records the stall either way).
+      updateFillEvent(fill.id, {
+        raw: { ...raw, pendingEscalation: { at: new Date().toISOString(), thresholdMinutes, reason: candidate.reason } }
+      }, p.userId);
+      const summary = candidate.reason === "order_absent_from_listing"
+        ? `Broker order ${fill.brokerOrderId ?? "(unknown)"} is absent from the ${candidate.listingIncludesTerminal ? "" : "non-authoritative "}order listing after ${ageMinutes} minutes. ${evidence?.summary ?? ""} Verify with the broker and resolve manually.`
+        : `Broker order ${fill.brokerOrderId ?? "(unknown)"} is in terminal state "${candidate.brokerState}" but reported no usable execution price/quantity after ${ageMinutes} minutes (known executed quantity: ${candidate.knownBrokerQuantity}). Verify the real fill with the broker.`;
+      const reasonDetail = candidate.reason === "terminal_state_unusable_execution_data"
+        ? { brokerState: candidate.brokerState, knownBrokerQuantity: candidate.knownBrokerQuantity }
+        : { listingIncludesTerminal: candidate.listingIncludesTerminal };
+      audit("fill_reconciliation_stalled", {
+        fillId: fill.id,
+        proposalId: fill.proposalId,
+        brokerOrderId: fill.brokerOrderId,
+        symbol: fill.symbol,
+        side: fill.side,
+        ageMinutes,
+        thresholdMinutes,
+        reason: candidate.reason,
+        ...reasonDetail,
+        ...(evidence ? { evidence } : {})
+      }, p.userId, p.connectedAccountId);
+      try {
+        await sendNotification(
+          {
+            type: "run_failed",
+            title: `${fill.symbol} fill pending reconciliation ${ageMinutes}m — verify with broker`,
+            payload: {
+              fillId: fill.id,
+              proposalId: fill.proposalId,
+              brokerOrderId: fill.brokerOrderId,
+              symbol: fill.symbol,
+              side: fill.side,
+              ageMinutes,
+              thresholdMinutes,
+              reason: candidate.reason,
+              ...reasonDetail,
+              ...(evidence ? { evidence } : {}),
+              reconcile: "uncertain",
+              summary
+            }
+          },
+          { userId: p.userId }
+        );
+      } catch (notifyError) {
+        console.warn("[reconciliation] pending-fill escalation notification failed:", notifyError instanceof Error ? notifyError.message : String(notifyError));
       }
     }
   } catch (error) {
-    console.error("[reconciliation] failed to reconcile pending fills:", error);
+    console.error("[reconciliation] pending-fill age escalation failed:", error);
   }
 }
 export async function reconcilePlacementError(p: {
