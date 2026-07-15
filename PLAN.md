@@ -1,5 +1,16 @@
 # Active Implementation Plan
 
+> **2026-07-15 - Durable state: persist in-memory rate-limiters/cooldowns across restarts (MONET,
+> branch `monet/durable-state-restart-survival`).** Owner directive after fleet-wide auto-deploy went
+> live: any in-memory guard against a real external cap or duplicate-action risk must survive a
+> mid-session container replacement. New shared `createDurableMap` primitive
+> (`src/lib/durable-state.ts`); persisted `RequestQuota`, the usage-budget alert cooldown, and the
+> congress-share send throttle after a 32-site discovery sweep. Two other candidates
+> (`order-replacement.ts`, `triggers.ts`) turned out to already be independently and more completely
+> solved by another agent while this branch was in flight — deferred to those, dropped the redundant
+> local wiring. Full gate green; landing via PR next. Rollout:
+> `docs/rollouts/2026-07-10-durable-state-restart-survival.md`.
+
 > **2026-07-15 - Primary-account Usage Monitor credential bridge writer
 > (CODEX).** Implement the default-off writer half of API Usage Monitor PR
 > #286: read only the fixed primary `local` user's Gemini and DeepSeek rows;
