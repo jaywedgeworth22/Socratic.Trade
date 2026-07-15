@@ -3197,6 +3197,8 @@ verified). Per owner: EVERY finding is logged. Findings where CLAUDE has no stro
 are marked **TBD (owner/design decision)** rather than given a fabricated confident action. Severity in
 brackets; effort S/M/L.
 
+- **2026-07-15 Browser tab title consistency (CODEX, branch `codex/tab-title-socratic-trade`).** Reapplies the useful part of stale/conflicted AG PR #1610 on top of current main: remove the console layout "Autonomy Desk" title template and the Coach page `"Coach"` title override so browser tabs resolve to "Socratic Trade". Hosted verification, merge, production auto-deploy, live verification, and closing superseded PR #1610 remain.
+
 ### Resolved by PR #1018 (no further action)
 - [P0][Visual] Money-reality banner hardcoded dark-only -> DONE: banner removed entirely (real money = normal, no banner).
 - [P1][UX] Command palette never wired into console -> DONE: native Cmd+K palette added.
