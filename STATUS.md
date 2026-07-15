@@ -58,10 +58,16 @@ occurred from this lane yet.
 
 **[codex-autofix] 2026-07-15:**
 - P1 — Codex review flagged that `github:` protocol in `package.json` resolves to
-  `git+ssh://` in the lockfile, which requires SSH keys not available in CI/Coolify.
-  Changed to `git+https://` spec and updated lockfile, then regenerated via `npm install`.
-  Verify trio: lint 0 errors, tsc clean, 4172 tests pass, build clean. Thread resolved,
-  auto-merge re-enabled.
+  `git+ssh://` in the lockfile. A controlled cold `npm ci` proved npm currently succeeds
+  tokenlessly through the lock integrity path even while direct SSH fails, but explicit
+  `git+https://` removes that deployment ambiguity. The manifest, lockfile, and npm
+  `allowScripts` entry now share the exact immutable HTTPS+SHA ref. Autofix verification:
+  lint 0 errors, TypeScript clean, 4,172 tests, and production build green. Codex then
+  corrected the autofix's broad package-name `allowScripts` entry back to the exact URL+SHA
+  key. Final exact-head verification is green: controlled cold tokenless install, unchanged
+  lock hash, lint 0 errors / 459 inherited warnings, TypeScript, 370 files / 4,172 tests,
+  and production build with all 32 static pages. The P1 thread is resolved; push and refreshed
+  hosted checks remain before merge.
 
 Rollout: `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 

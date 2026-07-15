@@ -65,9 +65,13 @@ Completed under Node 24:
 ### Summary
 
 Codex review (P1) flagged that the `github:` protocol spec in `package.json`
-resolves to `git+ssh://git@github.com/...` in the lockfile, which requires SSH
-keys for CI/Coolify builds. Changed to explicit `git+https://` spec and
-updated the lockfile `resolved` field accordingly.
+resolves to `git+ssh://git@github.com/...` in the lockfile. A controlled cold
+`npm ci` with an empty HOME, no SSH agent or GitHub tokens, disabled system/global
+Git config, forced no-identity SSH, and a fresh npm cache succeeded through the
+lock integrity path with all four artifacts and 105 exports, while direct SSH
+`git ls-remote` failed with status 128. Explicit `git+https://` still removes that
+deployment ambiguity, so the manifest, lockfile, and exact npm `allowScripts`
+entry now use the immutable HTTPS+SHA ref.
 
 ### Files
 
@@ -82,6 +86,13 @@ updated the lockfile `resolved` field accordingly.
 - `npx tsc --noEmit`: clean.
 - `npm test`: 370 files / 4,172 tests passed in 396.05 seconds.
 - `npm run build`: green with the real TypeScript phase and all 32 static pages.
+- Codex corrected the autofix's package-name-wide `allowScripts` entry back to the
+  exact immutable HTTPS+SHA key, then repeated a controlled cold tokenless install:
+  all four artifacts were non-empty, CommonJS and ESM each exposed 105 exports, and
+  the repository lockfile SHA-256 remained unchanged after a second fresh install.
+- Final exact-head gate: lint 0 errors / 459 inherited warnings, standalone TypeScript
+  clean, 370 files / 4,172 tests in 464.36 seconds, and production build green with
+  the real TypeScript phase plus all 32 static pages.
 
 ### Threads resolved
 
