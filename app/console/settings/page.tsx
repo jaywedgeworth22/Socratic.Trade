@@ -23,7 +23,7 @@ import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useToast } from "../ui/toast";
 import { Card, Chip, Field, RawNumInput, TextInput, Toggle } from "../ui/primitives";
-import { List, ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
+import { List, ListSection, ListRow, LabeledContent, SettingsGroup } from "../../ui/ios-components";
 import { SaveStatus } from "../ui/save-status";
 import { ApiKeysCard } from "./api-keys";
 import { BrokerAccountsCard } from "./brokers";
@@ -73,7 +73,7 @@ export default function SettingsPage() {
 
       <List>
         {/* ── ALL ACCOUNTS ── */}
-        <ListSection title="ALL YOUR ACCOUNTS" footer="Settings tagged ALL YOUR ACCOUNTS are stored per user — they overlay every account you connect, in every scope.">
+        <SettingsGroup label="ALL YOUR ACCOUNTS" footer="Settings tagged ALL YOUR ACCOUNTS are stored per user — they overlay every account you connect, in every scope.">
           {/* Anchor ids (#brokers/#api-keys) are deep-link targets used by the
               Run-once blocked-reason sheet; scroll-mt clears the sticky chrome. */}
           <div id="brokers" className="scroll-mt-28">
@@ -96,32 +96,32 @@ export default function SettingsPage() {
           </div>
           <BootBehaviorCard />
           <YouCard />
-        </ListSection>
+        </SettingsGroup>
 
         {/* ── THIS BROWSER ── */}
-        <ListSection title="THIS BROWSER" footer="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
+        <SettingsGroup label="THIS BROWSER" footer="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
           <AppearanceCard />
-        </ListSection>
+        </SettingsGroup>
 
         {/* ── OPERATOR (admin only: links, no new admin UI) ── */}
         {snapshot.currentUser?.isAdmin && (
           <div id="admin" className="scroll-mt-28">
-            <ListSection title="OPERATOR" footer="Visible because this login has operator/admin rights on the server. Server-wide diagnostics, outside the console.">
+            <SettingsGroup label="OPERATOR" footer="Visible because this login has operator/admin rights on the server. Server-wide diagnostics, outside the console.">
               <AdminLinksCard />
-            </ListSection>
+            </SettingsGroup>
           </div>
         )}
 
         {/* ── REFERENCE ── */}
-        <ListSection title="REFERENCE" footer="Nothing here changes any setting — it's the app's vocabulary, searchable.">
+        <SettingsGroup label="REFERENCE" footer="Nothing here changes any setting — it's the app's vocabulary, searchable.">
           <HelpGlossaryCard />
-        </ListSection>
+        </SettingsGroup>
 
         {/* ── DANGER ── */}
         <div id="danger" className="scroll-mt-28">
-          <ListSection title="DANGER" footer="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
+          <SettingsGroup label="DANGER" footer="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
             <AccountDeletionCard />
-          </ListSection>
+          </SettingsGroup>
         </div>
       </List>
     </div>
