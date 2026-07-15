@@ -101,6 +101,12 @@ function fmtCost(usd: number): string {
   return `$${usd.toFixed(4)}`;
 }
 
+// Headline totals show 2 decimals — a $34.8565 total reads as noise. Per-line-item
+// costs keep fmtCost's 4dp (sub-cent precision matters for one call, not for a total).
+function fmtTotalCost(usd: number): string {
+  return `$${usd.toFixed(2)}`;
+}
+
 function fmtRelDate(iso: string | null): string {
   if (!iso) return "never";
   try {
@@ -341,7 +347,7 @@ export function RagCoverageClient() {
             />
             <SummaryCard
               label="App-recorded RAG"
-              value={fmtCost(data.ragUsage.totalCostUsd)}
+              value={fmtTotalCost(data.ragUsage.totalCostUsd)}
               sub={`estimated Voyage cost, last ${data.sinceDays}d`}
             />
           </div>
