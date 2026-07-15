@@ -1,5 +1,33 @@
 # Current Status
 
+## 2026-07-15 — Per-position stop plans round 8: 2 post-merge Codex fixes (CLAUDE, branch `claude/stop-plans-round8-followups`)
+PR #1371 (per-position stop plans) merged; Codex reviewed the shipped merge commit and posted 4
+more findings afterward, against code that had since been heavily reworked by several intervening
+PRs (sub-millisecond order-race fix, account-relative risk hardening, Exit Replacement State
+Machine). Assessed each against current `main` rather than assuming the diff-time context still
+applied:
+- **Fixed** — `strategy-execution.ts`'s `reconcilePlacementError` had a shared
+  `commitRecoveredOpeningStopPlan` helper (added by other agents' hardening work, already wired
+  into two of its three fill-booking paths) but the fresh/non-dup `recordFillFromProposal` call
+  didn't invoke it — a scale-in recovered from a placement-error retry never got its stop plan
+  committed. Added the missing call.
+- **Fixed** — `synthetic-stops.ts`'s trailing-row purge only handled a plan resolving to
+  "none"/"fixed"/"atr"; a plan explicitly RESET to "default" (row cleared, symbol absent from
+  `stopPlanBySymbol`) with no account-wide `trailingStopPct` configured fell through untouched,
+  leaving a stale trailing row armed at the old plan's fallback distance. Extended the purge
+  condition to cover this case too.
+- **Not reproducible** — the partial-fill "commits stop plan too early" finding: confirmed
+  `listPendingBrokerReconciliationFills` already revisits `partially_filled` rows on every pass,
+  and `commitStopPlanIfOpening`/`commitRecoveredOpeningStopPlan` both re-derive the basis from the
+  BROKER'S OWN live `position.averageCost` (not a frozen single-fill price) each time, so the
+  basis self-corrects on every subsequent partial fill. This must have been valid only against an
+  intermediate state of the code between the merge and the later hardening PRs.
+- **Deferred** — canceling a resting bracket/OCO leg from an EARLIER opening when a scale-in
+  resets the plan to trailing/none: this is the same class as the previously-deferred "OCO
+  sibling-identity pairing" issue (PR #1331) — needs a broker API for identifying/cancelling a
+  bracket's sibling legs, not a code-only fix. Left open, matching prior precedent.
+Verify: tsc clean, lint 0 errors/488 pre-existing warnings, 382 files/4400 tests passed, build
+clean. Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`.
 ## 2026-07-15 — Post-Codex/AG audit + app evaluation → MONET handoff (CLAUDE)
 
 Owner-directed evaluation sweep on isolated branch `claude/adoring-hopper-4ff51e`. Verified
