@@ -535,6 +535,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **Post-Codex/AG consolidation audit + app evaluation sweep → MONET handoff (CLAUDE, isolated worktree branch `claude/adoring-hopper-4ff51e`, owner-directed 2026-07-15) — AUDIT COMPLETE / HANDED TO MONET.** Verified: production current + healthy (`main@294694ae`), no open ST PRs (all Codex/AG through #1624 merged+deployed), `congress-trading-shared` current on BOTH consumers (`0bc26ab`=v1.7.1, no drift). Audited 73 branches (main missing no squash-merged content; a small UNMERGED-VALUABLE set + 3 FLAGGED never-PR'd branches identified), 54 merged CODEX/AG PRs for board hygiene (corrections list produced — see handoff §2), API-Usage-Monitor integration (DEGRADED: real ~2× Voyage $ double-count + FMP request double-emit), and a 5-lane app eval with adversarial verification. Two side-fixes LANDED: Congress.Trade pin-check false-positive (PR #450 MERGED) + `agent-sync-push` pm2 repair. **Full synthesized findings + prioritized action list: `docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`.** All code fixes handed to MONET to land via separate PRs. Rollout: `docs/rollouts/2026-07-15-post-codex-ag-audit-monet-handoff.md`.
 - **Crash-durable Socratic.Trade usage telemetry replay (CODEX, branch `codex/socratic-usage-replay`, worktree `/Users/jay/apps/socratic-usage-telemetry-replay`, owner-directed 2026-07-13) — IN PROGRESS; CHECKPOINTED IN BLOCKED DRAFT PR #1563 (`7e1481c3`).** New events carry top-level `project: "socratic-trade"` without rewriting raw provider names. Historical/new `llm_usage` and `rag_usage` rows replay through deterministic existing IDs using ordered, overlap-safe, monotonic watermarks in internal settings; startup + one-minute bounded replay require no schema change. Node 24 focused 16/16, scoped ESLint, TypeScript, diff-check, and production webpack build pass. Do not merge/deploy: receiver backfill must deploy and verify in API Usage Monitor first; then refresh and rerun the Socratic gate before an explicit landing decision. PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/1563
 
 - **SEC/RAG 1,000-stock implementation program (CODEX, branch `codex/sec-rag-program`, worktree
@@ -2784,10 +2785,21 @@ As of 2026-07-08 (assignment-rule update).
   batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
 
 - **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (CLAUDE,
-  branch `claude/per-position-stop-plans`, stacked on PR #1331) — IN PROGRESS 2026-07-10, gates
-  green (lint/tsc/3511 tests/build); PR #1371 open, 3 Codex review rounds fixed (21 findings —
-  see the rollout doc's "Review fixes round 1-3" sections).** MOVED from Planned (below) — same
-  title, see that entry for the full original design/requirements record.
+  branch `claude/per-position-stop-plans`, stacked on PR #1331) — COMPLETED (merged to `main` via
+  PR #1371, 2026-07-11T07:39:12Z; deployed to production via auto-deploy-on-merge).** Landed after
+  7 rounds of Codex review + a merge-conflict reconciliation against a concurrent `strategy.ts`
+  split refactor (see `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`). One thread
+  deliberately left open on the merged PR: whether an explicit `none` stopPlan on a SHORT should
+  also bypass the pre-existing mandatory `shortStopLossPct` gate (a distinct short-specific safety
+  invariant, not the general "none is never blocked" rule) — awaiting owner's call, not a bug.
+  Round 8 (2026-07-15, `claude/stop-plans-round8-followups`): 2 more genuine Codex findings against
+  the merged code fixed (missing stop-plan commit in `reconcilePlacementError`'s fresh-fill path;
+  `synthetic-stops.ts` purge gap for a plan reset to default with no account-wide trailing %); one
+  finding confirmed not reproducible against current `main` (already self-correcting via live
+  basis lookups added by later hardening PRs); one deferred (OCO/bracket sibling-leg cancellation
+  — same class as the pre-existing deferred OCO-sibling-identity gap, needs a broker API change).
+  Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`. MOVED from Planned (below) —
+  same title, see that entry for the full original design/requirements record.
   **Implemented:** `TradeProposal.stopPlan` (`StopPlanStyle` = default/fixed/atr/trailing/none) in
   the LLM structured-output schema + `sanitizeProposals` coercion; `position_stop_plans` table +
   CRUD (`getStopPlans`/`recordStopPlan`/`clearStopPlans`, mirroring `take_profit_trims`), persisted
