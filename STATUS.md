@@ -11,6 +11,69 @@ results under `docs/benchmarks/` (date-prefixed) are unaffected. (3) Recorded bl
 cannot be benchmarked** — all 18 calls returned HTTP 403 `model_not_found` on the prod OpenAI key (newest
 accessible gpt-5 is gpt-5.5/5.5-pro; no gpt-5.6 exists for this account). Not a code bug — an access/existence
 issue; awaiting owner direction. Details: `docs/rollouts/2026-07-11-session-closeout-gpt56-blocked.md`.
+## 2026-07-15 — Eval-script OpenAI model defaults bumped off retired gpt-4o-mini (CLAUDE)
+
+Owner-directed cleanup after an OpenAI rate-limit/cost review. Two eval-only dev scripts
+still defaulted to previous-gen `gpt-4o-mini` (unused anywhere in the live app path):
+`scripts/eval/faithfulness.ts` RAG faithfulness **judge** → `gpt-5.4-mini` (a judge should
+be at least as capable as what it grades), and `scripts/eval/run-offline.ts` OpenAI
+**subject-under-test** in the cross-provider bake-off → `gpt-5.4-nano` (its cheap-tier
+current peer; every other provider row was already current-gen). Both stay env-overridable.
+No live runtime impact — these run manually. Congress.Trade needed no change (its live
+extraction already uses `gpt-5.6-terra`; all bare `gpt-5.6` refs there are prefix guards /
+inert aliases / labels). Branch `claude/eval-model-defaults`.
+Rollout: `docs/rollouts/2026-07-15-eval-model-default-bump.md`.
+
+## 2026-07-15 — Settings design consistency + Guardrails collapsible sections (CLAUDE)
+
+Owner-directed UI fix. (1) Settings was the only page built on `app/ui/ios-components.tsx`
+(iOS grouped-list, nested bordered boxes) instead of the `con-card` primitive every other page
+uses — restyled `ListSection` to render `con-card` and added a lightweight `SettingsGroup` for
+scope grouping, so Settings now matches Mandates (standalone cards, no nested boxes).
+(2) Added optional `collapsible`/`defaultOpen` to the console `Card` primitive and made the top
+Guardrails sections (Essentials, Protective stops, Advanced rulebook) collapsible, so every
+Guardrails section is consistently collapsible. Display-only; `Card`'s new props are opt-in so
+all other pages are untouched. tsc clean, eslint 0 errors, `npm run build` green, both pages
+visually verified in a local Node-24 dev server. Branch `claude/settings-guardrails-consistency`.
+Rollout: `docs/rollouts/2026-07-15-settings-guardrails-design-consistency.md`.
+
+## 2026-07-15 — ST-audit execution wave 1: handoff §8 do-first/do-now items landed (MONET, subagent team)
+
+Owner-directed pickup of the CLAUDE cap handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`).
+Executed the do-first P0 + all do-now items via 6 implementer agents + 3-lens adversarial
+review + 2 fix agents (2 of 3 must-fix review findings were real money-path/ops defects in the
+first-cut implementations — an unsound position-delta auto-flip and a Voyage local cost-fuse
+kill — both fixed before landing):
+
+1. **§6b.1(a) P0** — every auto-deploy silently halted live autonomy with zero signal; boot
+   reconcile now sends one summary notification per user (new `autonomy_halted_on_boot` type,
+   forced-delivery pattern). Interlock + `autoResumeOnBoot` default unchanged — **owner
+   decision still open: enable auto-resume in prod?**
+2. **§4.3+§6b.3** — live closed lots finally write episodic memory (re-fire on matched
+   pending→filled sell/cover flips, idempotent); genuinely-stuck pending fills (absent from
+   listing / terminal-without-data) escalate once with position-evidence diagnostics; NO
+   auto-flip from position deltas (review-killed as unsound vs manual/MCP trades).
+3. **§3.1+§3.2** — FMP price targets (`tgtMean`/`tgtUpsidePct`) + ratios-ttm quality fields
+   (`roa`/`grossMarginPct`, real ROE preferred over eps×pb) now reach the LLM prompt; console
+   drilldown ROE tile shows the same value the model sees. (`FMP_PRICE_TARGETS_ENABLED` still
+   off in prod — owner flag decision.)
+4. **§4.4** — counterfactual feedback balanced: avoided losers injected alongside missed
+   winners (4/4 split, SPY-relative), ending the one-sided "be bolder" training signal.
+5. **§3.7** — Alpha Vantage enrichment provider not registered when an Alpaca data key is
+   configured (kills the daily 25/day cap burn + alert; AV intact without Alpaca).
+6. **§7.1** — Voyage ~2× dollar double-count in the external usage monitor fixed at the push
+   boundary (`createProviderDispatchUsageMonitorEvent` emits cost 0; local dispatch fuse keeps
+   real estimates; `vector-db.ts` net-unchanged). No receiver change needed.
+7. **§5.1** — root `global-error.tsx` supports dark mode (prefers-color-scheme, app palette).
+8. **§2** — effort-board hygiene pass (both boards): back-filled #1482/#1614, flipped stale
+   #1593/#1594/#1604/#1492×4/TS-7.0.2 rows, collapsed the #1587 duplicate.
+
+Gate on the merged tree (node@24): lint 0 errors, tsc clean, **390 files / 4470 tests pass**,
+build clean. Rollout: `docs/rollouts/2026-07-15-st-audit-exec-wave1.md` (incl. deferred-items
+list + owner decisions). Remaining handoff backlog (§4.1 retrieval-usefulness join, §4.2/§1b
+branch fates, §3.3 Quiver, §6b.2/4/7 autonomy observability, §5.2/§5.4, §3.8, §7.2/§7.3) is
+tracked in the handoff doc §8 — wave 2 candidates.
+
 ## 2026-07-15 — Durable state: in-memory rate-limiters/cooldowns survive a restart (MONET, branch `monet/durable-state-restart-survival`)
 
 Owner directive after auto-deploy went live fleet-wide ("persist all variables/counts... have that be

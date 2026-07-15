@@ -1966,6 +1966,46 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
   });
 });
 
+// AV supplies ONLY NEWS_SENTIMENT; when Alpaca news is configured it already covers that field,
+// so registering AV too would just burn its 25/day free cap for nothing (see the registration
+// site comment in getEnrichmentProvider).
+describe("Alpha Vantage deregistration when Alpaca news is configured", () => {
+  const originalAlphaVantageKey = process.env.ALPHAVANTAGE_API_KEY;
+  const originalAlpacaKey = process.env.ALPACA_PAPER_API_KEY;
+  const originalAlpacaSecret = process.env.ALPACA_PAPER_SECRET_KEY;
+
+  beforeEach(() => {
+    process.env.ALPHAVANTAGE_API_KEY = "av-key";
+  });
+
+  afterEach(() => {
+    if (originalAlphaVantageKey) process.env.ALPHAVANTAGE_API_KEY = originalAlphaVantageKey;
+    else delete process.env.ALPHAVANTAGE_API_KEY;
+    if (originalAlpacaKey) process.env.ALPACA_PAPER_API_KEY = originalAlpacaKey;
+    else delete process.env.ALPACA_PAPER_API_KEY;
+    if (originalAlpacaSecret) process.env.ALPACA_PAPER_SECRET_KEY = originalAlpacaSecret;
+    else delete process.env.ALPACA_PAPER_SECRET_KEY;
+  });
+
+  it("registers alpha-vantage when Alpaca news is NOT configured", () => {
+    delete process.env.ALPACA_PAPER_API_KEY;
+    delete process.env.ALPACA_PAPER_SECRET_KEY;
+    const provider = getEnrichmentProvider();
+    expect(provider.name.split("+")).toContain("alpha-vantage");
+  });
+
+  it("does not register alpha-vantage when Alpaca news is configured", () => {
+    process.env.ALPACA_PAPER_API_KEY = "alpaca-key";
+    // AlpacaNewsEnrichmentProvider only requires the API key (secret is optional) — mirror that
+    // availability check here so this test doesn't accidentally depend on a stricter condition.
+    delete process.env.ALPACA_PAPER_SECRET_KEY;
+    const provider = getEnrichmentProvider();
+    const order = provider.name.split("+");
+    expect(order).toContain("alpaca-news");
+    expect(order).not.toContain("alpha-vantage");
+  });
+});
+
 describe("CascadingEnrichmentProvider.activeSources (honest source attribution)", () => {
   const stub = (name: string, data: Record<string, SymbolEnrichment>): MarketEnrichmentProvider => ({
     name,

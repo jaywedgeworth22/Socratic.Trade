@@ -11,6 +11,7 @@ import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { checkBrokerHealth } from "./broker-health";
+import { sendNotification } from "./notifications";
 import { expireStalePendingProposals } from "./proposal-revalidation";
 import { markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
@@ -286,6 +287,9 @@ export function reconcileAutonomyOnBoot(): void {
     console.log("[scheduler] AUTONOMY_RESUME_ON_BOOT=1 — persisted 'active' autonomy will resume");
     return;
   }
+  // Collect halted accounts per user so we can fire ONE summary notification per boot (not one
+  // per account) after the reconcile loop finishes, rather than notifying inline per account.
+  const haltedByUser = new Map<string, string[]>();
   for (const userId of listUsers()) {
     // Per-user autoResumeOnBoot setting (default false) — the individual opt-in replaces
     // the old global env var. Each user independently decides whether their accounts resume.
@@ -297,7 +301,8 @@ export function reconcileAutonomyOnBoot(): void {
     // "active" would otherwise auto-resume the moment the multi-account scheduler iterates it.
     // A user with no connected accounts still has a base policy (accountId undefined), so reconcile
     // that too (preserves the original single-account interlock behavior).
-    const accountIds: Array<string | undefined> = listConnectedAccounts(userId).map((a) => a.id);
+    const accounts = listConnectedAccounts(userId);
+    const accountIds: Array<string | undefined> = accounts.map((a) => a.id);
     if (accountIds.length === 0) accountIds.push(undefined);
     for (const accountId of accountIds) {
       try {
@@ -306,12 +311,54 @@ export function reconcileAutonomyOnBoot(): void {
           setPolicy({ ...policy, systemState: "halted" }, userId, accountId);
           audit("autonomy_halted_on_boot", { from: "active", to: "halted", reason: "autoResumeOnBoot not enabled" }, userId, accountId);
           console.warn(`[scheduler] autonomy was 'active' for ${userId}/${accountId ?? "(base)"} at boot; reverted to 'halted' (enable autoResumeOnBoot in Settings to auto-resume).`);
+          const label = accountId ? (accounts.find((a) => a.id === accountId)?.label ?? accountId) : "(base account)";
+          const labels = haltedByUser.get(userId) ?? [];
+          labels.push(label);
+          haltedByUser.set(userId, labels);
         }
       } catch (err) {
         console.error(`[scheduler] boot autonomy reconcile failed for ${userId}/${accountId ?? "(base)"}:`, err);
       }
     }
   }
+  // Fire-and-forget: notification delivery must never block or fail boot. sendNotification already
+  // catches its own channel errors internally, but this catch is the backstop against a synchronous
+  // throw (e.g. a policy lookup failure) reaching the caller of reconcileAutonomyOnBoot().
+  for (const [userId, accountLabels] of haltedByUser) {
+    notifyAutonomyHaltedOnBoot(userId, accountLabels).catch((err) => {
+      console.error(`[scheduler] boot-halt notification failed for ${userId}:`, err);
+    });
+  }
+}
+
+/** One summary notification per user per boot when reconcileAutonomyOnBoot halted at least one of
+ *  their accounts — so a deploy/restart silently disarming live autonomy doesn't go unnoticed until
+ *  the owner happens to check Settings. Forces the event into that send's enabledEvents so it
+ *  delivers even for accounts whose persisted notification preferences predate this event type. */
+async function notifyAutonomyHaltedOnBoot(userId: string, accountLabels: string[]): Promise<void> {
+  const accountsList = accountLabels.join(", ");
+  const activeAccountId = getActiveConnectedAccount(userId)?.id;
+  const policy = getPolicy(userId, activeAccountId);
+  const forcedPolicy: TradingPolicy = {
+    ...policy,
+    notificationSettings: {
+      ...policy.notificationSettings,
+      enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "autonomy_halted_on_boot" as const]))
+    }
+  };
+  const title =
+    accountLabels.length === 1
+      ? `Autonomy halted on boot: ${accountsList}`
+      : `Autonomy halted on boot for ${accountLabels.length} accounts`;
+  const body =
+    `Autonomy was reverted from 'active' to 'halted' because the app restarted (deploy or crash restart).\n` +
+    `Affected account(s): ${accountsList}.\n` +
+    `Re-arm autonomy in Settings when ready. To skip this halt on future restarts, enable ` +
+    `"auto-resume on boot" for this user in Settings, or set AUTONOMY_RESUME_ON_BOOT=1.`;
+  await sendNotification(
+    { type: "autonomy_halted_on_boot", title, payload: { accountLabels } },
+    { userId, policy: forcedPolicy, directBody: body }
+  );
 }
 
 export function getSchedulerState(userId: string = "local", connectedAccountId?: string): {

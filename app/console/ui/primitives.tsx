@@ -14,14 +14,34 @@ export function Card({
   action,
   children,
   className,
-  padded = true
+  padded = true,
+  collapsible = false,
+  defaultOpen = true
 }: {
   title?: ReactNode;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
   padded?: boolean;
+  /** Render the card as a collapsible disclosure (native <details>) with the title as the
+   *  summary and a chevron. Requires a title. Off by default so existing cards are unchanged. */
+  collapsible?: boolean;
+  /** Initial open state when collapsible. Defaults to open so nothing is hidden on first load. */
+  defaultOpen?: boolean;
 }) {
+  if (collapsible && title) {
+    return (
+      <details className={cx("con-card con-disclosure", className)} open={defaultOpen}>
+        <summary className="px-4 py-3">
+          <span className="con-card-title">{title}</span>
+          {action && (
+            <span className="ml-auto" onClick={(e) => e.preventDefault()}>{action}</span>
+          )}
+        </summary>
+        <div className={padded ? "px-4 pb-4 pt-1" : undefined}>{children}</div>
+      </details>
+    );
+  }
   return (
     <section className={cx("con-card", className)}>
       {(title || action) && (
