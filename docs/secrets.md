@@ -20,7 +20,9 @@ loop and starts the same final wrapper after each injection. Every path sets
 `SECRETS_SOURCE=infisical` before Next boots.
 
 Exports use the CLI's JSON format rather than reparsing dotenv text, preserving multiline values,
-quotes, backslashes, and whitespace exactly. Invalid JSON shapes, environment entries, or NUL bytes
+quotes, backslashes, and whitespace exactly. Pinned Infisical CLI v0.43.98 emits a JSON array of
+secret records; the runner copies only each record's validated string `key` and `value` and ignores
+metadata. Non-array shapes, malformed or duplicate entries, invalid environment keys, and NUL bytes
 fail with raw CLI output suppressed.
 
 **Auth (per project):** the runner authenticates the machine identity with its **Client ID + Client
