@@ -2273,7 +2273,7 @@ export function parseInstitutionOwnershipPct(
 export function isTransientError(error: unknown): boolean {
   if (!error) return false;
   const message = error instanceof Error ? error.message : String(error);
-  if (/\b429\b|rate limit|too many requests/i.test(message)) return true;
+  if (/\b429\b|rate limit|too many requests|quota|reservation|denied/i.test(message)) return true;
   if (/\btimeout\b|abort|network|fetch|conn|socket|eai_again|dns|504|502|503/i.test(message)) return true;
   return false;
 }

@@ -10,6 +10,12 @@ pending entitlement and rights; no provider/corpus/Infisical activation was perf
 
 Rollouts: `docs/rollouts/2026-07-15-tab-title-socratic-trade.md` and the Round-28 FMP
 deployment receipt in `docs/EFFORT-LOG.md`.
+## 2026-07-15 - Consolidated improvements and Codex PR #1611 audit land (Antigravity)
+
+All outstanding feature branches, PRs, and autofixes (FMP stable APIs, PR #1611 transcript hardening, PR #1610 browser tab title removal, PR #1541 strategy UI/red-team fixes, and PR #1543 SEC ingest validation) have been reconciled onto a single clean baseline branch `agent/ag-reconciled-improvements` in `/Users/jay/apps/trading-antigravity`.
+All 6 Codex P2 transcript hardening items are successfully addressed and verified.
+Type checks (`npx tsc`), linting (`npm run lint`), FMP integration probes (`scripts/test-fmp-integration.ts`), and the target test suites all pass cleanly under Node 24.
+PR landing and auto-deploy to production remains.
 
 ## 2026-07-15 - Branch integration labeling and PR #1586 landing gate (CODEX)
 

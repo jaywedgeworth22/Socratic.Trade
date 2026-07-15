@@ -340,6 +340,14 @@ function FallbackModelSelect({
         placeholder="e.g. gpt-4o, claude-3-5-sonnet-20240620"
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setOpen(true)}
+        onBlur={() => {
+          // Defer commit to let any in-flight checkbox onChange events settle
+          // (e.g. toggling a model via keyboard while focus moves away).
+          setTimeout(() => {
+            onCommitRef.current();
+            setOpen(false);
+          }, 0);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             setOpen(false);
@@ -592,7 +600,7 @@ function AccountScopedStrategyPage() {
     const array = localFallbackModels.split(",").map(s => s.trim()).filter(Boolean);
     const prevArray = policy.llmFallbackModels || [];
     if (array.join(",") === prevArray.join(",")) return;
-    autoSaveFallback.save(() => savePolicy({ llmFallbackModels: array }).then(() => refresh()), {
+    autoSaveFallback.save(() => savePolicy({ llmFallbackModels: array }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalFallbackModels(prevArray.join(", ")),
       errorTitle: "Fallback models not saved"
     });
@@ -603,7 +611,7 @@ function AccountScopedStrategyPage() {
     const array = localRedTeamFallbackModels.split(",").map(s => s.trim()).filter(Boolean);
     const prevArray = policy.redTeamFallbackModels || [];
     if (array.join(",") === prevArray.join(",")) return;
-    autoSaveRedTeamFallback.save(() => savePolicy({ redTeamFallbackModels: array }).then(() => refresh()), {
+    autoSaveRedTeamFallback.save(() => savePolicy({ redTeamFallbackModels: array }, policy.connectedAccountId).then(() => refresh()), {
       onError: () => setLocalRedTeamFallbackModels(prevArray.join(", ")),
       errorTitle: "Red Team fallback models not saved"
     });

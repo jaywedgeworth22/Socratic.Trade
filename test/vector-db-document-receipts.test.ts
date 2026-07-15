@@ -491,8 +491,9 @@ describe("storeDocument receipt transaction", () => {
     mocks.upsert.mockClear();
     process.env.RAG_INGEST_BUDGET_ENABLED = "off";
     process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED = "on";
-    // One managed record is ~6 estimated WUs with current metadata; two exceed this fuse.
-    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "8";
+    // One managed record is ~6 estimated WUs with current metadata; doubled to ~12 for managed commits.
+    // Two exceed a fuse of 15.
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "15";
 
     const document = {
       text: `${nonce}-a ${nonce}-b ${nonce}-c ${nonce}-d ${nonce}-e ${nonce}-f ${nonce}-g ${nonce}-h`,
