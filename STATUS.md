@@ -99,16 +99,20 @@ landing gate passed TypeScript, 380 files / 4,375 tests, and the production buil
 #1618. `main` then advanced through PR #1616 to `d3efc9a6`; that overlapping FMP lane is now reconciled,
 scoped lint/TypeScript plus 5 files / 163 tests pass, and production health serves exact `d3efc9a6`.
 The final post-reconciliation landing gate then passed TypeScript, 381 files / 4,377 tests, and the
-production build with 32 static pages; refreshed head `8949ebd8` is pushed to ready PR #1618. Hosted
-checks, protected merge, and exact production verification remain.
+production build with 32 static pages; refreshed head `8949ebd8` was pushed to ready PR #1618.
 
 Hosted Codex review on the original PR head found three P2s, all now fixed locally: the interactive
 scan has a hard 20-second JSON deadline and propagates aborts into Nasdaq/BlackRock discovery; its
 single-flight key includes weights, universe floor, dynamic universes, and normalized position inputs;
 and a hung rich-quote promise is evicted after a 30-second lease. Scoped lint and TypeScript pass;
 the five-file review regression set passes 26/26. Final exact-tree `scripts/land.sh` then passed
-TypeScript, 381 files / 4,381 tests, and production build/32 static pages; code head `3df82396` is
-pushed. Review-thread resolution, refreshed hosted checks, protected merge, and production verification remain.
+TypeScript, 381 files / 4,381 tests, and production build/32 static pages; code head `3df82396` was
+pushed. All review threads were resolved and hosted gitleaks, classify, Playwright smoke,
+`verify-hosted`, and required `verify` passed. PR #1618 squash-merged as
+`28eab7cb08abcefaa718b74889e8f29b0105941f`. Coolify deployment
+`a140o5e4sh3vh7ylqzzwu1qr` finished on that exact SHA. Production `/api/health` reports `ok:true`,
+DB `ok`, a current scheduler lease/tick, FMP and Congress healthy, and Litestream `replicating`
+with a valid one-second-old sync and no degraded reasons.
 
 Rollout: `docs/rollouts/2026-07-15-fmp-market-data-reliability.md`.
 
