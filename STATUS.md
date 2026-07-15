@@ -1,5 +1,16 @@
 # Current Status
 
+## 2026-07-15 — Pinecone fetch URL-length fix (CLAUDE)
+
+Production RAG error `inventory fetch: unexpected error … /vectors/fetch?ids=occ%3Av3%3A…`.
+`index.fetch({ ids })` is a GET with all ids in the query string; batch size defaulted to 100, fine
+for short default-namespace ids but ~18 KB URLs for the ~150-char managed `occ:v3:` ids (which only
+started existing after today's ledger-authority fix `951fe45c` let the authority mint). Added
+`fetchIdChunks` that batches fetch ids by encoded-URL-length budget (3.5 KB) as well as count, and
+switched all four `index.fetch` sites to it (upsert/delete unaffected — POST body). tsc clean, new
+5-test regression suite + 52 adjacent vector tests green. Branch `claude/pinecone-fetch-url-budget`.
+Rollout: `docs/rollouts/2026-07-15-pinecone-fetch-url-budget.md`.
+
 ## 2026-07-15 — Eval-script OpenAI model defaults bumped off retired gpt-4o-mini (CLAUDE)
 
 Owner-directed cleanup after an OpenAI rate-limit/cost review. Two eval-only dev scripts
