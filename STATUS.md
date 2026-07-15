@@ -56,6 +56,13 @@ landing, hosted verification, squash merge, and exact production verification ar
 next. No push, PR, merge, deploy, provider, broker, secret, or corpus mutation has
 occurred from this lane yet.
 
+**[codex-autofix] 2026-07-15:**
+- P1 — Codex review flagged that `github:` protocol in `package.json` resolves to
+  `git+ssh://` in the lockfile, which requires SSH keys not available in CI/Coolify.
+  Changed to `git+https://` spec and updated lockfile, then regenerated via `npm install`.
+  Verify trio: lint 0 errors, tsc clean, 4172 tests pass, build clean. Thread resolved,
+  auto-merge re-enabled.
+
 Rollout: `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 
 ## 2026-07-14 — Final hosted-review remediation (PR #1587)

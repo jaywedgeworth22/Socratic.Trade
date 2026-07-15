@@ -60,10 +60,34 @@ Completed under Node 24:
   The emitted middleware-deprecation, generated-CSS, webpack-cache, and Sentry
   Edge-runtime warnings pre-exist this package-metadata-only change.
 
+## Codex review autofix (2026-07-15)
+
+### Summary
+
+Codex review (P1) flagged that the `github:` protocol spec in `package.json`
+resolves to `git+ssh://git@github.com/...` in the lockfile, which requires SSH
+keys for CI/Coolify builds. Changed to explicit `git+https://` spec and
+updated the lockfile `resolved` field accordingly.
+
+### Files
+
+- `package.json` — dependency spec and `allowScripts` key changed to
+  `git+https://github.com/jaywedgeworth22/congress-trading-shared.git#...`
+  (resolves as HTTPS instead of SSH in CI environments)
+- `package-lock.json` — `resolved` field updated to `git+https://` URL
+
+### Verification
+
+- `npm run lint`: exit 0 with 0 errors and 459 inherited warnings.
+- `npx tsc --noEmit`: clean.
+- `npm test`: 370 files / 4,172 tests passed in 396.05 seconds.
+- `npm run build`: green with the real TypeScript phase and all 32 static pages.
+
+### Threads resolved
+
+- PRRT_kwDOS7mOVM6Q8jTN (chatgpt-codex-connector, P1 — Use HTTPS git URL for shared dependency)
+
 ## Follow-ups
 
-- Commit the green branch with the repository noreply identity.
-- Land through `scripts/land.sh`, require protected hosted verification and squash
-  merge, then confirm the automatic production rollout serves the exact merge SHA.
 - Confirm production health keeps the DB, scheduler lease, Litestream replication,
-  usage-monitor dependency, and Congress.Trade dependency green.
+  usage-monitor dependency, and Congress.Trade dependency green after merge.
