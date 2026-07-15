@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-11 — Mistral-benchmark session close-out + gpt-5.6 blocked finding (MONET, branch `monet/session-closeout-benchmark-gitignore`)
+Housekeeping close-out, no product code. (1) Board state correction: the "Mistral benchmark data in the
+model-picker UI" row was left at IN PROGRESS though PR #1361 merged + auto-deployed — flipped to
+✅ DEPLOYED (both boards). All other session items (#1268 vitest leak, #1279 capability-map, #1329 keyed
+re-benchmark + reasoning-tier fixes, #1345 rotation-pool re-add) were already correctly marked and are
+merged/deployed. (2) Added `/llm-benchmark-*.{json,md}` to `.gitignore` — `scripts/benchmark-llm-models.ts`
+defaults its `--out` to the repo root, which had left throwaway dry-run artifacts untracked; keep-worthy
+results under `docs/benchmarks/` (date-prefixed) are unaffected. (3) Recorded blocker: **gpt-5.6-sol/terra/luna
+cannot be benchmarked** — all 18 calls returned HTTP 403 `model_not_found` on the prod OpenAI key (newest
+accessible gpt-5 is gpt-5.5/5.5-pro; no gpt-5.6 exists for this account). Not a code bug — an access/existence
+issue; awaiting owner direction. Details: `docs/rollouts/2026-07-11-session-closeout-gpt56-blocked.md`.
+
 ## 2026-07-15 — Primary-account Usage Monitor credential bridge writer (CODEX)
 
 Branch `codex/st-primary-bridge-writer` adds the default-off Socratic writer

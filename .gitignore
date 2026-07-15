@@ -40,6 +40,13 @@ did.bin
 /test-ui.cjs
 /test-ui.js
 /SELECT value FROM store WHERE key = *
+# scripts/benchmark-llm-models.ts defaults its --out to ./llm-benchmark-<ts>.{json,md} in
+# the repo root when no --out is given — those are throwaway run artifacts (keep-worthy
+# results are committed under docs/benchmarks/ with date-prefixed names, which this does
+# NOT match). Ignore them so a benchmark run from the repo root can't clutter git status
+# or get accidentally committed via `git add -A`.
+/llm-benchmark-*.json
+/llm-benchmark-*.md
 
 # macOS / iCloud Drive conflict copies — this repo lives under ~/Documents, which
 # is iCloud-synced; sync conflicts spawn duplicate files named "<name> 2.<ext>"
