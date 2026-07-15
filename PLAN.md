@@ -121,8 +121,9 @@
 > Local browser QA is green. The first landing gate passed 4,375 tests/build and opened ready PR #1618.
 > `main` advanced during that gate through PR #1616's broader FMP adapters; `d3efc9a6` is now reconciled,
 > the shared adapter path has header auth plus durable endpoint accounting, and scoped lint/TypeScript
-> plus 5 files / 163 overlap tests pass. Repeat the single post-reconciliation landing gate, require
-> hosted checks, then verify the exact auto-deployed release.
+> plus 5 files / 163 overlap tests pass. The final land gate passed 381 files / 4,377 tests and build;
+> refreshed head `8949ebd8` is pushed to ready PR #1618. Require hosted checks, protected merge, then
+> verify the exact auto-deployed release.
 
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
 > initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged

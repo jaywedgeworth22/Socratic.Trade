@@ -98,8 +98,9 @@ reuse, and a clearly stale last-strategy fallback when Nasdaq is unavailable. Th
 landing gate passed TypeScript, 380 files / 4,375 tests, and the production build, opening ready PR
 #1618. `main` then advanced through PR #1616 to `d3efc9a6`; that overlapping FMP lane is now reconciled,
 scoped lint/TypeScript plus 5 files / 163 tests pass, and production health serves exact `d3efc9a6`.
-The final post-reconciliation landing gate/push, hosted checks, protected merge, and exact production
-verification remain.
+The final post-reconciliation landing gate then passed TypeScript, 381 files / 4,377 tests, and the
+production build with 32 static pages; refreshed head `8949ebd8` is pushed to ready PR #1618. Hosted
+checks, protected merge, and exact production verification remain.
 
 Rollout: `docs/rollouts/2026-07-15-fmp-market-data-reliability.md`.
 

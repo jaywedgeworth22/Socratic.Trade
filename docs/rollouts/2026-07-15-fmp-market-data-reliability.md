@@ -134,8 +134,10 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
   FMP accepts header authentication (HTTP 200; no key emitted). Post-merge
   scoped lint and TypeScript pass; 5 overlap files / 163 tests pass.
 - Production `/api/health` serves exact `d3efc9a6` with DB healthy, a current
-  scheduler lease, FMP healthy, and Litestream replicating. The final
-  post-reconciliation landing gate remains before updating PR #1618.
+  scheduler lease, FMP healthy, and Litestream replicating.
+- Final post-reconciliation `scripts/land.sh`: TypeScript passed; 381 files /
+  4,377 tests passed; production build completed with 32 static pages; refreshed
+  head `8949ebd8` pushed to ready PR #1618.
 
 ## Follow-ups
 
