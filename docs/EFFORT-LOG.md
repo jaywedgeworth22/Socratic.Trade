@@ -2787,18 +2787,25 @@ As of 2026-07-08 (assignment-rule update).
   branch `claude/per-position-stop-plans`, stacked on PR #1331) — COMPLETED (merged to `main` via
   PR #1371, 2026-07-11T07:39:12Z; deployed to production via auto-deploy-on-merge).** Landed after
   7 rounds of Codex review + a merge-conflict reconciliation against a concurrent `strategy.ts`
-  split refactor (see `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`). One thread
-  deliberately left open on the merged PR: whether an explicit `none` stopPlan on a SHORT should
-  also bypass the pre-existing mandatory `shortStopLossPct` gate (a distinct short-specific safety
-  invariant, not the general "none is never blocked" rule) — awaiting owner's call, not a bug.
+  split refactor (see `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`).
   Round 8 (2026-07-15, `claude/stop-plans-round8-followups`): 2 more genuine Codex findings against
   the merged code fixed (missing stop-plan commit in `reconcilePlacementError`'s fresh-fill path;
   `synthetic-stops.ts` purge gap for a plan reset to default with no account-wide trailing %); one
   finding confirmed not reproducible against current `main` (already self-correcting via live
-  basis lookups added by later hardening PRs); one deferred (OCO/bracket sibling-leg cancellation
-  — same class as the pre-existing deferred OCO-sibling-identity gap, needs a broker API change).
-  Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`. MOVED from Planned (below) —
-  same title, see that entry for the full original design/requirements record.
+  basis lookups added by later hardening PRs); one deferred (OCO/bracket sibling-leg cancellation).
+  Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`.
+  Follow-up (2026-07-15, `claude/stop-plans-none-short-override`): the one thread deliberately left
+  open on the merged PR — whether an explicit `none` stopPlan on a SHORT should also bypass the
+  pre-existing mandatory `shortStopLossPct` gate — resolved by owner ("if the LLM decides that it
+  does not want a stop plan, that is okay"); gate updated so `none` (like `fixed`/`atr`/`trailing`)
+  satisfies the requirement, `default` deliberately does not. Also researched (not fixed): the
+  OCO/bracket sibling-leg-cancellation gap is confirmed an UNIMPLEMENTED adapter capability, not a
+  broker-API wall — Alpaca's `?nested=true` order fetch returns sibling leg IDs off the
+  already-tracked original entry order ID; `alpaca.ts` just doesn't use it yet. Not applicable to
+  Robinhood (no bracket/OCO support there at all). Rollout:
+  `docs/rollouts/2026-07-15-stop-plans-none-short-override.md`.
+  MOVED from Planned (below) — same title, see that entry for the full original design/requirements
+  record.
   **Implemented:** `TradeProposal.stopPlan` (`StopPlanStyle` = default/fixed/atr/trailing/none) in
   the LLM structured-output schema + `sanitizeProposals` coercion; `position_stop_plans` table +
   CRUD (`getStopPlans`/`recordStopPlan`/`clearStopPlans`, mirroring `take_profit_trims`), persisted
