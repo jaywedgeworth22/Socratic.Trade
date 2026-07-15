@@ -52,7 +52,7 @@ vi.mock("../src/lib/broker", async (importOriginal) => {
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-rag-doc-type-coverage-${randomUUID()}.db`)}`;
-  process.env.ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  process.env.ENCRYPTION_KEY = "0".repeat(64);
 });
 
 afterEach(() => {
