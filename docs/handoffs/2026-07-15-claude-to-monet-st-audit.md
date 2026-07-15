@@ -199,17 +199,34 @@ closed, and the high-risk short/cover notional/PDT/P&L accounting is correct and
   DOES delete `user_api_keys`. The residual (the Infisical bridge copy isn't proactively
   tombstoned on delete) is minor and the writer is default-off. Not a priority.
 
-### 6b. Autonomous-loop & framework robustness
+### 6b. Autonomous-loop & framework robustness (11 findings; P0 spot-verified by CLAUDE)
 
-> **Status: findings being finalized (Opus pass in progress) — this subsection will be appended
-> to this file before the handoff PR merges.** Preliminary scope confirmed by inspection: the loop
-> has a scheduler lease + heartbeat (surfaced on `/api/health`), crash-durable usage replay
-> (#1563), Red Team failover, and per-provider health-aware behavior. The known live-ops pain
-> points to weigh are: mid-run deploy restarts (3 on 2026-07-15), multi-provider LLM quota
-> exhaustion (OpenAI+Gemini out, Anthropic capped on 2026-07-15), and the `pending_reconciliation`
-> fill-state handling (which also blocks live episodic memory — see §4.3). MONET: check this
-> section is populated before acting on the autonomy lane; if the PR merged without it, the
-> findings are in the follow-up agent transcript referenced in §8.
+**Assessment:** the money-path *mechanics* are mature and well-tested — CAS single-leader lease,
+boot autonomy interlock, crashed-run sweep, per-account run locks + re-entrancy guards,
+broker-truth-first fill reconciliation with idempotency keys, opt-in Green AND Red failover
+chains, durable usage-replay watermark, a real liveness probe. **The concentrated weakness is
+that the loop is bad at making its own silence visible** — it halts on deploy, can stall without
+paging, can starve on LLM quota without a distinct state, and can leave fills/notifications stuck
+without escalation. Closing the observability-of-stalls gaps (6b.1/6b.2/6b.3/6b.7) raises effective
+uptime more than any algorithmic change. None of the fixes remove owner control or add hard blocks.
+
+> These findings came from a single self-skeptical Opus pass (not the adversarial-verify sub-pass
+> the other lanes got). CLAUDE independently spot-verified the P0 against `src/` — confirmed exactly
+> as stated. Treat P1s as high-confidence-but-unverified; MONET should confirm each before landing.
+
+| # | Sev | Finding | Fix (effort) |
+| --- | --- | --- | --- |
+| 6b.1 | **P0** | **Every auto-deploy silently halts autonomy, with no owner notification.** `reconcileAutonomyOnBoot()` (`scheduler.ts:284-315`) reverts every `systemState:"active"` account to `"halted"` on process start unless per-user `autoResumeOnBoot` (default **false**, `db-settings.ts:288-289`) or `AUTONOMY_RESUME_ON_BOOT=1` is set — and it only writes `audit("autonomy_halted_on_boot")`, **no `sendNotification`** (CLAUDE-CONFIRMED). Since merge==auto-deploy==new container, **every merge to main silently turns the live bot off** and requires manual re-arm; 3 deploys happened 2026-07-15. The interlock is a legitimate owner safety feature — the defect is its unmanaged interaction with auto-deploy + zero signal that it fired. | Keep the interlock. (a) **Push-notify** on `autonomy_halted_on_boot` ("re-arm in Settings"); (b) distinguish operator deploy-restart (SIGTERM graceful marker → safe resume) from crash-loop (halt); (c) ask owner whether to just enable `autoResumeOnBoot` in prod now that auto-deploy is on. **Highest-leverage uptime fix.** (S/M) |
+| 6b.2 | P1 | **No enabled dead-man's-switch for silent scheduler death.** The only push watchdog (Sentry Crons) is double-gated off (`SENTRY_DSN` + `SENTRY_CRONS_ENABLED=1`, both blank in `.env.example`); `/api/health` computes `schedulerStale`→503 but nothing polls it post-PM2-retirement. A wedged scheduler either goes unnoticed OR gets Coolify-restarted into a halted state (feeds 6b.1). | Enable Sentry Crons in prod (code exists, safe), OR add an external probe (CF Worker/uptime) paging via the existing PagerDuty MCP when `schedulerAgeSeconds` exceeds threshold. (S/M) |
+| 6b.3 | P1 | **Pending-fill reconciliation never escalates aged-out orders.** `reconcilePendingFills` resolves a fill only if the broker still lists the order; on no match it `continue`s (`strategy-execution.ts:1232-1234`). Robinhood deliberately leaves `ordersListIncludesTerminal` false (`robinhood.ts:182`), so a RH order that executed but aged out of the window is **stuck at `pending_reconciliation` forever** — position/P&L understated, no age-based escalation. (This is also what blocks live episodic memory in §4.3.) Distinct from the #1420 "placing"-proposal fix. | On absent order + `ordersListIncludesTerminal !== true`, fall back to `getEquityPositions` to infer execution (position delta is truth); add age-based escalation (audit + notification) for any fill pending beyond N min. (M) |
+| 6b.4 | P1 | **No provider-health-aware LLM cooldown — quota exhaustion is rediscovered every run.** Green/Red failover chains iterate fallbacks in order every run with no cross-run memory that a provider just 429'd; the circuit breaker is wired to DATA providers only, not LLM calls. On 2026-07-15's multi-provider exhaustion this wasted attempts/latency each run and produced no distinct "all providers exhausted / autonomy data-starved" state. Hard `insufficient_quota` 429s are treated identically to transient ones. | Short-lived per-provider LLM cooldown keyed on 429/quota (reuse `api-circuit-breaker`); distinguish billing 429s (already detected `llm-errors.ts:104`); one throttled "all LLM providers exhausted" alert when all are cooling. (M) |
+| 6b.5 | P2 | **`run_failed` notifications are un-throttled; no consecutive-failure escalation.** Every failed run notifies once per cadence per account (alert fatigue during an outage), and there's no "N consecutive failures / no completed run in M cadences" escalation. (Ties to the notification-noise fixes already in-flight on `claude/todays-app-errors-716a45`.) | Per-(account,type) cooldown for `run_failed` + a separate escalation at K consecutive failures. (S) |
+| 6b.6 | P2 | **Red Team fail-closed is a SPOF for autonomous *openings* during provider outages.** By owner design (R11) a failed/unavailable Red Team routes openings to human approval — correct for a blip, but in a multi-provider outage all autonomous openings halt even if Green succeeded. `redTeamFallbackModels` helps only if configured across INDEPENDENT providers (same-family fallbacks exhaust together; independence is nudged, not enforced). | Keep fail-closed. Surface a Settings warning when Green's + Red's providers share a family; emit one throttled alert when openings are mass-blocked by Red-unavailable. (S) |
+| 6b.7 | P2 | **Heartbeat proves tick-function liveness, not trading liveness.** The heartbeat/abdication only detects DB-write failure; a scheduler that keeps ticking but whose runs never complete (persistent LLM/broker failure) keeps `/api/health` green while producing zero completed runs for hours. No signal derived from "last completed run age" or consecutive failures. | Add a "trading liveness" dimension to `/api/health`/ops snapshot: age of most recent COMPLETED run per active account + consecutive-failed counter, as `degraded` (not 503, to avoid the restart→halt loop). (S/M) |
+| 6b.8 | P2 | **`tick()` has no whole-tick overlap guard.** `setInterval(tick, TICK_MS)` doesn't await tick; a tick exceeding 60s (multi-step LLM runs take 150s+) lets a second concurrent tick start. Critical side effects are guarded (run locks, single-flights), but several fire-and-forget maintenance passes (`checkAllUserPriceAlerts`, `refreshDueWebSources`, `drainMaterialEventQueue`) are not. | Add a `tickInFlight` guard at the top of `tick()` so overlapping ticks coalesce. Cheap insurance. (S) |
+| 6b.9 | P3 | **Notification pushes lack durable replay across a mid-delivery restart.** `notify` has in-process bounded retry only; a deploy-restart mid-delivery drops in-flight pushes (kill-switch, run-failed). The in-app `notification_events` row persists, so it's low urgency, but time-sensitive pushes can be lost silently — unlike the usage ledger's durable outbox. | For high-priority types, record a delivery-outbox row on final failure and replay on next tick (reuse usage-replay pattern). (M) |
+| 6b.10 | P3 | **Single-leader lease TOCTOU window** (documented, `scheduler-lease.ts:6-11`). Mitigated by TTL+steal + in-flight guards; on single-container Coolify prod effectively one process. *(ALREADY_TRACKED.)* | Accept as-is for single-container; revisit only if prod runs >1 replica. (L if ever) |
+| 6b.11 | P3 | **Observability + multi-account isolation verified STRONG** (reported so they're not re-flagged). WHY-a-trade traceability is good locally (proposals persist rationale/regime/thesis/model + Red review; audit events; strategy_runs). Isolation is correct (per-account locks/caps/schedule/reconcile). Two minor notes: successful-run `llmSteps` timeline goes to Langfuse (external), not the local DB, so a fully-offline "replay the inputs the model saw" isn't possible; and `scopeAccount` collapses blank `account_number` to a shared `__unassigned__` bucket (safe today, latent risk if an account row ever lacks a number). | Optional: persist a compact per-run decision trace (served model + step reasons + evidence-pack hash) to the DB so WHY-analysis survives without Langfuse. (M, optional) |
 
 ---
 
@@ -268,9 +285,15 @@ the snapshot-channel dedup, but does NOT account for the provider-dispatch-vs-le
 
 ## 8. Suggested priority order for MONET
 
+**Do-first (P0 — surfaced to owner separately):**
+0. **§6b.1** — auto-deploy silently halts live autonomy with no notification. Every merge to main
+   turns the bot off until manually re-armed, and nothing tells the owner. Add the boot-halt
+   push-notification + decide whether to enable `autoResumeOnBoot` in prod. **CLAUDE-verified.**
+
 **Do-now, high-value, low-effort (mostly S):**
-1. **§4.3** — re-fire `recordClosedLotExperience` on reconciliation flip (live trades finally
-   feed episodic memory). Biggest learning win per line of code.
+1. **§4.3 / §6b.3** — re-fire `recordClosedLotExperience` when a `pending_reconciliation` fill
+   flips to filled (live trades finally feed episodic memory AND aged-out fills stop silently
+   understating position/P&L). Two findings, one reconciliation fix. Biggest learning win per line.
 2. **§3.1 + §3.2** — wire FMP price targets + ROE/ROA/gross-margin into the prompt/scoring
    (already fetched and paid for; pure upside).
 3. **§5.1** — `global-error.tsx` dark-mode fix.
@@ -286,10 +309,15 @@ the snapshot-channel dedup, but does NOT account for the provider-dispatch-vs-le
 10. **§3.3** — QuiverQuant producer (differentiated congress/lobbying/contracts signals) + fix the false STATUS claim.
 11. **§3.5 / §3.6** — economic-calendar awareness + raw-headline sentiment.
 
+**Autonomy uptime/observability (P1 — high leverage for a self-running bot):**
+12. **§6b.2** enable the scheduler dead-man's-switch (Sentry Crons or external probe) ·
+    **§6b.4** provider-health-aware LLM cooldown + "all providers exhausted" state ·
+    **§6b.7** trading-liveness health dimension (last completed run age).
+
 **Owner decisions / larger:**
-12. **§5.4** NAV_V2 resume · **§5.2** admin theme unification · **§4.6** Pinecone memory hygiene ·
-    **§3.8** cross-repo FMP budget split · **§7.3** commit-or-discard the untracked API-usage-monitor
-    Safari-extension scaffold.
+13. **§5.4** NAV_V2 resume · **§5.2** admin theme unification · **§4.6** Pinecone memory hygiene ·
+    **§3.8** cross-repo FMP budget split · **§6b.11** persist offline decision-replay trace ·
+    **§7.3** commit-or-discard the untracked API-usage-monitor Safari-extension scaffold.
 
 **Cleanup (optional):** §1a re-land candidates (`autofix-rag-limits-fix`, `codex-autofix-1476`);
 §1c branch pruning (keep the §1b FLAGGED + §1a candidates).
