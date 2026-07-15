@@ -278,7 +278,7 @@ const poolsByKeySetFingerprint = new Map<string, AlphaVantageKeyPool>();
  *  in a different order, or with defensive duplicates, must resolve to the same registry entry. */
 function fingerprintKeySet(keys: readonly string[]): string {
   const normalized = Array.from(new Set(keys.filter((key): key is string => Boolean(key)))).sort();
-  return crypto.createHash("sha256").update(normalized.join(" ")).digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(normalized.join("\x00")).digest("hex").slice(0, 16);
 }
 
 /**
