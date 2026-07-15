@@ -1807,6 +1807,8 @@ export interface MarketQuoteSummary {
 export interface MarketDataProviderOptions {
   scoringWeights?: ScoringWeights;
   ttlMs?: number;
+  /** Cancels the current scan's outbound discovery reads when its caller deadline expires. */
+  signal?: AbortSignal;
   userId?: string;
   dynamicUniverses?: IndexUniverse[];
   candidateLimit?: number;

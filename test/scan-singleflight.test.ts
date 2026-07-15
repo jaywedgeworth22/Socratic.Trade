@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_SCORING_WEIGHTS } from "../src/lib/defaults";
 import {
+  interactiveScanKey,
   marketScanQuotesFromAudit,
   resetScanSingleFlightForTests,
-  runScanSingleFlight
+  runScanSingleFlight,
+  withScanDeadline
 } from "../src/lib/scan-singleflight";
 import type { MarketScan } from "../src/lib/types";
 
@@ -24,7 +27,10 @@ function scan(generatedAt: string): MarketScan {
   };
 }
 
-afterEach(() => resetScanSingleFlightForTests());
+afterEach(() => {
+  resetScanSingleFlightForTests();
+  vi.useRealTimers();
+});
 
 describe("interactive scan single-flight", () => {
   it("shares concurrent work for the same scan key and clears after settlement", async () => {
@@ -66,6 +72,46 @@ describe("interactive scan single-flight", () => {
       runScanSingleFlight("user-b", factory)
     ]);
     expect(calls).toBe(2);
+  });
+
+  it("keys every input that can change ranking, filtering, or forced positions", () => {
+    const base = {
+      userId: "user-a",
+      accountNumber: "acct-a",
+      symbols: ["MSFT", "AAPL"],
+      candidateLimit: 30,
+      outlierReserve: 8,
+      dynamicUniverses: ["sp100" as const],
+      latestRunAuditId: "audit-a",
+      scoringWeights: DEFAULT_SCORING_WEIGHTS,
+      universeFloor: { minPrice: 2 },
+      positions: [{ symbol: "AAPL", quantity: 1, averageCost: 100, marketValue: 200 }]
+    };
+    const key = interactiveScanKey(base);
+
+    expect(interactiveScanKey({
+      ...base,
+      scoringWeights: { ...DEFAULT_SCORING_WEIGHTS, momentum: 9 }
+    })).not.toBe(key);
+    expect(interactiveScanKey({ ...base, universeFloor: { minPrice: 5 } })).not.toBe(key);
+    expect(interactiveScanKey({
+      ...base,
+      positions: [{ ...base.positions[0], marketValue: 500 }]
+    })).not.toBe(key);
+  });
+
+  it("aborts work when the interactive scan deadline expires", async () => {
+    vi.useFakeTimers();
+    let observedSignal: AbortSignal | undefined;
+    const pending = withScanDeadline(100, (signal) => {
+      observedSignal = signal;
+      return new Promise<boolean>(() => undefined);
+    });
+    const rejection = expect(pending).rejects.toThrow("Interactive market scan deadline exceeded.");
+
+    await vi.advanceTimersByTimeAsync(100);
+    await rejection;
+    expect(observedSignal?.aborted).toBe(true);
   });
 
   it("accepts only a full persisted strategy quote map", () => {

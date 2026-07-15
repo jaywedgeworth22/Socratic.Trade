@@ -1,4 +1,11 @@
-import type { MarketQuoteSummary, MarketScan } from "./types";
+import type {
+  EquityPosition,
+  IndexUniverse,
+  MarketQuoteSummary,
+  MarketScan,
+  ScoringWeights,
+  UniverseFloor
+} from "./types";
 
 const MAX_INTERACTIVE_SEED_AGE_MS = 24 * 60 * 60_000;
 
@@ -7,6 +14,67 @@ const MAX_INTERACTIVE_SEED_AGE_MS = 24 * 60 * 60_000;
  * must share one upstream scan instead of multiplying provider work.
  */
 const activeScans = new Map<string, Promise<MarketScan>>();
+
+export function interactiveScanKey(input: {
+  userId: string;
+  accountNumber?: string;
+  symbols: string[];
+  candidateLimit?: number;
+  outlierReserve?: number;
+  dynamicUniverses: IndexUniverse[];
+  latestRunAuditId?: string;
+  scoringWeights: ScoringWeights;
+  universeFloor?: UniverseFloor;
+  positions: EquityPosition[];
+}): string {
+  const positions = input.positions
+    .map((position) => ({
+      symbol: position.symbol.trim().toUpperCase(),
+      marketValue: position.marketValue,
+      sector: position.sector ?? "",
+      industry: position.industry ?? ""
+    }))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
+  return JSON.stringify({
+    userId: input.userId,
+    accountNumber: input.accountNumber ?? "",
+    symbols: [...input.symbols].sort(),
+    candidateLimit: input.candidateLimit,
+    outlierReserve: input.outlierReserve,
+    dynamicUniverses: [...input.dynamicUniverses].sort(),
+    latestRunAuditId: input.latestRunAuditId ?? "",
+    scoringWeights: input.scoringWeights,
+    universeFloor: input.universeFloor,
+    positions
+  });
+}
+
+export async function withScanDeadline<T>(
+  budgetMs: number,
+  factory: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController();
+  return await new Promise<T>((resolve, reject) => {
+    const deadlineError = new Error("Interactive market scan deadline exceeded.");
+    const timeout = setTimeout(() => {
+      controller.abort(deadlineError);
+      reject(deadlineError);
+    }, Math.max(1, budgetMs));
+    timeout.unref?.();
+    void Promise.resolve()
+      .then(() => factory(controller.signal))
+      .then(
+        (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      );
+  });
+}
 
 export function runScanSingleFlight(
   key: string,

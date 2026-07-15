@@ -8,9 +8,15 @@ import { fetchRecentGroupedBarsRest } from "@/lib/market-signals/massive";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import type { EquityPosition } from "@/lib/types";
-import { marketScanQuotesFromAudit, runScanSingleFlight } from "@/lib/scan-singleflight";
+import {
+  interactiveScanKey,
+  marketScanQuotesFromAudit,
+  runScanSingleFlight,
+  withScanDeadline
+} from "@/lib/scan-singleflight";
 
 export const dynamic = "force-dynamic";
+const INTERACTIVE_SCAN_BUDGET_MS = 20_000;
 
 // Fresh, standalone market scan for the Market Scan tab. It returns current screener,
 // broker, and persisted web-signal data instead of waiting for the next strategy run.
@@ -44,23 +50,30 @@ export async function GET(request: Request) {
     // fully enriched strategy scan supplies slow facts locally, while this path avoids
     // enqueueing hundreds of paced fundamentals calls. Coalesce identical page-mount/
     // manual-refresh requests so retries cannot multiply work.
-    const scanKey = JSON.stringify({
+    const dynamicUniverses = dynamicIndexUniversesForPolicy(policy);
+    const scanKey = interactiveScanKey({
       userId,
-      accountNumber: policy.accountNumber ?? "",
+      accountNumber: policy.accountNumber,
       symbols,
       candidateLimit: policy.marketScanCandidateLimit,
       outlierReserve: policy.marketScanOutlierReserve,
-      dynamicUniverses: dynamicIndexUniversesForPolicy(policy),
-      latestRunAuditId: latestRunAudit?.id ?? ""
+      dynamicUniverses,
+      latestRunAuditId: latestRunAudit?.id,
+      scoringWeights: policy.scoringWeights,
+      universeFloor: policy.universeFloor,
+      positions
     });
     const base = await runScanSingleFlight(scanKey, () =>
-      scanMarket(symbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
-        candidateLimit: policy.marketScanCandidateLimit,
-        outlierReserve: policy.marketScanOutlierReserve,
-        universeFloor: policy.universeFloor,
-        enrichmentMode: "skip",
-        seedEnrichment
-      })
+      withScanDeadline(INTERACTIVE_SCAN_BUDGET_MS, (signal) =>
+        scanMarket(symbols, positions, policy.scoringWeights, userId, dynamicUniverses, {
+          candidateLimit: policy.marketScanCandidateLimit,
+          outlierReserve: policy.marketScanOutlierReserve,
+          universeFloor: policy.universeFloor,
+          enrichmentMode: "skip",
+          seedEnrichment,
+          signal
+        })
+      )
     );
     // Merge live broker bid/ask quotes for the top candidates, matching the strategy
     // run path (mergeQuoteData) so the table's Bid/Ask and freshest prices are populated.

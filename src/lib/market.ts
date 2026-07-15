@@ -227,6 +227,7 @@ export async function scanMarket(
     universeFloor?: UniverseFloor;
     congressMultiplier?: number;
     enrichmentMode?: "full" | "skip";
+    signal?: AbortSignal;
     /** Slow-changing fields from the last completed strategy scan. Interactive
      * refreshes can reuse these locally while replacing price-family fields. */
     seedEnrichment?: Record<string, MarketQuoteSummary>;
@@ -235,6 +236,7 @@ export async function scanMarket(
   const scan = await nasdaqDelayedProvider.scan(symbols, positions, {
     scoringWeights,
     ttlMs: marketCacheTtlMs(),
+    signal: scanOptions.signal,
     userId,
     dynamicUniverses,
     candidateLimit: scanOptions.candidateLimit,
@@ -272,7 +274,11 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     const universeSources = new Set<string>();
 
     try {
-      const result = await fetchNasdaqScreener(options?.ttlMs ?? marketCacheTtlMs());
+      const result = await fetchNasdaqScreener(
+        options?.ttlMs ?? marketCacheTtlMs(),
+        undefined,
+        options?.signal
+      );
       cached = result.cached;
       const allQuotes = result.rows.flatMap((row) => toMarketQuote(row, positions, this.name, result.asOf));
       quotes = allQuotes.filter((quote) => allowed.has(quote.symbol));
@@ -282,7 +288,8 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
         allQuotes,
         positions,
         providerName: this.name,
-        ttlMs: options?.ttlMs ?? marketCacheTtlMs()
+        ttlMs: options?.ttlMs ?? marketCacheTtlMs(),
+        signal: options?.signal
       });
       quotes = uniqueQuotes([...quotes, ...dynamicResult.quotes]);
       dynamicResult.warnings.forEach((warning) => warnings.push(warning));
@@ -851,7 +858,11 @@ export function clearMarketCache(): void {
   clearFundHoldingsCache();
 }
 
-async function fetchNasdaqScreener(ttlMs: number, exchange?: NasdaqExchange): Promise<{ rows: RawNasdaqRow[]; asOf?: string; cached: boolean }> {
+async function fetchNasdaqScreener(
+  ttlMs: number,
+  exchange?: NasdaqExchange,
+  signal?: AbortSignal
+): Promise<{ rows: RawNasdaqRow[]; asOf?: string; cached: boolean }> {
   const now = Date.now();
   const cacheKey = exchange ?? "all";
   const cached = screenerCache.get(cacheKey);
@@ -860,10 +871,12 @@ async function fetchNasdaqScreener(ttlMs: number, exchange?: NasdaqExchange): Pr
   }
 
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeout = setTimeout(() => controller.abort(), 8_000);
-  let response: Response;
   try {
-    response = await fetch(nasdaqScreenerUrl(exchange), {
+    const response = await fetch(nasdaqScreenerUrl(exchange), {
       cache: "no-store",
       signal: controller.signal,
       headers: {
@@ -871,16 +884,17 @@ async function fetchNasdaqScreener(ttlMs: number, exchange?: NasdaqExchange): Pr
         "user-agent": "Mozilla/5.0"
       }
     });
+    if (!response.ok) throw new Error(`Market data request failed with ${response.status}.`);
+
+    const payload = await response.json();
+    const rows = Array.isArray(payload?.data?.table?.rows) ? (payload.data.table.rows as RawNasdaqRow[]) : [];
+    const asOf = typeof payload?.data?.asof === "string" ? payload.data.asof : undefined;
+    screenerCache.set(cacheKey, { rows, asOf, expiresAt: now + ttlMs });
+    return { rows, asOf, cached: false };
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
-  if (!response.ok) throw new Error(`Market data request failed with ${response.status}.`);
-
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data?.table?.rows) ? (payload.data.table.rows as RawNasdaqRow[]) : [];
-  const asOf = typeof payload?.data?.asof === "string" ? payload.data.asof : undefined;
-  screenerCache.set(cacheKey, { rows, asOf, expiresAt: now + ttlMs });
-  return { rows, asOf, cached: false };
 }
 
 function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider: string, asOf?: string): MarketQuote[] {
@@ -923,6 +937,7 @@ async function loadDynamicUniverseQuotes(input: {
   positions: EquityPosition[];
   providerName: string;
   ttlMs: number;
+  signal?: AbortSignal;
 }): Promise<{ quotes: MarketQuote[]; warnings: string[]; sources: string[]; cached: boolean }> {
   const quotes: MarketQuote[] = [];
   const warnings: string[] = [];
@@ -941,7 +956,7 @@ async function loadDynamicUniverseQuotes(input: {
       const exchange = config.exchange;
       if (!exchange) continue;
       try {
-        const result = await fetchNasdaqScreener(input.ttlMs, exchange);
+        const result = await fetchNasdaqScreener(input.ttlMs, exchange, input.signal);
         cached = cached || result.cached;
         quotes.push(...result.rows.flatMap((row) => toMarketQuote(row, input.positions, input.providerName, result.asOf)));
         sources.push(`${universe}-universe`);
@@ -952,7 +967,11 @@ async function loadDynamicUniverseQuotes(input: {
     }
     if (isBlackRockHoldingUniverse(universe)) {
       try {
-        const holdings = await fetchBlackRockHoldingSymbols(universe, Math.max(input.ttlMs, 6 * 60 * 60_000));
+        const holdings = await fetchBlackRockHoldingSymbols(
+          universe,
+          Math.max(input.ttlMs, 6 * 60 * 60_000),
+          input.signal
+        );
         cached = cached || holdings.cached;
         const holdingSymbols = new Set(holdings.symbols.map(normalizeMarketDataSymbol));
         quotes.push(...input.allQuotes.filter((quote) => holdingSymbols.has(quote.symbol)));

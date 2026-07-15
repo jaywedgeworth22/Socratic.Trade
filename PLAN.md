@@ -124,6 +124,10 @@
 > plus 5 files / 163 overlap tests pass. The final land gate passed 381 files / 4,377 tests and build;
 > refreshed head `8949ebd8` is pushed to ready PR #1618. Require hosted checks, protected merge, then
 > verify the exact auto-deployed release.
+> Hosted review then found three P2s: unbounded BlackRock discovery, incomplete scan single-flight
+> identity, and immortal hung quote entries. Abort propagation plus a hard scan deadline, complete
+> scan keys, and a 30-second quote lease are implemented; scoped lint/TypeScript and 26 review tests
+> pass. Repeat the exact-tree land gate, resolve the threads, then continue hosted merge verification.
 
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
 > initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged

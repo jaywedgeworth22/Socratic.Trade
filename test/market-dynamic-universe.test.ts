@@ -55,6 +55,43 @@ describe("market scan dynamic universes", () => {
     expect(scan.source).toContain("blackrock-oef-holdings");
     expect(fetchedUrls.some((url) => url.includes("finance/chart/MISSING"))).toBe(false);
   });
+
+  it("propagates the interactive deadline signal into BlackRock holdings discovery", async () => {
+    let started!: () => void;
+    const blackRockStarted = new Promise<void>((resolve) => { started = resolve; });
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("api.nasdaq.com")) {
+        return nasdaqRows([
+          { symbol: "AAPL", name: "Apple Inc.", lastsale: "$297.01", netchange: "2.01", pctchange: "0.681%", marketCap: "4400000000000" }
+        ]);
+      }
+      if (url.includes("blackrock.com")) {
+        requestSignal = init?.signal ?? undefined;
+        started();
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true }
+          );
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const { clearMarketCache, scanMarket } = await import("../src/lib/market");
+    clearMarketCache();
+    const controller = new AbortController();
+    const pending = scanMarket([], [], undefined, undefined, ["sp100"], { signal: controller.signal });
+    await blackRockStarted;
+    controller.abort();
+    const scan = await pending;
+
+    expect(requestSignal?.aborted).toBe(true);
+    expect(scan.warnings.join(" ")).toContain("holdings failed");
+  });
 });
 
 function nasdaqRows(rows: unknown[]): Response {

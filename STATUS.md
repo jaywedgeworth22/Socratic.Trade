@@ -102,6 +102,12 @@ The final post-reconciliation landing gate then passed TypeScript, 381 files / 4
 production build with 32 static pages; refreshed head `8949ebd8` is pushed to ready PR #1618. Hosted
 checks, protected merge, and exact production verification remain.
 
+Hosted Codex review on the original PR head found three P2s, all now fixed locally: the interactive
+scan has a hard 20-second JSON deadline and propagates aborts into Nasdaq/BlackRock discovery; its
+single-flight key includes weights, universe floor, dynamic universes, and normalized position inputs;
+and a hung rich-quote promise is evicted after a 30-second lease. Scoped lint and TypeScript pass;
+the five-file review regression set passes 26/26. Final exact-tree land/hosted checks remain.
+
 Rollout: `docs/rollouts/2026-07-15-fmp-market-data-reliability.md`.
 
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)

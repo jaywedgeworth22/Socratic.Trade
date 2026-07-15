@@ -67,6 +67,7 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
 - `app/console/console.css`
 - `src/lib/data-providers.ts`
 - `src/lib/fmp-common.ts`
+- `src/lib/fund-holdings.ts`
 - `src/lib/market.ts`
 - `src/lib/quote-singleflight.ts`
 - `src/lib/scan-singleflight.ts`
@@ -76,6 +77,7 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
 - `test/console-drilldown.test.ts`
 - `test/data-providers.test.ts`
 - `test/fmp-common.test.ts`
+- `test/market-dynamic-universe.test.ts`
 - `test/market-preselection.test.ts`
 - `test/quote-route.test.ts`
 - `test/scan-singleflight.test.ts`
@@ -138,6 +140,11 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
 - Final post-reconciliation `scripts/land.sh`: TypeScript passed; 381 files /
   4,377 tests passed; production build completed with 32 static pages; refreshed
   head `8949ebd8` pushed to ready PR #1618.
+- Hosted review P2 remediation: added a hard 20-second interactive deadline,
+  propagated aborts through Nasdaq and BlackRock response bodies, included
+  weights/floor/dynamic universes/positions in the scan single-flight key, and
+  evicted hung quote entries after 30 seconds. Scoped lint and TypeScript pass;
+  5 files / 26 review regressions pass. Final exact-tree gate remains.
 
 ## Follow-ups
 

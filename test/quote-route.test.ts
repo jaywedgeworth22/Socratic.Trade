@@ -150,6 +150,23 @@ describe("/api/quote", () => {
     expect(enrich).toHaveBeenCalledTimes(1);
   });
 
+  it("evicts a permanently hung rich cascade after its bounded single-flight lease", async () => {
+    vi.useFakeTimers();
+    const enrich = vi.fn(() => new Promise<Record<string, never>>(() => undefined));
+    vi.mocked(getEnrichmentProvider).mockReturnValue({ name: "slow-test", configured: true, enrich });
+    const { GET } = await import("../app/api/quote/route");
+
+    const first = GET(new Request("http://localhost/api/quote?symbol=LRCX"));
+    await vi.advanceTimersByTimeAsync(6_000);
+    await expect(first).resolves.toMatchObject({ status: 200 });
+
+    await vi.advanceTimersByTimeAsync(24_000);
+    const second = GET(new Request("http://localhost/api/quote?symbol=LRCX"));
+    await vi.advanceTimersByTimeAsync(6_000);
+    await expect(second).resolves.toMatchObject({ status: 200 });
+    expect(enrich).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects an invalid or missing symbol without calling the provider", async () => {
     const enrich = vi.fn();
     vi.mocked(getEnrichmentProvider).mockReturnValue({ name: "test", configured: true, enrich });
