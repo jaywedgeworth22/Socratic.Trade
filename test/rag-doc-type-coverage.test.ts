@@ -216,7 +216,9 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       defaultDedupeSimilarity: () => 0.6,
       formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
       storeContext: async () => {},
-      storeContexts: async () => ({ attempted: 0, indexed: 0 })
+      storeContexts: async () => ({ attempted: 0, indexed: 0 }),
+      getCurrentVectorProviderAuthority: () => "test-provider",
+      managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
@@ -266,7 +268,9 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       defaultDedupeSimilarity: () => 0.6,
       formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
       storeContext: async () => {},
-      storeContexts: async () => ({ attempted: 0, indexed: 0 })
+      storeContexts: async () => ({ attempted: 0, indexed: 0 }),
+      getCurrentVectorProviderAuthority: () => "test-provider",
+      managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
@@ -312,7 +316,9 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       defaultDedupeSimilarity: () => 0.6,
       formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
       storeContext: async () => {},
-      storeContexts: async () => ({ attempted: 0, indexed: 0 })
+      storeContexts: async () => ({ attempted: 0, indexed: 0 }),
+      getCurrentVectorProviderAuthority: () => "test-provider",
+      managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
@@ -347,7 +353,9 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       defaultDedupeSimilarity: () => 0.6,
       formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
       storeContext: async () => {},
-      storeContexts: async () => ({ attempted: 0, indexed: 0 })
+      storeContexts: async () => ({ attempted: 0, indexed: 0 }),
+      getCurrentVectorProviderAuthority: () => "test-provider",
+      managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
@@ -379,7 +387,9 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       defaultDedupeSimilarity: () => 0.6,
       formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
       storeContext: async () => {},
-      storeContexts: async () => ({ attempted: 0, indexed: 0 })
+      storeContexts: async () => ({ attempted: 0, indexed: 0 }),
+      getCurrentVectorProviderAuthority: () => "test-provider",
+      managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
@@ -412,7 +422,9 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       defaultDedupeSimilarity: () => 0.6,
       formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
       storeContext: async () => {},
-      storeContexts: async () => ({ attempted: 0, indexed: 0 })
+      storeContexts: async () => ({ attempted: 0, indexed: 0 }),
+      getCurrentVectorProviderAuthority: () => "test-provider",
+      managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
