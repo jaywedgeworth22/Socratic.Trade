@@ -194,6 +194,36 @@ describe("usage-budget: checkBudgetAndAlert", () => {
     expect(after.length).toBeGreaterThan(before);
     expect(after.some((n) => n.type === "budget_alert")).toBe(true);
   });
+
+  it("suppresses a second alert for the same (user, provider, level) within the cooldown", async () => {
+    const provider = `cooldown-provider-${Date.now()}`;
+    const st = status([{ name: provider, status: "exceeded", spentUsd: 120, monthlyBudgetUsd: 100 }]);
+    await budget.checkBudgetAndAlert("local", DEFAULT_POLICY, { status: st });
+    const afterFirst = listNotificationEvents("local", 200).filter((n) => n.type === "budget_alert").length;
+
+    await budget.checkBudgetAndAlert("local", DEFAULT_POLICY, { status: st });
+    const afterSecond = listNotificationEvents("local", 200).filter((n) => n.type === "budget_alert").length;
+
+    expect(afterSecond).toBe(afterFirst); // the second call was suppressed by the cooldown, no new alert
+  });
+
+  it("the alert cooldown survives a simulated process restart", async () => {
+    const { flushDurableStateNow, resetDurableStateCacheForTests } = await import("../src/lib/durable-state");
+    const provider = `restart-provider-${Date.now()}`;
+    const st = status([{ name: provider, status: "exceeded", spentUsd: 120, monthlyBudgetUsd: 100 }]);
+
+    await budget.checkBudgetAndAlert("local", DEFAULT_POLICY, { status: st });
+    const afterFirst = listNotificationEvents("local", 200).filter((n) => n.type === "budget_alert").length;
+    flushDurableStateNow(); // the cooldown's debounced write lands in SQLite
+
+    // Simulate a restart: forget the in-memory durable-state cache (SQLite rows are untouched).
+    resetDurableStateCacheForTests();
+
+    await budget.checkBudgetAndAlert("local", DEFAULT_POLICY, { status: st });
+    const afterSecond = listNotificationEvents("local", 200).filter((n) => n.type === "budget_alert").length;
+    // A fresh process must still honor the cooldown recorded before the "restart" — no duplicate alert.
+    expect(afterSecond).toBe(afterFirst);
+  });
 });
 
 describe("usage-budget: formatBudgetAdvisory", () => {
