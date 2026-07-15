@@ -37,6 +37,43 @@ list + owner decisions). Remaining handoff backlog (§4.1 retrieval-usefulness j
 branch fates, §3.3 Quiver, §6b.2/4/7 autonomy observability, §5.2/§5.4, §3.8, §7.2/§7.3) is
 tracked in the handoff doc §8 — wave 2 candidates.
 
+## 2026-07-15 — Durable state: in-memory rate-limiters/cooldowns survive a restart (MONET, branch `monet/durable-state-restart-survival`)
+
+Owner directive after auto-deploy went live fleet-wide ("persist all variables/counts... have that be
+the standard... for all things"): a redeploy replaces the running container mid-session, so any
+in-memory guard against a real external cap or a real duplicate-action risk needs to come back with
+its pre-restart state intact. Built ONE shared write-behind SQLite-backed primitive
+(`createDurableMap`, `src/lib/durable-state.ts`; new `durable_state` table via `src/lib/db-durable-state.ts`)
+after a 4-way parallel discovery sweep of 32 candidate in-memory sites app-wide. Persisted:
+`provider-rate-limit.ts`'s `RequestQuota` (already flagged — see the unified-quota rollout),
+`usage-budget.ts`'s alert cooldown (was the one inconsistent bare-Map cooldown vs. every sibling's
+durable pattern), `congress-share.ts`'s per-symbol send throttle. Left alone (confirmed correct,
+not a gap): the pacer, the AV key-pool's harmless rotation pointer, the circuit breaker's thin cache
+in front of a durable table, and every in-flight lock/Set tied to live async work.
+
+**Two supersession collisions found during rebase** (this branch was cherry-picked onto a fresh
+`origin/main` rather than merged — all 6 touched files had also changed upstream, `db.ts` alone 16
+times): `order-replacement.ts`'s double-sell cooldown and `triggers.ts`'s hourly/daily caps were BOTH
+independently rebuilt by another agent with more complete designs (a full DB-backed resumable
+state machine for order-replacement; a durable pending-event queue with claim/retry semantics for
+triggers) while this branch was in flight. Deferred to both; dropped my now-redundant wiring/tests
+for those two files rather than reintroducing a competing mechanism.
+
+**Fixed during the gate:** module-top-level `createDurableMap()` calls (data-provider quota,
+congress-share throttle, usage-budget cooldown) risked a circular-import TDZ crash
+("Cannot access 'host' before initialization") since this module's evaluation could nest inside
+`durable-state.ts`'s own still-in-progress top-level evaluation — converted all three to lazy
+singletons, created on first real call instead of at import time. Also hardened
+`durable-state.ts`'s hydration read with a try/catch (matching the write path's existing best-effort
+philosophy) after finding it crashed a pre-existing test whose `vi.mock("../src/lib/db", ...)` didn't
+provide `getDb` — that test never intended to exercise persistence at all.
+
+Full gate: `npm run lint` 0 errors, `tsc --noEmit` clean, targeted retest of every file the two bugs
+touched all green (151/151); full-suite re-run in progress. Node ABI trap applies here too — this
+was a completely fresh worktree checkout (`node_modules` didn't exist), `npm ci` built for the
+Mac's default node26, rebuilt for node24 to match `.nvmrc`. Rollout:
+`docs/rollouts/2026-07-10-durable-state-restart-survival.md`. Next: full suite confirmation, `npm run
+build`, land via PR.
 ## 2026-07-15 — Today's-errors triage: P1 RAG-outage fix + notification/alert truth-and-noise fixes (CLAUDE)
 
 Owner-directed from an SMS error review. Six fixes on `claude/todays-app-errors-716a45`, all

@@ -1750,6 +1750,24 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
+  (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
+  — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live
+  ("persist all variables/counts... have that be the standard... for all things"): a redeploy
+  replaces the running container mid-session, so any in-memory guard against a real external cap or
+  duplicate-action risk needs to survive it. New shared write-behind SQLite primitive
+  (`createDurableMap`, `src/lib/durable-state.ts` + `db-durable-state.ts`, new `durable_state` table)
+  after a 4-way discovery sweep of 32 candidate sites app-wide. Persisted: `RequestQuota` (already
+  flagged, see unified-quota note), `usage-budget.ts`'s alert cooldown (was the one inconsistent bare
+  Map vs. every sibling's durable pattern), `congress-share.ts`'s send throttle. **Two supersession
+  collisions found during rebase** (cherry-picked onto fresh main — all 6 touched files had also
+  changed upstream, `db.ts` 16x): another agent independently rebuilt BOTH `order-replacement.ts`'s
+  double-sell cooldown (full DB-backed resumable state machine) and `triggers.ts`'s caps/dedup
+  (durable pending-event queue w/ claim/retry) with more complete designs — deferred to both, dropped
+  my redundant wiring/tests for those two files. Also fixed a circular-import TDZ crash (module-
+  top-level `createDurableMap()` calls converted to lazy singletons) and hardened hydration with a
+  try/catch after it broke a pre-existing test's incomplete `./db` mock. Targeted retest of every
+  file the bugs touched: 151/151 green. Rollout: `docs/rollouts/2026-07-10-durable-state-restart-survival.md`.
 - **[Socratic.Trade][CODEX] Primary-account Infisical bridge writer (branch `codex/st-primary-bridge-writer`, worktree `/Users/jay/apps/socratic-st-primary-bridge-writer`, claimed 2026-07-15) — LOCAL IMPLEMENTATION COMPLETE / PUBLICATION IN PROGRESS / DEFAULT-OFF.** Default-off, least-privilege writer is implemented for fixed source `LOCAL_USER=local`, exporting only Gemini and DeepSeek to fixed `prod` path `/usage-monitor/st-primary/v1`. Hostile review's four writer findings were fixed (body-lifetime timeout, redirect rejection, final value coherence, forced in-flight rerun); final ordered gate is green: lint (0 errors; baseline warnings), TypeScript, 382 files / 4,400 tests, production build. API Usage Monitor reader fix PR #293 is live and healthy at `c6c4c8f`, clearing the byte-contract publication blocker. Push/ready PR/hosted verification is in progress; the writer remains disabled and unconfigured. No identity creation, Infisical/runtime secret mutation, activation, or manual deployment occurred.
 
 - **FMP transcript/RAG integration landing + branch disposition ledger (CODEX, branch `codex/fmp-transcripts-safe`, worktree `/Users/jay/.codex/worktrees/socratic-fmp-transcripts`) - COMPLETED / MERGED + PRODUCTION VERIFIED 2026-07-15.** PR #1586 merged as `2f5c986abecb3d489bc9aab2df1d8131a7c40f16` after hosted verify/gitleaks/smoke/classify passed. Production then advanced through PR #1612 to exact `main@3c015a52fbc229036195053aaef5d879bc52ba77`; public `/api/health` reports `ok:true`, DB `ok`, current scheduler lease, and Litestream `replicating`. Stale overlapping PRs #1610 and #1611 were closed as superseded and the open PR list is empty. Transcript ingestion/backfill stays disabled pending entitlement and rights; no FMP flag/provider/corpus/Pinecone/R2/Infisical activation or backfill was performed.
