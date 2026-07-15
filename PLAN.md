@@ -1,10 +1,9 @@
 # Active Implementation Plan
 
-> **2026-07-15 - Browser tab title consistency (CODEX).** After PR #1586 merged, PR #1610
-> remained as a stale/conflicted carrier for one small useful UI change. Reapply only the current-main
-> title fix: remove the console layout "Autonomy Desk" title template and the Coach route title override
-> so browser tabs resolve to the root "Socratic Trade" title. Land through a fresh PR, then close #1610
-> as superseded.
+> **2026-07-15 - Open-PR cleanup and production verification (CODEX).** PR #1586 and PR #1612
+> are merged and production health reports exact `main@3c015a52`. Stale overlapping PRs #1610 and
+> #1611 are closed as superseded; the open PR list is empty. FMP transcripts remain default-off until
+> entitlement/rights and activation/backfill authority are confirmed.
 >
 > **2026-07-13 - FMP transcript producer (CODEX).** Add a production-inert, default-off,
 > rights-confirmed FMP earnings-call transcript source with tracked stable-endpoint requests,

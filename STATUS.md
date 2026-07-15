@@ -1,13 +1,15 @@
 # Current Status
 
-## 2026-07-15 — Browser tab title consistency (CODEX)
+## 2026-07-15 — Open-PR cleanup and production verification (CODEX)
 
-PR #1586 merged as `2f5c986a`, leaving AG PR #1610 as a stale/conflicted carrier for one still-useful
-UI change: browser tabs should read simply "Socratic Trade". This branch reapplies only that current-main
-change by removing the console layout's "Autonomy Desk" title template and the Coach route's `"Coach"`
-title override. Hosted verification, merge, production auto-deploy, and live verification remain.
+PR #1586 merged as `2f5c986a` and PR #1612 merged as `3c015a52`; production `/api/health`
+now reports exact `main@3c015a52`, DB `ok`, scheduler current, and Litestream `replicating`.
+Stale overlapping PRs #1610 and #1611 were commented and closed as superseded, and
+`gh pr list --state open` is empty. FMP transcript ingestion/backfill remains default-off
+pending entitlement and rights; no provider/corpus/Infisical activation was performed.
 
-Rollout: `docs/rollouts/2026-07-15-tab-title-socratic-trade.md`.
+Rollouts: `docs/rollouts/2026-07-15-tab-title-socratic-trade.md` and the Round-28 FMP
+deployment receipt in `docs/EFFORT-LOG.md`.
 
 ## 2026-07-15 - Branch integration labeling and PR #1586 landing gate (CODEX)
 
