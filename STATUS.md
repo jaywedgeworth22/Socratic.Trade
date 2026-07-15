@@ -13,11 +13,12 @@ trigger an export. Hostile review found four writer issues; all were fixed with
 regressions: response-body lifetime timeout, redirect rejection, post-commit
 active-value coherence, and forced mutation draining during an in-flight sync.
 The exact final tree passes lint (0 errors; baseline warnings), TypeScript, 382
-test files / 4,400 tests, and production build. A cross-repo release blocker
-remains: API Usage Monitor's live reader must switch to the writer-compatible
-unexpanded-value contract (`expandSecretReferences=false`) before this branch
-can be pushed or activated. No push, identity creation, Infisical mutation,
-production configuration, merge, or deployment occurred.
+test files / 4,400 tests, and production build. API Usage Monitor reader PR
+#293 is live and healthy at `c6c4c8f` with bridge-only unexpanded reads, so the
+cross-repo byte-contract publication blocker is cleared. The writer branch is
+now entering ready-PR/hosted verification while remaining default-off and
+unconfigured. No identity creation, Infisical mutation, production
+configuration, activation, or manual deployment occurred.
 
 Rollout: `docs/rollouts/2026-07-15-st-primary-bridge-writer.md`.
 

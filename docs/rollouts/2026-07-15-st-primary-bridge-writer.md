@@ -82,9 +82,12 @@ below.
   exact-path reader for API Usage Monitor.
 - Configure both apps while their feature flags remain false, then enable the
   writer first, verify one complete generation, and enable the reader second.
-- Before any push or activation, update and deploy API Usage Monitor's reader to
-  use `expandSecretReferences=false`. The writer intentionally hashes and
-  publishes unexpanded stored bytes; the currently live reader requests
-  expanded values, which can mismatch for reference-like key content.
+- API Usage Monitor reader PR #293 is live and healthy at `c6c4c8f`; its fixed
+  ST-primary bridge reads use `expandSecretReferences=false` while ordinary
+  Infisical provider reads retain expansion. The writer's unexpanded-byte
+  contract is therefore publication-compatible.
+- Publish the writer through a ready PR, required hosted checks, protected
+  merge, and automatic Coolify deployment observation while leaving the writer
+  disabled and unconfigured.
 - No identity, secret, Infisical path, production environment, browser session,
   deployment, or Usage Monitor runtime was mutated in this implementation lane.
