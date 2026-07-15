@@ -40,7 +40,7 @@ import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/htt
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
 import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, resolveProviderQuota, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
-import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
+import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage, millisUntilNextAlphaVantageDailyReset } from "./alpha-vantage-key-pool";
 import {
   arbitrateFieldObservation,
   dedupeUpstreamFamilies,
@@ -932,7 +932,16 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
   if (alpacaData.apiKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId), alpacaData.source));
-  if (alphaVantage.keys.length > 0) providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.keys, alphaVantage.source, userId), alphaVantage.source));
+  // AV supplies ONLY NEWS_SENTIMENT (see AlphaVantageEnrichmentProvider.enrich). When Alpaca news
+  // is already configured (the availability check above — apiKey presence), it fully covers that
+  // field and AV would add nothing but burn its 25/day free cap. Skip registering AV in that case
+  // so it stops appearing in `source` attribution (which is derived from providers that actually
+  // ran) and stops producing a daily quota alert for a field nothing consumes.
+  if (alphaVantage.keys.length > 0 && !alpacaData.apiKey) {
+    providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.keys, alphaVantage.source, userId), alphaVantage.source));
+  } else if (alphaVantage.keys.length > 0) {
+    console.log("[data-providers] Alpha Vantage deregistered: Alpaca news already covers NEWS_SENTIMENT");
+  }
   if (fmp.key) providers.push(withHealthLane(new FmpEnrichmentProvider(fmp.key, fmp.source, userId), fmp.source));
   // Massive REST: REAL second short-interest source (FINRA short interest / free float) for the
   // Yahoo-vs-Massive disagreement cross-check. Supplies ONLY the carrier shortPercentOfFloatSecondary
@@ -3055,12 +3064,19 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     if (this.allExhaustedLogged) return;
     this.allExhaustedLogged = true;
     const total = this.pool.size();
+    const now = Date.now();
+    // This is a daily-quota exhaustion, not a transient connection failure — it cannot clear
+    // before Alpha Vantage's own daily reset, so tell logApiHealth exactly when that is instead
+    // of letting the generic 6h cooldown re-alert the operator every 6h for one still-ongoing
+    // outage (confirmed prod pattern: 1:31 AM and 8:02 AM alerts for the same exhausted key pool).
+    const quotaResetAt = new Date(now + millisUntilNextAlphaVantageDailyReset(now)).toISOString();
     logApiHealth({
       service: this.name,
       ok: false,
       errorText: `Alpha Vantage: entire key pool exhausted for today (${total}/${total} keys hit the 25/day cap)`,
       keySource: this.keySource,
-      userId: this.userId
+      userId: this.userId,
+      quotaResetAt
     });
   }
 

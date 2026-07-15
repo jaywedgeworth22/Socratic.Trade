@@ -45,6 +45,7 @@ import {
   type CongressPrice
 } from "../src/lib/congress-share";
 import { setInternalSetting } from "../src/lib/db";
+import { flushDurableStateNow, resetDurableStateCacheForTests } from "../src/lib/durable-state";
 
 const recentDate = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
@@ -317,6 +318,24 @@ describe("shareScanRefs", () => {
     expect((await shareScanRefs(scan))?.ok).toBe(false);
     expect((await shareScanRefs(scan))?.ok).toBe(true); // retried, not throttled
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("the per-symbol send throttle survives a simulated process restart", async () => {
+    process.env.CONGRESS_TRADE_TOKEN = "tok";
+    process.env.CONGRESS_SHARE_ENABLED = "on";
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    expect((await shareScanRefs(scan))?.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    flushDurableStateNow(); // the throttle's debounced write lands in SQLite
+
+    // Simulate a restart: forget the in-memory durable-state cache (the SQLite rows are untouched).
+    resetDurableStateCacheForTests();
+
+    // A fresh process's next scan of the SAME candidates must still see the throttle, not re-POST.
+    expect(await shareScanRefs(scan)).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // unchanged
   });
 });
 

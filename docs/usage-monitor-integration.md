@@ -68,7 +68,32 @@ runStrategyOnce entry ──► usage-budget.ts ──GET /api/budget-status─�
   tokens>`, `costUsd` (from `estimateLlmCostUsd`), `metricType:"cost"|"usage"`,
   `metadata:{model,context,userId,keySource,prompt/completion tokens}`.
 - **RAG** (`recordRagUsage`): `provider` (voyage/pinecone), `service:"rag"`,
-  `label:<operation>`, `unit:"token"`, `costUsd` (from `estimateRagCost`).
+  `label:<operation>`, `unit:"token"`, `costUsd` (from `estimateRagCost`). This is the
+  **single cost authority** for Voyage/Pinecone spend.
+- **Provider dispatch** (`withDurableRagProviderDispatch` in `vector-db.ts`, `requestFmp` in
+  `fmp-common.ts`): `service:"provider-dispatch"`, `label:<operation>`, `unit:"request"`. This
+  lane is **quota/reservation-only externally** — the event actually pushed to the monitor
+  (`createProviderDispatchUsageMonitorEvent` in `usage-monitor-push.ts`) always carries
+  `metricType:"usage"` with no `costUsd`, for every provider, unconditionally — it exists purely to
+  report request volume against the durable per-credential rate window, never a dollar figure.
+  Cost for these providers is owned exclusively by their dedicated ledger lane (the RAG bullet
+  above for Voyage; FMP has none, it's poll-primary).
+  This is deliberately two-layered: Voyage embed/rerank call sites in `vector-db.ts` pass a real
+  `estimateVoyageDispatchCost(...)` estimate into the *local* reservation
+  (`reserveProviderDispatch`, `provider_dispatch_attempts.estimated_cost_usd`), because that number
+  still drives the LOCAL per-credential daily cost-cap fuse (`PROVIDER_DISPATCH_VOYAGE_*_MAX_COST_USD_PER_DAY`,
+  default $25/day) — zeroing it there would silently disable that fuse. `createProviderDispatchUsageMonitorEvent`
+  is the single choke point for every provider-dispatch event sent to the monitor (both the
+  immediate push on startup and the crash-durable replay/reconciliation pass run through it), and
+  it discards `estimatedCostUsd`/`actualCostUsd` before building the outbound event — so the same
+  real local estimate never reaches the wire. FMP's local estimate is already 0 (poll-primary, no
+  local fuse needed), so it was and remains unaffected by this zeroing.
+  A 2026-07-15 version of this fix briefly zeroed the Voyage dispatch calls' *local* estimate
+  instead of the push boundary, which fixed the double-count but silently disabled the local Voyage
+  cost-cap fuse — corrected the same day: the local estimate is real again, and the push-boundary
+  zero in `usage-monitor-push.ts` is what actually prevents the receiver (which aggregates
+  `ExternalUsageEvent.costUsd` by provider name, ignoring `service`) from double-counting the same
+  spend the RAG ledger lane already reported.
 - **Call-volume** (market-data + broker): aggregated per provider per flush window as
   a single `metricType:"usage"`, `unit:"request"`, `requests:<count>` event —
   never one POST per call. Brokers are tagged `provider:"alpaca"|"robinhood"`,

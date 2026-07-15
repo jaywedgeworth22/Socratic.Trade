@@ -5,28 +5,48 @@ import { ChevronRight } from "lucide-react";
 import React from "react";
 
 export function List({ children, className }: { children: React.ReactNode; className?: string }) {
+  // Extra breathing room between sections on narrow (mobile) viewports, where the stacked
+  // ListSections felt cramped; unchanged on sm+ so desktop density is untouched.
   return (
-    <div className={cn("flex flex-col gap-6", className)}>
+    <div className={cn("flex flex-col gap-8 sm:gap-6", className)}>
       {children}
     </div>
   );
 }
 
+// A Settings section renders as the SAME `con-card` primitive every other console page uses
+// (Mandates, Scan, Results, …) — a standalone titled card with divided rows — instead of the old
+// ad-hoc iOS grouped-list box. Scope grouping is handled by <SettingsGroup> (a light label, not a
+// nested bordered box), so Settings no longer shows boxes-inside-boxes.
 export function ListSection({ title, footer, action, children, className }: { title?: React.ReactNode; footer?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <section className={cn("flex flex-col", className)}>
+    <section className={cn("con-card", className)}>
       {(title || action) && (
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 px-4 pb-1.5">
-          {title && <h2 className="text-[13px] font-semibold tracking-wide text-[color:var(--con-muted)] uppercase shrink-0">{title}</h2>}
-          {action && <div className="text-[13px]">{action}</div>}
-        </div>
+        <header className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-1">
+          {title ? <h2 className="con-card-title">{title}</h2> : <span />}
+          {action && <div className="text-[length:var(--con-fs-sm)]">{action}</div>}
+        </header>
       )}
-      <div className="overflow-hidden rounded-[var(--con-radius)] bg-[color:var(--con-surface)] border border-[color:var(--con-line)] shadow-sm">
-        <div className="flex flex-col divide-y divide-[color:var(--con-line)]">
-          {children}
-        </div>
+      <div className="flex flex-col divide-y divide-[color:var(--con-line)]">
+        {children}
       </div>
-      {footer && <div className="px-4 pt-2 text-[13px] text-[color:var(--con-faint)] leading-relaxed">{footer}</div>}
+      {footer && <div className="px-4 pt-2.5 pb-3.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] leading-relaxed">{footer}</div>}
+    </section>
+  );
+}
+
+// Lightweight scope grouping for the Settings page (ALL YOUR ACCOUNTS / THIS BROWSER / DANGER …):
+// a muted label above a stack of standalone cards, with an optional explanatory footer. Deliberately
+// NOT a bordered container — that outer border is exactly what made Settings look nested and unlike
+// every other page.
+export function SettingsGroup({ label, footer, children, className }: { label?: React.ReactNode; footer?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  return (
+    <section className={cn("flex flex-col gap-3", className)}>
+      {label && (
+        <h2 className="px-1 text-[length:var(--con-fs-xs)] font-semibold tracking-wide text-[color:var(--con-muted)] uppercase">{label}</h2>
+      )}
+      <div className="flex flex-col gap-4">{children}</div>
+      {footer && <div className="px-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] leading-relaxed">{footer}</div>}
     </section>
   );
 }

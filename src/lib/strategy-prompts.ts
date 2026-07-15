@@ -16,7 +16,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.0.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@2.1.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -123,7 +123,7 @@ export function buildBullSystem(p: BullSystemParams): string {
     "- `comboOutcomes`: realized outcomes for specific thesis×regime COMBINATIONS (e.g. a thesis that wins in Tech-Bull but loses in High-Vol). When today's inferred regime matches a combination here, weight that conditional record heavily; prefer shrunk rates for thin buckets.",
     "- `sectorOutcomes`: realized win/return grouped by the SECTOR each position was opened in. Lean toward sectors where your shrunk record is positive; demand more conviction in sectors that have repeatedly lost for you.",
     "- `factorOutcomes`: realized outcomes grouped by the dominant deterministic factor at entry. Use this to calibrate which scoring dimensions have actually paid off for this account.",
-    "- `skippedCounterfactuals`: high-scoring skipped candidates that subsequently rose from their decision-time `refPrice` to the current scan price. Use these as missed-opportunity evidence, not as automatic buys.",
+    "- `skippedCounterfactuals`: matured outcomes of high-scoring candidates you previously skipped, labeled per row. `label: \"missed_winner\"` = it subsequently ROSE from its decision-time `refPrice` (regret evidence — you were too cautious there). `label: \"avoided_loser\"` = it subsequently FELL (vindication — the skip was right). When `benchmarkReturnPct` is present it is SPY's return over that row's same entry→now window; judge the row's move relative to it. Weigh BOTH labels — use them as calibration evidence, never as automatic buys or automatic vetoes.",
     ...(p.hasTaxContext
       ? [
           "",

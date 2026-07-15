@@ -13,7 +13,25 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
   return (
     <html lang="en">
       <body>
+        {/* Dependency-free inline dark-mode override: this file replaces <html>/<body> at the
+            root, so the app's CSS-variable theme system isn't available here. Dark is the app
+            default (src/.../theme.tsx) - without this, a dark-mode user hitting a root crash
+            gets a jarring white flash. Hex values hand-picked to match app/globals.css's .dark
+            block (--bg, --fg, --muted, --accent, --accent-fg, --line). */}
+        <style>{`
+          @media (prefers-color-scheme: dark) {
+            .global-error-main { background: #111827 !important; color: #e7eef6 !important; }
+            .global-error-message { color: #b8c3d0 !important; }
+            .global-error-digest { color: #a0b0c0 !important; }
+            .global-error-button {
+              border-color: #58c7d3 !important;
+              background: #58c7d3 !important;
+              color: #04130d !important;
+            }
+          }
+        `}</style>
         <main
+          className="global-error-main"
           style={{
             minHeight: "100dvh",
             display: "grid",
@@ -27,17 +45,18 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         >
           <div style={{ maxWidth: 520, textAlign: "center" }}>
             <h1 style={{ fontSize: 24, lineHeight: 1.2, margin: "0 0 10px" }}>Dashboard error</h1>
-            <p style={{ margin: "0 0 18px", color: "#475569" }}>
+            <p className="global-error-message" style={{ margin: "0 0 18px", color: "#475569" }}>
               {message}
             </p>
             {error.digest && (
-              <p style={{ margin: "0 0 18px", color: "#64748b", fontSize: 13 }}>
+              <p className="global-error-digest" style={{ margin: "0 0 18px", color: "#64748b", fontSize: 13 }}>
                 Reference: {error.digest}
               </p>
             )}
             <button
               type="button"
               onClick={reset}
+              className="global-error-button"
               style={{
                 border: "1px solid #111827",
                 background: "#111827",
