@@ -19,8 +19,11 @@ import { reasoningAdviceForModel, recommendedReasoningEffortForModel } from "@/l
 import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Card, Field, Select, Toggle } from "../ui/primitives";
+import { Card, Field, RawNumInput, Select, Toggle } from "../ui/primitives";
 import { ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
+
+const DEFAULT_MIN_NEW_LESSONS = 5;
+const DEFAULT_MAX_WAIT_DAYS = 7;
 
 const MODE_OPTIONS = [
   {
@@ -52,6 +55,7 @@ export function LearningReviewCard() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<{ learningReviewMinNewLessons?: number; learningReviewMaxWaitDays?: number }>({});
 
   const policy = snapshot?.policy;
   if (!snapshot || !policy) return null;
@@ -69,19 +73,37 @@ export function LearningReviewCard() {
     policy.learningReviewReasoningEffort ?? recommendedEffort
   );
   const reasoningAdvice = reasoningAdviceForModel(model);
+  const minNewLessons = draft.learningReviewMinNewLessons ?? policy.learningReviewMinNewLessons ?? DEFAULT_MIN_NEW_LESSONS;
+  const maxWaitDays = draft.learningReviewMaxWaitDays ?? policy.learningReviewMaxWaitDays ?? DEFAULT_MAX_WAIT_DAYS;
 
-  const save = async (patch: Record<string, unknown>, saved: string) => {
-    if (busy) return;
+  /** Returns whether the save succeeded, so numeric-field callers can revert their optimistic draft. */
+  const save = async (patch: Record<string, unknown>, saved: string): Promise<boolean> => {
+    if (busy) return false;
     setBusy(true);
     try {
       await savePolicy(patch);
       await refresh();
       toast.push("pos", saved);
+      return true;
     } catch (error) {
       toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
+      return false;
     } finally {
       setBusy(false);
     }
+  };
+
+  // Numeric trigger knobs: local text while typing, commit on blur (mirrors Market-scan shape).
+  const commitNumber = (
+    key: "learningReviewMinNewLessons" | "learningReviewMaxWaitDays",
+    next: number,
+    saved: number,
+    label: string
+  ) => {
+    if (next === saved) return;
+    void save({ [key]: next }, label).then((ok) => {
+      if (!ok) setDraft((d) => ({ ...d, [key]: saved }));
+    });
   };
 
   return (
@@ -103,6 +125,53 @@ export function LearningReviewCard() {
           />
         </LabeledContent>
       </ListRow>
+
+      {enabled && (
+        <>
+          <ListRow>
+            <LabeledContent label="Run after this many new lessons" hint="Whichever fires first: this count, or the max wait below.">
+              <RawNumInput
+                id="learning-review-min-new-lessons"
+                className="w-16 text-right bg-transparent border-0 px-0 text-[length:var(--con-fs-sm)] focus:ring-0"
+                value={String(minNewLessons)}
+                emptyValue={DEFAULT_MIN_NEW_LESSONS}
+                disabled={busy}
+                title="Skips the daily call entirely until at least this many learned facts or pending items have appeared since the last successful review."
+                onValueChange={(parsed) => setDraft((d) => ({ ...d, learningReviewMinNewLessons: parsed }))}
+                onBlur={() =>
+                  commitNumber(
+                    "learningReviewMinNewLessons",
+                    minNewLessons,
+                    policy.learningReviewMinNewLessons ?? DEFAULT_MIN_NEW_LESSONS,
+                    "Threshold saved"
+                  )
+                }
+              />
+            </LabeledContent>
+          </ListRow>
+          <ListRow>
+            <LabeledContent label="Or after this many days, whichever is first" hint="A slow trickle of lessons still gets swept eventually.">
+              <RawNumInput
+                id="learning-review-max-wait-days"
+                className="w-16 text-right bg-transparent border-0 px-0 text-[length:var(--con-fs-sm)] focus:ring-0"
+                value={String(maxWaitDays)}
+                emptyValue={DEFAULT_MAX_WAIT_DAYS}
+                disabled={busy}
+                title="Even below the threshold, the review still runs once the oldest un-reviewed lesson has waited this many days."
+                onValueChange={(parsed) => setDraft((d) => ({ ...d, learningReviewMaxWaitDays: parsed }))}
+                onBlur={() =>
+                  commitNumber(
+                    "learningReviewMaxWaitDays",
+                    maxWaitDays,
+                    policy.learningReviewMaxWaitDays ?? DEFAULT_MAX_WAIT_DAYS,
+                    "Max wait saved"
+                  )
+                }
+              />
+            </LabeledContent>
+          </ListRow>
+        </>
+      )}
 
       <ListRow>
         <div className="w-full py-1">
