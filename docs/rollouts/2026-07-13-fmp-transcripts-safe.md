@@ -866,6 +866,44 @@ were OS-killed with 137 while other agent build/test processes respawned on the 
 137/143 exits are recorded as local host-pressure blockers; hosted GitHub `verify` must be treated as the
 authoritative full lint/test/build gate for the pushed PR head.
 
+### Round-25 import-cycle cleanup and FMP rights hook headroom
+
+The serialized full-suite diagnostic also exposed a test-time warning from Socratic lifecycle re-indexing:
+`Cannot access 'FMP_TRANSCRIPT_SOURCE' before initialization`. `src/lib/web-sources/fmp-transcripts.ts`
+now imports the exact owning DB modules (`db-api-keys`, `db-provider-dispatch`, `db-learning`,
+`db-settings`, and `db-vector-commits`) instead of the broad `db` barrel. The RAG doc-type focused test
+still passes 15/15 and the FMP TDZ warning no longer appears.
+
+The migration-heavy FMP rights-derived artifact suite timed out in its `beforeAll` hook under host load
+while applying 41 migrations. Its setup timeout is now 120s, and the focused file passes 10/10.
+
+Verification:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/rag-doc-type-coverage.test.ts --reporter=dot
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/fmp-rights-derived-artifacts.test.ts --reporter=dot
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit
+```
+
+Results: RAG doc-type 15/15 green with no FMP TDZ warning; FMP rights-derived artifacts 10/10 green;
+standalone TypeScript clean. Canonical local lint/full-test/build attempts remain blocked by host
+SIGTERM/kill pressure, so PR publication still waits on a clean pushed/hosted gate or a quieter local
+machine window.
+
+### Round-26 hosted gitleaks false-positive suppression
+
+Hosted PR #1586 gitleaks failed on the historical deterministic `ENCRYPTION_KEY` fixture introduced in
+branch commit `dd63ba35`. The current tree already uses `"0".repeat(64)`, but gitleaks scans the
+first-parent branch history, so the historical placeholder literal still needs an explicit false-positive
+fingerprint. `.gitleaksignore` now records:
+
+```text
+dd63ba35cbd5023f3571992380454dad22225536:test/rag-doc-type-coverage.test.ts:generic-api-key:55
+```
+
+This is a branch-local fake test fixture, not a real secret. The next normal branch push should rerun
+hosted gitleaks without rewriting PR history.
+
 No transcript flag, FMP request, corpus/vector provider write, Infisical mutation, merge, or
 production action ran in this step. The remaining release path is the ordered Node 24 lint,
 hosted TypeScript/full test/build gate, ready PR #1586, protected merge, and exact production verification.

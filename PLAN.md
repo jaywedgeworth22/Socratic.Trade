@@ -89,6 +89,11 @@
 > with 143 and repeated production builds were OS-killed with 137 while other agent runners respawned. Push the
 > current branch and let hosted `verify` provide the authoritative full lint/test/build result, then mark ready, merge,
 > and verify the automatic production deployment without enabling transcript ingestion or backfill.
+> Round-25 removes a DB-barrel import cycle from the FMP transcript module; the RAG doc-type focused test now passes
+> without the prior `FMP_TRANSCRIPT_SOURCE` TDZ warning. The FMP rights-derived artifact hook has 120s setup headroom
+> and passes focused 10/10; standalone TypeScript is clean after the import split.
+> Hosted gitleaks then failed on the historical deterministic `ENCRYPTION_KEY` fixture commit even though the current
+> tree uses `"0".repeat(64)`; `.gitleaksignore` now includes the exact false-positive fingerprint for a normal recheck.
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
 > but its automatic Coolify deployment failed health checks and rolled back because pinned
 > Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the

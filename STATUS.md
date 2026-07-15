@@ -32,6 +32,18 @@ were OS-killed with 137 while other agent build/test processes were respawning. 
 must therefore be the full repository gate authority for PR #1586. Build, landing, PR-ready,
 hosted checks, merge, and exact production verification remain pending.
 
+Additional cleanup from this pass: `src/lib/web-sources/fmp-transcripts.ts` no longer imports the broad
+DB barrel, which removed the `FMP_TRANSCRIPT_SOURCE` temporal-dead-zone warning in
+`test/rag-doc-type-coverage.test.ts`; the focused file now passes 15/15 without that warning. The
+migration-heavy FMP rights-derived artifact setup timeout is now 120s and the focused file passes 10/10.
+Standalone TypeScript also passed after the import split.
+
+Hosted PR #1586 status check update: gitleaks failed on a false-positive deterministic
+`ENCRYPTION_KEY` fixture from historical branch commit `dd63ba35` even though the current tree now uses
+`"0".repeat(64)`. Added the exact fingerprint to `.gitleaksignore` with a false-positive note; this
+needs a normal branch push and hosted recheck. PR #1586 is ready/open but merge-blocked until hosted
+checks pass.
+
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
 
 The decision trace now treats the structured Red Team verdict as the canonical explanation and
