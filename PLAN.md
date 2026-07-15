@@ -1,11 +1,11 @@
 # Active Implementation Plan
 
-> **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
-> but its automatic Coolify deployment failed health checks and rolled back because pinned
-> Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the
-> merged runner expected a flat object. Parse only validated `{ key, value }` records, reject
-> malformed or duplicate keys without exposing output, repeat the full Node 24 landing gate,
-> and verify the exact corrective merge SHA in production before releasing dependent work.
+> **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
+> initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged
+> as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8`, and Coolify deployment
+> `rkh3ifiyp2dbtvv7xz7rtnbn` finished on that exact SHA. Public production health is green for
+> the app/DB, current scheduler lease, Litestream replication with a valid sync timestamp, and
+> Congress/usage-monitor dependencies. The remaining cached-CLI version check is nonblocking P3.
 > See `docs/rollouts/2026-07-14-infisical-export-json-compat.md`.
 
 > **2026-07-14 - Local Infisical bootstrap wiring (CODEX).** Resolve the Socratic and shared
@@ -34,6 +34,16 @@
 > without rewriting history, and squash-merge after hosted checks. Then finish PR #1586 and verify
 > the exact auto-deployed production release. See
 > `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+> **2026-07-14 - Adopt immutable congress-trading-shared v1.7.1 (CODEX).** Replace the
+> exact `v1.6.0` commit pin with the immutable `v1.7.1` commit
+> `0bc26ab9311a396f3f6b5cba0fb54fa7558a42b4` across `package.json`, npm
+> `allowScripts`, and `package-lock.json`; regenerate through Node 24 with a fresh
+> disposable cache; prove non-empty JS/MJS/DTS/DMTS artifacts and both require/import
+> resolution; then run the serialized lint, standalone TypeScript, full test, and
+> production-build gate on current `origin/main`. Land through `scripts/land.sh`, require
+> hosted verification and protected squash merge, then verify the exact automatic production
+> rollout and dependency health.
+> See `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
 > TypeScript 5 compiler-API arrangement with one supported TypeScript 6.0.3 graph; remove the
