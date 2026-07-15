@@ -127,8 +127,10 @@
 > Hosted review then found three P2s: unbounded BlackRock discovery, incomplete scan single-flight
 > identity, and immortal hung quote entries. Abort propagation plus a hard scan deadline, complete
 > scan keys, and a 30-second quote lease are implemented; scoped lint/TypeScript and 26 review tests
-> pass. Final exact-tree land passed 381 files / 4,381 tests and build; code head `3df82396` is pushed.
-> Resolve the threads, require refreshed hosted checks, then continue protected merge/live verification.
+> pass. Final exact-tree land passed 381 files / 4,381 tests and build; code head `3df82396` was pushed.
+> All review threads and hosted gates passed. PR #1618 squash-merged as `28eab7cb`; Coolify deployment
+> `a140o5e4sh3vh7ylqzzwu1qr` finished on that exact SHA, and production health verifies the release,
+> current scheduler lease, FMP/Congress dependencies, and Litestream replication. This lane is complete.
 
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
 > initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged

@@ -148,6 +148,13 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
 - Final review-remediation `scripts/land.sh`: TypeScript passed; 381 files /
   4,381 tests passed; production build completed with 32 static pages; code
   head `3df82396` pushed to ready PR #1618.
+- Hosted gitleaks, classify, Playwright smoke, `verify-hosted`, and required
+  `verify` passed; all review threads were replied to and resolved.
+- PR #1618 squash-merged as `28eab7cb08abcefaa718b74889e8f29b0105941f`.
+  Coolify deployment `a140o5e4sh3vh7ylqzzwu1qr` finished on that exact SHA.
+  Production `/api/health` returned `ok:true`, DB `ok`, scheduler age 14 seconds
+  with an unexpired lease, FMP and Congress dependencies healthy, and Litestream
+  `replicating` with a valid one-second-old IPC sync and no degraded reasons.
 
 ## Follow-ups
 
