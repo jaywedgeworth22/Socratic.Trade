@@ -1185,25 +1185,31 @@ const MIGRATIONS: Migration[] = [
     version: 29,
     name: "provider_dispatch_and_vector_commit_receipts",
     up: (database) => {
-      const occurrenceColumns = database
-        .prepare("PRAGMA table_info(chunk_occurrences)")
-        .all() as Array<{ name: string }>;
-      const addOccurrenceColumn = (name: string, sql: string) => {
-        if (!occurrenceColumns.some((column) => column.name === name)) database.exec(sql);
-      };
-      addOccurrenceColumn(
-        "tenant_scope",
-        "ALTER TABLE chunk_occurrences ADD COLUMN tenant_scope TEXT NOT NULL DEFAULT 'legacy'"
-      );
-      addOccurrenceColumn(
-        "content_version",
-        "ALTER TABLE chunk_occurrences ADD COLUMN content_version TEXT NOT NULL DEFAULT 'legacy'"
-      );
-      addOccurrenceColumn("commit_id", "ALTER TABLE chunk_occurrences ADD COLUMN commit_id TEXT");
-      addOccurrenceColumn(
-        "receipt_state",
-        "ALTER TABLE chunk_occurrences ADD COLUMN receipt_state TEXT NOT NULL DEFAULT 'legacy_committed'"
-      );
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunk_occurrences'")
+        .get();
+
+      if (tableExists) {
+        const occurrenceColumns = database
+          .prepare("PRAGMA table_info(chunk_occurrences)")
+          .all() as Array<{ name: string }>;
+        const addOccurrenceColumn = (name: string, sql: string) => {
+          if (!occurrenceColumns.some((column) => column.name === name)) database.exec(sql);
+        };
+        addOccurrenceColumn(
+          "tenant_scope",
+          "ALTER TABLE chunk_occurrences ADD COLUMN tenant_scope TEXT NOT NULL DEFAULT 'legacy'"
+        );
+        addOccurrenceColumn(
+          "content_version",
+          "ALTER TABLE chunk_occurrences ADD COLUMN content_version TEXT NOT NULL DEFAULT 'legacy'"
+        );
+        addOccurrenceColumn("commit_id", "ALTER TABLE chunk_occurrences ADD COLUMN commit_id TEXT");
+        addOccurrenceColumn(
+          "receipt_state",
+          "ALTER TABLE chunk_occurrences ADD COLUMN receipt_state TEXT NOT NULL DEFAULT 'legacy_committed'"
+        );
+      }
 
       database.exec(`
         CREATE TABLE IF NOT EXISTS vector_ingest_commits (
@@ -1240,11 +1246,18 @@ const MIGRATIONS: Migration[] = [
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_commit
-          ON chunk_occurrences (commit_id, receipt_state);
-        CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_tenant
-          ON chunk_occurrences (tenant_scope, vector_id);
+      `);
 
+      if (tableExists) {
+        database.exec(`
+          CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_commit
+            ON chunk_occurrences (commit_id, receipt_state);
+          CREATE INDEX IF NOT EXISTS idx_chunk_occurrences_tenant
+            ON chunk_occurrences (tenant_scope, vector_id);
+        `);
+      }
+
+      database.exec(`
         CREATE TABLE IF NOT EXISTS provider_dispatch_attempts (
           id TEXT PRIMARY KEY,
           authority_id TEXT NOT NULL,

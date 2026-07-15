@@ -484,10 +484,10 @@ describe("refreshFmpTranscripts", () => {
   it.each([
     {
       status: 403,
-      capability: "access_denied",
-      error: "body:AAPL:access_denied:403",
+      capability: "endpoint_not_entitled",
+      error: "body:AAPL:endpoint_not_entitled",
       persisted: {
-        status: "access_denied",
+        status: "endpoint_not_entitled",
         checkedAt: "2025-01-31T00:00:00.000Z",
         httpStatus: 403
       }

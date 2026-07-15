@@ -1835,7 +1835,8 @@ function applyPineconeWriteBudget(
   userId: string,
   vectorUserId: string,
   scope: VectorScope,
-  tenantScope: string
+  tenantScope: string,
+  isManagedCommit = false
 ): { documents: ContextDocument[]; skipped: number; used: number; limit: number; requested: number; allowed: number } {
   const limit = pineconeMaxWriteUnitsPerDay();
   if (!pineconeWriteBudgetEnabled()) {
@@ -1849,7 +1850,8 @@ function applyPineconeWriteBudget(
   const allowedDocuments: ContextDocument[] = [];
 
   for (const document of documents) {
-    const estimated = estimatePineconeWriteUnitsForDocument(document, vectorUserId, scope, tenantScope);
+    const estimatedPending = estimatePineconeWriteUnitsForDocument(document, vectorUserId, scope, tenantScope);
+    const estimated = isManagedCommit ? estimatedPending * 2 : estimatedPending;
     requested += estimated;
     if (accepting && remaining >= estimated) {
       remaining -= estimated;
@@ -2415,7 +2417,7 @@ async function storeContextsImpl(
 
   let writeUnitBudgetSkipped = 0;
   assertVectorStoreLease(options?.leaseGuard);
-  const writeBudget = applyPineconeWriteBudget(documentsToStore, userId, vectorUserId, scope, tenantScope);
+  const writeBudget = applyPineconeWriteBudget(documentsToStore, userId, vectorUserId, scope, tenantScope, Boolean(options?.managedCommit));
   if (writeBudget.skipped > 0) {
     writeUnitBudgetSkipped = writeBudget.skipped;
     const budgetPayload = {
