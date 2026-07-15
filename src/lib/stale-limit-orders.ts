@@ -118,6 +118,13 @@ export async function notifyStaleLimitOrders(input: {
 
 function isWorkingOrderState(state: string | undefined): boolean {
   const normalized = String(state ?? "").trim().toLowerCase();
+  // A bracket/OCO exit leg sits in Alpaca's "held" state until its sibling entry order fills —
+  // it cannot execute yet, so "review/cancel/reprice" advice is wrong and the leg's age isn't
+  // actionable. isActiveBrokerOrderState() still counts "held" as active elsewhere (it
+  // legitimately holds shares/blocks duplicate exit orders); exclude it only from staleness.
+  // Once the entry fills, the broker transitions the leg (held -> new) and bumps updatedAt (see
+  // the P2.7 note above), so age-from-activation is measured correctly once the leg is live.
+  if (normalized === "held") return false;
   return isActiveBrokerOrderState(normalized) || EXTRA_WORKING_STATES.has(normalized);
 }
 

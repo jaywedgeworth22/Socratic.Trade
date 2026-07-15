@@ -31,6 +31,69 @@ describe("stale limit order alerts", () => {
     expect(stale[0]?.remainingQuantity).toBe(10);
   });
 
+  it("does not alert on a held bracket exit leg, even past the threshold", async () => {
+    const { listStaleLimitOrders } = await import("../src/lib/stale-limit-orders");
+
+    // Bracket take-profit/stop-loss legs are created alongside the entry order but sit in
+    // Alpaca's "held" state until the entry fills — they cannot execute yet, so staleness
+    // (and the "cancel/reprice" advice that comes with it) is not actionable.
+    const stale = listStaleLimitOrders(
+      [
+        order({
+          id: "held-exit-leg",
+          side: "sell",
+          state: "held",
+          type: "limit",
+          createdAt: "2026-06-30T15:00:00.000Z"
+        })
+      ],
+      { staleLimitOrderMinutes: 15 },
+      now
+    );
+
+    expect(stale).toEqual([]);
+  });
+
+  it("alerts a bracket exit leg once it activates, measured from activation not creation", async () => {
+    const { listStaleLimitOrders } = await import("../src/lib/stale-limit-orders");
+
+    // Same leg as above, but the entry has now filled: Alpaca transitions the leg held -> new
+    // and bumps updatedAt. Age must be measured from that activation, not from createdAt (which
+    // predates the entry fill by hours) and not suppressed just because it was once held.
+    const activatedButFresh = listStaleLimitOrders(
+      [
+        order({
+          id: "activated-exit-leg",
+          side: "sell",
+          state: "new",
+          type: "limit",
+          createdAt: "2026-06-30T10:00:00.000Z",
+          updatedAt: "2026-06-30T16:20:00.000Z" // activated 10 minutes ago — under threshold
+        })
+      ],
+      { staleLimitOrderMinutes: 15 },
+      now
+    );
+    expect(activatedButFresh).toEqual([]);
+
+    const activatedAndStale = listStaleLimitOrders(
+      [
+        order({
+          id: "activated-exit-leg",
+          side: "sell",
+          state: "new",
+          type: "limit",
+          createdAt: "2026-06-30T10:00:00.000Z",
+          updatedAt: "2026-06-30T16:00:00.000Z" // activated 30 minutes ago — over threshold
+        })
+      ],
+      { staleLimitOrderMinutes: 15 },
+      now
+    );
+    expect(activatedAndStale.map((item) => item.order.id)).toEqual(["activated-exit-leg"]);
+    expect(activatedAndStale[0]?.ageMinutes).toBe(30);
+  });
+
   it("records one notification per stale order and threshold", async () => {
     const { getPolicy, listNotificationEvents } = await import("../src/lib/db");
     const { notifyStaleLimitOrders } = await import("../src/lib/stale-limit-orders");
