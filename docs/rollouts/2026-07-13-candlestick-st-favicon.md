@@ -9,16 +9,19 @@ green-biased with reds mixed in, on the existing dark rounded-square background.
 
 ## Why / decisions
 
-- Owner wanted the tab icon to be an "ST" (offset like college initials) spelled
-  with candlesticks like the header logo.
-- The candle **look is driven by the same `buildTickerUnits` ticker the header logo
-  uses** (`app/console/ui/candle-ticker.ts`): each candle's body fraction (0.4–0.85)
-  + offset + green/red shade come from that 12-unit green-biased walk, so the icon's
-  candles vary in size exactly like the logo instead of reading as uniform blocks.
-- Letters are sampled the same way the logo samples letters (bold Arial rasterized
-  and sliced into candle columns), then drawn with the `drawTicker` geometry.
-- Layout: **S high-left, T a touch lower-right with only a tiny overlap**, so each
-  letter stays whole and legible (an earlier heavy-overlap monogram hid the T).
+- Owner wanted the tab icon to be an "ST" spelled with candlesticks like the header
+  logo. Several hand-rolled monogram attempts (custom sampler + overlap/stagger) read
+  as an abstract candle cluster, not clean letters — owner (rightly) pushed to just
+  use the real logo code.
+- **Final approach: the EXACT header-logo pipeline, verbatim.** The icon is
+  `sampleWordmark("ST")` → `buildTickerUnits()` → `drawTicker` geometry, copied
+  byte-for-byte from `app/console/ui/candle-ticker.ts` into the (throwaway) generator.
+  So the favicon is the identical candlestick rendering as the on-page wordmark, just
+  spelling "ST" — it reads as clean letters, and the candles vary like the logo.
+- **Colour = tick 6** of the ticker: green-biased, the tall T stem lands on a green
+  candle (no bright-pink column, per owner). Rendered on the existing dark
+  rounded-square background; only `y`/geometry differ from a single centered wordmark.
+- Owner signed off on this version 2026-07-15 ("make that logo the favicon").
 
 ## Files
 
