@@ -107,6 +107,22 @@
 > merged runner expected a flat object. Parse only validated `{ key, value }` records, reject
 > malformed or duplicate keys without exposing output, repeat the full Node 24 landing gate,
 > and verify the exact corrective merge SHA in production before releasing dependent work.
+> **2026-07-15 - FMP coverage and market-data reliability (CODEX).** Make interactive Market Scan
+> return within an HTTP budget by keeping paced deep ingestion off the request path, reusing the
+> latest completed strategy scan's slow facts while refreshing prices, coalescing identical
+> refreshes, and bounding the Nasdaq fetch; preserve full enrichment in scheduled/strategy
+> work and bounded on-demand ticker detail. Replace Socratic.Trade's legacy FMP v4 calls with stable,
+> header-authenticated profile and insider-search routes; map the useful ratios/profile fields already
+> paid for; keep congressional truth in Congress.Trade; and document the plan/entitlement boundary for
+> scheduled statements, metrics, estimates, calendars, news, and transcripts. Transcripts stay disabled
+> while the current subscription returns HTTP 402. Complete focused/full gates, browser QA, ready PR,
+> hosted verification, protected merge, and exact auto-deploy verification. See
+> `docs/rollouts/2026-07-15-fmp-market-data-reliability.md` and `docs/fmp-capabilities.md`.
+> Local browser QA is green. Current `origin/main@ede902f5` is reconciled, the hostile-review
+> freshness/fallback/coalescing findings are fixed, and Node 24 lint, TypeScript, plus 9 files / 201 focused
+> tests pass. Run the current-main full gate through `scripts/land.sh`, require hosted checks, then
+> verify the exact auto-deployed release.
+
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
 > initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged
 > as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8`, and Coolify deployment

@@ -435,7 +435,7 @@ function providerNegativeTtlMs(): number {
 // How many outbound requests one enriched symbol costs a quota'd provider — passed to the request
 // quota (which budgets in REQUESTS, not symbols). Only providers in RATE_QUOTAS need this: tiingo
 // fires up to 3 sub-calls/symbol (iex, daily, [news]); twelvedata costs 1 credit/symbol; fmp fires
-// 2 unconditional (insider + senate) plus up to 3 conditional (ratios-ttm, grades-consensus,
+// 2 unconditional (profile + insider) plus up to 3 conditional (ratios-ttm, grades-consensus,
 // price-target-consensus). Non-quota'd providers (finnhub, yahoo, alpha-vantage) are paced instead
 // and never consult this.
 export function callsPerSymbol(
@@ -444,7 +444,7 @@ export function callsPerSymbol(
 ): number {
   switch (provider) {
     case "tiingo": return opts?.dropExtra ? 2 : 3;  // iex, daily, [news]
-    // 2 unconditional (insider + senate) + ratios-ttm (unless skipPe) + grades-consensus (unless
+    // 2 unconditional (profile + insider) + ratios-ttm (unless skipPe) + grades-consensus (unless
     // skipConsensus) + price-target-consensus (only when wantTargets). Mirrors the fetch-path
     // conditions one-for-one; range 2..5. The caller MUST derive skipPe/skipConsensus/wantTargets
     // from the SAME skipFlagsFor(symbol) + wantTargets formula it dispatches with, so reservation
@@ -2468,8 +2468,8 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
 }
 
 // ── FMP stable API provider ───────────────────────────────────────────────────
-// Supplies P/E (ratios-ttm) and analyst consensus (grades-consensus).
-// Sector/industry/headlines are not available on the free plan.
+// Stable FMP company-data lane. Company profile + insider activity are always
+// requested for a cold symbol; ratios/analyst/targets remain coverage-aware.
 
 /** Opt-in: fetch FMP price-target-consensus (an extra call per symbol; not on every key tier). */
 export function fmpPriceTargetsEnabled(): boolean {
@@ -2578,21 +2578,29 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           const { symbol, skipPe, skipConsensus, wantTargets } = plan;
           // Coverage hint (short-circuit only): when a free upstream (App A) already
           // supplied P/E, analyst consensus, or price targets for this symbol, skip the
-          // matching FMP SUB-call — but always keep fetching insider/senate, which App A
-          // never supplies, so nothing FMP uniquely provides is lost. (Same flags are
+          // matching FMP SUB-call — but always keep fetching FMP profile + insider data.
+          // (Same flags are
           // applied to cache hits above.) skipTargets is folded into wantTargets already.
           const skipTargets = !wantTargets;
-          const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
+          const [peRaw, consensusRaw, profileRaw, insiderRaw, targetRaw] = await Promise.allSettled([
             skipPe
               ? Promise.resolve(undefined)
-              : this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
+              : this.getJson(`${this.base}/ratios-ttm?symbol=${encodeURIComponent(symbol)}`),
             skipConsensus
               ? Promise.resolve(undefined)
-              : this.getJson(`${this.base}/grades-consensus?symbol=${symbol}&apikey=${this.apiKey}`),
-            this.getJson(`https://financialmodelingprep.com/api/v4/insider-trading?symbol=${symbol}&apikey=${this.apiKey}`, false),
-            this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`, false),
+              : this.getJson(`${this.base}/grades-consensus?symbol=${encodeURIComponent(symbol)}`),
+            this.getJson(`${this.base}/profile?symbol=${encodeURIComponent(symbol)}`),
+            this.getJson(
+              `${this.base}/insider-trading/search?symbol=${encodeURIComponent(symbol)}&page=0&limit=100`,
+              false,
+              [402, 403]
+            ),
             wantTargets
-              ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`, false)
+              ? this.getJson(
+                  `${this.base}/price-target-consensus?symbol=${encodeURIComponent(symbol)}`,
+                  false,
+                  [402, 403]
+                )
               : Promise.resolve(undefined)
             // NOTE: FMP does NOT provide short interest — there is no /short_interest (or equivalent)
             // endpoint (verified via FMP's API docs + official MCP surface, 2026-07). A second
@@ -2600,9 +2608,67 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           ]);
 
           let peRatio: number | undefined;
+          let pbRatio: number | undefined;
+          let debtToEquity: number | undefined;
+          let returnOnEquity: number | undefined;
+          let returnOnAssets: number | undefined;
+          let grossProfitMargin: number | undefined;
+          let ratiosDividendYield: number | undefined;
           if (peRaw.status === "fulfilled" && Array.isArray(peRaw.value)) {
-            const pe = Number((peRaw.value as Array<Record<string, unknown>>)[0]?.priceToEarningsRatioTTM);
-            if (Number.isFinite(pe) && pe > 0) peRatio = pe;
+            const row = (peRaw.value as Array<Record<string, unknown>>)[0];
+            const finite = (value: unknown) => {
+              const parsed = Number(value);
+              return Number.isFinite(parsed) ? parsed : undefined;
+            };
+            const percent = (value: unknown) => {
+              const parsed = finite(value);
+              return parsed === undefined ? undefined : Math.round(parsed * 10_000) / 100;
+            };
+            const pe = finite(row?.priceToEarningsRatioTTM);
+            const pb = finite(row?.priceToBookRatioTTM);
+            if (pe !== undefined && pe > 0) peRatio = pe;
+            if (pb !== undefined && pb > 0) pbRatio = pb;
+            debtToEquity = finite(row?.debtToEquityRatioTTM ?? row?.debtEquityRatioTTM);
+            returnOnEquity = percent(row?.returnOnEquityTTM);
+            returnOnAssets = percent(row?.returnOnAssetsTTM);
+            grossProfitMargin = percent(row?.grossProfitMarginTTM);
+            ratiosDividendYield = percent(row?.dividendYieldTTM);
+          }
+
+          // Stable company profile -> identity + durable operating/market facts. This
+          // replaces the duplicate per-symbol Senate call (Congress.Trade is the
+          // congressional system of record) without increasing the baseline call count.
+          let companyName: string | undefined;
+          let sector: string | undefined;
+          let industry: string | undefined;
+          let beta: number | undefined;
+          let dividendYield: number | undefined = ratiosDividendYield;
+          let fiftyTwoWeekHigh: number | undefined;
+          let fiftyTwoWeekLow: number | undefined;
+          if (profileRaw.status === "fulfilled" && Array.isArray(profileRaw.value)) {
+            const row = (profileRaw.value as Array<Record<string, unknown>>)[0];
+            if (row) {
+              const clean = (value: unknown) =>
+                typeof value === "string" && value.trim() ? value.trim() : undefined;
+              const finite = (value: unknown) => {
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? parsed : undefined;
+              };
+              companyName = clean(row.companyName);
+              sector = clean(row.sector);
+              industry = clean(row.industry);
+              beta = finite(row.beta);
+              const lastDividend = finite(row.lastDividend ?? row.lastDiv);
+              const profilePrice = finite(row.price);
+              if (lastDividend !== undefined && lastDividend >= 0 && profilePrice !== undefined && profilePrice > 0) {
+                dividendYield = Math.round((lastDividend / profilePrice) * 10_000) / 100;
+              }
+              const range = clean(row.range)?.match(/^\s*([\d.]+)\s*-\s*([\d.]+)\s*$/);
+              if (range) {
+                fiftyTwoWeekLow = finite(range[1]);
+                fiftyTwoWeekHigh = finite(range[2]);
+              }
+            }
           }
 
           // Analyst grades-consensus → 0–100 score + label + counts (blended by the cascade).
@@ -2632,7 +2698,9 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             let sells = 0;
             for (const trade of trades.slice(0, 100)) {
               const type = String(trade.transactionType || "").toLowerCase();
-              const acqDisp = String(trade.acquistionOrDisposition || "").toLowerCase();
+              const acqDisp = String(
+                trade.acquisitionOrDisposition ?? trade.acquistionOrDisposition ?? ""
+              ).toLowerCase();
               if (type.includes("buy") || type.includes("purchase") || acqDisp === "a") buys++;
               else if (type.includes("sell") || type.includes("sale") || acqDisp === "d") sells++;
             }
@@ -2640,18 +2708,6 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             if (total > 0) {
               insiderSentiment = Math.round((buys / total) * 100);
             }
-          }
-
-          let senateTrades: number | undefined;
-          if (senateRaw.status === "fulfilled" && Array.isArray(senateRaw.value)) {
-            const trades = senateRaw.value as Array<Record<string, unknown>>;
-            let net = 0;
-            for (const trade of trades.slice(0, 100)) {
-              const type = String(trade.type || "").toLowerCase();
-              if (type.includes("purchase")) net++;
-              else if (type.includes("sale")) net--;
-            }
-            if (trades.length > 0) senateTrades = net;
           }
 
           // Price-target-consensus → numeric targets. FMP stable shape:
@@ -2676,9 +2732,20 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
 
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
+            ...(pbRatio !== undefined && { pbRatio }),
+            ...(debtToEquity !== undefined && { debtToEquity }),
+            ...(returnOnEquity !== undefined && { returnOnEquity }),
+            ...(returnOnAssets !== undefined && { returnOnAssets }),
+            ...(grossProfitMargin !== undefined && { grossProfitMargin }),
             ...(analystBySource !== undefined && { analystBySource }),
+            ...(companyName !== undefined && { companyName }),
+            ...(sector !== undefined && { sector }),
+            ...(industry !== undefined && { industry }),
+            ...(beta !== undefined && { beta }),
+            ...(dividendYield !== undefined && { dividendYield }),
+            ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+            ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
             ...(insiderSentiment !== undefined && { insiderSentiment }),
-            ...(senateTrades !== undefined && { senateTrades }),
             ...(targetMean !== undefined && { targetMean }),
             ...(targetHigh !== undefined && { targetHigh }),
             ...(targetLow !== undefined && { targetLow }),
@@ -2694,8 +2761,8 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           const madeCalls = [
             ...(skipPe ? [] : [peRaw]),
             ...(skipConsensus ? [] : [consensusRaw]),
+            profileRaw,
             insiderRaw,
-            senateRaw,
             ...(wantTargets ? [targetRaw] : [])
           ];
           const breakerSkipped = madeCalls.length > 0 && madeCalls.every(
@@ -2707,7 +2774,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             return;
           }
 
-          const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
+          const promises = [peRaw, consensusRaw, profileRaw, insiderRaw];
           const allRejected = promises.every((p) => p.status === "rejected");
           const hasTransientError = promises.some((p) => p.status === "rejected" && isTransientError(p.reason));
           const isEmpty = Object.keys(data).length === 0;
@@ -2768,7 +2835,13 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     try {
       const response = await fetchWithRetry(
         url,
-        { cache: "no-store", signal: controller.signal },
+        {
+          cache: "no-store",
+          signal: controller.signal,
+          // Header authentication keeps the credential out of URLs, thrown
+          // errors, proxy logs, and upstream diagnostics.
+          headers: { apikey: this.apiKey }
+        },
         {
           service: this.name,
           keySource: this.keySource,

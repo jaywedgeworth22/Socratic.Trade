@@ -59,6 +59,38 @@ Hosted verify then failed one test: `test/vector-db-chunk-cap.test.ts` expected 
 work while its DB mock lacked the new durable active rights-gate row. The mock now exposes
 `fmp_transcript_rights_gate` as `{ generation: 1, status: "active" }` plus basic `all/run` seams, matching
 current product retrieval requirements. Focused Node 24 verification passes 14/14.
+## 2026-07-15 — FMP coverage, market-scan reliability, and non-scan ticker sheets (CODEX, branch `codex/fmp-market-data-reliability`)
+
+Production evidence showed three July 14 interactive scan failures at 15:35-15:40 CDT, all
+the route's 25-second timeout. FMP was healthy during the incident; the architectural blocker was
+the cold 150-symbol all-provider cascade. Finnhub can enqueue 750 calls at 50/min, while the route's
+timeout did not cancel queued work and page mounts/retries had no single-flight. Interactive scans
+now skip that deep ingestion job, safely reuse slow facts from the latest completed strategy run
+while replacing price-family fields, coalesce identical requests, and bound the public Nasdaq
+screener. Full strategy/scheduler scans retain deep enrichment.
+
+FMP now uses stable, header-authenticated profile and insider-search routes instead of legacy v4
+insider/Senate URLs. The existing ratios call now maps P/B, leverage, ROE, ROA, margin, and yield in
+addition to P/E; profile supplies company identity, classification, beta, dividend yield, and range.
+Congress.Trade remains the congressional source of truth, avoiding duplicate shared-quota calls.
+Durable provider-dispatch events retain the scrubbed FMP operation name, so future endpoint coverage
+is observable by Socratic.Trade credential lane instead of only as an aggregate `fmp` counter.
+The three transcript attempts visible in the screenshot predated the newly merged, safety-gated
+producer and were not ingestion: the current plan returns HTTP 402 and the legacy Gamma helpers have
+no caller. The production transcript producer/backfill remains default-off pending entitlement and rights.
+
+Out-of-scan ticker sheets now fetch a bounded Yahoo identity/current-quote floor in parallel with
+the rich cascade, preserve completed rich fields, omit synthetic bid/ask, and update the open sheet's
+header when the company name arrives. Browser QA passed the exact absent-from-scan flow with LRCX:
+the sheet resolved Lam Research, current quote, classification, analyst rating, and derived
+fundamentals with zero browser-console errors. A hostile review then caught and closed four issues:
+fresh-quote timestamp arbitration, quote-cascade coalescing, 24-hour/slow-field-only persisted seed
+reuse, and a clearly stale last-strategy fallback when Nasdaq is unavailable. Current
+`origin/main@ede902f5` (including PR #1586's durable FMP dispatch/transcript safety lane) is reconciled;
+Node 24 lint and TypeScript pass, along with 9 files / 201 focused tests. The current-main full landing gate, ready PR,
+hosted checks, protected merge, and exact production verification remain.
+
+Rollout: `docs/rollouts/2026-07-15-fmp-market-data-reliability.md`.
 
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
 
@@ -848,7 +880,7 @@ on `.console-root`) while secondary text used the LEGACY app utility classes (`t
 ONLY the console system, so the two diverged — in console dark mode, muted text stayed dark slate
 (rgb(63,79,96)) on a dark card = nearly invisible; in html-dark + console-light it was washed-out light text
 on white. Every migrated Settings page was affected. Fix: 6 class swaps in `ios-components.tsx` to the
-`text-[color:var(--con-*)]` arbitrary-value form the same file already uses at its other call sites, plus 2
+the semantic console-token arbitrary-value form the same file already uses at its other call sites, plus 2
 typo fixes in `app/console/components/chrome.tsx` (theme-picker active state used `var(--con-text)`, an
 undefined token → corrected to `var(--con-fg)`). Display-only CSS-class change, no logic touched. Grep
 confirms 0 standalone legacy classes and 0 `con-text` remaining. Rollout:
@@ -1069,7 +1101,11 @@ Verified full health via `tsc`, `lint`, and 3896 passing tests.
 Rollout: `docs/rollouts/2026-07-12-rag-ingestion-limits.md`.
 ## 2026-07-12 — Quiver Quant API Integration & FMP Endpoint Expansion (AG, branch `agent/antigravity`)
 
-Integrated the Quiver Quant API into the backend application. Added Quiver Quant key support in `src/lib/db-api-keys.ts` and `app/api/keys/route.ts`. Created `QuiverQuantEnrichmentProvider` in `src/lib/data-providers.ts` and injected it into the main cascading enrichment workflow. Expanded the existing `FmpEnrichmentProvider` to utilize `/v3/key-metrics-ttm` and `/v3/financial-growth` endpoints. Updated `MarketQuote` and `SymbolEnrichment` structures in `src/lib/types.ts`. All test suites updated to reflect the new 6-endpoint FMP fetch count.
+**CORRECTED 2026-07-15:** the Quiver provider landed, but the FMP expansion claim did not. The
+production tree had no `/v3/key-metrics-ttm` or `/v3/financial-growth` caller and still made four
+per-symbol FMP calls (plus optional targets). Treat the older six-endpoint wording as documentation
+drift. The stable-route and field-coverage correction is tracked in the 2026-07-15 entry above and
+`docs/fmp-capabilities.md`.
 Passed 3896 tests and clean build.
 Rollout: `docs/rollouts/2026-07-12-quiver-quant-fmp.md`.
 

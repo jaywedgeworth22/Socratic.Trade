@@ -26,6 +26,7 @@ describe("Yahoo Finance Quotes", () => {
               result: [
                 {
                   meta: {
+                    longName: "Apple Inc.",
                     regularMarketPrice: 205.5,
                     chartPreviousClose: 203.2
                   },
@@ -48,6 +49,7 @@ describe("Yahoo Finance Quotes", () => {
 
     const quote = await fetchYahooFinanceQuote("AAPL");
     expect(quote).toBeDefined();
+    expect(quote?.companyName).toBe("Apple Inc.");
     expect(quote?.price).toBe(205.5);
     expect(quote?.prevClose).toBe(203.2);
     expect(quote?.volume).toBe(1500000);
