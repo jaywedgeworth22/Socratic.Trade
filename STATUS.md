@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-15 — Eval-script OpenAI model defaults bumped off retired gpt-4o-mini (CLAUDE)
+
+Owner-directed cleanup after an OpenAI rate-limit/cost review. Two eval-only dev scripts
+still defaulted to previous-gen `gpt-4o-mini` (unused anywhere in the live app path):
+`scripts/eval/faithfulness.ts` RAG faithfulness **judge** → `gpt-5.4-mini` (a judge should
+be at least as capable as what it grades), and `scripts/eval/run-offline.ts` OpenAI
+**subject-under-test** in the cross-provider bake-off → `gpt-5.4-nano` (its cheap-tier
+current peer; every other provider row was already current-gen). Both stay env-overridable.
+No live runtime impact — these run manually. Congress.Trade needed no change (its live
+extraction already uses `gpt-5.6-terra`; all bare `gpt-5.6` refs there are prefix guards /
+inert aliases / labels). Branch `claude/eval-model-defaults`.
+Rollout: `docs/rollouts/2026-07-15-eval-model-default-bump.md`.
+
 ## 2026-07-15 — Settings design consistency + Guardrails collapsible sections (CLAUDE)
 
 Owner-directed UI fix. (1) Settings was the only page built on `app/ui/ios-components.tsx`
