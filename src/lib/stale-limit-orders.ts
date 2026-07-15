@@ -64,6 +64,9 @@ export async function notifyStaleLimitOrders(input: {
   let alerted = 0;
 
   for (const item of stale) {
+    // Never alert on an unactivated bracket exit leg — see isHeldExitLeg. (The leg stays in the
+    // listing for order-replacement's held-leg 409; only the owner-facing alert is suppressed.)
+    if (isHeldExitLeg(item.order)) continue;
     const key = staleLimitOrderAlertKey(userId, input.policy, item);
     if (getInternalSetting(key)) continue;
 
@@ -119,6 +122,21 @@ export async function notifyStaleLimitOrders(input: {
 function isWorkingOrderState(state: string | undefined): boolean {
   const normalized = String(state ?? "").trim().toLowerCase();
   return isActiveBrokerOrderState(normalized) || EXTRA_WORKING_STATES.has(normalized);
+}
+
+/**
+ * A bracket/OCO/OTO exit leg sits in Alpaca's "held" state until its sibling entry order fills.
+ * It cannot execute yet, so the stale-limit ALERT ("cancel/reprice or replace with a market
+ * order") is wrong advice and the leg's age is not actionable — suppress the alert for it.
+ *
+ * This is deliberately NOT done inside `listStaleLimitOrders`/`isWorkingOrderState`: that listing
+ * is a shared primitive `order-replacement.ts` relies on to still SEE a held leg so it can reject
+ * a manual market-replace with the correct held-leg 409 (and its auto path skips held itself).
+ * Once the entry fills, the broker transitions the leg (held -> new) and bumps `updatedAt`, so the
+ * leg reappears here and its age-from-activation is measured correctly.
+ */
+function isHeldExitLeg(order: EquityOrder): boolean {
+  return String(order.state ?? "").trim().toLowerCase() === "held";
 }
 
 function staleLimitOrderAlertKey(userId: string, policy: TradingPolicy, item: StaleLimitOrder): string {

@@ -544,7 +544,13 @@ class AlpacaBrokerGateway implements BrokerGateway {
         }
 
         if (input.limitPrice) orderOptions.limit_price = input.limitPrice;
-        if (input.stopPrice) orderOptions.stop_price = input.stopPrice;
+        // stop_price is only legal on stop-family order types — Alpaca rejects a limit order that
+        // carries one with HTTP 422 40010001 "limit orders require no stop price" (proposals may
+        // carry a protective stopPrice idea; that intent rides the bracket stop_loss /
+        // protective-stop systems, never this field).
+        if (input.stopPrice && (input.type === "stop_market" || input.type === "stop_limit")) {
+          orderOptions.stop_price = input.stopPrice;
+        }
         if (input.marketHours === "extended_hours") orderOptions.extended_hours = true;
 
         if (isBracket) {
@@ -598,7 +604,11 @@ class AlpacaBrokerGateway implements BrokerGateway {
     else if (input.dollarAmount && !isBracket) orderArgs.notional = String(input.dollarAmount);
 
     if (input.limitPrice) orderArgs.limit_price = String(input.limitPrice);
-    if (input.stopPrice) orderArgs.stop_price = String(input.stopPrice);
+    // Same constraint as the REST path: stop_price only on stop-family types (Alpaca 422s a
+    // limit order carrying one).
+    if (input.stopPrice && (input.type === "stop_market" || input.type === "stop_limit")) {
+      orderArgs.stop_price = String(input.stopPrice);
+    }
 
     if (isBracket) {
       orderArgs.order_class = "bracket";

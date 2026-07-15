@@ -272,6 +272,10 @@ export function LlmUsageClient({
   const filteredCalls = filteredRows.reduce((s, r) => s + r.calls, 0);
   const filteredTokens = filteredRows.reduce((s, r) => s + r.totalTokens, 0);
 
+  // max-w-5xl here is independently maintained (this component also renders standalone at
+  // /admin/llm-usage, outside the console shell's CSS tokens) — it only coincidentally matches
+  // ../../console/lib/page-width.ts's CONSOLE_PAGE_WIDTH, which /console/usage's wrapper does not
+  // import.
   return (
     <div className="min-h-screen bg-base text-fg p-6 max-w-5xl mx-auto">
       <div className="mb-6">

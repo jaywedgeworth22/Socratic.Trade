@@ -150,7 +150,13 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         });
 
         if (!response.ok) {
-          console.warn("Post-mortem LLM call failed:", humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status }));
+          const reason = humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status });
+          console.warn("Post-mortem LLM call failed:", reason);
+          // Attributed failure record (model attribution "incl. failure states") — previously a
+          // failed reflection call left NO trace anywhere the owner could see; this is the only
+          // audit for this run when the call fails, so it must be written here, not gated behind
+          // the success-only block below.
+          audit("post_mortem_reflection", { status: "failed", model, provider, accountNumber, reason }, userId, connectedAccount?.id);
           return { text: undefined };
         }
 
@@ -180,6 +186,8 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
       audit("post_mortem_reflection", {
         summary: traced.text,
         accountNumber,
+        model,
+        provider,
         tradeCount: tradeData.length,
         outcomesByThesis,
         outcomesByRegime,

@@ -237,7 +237,12 @@ describe("generateReflectionSummary", () => {
       .all(userId) as Array<{ payload: string; connected_account_id: string | null }>;
     expect(reflections).toHaveLength(1);
     expect(reflections[0].connected_account_id).toBe(accountId);
-    expect(JSON.parse(reflections[0].payload).accountNumber).toBe(accountNumber);
+    const reflectionPayload = JSON.parse(reflections[0].payload);
+    expect(reflectionPayload.accountNumber).toBe(accountNumber);
+    // Model attribution "on every decision surface incl. failure states" (#1076) — the reflection
+    // is an LLM decision too, so its Journal entry must be able to show which model produced it.
+    expect(reflectionPayload.model).toBe("gpt-4.1-mini");
+    expect(reflectionPayload.provider).toBe("openai");
 
     // Opt-out is reflection-only: an ordinary user-setting write still emits policy_change.
     setUserSetting(userId, "some_user_pref", "on");
@@ -245,6 +250,39 @@ describe("generateReflectionSummary", () => {
       .prepare("SELECT payload FROM audit_events WHERE user_id = ? AND kind = 'policy_change'")
       .all(userId) as Array<{ payload: string }>;
     expect(afterNormalWrite.some((row) => row.payload.includes("some_user_pref"))).toBe(true);
+  });
+
+  it("a failed reflection LLM call still audits a model-attributed failure record (incl. failure states)", async () => {
+    const userId = `post-mortem-failed-${randomUUID()}`;
+    const accountNumber = "APCA-PAPER-FAILED";
+    const accountId = randomUUID();
+    const { getDb, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
+    const { generateReflectionSummary } = await import("../src/lib/post-mortem");
+
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+
+    upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
+    setActiveConnectedAccount(accountId, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", connectedAccountId: accountId, llmModel: "gpt-4.1-mini" }, userId);
+    insertFillEvent({ userId, accountNumber, source: "paper", executionMode: "broker/paper", symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled" });
+
+    vi.stubGlobal("fetch", async () => new Response("rate limited", { status: 429, headers: { "content-type": "text/plain" } }));
+
+    // Before this fix, a failed call produced console.warn only — no audit at all, so the Journal
+    // never showed anything happened. Must complete cleanly, not throw.
+    await expect(generateReflectionSummary(accountNumber, userId)).resolves.toBeUndefined();
+
+    const reflections = getDb()
+      .prepare("SELECT payload, connected_account_id FROM audit_events WHERE user_id = ? AND kind = 'post_mortem_reflection'")
+      .all(userId) as Array<{ payload: string; connected_account_id: string | null }>;
+    expect(reflections).toHaveLength(1);
+    expect(reflections[0].connected_account_id).toBe(accountId);
+    const failurePayload = JSON.parse(reflections[0].payload);
+    expect(failurePayload.status).toBe("failed");
+    expect(failurePayload.model).toBe("gpt-4.1-mini");
+    expect(failurePayload.provider).toBe("openai");
+    expect(typeof failurePayload.reason).toBe("string");
   });
 
   it("over the daily LLM budget: skips the reflection LLM call, does not throw (non-LLM excursion path still runs)", async () => {
