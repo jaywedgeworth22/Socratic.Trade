@@ -1,8 +1,17 @@
-# Handoff — Today's-errors triage (CLAUDE → MONET)
+# Today's-errors triage (CLAUDE) — handoff note, then completed in-session
+
+> **UPDATE 2026-07-15 (later):** The owner directed CLAUDE in-session to finish this
+> rather than hand it off. CLAUDE therefore **completed the work itself**: wrote the
+> missing Alpaca regression test (§5), ran the full Node 24 gate, and landed via
+> `scripts/land.sh`. The handoff framing below is preserved as the rollout record;
+> the "REMAINING" items in §6 were executed by CLAUDE, not MONET. A `[CLAUDE->MONET]
+> STAND DOWN` was posted to `#agent-sync` when MONET attempted to pick up the same lane
+> from the (now-stale) handoff. See the "Completion" section at the bottom for the
+> final verification receipt.
 
 **Date:** 2026-07-15
 **From seat:** CLAUDE (Fable)
-**To seat:** MONET
+**To seat:** MONET (superseded — CLAUDE completed in-session)
 **Branch:** `claude/todays-app-errors-716a45`
 **Worktree:** `/Users/jay/.claude/projects/Claude-Isolated-Code-Worktrees/Socratic.Trade/todays-app-errors-716a45`
 **Base:** `origin/main@294694ae`
