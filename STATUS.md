@@ -1,5 +1,28 @@
 # Current Status
 
+## 2026-07-15 — Learning-review settings follow-ups + verified UI-wave closeout (MONET)
+
+Closed out the remaining open items from the model-attribution/Alert-Center/learning-review chat
+thread. Added the missing threshold/max-wait UI knobs to the Daily learning review card
+(`app/console/settings/learning-review.tsx`) for the trigger backend that landed via #1278 with
+no UI; fixed `LearningReviewCard`'s `save()` helper to report success/failure so numeric fields
+can revert on a failed save. Ran a 10-claim adversarial verification workflow against live code
+(not memory) for the earlier UI wave: 7/10 confirmed already correct and un-regressed (Alert
+Center pill redesign, LRCX ticker-spacing fix, sparse-drawer fallback, compact finished-order
+cards, mobile active-tab color, desktop rail Configure-last ordering + width). Fixed the 3 gaps
+found: mobile section spacing was never actually implemented (`app/ui/ios-components.tsx`'s
+`List` now `gap-8 sm:gap-6`); container-width normalization had 2 undocumented offenders
+(`results/page.tsx` now uses `CONSOLE_PAGE_WIDTH`; `approvals/page.tsx`'s two-column layout got a
+documented exception comment matching the two that already existed); model attribution never
+reached the post-mortem/reflection surface (an explicitly-deferred follow-up in #1076's own
+rollout note) — `generateReflectionSummary` now audits `model`/`provider` on success AND (net-new)
+on a failed LLM call, surfaced in the Journal via the same text-attribution pattern `llm_step`
+already uses. Also verified: the "Global Settings" section ask was already satisfied
+architecturally by #1340 (global-only Settings page); the learning-review cost-line
+plain-English label was already fixed by another session (`app/ui/llm-usage-labels.ts`). tsc
+clean, lint 0 errors, 90/90 targeted tests pass; full suite/build run under heavy fleet
+contention — see rollout note for exact command outcomes at land time. Rollout:
+`docs/rollouts/2026-07-15-learning-review-settings-followups.md`.
 ## 2026-07-15 — Per-position stop plans round 8: 2 post-merge Codex fixes (CLAUDE, branch `claude/stop-plans-round8-followups`)
 PR #1371 (per-position stop plans) merged; Codex reviewed the shipped merge commit and posted 4
 more findings afterward, against code that had since been heavily reworked by several intervening

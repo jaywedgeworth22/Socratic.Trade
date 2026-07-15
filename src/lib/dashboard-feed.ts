@@ -292,9 +292,18 @@ function formatAuditEvent(
   }
 
   if (kind === "post_mortem_reflection") {
+    const provider = stringValue(payload.provider);
+    const model = stringValue(payload.model);
+    const modelAttribution = model && provider ? `${model} via ${capitalize(provider)}` : model ?? provider;
+    if (payload.status === "failed") {
+      return {
+        title: "Post-mortem reflection failed",
+        detail: joinDetail([modelAttribution, stringValue(payload.reason)]) ?? "The reflection model call failed"
+      };
+    }
     return {
       title: "Post Mortem Reflection",
-      detail: stringValue(payload.summary) ?? "No reflection summary"
+      detail: joinDetail([modelAttribution, stringValue(payload.summary)]) ?? stringValue(payload.summary) ?? "No reflection summary"
     };
   }
 
