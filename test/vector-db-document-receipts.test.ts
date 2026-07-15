@@ -873,6 +873,68 @@ describe("storeDocument receipt transaction", () => {
     `).get(tenantScope, source, documentKey)).toEqual({ commit_id: corrected.commitId });
   });
 
+  it("chunks a maximum six-tier receipt lookup below SQLite bind limits", async () => {
+    const {
+      beginVectorCommit,
+      committedManagedVectorReceipts,
+      insertManagedChunkOccurrences,
+      markVectorCommitCommitted,
+      markVectorCommitReceiptsPersisted
+    } = await import("../src/lib/db");
+    const suffix = randomUUID();
+    const commitId = `vcommit:test:large-receipt-lookup:${suffix}`;
+    const vectorId = `occ:test:large-receipt-lookup:${suffix}`;
+    const documentKey = `logical-document:large-receipt-lookup:${suffix}`;
+    const source = `large-receipt-lookup-${suffix}`;
+    const attemptToken = `attempt:${suffix}`;
+    const acceptedAt = "2026-02-04T12:00:00.000Z";
+
+    expect(beginVectorCommit({
+      id: commitId,
+      tenantScope: "shared:operator",
+      userId: "local",
+      source,
+      accession: documentKey,
+      documentKey,
+      contentVersion: `content:${suffix}`,
+      retrievalMetadataVersion: `metadata:${suffix}`,
+      parserRevision: "test-v1",
+      embedRevision: "test-v1",
+      expectedVectors: 1,
+      attemptToken,
+      leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+      now: acceptedAt
+    })).toBe("started");
+    insertManagedChunkOccurrences([{
+      vectorId,
+      contentHash: `hash:${suffix}`,
+      symbol: "AAPL",
+      source,
+      accession: documentKey,
+      section: "body",
+      ordinal: 1,
+      acceptedAt,
+      tenantScope: "shared:operator",
+      contentVersion: `content:${suffix}`,
+      commitId,
+      receiptState: "pending",
+      createdAt: acceptedAt
+    }]);
+    markVectorCommitReceiptsPersisted(commitId, attemptToken, acceptedAt);
+    markVectorCommitCommitted(commitId, attemptToken, acceptedAt);
+
+    // Retrieval may combine six independent provider tiers of 10,000 candidates. Keep the
+    // committed match last so every batch is exercised; the old one-statement lookup exceeded
+    // SQLite's host-parameter ceiling and silently degraded managed retrieval to no matches.
+    const candidateIds = Array.from(
+      { length: 59_999 },
+      (_, index) => `missing:large-receipt-lookup:${suffix}:${index}`
+    );
+    candidateIds.push(vectorId);
+
+    expect([...committedManagedVectorReceipts(candidateIds).keys()]).toEqual([vectorId]);
+  });
+
   it("activates a historically accepted reconciliation correction strictly after the current head", async () => {
     const {
       beginVectorCommit,

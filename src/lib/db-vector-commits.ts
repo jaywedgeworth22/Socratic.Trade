@@ -700,6 +700,31 @@ export function abortVectorCommit(
   `).run(now, commitId, attemptToken);
 }
 
+// Stay below SQLite's portable 999-variable ceiling, including the two optional as-of binds.
+// A retrieval can legally combine six provider tiers of up to 10,000 candidates each.
+const MANAGED_RECEIPT_LOOKUP_BATCH_SIZE = 900;
+
+interface CommittedManagedVectorReceiptRow {
+  vector_id: string;
+  commit_id: string;
+  content_version: string;
+  tenant_scope: string;
+  content_hash: string;
+  symbol: string;
+  source: string;
+  accession: string;
+  document_key: string;
+  section: string;
+  ordinal: number;
+  parser_revision: string;
+  embed_revision: string;
+  retrieval_metadata_version: string;
+  attempt_token: string;
+  provider_authority: string | null;
+  ledger_authority: string | null;
+  vector_namespace: "managed" | "fmp-transcripts";
+}
+
 export function committedManagedVectorReceipts(vectorIds: string[], asOf?: string): Map<string, {
   commitId: string;
   contentVersion: string;
@@ -721,55 +746,41 @@ export function committedManagedVectorReceipts(vectorIds: string[], asOf?: strin
 }> {
   const unique = [...new Set(vectorIds.filter(Boolean))];
   if (unique.length === 0) return new Map();
-  const placeholders = unique.map(() => "?").join(",");
   const parsedAsOf = asOf && Number.isFinite(Date.parse(asOf))
     ? new Date(asOf).toISOString()
     : undefined;
-  const rows = getDb().prepare(`
-    SELECT o.vector_id, o.commit_id, o.content_version, o.tenant_scope,
-           o.content_hash, o.symbol, o.source, o.accession, o.section, o.ordinal,
-           c.document_key, c.parser_revision, c.embed_revision,
-           c.retrieval_metadata_version, c.attempt_token, c.provider_authority,
-           c.ledger_authority, c.vector_namespace
-    FROM chunk_occurrences o
-    JOIN vector_ingest_commits c ON c.id = o.commit_id
-    ${parsedAsOf
-      ? `JOIN vector_document_versions v
-          ON v.commit_id = c.id
-          AND v.tenant_scope = c.tenant_scope
-          AND v.source = c.source
-          AND v.document_key = c.document_key
-          AND v.valid_from <= ?
-          AND (v.valid_to IS NULL OR v.valid_to > ?)`
-      : `JOIN vector_document_heads h
-          ON h.commit_id = c.id
-          AND h.tenant_scope = c.tenant_scope
-          AND h.source = c.source
-          AND h.accession = c.document_key`}
-    WHERE o.vector_id IN (${placeholders})
-      AND o.receipt_state = 'committed' AND c.state = 'committed'
-      AND c.lease_expires_at IS NULL
-      AND o.tenant_scope = c.tenant_scope AND o.content_version = c.content_version
-  `).all(...(parsedAsOf ? [parsedAsOf, parsedAsOf, ...unique] : unique)) as Array<{
-    vector_id: string;
-    commit_id: string;
-    content_version: string;
-    tenant_scope: string;
-    content_hash: string;
-    symbol: string;
-    source: string;
-    accession: string;
-    document_key: string;
-    section: string;
-    ordinal: number;
-    parser_revision: string;
-    embed_revision: string;
-    retrieval_metadata_version: string;
-    attempt_token: string;
-    provider_authority: string | null;
-    ledger_authority: string | null;
-    vector_namespace: "managed" | "fmp-transcripts";
-  }>;
+  const database = getDb();
+  const rows: CommittedManagedVectorReceiptRow[] = [];
+  for (let offset = 0; offset < unique.length; offset += MANAGED_RECEIPT_LOOKUP_BATCH_SIZE) {
+    const batch = unique.slice(offset, offset + MANAGED_RECEIPT_LOOKUP_BATCH_SIZE);
+    const placeholders = batch.map(() => "?").join(",");
+    rows.push(...database.prepare(`
+      SELECT o.vector_id, o.commit_id, o.content_version, o.tenant_scope,
+             o.content_hash, o.symbol, o.source, o.accession, o.section, o.ordinal,
+             c.document_key, c.parser_revision, c.embed_revision,
+             c.retrieval_metadata_version, c.attempt_token, c.provider_authority,
+             c.ledger_authority, c.vector_namespace
+      FROM chunk_occurrences o
+      JOIN vector_ingest_commits c ON c.id = o.commit_id
+      ${parsedAsOf
+        ? `JOIN vector_document_versions v
+            ON v.commit_id = c.id
+            AND v.tenant_scope = c.tenant_scope
+            AND v.source = c.source
+            AND v.document_key = c.document_key
+            AND v.valid_from <= ?
+            AND (v.valid_to IS NULL OR v.valid_to > ?)`
+        : `JOIN vector_document_heads h
+            ON h.commit_id = c.id
+            AND h.tenant_scope = c.tenant_scope
+            AND h.source = c.source
+            AND h.accession = c.document_key`}
+      WHERE o.vector_id IN (${placeholders})
+        AND o.receipt_state = 'committed' AND c.state = 'committed'
+        AND c.lease_expires_at IS NULL
+        AND o.tenant_scope = c.tenant_scope AND o.content_version = c.content_version
+    `).all(...(parsedAsOf ? [parsedAsOf, parsedAsOf, ...batch] : batch)) as CommittedManagedVectorReceiptRow[]);
+  }
   return new Map(rows.map((row) => [row.vector_id, {
     commitId: row.commit_id,
     contentVersion: row.content_version,

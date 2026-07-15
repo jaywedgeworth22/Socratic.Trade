@@ -735,6 +735,63 @@ git diff --check
 Results: 5 files / 46 tests and 7 files / 74 tests green; TypeScript and diff-check clean. Fresh hostile
 re-review and the ordered full repository gate remain. No external provider/config/production mutation ran.
 
+### Round-19 ambiguous-write erasure and eligibility-before-quota
+
+The final hostile pass found two remaining edge cases. First, `storeContexts` can return zero indexed
+records plus an error when a provider request timed out after dispatch; the remote upsert may still have
+committed. Decision-memory work now classifies only a clean zero-index result as `no_provider_write`.
+Zero-index plus any error stays `provider_write_unknown`, remains in private-vector inventory, and is
+deleted and verified through the recorded provider/ledger authority before its local receipt is removed.
+
+Second, the six-tier fair union previously applied its 1,000-document cap before relational eligibility.
+High-scoring stale managed generations could therefore consume a tier's quota, get rejected afterward,
+and hide lower-scoring current evidence from the reranker. Tenant visibility, committed-receipt validity,
+and transcript-rights generation now filter each tier before quota allocation. Raw, visible, and
+receipt-eligible counts remain attached to the in-memory pool for degraded-state telemetry, including
+multi-query fusion. Multi-query RRF also retains provider-tier identity and applies a final fair 1,000-record
+cap instead of truncating the fused rerank pool back to the single-query fetch count. Saturated regressions
+supply 900 stale plus 100 current private records and 1,000
+shared records; Voyage receives all 100 current private records, 900 shared records, and no stale record.
+Another fans out two queries over 150 private plus 150 shared records and proves Voyage receives all 300.
+
+Final hostile review then found that the eligibility pass could send the legal six-tier maximum of
+60,000 vector IDs through one SQLite `IN (...)` receipt query. That exceeds SQLite's host-parameter
+ceiling on common builds; the catch path would then reject all managed candidates. Receipt lookup now
+deduplicates and batches IDs in groups of 900, leaving room for point-in-time binds under SQLite's
+portable 999-variable ceiling. A real temporary-SQLite regression places the only committed match last
+in a 60,000-ID pool and proves it survives all batches.
+
+Files changed in this round: `src/lib/socratic-memory.ts`, `src/lib/vector-db.ts`,
+`src/lib/db-vector-commits.ts`,
+`src/lib/web-sources/fmp-transcripts.ts`,
+`test/socratic-db.test.ts`, `test/fmp-rights-derived-artifacts.test.ts`,
+`test/vector-db-scope.test.ts`, `test/vector-db-document-receipts.test.ts`,
+`test/socratic-memory.test.ts`, `test/outcome-engine.test.ts`, `STATUS.md`, `PLAN.md`,
+`docs/phase-9-web-sources.md`, both effort logs, and this rollout note.
+
+Focused verification (Node 24, mocked providers and temporary SQLite only):
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/socratic-db.test.ts test/fmp-rights-derived-artifacts.test.ts \
+  test/vector-db-scope.test.ts test/vector-db-document-receipts.test.ts \
+  test/outcome-engine.test.ts test/rag-multi-query-retrieval.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit
+git diff --check
+```
+
+Results: 6 files / 72 tests green; TypeScript and diff-check clean. Final hostile re-review and the
+ordered full repository gate remain. No provider, corpus, configuration, or production mutation ran.
+
+The first ordered repository run then passed lint (0 errors / 480 inherited warnings), TypeScript,
+and 379 files / 4,362 tests before the production build rejected transitive `node:crypto` and
+`node:timers/promises` imports. Licensed Socratic-memory IDs now use Web Crypto SHA-256 and global
+`randomUUID`; document construction accepts that awaited immutable ID only when paired with the exact
+rights generation. Erasure stability backoff reuses the module's existing abort-aware `retryPause`
+instead of Node's timers/promises module. The deterministic SHA-256 fixture, adjacent decision/rights
+tests (3 files / 20 tests), TypeScript, and a production build with the real TypeScript phase plus all
+32 static pages pass. The ordered full gate must restart after this code change.
+
 The highest-yield 1,000-stock operational plan remains “archive broadly, embed selectively”: exact
 1,000-CIK manifest plus private priority overlay; historical submissions-shard discovery; immutable raw
 archive; structured XBRL/fundamentals; embedded 10-K/10-Q decision sections and material 8-K exhibits;

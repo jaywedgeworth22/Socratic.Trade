@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import type { SocraticDecisionCase } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-socratic-${randomUUID()}.db`)}`;
@@ -15,7 +16,7 @@ const storeContextsCalls: Array<{
 }> = [];
 let storeContextsInterceptor: ((text: string) => Promise<void>) | undefined;
 let storeContextsResultOverride:
-  | { attempted: number; indexed: number; skipped?: boolean; unconfigured?: boolean }
+  | { attempted: number; indexed: number; skipped?: boolean; unconfigured?: boolean; error?: string }
   | undefined;
 vi.mock("../src/lib/vector-db", () => ({
   getCurrentVectorProviderAuthority: async (options?: { leaseGuard?: { assertOwnership: () => void } }) => {
@@ -35,6 +36,35 @@ vi.mock("../src/lib/vector-db", () => ({
     return storeContextsResultOverride ?? { attempted: documents.length, indexed: documents.length };
   }
 }));
+
+function fmpDerivedDecision(id: string, chunkId: string): SocraticDecisionCase {
+  return {
+    id,
+    userId: "local",
+    status: "proposed",
+    createdAt: "2026-07-14T12:00:00.000Z",
+    updatedAt: "2026-07-14T12:00:00.000Z",
+    symbol: "EXE",
+    side: "buy",
+    authority: "decide",
+    thesis: "FMP-derived case",
+    rationale: "FMP-derived rationale.",
+    action: "BUY EXE",
+    evidence: [],
+    ragAttributions: [{
+      symbol: "EXE",
+      query: "earnings call",
+      source: "fmp-earnings-transcript",
+      docType: "earnings-transcript",
+      chunkId,
+      text: "licensed context",
+      contribution: "licensed context"
+    }],
+    dissent: [],
+    lessons: [],
+    coachNotes: []
+  };
+}
 
 describe("Socratic decision persistence", () => {
   it("settles a licensed provider reservation as no-write when indexing short-circuits", async () => {
@@ -81,6 +111,32 @@ describe("Socratic decision persistence", () => {
       FROM fmp_transcript_derived_provider_work WHERE artifact_id = ?
     `).get(id) as { status: string; terminal_outcome: string };
     expect(row).toEqual({ status: "complete", terminal_outcome: "no_provider_write" });
+  });
+
+  it("retains a purge obligation when provider-write acknowledgement is ambiguous", async () => {
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "on";
+    const { indexSocraticDecisionMemory } = await import("../src/lib/socratic-memory");
+    const { activateFmpTranscriptRightsGeneration } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    activateFmpTranscriptRightsGeneration();
+    storeContextsResultOverride = {
+      attempted: 1,
+      indexed: 0,
+      // Error presence, not message truthiness, is the durable proof that provider state is unknown.
+      error: ""
+    };
+    const id = `fmp-provider-unknown-${randomUUID()}`;
+    try {
+      await indexSocraticDecisionMemory(fmpDerivedDecision(id, "occ:v3:fmp:provider-unknown"));
+    } finally {
+      storeContextsResultOverride = undefined;
+    }
+
+    const row = getDb().prepare(`
+      SELECT status, terminal_outcome
+      FROM fmp_transcript_derived_provider_work WHERE artifact_id = ?
+    `).get(id) as { status: string; terminal_outcome: string };
+    expect(row).toEqual({ status: "complete", terminal_outcome: "provider_write_unknown" });
   });
 
   it("fences a paused FMP-derived memory writer after rights revocation and lease expiry", async () => {

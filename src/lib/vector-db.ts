@@ -481,9 +481,35 @@ function overFetchK(limit: number): number {
  */
 const DEFAULT_RERANK_OVERFETCH_K = 150;
 const VOYAGE_RERANK_MAX_DOCUMENTS = 1_000;
+
+interface CandidatePoolObservability {
+  providerCandidateCount: number;
+  visibleCandidateCount: number;
+  receiptEligibleCount: number;
+  receiptCrowdingDegraded: boolean;
+  tierByCandidateIdentity: Map<any, number>;
+}
+
 function rerankOverFetchK(limit: number): number {
   const cap = Math.floor(numericEnv("VECTOR_RERANK_OVERFETCH_K", DEFAULT_RERANK_OVERFETCH_K, 1));
   return Math.max(limit, cap);
+}
+
+function uniqueTierCandidateCount(tiers: any[][]): number {
+  const ids = new Set<string>();
+  const idless = new Set<any>();
+  for (const tier of tiers) {
+    for (const match of tier) {
+      const id = typeof match?.id === "string" && match.id.length > 0 ? match.id : undefined;
+      if (id) ids.add(id);
+      else idless.add(match);
+    }
+  }
+  return ids.size + idless.size;
+}
+
+function candidatePoolIdentity(match: any): string | object {
+  return typeof match?.id === "string" && match.id.length > 0 ? match.id : match;
 }
 
 /**
@@ -491,9 +517,14 @@ function rerankOverFetchK(limit: number): number {
  * Voyage's rerank request limit. When a cap is needed, rank-round-robin preserves quota from every
  * non-empty tier; selected candidates are then restored to global cosine order for fail-open fallback.
  */
-function boundedTierCandidateUnion(tiers: any[][], maxDocuments: number): any[] {
-  const sortedTiers = tiers.map((tier) => [...tier].sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0)));
-  const globallySorted = sortedTiers.flat().sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
+function boundedTierCandidateUnion(
+  tiers: any[][],
+  maxDocuments: number,
+  rankScore: (match: any) => number = (match) => Number(match?.score) || 0
+): any[] {
+  const compareRank = (a: any, b: any) => rankScore(b) - rankScore(a);
+  const sortedTiers = tiers.map((tier) => [...tier].sort(compareRank));
+  const globallySorted = sortedTiers.flat().sort(compareRank);
   const bestById = new Map<string, any>();
   const unique: any[] = [];
   const idlessSeen = new Set<any>();
@@ -537,7 +568,7 @@ function boundedTierCandidateUnion(tiers: any[][], maxDocuments: number): any[] 
     }
     if (!progressed) break;
   }
-  return selected.sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
+  return selected.sort(compareRank);
 }
 
 /** Hybrid dense+BM25 retrieval via Reciprocal Rank Fusion. OFF by default — set HYBRID_RETRIEVAL=on to enable.
@@ -5484,6 +5515,10 @@ export async function retrieveContextDetailed(
       ]
     }, asOfEpochFilter));
 
+    // Keep provider-vs-eligible counts alongside each in-memory pool without exposing internal
+    // bookkeeping to Pinecone/Voyage or changing the array contract used by the ranking pipeline.
+    const candidatePoolObservability = new WeakMap<any[], CandidatePoolObservability>();
+
     // Embed ONE query string (via the shared query-embed cache) and run its Pinecone match(es),
     // returning `null` on a malformed embedding (already audited/logged by the caller of `null`).
     // Factored out of the single-query path unchanged so `queries?.length` absent/empty is
@@ -5655,12 +5690,53 @@ export async function retrieveContextDetailed(
         managedLocalResults.matches || [],
         fmpResults.matches || []
       ];
-      // Every provider tier enforces its own topK. Preserve each non-empty tier's quota while keeping
-      // the combined rerank request within Voyage's documented 1,000-document ceiling.
-      return boundedTierCandidateUnion(
-        tiers,
+      const providerCandidateCount = uniqueTierCandidateCount(tiers);
+      const visibleTiers = tiers.map((tier) => filterMatchesForTenantVisibility(tier, userId));
+      const visibleCandidateCount = uniqueTierCandidateCount(visibleTiers);
+
+      // Mandatory eligibility must run before tier quotas. Otherwise high-scoring stale generations
+      // can consume an entire tier's share of the 1,000-document rerank budget and then be dropped,
+      // hiding lower-scoring current evidence that the provider already returned.
+      const receiptEligibleMatches = filterMatchesForCommittedReceipts(visibleTiers.flat(), options?.asOf, {
+        userId,
+        providerAuthority,
+        ...(ledgerAuthority ? { ledgerAuthority } : {})
+      });
+      const receiptEligibleReferences = new Set(receiptEligibleMatches);
+      const receiptEligibleTiers = visibleTiers.map((tier) => (
+        tier.filter((match) => receiptEligibleReferences.has(match))
+      ));
+      const receiptEligibleCount = uniqueTierCandidateCount(receiptEligibleTiers);
+      const transcriptEligibleReferences = new Set(
+        filterMatchesForTranscriptRights(receiptEligibleTiers.flat())
+      );
+      const eligibleTiers = receiptEligibleTiers.map((tier) => (
+        tier.filter((match) => transcriptEligibleReferences.has(match))
+      ));
+      const tierByCandidateIdentity = new Map<any, number>();
+      eligibleTiers.forEach((tier, tierIndex) => {
+        tier.forEach((match) => {
+          const identity = candidatePoolIdentity(match);
+          if (!tierByCandidateIdentity.has(identity)) tierByCandidateIdentity.set(identity, tierIndex);
+        });
+      });
+
+      // Every provider tier enforces its own topK. Preserve each non-empty eligible tier's quota
+      // while keeping the combined rerank request within Voyage's documented 1,000-document ceiling.
+      const eligiblePool = boundedTierCandidateUnion(
+        eligibleTiers,
         wantRerank ? VOYAGE_RERANK_MAX_DOCUMENTS : Number.MAX_SAFE_INTEGER
       );
+      candidatePoolObservability.set(eligiblePool, {
+        providerCandidateCount,
+        visibleCandidateCount,
+        receiptEligibleCount,
+        receiptCrowdingDegraded: providerCandidateCount >= fetchK &&
+          visibleCandidateCount > receiptEligibleCount &&
+          receiptEligibleCount < limit,
+        tierByCandidateIdentity
+      });
+      return eligiblePool;
     };
 
     // Additive multi-query fan-out (hyde-multiquery-retrieval, 2026-07-05): when the caller passes
@@ -5711,6 +5787,17 @@ export async function retrieveContextDetailed(
         const rankedIdLists: string[][] = validResults.map((matchList, listIdx) =>
           matchList.map((m: any, i: number) => (typeof m?.id === "string" && m.id.length > 0 ? m.id : `__idx_${listIdx}_${i}__`))
         );
+        const tierByFusedId = new Map<string, number>();
+        validResults.forEach((matchList, listIdx) => {
+          const observation = candidatePoolObservability.get(matchList);
+          matchList.forEach((match, matchIndex) => {
+            const fusedId = rankedIdLists[listIdx]![matchIndex]!;
+            const tierIndex = observation?.tierByCandidateIdentity.get(candidatePoolIdentity(match));
+            if (tierIndex !== undefined && !tierByFusedId.has(fusedId)) {
+              tierByFusedId.set(fusedId, tierIndex);
+            }
+          });
+        });
         // First-occurrence-wins would let a LOWER cosine score for a chunk that appears in multiple
         // per-query pools silently win the fused entry (feeding a lower score into rankPool's
         // minScore floor for that chunk). Keep the occurrence with the HIGHER match.score instead.
@@ -5725,7 +5812,50 @@ export async function retrieveContextDetailed(
           });
         });
         const fusedIds = rrfFuse(rankedIdLists);
-        matches = fusedIds.map((id) => idToMatch.get(id)).filter((m): m is any => m !== undefined).slice(0, fetchK);
+        const fusedMatches = fusedIds.map((id) => idToMatch.get(id)).filter((m): m is any => m !== undefined);
+        if (wantRerank) {
+          // Do not collapse a fair per-query tier union back to the single-query fetchK before
+          // reranking. Preserve each candidate's provider tier through RRF, then apply one final
+          // fair provider-contract cap while retaining RRF order for rerank fail-open behavior.
+          const fusedTiers = Array.from({ length: 7 }, () => [] as any[]);
+          const fusedRank = new Map<string | object, number>();
+          fusedIds.forEach((id, rank) => {
+            const match = idToMatch.get(id);
+            if (!match) return;
+            const tierIndex = tierByFusedId.get(id) ?? 6;
+            while (fusedTiers.length <= tierIndex) fusedTiers.push([]);
+            fusedTiers[tierIndex]!.push(match);
+            fusedRank.set(candidatePoolIdentity(match), rank);
+          });
+          matches = boundedTierCandidateUnion(
+            fusedTiers,
+            VOYAGE_RERANK_MAX_DOCUMENTS,
+            (match) => -(fusedRank.get(candidatePoolIdentity(match)) ?? Number.MAX_SAFE_INTEGER)
+          );
+        } else {
+          matches = fusedMatches.slice(0, fetchK);
+        }
+        const observations = perQueryResults
+          .filter((result): result is any[] => result != null)
+          .map((result) => candidatePoolObservability.get(result) ?? {
+            providerCandidateCount: result.length,
+            visibleCandidateCount: result.length,
+            receiptEligibleCount: result.length,
+            receiptCrowdingDegraded: false,
+            tierByCandidateIdentity: new Map<any, number>()
+          });
+        const finalTierByCandidateIdentity = new Map<any, number>();
+        for (const [fusedId, tierIndex] of tierByFusedId) {
+          const match = idToMatch.get(fusedId);
+          if (match) finalTierByCandidateIdentity.set(candidatePoolIdentity(match), tierIndex);
+        }
+        candidatePoolObservability.set(matches, {
+          providerCandidateCount: Math.max(...observations.map((item) => item.providerCandidateCount)),
+          visibleCandidateCount: Math.max(...observations.map((item) => item.visibleCandidateCount)),
+          receiptEligibleCount: Math.max(...observations.map((item) => item.receiptEligibleCount)),
+          receiptCrowdingDegraded: observations.some((item) => item.receiptCrowdingDegraded),
+          tierByCandidateIdentity: finalTierByCandidateIdentity
+        });
       }
     } else {
       const single = await embedAndMatchOneQuery(query);
@@ -5736,21 +5866,23 @@ export async function retrieveContextDetailed(
       matches = single;
     }
 
-    const providerCandidateCount = matches.length;
+    const poolObservation = candidatePoolObservability.get(matches);
+    const providerCandidateCount = poolObservation?.providerCandidateCount ?? matches.length;
 
     // Broad coach/chat retrieval has no docType filter. Enforce tenant visibility and transcript
     // rights before any candidate-pool persistence, reranking, or prompt injection.
     matches = filterMatchesForTenantVisibility(matches, userId);
-    const visibleCandidateCount = matches.length;
-    const beforeReceiptCount = matches.length;
+    const visibleCandidateCount = poolObservation?.visibleCandidateCount ?? matches.length;
+    const beforeReceiptCount = visibleCandidateCount;
     matches = filterMatchesForCommittedReceipts(matches, options?.asOf, {
       userId,
       providerAuthority,
       ...(ledgerAuthority ? { ledgerAuthority } : {})
     });
-    const receiptEligibleCount = matches.length;
+    const receiptEligibleCount = poolObservation?.receiptEligibleCount ?? matches.length;
     const managedVersionCrowdingDegraded = (
       managedTopKCapHit ||
+      poolObservation?.receiptCrowdingDegraded === true ||
       (providerCandidateCount >= fetchK &&
         beforeReceiptCount > receiptEligibleCount &&
         receiptEligibleCount < limit)

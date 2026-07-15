@@ -60,6 +60,21 @@
 > generation, and broker-minimum alert cooldowns are user-scoped for the shared settings fence/eraser.
 > Node 24 TypeScript and the merged targeted set (9 files / 99 tests) are green. Fresh hostile re-review
 > and the ordered full gate remain before #1586 can leave draft.
+> Rounds 17-20 supersede the Access-token freshness design with signed Auth.js `loginAt`, bind licensed
+> private derivative writes and purge receipts to immutable rights generation plus exact provider/ledger
+> authority, and require consecutive clean provider observations before deleting local evidence. Treat
+> an acknowledged zero-write as `no_provider_write`, but any provider error/timeout after dispatch as
+> `provider_write_unknown` and therefore an exact purge obligation. Filter tenant-, receipt-, and
+> transcript-rights-ineligible records inside each provider tier before the fair 1,000-document rerank
+> cap so stale generations cannot crowd out current evidence; carry tier identity through multi-query RRF
+> and apply one final fair cap before reranking. Chunk relational receipt lookups below SQLite's portable
+> host-parameter ceiling so the legal six-tier/60,000-candidate provider pool cannot fail closed by
+> accidentally discarding every managed match. Round 21 removes transitive `node:` imports exposed by
+> the production build: immutable derivative IDs use edge-safe Web Crypto SHA-256, the already-tested
+> abort-aware retry pause owns erasure backoff, and document construction requires the precomputed ID
+> to remain paired with its rights generation. Finish hostile re-review, run the ordered
+> Node 24 lint/TypeScript/full-test/build gate, update the PR, resolve hosted findings, merge, and verify
+> the automatic production deployment without enabling transcript ingestion or backfill.
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
 > but its automatic Coolify deployment failed health checks and rolled back because pinned
 > Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the
@@ -1656,7 +1671,7 @@ scope, timeline, or approach changed.
   erasure, account-deletion coverage, and independent private/shared rerank candidate pools.
 - Treat Cloudflare Access application-token timestamps as authorization-token freshness only; require
   a matching signed Auth.js `loginAt` for post-deletion identity regeneration.
-- Complete the ordered Node 24 gate and hostile re-review, merge #1586 and #1593 through their PRs,
+- Complete the ordered Node 24 gate and hostile re-review, merge #1607 and #1586 through their PRs,
   then verify zero open PRs plus the exact final production release. Transcript activation remains a
   separate owner/config decision gated on endpoint entitlement and commercial storage/display rights.
 

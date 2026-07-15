@@ -83,7 +83,9 @@ disclosures lets the agent act on the same names *before* the copycats pile in.
   derivatives and performs provider-first verified purge. Rights generations also ledger exact derived
   chat, prompt-safety audit, decision, and framework artifacts plus unresolved derived provider work, so
   withdrawal blocks new writes, waits for terminal external receipts, and removes only proven transcript-
-  derived state. Private managed-vector writes hold a durable account-operation claim from provider identity
+  derived state. A proven pre-upsert short circuit records `no_provider_write`; any timeout/error after
+  dispatch records `provider_write_unknown` and retains the immutable authority-bound deletion obligation.
+  Private managed-vector writes hold a durable account-operation claim from provider identity
   through receipt commit; account erasure requires current index authority and consecutive clean provider
   observations before deleting local evidence. Commercial rights and a genuinely shared cross-app FMP quota
   authority remain activation gates.
@@ -151,6 +153,13 @@ durable pending/retry job or awaiting it, and remains an explicit follow-up rath
   local rejected-generation upper bound and emit a typed degraded receipt when the cap can still hide
   eligible evidence. Private and shared query tiers retain independent bounded candidate pools until
   cross-encoder reranking so dense-score saturation in one tier cannot erase recall from the other.
+  Tenant visibility, relational receipt validity, and transcript-rights generation are enforced inside
+  every tier before its share of Voyage's 1,000-document cap is allocated; stale/ineligible records therefore
+  cannot consume quota and hide lower-scoring current evidence already returned by the provider. Multi-query
+  RRF carries those tier identities into one final fair 1,000-document cap instead of collapsing the fused
+  pool back to the single-query fetch count before reranking. Relational receipt validation batches
+  candidate IDs below SQLite's portable host-parameter ceiling; a legal six-tier provider response can
+  contain 60,000 raw IDs, so one unbounded `IN (...)` statement is not safe.
   Transcript-derived decision memory uses an immutable rights-generation vector ID plus a durable work
   lease bound to the exact Pinecone provider and SQLite namespace authority. Retrieval requires the
   currently active rights generation; provider/manifest rotation fails closed. Rights withdrawal keeps

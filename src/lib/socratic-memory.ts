@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from "node:crypto";
 import type { ContextDocument, StoreContextsResult } from "./vector-db";
 import type { SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution } from "./types";
 
@@ -40,8 +39,13 @@ function finalAction(decision: SocraticDecisionCase): string {
 export function buildSocraticMemoryDocument(
   decision: SocraticDecisionCase,
   accountEnvironment?: "paper" | "live",
-  options?: { fmpRightsGeneration?: number }
+  options?: { fmpRightsGeneration?: number; fmpProviderVectorId?: string }
 ): ContextDocument {
+  const hasFmpRightsGeneration = options?.fmpRightsGeneration !== undefined;
+  const hasFmpProviderVectorId = options?.fmpProviderVectorId !== undefined;
+  if (hasFmpRightsGeneration !== hasFmpProviderVectorId) {
+    throw new Error("FMP-derived Socratic memory requires both rights generation and provider vector ID.");
+  }
   const symbol = decision.symbol ?? "PORTFOLIO";
   const criticCounterArgument =
     decision.redTeamVerdict?.reason ??
@@ -101,10 +105,10 @@ export function buildSocraticMemoryDocument(
       memory_scope: "account",
       decision_id: decision.id,
       final_action: finalAction(decision),
-      ...(options?.fmpRightsGeneration ? {
-        vector_id: fmpDerivedSocraticMemoryVectorId(decision, options.fmpRightsGeneration),
+      ...(hasFmpRightsGeneration ? {
+        vector_id: options!.fmpProviderVectorId!,
         fmp_derived: true,
-        fmp_rights_generation: options.fmpRightsGeneration
+        fmp_rights_generation: options!.fmpRightsGeneration
       } : {}),
       ...(decision.proposalId ? { proposal_id: decision.proposalId } : {}),
       ...(decision.runId ? { run_id: decision.runId } : {}),
@@ -122,13 +126,18 @@ export function buildSocraticMemoryDocument(
 }
 
 /** A licensed decision generation gets its own immutable provider identity. */
-export function fmpDerivedSocraticMemoryVectorId(
+export async function fmpDerivedSocraticMemoryVectorId(
   decision: Pick<SocraticDecisionCase, "id" | "userId">,
   generation: number
-): string {
-  const digest = createHash("sha256")
-    .update(`${decision.userId}\u0000${decision.id}\u0000${generation}`, "utf8")
-    .digest("hex");
+): Promise<string> {
+  const digestBytes = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${decision.userId}\u0000${decision.id}\u0000${generation}`)
+  );
+  const digest = Array.from(
+    new Uint8Array(digestBytes),
+    (byte) => byte.toString(16).padStart(2, "0")
+  ).join("");
   return `fmp-derived-socratic:v1:${digest}`;
 }
 
@@ -180,8 +189,8 @@ export function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Pro
       return { attempted: 0, indexed: 0, skipped: true, unconfigured: true };
     }
     const ledgerAuthority = managedVectorLedgerAuthority();
-    const providerWorkId = `fmp-derived:index:${current.id}:${claim.generation}:${randomUUID()}`;
-    const providerVectorId = fmpDerivedSocraticMemoryVectorId(current, claim.generation);
+    const providerWorkId = `fmp-derived:index:${current.id}:${claim.generation}:${globalThis.crypto.randomUUID()}`;
+    const providerVectorId = await fmpDerivedSocraticMemoryVectorId(current, claim.generation);
     fmp.persistFmpTranscriptDerivedArtifact({
       claim,
       artifactType: "strategy-decision",
@@ -223,12 +232,17 @@ export function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Pro
     try {
       const result = await storeContexts(
         [buildSocraticMemoryDocument(current, accountEnvironment, {
-          fmpRightsGeneration: claim.generation
+          fmpRightsGeneration: claim.generation,
+          fmpProviderVectorId: providerVectorId
         })],
         current.userId,
         { dedupKeyPrefix: "socratic-decision", scope: "private", leaseGuard }
       );
-      terminalOutcome = result.indexed > 0 ? "completed" : "no_provider_write";
+      terminalOutcome = result.indexed > 0
+        ? "completed"
+        : result.error !== undefined
+          ? "provider_write_unknown"
+          : "no_provider_write";
       return result;
     } finally {
       clearInterval(heartbeat);

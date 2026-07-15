@@ -285,6 +285,60 @@ describe("FMP rights-derived artifact gate", () => {
     }));
   });
 
+  it("purges an exact private vector after a remote write may have succeeded before timeout", async () => {
+    const {
+      captureFmpTranscriptRightsGeneration,
+      completeFmpTranscriptDerivedProviderWork,
+      fmpTranscriptDerivedProvenance,
+      inventoryFmpTranscriptRightsArtifacts,
+      persistFmpTranscriptDerivedArtifact,
+      purgeFmpTranscriptRightsArtifacts
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const workId = "fmp-rights-test:provider-write-unknown";
+    const providerVectorId = "fmp-derived-socratic:v1:provider-write-unknown";
+    const claim = captureFmpTranscriptRightsGeneration()!;
+    persistFmpTranscriptDerivedArtifact({
+      claim,
+      artifactType: "strategy-decision",
+      artifactId: "fmp-rights-test:provider-write-unknown-decision",
+      userId: "local",
+      provenance: fmpTranscriptDerivedProvenance([{
+        source: "fmp-earnings-transcript",
+        docType: "earnings-transcript",
+        chunkId: "occ:v3:fmp:provider-write-unknown"
+      }]),
+      providerWorkId: workId,
+      providerVectorId,
+      providerAuthority: "provider:test",
+      ledgerAuthority: "ledger:test",
+      write: () => undefined
+    });
+    completeFmpTranscriptDerivedProviderWork(workId, "provider_write_unknown");
+    vectorMocks.fetchExistingVectorRecordIds
+      .mockResolvedValueOnce([providerVectorId])
+      .mockResolvedValueOnce([providerVectorId])
+      .mockResolvedValueOnce([]);
+
+    const inventory = await inventoryFmpTranscriptRightsArtifacts();
+    expect(inventory.providerPrivateVectorRefs).toEqual([{
+      userId: "local",
+      vectorId: providerVectorId,
+      providerAuthority: "provider:test",
+      ledgerAuthority: "ledger:test"
+    }]);
+
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    const purged = await purgeFmpTranscriptRightsArtifacts({ dryRun: false });
+    expect(purged.after.providerPrivateVectorRefs).toEqual([]);
+    expect(vectorMocks.purgeVectorRecordIds).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "local",
+      namespace: "private",
+      ids: [providerVectorId],
+      expectedProviderAuthority: "provider:test",
+      ledgerAuthority: "ledger:test"
+    }));
+  });
+
   it("expires crash-abandoned derived provider work after its durable lease", async () => {
     const {
       assertFmpTranscriptDerivedProviderWorkOwnership,

@@ -11,6 +11,8 @@ beforeAll(() => {
 // Capture every vector-memory re-index (the lifecycle hook) without Pinecone/Voyage credentials.
 const storeContextsCalls: Array<{ documents: Array<{ text: string }>; options?: { dedupKeyPrefix?: string; scope?: string } }> = [];
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: async () => "provider:test",
+  managedVectorLedgerAuthority: () => "ledger:test",
   storeContexts: async (documents: Array<{ text: string }>, _userId?: string, options?: { dedupKeyPrefix?: string; scope?: string }) => {
     storeContextsCalls.push({ documents, options });
     return { attempted: documents.length, indexed: documents.length };

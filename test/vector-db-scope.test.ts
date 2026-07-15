@@ -521,6 +521,130 @@ describe("vector-db scope metadata", () => {
       expect(results).toContain("shared-saturated-0");
     });
 
+    it("removes stale managed generations before they consume a tier's rerank quota", async () => {
+      process.env.VECTOR_ENABLE_RERANK = "on";
+      process.env.VECTOR_RERANK_OVERFETCH_K = "1000";
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+      mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+      mocks.upsert.mockResolvedValue(undefined);
+      const { retrieveContext, storeContexts, vectorTenantScope } = await import("../src/lib/vector-db");
+
+      await storeContexts([{
+        text: "Private operator decision",
+        metadata: { symbol: "AAPL", source: "socratic-memory", timestamp: "2026-07-14" }
+      }], "local", { scope: "private" });
+      mocks.query.mockReset();
+      const staleManagedMatches = Array.from({ length: 900 }, (_, index) => ({
+        id: `occ:v3:stale-managed-${index}`,
+        score: 0.99 - index / 100_000,
+        metadata: {
+          text: `stale-managed-${index}`,
+          userId: "local",
+          scope: "private",
+          tenant_scope: vectorTenantScope("local", "private"),
+          receipt_required: true,
+          ingest_state: "committed",
+          provider_authority: "provider:stale",
+          ledger_authority: "ledger:stale"
+        }
+      }));
+      const validPrivateMatches = Array.from({ length: 100 }, (_, index) => ({
+        id: `private-current-${index}`,
+        score: 0.08 - index / 100_000,
+        metadata: {
+          text: `private-current-${index}`,
+          userId: "local",
+          scope: "private",
+          tenant_scope: vectorTenantScope("local", "private")
+        }
+      }));
+      const sharedMatches = Array.from({ length: 1_000 }, (_, index) => ({
+        id: `shared-current-${index}`,
+        score: 0.1 - index / 100_000,
+        metadata: {
+          text: `shared-current-${index}`,
+          userId: "local",
+          scope: "shared",
+          tenant_scope: "shared:operator"
+        }
+      }));
+      mocks.query
+        .mockResolvedValueOnce({ matches: [...staleManagedMatches, ...validPrivateMatches] })
+        .mockResolvedValueOnce({ matches: [] })
+        .mockResolvedValueOnce({ matches: sharedMatches });
+      mocks.rerank.mockImplementation(async ({ documents }: { documents: string[] }) => ({
+        data: documents.slice(0, 3).map((_document, index) => ({
+          index,
+          relevanceScore: 1 - index / 10
+        }))
+      }));
+
+      await retrieveContext("AAPL catalysts", "AAPL", 3);
+
+      const documents = mocks.rerank.mock.calls[0][0].documents as string[];
+      expect(documents).toHaveLength(1_000);
+      expect(documents.some((document) => document.startsWith("stale-managed-"))).toBe(false);
+      expect(documents.filter((document) => document.startsWith("private-current-"))).toHaveLength(100);
+      expect(documents.filter((document) => document.startsWith("shared-current-"))).toHaveLength(900);
+    });
+
+    it("preserves tier breadth through multi-query fusion before reranking", async () => {
+      process.env.VECTOR_ENABLE_RERANK = "on";
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+      mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+      mocks.upsert.mockResolvedValue(undefined);
+      const { retrieveContextDetailed, storeContexts, vectorTenantScope } = await import("../src/lib/vector-db");
+
+      await storeContexts([{
+        text: "Private operator decision",
+        metadata: { symbol: "AAPL", source: "socratic-memory", timestamp: "2026-07-14" }
+      }], "local", { scope: "private" });
+      mocks.query.mockReset();
+      const privateMatches = Array.from({ length: 150 }, (_, index) => ({
+        id: `multi-private-${index}`,
+        score: 0.99 - index / 100_000,
+        metadata: {
+          text: `multi-private-${index}`,
+          userId: "local",
+          scope: "private",
+          tenant_scope: vectorTenantScope("local", "private")
+        }
+      }));
+      const sharedMatches = Array.from({ length: 150 }, (_, index) => ({
+        id: `multi-shared-${index}`,
+        score: 0.1 - index / 100_000,
+        metadata: {
+          text: `multi-shared-${index}`,
+          userId: "local",
+          scope: "shared",
+          tenant_scope: "shared:operator"
+        }
+      }));
+      mocks.query.mockImplementation(async () => {
+        const queryIndex = mocks.query.mock.calls.length - 1;
+        if (queryIndex % 3 === 0) return { matches: privateMatches };
+        if (queryIndex % 3 === 1) return { matches: [] };
+        return { matches: sharedMatches };
+      });
+      mocks.rerank.mockImplementation(async ({ documents }: { documents: string[] }) => ({
+        data: documents.slice(0, 3).map((_document, index) => ({
+          index,
+          relevanceScore: 1 - index / 10
+        }))
+      }));
+
+      await retrieveContextDetailed("AAPL catalysts", "AAPL", 3, "local", {
+        queries: ["AAPL risks"]
+      });
+
+      expect(mocks.query).toHaveBeenCalledTimes(6);
+      expect(mocks.query.mock.calls.map(([request]) => request.topK)).toEqual(Array(6).fill(150));
+      const documents = mocks.rerank.mock.calls[0][0].documents as string[];
+      expect(documents).toHaveLength(300);
+      expect(documents.filter((document) => document.startsWith("multi-private-"))).toHaveLength(150);
+      expect(documents.filter((document) => document.startsWith("multi-shared-"))).toHaveLength(150);
+    });
+
     it("private-tier query includes the user's own userId filter (not $or)", async () => {
       mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
       mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });

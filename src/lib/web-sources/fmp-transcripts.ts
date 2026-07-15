@@ -11,7 +11,6 @@
 //  - Empty/transient responses never enter the ingestion ledger and therefore remain retryable.
 
 import crypto from "crypto";
-import { setTimeout as sleep } from "node:timers/promises";
 import { CircuitOpenError } from "../api-circuit-breaker";
 import { fetchWithRetry, apiKeyFingerprint } from "../data-providers";
 import { logApiHealth } from "../db-health";
@@ -2012,7 +2011,7 @@ export async function purgeFmpTranscriptRightsArtifacts(options: { dryRun?: bool
       let remainingSelectedIds: string[] = selectedIds;
       for (let attempt = 0; attempt < verifyAttempts; attempt++) {
         if (attempt > 0 && verifyDelayMs > 0) {
-          await sleep(Math.min(30_000, verifyDelayMs * (2 ** (attempt - 1))), undefined, { signal });
+          await retryPause(Math.min(30_000, verifyDelayMs * (2 ** (attempt - 1))), signal);
           assertLease();
         }
         providerVerification = await inventoryFmpTranscriptRightsArtifacts({ signal, assertOwnership: assertLease });

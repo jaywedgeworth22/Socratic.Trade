@@ -7,8 +7,8 @@ suppresses only exact generic echoes plus known generated policy wrappers around
 Distinct policy objections and Red Team override context remain visible. The canonical card also
 shows the shared explicit verdict label, so an approve-at-half review still says “Approved at half
 size” and a rejection still says “Rejected by Red Team” even when its duplicate rationale row is
-hidden. The change is display-only; persisted cases and other consumers are unchanged. PR #1593 is
-open with squash auto-merge armed; production is unchanged until merge auto-deploys.
+hidden. The change is display-only; persisted cases and other consumers are unchanged. PR #1593
+merged as `3df405e6`; production health reported that exact SHA after the automatic deployment.
 
 **[codex-autofix] Round 1:**
 - P2 — preserve overridden Red Team dissent rows when the summary matches the canonical verdict
@@ -27,15 +27,15 @@ open with squash auto-merge armed; production is unchanged until merge auto-depl
   autofix `02c03fe5` advanced the branch. That one-file delta is now merged without force; the
   conflict preserves the tested Chip, status tone, and applied-override semantics. Exact-head Codex
   review is clean and every actionable thread is replied to and resolved. After `main` advanced
-  through #1604, commit `f54e43aa` was merged additively at `a84a9dfd`; the final current-main
-  landing gate, refreshed hosted checks, auto-merge, and merged-SHA/production verification remain.
+  through #1604, commit `f54e43aa` was merged additively at `a84a9dfd`; the repeated landing gate and
+  hosted checks passed, and #1593 auto-merged and deployed as `3df405e6`.
 
 Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 ## 2026-07-14 — Infisical JSON-export production compatibility (CODEX)
 
 PR #1594 merged as `48bd191c`, but Coolify deployment `trxqzfunxctpy440ozbyt5if` failed its
-new-container health check and rolled back cleanly; production remains healthy on prior SHA
-`2dabc7f8`. Redacted deployment logs repeatedly reported invalid Infisical export JSON. The
+new-container health check and rolled back cleanly. Redacted deployment logs repeatedly reported
+invalid Infisical export JSON. The
 pinned Infisical CLI v0.43.98 source confirms `--format json` serializes an array of
 `SingleEnvironmentVariable` records, not a flat key/value object. The corrective parser accepts
 only an array of object records with non-empty string `key` and string `value`, copies no metadata,
@@ -43,15 +43,15 @@ and rejects duplicate keys, NULs, malformed records, and the incorrect flat-obje
 printing raw output. Focused Node 24 verification is green: 37 tests, scoped ESLint, standalone
 TypeScript, and `git diff --check`. Independent hostile review reports LAND with no P0-P2 findings.
 Its nonblocking P3 is to make the production bootstrap compare the cached Infisical executable's
-version instead of only checking its presence; the current cache is known to be v0.43.98. The
-canonical full landing gate, merge, automatic rollout, and exact-SHA production verification remain.
+version instead of only checking its presence; the current cache is known to be v0.43.98. Corrective
+PR #1604 merged as `f54e43aa`; later production verification on `3df405e6` includes that fix.
 
-## 2026-07-14 — Final hosted-review remediation (PR #1587)
+## 2026-07-14 — Final hosted-review remediation (PR #1587, merged as `acd67a5c`)
 
 The hosted autofix pushed two independent review fixes. Both remaining money-path
 findings are now implemented locally: funding sells are downstream of exact-size
 eligibility, and a stored owner override cannot be consumed after a material upward
-broker requote. Focused verification is green; the final ordered gate and push remain.
+broker requote. The final ordered and hosted gates passed; the PR merged and auto-deployed.
 ## 2026-07-14 — Codex autofix: draftMode sync + unpriced growth lifecycle + final-size input cleanliness + broker-rejection measurability (PR #1587)
 
 **[codex-autofix] Round 2 (this commit):** two more Codex review findings fixed,
@@ -505,6 +505,19 @@ assertion forwards its matching `iat` for post-deletion identity generation, and
 cooldowns include user ownership so the canonical settings matcher fences and erases them. Node 24
 TypeScript plus the merged targeted set (9 files / 99 tests) are green. Fresh hostile re-review and the
 ordered lint/TypeScript/full-test/build gate remain pending; PR #1586 stays draft/default-off.
+
+Rounds 17-19 replace the Access-token freshness assumption with a matching signed Auth.js `loginAt`,
+bind every licensed private decision-memory write and erasure receipt to its immutable rights generation
+plus exact provider/ledger authority, and require consecutive clean provider observations before local
+receipt deletion. A provider timeout after dispatch now settles as `provider_write_unknown`, never as a
+proven no-write; that preserves the exact purge obligation if the remote upsert succeeded before the
+client lost its acknowledgement. Retrieval keeps private/shared provider tiers separate, removes tenant-,
+receipt-, and rights-ineligible candidates before applying Voyage's 1,000-document fair quota, and carries
+provider-tier identity through multi-query RRF so fan-out cannot re-truncate a fair pool to one tier. It
+also carries raw-vs-eligible counts forward for degraded-state telemetry. Migration 41 puts rights and provider-work
+tables under versioned account deletion/write fences. Current Node 24 focused verification is green:
+5 files / 57 tests, standalone TypeScript, and diff-check. Final hostile re-review and the ordered full
+repository gate remain before #1586 leaves draft; all transcript flags remain default-off.
 
 Production activation/backfill remains gated on an entitled transcript plan, confirmed commercial
 persistence/embedding/display rights, and one genuinely shared cross-app transactional quota authority;
@@ -1066,10 +1079,11 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## Current Status
 
-- PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, and #1589 are merged. Two PRs remain:
-  draft #1586 (this default-off FMP/RAG/privacy/account-risk consolidation) and ready #1593
-  (decision-dissent deduplication, owned by its separate Codex lane).
-- #1586 is reconciled with `main@2dabc7f8`. The final hostile-review fixes bind every licensed
+- PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, #1589, #1593, #1594, and #1604 are merged.
+  Two PRs remain: ready #1607 (immutable shared-package v1.7.1 adoption) and draft #1586 (this
+  default-off FMP/RAG/privacy/account-risk consolidation). #1607's required hosted gate is green;
+  one automated HTTPS-dependency review finding is being resolved before merge.
+- #1586 is reconciled with `main@3df405e6`. The final hostile-review fixes bind every licensed
   private-memory vector receipt to its exact Pinecone provider plus SQLite ledger authority, reject
   provider/manifest rotation, require consecutive clean provider observations before local erasure,
   and preserve independent private/shared retrieval pools through reranking. Versioned migration 41
@@ -1078,15 +1092,20 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - The earlier Cloudflare Access `iat` approach is superseded: reusable Access application-token time
   is not fresh IdP-login proof. A Cloudflare request may reopen a deleted identity generation only
   when a matching signed Auth.js session carries a post-cutoff `loginAt`.
-- Current Node 24 focused verification is green: the final retrieval/provider subset is 5 files /
-  46 tests; the migration/deletion subset is 7 files / 74 tests; TypeScript and diff-check pass.
+- Current Node 24 focused verification is green: the final retrieval/provider subset is 6 files /
+  72 tests; the migration/deletion subset is 7 files / 74 tests; TypeScript and diff-check pass.
   The latest review findings are fixed: no-op indexing settles as `no_provider_write` without
   inventing an erasure obligation, while unknown writes stay purgeable; saturated tier unions retain
-  fair representation under Voyage's 1,000-document rerank ceiling. Fresh re-review and the ordered full
-  lint/TypeScript/test/build gate are still running; #1586 remains draft and no FMP flag/provider/
+  fair representation under Voyage's 1,000-document rerank ceiling. Managed receipt lookup is also
+  batched below SQLite's bind limit; a 60,000-candidate regression preserves the committed match.
+  The first full run passed 379 files / 4,362 tests, then the production build found transitive
+  `node:crypto` and `node:timers/promises` imports. Those are now replaced by edge-safe Web Crypto
+  SHA-256/global UUID and the existing abort-aware retry pause; 3 files / 20 tests, TypeScript, and a
+  production build with 32 static pages pass. Focused re-review and a clean ordered full rerun remain;
+  #1586 stays draft and no FMP flag/provider/
   corpus/Infisical mutation has occurred.
 
 ## Next Action
-- Close the hostile review, run the ordered full gate, land and merge #1586, merge #1593 after its
-  current-main reconciliation/checks, require zero open PRs, then verify the exact final `main` SHA
+- Resolve and merge #1607, close #1586's hostile review, run the ordered full gate, reconcile #1586
+  with final `main`, land and merge it, require zero open PRs, then verify the exact final `main` SHA
   through the production health/readiness and Coolify runtime surfaces.
