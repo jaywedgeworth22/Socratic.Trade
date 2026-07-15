@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-15 — Secure FMP Stable Endpoint Integration (AG, branch `agent/ag-fmp-transcripts`)
+
+Implemented secure, plan-agnostic integration for Financial Modeling Prep (FMP) APIs, including:
+1. Real-time Quotes, ETF sector weightings/holdings, and Index data (`fmp-alpha.ts`).
+2. Treasury Yields, GDP/CPI/unemploymentRate/federalFunds economic indicators, VIX volatility, Crude/Gold commodities, and BTC/ETH cryptocurrency trends (`fmp-beta.ts` [NEW]).
+3. Congressional Trading (Senate/House), Earnings/Economic calendars, and Market news (`fmp-gamma.ts`).
+4. Intrinsic Value (DCF), Altman Z-Score, Piotroski score, and Analyst Upgrades/Downgrades (`fmp-delta.ts`).
+
+All queries route safely through a unified client helper `requestFmp` in `src/lib/fmp-common.ts` wrapping `fetchWithRetry` for built-in rate limiting and circuit-breaker protection. URL query parameter scrubbing is applied on errors to prevent API key leaks. Account-level plan restrictions (402/Restricted) degrade gracefully, returning null/empty arrays with warning logs. All TypeScript checks, Vitest files, and a dedicated integration verification run are green.
+
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
 
 The decision trace now treats the structured Red Team verdict as the canonical explanation and
