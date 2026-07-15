@@ -431,8 +431,14 @@ describe("storeDocument: per-chunk char cap aligned with the token chunker (item
   it("keeps source completion false when an idempotent receipt insert has no matching row", async () => {
     mocks.prepare.mockImplementation((sql?: unknown) => ({
       get: vi.fn<(...args: unknown[]) => unknown>(() =>
-        String(sql).includes("FROM document_chunks") ? undefined : { ok: 1 }
-      )
+        String(sql).includes("FROM document_chunks")
+          ? undefined
+          : String(sql).includes("fmp_transcript_rights_gate")
+            ? { generation: 1, status: "active" }
+            : { ok: 1 }
+      ),
+      all: vi.fn<(...args: unknown[]) => unknown[]>(() => []),
+      run: vi.fn<(...args: unknown[]) => { changes: number }>(() => ({ changes: 1 }))
     }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { storeDocument } = await import("../src/lib/vector-db");
