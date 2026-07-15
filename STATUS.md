@@ -8,7 +8,8 @@ Implemented secure, plan-agnostic integration for Financial Modeling Prep (FMP) 
 3. Congressional Trading (Senate/House), Earnings/Economic calendars, and Market news (`fmp-gamma.ts`).
 4. Intrinsic Value (DCF), Altman Z-Score, Piotroski score, and Analyst Upgrades/Downgrades (`fmp-delta.ts`).
 
-All queries route safely through a unified client helper `requestFmp` in `src/lib/fmp-common.ts` wrapping `fetchWithRetry` for built-in rate limiting and circuit-breaker protection. URL query parameter scrubbing is applied on errors to prevent API key leaks. Account-level plan restrictions (402/Restricted) degrade gracefully, returning null/empty arrays with warning logs. All TypeScript checks, Vitest files, and a dedicated integration verification run are green.
+All queries route safely through a unified client helper `requestFmp` in `src/lib/fmp-common.ts` wrapping `fetchWithRetry` for built-in rate limiting and circuit-breaker protection. URL query parameter scrubbing is applied on errors to prevent API key leaks. Account-level plan restrictions (402/Restricted) degrade gracefully, returning null/empty arrays with warning logs. All TypeScript checks, Vitest files, and a dedicated integration verification run are green. PR #1611 is open with all verification gates (tsc, lint, test, build) passing cleanly under Node 24.
+
 
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
 
