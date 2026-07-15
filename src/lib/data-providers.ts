@@ -40,7 +40,7 @@ import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/htt
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
 import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, resolveProviderQuota, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
-import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage, millisUntilNextAlphaVantageDailyReset } from "./alpha-vantage-key-pool";
+import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage, millisUntilNextAlphaVantageDailyReset, tryReserveAlphaVantageCalls, refundAlphaVantageCalls, alphaVantageDailyCallBudget } from "./alpha-vantage-key-pool";
 import {
   arbitrateFieldObservation,
   dedupeUpstreamFamilies,
@@ -3071,6 +3071,30 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     });
   }
 
+  /**
+   * Same alert semantics/plumbing as `logAllExhaustedOnce` (quotaResetAt, api_health_log row) —
+   * and shares its `allExhaustedLogged` once-per-`enrich()`-call guard, so whichever exhaustion
+   * signal fires first this call (this proactive self-imposed budget, or AV's own reactive
+   * daily-cap message) wins and the other never double-alerts the operator for one ongoing
+   * outage. Fired when `tryReserveAlphaVantageCalls` admits 0 while misses remain — i.e. this
+   * app's own persisted daily ceiling ran out, distinct from AV itself having rejected a key.
+   */
+  private logBudgetExhaustedOnce(): void {
+    if (this.allExhaustedLogged) return;
+    this.allExhaustedLogged = true;
+    const now = Date.now();
+    const quotaResetAt = new Date(now + millisUntilNextAlphaVantageDailyReset(now)).toISOString();
+    const budget = alphaVantageDailyCallBudget();
+    logApiHealth({
+      service: this.name,
+      ok: false,
+      errorText: `Alpha Vantage: proactive daily call budget exhausted (self-limited to ${budget}/day, PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY)`,
+      keySource: this.keySource,
+      userId: this.userId,
+      quotaResetAt
+    });
+  }
+
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
     const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
@@ -3100,10 +3124,30 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
       }
 
       const chunk = misses.slice(i, i + CONCURRENCY);
+
+      // Proactive, self-imposed daily budget (default 23/day — see alpha-vantage-key-pool.ts),
+      // checked BEFORE dispatching any call in this chunk, same spot/shape as the reactive
+      // allExhausted() fast-fail above. AV's real 25/day cap is enforced per source IP, not per
+      // key, so this app self-limits below it instead of relying purely on AV's own rejection —
+      // see the module doc comment on tryReserveAlphaVantageCalls for why this must be persisted
+      // rather than an in-memory window. Symbols beyond the admitted count are left unenriched
+      // exactly like the allExhausted() skip path above (result[symbol] = {}).
+      const admitted = tryReserveAlphaVantageCalls(chunk.length, now);
+      if (admitted < chunk.length) {
+        for (let j = admitted; j < chunk.length; j++) result[chunk[j]] = {};
+        if (admitted === 0) {
+          this.logBudgetExhaustedOnce();
+          for (let j = i + chunk.length; j < misses.length; j++) result[misses[j]] = {};
+          break;
+        }
+      }
+      const dispatchable = chunk.slice(0, admitted);
+
       await Promise.all(
-        chunk.map(async (symbol) => {
+        dispatchable.map(async (symbol) => {
           let dispatchKey: string | undefined;
           let keyIndex = 0;
+          let dispatchedToNetwork = false;
           try {
             // deferSuccessLog: true — don't mark 200 healthy until body validates;
             // Alpha Vantage embeds quota/error messages in HTTP 200 responses. Free tier is
@@ -3139,7 +3183,20 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
               const controller = new AbortController();
               const timeout = setTimeout(() => controller.abort(), 6000);
               try {
-                return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true, apiKey: dispatchKey });
+                return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, {
+                  service: this.name,
+                  keySource: this.keySource,
+                  userId: this.userId,
+                  deferSuccessLog: true,
+                  apiKey: dispatchKey,
+                  // Marks the reserved proactive-budget call (see tryReserveAlphaVantageCalls
+                  // above) as actually spent the instant it reaches the real network — fires
+                  // right before fetchWithRetry's own `fetch()` call, i.e. AFTER the per-
+                  // credential circuit breaker and the allExhausted()/no-key throws above have
+                  // already had their chance to skip this call without ever touching AV. The
+                  // catch block below refunds the reservation when this never flips true.
+                  durableAttempt: { onDispatch: () => { dispatchedToNetwork = true; } }
+                });
               } finally {
                 clearTimeout(timeout);
               }
@@ -3219,6 +3276,13 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
             writeEnrichmentCache("alphavantage", symbol, this.scope, this.userId, data, now + ttlMs());
             result[symbol] = data;
           } catch {
+            // This symbol's reserved proactive-budget call never reached the real network
+            // (reactive key-pool exhaustion discovered mid-chunk, a per-credential circuit-
+            // breaker skip, or any other throw before dispatch) — give the budget back so a
+            // genuinely-skipped call doesn't silently shrink today's remaining quota. A call
+            // that DID reach the network (dispatchedToNetwork === true) is never refunded here,
+            // even though it went on to fail/error — it already spent AV's real quota.
+            if (!dispatchedToNetwork) refundAlphaVantageCalls(1);
             result[symbol] = {};
           }
         })
