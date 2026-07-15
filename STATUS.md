@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-15 — Settings design consistency + Guardrails collapsible sections (CLAUDE)
+
+Owner-directed UI fix. (1) Settings was the only page built on `app/ui/ios-components.tsx`
+(iOS grouped-list, nested bordered boxes) instead of the `con-card` primitive every other page
+uses — restyled `ListSection` to render `con-card` and added a lightweight `SettingsGroup` for
+scope grouping, so Settings now matches Mandates (standalone cards, no nested boxes).
+(2) Added optional `collapsible`/`defaultOpen` to the console `Card` primitive and made the top
+Guardrails sections (Essentials, Protective stops, Advanced rulebook) collapsible, so every
+Guardrails section is consistently collapsible. Display-only; `Card`'s new props are opt-in so
+all other pages are untouched. tsc clean, eslint 0 errors, `npm run build` green, both pages
+visually verified in a local Node-24 dev server. Branch `claude/settings-guardrails-consistency`.
+Rollout: `docs/rollouts/2026-07-15-settings-guardrails-design-consistency.md`.
+
 ## 2026-07-15 — ST-audit execution wave 1: handoff §8 do-first/do-now items landed (MONET, subagent team)
 
 Owner-directed pickup of the CLAUDE cap handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`).

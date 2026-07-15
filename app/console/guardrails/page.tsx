@@ -230,7 +230,7 @@ function AccountScopedGuardrailsPage() {
 
       <AutonomyCard />
 
-      <Card title="Essentials">
+      <Card title="Essentials" collapsible defaultOpen>
         <div className="divide-y divide-[color:var(--con-line)]">
           <div>
             <PolicyDualModeRow
@@ -273,7 +273,7 @@ function AccountScopedGuardrailsPage() {
         </div>
       </Card>
 
-      <Card title="Protective stops">
+      <Card title="Protective stops" collapsible defaultOpen>
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Every rule that exits a losing (or protects a winning) position, in one place. The diagram shows how they
           compose for this account right now: each lane falls back left → right, trailing runs alongside, and the app
@@ -287,7 +287,7 @@ function AccountScopedGuardrailsPage() {
         </div>
       </Card>
 
-      <Card title="Advanced rulebook" padded={false}>
+      <Card title="Advanced rulebook" padded={false} collapsible defaultOpen>
         <div className="px-4 pb-2">
           <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             Everything below ships with safe defaults — you never have to touch it. One rule everywhere: a cap that
