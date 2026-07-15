@@ -104,6 +104,10 @@ original-thread resolution, and exact production verification remain after pushi
 
 Rollout: `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
 Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
+## 2026-07-14 — Browser Tab Title Update (AG, branch `agent/ag-tab-title`)
+
+Changed the browser tab title to display exactly "Socratic Trade" by removing the "Autonomy Desk" override in the console layout. Passed verification gate (tsc, lint, test, build). Rollout: `docs/rollouts/2026-07-14-tab-title-socratic-trade.md`.
+
 ## 2026-07-14 — Watchlist & Order Row Button Tooltip Alignment (AG, branch `agent/ag-watchlist-tooltip-fix`)
 
 Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 merged to main. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
