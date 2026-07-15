@@ -912,8 +912,8 @@ export function parseFmpTranscriptBody(payload: unknown, expected: FmpTranscript
     const row = dataRecord(raw);
     if (!row) continue;
     const symbol = validSymbol(row.symbol);
-    const year = validYear(row.year);
-    const quarter = validQuarter(row.quarter ?? row.period);
+    const year = validYear(row.year ?? row.fiscalYear);
+    const quarter = validQuarter(row.quarter ?? row.fiscalQuarter ?? row.period);
     const content = typeof row.content === "string" ? row.content.trim() : "";
     if (
       symbol !== expected.symbol ||
@@ -1186,9 +1186,9 @@ async function requestFmpJson(
     throwIfOperationLeaseCancelled(leaseSignal);
     assertOperationLeaseOwnership(claim);
     if (!response.ok) {
-      const kind: FmpRequestFailureKind = response.status === 402
+      const kind: FmpRequestFailureKind = (response.status === 402 || response.status === 403)
         ? "endpoint_not_entitled"
-        : [400, 401, 403].includes(response.status)
+        : [400, 401].includes(response.status)
           ? "access_denied"
         : isTransientStatus(response.status)
           ? "transient"
