@@ -1,5 +1,20 @@
 # Active Implementation Plan
 
+> **2026-07-15 - Primary-account Usage Monitor credential bridge writer
+> (CODEX).** Implement the default-off writer half of API Usage Monitor PR
+> #286: read only the fixed primary `local` user's Gemini and DeepSeek rows;
+> publish active values then a strict manifest-last monotonic complete set to
+> fixed ST `prod` `/usage-monitor/st-primary/v1`; retain delete-free revoked
+> tombstones; reconcile through the single-leader scheduler and immediate
+> tracked-key triggers; document least-privilege writer/read-only reader
+> identities. Focused/integration checks and the serialized full gate are green;
+> hostile writer findings are fixed. API Usage Monitor reader PR #293 is live
+> and healthy at `c6c4c8f` with the compatible bridge-only unexpanded-value
+> contract, so publish this default-off writer through a ready PR, hosted
+> checks, protected merge, and Coolify auto-deploy observation. Identity
+> creation, production configuration, secret mutation, and activation remain
+> out of scope.
+
 > **2026-07-15 - Open-PR cleanup and production verification (CODEX).** PR #1586 and PR #1612
 > are merged and production health reports exact `main@3c015a52`. Stale overlapping PRs #1610 and
 > #1611 are closed as superseded; the open PR list is empty. FMP transcripts remain default-off until

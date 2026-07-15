@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiKeyEnvVarForService, listUserApiKeys, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import { apiKeyEnvVarForService, listUserApiKeys, LOCAL_USER, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { queueStPrimaryBridgeWriterSync } from "@/lib/st-primary-bridge-writer";
 
 export const dynamic = "force-dynamic";
 
@@ -135,6 +136,13 @@ const API_KEY_CATALOG = [
 ] as const;
 
 const VALID_SERVICES: ReadonlySet<string> = new Set(API_KEY_CATALOG.map((item) => item.service));
+const ST_PRIMARY_BRIDGE_SERVICES: ReadonlySet<string> = new Set(["gemini", "deepseek"]);
+
+function queuePrimaryBridgeAfterTrackedMutation(userId: string, service: string): void {
+  if (userId === LOCAL_USER && ST_PRIMARY_BRIDGE_SERVICES.has(service)) {
+    queueStPrimaryBridgeWriterSync();
+  }
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -192,6 +200,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = upsertUserApiKey(userId, canonical, apiKey.trim(), label);
+    queuePrimaryBridgeAfterTrackedMutation(userId, canonical);
     return NextResponse.json({
       success: true,
       key: {
@@ -222,5 +231,6 @@ export async function DELETE(request: NextRequest) {
   }
 
   const deleted = deleteUserApiKey(userId, canonical);
+  queuePrimaryBridgeAfterTrackedMutation(userId, canonical);
   return NextResponse.json({ success: true, deleted });
 }

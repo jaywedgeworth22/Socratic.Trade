@@ -36,6 +36,7 @@ import { symbolsForPolicyUniverse } from "./index-universes";
 import { acquireOrRenewLeadership, releaseLease, LEASE_OWNER } from "./scheduler-lease";
 import { reconcilePendingFills } from "./strategy-execution";
 import { safeErrorMessage } from "./telemetry-sanitize";
+import { runStPrimaryBridgeWriterIfDue } from "./st-primary-bridge-writer";
 
 const TICK_MS = 60_000; // check every 60s; cadence changes take effect within one tick
 export const MANAGED_VECTOR_RECONCILE_LAST_ATTEMPT_KEY = "scheduler:managedVectorReconcile:lastAttempt";
@@ -407,6 +408,18 @@ async function tick(): Promise<void> {
   // Global managed-vector crash repair is cadence-gated and single-flight. It must never block or
   // throw into trading work; failed or lease-busy attempts persist their hourly retry marker.
   void reconcileManagedVectorRecordsIfDue();
+
+  // Default-off, cadence-gated export of only the primary local user's Gemini
+  // and DeepSeek credentials to the isolated Usage Monitor bridge path. The
+  // writer is self-guarded and returns sanitized status codes without throwing
+  // into trading work.
+  void runStPrimaryBridgeWriterIfDue().then((result) => {
+    if (result.status === "error") {
+      console.error(
+        `[scheduler] ST primary credential bridge failed (${result.errorCode ?? "unknown"})`
+      );
+    }
+  });
 
   // Refresh backend web sources (congressional trades, etc.) independently of the
   // trading loop — these are low-frequency (cadence-gated, ~daily) data reads that
