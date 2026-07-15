@@ -535,6 +535,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **Today's-errors triage: notification truth/noise fixes + P1 RAG-outage fix + ops report (CLAUDE, branch `claude/todays-app-errors-716a45`, isolated worktree `~/.claude/projects/Claude-Isolated-Code-Worktrees/Socratic.Trade/todays-app-errors-716a45`) — IN PROGRESS 2026-07-15; HANDED OFF TO MONET (see `docs/rollouts/2026-07-15-todays-errors-triage-handoff.md`).** Owner-directed from today's SMS error review. Code fixes (KEEPOUT-aware: no `strategy.ts`/`types.ts` edits — AG safety-maintenance lane holds them): (1) `run_failed`/`kill_switch` notification body surfaces the actual broker rejection/breaker reason (`payload.reason`/`error`) instead of duplicating the title ("BAC order rejected by broker" x2 today) + Discord parity; (2) placeholder `pending_reconciliation` fill notifications stop rendering "BUY 0 SYM ($0.00)"; (3) stale-limit alerts skip unactivated Alpaca `"held"` bracket exit legs (SELL TP legs alerted beside their unfilled BUY entries today); (4) Alpha Vantage daily-cap exhaustion alert cools down until the next daily reset instead of every 6h; (5) **P1 — production RAG retrieval was 100% down (Sentry SOCRATIC-TRADE-X, 150 events escalating): `managedVectorLedgerAuthority()` counted pre-authority `legacy_committed` chunk_occurrences rows as blocking evidence, wedging first-authority mint on every retrieval AND ingest; fixed in `vector-db.ts` + 7-test regression suite**; (6) `alpaca.ts` stop-price-on-limit guard (probable "order rejected by broker" root cause; **still needs a regression test**). Sentry board cleaned (X resolvedInNextRelease; W/T/B resolved; F ignored). PagerDuty: 14 stale-snapshot warnings all auto-resolved (external usage-monitor). State at handoff: `tsc` clean, all focused suites green (17+7+56+90); REMAINING = alpaca test, full lint/test/build gate, STATUS/rollout docs, `scripts/land.sh` → merge/auto-deploy → prod health + RAG-recovery verification, and forward the corrected owner ops report.
 - **Post-Codex/AG consolidation audit + app evaluation sweep → MONET handoff (CLAUDE, isolated worktree branch `claude/adoring-hopper-4ff51e`, owner-directed 2026-07-15) — AUDIT COMPLETE / HANDED TO MONET.** Verified: production current + healthy (`main@294694ae`), no open ST PRs (all Codex/AG through #1624 merged+deployed), `congress-trading-shared` current on BOTH consumers (`0bc26ab`=v1.7.1, no drift). Audited 73 branches (main missing no squash-merged content; a small UNMERGED-VALUABLE set + 3 FLAGGED never-PR'd branches identified), 54 merged CODEX/AG PRs for board hygiene (corrections list produced — see handoff §2), API-Usage-Monitor integration (DEGRADED: real ~2× Voyage $ double-count + FMP request double-emit), and a 5-lane app eval with adversarial verification. Two side-fixes LANDED: Congress.Trade pin-check false-positive (PR #450 MERGED) + `agent-sync-push` pm2 repair. **Full synthesized findings + prioritized action list: `docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`.** All code fixes handed to MONET to land via separate PRs. Rollout: `docs/rollouts/2026-07-15-post-codex-ag-audit-monet-handoff.md`.
 - **Crash-durable Socratic.Trade usage telemetry replay (CODEX, branch `codex/socratic-usage-replay`, worktree `/Users/jay/apps/socratic-usage-telemetry-replay`, owner-directed 2026-07-13) — IN PROGRESS; CHECKPOINTED IN BLOCKED DRAFT PR #1563 (`7e1481c3`).** New events carry top-level `project: "socratic-trade"` without rewriting raw provider names. Historical/new `llm_usage` and `rag_usage` rows replay through deterministic existing IDs using ordered, overlap-safe, monotonic watermarks in internal settings; startup + one-minute bounded replay require no schema change. Node 24 focused 16/16, scoped ESLint, TypeScript, diff-check, and production webpack build pass. Do not merge/deploy: receiver backfill must deploy and verify in API Usage Monitor first; then refresh and rerun the Socratic gate before an explicit landing decision. PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/1563
 
@@ -647,8 +648,10 @@ As of 2026-07-08 (assignment-rule update).
   `docs/rollouts/2026-07-11-public-auth-rate-limit-hardening.md`.
 
 - **Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch
-  `monet/privacy-terms-pages`) — IN PROGRESS 2026-07-10, code+tests+full gate done, PR opening
-  next.** Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added
+  `monet/privacy-terms-pages`) — ✅ DEPLOYED TO PROD 2026-07-10: PR #1374 squash-merged to `main`
+  (`1c7f2376`), auto-deployed. Verified live in production 2026-07-15: `/privacy-policy` and
+  `/terms-and-conditions` both return HTTP 200 unauthenticated with correct titles/content.**
+  Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added
   `/privacy-policy` + `/terms-and-conditions` (boilerplate, matches the existing
   `/how-it-works`/`/welcome` page pattern exactly), describing the app's real opt-in Twilio SMS
   notification channel (`src/lib/notify.ts`) with the specific language Twilio's compliance review
@@ -732,6 +735,10 @@ As of 2026-07-08 (assignment-rule update).
   pattern). Rollout: `docs/rollouts/2026-07-10-per-team-reasoning.md` (Follow-ups section).
 - **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — IN PROGRESS 2026-07-10, owner-assigned.** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team: (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rides here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row). Full gate under node@24 + land.sh.
 - **Learning-review legacy-seed default-blob edge — #1278 deferred finding #3 (MONET, branch
+  `monet/learning-review-legacy-seed-99138a`) — ✅ DEPLOYED TO PROD 2026-07-10: PR #1326 squash-merged
+  to `main` (`505475c5`), auto-deployed. Re-verified intact on `main` 2026-07-15 (5 days later, 46/46
+  learning-review tests including both dedicated regression tests pass on current tree).**
+  `seedLegacyLearningReviewFields`
   `monet/learning-review-legacy-seed-99138a`) — ✅ COMPLETED 2026-07-10, MERGED as PR #1326.**
   (Row corrected 2026-07-15 — MONET, was stuck at IN PROGRESS after merge; the mirror never got
   flipped since #1278 squash-merged to `main` mid-work, `6f1aaf87`.) `seedLegacyLearningReviewFields`
@@ -745,6 +752,10 @@ As of 2026-07-08 (assignment-rule update).
   clobber a later deliberate disable (the fail-OPEN danger the naive fix risked). +2 tests
   (full-blob recovered; tiered-disable NOT clobbered), pre-fix falsified. node@24: tsc clean,
   learning-review 32/32, policy-scope 53/53 (pr7-merge-gate green), build clean, eslint 0-err. Built off
+  #1278 tip 150257ae (target code only exists on the unmerged PR). Deferred finding #2 (unshown-item
+  orphaning) was later found to have 2 more adjacent gaps of its own on adversarial re-review; ALL
+  fixed via PR #1363 (2026-07-10/11, "Learning-review orphan hardening" row, this file). No known open
+  #1278 deferred items remain. See docs/rollouts/2026-07-09-learning-review-model-fixes.md addendum 3.
   #1278 tip 150257ae (target code only exists on the unmerged PR). #2 (unshown-item orphaning) ALSO
   landed since, as PR #1328 (merged 2026-07-10) — every #1278 deferred item is now closed.
   See docs/rollouts/2026-07-09-learning-review-model-fixes.md addendum 3.

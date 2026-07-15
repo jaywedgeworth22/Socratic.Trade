@@ -340,9 +340,20 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
       const fill = asRecord(payload.fill);
       if (!fill) return input.title;
       const side = fill.side ? String(fill.side).toUpperCase() : "ORDER";
+      const symbol = fill.symbol ? ` ${fill.symbol}` : "";
+      // recordFillFromProposal (performance.ts) zeroes quantity/price/notional on a "pending_reconciliation"
+      // receipt when the broker hasn't reported a fill price yet — that's a pre-confirmation placeholder,
+      // not a real $0 fill. Rendering the zeros verbatim reads as "BUY 0 JPM pending_reconciliation ($0.00)".
+      // Key off status + absence of a priced fill (not just quantity === 0, which can be legitimately 0 on a
+      // dollar-sized order awaiting its broker price) so a genuinely zero-priced CONFIRMED fill (status
+      // "filled"/"partially_filled") still renders normally below.
+      if (isPlaceholderFillReceipt(fill)) {
+        const estimate = estimatedFillNotional(fill);
+        const est = estimate !== undefined ? ` (~$${estimate.toFixed(2)} est.)` : "";
+        return `${side}${symbol} — order accepted by broker; fill not yet confirmed${est}`.trim();
+      }
       const status = fill.status ? ` ${String(fill.status)}` : "";
       const quantity = fill.quantity != null ? ` ${fill.quantity}` : "";
-      const symbol = fill.symbol ? ` ${fill.symbol}` : "";
       const notional = Number.isFinite(Number(fill.notional)) ? ` ($${Number(fill.notional).toFixed(2)})` : "";
       return `${side}${quantity}${symbol}${status}${notional}`.trim();
     }
@@ -360,8 +371,19 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
       return `Approval needed for ${side}${symbol}`.trim();
     }
     case "kill_switch":
-    case "run_failed":
-      return String(payload.summary ?? input.title);
+    case "run_failed": {
+      // Every run_failed emission site (strategy.ts, strategy-execution.ts) puts the actual broker
+      // rejection/decline/uncertainty detail under payload.reason or payload.error, never
+      // payload.summary — summary is only ever populated by the order-agnostic "Strategy run failed"
+      // emitter. Falling straight through to the title (as this used to) duplicated the title as the
+      // body, e.g. SMS "BAC order rejected by broker\nBAC order rejected by broker", silently
+      // dropping the real reason. kill_switch sites split the same way: the scheduled-halt emitter
+      // carries summary, while the circuit-breaker and volatility-brake halts carry only reason —
+      // so this shared fallback chain surfaces the breaker/brake reason for those too instead of
+      // repeating the title.
+      const detail = payload.summary ?? payload.reason ?? payload.error;
+      return String(detail ?? input.title);
+    }
     case "limit_order_stale":
       return String(payload.summary ?? input.title);
     case "proposal_withdrawn":
@@ -388,6 +410,27 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+/** True when `fill` is a recordFillFromProposal pre-confirmation placeholder receipt (status
+ *  "pending_reconciliation" with no priced fill yet) rather than a real, priced fill — see the
+ *  "fill" case in directNotificationBody for why this can't key off quantity/notional alone. */
+function isPlaceholderFillReceipt(fill: unknown): boolean {
+  const record = asRecord(fill);
+  const price = Number(record.price);
+  const hasPricedFill = Number.isFinite(price) && price > 0;
+  return record.status === "pending_reconciliation" && !hasPricedFill;
+}
+
+/** Best-effort pre-fill notional estimate for a placeholder receipt, read from the review/proposal
+ *  that recordFillFromProposal stamps onto `fill.raw` — NEVER fabricated when neither is present. */
+function estimatedFillNotional(fill: unknown): number | undefined {
+  const raw = asRecord(asRecord(fill).raw);
+  const reviewEstimate = Number(asRecord(raw.review).estimatedNotional);
+  if (Number.isFinite(reviewEstimate) && reviewEstimate > 0) return reviewEstimate;
+  const dollarAmount = Number(asRecord(raw.proposal).dollarAmount);
+  if (Number.isFinite(dollarAmount) && dollarAmount > 0) return dollarAmount;
+  return undefined;
+}
+
 function formatDiscordPayload(input: {
   type: NotificationEventType;
   title: string;
@@ -405,12 +448,24 @@ function formatDiscordPayload(input: {
       if (fill) {
         fields.push(
           { name: "Symbol", value: String(fill.symbol), inline: true },
-          { name: "Side", value: String(fill.side).toUpperCase(), inline: true },
-          { name: "Status", value: String(fill.status), inline: true },
-          { name: "Quantity", value: String(fill.quantity), inline: true },
-          { name: "Price", value: `$${Number(fill.price).toFixed(2)}`, inline: true },
-          { name: "Notional", value: `$${Number(fill.notional).toFixed(2)}`, inline: true }
+          { name: "Side", value: String(fill.side).toUpperCase(), inline: true }
         );
+        // See directNotificationBody's "fill" case for why a "pending_reconciliation" receipt with
+        // no priced fill is a placeholder, not a real $0.00 fill — same guard, Discord embed fields.
+        if (isPlaceholderFillReceipt(fill)) {
+          const estimate = estimatedFillNotional(fill);
+          fields.push(
+            { name: "Status", value: "Order accepted by broker; fill not yet confirmed", inline: true },
+            { name: "Notional", value: estimate !== undefined ? `~$${estimate.toFixed(2)} est.` : "Pending", inline: true }
+          );
+        } else {
+          fields.push(
+            { name: "Status", value: String(fill.status), inline: true },
+            { name: "Quantity", value: String(fill.quantity), inline: true },
+            { name: "Price", value: `$${Number(fill.price).toFixed(2)}`, inline: true },
+            { name: "Notional", value: `$${Number(fill.notional).toFixed(2)}`, inline: true }
+          );
+        }
       }
       if (payload?.runId) {
         fields.push({ name: "Run ID", value: String(payload.runId), inline: false });
@@ -463,7 +518,10 @@ function formatDiscordPayload(input: {
     }
     case "kill_switch": {
       color = 10181046; // Purple
-      description = payload?.summary ?? "Kill switch triggered.";
+      // Same field split as directNotificationBody: the circuit-breaker and volatility-brake
+      // halts carry only payload.reason, so Discord must fall back to it too or those two real
+      // production alerts render the generic text while SMS shows the specific reason.
+      description = payload?.summary ?? payload?.reason ?? "Kill switch triggered.";
       if (payload?.runId) {
         fields.push({ name: "Run ID", value: String(payload.runId), inline: false });
       }
@@ -485,7 +543,10 @@ function formatDiscordPayload(input: {
     }
     case "run_failed": {
       color = 15158332; // Red
-      description = payload?.summary ?? "Strategy run failed.";
+      // Mirrors directNotificationBody's run_failed fallback chain — most emission sites carry the
+      // real broker rejection/decline/uncertainty detail under payload.reason or payload.error, not
+      // payload.summary (see that case for the full explanation).
+      description = payload?.summary ?? payload?.reason ?? payload?.error ?? "Strategy run failed.";
       if (payload?.runId) {
         fields.push({ name: "Run ID", value: String(payload.runId), inline: false });
       }

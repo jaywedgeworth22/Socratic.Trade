@@ -37,6 +37,40 @@ was a completely fresh worktree checkout (`node_modules` didn't exist), `npm ci`
 Mac's default node26, rebuilt for node24 to match `.nvmrc`. Rollout:
 `docs/rollouts/2026-07-10-durable-state-restart-survival.md`. Next: full suite confirmation, `npm run
 build`, land via PR.
+## 2026-07-15 — Today's-errors triage: P1 RAG-outage fix + notification/alert truth-and-noise fixes (CLAUDE)
+
+Owner-directed from an SMS error review. Six fixes on `claude/todays-app-errors-716a45`, all
+KEEPOUT-aware (no `strategy.ts`/`types.ts` — AG safety-maintenance lane holds them):
+
+1. **P1 — production RAG retrieval was 100% down** (Sentry `SOCRATIC-TRADE-X`, 150 events
+   escalating since 11:27Z). `managedVectorLedgerAuthority()` counted pre-authority
+   `legacy_committed` `chunk_occurrences` rows as blocking evidence, so a deployment upgrading
+   with legacy RAG data could never mint its first ledger authority — every retrieval AND ingest
+   threw `Managed vector ledger authority is missing while vector evidence exists`. Fix counts only
+   authority-bearing evidence (`receipt_state <> 'legacy_committed'`); fail-closed on genuine
+   managed evidence preserved. `test/vector-ledger-authority-legacy.test.ts` (7 tests).
+2. `run_failed`/`kill_switch` notification body now surfaces the real broker/breaker reason
+   (`payload.reason`/`error`) instead of duplicating the title (SMS showed "BAC order rejected by
+   broker" twice); Discord parity. `test/notification-body-fixes.test.ts`.
+3. Placeholder `pending_reconciliation` fills stop rendering "BUY 0 SYM ($0.00)"; render an
+   intent-truthful body with an estimate only when a real one exists.
+4. Stale-limit alerts skip unactivated Alpaca `"held"` bracket exit legs (SELL TP legs alerted
+   beside their unfilled BUY entries). `test/stale-limit-orders.test.ts`.
+5. Alpha Vantage daily-cap exhaustion alert cools down until the next US/Eastern daily reset
+   instead of re-firing every 6h. `test/connection-health-routing.test.ts` +
+   `test/alpha-vantage-quota-alert-cooldown.test.ts`.
+6. Alpaca adapter no longer sets `stop_price` on non-stop order types (limit/market) — the
+   probable cause of today's repeated "order rejected by broker" (Alpaca 422 40010001 "limit
+   orders require no stop price"). Both REST and MCP paths guarded.
+   `test/alpaca-limit-stop-price-guard.test.ts` (6 tests, both paths).
+
+Sentry board cleaned (`X` resolvedInNextRelease → auto-closes on this merge; `W`/`T`/`B` resolved;
+`F` ignored). PagerDuty: 14 stale-snapshot warnings all auto-resolved (external usage-monitor).
+Owner-only follow-ups surfaced: Robinhood investor-profile questionnaire on the Agentic account
+(400-blocking 2nd+ trades), Alpha Vantage key pool expansion, multi-provider LLM quota review.
+
+Rollout: `docs/rollouts/2026-07-15-todays-errors-triage-handoff.md` (records the full triage;
+CLAUDE completed the land in-session rather than handing off).
 ## 2026-07-15 — Learning-review settings follow-ups + verified UI-wave closeout (MONET)
 
 Closed out the remaining open items from the model-attribution/Alert-Center/learning-review chat
