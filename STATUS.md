@@ -1,5 +1,81 @@
 # Current Status
 
+## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
+
+The decision trace now treats the structured Red Team verdict as the canonical explanation and
+suppresses only exact generic echoes plus known generated policy wrappers around that same reason.
+Distinct policy objections and Red Team override context remain visible. The canonical card also
+shows the shared explicit verdict label, so an approve-at-half review still says “Approved at half
+size” and a rejection still says “Rejected by Red Team” even when its duplicate rationale row is
+hidden. The change is display-only; persisted cases and other consumers are unchanged. PR #1593 is
+open with squash auto-merge armed; production is unchanged until merge auto-deploys.
+
+**[codex-autofix] Round 1:**
+- P2 — preserve overridden Red Team dissent rows when the summary matches the canonical verdict
+  reason but the title carries override context. Fixed in `app/console/lib/dissent.ts` and
+  `test/console-dissent-dedup.test.ts` (added real-world test case where summary is unchanged).
+
+**[codex-autofix] Round 2:**
+- P2 — preserve the approve-at-half verdict label while continuing to suppress its generated
+  policy rationale echo.
+- P2 — preserve explicit Red Team rejection status while continuing to suppress its identical
+  dissent rationale echo.
+- Exact-tree Node 24 verification: focused 2 files / 24 tests, lint, TypeScript, full 369 files /
+  4,135 tests, production build with TypeScript + 32 static pages, and diff-check passed. Commit
+  `40853f3e` contains both fixes and required docs. The first `scripts/land.sh` pass was also green
+  (TypeScript, 370 files / 4,168 tests, production build) but its push correctly stopped when remote
+  autofix `02c03fe5` advanced the branch. That one-file delta is now merged without force; the
+  conflict preserves the tested Chip, status tone, and applied-override semantics. Exact-head Codex
+  review is clean and every actionable thread is replied to and resolved. After `main` advanced
+  through #1604, commit `f54e43aa` was merged additively at `a84a9dfd`; the final current-main
+  landing gate, refreshed hosted checks, auto-merge, and merged-SHA/production verification remain.
+
+Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
+## 2026-07-14 — Infisical JSON-export production compatibility (CODEX)
+
+The initial PR #1594 deployment failed its new-container health check and rolled back cleanly.
+Corrective PR #1604 merged as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8` after independent
+LAND/no-P0-P2 review, Node 24 TypeScript, 369 files / 4,165 tests, production build, hosted verify,
+browser smoke, and gitleaks. Coolify deployment `rkh3ifiyp2dbtvv7xz7rtnbn` finished on that exact
+SHA. Public health confirms the app/DB are healthy, the scheduler lease is current, Litestream is
+replicating with a valid sync timestamp, and the Congress/usage-monitor dependencies are healthy.
+The remaining cached-Infisical-version comparison is nonblocking P3.
+## 2026-07-14 — Immutable shared-package v1.7.1 consumer adoption (CODEX)
+
+Branch `codex/shared-v171-consumer` now pins
+`@jaywedgeworth22/congress-trading-shared` to the immutable `v1.7.1` commit
+`0bc26ab9311a396f3f6b5cba0fb54fa7558a42b4` in the manifest, npm
+`allowScripts`, and lockfile. A Node 24 clean install from a disposable empty npm
+cache produced all four declared package surfaces (`index.js`, `index.mjs`,
+`index.d.ts`, and `index.d.mts`); direct CommonJS and ESM load probes both passed
+with the expected client and telemetry exports. The branch is reconciled cleanly
+with `origin/main@3df405e6`. The exact-tree Node 24 gate is green: lint 0 errors /
+459 inherited warnings, standalone TypeScript clean, 370 files / 4,172 tests, and
+a production build with the real TypeScript phase plus 32 static pages. Ready PR
+#1607 is pushed, both review threads are resolved, and exact-head `check-pin`,
+gitleaks, Playwright smoke, hosted verification, and required verification are
+green. Protected squash merge and exact production verification remain. No merge,
+deploy, provider, broker, secret, or corpus mutation has occurred from this lane.
+
+**[codex-autofix] 2026-07-15:**
+- P1 — Codex review flagged that `github:` protocol in `package.json` resolves to
+  `git+ssh://` in the lockfile. A controlled cold `npm ci` proved npm currently succeeds
+  tokenlessly through the lock integrity path even while direct SSH fails, but explicit
+  `git+https://` removes that deployment ambiguity. The manifest, lockfile, and npm
+  `allowScripts` entry now share the exact immutable HTTPS+SHA ref. Autofix verification:
+  lint 0 errors, TypeScript clean, 4,172 tests, and production build green. Codex then
+  corrected the autofix's broad package-name `allowScripts` entry back to the exact URL+SHA
+  key. Final exact-head verification is green: controlled cold tokenless install, unchanged
+  lock hash, lint 0 errors / 459 inherited warnings, TypeScript, 370 files / 4,172 tests,
+  and production build with all 32 static pages. A second resolver P1 was disproved
+  by a cold npm 11.4.2 `npm ci` with an empty HOME/cache, no agent or tokens,
+  `GIT_SSH_COMMAND=false`, and `npm_config_git` pointed at a nonexistent executable;
+  all four artifacts and 105 exports still installed, proving the warning's `ssh://`
+  text was not the actual transport. Both P1 threads are resolved. Refreshed exact-head
+  hosted checks are green; protected squash merge and production verification remain.
+
+Rollout: `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
+
 ## 2026-07-14 — Final hosted-review remediation (PR #1587)
 
 The hosted autofix pushed two independent review fixes. Both remaining money-path
@@ -140,6 +216,36 @@ Verify trio passed. Codex threads fixed, resolved. Auto-merge remains enabled.
 Rollout: `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
 
 Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="right"`). Passed verification gate (tsc, lint, test, build); PR #1575 merged to `main` as `07c2da3f` and auto-deploy verification is pending. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+Fixed edge cropping of action tooltips in the Watchlist and Order history rows by aligning them to the right (`align="end"`). Passed verification gate (tsc, lint, test, build), PR #1575 is open, and auto-merge is armed. Rollout: `docs/rollouts/2026-07-14-watchlist-tooltip-fix.md`.
+## 2026-07-14 — Local Infisical machine-identity bootstrap wiring (CODEX, branch `codex/infisical-bootstrap-wiring`)
+
+An isolated worktree closes the bootstrap gap without touching the AG checkout or transcript lane.
+Resolution is process env > `.env.local` > fixed `~/.secrets/global-api-keys`; a complete machine
+pair beats a stale token within a source. The broad file accepts only Socratic `INFIISICAL_ST_*` /
+corrected `INFISICAL_ST_*` and `INFISICAL_CT_SHARED_*`, while generic names remain local/process
+only. Descriptor-level no-follow, identity, ownership, mode, size, duplicate-assignment, and inert
+managed-only parsing checks fail closed without exposing values.
+
+P1/P2 remediation now removes long-lived credentials from the runner immediately, clears auth
+objects after token mint/copy, and gives probe/login/export/watch CLI processes only a minimal
+allowlisted environment. Normal/overlay paths export then launch directly, so ambient provider and
+cross-app secrets never transit a third-party CLI. The argv-safe final wrapper masks every bootstrap
+name after Infisical injection; actual `@next/env` tests prove neither remote values nor `.env.local`
+can restore them, including watch mode. Ambient `GLOBAL_API_KEYS_FILE` is ignored and scrubbed.
+Node 24 focused verification is green: 33/33 adversarial resolver/runner tests, scoped ESLint with
+zero errors, standalone TypeScript, JS/Bash syntax, ASCII, and diff-check. Coverage includes CLI
+domain routing, JSON multiline/quote/backslash fidelity, signal forwarding, argv separators, Node
+preload neutralization/restoration, runtime masks, conflicting aliases, shell blocks/heredocs, and
+NUL rejection without value echo. The branch is cleanly rebased on `origin/main@acd67a5c`. The first
+clean install after the interrupted session exposed a local npm Git-cache artifact: the valid shared
+package had only declarations staged and therefore caused broad module-resolution failures. Fresh
+isolated v1.6.0/current-main installs built all CJS/ESM/type artifacts; reinstalling this worktree with
+a disposable cache repaired the graph. The final exact-tree gate passes lint with 0 errors / 459
+inherited warnings, standalone TypeScript, 369 files / 4,161 tests, and a production build with the
+real TypeScript phase and all 32 static pages. No real secret file was read in this remediation unit
+and no Infisical/provider call, push, merge, deploy, or production mutation occurred. Rollout:
+`docs/rollouts/2026-07-14-infisical-bootstrap-wiring.md`.
+
 ## 2026-07-14 — Restore a single supported TypeScript compiler and the Next build type gate (CODEX, branch `codex/typescript-gate-repair`)
 
 An independent post-deploy audit of PR #1531 found that the green gates did not use one coherent
