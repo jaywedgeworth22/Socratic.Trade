@@ -1883,6 +1883,31 @@ function chunks<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+// Pinecone `index.fetch({ ids })` issues a GET with every id URL-encoded into the query string
+// (`?ids=…&ids=…`). Managed occurrence ids (`occ:v3:…`) are ~150 chars each, so a batch that is
+// fine by COUNT (the default 100) can still build an ~18 KB request URL and fail with an opaque
+// "unexpected error" once Pinecone/its edge rejects the oversized URL. Chunk fetch ids by encoded
+// URL length as well as count so both short (default-namespace) and long (managed) ids stay under
+// a safe limit. Only fetches need this — upsert/delete send ids in the POST body, not the URL.
+export const PINECONE_FETCH_ID_URL_BUDGET = 3500; // encoded id chars per GET; headroom under a ~4 KB URL
+export function fetchIdChunks(ids: string[], maxCount: number): string[][] {
+  const out: string[][] = [];
+  let current: string[] = [];
+  let currentLen = 0;
+  for (const id of ids) {
+    const encodedLen = encodeURIComponent(id).length + 6; // "&ids=" + separator overhead
+    if (current.length > 0 && (current.length >= maxCount || currentLen + encodedLen > PINECONE_FETCH_ID_URL_BUDGET)) {
+      out.push(current);
+      current = [];
+      currentLen = 0;
+    }
+    current.push(id);
+    currentLen += encodedLen;
+  }
+  if (current.length > 0) out.push(current);
+  return out;
+}
+
 function trimContextText(text: string, maxCharsOverride?: number): string {
   const trimmed = text.trim();
   const maxChars = maxCharsOverride ?? contextMaxChars();
@@ -3566,7 +3591,7 @@ export async function backfillAsOfEpoch(options: BackfillAsOfEpochOptions = {}):
     if (ids.length === 0) continue;
 
     // Fetch metadata in batches so a large page doesn't build one oversized fetch request.
-    for (const idBatch of chunks(ids, batchSize)) {
+    for (const idBatch of fetchIdChunks(ids, batchSize)) {
       const fetchResp = await withRagApiHealth("pinecone", pineconeSource, userId, "fetch", () =>
         index.fetch({ ids: idBatch })
       );
@@ -3692,7 +3717,7 @@ export async function inventoryVectorRecordsByMetadata(options: {
       throw new Error(`Vector inventory scan limit exceeded (${maxScanned} records).`);
     }
     scanned += ids.length;
-    for (const idBatch of chunks(ids, batchSize)) {
+    for (const idBatch of fetchIdChunks(ids, batchSize)) {
       assertVectorStoreLease(options.leaseGuard);
       const fetched = await withRagApiHealth(
         "pinecone",
@@ -3871,7 +3896,7 @@ export async function fetchExistingVectorRecordIds(options: {
   );
   const batchSize = Math.max(1, Math.min(1_000, Math.floor(options.batchSize ?? 100)));
   const existing: string[] = [];
-  for (const idBatch of chunks(ids, batchSize)) {
+  for (const idBatch of fetchIdChunks(ids, batchSize)) {
     assertVectorStoreLease(options.leaseGuard);
     const fetched = await withRagApiHealth(
       "pinecone",
@@ -4237,7 +4262,7 @@ export async function purgePrivateVectorRecordsForUser(options: {
   const fetchExactResiduals = async (namespace: VectorDataNamespace, targetIds: string[]) => {
     const remaining: string[] = [];
     const index = vectorDataIndex(pc, namespace, undefined, options.userId);
-    for (const idBatch of chunks(targetIds, batchSize)) {
+    for (const idBatch of fetchIdChunks(targetIds, batchSize)) {
       assertVectorStoreLease(options.leaseGuard);
       const fetched = await withRagApiHealth(
         "pinecone",
