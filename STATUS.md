@@ -1,5 +1,90 @@
 # Current Status
 
+## 2026-07-15 — Today's-errors triage: P1 RAG-outage fix + notification/alert truth-and-noise fixes (CLAUDE)
+
+Owner-directed from an SMS error review. Six fixes on `claude/todays-app-errors-716a45`, all
+KEEPOUT-aware (no `strategy.ts`/`types.ts` — AG safety-maintenance lane holds them):
+
+1. **P1 — production RAG retrieval was 100% down** (Sentry `SOCRATIC-TRADE-X`, 150 events
+   escalating since 11:27Z). `managedVectorLedgerAuthority()` counted pre-authority
+   `legacy_committed` `chunk_occurrences` rows as blocking evidence, so a deployment upgrading
+   with legacy RAG data could never mint its first ledger authority — every retrieval AND ingest
+   threw `Managed vector ledger authority is missing while vector evidence exists`. Fix counts only
+   authority-bearing evidence (`receipt_state <> 'legacy_committed'`); fail-closed on genuine
+   managed evidence preserved. `test/vector-ledger-authority-legacy.test.ts` (7 tests).
+2. `run_failed`/`kill_switch` notification body now surfaces the real broker/breaker reason
+   (`payload.reason`/`error`) instead of duplicating the title (SMS showed "BAC order rejected by
+   broker" twice); Discord parity. `test/notification-body-fixes.test.ts`.
+3. Placeholder `pending_reconciliation` fills stop rendering "BUY 0 SYM ($0.00)"; render an
+   intent-truthful body with an estimate only when a real one exists.
+4. Stale-limit alerts skip unactivated Alpaca `"held"` bracket exit legs (SELL TP legs alerted
+   beside their unfilled BUY entries). `test/stale-limit-orders.test.ts`.
+5. Alpha Vantage daily-cap exhaustion alert cools down until the next US/Eastern daily reset
+   instead of re-firing every 6h. `test/connection-health-routing.test.ts` +
+   `test/alpha-vantage-quota-alert-cooldown.test.ts`.
+6. Alpaca adapter no longer sets `stop_price` on non-stop order types (limit/market) — the
+   probable cause of today's repeated "order rejected by broker" (Alpaca 422 40010001 "limit
+   orders require no stop price"). Both REST and MCP paths guarded.
+   `test/alpaca-limit-stop-price-guard.test.ts` (6 tests, both paths).
+
+Sentry board cleaned (`X` resolvedInNextRelease → auto-closes on this merge; `W`/`T`/`B` resolved;
+`F` ignored). PagerDuty: 14 stale-snapshot warnings all auto-resolved (external usage-monitor).
+Owner-only follow-ups surfaced: Robinhood investor-profile questionnaire on the Agentic account
+(400-blocking 2nd+ trades), Alpha Vantage key pool expansion, multi-provider LLM quota review.
+
+Rollout: `docs/rollouts/2026-07-15-todays-errors-triage-handoff.md` (records the full triage;
+CLAUDE completed the land in-session rather than handing off).
+## 2026-07-15 — Learning-review settings follow-ups + verified UI-wave closeout (MONET)
+
+Closed out the remaining open items from the model-attribution/Alert-Center/learning-review chat
+thread. Added the missing threshold/max-wait UI knobs to the Daily learning review card
+(`app/console/settings/learning-review.tsx`) for the trigger backend that landed via #1278 with
+no UI; fixed `LearningReviewCard`'s `save()` helper to report success/failure so numeric fields
+can revert on a failed save. Ran a 10-claim adversarial verification workflow against live code
+(not memory) for the earlier UI wave: 7/10 confirmed already correct and un-regressed (Alert
+Center pill redesign, LRCX ticker-spacing fix, sparse-drawer fallback, compact finished-order
+cards, mobile active-tab color, desktop rail Configure-last ordering + width). Fixed the 3 gaps
+found: mobile section spacing was never actually implemented (`app/ui/ios-components.tsx`'s
+`List` now `gap-8 sm:gap-6`); container-width normalization had 2 undocumented offenders
+(`results/page.tsx` now uses `CONSOLE_PAGE_WIDTH`; `approvals/page.tsx`'s two-column layout got a
+documented exception comment matching the two that already existed); model attribution never
+reached the post-mortem/reflection surface (an explicitly-deferred follow-up in #1076's own
+rollout note) — `generateReflectionSummary` now audits `model`/`provider` on success AND (net-new)
+on a failed LLM call, surfaced in the Journal via the same text-attribution pattern `llm_step`
+already uses. Also verified: the "Global Settings" section ask was already satisfied
+architecturally by #1340 (global-only Settings page); the learning-review cost-line
+plain-English label was already fixed by another session (`app/ui/llm-usage-labels.ts`). tsc
+clean, lint 0 errors, 90/90 targeted tests pass; full suite/build run under heavy fleet
+contention — see rollout note for exact command outcomes at land time. Rollout:
+`docs/rollouts/2026-07-15-learning-review-settings-followups.md`.
+## 2026-07-15 — Per-position stop plans round 8: 2 post-merge Codex fixes (CLAUDE, branch `claude/stop-plans-round8-followups`)
+PR #1371 (per-position stop plans) merged; Codex reviewed the shipped merge commit and posted 4
+more findings afterward, against code that had since been heavily reworked by several intervening
+PRs (sub-millisecond order-race fix, account-relative risk hardening, Exit Replacement State
+Machine). Assessed each against current `main` rather than assuming the diff-time context still
+applied:
+- **Fixed** — `strategy-execution.ts`'s `reconcilePlacementError` had a shared
+  `commitRecoveredOpeningStopPlan` helper (added by other agents' hardening work, already wired
+  into two of its three fill-booking paths) but the fresh/non-dup `recordFillFromProposal` call
+  didn't invoke it — a scale-in recovered from a placement-error retry never got its stop plan
+  committed. Added the missing call.
+- **Fixed** — `synthetic-stops.ts`'s trailing-row purge only handled a plan resolving to
+  "none"/"fixed"/"atr"; a plan explicitly RESET to "default" (row cleared, symbol absent from
+  `stopPlanBySymbol`) with no account-wide `trailingStopPct` configured fell through untouched,
+  leaving a stale trailing row armed at the old plan's fallback distance. Extended the purge
+  condition to cover this case too.
+- **Not reproducible** — the partial-fill "commits stop plan too early" finding: confirmed
+  `listPendingBrokerReconciliationFills` already revisits `partially_filled` rows on every pass,
+  and `commitStopPlanIfOpening`/`commitRecoveredOpeningStopPlan` both re-derive the basis from the
+  BROKER'S OWN live `position.averageCost` (not a frozen single-fill price) each time, so the
+  basis self-corrects on every subsequent partial fill. This must have been valid only against an
+  intermediate state of the code between the merge and the later hardening PRs.
+- **Deferred** — canceling a resting bracket/OCO leg from an EARLIER opening when a scale-in
+  resets the plan to trailing/none: this is the same class as the previously-deferred "OCO
+  sibling-identity pairing" issue (PR #1331) — needs a broker API for identifying/cancelling a
+  bracket's sibling legs, not a code-only fix. Left open, matching prior precedent.
+Verify: tsc clean, lint 0 errors/488 pre-existing warnings, 382 files/4400 tests passed, build
+clean. Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`.
 ## 2026-07-15 — Post-Codex/AG audit + app evaluation → MONET handoff (CLAUDE)
 
 Owner-directed evaluation sweep on isolated branch `claude/adoring-hopper-4ff51e`. Verified

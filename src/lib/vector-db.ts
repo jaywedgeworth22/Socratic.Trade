@@ -834,10 +834,16 @@ export function managedVectorLedgerAuthority(): string {
         }
         return parsed;
       }
+      // Only authority-bearing evidence may block first-authority minting. `legacy_committed`
+      // occurrences predate the managed ledger entirely: they live in the provider's default
+      // namespace, carry no ledger_authority, and are never claimed by the reconciler — so a
+      // deployment upgrading with years of legacy RAG data must still be able to mint. Counting
+      // them here wedged production permanently (every retrieval AND every ingest resolves the
+      // authority, so nothing could ever create the first commit): 2026-07-15 RAG outage.
       const localEvidence = database.prepare(`
         SELECT
           (SELECT COUNT(*) FROM vector_ingest_commits) +
-          (SELECT COUNT(*) FROM chunk_occurrences) +
+          (SELECT COUNT(*) FROM chunk_occurrences WHERE receipt_state <> 'legacy_committed') +
           (SELECT COUNT(*) FROM vector_private_namespace_manifests) AS count
       `).get() as { count: number };
       const recovered = [...authorities][0];

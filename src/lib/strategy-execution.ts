@@ -1680,6 +1680,10 @@ export async function reconcilePlacementError(p: {
       execution: { orderId: matched.id, refId: p.refId, state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
       status: fillStatus
     });
+    if (fillStatus === "filled" || fillStatus === "partially_filled") {
+      const price = matched.averagePrice ?? p.proposal.referencePrice ?? 0;
+      await commitRecoveredOpeningStopPlan({ gateway: p.gateway, accountNumber: p.accountNumber, userId: p.userId, proposal: p.proposal, price });
+    }
     return { kind: "placed", orderId: matched.id, state: matched.state, fillStatus, fill, alreadyBooked: false };
   } catch (bookError) {
     // We KNOW the order exists but booking failed — degrade to uncertain so the 'placing' intent +

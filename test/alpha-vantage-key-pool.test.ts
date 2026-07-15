@@ -72,6 +72,14 @@ describe("millisUntilNextAlphaVantageDailyReset", () => {
     expect(millisUntilNextAlphaVantageDailyReset(fromMs)).toBe(8 * 60 * 60_000);
   });
 
+  it("is correct for a plain January date (EST, standard time, no transition nearby)", () => {
+    // 2026-01-15T20:00:00Z = 15:00 EST (UTC-5, standard time) -> 9h until next ET midnight.
+    // Distinct from the July case above (EDT, UTC-4) so both halves of the US DST year are
+    // exercised directly, not just the transition-day edge cases below.
+    const fromMs = Date.parse("2026-01-15T20:00:00Z");
+    expect(millisUntilNextAlphaVantageDailyReset(fromMs)).toBe(9 * 60 * 60_000);
+  });
+
   it("is DST-safe across the US spring-forward transition (2026-03-08, EST->EDT)", () => {
     // 2026-03-07T17:00:00Z = 12:00 noon EST (UTC-5, still standard time) the day before the
     // transition. Next ET midnight (2026-03-08 00:00, still EST — the 2am jump hasn't

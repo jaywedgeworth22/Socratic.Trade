@@ -44,6 +44,12 @@ function fmtCost(usd: number): string {
   return `$${usd.toFixed(4)}`;
 }
 
+// Headline totals show 2 decimals — a $34.8565 total reads as noise. Per-line-item
+// costs keep fmtCost's 4dp (sub-cent precision matters for one call, not for a total).
+function fmtTotalCost(usd: number): string {
+  return `$${usd.toFixed(2)}`;
+}
+
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -163,7 +169,7 @@ function UsageGroupCard({ groupRows: rows }: { groupRows: UsageRow[] }) {
           </div>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-lg font-semibold text-fg">{fmtCost(totalCost)}</div>
+          <div className="text-lg font-semibold text-fg">{fmtTotalCost(totalCost)}</div>
           <div className="text-xs text-muted">{totalCalls} call{totalCalls !== 1 ? "s" : ""}</div>
         </div>
       </div>
@@ -266,6 +272,10 @@ export function LlmUsageClient({
   const filteredCalls = filteredRows.reduce((s, r) => s + r.calls, 0);
   const filteredTokens = filteredRows.reduce((s, r) => s + r.totalTokens, 0);
 
+  // max-w-5xl here is independently maintained (this component also renders standalone at
+  // /admin/llm-usage, outside the console shell's CSS tokens) — it only coincidentally matches
+  // ../../console/lib/page-width.ts's CONSOLE_PAGE_WIDTH, which /console/usage's wrapper does not
+  // import.
   return (
     <div className="min-h-screen bg-base text-fg p-6 max-w-5xl mx-auto">
       <div className="mb-6">
@@ -337,12 +347,12 @@ export function LlmUsageClient({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
             <SummaryCard
               label="Total cost"
-              value={fmtCost(filteredTotalCost)}
+              value={fmtTotalCost(filteredTotalCost)}
               sub={accountFilter === "all" ? `last ${days}d` : `filtered · ${days}d`}
             />
             <SummaryCard
               label="Server failover"
-              value={fmtCost(filteredFailoverCost)}
+              value={fmtTotalCost(filteredFailoverCost)}
               sub={data.operatorFallbackEnabled ? "failover on" : "failover off"}
             />
             <SummaryCard
