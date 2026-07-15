@@ -51,10 +51,11 @@ cache produced all four declared package surfaces (`index.js`, `index.mjs`,
 with the expected client and telemetry exports. The branch is reconciled cleanly
 with `origin/main@3df405e6`. The exact-tree Node 24 gate is green: lint 0 errors /
 459 inherited warnings, standalone TypeScript clean, 370 files / 4,172 tests, and
-a production build with the real TypeScript phase plus 32 static pages. Protected
-landing, hosted verification, squash merge, and exact production verification are
-next. No push, PR, merge, deploy, provider, broker, secret, or corpus mutation has
-occurred from this lane yet.
+a production build with the real TypeScript phase plus 32 static pages. Ready PR
+#1607 is pushed, both review threads are resolved, and exact-head `check-pin`,
+gitleaks, Playwright smoke, hosted verification, and required verification are
+green. Protected squash merge and exact production verification remain. No merge,
+deploy, provider, broker, secret, or corpus mutation has occurred from this lane.
 
 **[codex-autofix] 2026-07-15:**
 - P1 — Codex review flagged that `github:` protocol in `package.json` resolves to
@@ -66,8 +67,12 @@ occurred from this lane yet.
   corrected the autofix's broad package-name `allowScripts` entry back to the exact URL+SHA
   key. Final exact-head verification is green: controlled cold tokenless install, unchanged
   lock hash, lint 0 errors / 459 inherited warnings, TypeScript, 370 files / 4,172 tests,
-  and production build with all 32 static pages. The P1 thread is resolved; push and refreshed
-  hosted checks remain before merge.
+  and production build with all 32 static pages. A second resolver P1 was disproved
+  by a cold npm 11.4.2 `npm ci` with an empty HOME/cache, no agent or tokens,
+  `GIT_SSH_COMMAND=false`, and `npm_config_git` pointed at a nonexistent executable;
+  all four artifacts and 105 exports still installed, proving the warning's `ssh://`
+  text was not the actual transport. Both P1 threads are resolved. Refreshed exact-head
+  hosted checks are green; protected squash merge and production verification remain.
 
 Rollout: `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 

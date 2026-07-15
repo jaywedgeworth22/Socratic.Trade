@@ -42,7 +42,9 @@
 > resolution; then run the serialized lint, standalone TypeScript, full test, and
 > production-build gate on current `origin/main`. Land through `scripts/land.sh`, require
 > hosted verification and protected squash merge, then verify the exact automatic production
-> rollout and dependency health.
+> rollout and dependency health. Ready PR #1607 now has exact-head local and hosted gates
+> green with both review threads resolved; protected squash merge and production verification
+> remain.
 > See `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /

@@ -93,10 +93,18 @@ entry now use the immutable HTTPS+SHA ref.
 - Final exact-head gate: lint 0 errors / 459 inherited warnings, standalone TypeScript
   clean, 370 files / 4,172 tests in 464.36 seconds, and production build green with
   the real TypeScript phase plus all 32 static pages.
+- Reproduced npm 11.4.2's hosted-git `ssh://` warning, then proved it is not the
+  actual install transport on this path: a cold full `npm ci` on the exact tree
+  succeeded with an empty HOME/cache, no SSH agent or GitHub/npm tokens,
+  `GIT_SSH_COMMAND=false`, and `npm_config_git` pointed at a nonexistent executable.
+  All four built artifacts and 105 CommonJS exports were present.
+- Exact-head hosted checks passed: `check-pin`, gitleaks, both classifiers,
+  Playwright smoke (5m11s), `verify-hosted` (11m22s), and required `verify`.
 
 ### Threads resolved
 
 - PRRT_kwDOS7mOVM6Q8jTN (chatgpt-codex-connector, P1 — Use HTTPS git URL for shared dependency)
+- PRRT_kwDOS7mOVM6Q8yEd (chatgpt-codex-connector, P1 — Force npm to fetch the git package over HTTPS; resolved with cold npm 11.4.2 executable-level proof)
 
 ## Follow-ups
 
