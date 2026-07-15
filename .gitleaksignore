@@ -25,8 +25,3 @@ edc62261e8cc085ab494c567462e6e97755db0d9:test/provider-rate-limit.test.ts:generi
 # Fake deterministic ENCRYPTION_KEY fixture in PR #1586. The current tree uses "0".repeat(64), but
 # hosted gitleaks scans the branch's first-parent history and still sees the original placeholder literal.
 dd63ba35cbd5023f3571992380454dad22225536:test/rag-doc-type-coverage.test.ts:generic-api-key:55
-#
-# This is a fake deterministic 64-hex ENCRYPTION_KEY fixture introduced while stabilizing
-# test/rag-doc-type-coverage.test.ts for PR #1586. It was immediately replaced with
-# "0".repeat(64), but gitleaks scans the PR commit range and still sees the old fixture.
-dd63ba35cbd5023f3571992380454dad22225536:test/rag-doc-type-coverage.test.ts:generic-api-key:55
