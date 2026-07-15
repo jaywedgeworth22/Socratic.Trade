@@ -535,6 +535,13 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **Candlestick "ST" monogram favicon (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`) —
+  IN PROGRESS 2026-07-13, PR up for owner review (auto-merge OFF).** New favicon/app icons: an
+  interlocking candlestick "ST" spelled in candlesticks like the header logo (varied bodies driven by
+  the same `buildTickerUnits` ticker, green-biased with reds, dark rounded bg). S high-left, T
+  slightly lower-right, tiny overlap. Static-asset swap (`public/icon.svg` + `public/icons/*`);
+  `app/layout.tsx` already references them. tsc 0, build 0. Awaiting owner sign-off before merge. See
+  `docs/rollouts/2026-07-13-candlestick-st-favicon.md`.
 - **Crash-durable Socratic.Trade usage telemetry replay (CODEX, branch `codex/socratic-usage-replay`, worktree `/Users/jay/apps/socratic-usage-telemetry-replay`, owner-directed 2026-07-13) — IN PROGRESS; CHECKPOINTED IN BLOCKED DRAFT PR #1563 (`7e1481c3`).** New events carry top-level `project: "socratic-trade"` without rewriting raw provider names. Historical/new `llm_usage` and `rag_usage` rows replay through deterministic existing IDs using ordered, overlap-safe, monotonic watermarks in internal settings; startup + one-minute bounded replay require no schema change. Node 24 focused 16/16, scoped ESLint, TypeScript, diff-check, and production webpack build pass. Do not merge/deploy: receiver backfill must deploy and verify in API Usage Monitor first; then refresh and rerun the Socratic gate before an explicit landing decision. PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/1563
 
 - **SEC/RAG 1,000-stock implementation program (CODEX, branch `codex/sec-rag-program`, worktree

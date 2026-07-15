@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-13 — Candlestick "ST" monogram favicon (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+
+Replaced the favicon / app icons with an interlocking candlestick "ST" monogram matching the header
+logo's style: letters spelled in candlesticks (thin wicks + varied rounded bodies), green-biased with
+reds mixed in, on the dark rounded-square background. Candle-size variation is driven by the SAME
+`buildTickerUnits` ticker the logo uses (body fraction 0.4–0.85 + offset + shade), so candles vary
+like the logo instead of reading as uniform blocks. Letters sampled the same way the logo samples
+them; S high-left, T slightly lower-right with a tiny overlap so both stay legible. Files:
+`public/icon.svg`, `public/icons/icon-192.png`, `icon-512.png`, `apple-touch-icon-180.png`
+(`app/layout.tsx` already references them). tsc 0, build 0. PR up for owner review (auto-merge OFF —
+awaiting sign-off). Rollout: `docs/rollouts/2026-07-13-candlestick-st-favicon.md`.
+
 ## 2026-07-15 — Primary-account Usage Monitor credential bridge writer (CODEX)
 
 Branch `codex/st-primary-bridge-writer` adds the default-off Socratic writer
