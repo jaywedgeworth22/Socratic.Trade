@@ -40,7 +40,7 @@ import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/htt
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
 import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, resolveProviderQuota, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
-import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
+import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage, millisUntilNextAlphaVantageDailyReset } from "./alpha-vantage-key-pool";
 import {
   arbitrateFieldObservation,
   dedupeUpstreamFamilies,
@@ -3055,12 +3055,19 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
     if (this.allExhaustedLogged) return;
     this.allExhaustedLogged = true;
     const total = this.pool.size();
+    const now = Date.now();
+    // This is a daily-quota exhaustion, not a transient connection failure — it cannot clear
+    // before Alpha Vantage's own daily reset, so tell logApiHealth exactly when that is instead
+    // of letting the generic 6h cooldown re-alert the operator every 6h for one still-ongoing
+    // outage (confirmed prod pattern: 1:31 AM and 8:02 AM alerts for the same exhausted key pool).
+    const quotaResetAt = new Date(now + millisUntilNextAlphaVantageDailyReset(now)).toISOString();
     logApiHealth({
       service: this.name,
       ok: false,
       errorText: `Alpha Vantage: entire key pool exhausted for today (${total}/${total} keys hit the 25/day cap)`,
       keySource: this.keySource,
-      userId: this.userId
+      userId: this.userId,
+      quotaResetAt
     });
   }
 
