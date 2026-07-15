@@ -531,7 +531,12 @@ export function chunkPrices(
 // every symbol look "never shared" to the very next scan, re-POSTing refs shared minutes earlier.
 // Low stakes either way (App A's import endpoint is idempotent — worst case is redundant, harmless
 // network calls, per the module header above), so debounced (not immediate) flush is fine here.
-const refSentAt = createDurableMap<number>("congress-share-ref-throttle");
+// Lazily created (not at module top level) — see provider-rate-limit.ts's quotaStore() for why
+// eagerly calling createDurableMap() at import time risks a circular-import TDZ crash.
+let refSentAtInstance: ReturnType<typeof createDurableMap<number>> | undefined;
+function refSentAt(): ReturnType<typeof createDurableMap<number>> {
+  return refSentAtInstance ?? (refSentAtInstance = createDurableMap<number>("congress-share-ref-throttle"));
+}
 
 /**
  * Forward the scan's candidate company refs — plus the fundamentals + analyst consensus App B just
@@ -556,7 +561,7 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
     for (const quote of scan.topCandidates ?? []) {
       const ref = marketQuoteToRef(quote);
       if (!ref) continue;
-      const sentAt = refSentAt.get(ref.ticker);
+      const sentAt = refSentAt().get(ref.ticker);
       if (sentAt !== undefined && now - sentAt < ttl) continue; // throttled
       refs.push(ref);
       if (includeFundamentals) {
@@ -567,14 +572,14 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
       }
       claimed.push(ref.ticker);
       // Optimistically claim BEFORE the await so concurrent scans don't double-POST the same ref.
-      refSentAt.set(ref.ticker, now);
+      refSentAt().set(ref.ticker, now);
       if (refs.length >= MAX_REFS_PER_POST) break;
     }
     if (refs.length === 0) return null;
     const result = await shareWithCongressTrade({ refs, fundamentals, analyst });
     if (!result.ok) {
       // Roll back the throttle so a later scan retries the failed refs (don't spam on success).
-      for (const ticker of claimed) refSentAt.delete(ticker);
+      for (const ticker of claimed) refSentAt().delete(ticker);
     }
     return result;
   } catch (err) {
@@ -585,7 +590,7 @@ export async function shareScanRefs(scan: Pick<MarketScan, "topCandidates">): Pr
 
 /** Test seam: reset the in-memory scan-refs throttle. */
 export function resetCongressRefThrottle(): void {
-  refSentAt.clear();
+  refSentAt().clear();
 }
 
 // ── Nightly daily-close + S&P-500 batch ─────────────────────────────────────────

@@ -359,22 +359,33 @@ const defaultQuota = new RequestQuota();
 // before, risking real HTTP 429s or provider-side throttling. See durable-state.ts's file header
 // for the pacer-vs-quota-vs-ephemeral-cache reasoning this module's sibling primitives follow.
 const QUOTA_NAMESPACE = "provider-request-quota";
-const quotaStore = createDurableMap<number[]>(QUOTA_NAMESPACE); // debounced: admit() is called at
-// most once per enrich() batch per provider (not once per HTTP request), so this is not a hot path.
+// Lazily created on first actual use (NOT at module top level): createDurableMap() eagerly reaches
+// into durable-state.ts -> db-durable-state.ts -> db.ts's barrel, and this module is itself imported
+// from deep in that same barrel's dependency graph (data-providers.ts, etc.) — constructing it at
+// import time risked a circular-import TDZ crash ("Cannot access 'host' before initialization") if
+// this module's evaluation happened to be nested inside durable-state.ts's own still-in-progress
+// top-level evaluation. Deferring construction to the first real call sidesteps the whole class of
+// import-order hazards, since by then every module has finished loading.
+let quotaStoreInstance: ReturnType<typeof createDurableMap<number[]>> | undefined;
+function quotaStore(): ReturnType<typeof createDurableMap<number[]>> {
+  return quotaStoreInstance ?? (quotaStoreInstance = createDurableMap<number[]>(QUOTA_NAMESPACE));
+  // debounced: admit() is called at most once per enrich() batch per provider (not once per HTTP
+  // request), so this is not a hot path.
+}
 
 function ensureQuotaHydrated(): void {
   // Gate on durable-state's OWN hydration tracking (not a second, parallel flag here) so a test's
   // resetDurableStateCacheForTests(QUOTA_NAMESPACE) — or a real process forgetting everything on
   // restart — is the single source of truth for "has this been loaded from SQLite yet".
   if (hasHydratedNamespace(QUOTA_NAMESPACE)) return;
-  for (const [combinedKey, timestamps] of quotaStore.entries()) {
+  for (const [combinedKey, timestamps] of quotaStore().entries()) {
     defaultQuota.restoreLane(combinedKey, timestamps);
   }
 }
 
 function persistLane(provider: string, credKey: string): void {
   const lane = defaultQuota.getLane(provider, credKey);
-  if (lane) quotaStore.set(`${provider}|${credKey}`, lane);
+  if (lane) quotaStore().set(`${provider}|${credKey}`, lane);
 }
 
 /** How many of `wanted` requests to `provider` on credential `credKey` fit the provider's rate
@@ -401,10 +412,10 @@ export function refundProviderRequests(provider: string, credKey: string, n: num
 export function resetProviderQuotaState(provider?: string): void {
   defaultQuota.reset(provider);
   if (!provider) {
-    quotaStore.clear();
+    quotaStore().clear();
   } else {
-    for (const [combinedKey] of quotaStore.entries()) {
-      if (combinedKey.startsWith(`${provider}|`)) quotaStore.delete(combinedKey);
+    for (const [combinedKey] of quotaStore().entries()) {
+      if (combinedKey.startsWith(`${provider}|`)) quotaStore().delete(combinedKey);
     }
   }
 }

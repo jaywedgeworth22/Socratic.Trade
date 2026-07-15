@@ -72,8 +72,16 @@ function ensureHydrated(namespace: string): Map<string, unknown> {
     cache.set(namespace, ns);
   }
   if (!hydratedNamespaces.has(namespace)) {
-    hydratedNamespaces.add(namespace);
-    for (const [key, value] of listDurableStateNamespace(namespace)) ns.set(key, value);
+    hydratedNamespaces.add(namespace); // mark first: a failed read below must not retry every call
+    try {
+      for (const [key, value] of listDurableStateNamespace(namespace)) ns.set(key, value);
+    } catch (err) {
+      // Best-effort, matching the write-behind flush path: a caller reading/writing durable state
+      // must never crash on a DB error (e.g. a test's `vi.mock("../src/lib/db", ...)` that doesn't
+      // provide `getDb`, since it never intended to exercise persistence at all). Degrade to an
+      // empty in-memory cache for this namespace rather than propagating the failure.
+      console.error(`[durable-state] hydration failed for namespace ${namespace}:`, err instanceof Error ? err.message : err);
+    }
   }
   return ns;
 }

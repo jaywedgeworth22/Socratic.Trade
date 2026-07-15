@@ -113,7 +113,12 @@ const cacheHost = globalThis as unknown as BudgetCacheHost;
 // deliberate choice. Without persistence, a redeploy resets the cooldown clock and a user/provider
 // already alerted minutes earlier gets re-alerted immediately after — the exact duplicate-alert spam
 // this cooldown exists to prevent.
-const alertSentAt = createDurableMap<number>("usage-budget-alert-cooldown");
+// Lazily created (not at module top level) — see provider-rate-limit.ts's quotaStore() for why
+// eagerly calling createDurableMap() at import time risks a circular-import TDZ crash.
+let alertSentAtInstance: ReturnType<typeof createDurableMap<number>> | undefined;
+function alertSentAt(): ReturnType<typeof createDurableMap<number>> {
+  return alertSentAtInstance ?? (alertSentAtInstance = createDurableMap<number>("usage-budget-alert-cooldown"));
+}
 
 function isBudgetLevel(v: unknown): v is BudgetLevel {
   return v === "ok" || v === "warning" || v === "exceeded" || v === "unconfigured";
@@ -214,9 +219,9 @@ export async function getBudgetStatusCached(opts: { force?: boolean; fetchImpl?:
 function shouldAlert(userId: string, provider: string, level: BudgetLevel): boolean {
   const key = `${userId}|${provider}|${level}`;
   const now = Date.now();
-  const last = alertSentAt.get(key);
+  const last = alertSentAt().get(key);
   if (last !== undefined && now - last < alertCooldownMs()) return false;
-  alertSentAt.set(key, now);
+  alertSentAt().set(key, now);
   return true;
 }
 
