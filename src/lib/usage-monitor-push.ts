@@ -300,7 +300,14 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
   estimatedCostUsd?: number;
   actualCostUsd?: number;
 }): Promise<UsageMonitorEvent> {
-  const costUsd = entry.actualCostUsd ?? entry.estimatedCostUsd;
+  // INVARIANT: the ledger lanes (pushLlmUsage/pushRagUsage, service "llm"/"rag") are the single
+  // external cost authority for every provider they cover — dispatch (service "provider-dispatch")
+  // is a quota/request-volume signal only, for every provider, always. entry.estimatedCostUsd /
+  // entry.actualCostUsd above still drive the LOCAL per-credential daily cost-cap fuse
+  // (reserveProviderDispatch's maxEstimatedCostUsdPer24h check in db-provider-dispatch.ts) and must
+  // stay real there — but they must never be threaded into the event pushed to the monitor below.
+  // The monitor's receiver sums cost by provider name only (it ignores `service`), so a non-zero
+  // costUsd here would double-count spend the ledger lane already reported for the same call.
   return {
     sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
@@ -309,11 +316,10 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
     project: PROJECT,
     label: entry.operation,
     keyRef: entry.credentialRef,
-    billingMode: entry.actualCostUsd !== undefined ? "actual" : "estimated",
-    metricType: typeof costUsd === "number" && costUsd > 0 ? "cost" : "usage",
+    billingMode: "estimated",
+    metricType: "usage",
     unit: "request",
     requests: entry.requests ?? 1,
-    ...(typeof costUsd === "number" && costUsd > 0 ? { costUsd } : {}),
     confidence: entry.outcome === "unknown" ? "estimated" : "actual",
     occurredAt: entry.occurredAt,
     metadata: cleanMetadata({

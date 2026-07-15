@@ -328,7 +328,8 @@ const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
   red_team_veto_overridden: "Red Team veto overridden",
   prompt_injection_suspected: "Prompt injection suspected",
   evidence_age_anomaly: "Evidence age anomaly",
-  storage_warning: "Storage warning"
+  storage_warning: "Storage warning",
+  autonomy_halted_on_boot: "Autonomy halted on boot"
 };
 
 export function notificationTypeLabel(type?: string | null): string {

@@ -81,7 +81,8 @@ import {
 import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
 import { fractionalKellySuggestion } from "./kelly";
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
-import type { ThesisStat, ThesisRegimeStat } from "./performance";
+import type { ThesisStat, ThesisRegimeStat, SkippedCandidateReturn } from "./performance";
+import { buildSpyReturnToNowMap } from "./backtest";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
 import { effectiveDailyOpeningNotionalCap, resolveDailyOpeningCap } from "./policy-caps";
@@ -3769,9 +3770,24 @@ async function proposeTrades(input: {
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14, connectedAccountId: input.policy.connectedAccountId })
-    .filter((row) => row.returnPct >= 3)
-    .slice(0, 8);
+  // Balanced counterfactual feedback (regret AND vindication): showing only missed winners
+  // (returnPct >= 3) meant the sole lesson the model could ever draw was "you are too cautious".
+  // Fetch a wider matured window, annotate each row with SPY's return over its own entry→now
+  // window (single SPY OHLC fetch, reusing the tuner's benchmark plumbing; a failed fetch simply
+  // omits benchmarkReturnPct — never fabricated), then split the 8-row budget between labeled
+  // missed_winner and avoided_loser rows.
+  const cfOptions = { limit: 24, maxAgeDays: 14, connectedAccountId: input.policy.connectedAccountId };
+  const cfDates = Array.from(
+    new Set(
+      getSkippedCandidateReturns(currentPrices, input.userId, cfOptions)
+        .map((row) => row.asOf?.slice(0, 10))
+        .filter((d): d is string => Boolean(d))
+    )
+  );
+  const cfBenchmark = cfDates.length > 0 ? await buildSpyReturnToNowMap(cfDates).catch(() => new Map<string, number>()) : undefined;
+  const skippedCounterfactuals = selectBalancedCounterfactuals(
+    getSkippedCandidateReturns(currentPrices, input.userId, { ...cfOptions, benchmarkReturnBySnapshotDate: cfBenchmark })
+  );
   const taxSummary = input.policy.accountNumber
     ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId, input.prefetched)
     : null;
@@ -4904,7 +4920,40 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
   };
 }
 
-function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+export type LabeledSkippedCounterfactual = SkippedCandidateReturn & { label: "missed_winner" | "avoided_loser" };
+
+/**
+ * Split the bounded counterfactual budget between BOTH feedback directions: `missed_winner` rows the
+ * model skipped that then rose >= 3% (regret) and `avoided_loser` rows it skipped that then fell
+ * <= -3% (vindication). One-sided regret-only feedback can only ever teach "you are too cautious".
+ * Each direction gets half of `cap`; an underfilled side donates its remainder to the other, so the
+ * total row count stays bounded at `cap`. Pure; exported for tests.
+ */
+export function selectBalancedCounterfactuals(rows: SkippedCandidateReturn[], cap = 8): LabeledSkippedCounterfactual[] {
+  const winners = rows.filter((row) => row.returnPct >= 3).sort((a, b) => b.returnPct - a.returnPct);
+  const losers = rows.filter((row) => row.returnPct <= -3).sort((a, b) => a.returnPct - b.returnPct);
+  const winnerCount = Math.min(winners.length, Math.max(Math.floor(cap / 2), cap - losers.length));
+  const loserCount = Math.min(losers.length, cap - winnerCount);
+  return [
+    ...winners.slice(0, winnerCount).map((row) => ({ ...row, label: "missed_winner" as const })),
+    ...losers.slice(0, loserCount).map((row) => ({ ...row, label: "avoided_loser" as const }))
+  ];
+}
+
+/** Round to 1 decimal for prompt compactness; undefined (dropped by compactPromptObject) when not finite. */
+function round1(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value * 10) / 10 : undefined;
+}
+
+/** Analyst-target upside % = (targetMean − price) / price, 1dp. Undefined (omitted) when either input is absent. */
+function targetUpsidePct(quote: { price?: number; targetMean?: number }): number | undefined {
+  const { price, targetMean } = quote;
+  if (typeof price !== "number" || !(price > 0) || typeof targetMean !== "number" || !(targetMean > 0)) return undefined;
+  return Math.round(((targetMean - price) / price) * 1000) / 10;
+}
+
+// Exported for tests (prompt-field wiring assertions); only compactMarketScanForPrompt calls it in production.
+export function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
   // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread —
   // it would wrongly anchor ask-relative limit-price reasoning. Emit each side only when it is not
   // synthetic (compactPromptObject drops undefined keys, matching hasAskData).
@@ -4926,6 +4975,12 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     de: quote.debtToEquity,
     epsGr: quote.epsGrowth,
     pb: quote.pbRatio,
+    // FMP quality + analyst-target fields (already PERCENT numbers where % applies). Omitted
+    // entirely when the provider had no data — never a placeholder value.
+    roa: round1(quote.returnOnAssets),
+    grossMarginPct: round1(quote.grossProfitMargin),
+    tgtMean: quote.targetMean,
+    tgtUpsidePct: targetUpsidePct(quote),
     shortFloat: quote.shortPercentOfFloat,
     beta: quote.beta,
     earnIn: quote.daysToEarnings,
