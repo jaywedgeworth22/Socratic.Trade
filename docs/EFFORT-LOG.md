@@ -749,39 +749,30 @@ As of 2026-07-08 (assignment-rule update).
 - **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — ✅ COMPLETED 2026-07-10, MERGED as PR #1314 (owner-assigned).** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team (2 Sonnet + 1 Fable implementers in isolated worktrees; adversarial verify wave caught the chat get_reflection legacy-key regression pre-land): (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rode here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row — re-fetch main post-#1314 before the 42-site pass). Full gate green under node@24; rollout `docs/rollouts/2026-07-10-activity-audit-p1-batch.md`. POST-DEPLOY watch: one Roth run producing >0 proposals.
 
 - **Filings ingest stop-early + budget 5000 (MONET, session `aapl-fundamentals-missing-e3ea01`) —
-  IN PROGRESS 2026-07-10, owner-directed.** RAG_INGEST_MAX_TEXTS_PER_DAY 1000→5000 +
-  SEC_FILING_RAG_MAX_PER_RUN 1→25 in Infisical prod (were shadowing the paid ingest pace);
-  code: budget pre-flight before EDGAR body fetches, run-level stop-early with cap-aware
-  `deferredForBudget`, `StoreResult.unconfigured`/`dedupComplete` disambiguation + crash-window
-  accession heal (adversarial-review finding). Kills the N-wasted-downloads + N-Sentry-warnings
-  per budget-capped run (SOCRATIC-TRADE-R). See the 2026-07-10 addendum in
-  docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md.
-
-- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
-  enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — IN
-  PROGRESS 2026-07-09; PR opened via land.sh, auto-merge armed (MONET's work, landed by CLAUDE
-  under the owner-directed usage-cap pickup: committed MONET's uncommitted fix, merged
-  `origin/main` incl. PR #1222's TwelveData negative-cache — different region, both kept — and
-  re-ran the full gate green).** Root cause of "AAPL fundamentals all dashes": every enrichment provider
-  slices its symbol list to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts)
-  while `scanMarket` enriches top-`candidateLimit` (30) ranked + up to 8 event outliers + ALL held
-  positions (src/lib/market.ts) — the force-included extras past index 30 (systematically the
-  owner's held names; verified in prod 2026-07-09T19:41Z, exactly 30/42 enriched) get zero fields
-  from every provider: blank Fundamentals drawer, neutral-50 factor defaults, no fundamentals for
-  the LLM/FCF-veto on exactly the owned positions. Fix: derive the per-provider budget from the
-  real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still
-  bounds cost; PR #1087 pacer handles the extra calls); order the `enrich()` symbol list held →
-  outliers → ranked so a budget shortfall starves the ranked tail, never holdings; tooltip honesty
-  (`withProvenance`/`cellTitle` no longer stamp "Received <time>" on fields no provider returned);
-  regression test for candidateLimit+extras full coverage. PR via land.sh when verify is green.
+  ✅ COMPLETED 2026-07-10, MERGED as PR #1307, DEPLOYED to production same day.** RAG_INGEST_MAX_TEXTS_PER_DAY
+  1000→5000 (later raised to 200000 by 2026-07-13 to drain the backlog faster — Infisical prod,
+  verified current) + SEC_FILING_RAG_MAX_PER_RUN 1→25 in Infisical prod (were shadowing the paid
+  ingest pace); code: budget pre-flight before EDGAR body fetches, run-level stop-early with
+  cap-aware `deferredForBudget`, `StoreResult.unconfigured`/`dedupComplete` disambiguation +
+  crash-window accession heal (adversarial-review finding). Kills the N-wasted-downloads +
+  N-Sentry-warnings per budget-capped run (SOCRATIC-TRADE-R). See the 2026-07-10 addendum in
+  docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md. **VERIFIED WORKING
+  2026-07-15** (prod DB check): `ingested_accessions` grew from 2 (pre-fix) to 56 filings /
+  4,027 chunks; the 2026-07-15T07:39Z run shows a clean 25/25 ingested, 0 errors,
+  `deferredForBudget:0`. Separate finding surfaced during this verification: ticker CB has been
+  permanently failing ingestion since 2026-07-13 with a Pinecone "Vector ID must be ASCII" error
+  (still 0 ingested rows as of 07-15) — unrelated to this fix's code, flagged as its own
+  background task, not yet claimed.
 
 - **Enrichment NO-CAP revision + filings warm-up receipts/ingestion (MONET, session
-  `aapl-fundamentals-missing-e3ea01`, branch `monet/aapl-fundamentals-missing-e3ea01`) — IN
-  PROGRESS 2026-07-09, owner-directed; MONET-authored, CLAUDE-landed under the usage-cap
+  `aapl-fundamentals-missing-e3ea01`, branch `monet/aapl-fundamentals-missing-e3ea01`) —
+  ✅ COMPLETED 2026-07-09, MERGED as PR #1287, DEPLOYED to production 2026-07-10 ~06:00Z
+  (announce-then-deploy claim honored; health verified ok/scheduler ticking post-deploy).**
+  MONET-authored, CLAUDE-landed under the usage-cap
   pickup round 2 (follow-on refinements committed: held-in-top-N enrichment priority,
-  budget-skip un-record in `ingestFiling`, forced-run TTL-stamp skip); PR opened via
-  land.sh with auto-merge armed. Supersedes PR #1272 (stuck on a phantom GitHub DIRTY
-  mergeable-state; `git merge-tree` clean; its content is merged into this branch).** Owner
+  budget-skip un-record in `ingestFiling`, forced-run TTL-stamp skip). Supersedes PR #1272 (stuck on a phantom GitHub DIRTY
+  mergeable-state; `git merge-tree` clean; its content is merged into this branch; #1272 closed
+  superseded 2026-07-10). Owner
   rulings in-session: (1) NO hard enrichment-symbol cap — "no cap at all or multiple hundreds",
   >50 positions is a supported future; `maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS` set
   (unclamped explicit throttle); `HELD_SYMBOL_ALLOWANCE`/`MAX_SYMBOLS_CAP` removed; webull +
@@ -792,8 +783,15 @@ As of 2026-07-08 (assignment-rule update).
   per-run default 25 (was 1); `SEC_FILING_INGEST_TTL_HOURS` cadence knob; admin reindex route
   forces past the TTL stamp (used to silently no-op). Rollouts:
   `2026-07-09-filings-warmup-receipts-and-ingest-pacing.md` + owner-ruling revision section in
-  `2026-07-09-enrichment-starvation-fix.md`. Prod env follow-up after deploy:
-  `VECTOR_EMBED_BATCH_DELAY_MS=0`, `SEC_FILING_INGEST_TTL_HOURS=24`.
+  `2026-07-09-enrichment-starvation-fix.md`. Prod env follow-up: `VECTOR_EMBED_BATCH_DELAY_MS=0`,
+  `SEC_FILING_INGEST_TTL_HOURS=24` — both applied (migrated into Infisical prod by a later
+  cleanup pass, confirmed live 2026-07-15) and `SEC_FILING_RAG_MAX_PER_RUN=25` activated via a
+  2026-07-10 restart deploy. **VERIFIED end-to-end in production 2026-07-15**: AAPL's last scan
+  (72 candidates, well past the old 30-symbol cap) carries a full 44-field enrichment record
+  (P/E 37.3, EPS $8.27, EPS growth +21.8%, dividend yield, FCF yield, debt/equity, analyst
+  rating, real bid/ask/VWAP) — the original "AAPL fundamentals all dashes" report is resolved.
+  Filings corpus grew from 2 to 56 ingested (4,027 chunks); AAPL's own 4 filings (2×10-K, 2×10-Q)
+  ingested within hours of the 2026-07-10 deploy, confirming demand-first ordering works.
 
 - **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
   `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
