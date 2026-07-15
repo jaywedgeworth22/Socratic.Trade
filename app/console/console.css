@@ -4,7 +4,7 @@
 
    THEMING MODEL
    - Semantic tokens only (surface/fg/muted/line/accent/up-down/warn/reality).
-     Components never hardcode raw hex — they reference var(--con-*).
+     Components never hardcode raw hex — they reference the semantic console tokens.
    - Light is the base set; dark overrides it. Resolution order:
        1. explicit choice via [data-theme="light"|"dark"] on .console-root
           (persisted in localStorage under a console-scoped key), else

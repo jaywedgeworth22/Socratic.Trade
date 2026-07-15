@@ -11,6 +11,7 @@ interface SymbolDrawerContent {
 
 interface SymbolDrawerApi {
   openDrawer: (content: SymbolDrawerContent) => void;
+  updateDrawerTitle: (ariaLabel: string, title: ReactNode) => void;
   closeDrawer: () => void;
 }
 
@@ -20,12 +21,18 @@ export function SymbolDrawerProvider({ children }: { children: ReactNode }) {
   const [content, setContent] = useState<SymbolDrawerContent | null>(null);
 
   const closeDrawer = useCallback(() => setContent(null), []);
+  const updateDrawerTitle = useCallback((ariaLabel: string, title: ReactNode) => {
+    setContent((current) =>
+      current?.ariaLabel === ariaLabel ? { ...current, title } : current
+    );
+  }, []);
   const api = useMemo<SymbolDrawerApi>(
     () => ({
       openDrawer: setContent,
+      updateDrawerTitle,
       closeDrawer
     }),
-    [closeDrawer]
+    [closeDrawer, updateDrawerTitle]
   );
 
   useEffect(() => {

@@ -111,6 +111,110 @@ describe("two-stage market enrichment", () => {
     expect(scan.topCandidates).toHaveLength(11);
   });
 
+  it("returns a usable interactive scan without starting the deep provider cascade", async () => {
+    const rows = [screenerRow("FAST", 2)];
+    vi.stubGlobal("fetch", async () => nasdaqRows(rows));
+
+    const scan = await scanMarket(["FAST"], [], promotionWeights, undefined, [], {
+      candidateLimit: 10,
+      outlierReserve: 0,
+      enrichmentMode: "skip"
+    });
+
+    expect(mocks.enrich).not.toHaveBeenCalled();
+    expect(scan.topCandidates.map((quote) => quote.symbol)).toEqual(["FAST"]);
+    expect(scan.warnings.join(" ")).toContain("Deep fundamentals refresh is deferred");
+  });
+
+  it("reuses persisted slow facts while preserving fresh interactive price data", async () => {
+    const rows = [screenerRow("FAST", 2)];
+    vi.stubGlobal("fetch", async () => nasdaqRows(rows));
+
+    const scan = await scanMarket(["FAST"], [], promotionWeights, undefined, [], {
+      candidateLimit: 10,
+      outlierReserve: 0,
+      enrichmentMode: "skip",
+      seedEnrichment: {
+        FAST: {
+          symbol: "FAST",
+          companyName: "Fast Industries",
+          price: 10,
+          score: 1,
+          peRatio: 15,
+          sentiment: 100,
+          insiderSentiment: 100,
+          daysToEarnings: 1,
+          intradayChangePct: -20,
+          volume: 2,
+          sources: {
+            price: "old-price",
+            intradayChangePct: "old-price",
+            volume: "old-price",
+            peRatio: "fmp",
+            companyName: "fmp"
+          }
+        }
+      }
+    });
+
+    const refreshed = scan.topCandidates[0]!;
+    expect(mocks.enrich).not.toHaveBeenCalled();
+    expect(refreshed).toMatchObject({
+      symbol: "FAST",
+      companyName: "Fast Industries",
+      price: 100,
+      volume: 1_000_000,
+      intradayChangePct: 2,
+      peRatio: 15
+    });
+    expect(refreshed.provider).toBe("nasdaq-delayed-screener");
+    expect(refreshed.sources).toMatchObject({ peRatio: "fmp", companyName: "fmp" });
+    expect(refreshed.sources?.price).not.toBe("old-price");
+    expect(refreshed.sources?.intradayChangePct).not.toBe("old-price");
+    expect(refreshed.sources?.volume).not.toBe("old-price");
+    expect(refreshed.sentiment).toBeUndefined();
+    expect(refreshed.insiderSentiment).toBeUndefined();
+    expect(refreshed.daysToEarnings).toBeUndefined();
+    expect(refreshed.factorBreakdown?.weightedTotal).toBeGreaterThan(0);
+    expect(scan.warnings.join(" ")).toContain("latest completed strategy scan");
+  });
+
+  it("returns a clearly stale persisted scan when the live Nasdaq screener is unavailable", async () => {
+    vi.stubGlobal("fetch", async () => { throw new Error("Nasdaq unavailable"); });
+
+    const scan = await scanMarket(["FAST"], [], promotionWeights, undefined, [], {
+      candidateLimit: 10,
+      outlierReserve: 0,
+      enrichmentMode: "skip",
+      seedEnrichment: {
+        FAST: {
+          symbol: "FAST",
+          companyName: "Fast Industries",
+          price: 91,
+          score: 44,
+          peRatio: 15,
+          intradayChangePct: -1,
+          volume: 50_000,
+          asOf: "2026-07-14T20:00:00.000Z",
+          sources: { peRatio: "fmp" }
+        }
+      }
+    });
+
+    expect(mocks.enrich).not.toHaveBeenCalled();
+    expect(scan.topCandidates[0]).toMatchObject({
+      symbol: "FAST",
+      companyName: "Fast Industries",
+      price: 91,
+      volume: 50_000,
+      stale: true,
+      cached: true,
+      provider: "persisted-strategy-scan",
+      peRatio: 15
+    });
+    expect(scan.warnings.join(" ")).toContain("stale fallback");
+  });
+
   it("holds the wider pool to the configured hard cap after prioritizing holdings and events", () => {
     process.env.MARKET_SCAN_ENRICHMENT_POOL_MULTIPLIER = "10";
     process.env.MARKET_SCAN_ENRICHMENT_POOL_CAP = "20";

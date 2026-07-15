@@ -1807,6 +1807,8 @@ export interface MarketQuoteSummary {
 export interface MarketDataProviderOptions {
   scoringWeights?: ScoringWeights;
   ttlMs?: number;
+  /** Cancels the current scan's outbound discovery reads when its caller deadline expires. */
+  signal?: AbortSignal;
   userId?: string;
   dynamicUniverses?: IndexUniverse[];
   candidateLimit?: number;
@@ -1819,6 +1821,14 @@ export interface MarketDataProviderOptions {
    * verdict and `policy.tuning.congressGoNoGoGating` is on. Resolved by the caller from the cached verdict.
    */
   congressMultiplier?: number;
+  /**
+   * Interactive refreshes must not enqueue the multi-minute fundamentals cascade.
+   * They still return real screener, broker, and persisted web-signal data; the full
+   * strategy/scheduler path keeps deep enrichment enabled.
+   */
+  enrichmentMode?: "full" | "skip";
+  /** Slow-changing facts from the latest completed strategy scan. */
+  seedEnrichment?: Record<string, MarketQuoteSummary>;
 }
 
 export interface MarketDataProvider {

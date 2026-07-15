@@ -868,7 +868,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({});
-    // 4 sub-calls: ratios-ttm, grades-consensus, insider-trading, senate-trading.
+    // 4 sub-calls: ratios-ttm, grades-consensus, profile, insider-trading/search.
     expect(fetchCount).toBe(4);
 
     const res2 = await provider.enrich(["AAPL"]);
@@ -876,18 +876,18 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     expect(fetchCount).toBe(8);
   });
 
-  it("logs non-premium optional FMP failures while suppressing expected premium 403s", async () => {
+  it("logs core FMP failures while suppressing an unentitled optional insider endpoint", async () => {
     const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { getDb } = await import("../src/lib/db");
     clearEnrichmentCache();
     getDb().prepare("DELETE FROM api_health_log WHERE service = ?").run("fmp");
 
     vi.stubGlobal("fetch", async (url: string) => {
-      if (url.includes("insider-trading")) {
+      if (url.includes("profile")) {
         return new Response("server error", { status: 500 });
       }
-      if (url.includes("senate-trading")) {
-        return new Response("premium endpoint", { status: 403 });
+      if (url.includes("insider-trading")) {
+        return new Response("premium endpoint", { status: 402 });
       }
       return new Response(JSON.stringify([]));
     });
@@ -907,29 +907,66 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     clearEnrichmentCache();
 
     let fetchCount = 0;
-    vi.stubGlobal("fetch", async (url: string) => {
+    const requested: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       fetchCount++;
+      requested.push({ url, init });
       if (url.includes("ratios-ttm")) {
-        return new Response(JSON.stringify([{ priceToEarningsRatioTTM: "25.5" }]));
+        return new Response(JSON.stringify([{
+          priceToEarningsRatioTTM: "25.5",
+          priceToBookRatioTTM: "8.2",
+          debtToEquityRatioTTM: "1.4",
+          returnOnEquityTTM: "0.31",
+          returnOnAssetsTTM: "0.12",
+          grossProfitMarginTTM: "0.46",
+          dividendYieldTTM: "0.004"
+        }]));
+      }
+      if (url.includes("/profile")) {
+        return new Response(JSON.stringify([{
+          companyName: "Apple Inc.",
+          sector: "Technology",
+          industry: "Consumer Electronics",
+          beta: 1.2,
+          price: 200,
+          lastDividend: 1,
+          range: "150-250"
+        }]));
       }
       return new Response(JSON.stringify([]));
     });
 
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
-    expect(res1.AAPL).toEqual({ peRatio: 25.5 });
-    // 4 sub-calls: ratios-ttm, grades-consensus, insider-trading, senate-trading.
+    expect(res1.AAPL).toEqual({
+      peRatio: 25.5,
+      pbRatio: 8.2,
+      debtToEquity: 1.4,
+      returnOnEquity: 31,
+      returnOnAssets: 12,
+      grossProfitMargin: 46,
+      companyName: "Apple Inc.",
+      sector: "Technology",
+      industry: "Consumer Electronics",
+      beta: 1.2,
+      dividendYield: 0.5,
+      fiftyTwoWeekHigh: 250,
+      fiftyTwoWeekLow: 150
+    });
+    // 4 sub-calls: ratios-ttm, grades-consensus, profile, insider-trading/search.
     expect(fetchCount).toBe(4);
+    expect(requested.every(({ url }) => !url.includes("test-key"))).toBe(true);
+    expect(requested.every(({ init }) => new Headers(init?.headers).get("apikey") === "test-key")).toBe(true);
 
     const res2 = await provider.enrich(["AAPL"]);
-    expect(res2.AAPL).toEqual({ peRatio: 25.5 });
+    expect(res2.AAPL).toEqual(res1.AAPL);
     expect(fetchCount).toBe(4);
   });
 });
 
 describe("callsPerSymbol('fmp', …) — per-symbol request accounting", () => {
-  it("counts 2 unconditional (insider+senate) + ratios/consensus/targets one-for-one", () => {
-    // Nothing skipped, targets off → insider + senate + ratios-ttm + grades-consensus = 4.
+  it("counts 2 unconditional (profile+insider) + ratios/consensus/targets one-for-one", () => {
+    // Nothing skipped, targets off → profile + insider + ratios-ttm + grades-consensus = 4.
     expect(callsPerSymbol("fmp", { skipPe: false, skipConsensus: false, wantTargets: false })).toBe(4);
     expect(callsPerSymbol("fmp")).toBe(4);               // undefined flags are falsy → same as all-false
     expect(callsPerSymbol("fmp", {})).toBe(4);

@@ -244,6 +244,7 @@ export function SymbolDrilldownSheet({
   quote?: MarketQuote;
 }) {
   const { snapshot } = useConsoleData();
+  const { updateDrawerTitle } = useSymbolDrawer();
   const normalized = symbol.trim().toUpperCase();
   const history = useHistory(normalized, true);
 
@@ -261,6 +262,19 @@ export function SymbolDrilldownSheet({
   const onDemandView = enrichment.status === "ready" ? enrichment.view : null;
   // Best-available view for the price line / score chip / sector line / footer below.
   const view = scanView ?? onDemandView;
+  const companyName = resolveDrilldownCompanyName(scanView, onDemandView);
+
+  // The drawer title is created when the ticker is clicked, before an out-of-scan
+  // symbol's on-demand identity exists. Refresh only the matching open drawer once
+  // the provider response supplies the issuer name; the aria-label guard prevents a
+  // late response from renaming a newer drawer.
+  useEffect(() => {
+    if (!companyName) return;
+    updateDrawerTitle(
+      `${normalized} details`,
+      <SymbolDrilldownTitle symbol={normalized} companyName={companyName} />
+    );
+  }, [companyName, normalized, updateDrawerTitle]);
 
   const position = snapshot?.positions?.find((p) => p.symbol.trim().toUpperCase() === normalized);
   const pending = useMemo(
@@ -436,6 +450,16 @@ export function SymbolDrilldownSheet({
         )}
     </div>
   );
+}
+
+/** Resolve the identity rendered in the drawer header. The scan remains first
+ * choice; on-demand identity fills the header for symbols outside that scan. */
+export function resolveDrilldownCompanyName(
+  scanView: QuoteView | null,
+  onDemandView: QuoteView | null
+): string | undefined {
+  const name = scanView?.companyName ?? onDemandView?.companyName;
+  return name?.trim() || undefined;
 }
 
 function SymbolDrilldownTitle({ symbol, companyName }: { symbol: string; companyName?: string }) {

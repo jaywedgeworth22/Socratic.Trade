@@ -107,6 +107,29 @@
 > merged runner expected a flat object. Parse only validated `{ key, value }` records, reject
 > malformed or duplicate keys without exposing output, repeat the full Node 24 landing gate,
 > and verify the exact corrective merge SHA in production before releasing dependent work.
+> **2026-07-15 - FMP coverage and market-data reliability (CODEX).** Make interactive Market Scan
+> return within an HTTP budget by keeping paced deep ingestion off the request path, reusing the
+> latest completed strategy scan's slow facts while refreshing prices, coalescing identical
+> refreshes, and bounding the Nasdaq fetch; preserve full enrichment in scheduled/strategy
+> work and bounded on-demand ticker detail. Replace Socratic.Trade's legacy FMP v4 calls with stable,
+> header-authenticated profile and insider-search routes; map the useful ratios/profile fields already
+> paid for; keep congressional truth in Congress.Trade; and document the plan/entitlement boundary for
+> scheduled statements, metrics, estimates, calendars, news, and transcripts. Transcripts stay disabled
+> while the current subscription returns HTTP 402. Complete focused/full gates, browser QA, ready PR,
+> hosted verification, protected merge, and exact auto-deploy verification. See
+> `docs/rollouts/2026-07-15-fmp-market-data-reliability.md` and `docs/fmp-capabilities.md`.
+> Local browser QA is green. The first landing gate passed 4,375 tests/build and opened ready PR #1618.
+> `main` advanced during that gate through PR #1616's broader FMP adapters; `d3efc9a6` is now reconciled,
+> the shared adapter path has header auth plus durable endpoint accounting, and scoped lint/TypeScript
+> plus 5 files / 163 overlap tests pass. The final land gate passed 381 files / 4,377 tests and build;
+> refreshed head `8949ebd8` is pushed to ready PR #1618. Require hosted checks, protected merge, then
+> verify the exact auto-deployed release.
+> Hosted review then found three P2s: unbounded BlackRock discovery, incomplete scan single-flight
+> identity, and immortal hung quote entries. Abort propagation plus a hard scan deadline, complete
+> scan keys, and a 30-second quote lease are implemented; scoped lint/TypeScript and 26 review tests
+> pass. Final exact-tree land passed 381 files / 4,381 tests and build; code head `3df82396` is pushed.
+> Resolve the threads, require refreshed hosted checks, then continue protected merge/live verification.
+
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
 > initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged
 > as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8`, and Coolify deployment
