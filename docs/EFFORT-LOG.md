@@ -535,6 +535,8 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **Browser tab title "Socratic Trade" — PR #1610, branch `agent/ag-tab-title` — [codex-autofix] round 2026-07-15 (claude[bot]).** Removed "Autonomy Desk" override from `app/console/layout.tsx` and `title: "Coach"` from `app/console/assistant/page.tsx` so all console pages show "Socratic Trade" uniformly in the browser tab. Auto-merge (squash) armed; PR #1610 will auto-deploy on merge to main.
+
 - **Crash-durable Socratic.Trade usage telemetry replay (CODEX, branch `codex/socratic-usage-replay`, worktree `/Users/jay/apps/socratic-usage-telemetry-replay`, owner-directed 2026-07-13) — IN PROGRESS; CHECKPOINTED IN BLOCKED DRAFT PR #1563 (`7e1481c3`).** New events carry top-level `project: "socratic-trade"` without rewriting raw provider names. Historical/new `llm_usage` and `rag_usage` rows replay through deterministic existing IDs using ordered, overlap-safe, monotonic watermarks in internal settings; startup + one-minute bounded replay require no schema change. Node 24 focused 16/16, scoped ESLint, TypeScript, diff-check, and production webpack build pass. Do not merge/deploy: receiver backfill must deploy and verify in API Usage Monitor first; then refresh and rerun the Socratic gate before an explicit landing decision. PR: https://github.com/jaywedgeworth22/Socratic.Trade/pull/1563
 
 - **SEC/RAG 1,000-stock implementation program (CODEX, branch `codex/sec-rag-program`, worktree
