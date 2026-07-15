@@ -4,10 +4,11 @@
 - **Why**: The user requested that the `<title>` shown in the browser tab be "just Socratic Trade instead of Automation Dashboard (Socratic Trade)".
 - **Files**:
   - `app/console/layout.tsx`
-- **Verification**:
-  - `npm run lint`
-  - `npx tsc --noEmit`
-  - `npm test`
-  - `npm run build`
+- **Verification** ([codex-autofix] verification round, 2026-07-15):
+  - `npm run lint` — 0 errors, 459 warnings (grandfathered backlog)
+  - `npx tsc --noEmit` — clean
+  - `npm test` — 4172 passed (370 files)
+  - `npm run build` — clean
+- **[codex-autofix]** Also removed `title: "Coach"` from `app/console/assistant/page.tsx` so the browser tab reads "Socratic Trade" consistently across ALL console subroutes.
 - **Follow-ups**:
   - Merge the branch containing this change.

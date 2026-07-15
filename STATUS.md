@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-15 — [codex-autofix] Browser tab title consistency (AG, PR #1610)
+
+Addressed Codex PR review feedback on the "Socratic Trade" tab title change:
+- **P1** — commit author identity: all current PR commits already use the required noreply email (commit `6858df9f` no longer exists — thread resolved as outdated).
+- **P2** — console subroute title override: removed `title: "Coach"` from `app/console/assistant/page.tsx` so all console pages uniformly display "Socratic Trade" in the browser tab.
+- **P2** — verification record: confirmed the verify gate passes clean (tsc, lint, test, build). Rollout note updated with actual results.
+Verification: `npx tsc --noEmit`, `npm test` (4172 pass), `npm run build`. PR #1610 armed for squash-merge auto.
+
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
 
 The decision trace now treats the structured Red Team verdict as the canonical explanation and
