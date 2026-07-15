@@ -1,5 +1,36 @@
 # Current Status
 
+## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
+
+The decision trace now treats the structured Red Team verdict as the canonical explanation and
+suppresses only exact generic echoes plus known generated policy wrappers around that same reason.
+Distinct policy objections and Red Team override context remain visible. The canonical card also
+shows the shared explicit verdict label, so an approve-at-half review still says “Approved at half
+size” and a rejection still says “Rejected by Red Team” even when its duplicate rationale row is
+hidden. The change is display-only; persisted cases and other consumers are unchanged. PR #1593 is
+open with squash auto-merge armed; production is unchanged until merge auto-deploys.
+
+**[codex-autofix] Round 1:**
+- P2 — preserve overridden Red Team dissent rows when the summary matches the canonical verdict
+  reason but the title carries override context. Fixed in `app/console/lib/dissent.ts` and
+  `test/console-dissent-dedup.test.ts` (added real-world test case where summary is unchanged).
+
+**[codex-autofix] Round 2:**
+- P2 — preserve the approve-at-half verdict label while continuing to suppress its generated
+  policy rationale echo.
+- P2 — preserve explicit Red Team rejection status while continuing to suppress its identical
+  dissent rationale echo.
+- Exact-tree Node 24 verification: focused 2 files / 24 tests, lint, TypeScript, full 369 files /
+  4,135 tests, production build with TypeScript + 32 static pages, and diff-check passed. Commit
+  `40853f3e` contains both fixes and required docs. The first `scripts/land.sh` pass was also green
+  (TypeScript, 370 files / 4,168 tests, production build) but its push correctly stopped when remote
+  autofix `02c03fe5` advanced the branch. That one-file delta is now merged without force; the
+  conflict preserves the tested Chip, status tone, and applied-override semantics. Exact-head Codex
+  review is clean and every actionable thread is replied to and resolved. After `main` advanced
+  through #1604, commit `f54e43aa` was merged additively at `a84a9dfd`; the final current-main
+  landing gate, refreshed hosted checks, auto-merge, and merged-SHA/production verification remain.
+
+Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 ## 2026-07-14 — Infisical JSON-export production compatibility (CODEX)
 
 PR #1594 merged as `48bd191c`, but Coolify deployment `trxqzfunxctpy440ozbyt5if` failed its
