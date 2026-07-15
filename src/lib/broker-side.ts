@@ -33,6 +33,27 @@ export function isRejectedOrCanceledState(state: string | undefined | null): boo
   return TERMINAL_DECLINE_STATES.has(String(state ?? "").trim().toLowerCase());
 }
 
+/** Broker terminal state does not prove zero execution: a cancel/reject/expire can arrive after a
+ * partial fill. Every placement/reconciliation path must inspect the broker-reported quantity
+ * before classifying the order as wholly declined. */
+export function hasBrokerReportedFill(order: { filledQuantity?: number | null }): boolean {
+  return typeof order.filledQuantity === "number" && Number.isFinite(order.filledQuantity) && order.filledQuantity > 0;
+}
+
+/** A broker-reported execution is safe to book only when both cumulative quantity and the
+ * broker's realized average price are present. Proposal/reference prices are useful estimates,
+ * but substituting them here would permanently turn an unresolved broker receipt into invented
+ * realized P&L. */
+export function hasBrokerReportedPricedFill(order: {
+  filledQuantity?: number | null;
+  averagePrice?: number | null;
+}): boolean {
+  return hasBrokerReportedFill(order)
+    && typeof order.averagePrice === "number"
+    && Number.isFinite(order.averagePrice)
+    && order.averagePrice > 0;
+}
+
 // The complementary broker-agnostic check: "this order is still RESTING/LIVE at the broker"
 // (placed, not yet filled/canceled/expired/rejected/failed). Like the decline check above, the raw
 // vocabularies aren't normalized to one enum — Alpaca emits new/accepted/pending_new/…/partially_

@@ -59,13 +59,17 @@ export function evidenceKindLabel(kind?: string | null): string {
 const DECISION_STATUS_LABELS: Record<SocraticDecisionStatus, string> = {
   planned: "Planned",
   proposed: "Proposed",
+  placing: "Placement pending",
   placed: "Placed",
   filled: "Filled",
   blocked: "Blocked",
   rejected: "Rejected",
+  rejected_by_broker: "Rejected by broker",
+  not_placed: "Not placed",
+  expired: "Expired",
+  withdrawn: "Withdrawn",
   error: "Failed",
-  observed: "Observed (no action)",
-  not_placed: "Not Placed"
+  observed: "Observed (no action)"
 };
 
 /** Decision-case status. `DecisionRowData.status` on the home page is a mixed

@@ -30,6 +30,8 @@ type DecisionRow = {
   authority: string;
   thesis: string;
   rationale: string;
+  green_team_rationale: string | null;
+  sizing_snapshot: string | null;
   action: string;
   thesis_tag: string | null;
   regime: string | null;
@@ -94,6 +96,10 @@ function rowToDecision(row: DecisionRow): SocraticDecisionCase {
     authority: row.authority as StrategyAuthority,
     thesis: row.thesis,
     rationale: row.rationale,
+    ...(row.green_team_rationale ? { greenTeamRationale: row.green_team_rationale } : {}),
+    ...(row.sizing_snapshot
+      ? { sizingSnapshot: parseJson<SocraticDecisionCase["sizingSnapshot"] | undefined>(row.sizing_snapshot, undefined) }
+      : {}),
     action: row.action,
     ...(row.thesis_tag ? { thesisTag: row.thesis_tag } : {}),
     ...(row.regime ? { regime: row.regime } : {}),
@@ -178,6 +184,8 @@ export function upsertSocraticDecisionCase(input: {
   authority: StrategyAuthority;
   thesis: string;
   rationale: string;
+  greenTeamRationale?: string;
+  sizingSnapshot?: SocraticDecisionCase["sizingSnapshot"];
   action: string;
   thesisTag?: string;
   regime?: string;
@@ -200,10 +208,10 @@ export function upsertSocraticDecisionCase(input: {
     .prepare(
       `INSERT INTO socratic_decisions (
         id, user_id, connected_account_id, run_id, proposal_id, account_number, symbol, side, status,
-        authority, thesis, rationale, action, thesis_tag, regime, confidence_score, notional, model,
-        red_team, policy_decision, evidence, rag_attributions, dissent, outcome, autonomy_override,
-        lessons, coach_notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        authority, thesis, rationale, green_team_rationale, sizing_snapshot, action, thesis_tag, regime,
+        confidence_score, notional, model, red_team, policy_decision, evidence, rag_attributions,
+        dissent, outcome, autonomy_override, lessons, coach_notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         connected_account_id = excluded.connected_account_id,
         run_id = excluded.run_id,
@@ -215,6 +223,8 @@ export function upsertSocraticDecisionCase(input: {
         authority = excluded.authority,
         thesis = excluded.thesis,
         rationale = excluded.rationale,
+        green_team_rationale = excluded.green_team_rationale,
+        sizing_snapshot = excluded.sizing_snapshot,
         action = excluded.action,
         thesis_tag = excluded.thesis_tag,
         regime = excluded.regime,
@@ -245,6 +255,8 @@ export function upsertSocraticDecisionCase(input: {
       input.authority,
       input.thesis,
       input.rationale,
+      input.greenTeamRationale ?? null,
+      input.sizingSnapshot ? JSON.stringify(input.sizingSnapshot) : null,
       input.action,
       input.thesisTag ?? null,
       input.regime ?? null,
@@ -374,7 +386,7 @@ export function listSocraticDecisionCasesNeedingOutcome(
   const measuredBefore = opts.measuredBefore ?? new Date().toISOString();
   const clauses = [
     "user_id = ?",
-    "status IN ('placed', 'blocked', 'rejected', 'filled')",
+    "status IN ('placed', 'blocked', 'rejected', 'filled', 'rejected_by_broker')",
     "(outcome IS NULL OR (json_extract(outcome, '$.status') = 'open' AND COALESCE(json_extract(outcome, '$.measuredAt'), '') <= ?))"
   ];
   const args: unknown[] = [userId, measuredBefore];
@@ -476,7 +488,7 @@ export interface SocraticOutcomeCoverage {
 }
 
 export function getSocraticOutcomeCoverage(userId: string = "local", connectedAccountId?: string): SocraticOutcomeCoverage {
-  const clauses = ["user_id = ?", "status IN ('placed', 'blocked', 'rejected')"];
+  const clauses = ["user_id = ?", "status IN ('placed', 'filled', 'blocked', 'rejected', 'rejected_by_broker')"];
   const args: unknown[] = [userId];
   if (connectedAccountId) {
     clauses.push("connected_account_id = ?");

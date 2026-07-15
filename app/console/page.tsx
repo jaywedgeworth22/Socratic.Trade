@@ -525,12 +525,24 @@ function ThesisNarrative({
           {sizing && (
             <p className="mt-1 font-semibold">
               App-calculated at decision time: {fmtMoney(sizing.estimatedNotional)} = {fmtPct(sizing.estimatedPctOfNav, 2)} of {fmtMoney(sizing.portfolioValue)} NAV.
+              {sizing.sizeBasis === "quantity" && sizing.quantity != null
+                ? ` Broker route: ${sizing.quantity} share${sizing.quantity === 1 ? "" : "s"}.`
+                : sizing.sizeBasis === "notional" && sizing.dollarAmount != null
+                  ? ` Broker route: ${fmtMoney(sizing.dollarAmount)} notional.`
+                  : ""}
               {sizing.dailyOpeningCap
                 ? ` Daily opening cap: ${
                     sizing.dailyOpeningCap.mode === "pct_nav"
                       ? `${fmtPct(sizing.dailyOpeningCap.configuredValue, 1)} of NAV`
                       : `${fmtMoney(sizing.dailyOpeningCap.configuredValue)} fixed (${fmtPct(sizing.dailyOpeningCap.pctOfNav, 1)} of NAV)`
                   } = ${fmtMoney(sizing.dailyOpeningCap.effectiveNotional)}.`
+                : ""}
+              {sizing.dailyNotionalUsed != null
+                ? ` Used today: ${fmtMoney(sizing.dailyNotionalUsed)}${
+                    sizing.remainingDailyNotional != null
+                      ? `; remaining: ${fmtMoney(sizing.remainingDailyNotional)}`
+                      : ""
+                  }.`
                 : ""}
             </p>
           )}
@@ -545,7 +557,7 @@ function ThesisNarrative({
               Red Team review
             </div>
             <Chip tone={!redTeam.available ? "warn" : redTeam.rejected ? "neg" : "pos"}>
-              {redTeamVerdictLabel(redTeam)}
+              {redTeamVerdictLabel(redTeam, decision?.policyDecision?.socraticOverride?.applied)}
             </Chip>
           </div>
           <p className="mt-1">{redTeam.reason}</p>

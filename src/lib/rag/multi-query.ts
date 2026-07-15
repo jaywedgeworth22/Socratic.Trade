@@ -43,7 +43,9 @@ export function hydeEnabled(): boolean {
   return envFlagOn("RAG_HYDE", false);
 }
 
-/** Cheap default model for HyDE passage drafting; overridable via RAG_HYDE_MODEL. */
+/** Cheap default model for HyDE passage drafting; overridable via RAG_HYDE_MODEL. Deliberately
+ * remains GPT-5.4 Mini instead of a GPT-5.6 tier: this is short retrieval-query synthesis, and Mini
+ * is both sufficient and currently cheaper than 5.6 Luna. */
 const DEFAULT_HYDE_MODEL = "gpt-5.4-mini";
 
 function hydeModel(): string {

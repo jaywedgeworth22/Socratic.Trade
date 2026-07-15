@@ -58,7 +58,7 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(29);
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -72,7 +72,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
     db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(29);
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 
@@ -89,7 +89,7 @@ describe("runMigrations — versioned schema migrations", () => {
 
     db.pragma("user_version = 25");
     applyVersionedMigrations(db);
-    expect(getSchemaVersion(db)).toBe(27);
+    expect(getSchemaVersion(db)).toBe(29);
 
     const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
     const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);
@@ -97,6 +97,145 @@ describe("runMigrations — versioned schema migrations", () => {
     expect(migrated.maxDailyNotional).toBeUndefined();
     expect(preserved).toMatchObject({ maxDailyNotional: 1_000 });
     expect(preserved.maxDailyPctOfNav).toBeUndefined();
+  });
+
+  it("backstops a legacy settings policy when versioned migrations run before the global copy", async () => {
+    const { applyVersionedMigrations, migrateGlobalPolicyToLocalUser } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+    db.exec(`
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE user_settings (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE account_strategy_state (policy TEXT NOT NULL);
+      CREATE TABLE strategy_profiles (policy TEXT NOT NULL);
+      CREATE TABLE socratic_decisions (id TEXT PRIMARY KEY);
+    `);
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('policy', ?, ?)").run(
+      JSON.stringify({ maxDailyNotional: 500 }),
+      now
+    );
+    db.prepare("INSERT INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, 'policy', ?, ?)").run(
+      "legacy-user-policy",
+      "legacy-user",
+      JSON.stringify({ maxDailyNotional: 500 }),
+      now
+    );
+    db.prepare("INSERT INTO account_strategy_state (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
+    db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
+    db.pragma("user_version = 25");
+
+    expect(applyVersionedMigrations(db)).toBe(28);
+
+    for (const json of [
+      (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
+      (db.prepare("SELECT value AS json FROM user_settings WHERE id = 'legacy-user-policy'").get() as { json: string }).json,
+      (db.prepare("SELECT policy AS json FROM account_strategy_state").get() as { json: string }).json,
+      (db.prepare("SELECT policy AS json FROM strategy_profiles").get() as { json: string }).json
+    ]) {
+      const migrated = JSON.parse(json);
+      expect(migrated).toMatchObject({ maxDailyPctOfNav: 20 });
+      expect(migrated.maxDailyNotional).toBeUndefined();
+    }
+
+    migrateGlobalPolicyToLocalUser(db, now);
+
+    const legacy = JSON.parse((db.prepare("SELECT value FROM settings WHERE key = 'policy'").get() as { value: string }).value);
+    const copied = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE user_id = 'local' AND key = 'policy'").get() as { value: string }).value);
+    expect(legacy).toMatchObject({ maxDailyPctOfNav: 20 });
+    expect(legacy.maxDailyNotional).toBeUndefined();
+    expect(copied).toEqual(legacy);
+    db.close();
+  });
+
+  it("does not reinterpret an intentional fixed $500 cap after migration v26", async () => {
+    const { applyVersionedMigrations } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+    db.exec(`
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE user_settings (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE account_strategy_state (policy TEXT NOT NULL);
+      CREATE TABLE strategy_profiles (policy TEXT NOT NULL);
+      CREATE TABLE socratic_decisions (id TEXT PRIMARY KEY);
+    `);
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO user_settings (id, user_id, key, value, updated_at) VALUES (?, ?, 'policy', ?, ?)"
+    ).run("cap-intentional-500", "cap-intentional-user", JSON.stringify({ maxDailyNotional: 500 }), now);
+    db.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('policy', ?, ?)").run(JSON.stringify({ maxDailyNotional: 500 }), now);
+    db.prepare("INSERT INTO account_strategy_state (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
+    db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
+    db.pragma("user_version = 26");
+
+    expect(applyVersionedMigrations(db)).toBe(28);
+
+    for (const json of [
+      (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
+      (db.prepare("SELECT value AS json FROM user_settings WHERE id = 'cap-intentional-500'").get() as { json: string }).json,
+      (db.prepare("SELECT policy AS json FROM account_strategy_state").get() as { json: string }).json,
+      (db.prepare("SELECT policy AS json FROM strategy_profiles").get() as { json: string }).json
+    ]) {
+      const preserved = JSON.parse(json);
+      expect(preserved).toMatchObject({ maxDailyNotional: 500 });
+      expect(preserved.maxDailyPctOfNav).toBeUndefined();
+    }
+    expect(
+      (db.prepare("PRAGMA table_info(socratic_decisions)").all() as Array<{ name: string }>).map((column) => column.name)
+    ).toEqual(expect.arrayContaining(["green_team_rationale", "sizing_snapshot"]));
+    db.close();
+  });
+
+  it("preserves an explicitly configured large dollar cap instead of treating it as a sentinel", async () => {
+    const { mergePolicy } = await import("../src/lib/db-profiles");
+    const merged = mergePolicy({ ...DEFAULT_POLICY, maxDailyNotional: 750_000, maxDailyPctOfNav: undefined });
+    expect(merged.maxDailyNotional).toBe(750_000);
+    expect(merged.maxDailyPctOfNav).toBeUndefined();
+  });
+
+  it("migrates active replacement uniqueness to user scope and collapses same-user duplicates", async () => {
+    const { applyVersionedMigrations } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+    db.exec(`
+      CREATE TABLE order_replacements (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        original_order_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        replacement_order_id TEXT,
+        error TEXT,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO order_replacements
+        (id, user_id, account_number, original_order_id, status, updated_at)
+      VALUES
+        ('older', 'user-1', 'ACCOUNT', 'ORDER', 'cancel_requested', '2026-07-14T00:00:00.000Z'),
+        ('newer', 'user-1', 'ACCOUNT', 'ORDER', 'replacement_submitted', '2026-07-14T00:01:00.000Z');
+    `);
+    db.pragma("user_version = 27");
+
+    expect(applyVersionedMigrations(db)).toBe(28);
+    expect(db.prepare(`
+      SELECT status, COUNT(*) AS count
+      FROM order_replacements
+      WHERE user_id = 'user-1' AND account_number = 'ACCOUNT' AND original_order_id = 'ORDER'
+      GROUP BY status
+      ORDER BY status
+    `).all()).toEqual([
+      { status: "failed", count: 1 },
+      { status: "replacement_submitted", count: 1 }
+    ]);
+
+    expect(() => db.prepare(`
+      INSERT INTO order_replacements
+        (id, user_id, account_number, original_order_id, status, updated_at)
+      VALUES ('cross-user', 'user-2', 'ACCOUNT', 'ORDER', 'cancel_requested', '2026-07-14T00:02:00.000Z')
+    `).run()).not.toThrow();
+    expect(() => db.prepare(`
+      INSERT INTO order_replacements
+        (id, user_id, account_number, original_order_id, status, updated_at)
+      VALUES ('same-user', 'user-1', 'ACCOUNT', 'ORDER', 'cancel_requested', '2026-07-14T00:03:00.000Z')
+    `).run()).toThrow();
+    db.close();
   });
 });
 

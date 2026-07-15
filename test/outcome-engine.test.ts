@@ -40,6 +40,24 @@ const SPY_BARS: OHLCBar[] = [
 const NOW = Date.parse("2026-06-20T00:00:00.000Z");
 
 describe("outcome engine — the outcome writer", () => {
+  it("includes filled decision cases in outcome-coverage denominators", async () => {
+    const userId = `oe-filled-coverage-${randomUUID()}`;
+    const { getSocraticOutcomeCoverage, upsertSocraticDecisionCase } = await import("../src/lib/db");
+    upsertSocraticDecisionCase({
+      userId,
+      proposalId: `filled-${randomUUID()}`,
+      symbol: "EXE",
+      side: "buy",
+      status: "filled",
+      authority: "decide",
+      thesis: "Value-Quality",
+      rationale: "Filled-case coverage regression.",
+      action: "BUY EXE $4"
+    });
+
+    expect(getSocraticOutcomeCoverage(userId)).toMatchObject({ totalMeasurable: 1, open: 1 });
+  });
+
   it("matures a PLACED decision: joins the fill + closed lot, writes multi-horizon outcome, receipts, re-indexes", async () => {
     const userId = `oe-placed-${randomUUID()}`;
     const { insertFillEvent, listAudit, upsertConnectedAccount, upsertSocraticDecisionCase, getSocraticDecisionCase } = await import("../src/lib/db");

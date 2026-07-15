@@ -7,7 +7,7 @@
  *  server's typed-confirmation contract (LIVE_CONFIRMATION_REQUIRED). */
 
 import { useMemo, useState } from "react";
-import { Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
+import { CircleAlert, Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
 import { isModelRotationSentinel } from "@/lib/llm-request";
 import { resolveDailyOpeningCap } from "@/lib/policy-caps";
 import type { PendingProposal, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "@/lib/types";
@@ -23,6 +23,7 @@ import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
 import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel } from "../lib/red-team";
+import { proposalGreenRationale, proposalHumanReviewReasons } from "../lib/thesis";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
@@ -176,6 +177,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   // "unavailable" callout, or the "no review triggered" note. A total function keeps them mutually
   // exclusive so a failed review can never render as both the panel and the callout (dedup).
   const redCard = redTeamCardState(Boolean(p.redTeamVerdict), pending.decision.adversaryUnavailable === true);
+  const humanReviewReasons = proposalHumanReviewReasons(p);
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -184,7 +186,9 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         : EM_DASH;
 
   const finish = (result: ApproveResult) => {
-    if (result.status === "placed") {
+    if (result.status === "filled") {
+      toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} filled`, "The broker reports that the order completed.");
+    } else if (result.status === "placed") {
       toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} placed`, "The order went to the broker with a durable, idempotent intent record.");
     } else if (result.status === "paper") {
       toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} filled (simulated)`, "Recorded as a practice-money fill.");
@@ -266,10 +270,10 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                     title={
                       greenPolicyRotates
                         ? "The policy rotates models each run; this legacy proposal predates per-proposal model stamping, so the concrete rotation pick was not recorded."
-                        : "No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."
+                        : "This legacy proposal has no served-model stamp and no model is currently configured. The app has no hidden Green Team default."
                     }
                   >
-                    ({greenPolicyRotates ? "policy rotates models" : "policy default"})
+                    ({greenPolicyRotates ? "policy rotates models" : "model not recorded"})
                   </span>
                 )}
               </div>
@@ -302,7 +306,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
               failover
             </Chip>
           </div>
-          <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{p.rationale}</p>
+          <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{proposalGreenRationale(p)}</p>
         </div>
 
         {/* Red team: the single adversarial reviewer + its verdict — including the FAILURE state,
@@ -333,7 +337,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
               {p.redTeamVerdict.available ? (
                 <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
-                  Verdict: {redTeamVerdictLabel(p.redTeamVerdict)}
+                  Verdict: {redTeamVerdictLabel(p.redTeamVerdict, pending.decision.socraticOverride?.applied)}
                 </span>
               ) : (
                 <span className="font-semibold" style={{ color: "var(--con-warn)" }} title={redFailure.title}>
@@ -375,6 +379,22 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
               {pending.decision.adversaryUnavailableReason ?? "The adversarial review could not run for this proposal."}
               {" "}No model critiqued this trade — review it as the sole adversary.
             </p>
+          </div>
+        )}
+
+        {humanReviewReasons.length > 0 && (
+          <div className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3">
+            <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
+              <CircleAlert size={12} /> Why your approval is required
+            </div>
+            <div className="mt-2 space-y-2">
+              {humanReviewReasons.map((reason) => (
+                <div key={reason.code}>
+                  <div className="font-semibold text-[color:var(--con-fg)]">{reason.title}</div>
+                  <p className="mt-0.5 leading-relaxed text-[color:var(--con-muted)]">{reason.summary}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

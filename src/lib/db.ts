@@ -50,6 +50,39 @@ export function getDb(): Database.Database {
 // migrate() (no ordering/stamp; diverged across worktrees).
 const SCHEMA_BASELINE = 1;
 type Migration = { version: number; name: string; up: (db: Database.Database) => void };
+
+/** Convert only the former product-default daily cap. Keeping this as a shared, idempotent helper
+ * applies the same exact-value rule to every policy store that exists when migration v26 runs. */
+function migrateLegacyDailyOpeningCapRows(database: Database.Database): number {
+  const targets = [
+    { table: "account_strategy_state", column: "policy", where: "1=1" },
+    { table: "strategy_profiles", column: "policy", where: "1=1" },
+    { table: "user_settings", column: "value", where: "key = 'policy'" },
+    { table: "settings", column: "value", where: "key = 'policy'" }
+  ] as const;
+  let changed = 0;
+  for (const target of targets) {
+    const rows = database
+      .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
+      .all() as Array<{ rowid: number; json: string }>;
+    const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
+    for (const row of rows) {
+      try {
+        const policy = JSON.parse(row.json) as Record<string, unknown>;
+        if (policy.maxDailyNotional !== 500 || (typeof policy.maxDailyPctOfNav === "number" && policy.maxDailyPctOfNav > 0)) continue;
+        delete policy.maxDailyNotional;
+        policy.maxDailyPctOfNav = 20;
+        update.run(JSON.stringify(policy), row.rowid);
+        changed += 1;
+      } catch {
+        // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
+        // make the database unbootable while trying to repair an unrelated row.
+      }
+    }
+  }
+  return changed;
+}
+
 const MIGRATIONS: Migration[] = [
   {
     // Per-attached-key LLM usage attribution: usage/cost measured per distinct key (user or
@@ -96,7 +129,7 @@ const MIGRATIONS: Migration[] = [
           ),
           CASE
             WHEN status = 'paper' THEN 'test/local'
-            WHEN status IN ('placed', 'placing', 'placing_failed') THEN 'broker/live'
+            WHEN status IN ('placed', 'filled', 'placing', 'placing_failed') THEN 'broker/live'
             ELSE NULL
           END
         )
@@ -948,39 +981,87 @@ const MIGRATIONS: Migration[] = [
     version: 26,
     name: "daily_opening_cap_percent_default",
     up: (database) => {
-      const targets = [
-        { table: "account_strategy_state", column: "policy", where: "1=1" },
-        { table: "strategy_profiles", column: "policy", where: "1=1" },
-        { table: "user_settings", column: "value", where: "key = 'policy'" }
-      ] as const;
-      let changed = 0;
-      for (const target of targets) {
-        const rows = database
-          .prepare(`SELECT rowid, ${target.column} AS json FROM ${target.table} WHERE ${target.where}`)
-          .all() as Array<{ rowid: number; json: string }>;
-        const update = database.prepare(`UPDATE ${target.table} SET ${target.column} = ? WHERE rowid = ?`);
-        for (const row of rows) {
-          try {
-            const policy = JSON.parse(row.json) as Record<string, unknown>;
-            if (policy.maxDailyNotional !== 500 || (typeof policy.maxDailyPctOfNav === "number" && policy.maxDailyPctOfNav > 0)) continue;
-            delete policy.maxDailyNotional;
-            policy.maxDailyPctOfNav = 20;
-            update.run(JSON.stringify(policy), row.rowid);
-            changed += 1;
-          } catch {
-            // Corrupt JSON is already handled by the owning policy reader; a cap migration must not
-            // make the database unbootable while trying to repair an unrelated row.
-          }
-        }
-      }
+      const changed = migrateLegacyDailyOpeningCapRows(database);
       if (changed > 0) console.log(`[db] migration 26: moved ${changed} legacy $500 daily cap row(s) to 20% of NAV`);
+    }
+  },
+  {
+    // Persist the exact Green Team text and deterministic sizing arithmetic carried by each
+    // Socratic case. This migration is deliberately schema-only: by the time a database is stamped
+    // v26, a fixed $500 cap may be an intentional user choice and must never be reinterpreted.
+    version: 27,
+    name: "socratic_decision_narrative_receipts",
+    up: (database) => {
+      const columns = database.prepare("PRAGMA table_info(socratic_decisions)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "green_team_rationale")) {
+        database.exec("ALTER TABLE socratic_decisions ADD COLUMN green_team_rationale TEXT");
+      }
+      if (!columns.some((column) => column.name === "sizing_snapshot")) {
+        database.exec("ALTER TABLE socratic_decisions ADD COLUMN sizing_snapshot TEXT");
+      }
+    }
+  },
+  {
+    // Replacement dedupe is tenant-scoped. Migration v21/v22 created an unscoped partial UNIQUE
+    // index, so replace it in place after collapsing any same-user duplicates that may predate the
+    // corrected key. Cross-user rows with the same broker account/order remain valid.
+    version: 28,
+    name: "order_replacements_user_scoped_active_unique",
+    up: (database) => {
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'order_replacements'")
+        .get();
+      if (!tableExists) return;
+
+      const dupGroups = database
+        .prepare(
+          `WITH ranked AS (
+             SELECT rowid, user_id, account_number, original_order_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY user_id, account_number, original_order_id
+                      ORDER BY
+                        CASE status
+                          WHEN 'replacement_submitted' THEN 1
+                          WHEN 'replacement_claiming' THEN 2
+                          WHEN 'cancel_confirmed' THEN 3
+                          WHEN 'cancel_requested' THEN 4
+                          ELSE 5
+                        END ASC,
+                        CASE WHEN replacement_order_id IS NOT NULL THEN 0 ELSE 1 END ASC,
+                        rowid DESC
+                    ) AS rn
+             FROM order_replacements
+             WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')
+           )
+           SELECT user_id, account_number, original_order_id,
+                  MAX(CASE WHEN rn = 1 THEN rowid END) AS keep_rowid
+           FROM ranked
+           GROUP BY user_id, account_number, original_order_id
+           HAVING COUNT(*) > 1`
+        )
+        .all() as Array<{ user_id: string; account_number: string; original_order_id: string; keep_rowid: number }>;
+      const terminalizeExtras = database.prepare(
+        `UPDATE order_replacements
+         SET status = 'failed', error = 'superseded by duplicate active replacement', updated_at = ?
+         WHERE user_id = ? AND account_number = ? AND original_order_id = ? AND rowid != ?
+         AND status NOT IN ('replacement_confirmed', 'failed', 'aborted')`
+      );
+      const now = new Date().toISOString();
+      for (const group of dupGroups) {
+        terminalizeExtras.run(now, group.user_id, group.account_number, group.original_order_id, group.keep_rowid);
+      }
+
+      database.exec("DROP INDEX IF EXISTS idx_order_replacements_active_unique");
+      database.exec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_order_replacements_active_unique ON order_replacements (user_id, account_number, original_order_id) WHERE status NOT IN ('replacement_confirmed', 'failed', 'aborted')"
+      );
     }
   },
   {
     // Crash-durable provider dispatch/quota receipts and two-phase vector document commits. New
     // managed vectors are queryable only after their exact local receipt set and provider-side
     // committed metadata both succeed. Legacy occurrence rows retain an explicit legacy state.
-    version: 27,
+    version: 29,
     name: "provider_dispatch_and_vector_commit_receipts",
     up: (database) => {
       const occurrenceColumns = database
@@ -1852,6 +1933,8 @@ function migrate(database: Database.Database): void {
       authority TEXT NOT NULL,
       thesis TEXT NOT NULL,
       rationale TEXT NOT NULL,
+      green_team_rationale TEXT,
+      sizing_snapshot TEXT,
       action TEXT NOT NULL,
       thesis_tag TEXT,
       regime TEXT,
@@ -2404,11 +2487,6 @@ function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
   const explicitDailyNotional = typeof policyWithoutLegacyFields.maxDailyNotional === "number" && policyWithoutLegacyFields.maxDailyNotional > 0;
   if (explicitDailyPct) delete merged.maxDailyNotional;
   else if (explicitDailyNotional) delete merged.maxDailyPctOfNav;
-  if ((merged.maxDailyNotional ?? 0) >= 500_000) {
-    delete merged.maxDailyNotional;
-    merged.maxDailyPctOfNav = DEFAULT_POLICY.maxDailyPctOfNav;
-    if (merged.maxDailyOrders > DEFAULT_POLICY.maxDailyOrders) merged.maxDailyOrders = DEFAULT_POLICY.maxDailyOrders;
-  }
   if ((merged.maxOrderNotional ?? 0) > 100_000) merged.maxOrderNotional = 100_000;
   return merged;
 }

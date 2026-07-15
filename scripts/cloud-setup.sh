@@ -38,6 +38,15 @@ if [ ! -f .env.local ] && [ -f .env.example ]; then
   cp .env.example .env.local
 fi
 
+# Resolve the local Infisical machine-identity bootstrap without sourcing the
+# global key file as shell code and without copying/printing credential values.
+# The runner repeats this resolution at launch, after reading .env.local itself.
+# The global path is intentionally fixed; an inherited legacy override must not
+# redirect setup to an arbitrary credential file.
+unset GLOBAL_API_KEYS_FILE
+echo "==> Checking Infisical bootstrap identity (values stay private)"
+node scripts/infisical-bootstrap-env.mjs
+
 # Install the Slack coordination sync globally (SessionStart hook). No-op at
 # runtime unless SLACK_BOT_TOKEN is set as an environment secret. Non-fatal:
 # a hiccup here must never fail the whole environment setup.

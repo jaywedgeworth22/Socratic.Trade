@@ -68,6 +68,25 @@ describe("dashboard feed helpers", () => {
     expect(feed[0]?.companyName).toBe("Palantir Technologies Inc.");
   });
 
+  it("renders a synchronous broker fill as completed rather than awaiting an update", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "filled-approval",
+          createdAt: "2026-07-14T00:00:00.000Z",
+          kind: "proposal_approved",
+          payload: { proposalId: "filled-proposal", result: "filled", brokerState: "filled", orderId: "order-filled-123" }
+        }
+      ],
+      symbolMetaBySymbol: {},
+      getProposalById: () => ({ proposal: proposal({ symbol: "EXE", side: "buy" }) })
+    });
+
+    expect(feed[0]?.title).toBe("Buy EXE Filled");
+    expect(feed[0]?.detail).toContain("Order filled");
+    expect(feed[0]?.detail).not.toContain("Awaiting next update");
+  });
+
   it("formats notification audit rows into compact human-readable text", () => {
     const audit: AuditEvent[] = [
       {
@@ -117,6 +136,23 @@ describe("dashboard feed helpers", () => {
     expect(feed[0]?.detail).toContain("No Robinhood MCP access token");
     expect(feed[0]?.detail).toContain("Fallback:");
     expect(feed[0]?.detail).toContain("2 repeats suppressed");
+  });
+
+  it("labels a Red Team override request without claiming that it was applied", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "a-red-request",
+          createdAt: "2026-07-13T00:00:00.000Z",
+          kind: "red_team_veto_override_requested",
+          payload: { symbol: "EXE", side: "buy", reason: "Risk review rejected the entry." }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Red Team Override Requested: EXE");
+    expect(feed[0]?.title).not.toContain("Overridden");
+    expect(feed[0]?.detail).toBe("Risk review rejected the entry.");
   });
 
   it("never renders raw JSON inline for an unrecognized audit kind's detail, but keeps it in fullText", () => {
@@ -187,6 +223,26 @@ describe("dashboard feed helpers", () => {
     // NotificationStatus decided vocabulary: skipped -> "Not sent".
     expect(item.detail).toBe("Not sent - No notification channels enabled.");
     expect(item.companyName).toBe("Palantir Technologies Inc.");
+  });
+
+  it("uses the persisted human-hold title instead of inventing a Red Team outage", () => {
+    const item = formatNotificationDisplay(
+      {
+        id: "hold-reason",
+        createdAt: "2026-07-14T00:00:00.000Z",
+        type: "pending_approval",
+        title: "AAPL awaiting approval (Rationale-diversity hold)",
+        status: "skipped",
+        payload: {
+          proposal: { symbol: "AAPL", side: "buy" },
+          humanReviewReasonTitle: "Rationale-diversity hold"
+        }
+      } satisfies NotificationEvent,
+      {}
+    );
+
+    expect(item.title).toBe("Buy AAPL Awaiting Approval — Rationale-diversity hold");
+    expect(item.title).not.toContain("Red Team Unavailable");
   });
 
   it.each([

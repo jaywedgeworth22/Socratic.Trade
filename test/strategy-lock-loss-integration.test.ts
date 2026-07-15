@@ -646,10 +646,10 @@ describe("strategy-run ownership loss across broker awaits", () => {
     expect(result.status).toBe("failed");
     expect(result.summary).toMatch(/1 proposal result.*ownership was lost/i);
     expect(result.proposals).toEqual([
-      expect.objectContaining({ status: "placed", orderId: "placed-order" })
+      expect.objectContaining({ status: "filled", orderId: "placed-order" })
     ]);
     expect(db.listRecentProposals(STRATEGY_ACCOUNT, 100, userId)).toEqual([
-      expect.objectContaining({ status: "placed" })
+      expect.objectContaining({ status: "filled" })
     ]);
     expect(brokerMocks.placeEquityOrder).toHaveBeenCalledTimes(1);
   }, 30_000);

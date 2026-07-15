@@ -36,6 +36,53 @@
 > exact regression 6/6, related focused tests 106/106, lint 0 errors / 458 inherited warnings, TypeScript
 > clean, 369 files / 4,147 tests, production build with real TypeScript and 32 static pages, diff-check
 > clean. Hostile re-review found no remaining P0/P1/P2 in scope. Root review is pending; still no push/PR.
+> **2026-07-14 - Infisical JSON-export production compatibility (CODEX) — COMPLETE.** The
+> initial PR #1594 deployment failed closed and rolled back safely; corrective PR #1604 merged
+> as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8`, and Coolify deployment
+> `rkh3ifiyp2dbtvv7xz7rtnbn` finished on that exact SHA. Public production health is green for
+> the app/DB, current scheduler lease, Litestream replication with a valid sync timestamp, and
+> Congress/usage-monitor dependencies. The remaining cached-CLI version check is nonblocking P3.
+> See `docs/rollouts/2026-07-14-infisical-export-json-compat.md`.
+
+> **2026-07-14 - Local Infisical bootstrap wiring (CODEX).** Resolve the Socratic and shared
+> machine identities before the Infisical runner authenticates, with process env > `.env.local` >
+> secure global-file precedence; support both the owner-provided `INFIISICAL_ST_*` spelling and its
+> corrected alias plus `INFISICAL_CT_SHARED_*`; normalize only in process memory; default known
+> nonsecret project IDs without forcing a shared overlay; reject incomplete pairs; and prove no
+> unrelated global key or long-lived credential reaches the app child. Review found three P1s and
+> three P2s: same-source token-before-pair selection, Next reload reintroduction, runner-lifetime
+> credential retention, broad CLI inheritance, ambient path override, and overbroad global aliases.
+> All are remediated with pair-first resolution, immediate auth scrubbing, minimal CLI environments,
+> a fixed global path, a narrow ST/CT-shared allowlist, and an argv-safe post-injection wrapper whose
+> real `@next/env` regressions are green in normal and watch paths. Descriptor-level file hardening
+> and managed-only inert parsing also remain green. JSON export preserves exact values, CLI domain
+> routing remains explicit, preload hooks execute only after masking, and signal/argv/NUL/conflicting
+> alias/shell-block regressions are green. The branch is rebased on `origin/main@acd67a5c`; a force-quit-
+> contaminated npm Git-dependency cache initially installed declarations without runtime bundles, but
+> isolated installs proved the immutable shared-package release healthy and a disposable-cache reinstall
+> restored all CJS/ESM/type artifacts. The exact-tree Node 24 gate is green: lint 0 errors / 459 inherited
+> warnings, TypeScript, 369 files / 4,161 tests, and a production build with all 32 static pages. Publish
+> through `scripts/land.sh`, require hosted verification, then verify the automatic production rollout.
+> See `docs/rollouts/2026-07-14-infisical-bootstrap-wiring.md`.
+> **2026-07-14 - Final open-PR reconciliation (CODEX).** Reconcile PR #1589 with current
+> `origin/main`, correct stale merged/closed PR and effort-board state, resolve all review threads,
+> run the documentation branch through the canonical Node 24 gate, update the existing PR head
+> without rewriting history, and squash-merge after hosted checks. Then finish PR #1586 and verify
+> the exact auto-deployed production release. See
+> `docs/rollouts/2026-07-14-pr-resolution-cleanup.md`.
+> **2026-07-14 - Adopt immutable congress-trading-shared v1.7.1 (CODEX).** Replace the
+> exact `v1.6.0` commit pin with the immutable `v1.7.1` commit
+> `0bc26ab9311a396f3f6b5cba0fb54fa7558a42b4` across `package.json`, npm
+> `allowScripts`, and `package-lock.json`; regenerate through Node 24 with a fresh
+> disposable cache; prove non-empty JS/MJS/DTS/DMTS artifacts and both require/import
+> resolution; then run the serialized lint, standalone TypeScript, full test, and
+> production-build gate on current `origin/main`. Land through `scripts/land.sh`, require
+> hosted verification and protected squash merge, then verify the exact automatic production
+> rollout and dependency health. Ready PR #1607 now has exact-head local and hosted gates
+> green with both review threads resolved; protected squash merge and production verification
+> remain.
+> See `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
+
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /
 > TypeScript 5 compiler-API arrangement with one supported TypeScript 6.0.3 graph; remove the
 > postinstall mutation, module-resolution hooks, Next override, and `ignoreBuildErrors` bypass;
@@ -64,10 +111,48 @@
 > rechecks, prompts, capital posture, mobile data, and AI strategy review. Persist app-computed
 > notional/NAV arithmetic; clear impossible Alpaca whole-share bracket fields before fractional
 > submission; and render Green Team, sizing/risk, Red Team, and deterministic outcome as distinct
-> sections with explicit verdict wording. Implementation, lint, TypeScript, Swift contract checking,
-> 4,021/4,021 tests, and the production build are complete. Ready PR #1561 is open; hosted acceptance,
-> merge/autodeploy, and production verification remain. See
-> `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md`.
+> sections with explicit verdict wording. PR #1561 merged as `3e105e17`; required hosted checks passed
+> and that exact release is healthy in production. A review posted after auto-merge found three P2
+> gaps. The active follow-up persists Green/sizing receipts across refreshes, makes v26 cover every
+> legacy policy store without reinterpreting later intentional dollar choices, and separates a Red
+> override request from a final applied override. It also reruns Red exactly once after a
+> broker-minimum size mutation, preserves independent human-review reasons, atomically commits the
+> broker intent with its Socratic case, synchronizes lifecycle truth transactionally, serializes
+> same-decision vector updates, and keeps uncertain submissions in `placing`. The latest hostile
+> blockers are implemented: `filled` orders remain in caps and every success/count/UI/outcome
+> consumer; independent holds have structured owner-facing reasons; lifecycle sync preserves
+> learned fields; and an atomic approval claim requires a proposed Socratic case. The final two
+> race/recovery defects are closed: chat draft idempotency spans proposed through filled under an
+> immediate transaction, and stale broker-filled orders finalize an existing pending receipt with
+> proposal/case truth atomically. A final audit also handles terminal partial executions everywhere,
+> makes direct broker receipt + lifecycle commits atomic/recoverable, scopes replacement dedupe, and
+> binds legacy chat-case repair to the historical account. The final price/quantity review is also
+> closed: unpriced broker receipts store zero rather than estimates, cumulative execution is
+> monotonic, replacement partials remain refId-recoverable, and the active replacement index is
+> user-scoped. Current `main@07c2da3f` is integrated and independent re-review reports no P0-P2
+> findings on that snapshot. The later hosted review found one P1 ordering gap: sell-to-fund could
+> liquidate a holding before a broker-minimum-adjusted buy entered a final-size Red hold. The fix
+> now correlation-gates and caches tradability, broker minimum, exact-size Red, policy, and override
+> preflight before funding notional is calculated. Correlation-dropped, broker-unplaceable,
+> human-held, and non-funding policy-blocked openings fund `$0`; a valid cumulative buying-power
+> shortfall remains eligible. Regressions cover both no-sale-on-hold and exact cumulative funding,
+> and placement reuses the cached shape. Hosted autofix also synchronized account-switch cap-mode drafts and kept unpriced
+> fill growth pending. The prior ordered Node 24 gate is green: lint 0 errors / 458 inherited warnings,
+> standalone TypeScript clean, 368 files / 4,124 tests, and a production build with the real
+> TypeScript phase plus 32 static pages. `scripts/land.sh` repeated current-main TypeScript, all
+> 4,124 tests, and the build before opening ready PR #1587. The local ordering remediation passes
+> TypeScript and 3 focused files / 20 tests. The combined-tree ordered Node 24 gate is green:
+> lint exit 0, standalone TypeScript clean, 368 files / 4,128 tests, and a production build with
+> the real TypeScript phase plus 32 static pages. Push, resolve the review, merge after hosted
+> verification, and verify the exact production release.
+> The last hosted P2 is also closed: final-size owner consent carries the exact broker estimate it
+> covers. A fresh upward estimate above the greater of 1% or $0.01 is persisted and re-queued for
+> one new click; downward/immaterial drift remains within the approved envelope. Focused final-size
+> verification is green (3 files / 21 tests plus standalone TypeScript); the repeated full gate
+> passes lint, TypeScript, 368 files / 4,128 tests, and the production build.
+> See `docs/rollouts/2026-07-13-account-relative-risk-and-decision-clarity.md` and
+> `docs/rollouts/2026-07-13-account-relative-risk-postmerge-review.md`.
+> Continuation: `docs/rollouts/2026-07-14-final-size-red-and-lifecycle-truth.md`.
 
 > **2026-07-13 - Decision-evidence architecture program (CODEX, owner-directed).** Implement the
 > complete source-to-decision boundary before adding more feeds: wider bounded enrichment;
@@ -128,6 +213,13 @@ Eight-phase roadmap to make the dashboard genuinely autonomous, more accurate,
 measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
+
+> **2026-07-14 - Decision-detail dissent deduplication (CODEX).** No roadmap scope
+> change. `/console/decisions/[id]` now shows a structured Red Team verdict once,
+> filters only exact/generated copies of that explanation from the generic dissent
+> list, preserves distinct policy or override objections, and keeps approve-at-half
+> and rejection status explicit on the canonical card without repeating rationale. See
+> `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 
 > **2026-07-12 - SEC/RAG 1,000-stock high-yield backfill architecture (CODEX).** The approved planning
 > direction is “archive broadly, embed selectively”: catalog all SEC filings; preserve selected immutable
