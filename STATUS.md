@@ -37,6 +37,54 @@ was a completely fresh worktree checkout (`node_modules` didn't exist), `npm ci`
 Mac's default node26, rebuilt for node24 to match `.nvmrc`. Rollout:
 `docs/rollouts/2026-07-10-durable-state-restart-survival.md`. Next: full suite confirmation, `npm run
 build`, land via PR.
+## 2026-07-15 — Per-position stop plans round 8: 2 post-merge Codex fixes (CLAUDE, branch `claude/stop-plans-round8-followups`)
+PR #1371 (per-position stop plans) merged; Codex reviewed the shipped merge commit and posted 4
+more findings afterward, against code that had since been heavily reworked by several intervening
+PRs (sub-millisecond order-race fix, account-relative risk hardening, Exit Replacement State
+Machine). Assessed each against current `main` rather than assuming the diff-time context still
+applied:
+- **Fixed** — `strategy-execution.ts`'s `reconcilePlacementError` had a shared
+  `commitRecoveredOpeningStopPlan` helper (added by other agents' hardening work, already wired
+  into two of its three fill-booking paths) but the fresh/non-dup `recordFillFromProposal` call
+  didn't invoke it — a scale-in recovered from a placement-error retry never got its stop plan
+  committed. Added the missing call.
+- **Fixed** — `synthetic-stops.ts`'s trailing-row purge only handled a plan resolving to
+  "none"/"fixed"/"atr"; a plan explicitly RESET to "default" (row cleared, symbol absent from
+  `stopPlanBySymbol`) with no account-wide `trailingStopPct` configured fell through untouched,
+  leaving a stale trailing row armed at the old plan's fallback distance. Extended the purge
+  condition to cover this case too.
+- **Not reproducible** — the partial-fill "commits stop plan too early" finding: confirmed
+  `listPendingBrokerReconciliationFills` already revisits `partially_filled` rows on every pass,
+  and `commitStopPlanIfOpening`/`commitRecoveredOpeningStopPlan` both re-derive the basis from the
+  BROKER'S OWN live `position.averageCost` (not a frozen single-fill price) each time, so the
+  basis self-corrects on every subsequent partial fill. This must have been valid only against an
+  intermediate state of the code between the merge and the later hardening PRs.
+- **Deferred** — canceling a resting bracket/OCO leg from an EARLIER opening when a scale-in
+  resets the plan to trailing/none: this is the same class as the previously-deferred "OCO
+  sibling-identity pairing" issue (PR #1331) — needs a broker API for identifying/cancelling a
+  bracket's sibling legs, not a code-only fix. Left open, matching prior precedent.
+Verify: tsc clean, lint 0 errors/488 pre-existing warnings, 382 files/4400 tests passed, build
+clean. Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`.
+## 2026-07-15 — Post-Codex/AG audit + app evaluation → MONET handoff (CLAUDE)
+
+Owner-directed evaluation sweep on isolated branch `claude/adoring-hopper-4ff51e`. Verified
+production current + healthy (`main@294694ae`, all providers green), no open ST PRs (all
+Codex/AG work through #1624 merged + auto-deployed), and `congress-trading-shared` current on
+BOTH consumers (pin `0bc26ab9` = v1.7.1, no drift). Audited 73 branches (dispositions), 54
+merged CODEX/AG PRs (board hygiene), the API-Usage-Monitor integration, and ran a 5-lane app
+evaluation (UI/UX, data-streams, RAG/learning, autonomy, backend) with adversarial verification.
+
+Two fixes LANDED this session: Congress.Trade `Shared package pin check` false-positive
+([PR #450](https://github.com/jaywedgeworth22/Congress.Trade/pull/450), MERGED — `git+ssh` vs
+`git+https` transport, same commit); and `agent-sync-push` pm2 crash-loop repaired
+(janitor-reaped `node_modules`, `.janitor-keep` added).
+
+Full synthesized, adversarially-verified findings + prioritized action list for MONET:
+**`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`**. Headline opportunities: a real
+~2× Voyage dollar double-count in the usage monitor (§7.1); FMP price-targets + ROE/ROA
+fetched-but-unwired (§3.1/3.2); live closed lots never write episodic memory (§4.3); the
+retrieval-usefulness join is unwired (§4.1); `global-error.tsx` dark-mode bug (§5.1). Read-only
+audit + docs; all code fixes handed to MONET to land via separate PRs.
 
 ## 2026-07-15 — Primary-account Usage Monitor credential bridge writer (CODEX)
 
