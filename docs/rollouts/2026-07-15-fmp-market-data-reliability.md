@@ -144,7 +144,10 @@ rights-gated producer, but its production ingestion/backfill flags remain off.
   propagated aborts through Nasdaq and BlackRock response bodies, included
   weights/floor/dynamic universes/positions in the scan single-flight key, and
   evicted hung quote entries after 30 seconds. Scoped lint and TypeScript pass;
-  5 files / 26 review regressions pass. Final exact-tree gate remains.
+  5 files / 26 review regressions pass.
+- Final review-remediation `scripts/land.sh`: TypeScript passed; 381 files /
+  4,381 tests passed; production build completed with 32 static pages; code
+  head `3df82396` pushed to ready PR #1618.
 
 ## Follow-ups
 

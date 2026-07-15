@@ -106,7 +106,9 @@ Hosted Codex review on the original PR head found three P2s, all now fixed local
 scan has a hard 20-second JSON deadline and propagates aborts into Nasdaq/BlackRock discovery; its
 single-flight key includes weights, universe floor, dynamic universes, and normalized position inputs;
 and a hung rich-quote promise is evicted after a 30-second lease. Scoped lint and TypeScript pass;
-the five-file review regression set passes 26/26. Final exact-tree land/hosted checks remain.
+the five-file review regression set passes 26/26. Final exact-tree `scripts/land.sh` then passed
+TypeScript, 381 files / 4,381 tests, and production build/32 static pages; code head `3df82396` is
+pushed. Review-thread resolution, refreshed hosted checks, protected merge, and production verification remain.
 
 Rollout: `docs/rollouts/2026-07-15-fmp-market-data-reliability.md`.
 
