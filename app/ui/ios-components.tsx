@@ -5,8 +5,10 @@ import { ChevronRight } from "lucide-react";
 import React from "react";
 
 export function List({ children, className }: { children: React.ReactNode; className?: string }) {
+  // Extra breathing room between sections on narrow (mobile) viewports, where the stacked
+  // ListSections felt cramped; unchanged on sm+ so desktop density is untouched.
   return (
-    <div className={cn("flex flex-col gap-6", className)}>
+    <div className={cn("flex flex-col gap-8 sm:gap-6", className)}>
       {children}
     </div>
   );
