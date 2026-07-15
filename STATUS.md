@@ -8,7 +8,7 @@ Distinct policy objections and Red Team override context remain visible. The can
 shows the shared explicit verdict label, so an approve-at-half review still says “Approved at half
 size” and a rejection still says “Rejected by Red Team” even when its duplicate rationale row is
 hidden. The change is display-only; persisted cases and other consumers are unchanged. PR #1593 is
-open, auto-merge is disabled, and production is unchanged.
+open with squash auto-merge armed; production is unchanged until merge auto-deploys.
 
 **[codex-autofix] Round 1:**
 - P2 — preserve overridden Red Team dissent rows when the summary matches the canonical verdict
@@ -25,9 +25,10 @@ open, auto-merge is disabled, and production is unchanged.
   `40853f3e` contains both fixes and required docs. The first `scripts/land.sh` pass was also green
   (TypeScript, 370 files / 4,168 tests, production build) but its push correctly stopped when remote
   autofix `02c03fe5` advanced the branch. That one-file delta is now merged without force; the
-  conflict preserves the tested Chip, status tone, and applied-override semantics. Focused/
-  TypeScript recheck, landing retry, final hosted review/checks, replies, and resolution of threads
-  `PRRT_kwDOS7mOVM6Q6zNL` and `PRRT_kwDOS7mOVM6Q6zNO` remain.
+  conflict preserves the tested Chip, status tone, and applied-override semantics. Exact-head Codex
+  review is clean and every actionable thread is replied to and resolved. After `main` advanced
+  through #1604, commit `f54e43aa` was merged additively at `a84a9dfd`; the final current-main
+  landing gate, refreshed hosted checks, auto-merge, and merged-SHA/production verification remain.
 
 Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 ## 2026-07-14 — Infisical JSON-export production compatibility (CODEX)

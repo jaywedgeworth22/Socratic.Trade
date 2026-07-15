@@ -100,3 +100,12 @@ the production build, then correctly refused a non-fast-forward push because rem
 added a simpler verdict-label span and had no tests; its history is merged, while the single conflict
 keeps the already-tested Chip, semantic status tone, applied-override argument, and two focused
 regressions. A focused/TypeScript check and serialized landing retry remain before hosted review.
+
+### Current-main finalization
+
+Exact head `47bfbc0b` received a clean Codex review; every actionable thread was replied to and
+resolved, hosted smoke/classify/gitleaks passed, and squash auto-merge was armed. GitHub then marked
+the branch dirty after `main` advanced through #1604. Main commit `f54e43aa` is now merged additively
+at `a84a9dfd`, preserving both lanes' shared status/plan/effort records. The final current-main
+`scripts/land.sh` pass, refreshed hosted verify, auto-merge, and merged-SHA/production verification
+remain. No other PR is in scope.
