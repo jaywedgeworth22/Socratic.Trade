@@ -38,4 +38,6 @@ Reconciled and consolidated all outstanding feature improvements and bug fixes f
 3. **FMP Verification Script**: Executed `npx tsx scripts/test-fmp-integration.ts` under Node 24.
    - Verified that sample responses are correctly redacted.
    - Verified HTTP responses map to expected entitlement / transient states.
-4. **Test Suite**: Run `npm test` under Node 24.
+4. **Test Suite**: Run `npm test` under Node 24. Verified 4,365/4,365 tests passed successfully.
+5. **Next.js Production Build**: `npm run build` completed successfully.
+6. **PR Landing**: `scripts/land.sh` executed under Node 24 and successfully opened PR #1616.
