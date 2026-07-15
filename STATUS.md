@@ -30,6 +30,20 @@ open, auto-merge is disabled, and production is unchanged.
   `PRRT_kwDOS7mOVM6Q6zNL` and `PRRT_kwDOS7mOVM6Q6zNO` remain.
 
 Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
+## 2026-07-14 — Infisical JSON-export production compatibility (CODEX)
+
+PR #1594 merged as `48bd191c`, but Coolify deployment `trxqzfunxctpy440ozbyt5if` failed its
+new-container health check and rolled back cleanly; production remains healthy on prior SHA
+`2dabc7f8`. Redacted deployment logs repeatedly reported invalid Infisical export JSON. The
+pinned Infisical CLI v0.43.98 source confirms `--format json` serializes an array of
+`SingleEnvironmentVariable` records, not a flat key/value object. The corrective parser accepts
+only an array of object records with non-empty string `key` and string `value`, copies no metadata,
+and rejects duplicate keys, NULs, malformed records, and the incorrect flat-object shape without
+printing raw output. Focused Node 24 verification is green: 37 tests, scoped ESLint, standalone
+TypeScript, and `git diff --check`. Independent hostile review reports LAND with no P0-P2 findings.
+Its nonblocking P3 is to make the production bootstrap compare the cached Infisical executable's
+version instead of only checking its presence; the current cache is known to be v0.43.98. The
+canonical full landing gate, merge, automatic rollout, and exact-SHA production verification remain.
 
 ## 2026-07-14 — Final hosted-review remediation (PR #1587)
 

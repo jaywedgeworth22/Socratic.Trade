@@ -309,14 +309,25 @@ function fetchProject(projectId, token, environment, path, label, { allowStoredS
   }
   try {
     const parsed = JSON.parse(result.stdout || "");
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("invalid shape");
+    // Infisical CLI v0.43.98 serializes `--format json` as an array of
+    // SingleEnvironmentVariable records (`{ key, value, ...metadata }`), not
+    // as a flat key/value object. Keep this parser pinned to that documented
+    // wire shape so metadata can never be mistaken for application secrets.
+    if (!Array.isArray(parsed)) throw new Error("invalid shape");
     const secrets = Object.create(null);
-    for (const [key, value] of Object.entries(parsed)) {
+    for (const entry of parsed) {
+      if (!entry || Array.isArray(entry) || typeof entry !== "object") {
+        throw new Error("invalid entry");
+      }
+      const { key, value } = entry;
       if (
-        !key || key.includes("=") || key.includes("\0") ||
+        typeof key !== "string" || !key || key.includes("=") || key.includes("\0") ||
         typeof value !== "string" || value.includes("\0")
       ) {
         throw new Error("invalid entry");
+      }
+      if (Object.prototype.hasOwnProperty.call(secrets, key)) {
+        throw new Error("duplicate entry");
       }
       secrets[key] = value;
     }
