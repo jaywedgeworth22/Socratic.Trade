@@ -3,9 +3,11 @@
 This app now has opt-in scaffolding for the seven selected tools:
 
 - **Infisical**: use `npm run dev:secrets`, `npm run build:secrets`, or
-  `npm run start:secrets` to execute the app under `infisical run`. Configure
-  `INFISICAL_PROJECT_ID`, `INFISICAL_ENV`, `INFISICAL_PATH`, and a machine identity
-  token in the host environment. Do not commit `.env.local`.
+  `npm run start:secrets`. The runner normally exports secrets through a minimal CLI
+  environment and starts the app directly; `INFISICAL_WATCH=true` uses `infisical run
+  --watch` plus the final credential-masking wrapper. Configure `INFISICAL_PROJECT_ID`,
+  `INFISICAL_ENV`, `INFISICAL_PATH`, and a machine identity pair/token. Do not commit
+  `.env.local`.
 - **Gitleaks**: `npm run gitleaks` runs a local secret scan. The GitHub Actions
   Security workflow runs the pinned gitleaks action on the self-hosted runner
   and clears stale macOS installer temp files before invoking the action.

@@ -60,6 +60,34 @@
 > generation, and broker-minimum alert cooldowns are user-scoped for the shared settings fence/eraser.
 > Node 24 TypeScript and the merged targeted set (9 files / 99 tests) are green. Fresh hostile re-review
 > and the ordered full gate remain before #1586 can leave draft.
+> **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
+> but its automatic Coolify deployment failed health checks and rolled back because pinned
+> Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the
+> merged runner expected a flat object. Parse only validated `{ key, value }` records, reject
+> malformed or duplicate keys without exposing output, repeat the full Node 24 landing gate,
+> and verify the exact corrective merge SHA in production before releasing dependent work.
+> See `docs/rollouts/2026-07-14-infisical-export-json-compat.md`.
+
+> **2026-07-14 - Local Infisical bootstrap wiring (CODEX).** Resolve the Socratic and shared
+> machine identities before the Infisical runner authenticates, with process env > `.env.local` >
+> secure global-file precedence; support both the owner-provided `INFIISICAL_ST_*` spelling and its
+> corrected alias plus `INFISICAL_CT_SHARED_*`; normalize only in process memory; default known
+> nonsecret project IDs without forcing a shared overlay; reject incomplete pairs; and prove no
+> unrelated global key or long-lived credential reaches the app child. Review found three P1s and
+> three P2s: same-source token-before-pair selection, Next reload reintroduction, runner-lifetime
+> credential retention, broad CLI inheritance, ambient path override, and overbroad global aliases.
+> All are remediated with pair-first resolution, immediate auth scrubbing, minimal CLI environments,
+> a fixed global path, a narrow ST/CT-shared allowlist, and an argv-safe post-injection wrapper whose
+> real `@next/env` regressions are green in normal and watch paths. Descriptor-level file hardening
+> and managed-only inert parsing also remain green. JSON export preserves exact values, CLI domain
+> routing remains explicit, preload hooks execute only after masking, and signal/argv/NUL/conflicting
+> alias/shell-block regressions are green. The branch is rebased on `origin/main@acd67a5c`; a force-quit-
+> contaminated npm Git-dependency cache initially installed declarations without runtime bundles, but
+> isolated installs proved the immutable shared-package release healthy and a disposable-cache reinstall
+> restored all CJS/ESM/type artifacts. The exact-tree Node 24 gate is green: lint 0 errors / 459 inherited
+> warnings, TypeScript, 369 files / 4,161 tests, and a production build with all 32 static pages. Publish
+> through `scripts/land.sh`, require hosted verification, then verify the automatic production rollout.
+> See `docs/rollouts/2026-07-14-infisical-bootstrap-wiring.md`.
 > **2026-07-14 - Final open-PR reconciliation (CODEX).** Reconcile PR #1589 with current
 > `origin/main`, correct stale merged/closed PR and effort-board state, resolve all review threads,
 > run the documentation branch through the canonical Node 24 gate, update the existing PR head
@@ -206,6 +234,13 @@ Eight-phase roadmap to make the dashboard genuinely autonomous, more accurate,
 measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
+
+> **2026-07-14 - Decision-detail dissent deduplication (CODEX).** No roadmap scope
+> change. `/console/decisions/[id]` now shows a structured Red Team verdict once,
+> filters only exact/generated copies of that explanation from the generic dissent
+> list, preserves distinct policy or override objections, and keeps approve-at-half
+> and rejection status explicit on the canonical card without repeating rationale. See
+> `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 
 > **2026-07-12 - SEC/RAG 1,000-stock high-yield backfill architecture (CODEX).** The approved planning
 > direction is “archive broadly, embed selectively”: catalog all SEC filings; preserve selected immutable
