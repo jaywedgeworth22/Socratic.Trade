@@ -741,8 +741,6 @@ As of 2026-07-08 (assignment-rule update).
   `monet/learning-review-legacy-seed-99138a`) — ✅ DEPLOYED TO PROD 2026-07-10: PR #1326 squash-merged
   to `main` (`505475c5`), auto-deployed. Re-verified intact on `main` 2026-07-15 (5 days later, 46/46
   learning-review tests including both dedicated regression tests pass on current tree).**
-  `seedLegacyLearningReviewFields`
-  `monet/learning-review-legacy-seed-99138a`) — ✅ COMPLETED 2026-07-10, MERGED as PR #1326.**
   (Row corrected 2026-07-15 — MONET, was stuck at IN PROGRESS after merge; the mirror never got
   flipped since #1278 squash-merged to `main` mid-work, `6f1aaf87`.) `seedLegacyLearningReviewFields`
   (`src/lib/db-profiles.ts`) bailed whenever any `learningReview*` key was present in
