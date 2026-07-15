@@ -33,18 +33,48 @@ open with squash auto-merge armed; production is unchanged until merge auto-depl
 Rollout: `docs/rollouts/2026-07-14-decision-dissent-dedup.md`.
 ## 2026-07-14 — Infisical JSON-export production compatibility (CODEX)
 
-PR #1594 merged as `48bd191c`, but Coolify deployment `trxqzfunxctpy440ozbyt5if` failed its
-new-container health check and rolled back cleanly; production remains healthy on prior SHA
-`2dabc7f8`. Redacted deployment logs repeatedly reported invalid Infisical export JSON. The
-pinned Infisical CLI v0.43.98 source confirms `--format json` serializes an array of
-`SingleEnvironmentVariable` records, not a flat key/value object. The corrective parser accepts
-only an array of object records with non-empty string `key` and string `value`, copies no metadata,
-and rejects duplicate keys, NULs, malformed records, and the incorrect flat-object shape without
-printing raw output. Focused Node 24 verification is green: 37 tests, scoped ESLint, standalone
-TypeScript, and `git diff --check`. Independent hostile review reports LAND with no P0-P2 findings.
-Its nonblocking P3 is to make the production bootstrap compare the cached Infisical executable's
-version instead of only checking its presence; the current cache is known to be v0.43.98. The
-canonical full landing gate, merge, automatic rollout, and exact-SHA production verification remain.
+The initial PR #1594 deployment failed its new-container health check and rolled back cleanly.
+Corrective PR #1604 merged as `f54e43aaba1589af2467b4ec2fc2be5eb461e1e8` after independent
+LAND/no-P0-P2 review, Node 24 TypeScript, 369 files / 4,165 tests, production build, hosted verify,
+browser smoke, and gitleaks. Coolify deployment `rkh3ifiyp2dbtvv7xz7rtnbn` finished on that exact
+SHA. Public health confirms the app/DB are healthy, the scheduler lease is current, Litestream is
+replicating with a valid sync timestamp, and the Congress/usage-monitor dependencies are healthy.
+The remaining cached-Infisical-version comparison is nonblocking P3.
+## 2026-07-14 — Immutable shared-package v1.7.1 consumer adoption (CODEX)
+
+Branch `codex/shared-v171-consumer` now pins
+`@jaywedgeworth22/congress-trading-shared` to the immutable `v1.7.1` commit
+`0bc26ab9311a396f3f6b5cba0fb54fa7558a42b4` in the manifest, npm
+`allowScripts`, and lockfile. A Node 24 clean install from a disposable empty npm
+cache produced all four declared package surfaces (`index.js`, `index.mjs`,
+`index.d.ts`, and `index.d.mts`); direct CommonJS and ESM load probes both passed
+with the expected client and telemetry exports. The branch is reconciled cleanly
+with `origin/main@3df405e6`. The exact-tree Node 24 gate is green: lint 0 errors /
+459 inherited warnings, standalone TypeScript clean, 370 files / 4,172 tests, and
+a production build with the real TypeScript phase plus 32 static pages. Ready PR
+#1607 is pushed, both review threads are resolved, and exact-head `check-pin`,
+gitleaks, Playwright smoke, hosted verification, and required verification are
+green. Protected squash merge and exact production verification remain. No merge,
+deploy, provider, broker, secret, or corpus mutation has occurred from this lane.
+
+**[codex-autofix] 2026-07-15:**
+- P1 — Codex review flagged that `github:` protocol in `package.json` resolves to
+  `git+ssh://` in the lockfile. A controlled cold `npm ci` proved npm currently succeeds
+  tokenlessly through the lock integrity path even while direct SSH fails, but explicit
+  `git+https://` removes that deployment ambiguity. The manifest, lockfile, and npm
+  `allowScripts` entry now share the exact immutable HTTPS+SHA ref. Autofix verification:
+  lint 0 errors, TypeScript clean, 4,172 tests, and production build green. Codex then
+  corrected the autofix's broad package-name `allowScripts` entry back to the exact URL+SHA
+  key. Final exact-head verification is green: controlled cold tokenless install, unchanged
+  lock hash, lint 0 errors / 459 inherited warnings, TypeScript, 370 files / 4,172 tests,
+  and production build with all 32 static pages. A second resolver P1 was disproved
+  by a cold npm 11.4.2 `npm ci` with an empty HOME/cache, no agent or tokens,
+  `GIT_SSH_COMMAND=false`, and `npm_config_git` pointed at a nonexistent executable;
+  all four artifacts and 105 exports still installed, proving the warning's `ssh://`
+  text was not the actual transport. Both P1 threads are resolved. Refreshed exact-head
+  hosted checks are green; protected squash merge and production verification remain.
+
+Rollout: `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 
 ## 2026-07-14 — Final hosted-review remediation (PR #1587)
 
