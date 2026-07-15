@@ -1,5 +1,37 @@
 # Current Status
 
+## 2026-07-15 - Branch integration labeling and PR #1586 landing gate (CODEX)
+
+Main is aligned with `origin/main@58de276e`. The FMP/RAG transcript branch
+`codex/fmp-transcripts-safe` is reconciled locally with that baseline and remains the only active
+landing candidate for this lane. The remote PR #1586 head is stale until `scripts/land.sh` pushes
+the verified tree.
+
+Focused Node 24 blockers from the previous handoff are no longer reproducing:
+`test/rag-doc-type-coverage.test.ts` passes 15/15 and `test/infisical-bootstrap.test.ts` passes
+37/37. A durable branch disposition ledger now lives at `docs/BRANCH-INTEGRATION-LEDGER.md` so future
+agents can see which branches are active, stale, duplicate, or selective-review only. Full ordered
+lint, TypeScript, test, build, `scripts/land.sh`, hosted verification, protected merge, and exact
+production verification still remain before this can be called complete.
+
+The focused read-only subagent review then found three rights-boundary regressions before landing:
+raw transcript retrieval trusted the env flag without requiring the durable active rights generation;
+FMP-derived Socratic-memory dedup hashes were not in the rights purge inventory; and unrelated Pinecone
+upserts could block transcript rights erasure. All three are patched locally. Focused Node 24 remediation
+verification passes `test/vector-db-retrieval.test.ts` + `test/fmp-rights-derived-artifacts.test.ts`
+(31/31).
+
+The later strategy/regime compatibility fixes are also green in focused verification:
+`test/regime-severity.test.ts` + `test/strategy-moneypath-drawdown-flip.test.ts` pass 23/23 after
+adding the current vector-authority mocks, Red Team fixture routing, and timeout headroom. Standalone
+Node 24 TypeScript is clean, and an earlier lint run on this tree exited 0 with inherited warnings only.
+Under current host contention, later full/grouped local gates are not authoritative: grouped `npm test`
+and grouped changed-test runs ended with SIGTERM 143 without assertion summaries, and multiple
+`npm run build` attempts, including `NEXT_PRIVATE_BUILD_WORKER=1 NODE_OPTIONS=--max-old-space-size=4096`,
+were OS-killed with 137 while other agent build/test processes were respawning. Push/hosted `verify`
+must therefore be the full repository gate authority for PR #1586. Build, landing, PR-ready,
+hosted checks, merge, and exact production verification remain pending.
+
 ## 2026-07-14 — Decision-detail dissent deduplication (CODEX, branch `codex/decision-dissent-dedup`)
 
 The decision trace now treats the structured Red Team verdict as the canonical explanation and
@@ -558,8 +590,20 @@ receipt-, and rights-ineligible candidates before applying Voyage's 1,000-docume
 provider-tier identity through multi-query RRF so fan-out cannot re-truncate a fair pool to one tier. It
 also carries raw-vs-eligible counts forward for degraded-state telemetry. Migration 41 puts rights and provider-work
 tables under versioned account deletion/write fences. Current Node 24 focused verification is green:
-5 files / 57 tests, standalone TypeScript, and diff-check. Final hostile re-review and the ordered full
-repository gate remain before #1586 leaves draft; all transcript flags remain default-off.
+  5 files / 57 tests, standalone TypeScript, and diff-check. Round-20 then batches high-cardinality managed
+  receipt lookup below SQLite's host-parameter ceiling and proves a 60,000-ID pool keeps its committed match.
+  Round-21 removes production-bundle `node:` imports by using Web Crypto/global UUID and the existing
+  abort-aware retry pause. Current-main reconciliation now includes `origin/main@58de276e`, which merged
+  shared package v1.7.1 adoption in PR #1607. The rag doc-type integration compatibility test now supplies
+  the new vector authority mocks, pins deterministic test encryption, includes the required proposal regime
+  field, and uses realistic strategy-integration timeouts. The Infisical signal-forwarding fixture now supplies
+  its own fake app identity/login path; combined focused blocker verification is green at 52/52.
+  `docs/BRANCH-INTEGRATION-LEDGER.md` records the reviewed branch dispositions so future agents do not repeat stale-branch inventory.
+  Round-23 closes the focused review findings: raw transcript eligibility now requires the durable active
+  rights gate, FMP-derived Socratic-memory `document_chunks` hashes are inventoried and removed after provider
+  verification, and only transcript-associated Pinecone upsert operations block transcript-rights erasure.
+  Focused remediation verification is green at 2 files / 31 tests. The ordered full repository gate
+  remains before #1586 leaves draft; all transcript flags remain default-off.
 
 Production activation/backfill remains gated on an entitled transcript plan, confirmed commercial
 persistence/embedding/display rights, and one genuinely shared cross-app transactional quota authority;
@@ -1121,11 +1165,9 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## Current Status
 
-- PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, #1589, #1593, #1594, and #1604 are merged.
-  Two PRs remain: ready #1607 (immutable shared-package v1.7.1 adoption) and draft #1586 (this
-  default-off FMP/RAG/privacy/account-risk consolidation). #1607's required hosted gate is green;
-  one automated HTTPS-dependency review finding is being resolved before merge.
-- #1586 is reconciled with `main@3df405e6`. The final hostile-review fixes bind every licensed
+- PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, #1589, #1593, #1594, #1604, and #1607 are merged.
+  Only draft PR #1586 remains open; it is the default-off FMP/RAG/privacy/account-risk consolidation.
+- #1586 is reconciled with `main@58de276e`. The final hostile-review fixes bind every licensed
   private-memory vector receipt to its exact Pinecone provider plus SQLite ledger authority, reject
   provider/manifest rotation, require consecutive clean provider observations before local erasure,
   and preserve independent private/shared retrieval pools through reranking. Versioned migration 41
@@ -1143,11 +1185,19 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
   The first full run passed 379 files / 4,362 tests, then the production build found transitive
   `node:crypto` and `node:timers/promises` imports. Those are now replaced by edge-safe Web Crypto
   SHA-256/global UUID and the existing abort-aware retry pause; 3 files / 20 tests, TypeScript, and a
-  production build with 32 static pages pass. Focused re-review and a clean ordered full rerun remain;
-  #1586 stays draft and no FMP flag/provider/
-  corpus/Infisical mutation has occurred.
+  production build with 32 static pages pass. After #1607 merged, the current branch is ahead of the remote
+  PR head and has final compatibility cleanup: `test/rag-doc-type-coverage.test.ts` now supplies deterministic
+  encryption, vector provider/ledger authority mocks, the required proposal regime field, and 75s timeout
+  headroom for the heavy strategy integration cases. `test/infisical-bootstrap.test.ts` now gives the
+  signal-forwarding fixture an explicit fake app identity/login path. Combined focused blocker verification
+  is green at 52/52. `docs/BRANCH-INTEGRATION-LEDGER.md` records branch/PR dispositions. A focused landing
+  review then found and this tree fixes the durable-rights retrieval gate, derived-memory dedup purge, and
+  unrelated-upsert purge blocker issues; `test/vector-db-retrieval.test.ts` plus
+  `test/fmp-rights-derived-artifacts.test.ts` pass 31/31. Clean ordered full rerun, push, hosted checks/review,
+  merge, and production verification remain; #1586 stays draft and no FMP flag/provider/corpus/Infisical
+  mutation has occurred.
 
 ## Next Action
-- Resolve and merge #1607, close #1586's hostile review, run the ordered full gate, reconcile #1586
-  with final `main`, land and merge it, require zero open PRs, then verify the exact final `main` SHA
-  through the production health/readiness and Coolify runtime surfaces.
+- Run the ordered full gate, push #1586 through `scripts/land.sh`, mark the PR ready, resolve hosted
+  checks/review, merge it, require zero open PRs, then verify the exact final `main` SHA through production
+  health/readiness and Coolify runtime surfaces.

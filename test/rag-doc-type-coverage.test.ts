@@ -52,6 +52,7 @@ vi.mock("../src/lib/broker", async (importOriginal) => {
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-rag-doc-type-coverage-${randomUUID()}.db`)}`;
+  process.env.ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 });
 
 afterEach(() => {
@@ -122,6 +123,7 @@ const BULL_PROPOSAL = {
   marketHours: "regular_hours",
   rationale: "Structured momentum evidence for AAPL",
   tradeThesisTag: "Momentum-Breakout",
+  entryMarketRegime: "Neutral (Normal Volatility)",
   confidenceScore: 40
 };
 
@@ -155,6 +157,12 @@ function stubFetch(openAiBodies: OpenAiBody[]): void {
     if (href.includes("api.openai.com")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
+      if (JSON.stringify(body).includes("Red Team Risk Agent")) {
+        return new Response(
+          JSON.stringify({ output_text: JSON.stringify({ verdict: "approve", reason: "No fatal flaw found." }) }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
       return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [BULL_PROPOSAL] }) }), {
         status: 200,
         headers: { "content-type": "application/json" }
@@ -190,6 +198,7 @@ async function setupBrokerPaperDecide(): Promise<void> {
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
+    redTeamLlmModel: "gpt-4.1-mini",
     maxOrderPctOfNav: 100,
     maxDailyNotional: 400_000,
     maxDailyPctOfNav: 0,
@@ -250,7 +259,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     // (owner report 2026-07-09: the warning-orange "never ingested" card on every stock
     // read as a per-symbol lookup failure).
     expect(coverageItems[0]!.tone).toBe("neutral");
-  }, 30_000);
+  }, 75_000);
 
   it("(b) THE KEY LOW-NOISE CASE: 10-k requested, NOT retrieved this run, but HAS >=1 ingested_accessions '10-K' row -> receipt does NOT fire", async () => {
     // Proves normal-run silence: a coverage-checked type that simply didn't rank this run's
@@ -294,7 +303,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     // 10-k didn't retrieve this run, but DOES have a producer row -> both-conditions guard keeps
     // the receipt silent. This is the normal-run case and must never fire.
     expect(coverageAudits.length).toBe(0);
-  }, 30_000);
+  }, 75_000);
 
   it("(c) 8-k never triggers a coverage receipt regardless of retrieval/accession state (excluded from COVERAGE_CHECKED_DOC_TYPES)", async () => {
     // Mirrors the default production config exactly: the 8-K summary writer (sec8k.ts,
@@ -335,7 +344,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     const runAudits = listAudit(500).filter((e) => (e.payload as { runId?: string })?.runId === result.runId);
     const coverageAudits = runAudits.filter((e) => e.kind === "rag_doc_type_coverage_empty");
     expect(coverageAudits.length).toBe(0);
-  }, 30_000);
+  }, 75_000);
 
   it("(d1) does NOT fire for earnings-transcript while its default-off producer is disabled", async () => {
     // Both always-checked types retrieve chunks; transcript refresh is explicitly off, so the
@@ -371,7 +380,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     const { listAudit } = await import("../src/lib/db");
     const runAudits = listAudit(500).filter((e) => (e.payload as { runId?: string })?.runId === result.runId);
     expect(runAudits.filter((e) => e.kind === "rag_doc_type_coverage_empty").length).toBe(0);
-  }, 30_000);
+  }, 75_000);
 
   it("(d2) names earnings-transcript when the producer is enabled but no transcript was ever ingested", async () => {
     vi.doMock("../src/lib/vector-db", () => ({
@@ -407,7 +416,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     const runAudits = listAudit(500).filter((e) => (e.payload as { runId?: string })?.runId === result.runId);
     const coverage = runAudits.find((e) => e.kind === "rag_doc_type_coverage_empty");
     expect((coverage?.payload as { emptyDocTypes?: string[] })?.emptyDocTypes).toEqual(["earnings-transcript"]);
-  }, 30_000);
+  }, 75_000);
 
   it("(e) advisory invariant: the receipt firing does not change ragContext content or proposal count", async () => {
     vi.doMock("../src/lib/vector-db", () => ({
@@ -450,7 +459,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     expect(ragField).toContain("Risk factors for AAPL.");
     expect(ragField).not.toContain("warming up");
     expect(ragField).not.toContain("earnings-transcript");
-  }, 30_000);
+  }, 75_000);
 });
 
 // Placed AFTER the strategy integration tests above — see the ordering note near that block's

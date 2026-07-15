@@ -13,25 +13,27 @@
 import crypto from "crypto";
 import { CircuitOpenError } from "../api-circuit-breaker";
 import { fetchWithRetry, apiKeyFingerprint } from "../data-providers";
+import { audit, getDb } from "../db";
+import { resolveApiKeyWithSource } from "../db-api-keys";
 import { logApiHealth } from "../db-health";
-import { resolveProviderQuota, withProviderLimit } from "../provider-rate-limit";
 import {
-  audit,
   cancelUndispatchedProviderReservation,
-  deleteInternalSetting,
-  getFmpTranscriptVersion,
-  getDb,
-  getInternalSetting,
-  ingestedAccessionCountForDocType,
   markProviderDispatchStarted,
-  observeFmpTranscriptVersion,
   reserveProviderDispatch,
-  resolveApiKeyWithSource,
-  runWithActiveVectorCommitProof,
-  setFmpTranscriptVersionState,
-  settleProviderDispatch,
+  settleProviderDispatch
+} from "../db-provider-dispatch";
+import { ingestedAccessionCountForDocType } from "../db-learning";
+import {
+  deleteInternalSetting,
+  getInternalSetting,
   setInternalSetting
-} from "../db";
+} from "../db-settings";
+import {
+  getFmpTranscriptVersion,
+  observeFmpTranscriptVersion,
+  runWithActiveVectorCommitProof,
+  setFmpTranscriptVersionState
+} from "../db-vector-commits";
 import { normalizeSymbol } from "../money";
 import {
   assertOperationLeaseOwnership,
@@ -41,6 +43,7 @@ import {
   type OperationLeaseClaim,
   type OperationLeaseAware
 } from "../operation-lease";
+import { resolveProviderQuota, withProviderLimit } from "../provider-rate-limit";
 
 export const FMP_TRANSCRIPT_DOC_TYPE = "earnings-transcript";
 export const FMP_TRANSCRIPT_SOURCE = "fmp-earnings-transcript";
@@ -1775,6 +1778,13 @@ function localFmpTranscriptRightsInventory(): Omit<
     content_hash: string;
     commit_id: string | null;
   }>;
+  const derivedContentHashes = (database.prepare(`
+    SELECT d.content_hash
+    FROM document_chunks d
+    JOIN fmp_transcript_derived_provider_work w ON w.vector_id = d.chunk_id
+    WHERE w.vector_id IS NOT NULL
+    ORDER BY d.content_hash
+  `).all() as Array<{ content_hash: string }>).map((row) => row.content_hash);
   const versionIds = (database.prepare(`
     SELECT version_id FROM fmp_transcript_versions ORDER BY version_id
   `).all() as Array<{ version_id: string }>).map((row) => row.version_id);
@@ -1833,7 +1843,11 @@ function localFmpTranscriptRightsInventory(): Omit<
   const pendingPineconeUpsertAttemptIds = (database.prepare(`
     SELECT id FROM provider_dispatch_attempts
     WHERE provider = 'pinecone'
-      AND operation IN ('upsert','commit managed vectors')
+      AND operation IN (
+        'upsert fmp transcript vectors',
+        'commit fmp transcript vectors',
+        'upsert fmp-derived private memory'
+      )
       AND status IN ('reserved','dispatched','unknown')
     ORDER BY id
   `).all() as Array<{ id: string }>).map((row) => row.id);
@@ -1859,7 +1873,10 @@ function localFmpTranscriptRightsInventory(): Omit<
     .map((row) => row.id);
   return {
     localVectorIds: occurrences.map((row) => row.vector_id),
-    contentHashes: [...new Set(occurrences.map((row) => row.content_hash))].sort(),
+    contentHashes: [...new Set([
+      ...occurrences.map((row) => row.content_hash),
+      ...derivedContentHashes
+    ])].sort(),
     commitIds,
     activeHeadCommitIds,
     documentVersionCommitIds,

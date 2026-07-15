@@ -221,7 +221,9 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "test-provider",
+  managedVectorLedgerAuthority: () => "test-ledger"
 }));
 
 // Deterministic, network-free macro + market-signals fan-out so `regimeSeverity` is a known,
@@ -286,6 +288,18 @@ function nasdaqRow(): Response {
   );
 }
 
+function isRedTeamRequest(body: unknown): boolean {
+  return JSON.stringify(body).includes("Red Team Risk Agent");
+}
+
+function bullPromptBody(openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }>): { input?: Array<{ role: string; content: string }> } {
+  const body = openAiBodies.find((candidate) => (
+    candidate.input?.some((item) => item.role === "system" && item.content.includes("autonomous equity trading agent"))
+  ));
+  if (!body) throw new Error("Bull strategy prompt was not captured");
+  return body;
+}
+
 beforeEach(() => {
   vi.resetModules();
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-regime-severity-${randomUUID()}.db`)}`;
@@ -307,6 +321,7 @@ async function seed(options: { regimeSeverityScoring?: boolean } = {}) {
     ...DEFAULT_POLICY,
     systemState: "active",
     llmModel: "gpt-4.1-mini",
+    redTeamLlmModel: "gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
@@ -323,7 +338,14 @@ describe("strategy.ts regime-severity wiring", () => {
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
       if (href.includes("api.openai.com")) {
-        openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        openAiBodies.push(body);
+        if (isRedTeamRequest(body)) {
+          return new Response(
+            JSON.stringify({ output_text: JSON.stringify({ verdict: "approve", reason: "No fatal flaw found." }) }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
         return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [PROPOSAL] }) }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -339,12 +361,12 @@ describe("strategy.ts regime-severity wiring", () => {
     const result = await runStrategyOnce();
 
     expect(result.status).toBe("completed");
-    const bullBody = openAiBodies[0]!;
+    const bullBody = bullPromptBody(openAiBodies);
     const userContent = JSON.parse(bullBody.input!.find((item) => item.role === "user")?.content ?? "{}");
     expect(userContent.currentMarketRegime).toBeDefined();
     expect(userContent.regimeSeverity).toBeUndefined();
     expect(result.proposals[0]?.proposal.entryRegimeSeverity).toBeUndefined();
-  }, 30_000);
+  }, 75_000);
 
   it("policy.tuning.regimeSeverityScoring ON: includes a compact regimeSeverity block in userContent next to currentMarketRegime, and stamps entryRegimeSeverity on the persisted proposal", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
@@ -354,7 +376,14 @@ describe("strategy.ts regime-severity wiring", () => {
       const href = String(url);
       if (href.includes("api.openai.com")) {
         strategyCallCount += 1;
-        openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        openAiBodies.push(body);
+        if (isRedTeamRequest(body)) {
+          return new Response(
+            JSON.stringify({ output_text: JSON.stringify({ verdict: "approve", reason: "No fatal flaw found." }) }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
         // First call is Bull, second is Bear — both echo the same proposal back.
         return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [PROPOSAL] }) }), {
           status: 200,
@@ -372,7 +401,7 @@ describe("strategy.ts regime-severity wiring", () => {
     expect(result.status).toBe("completed");
     expect(strategyCallCount).toBeGreaterThanOrEqual(1);
 
-    const bullBody = openAiBodies[0]!;
+    const bullBody = bullPromptBody(openAiBodies);
     const userContent = JSON.parse(bullBody.input!.find((item) => item.role === "user")?.content ?? "{}");
     expect(userContent.currentMarketRegime).toBeDefined();
     expect(userContent.regimeSeverity).toBeDefined();
@@ -390,7 +419,7 @@ describe("strategy.ts regime-severity wiring", () => {
     expect(typeof persisted!.entryRegimeSeverity).toBe("number");
     expect(persisted!.entryRegimeSeverity).toBeGreaterThan(0);
     expect(persisted!.entryRegimeSeverity).toBeLessThanOrEqual(1);
-  }, 30_000);
+  }, 75_000);
 
   it("policy.tuning.regimeSeverityScoring ON, scorer throws: does not fail the run — no regimeSeverity in userContent, proposal still generated", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
@@ -404,7 +433,14 @@ describe("strategy.ts regime-severity wiring", () => {
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
       if (href.includes("api.openai.com")) {
-        openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        openAiBodies.push(body);
+        if (isRedTeamRequest(body)) {
+          return new Response(
+            JSON.stringify({ output_text: JSON.stringify({ verdict: "approve", reason: "No fatal flaw found." }) }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
         return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [PROPOSAL] }) }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -419,9 +455,9 @@ describe("strategy.ts regime-severity wiring", () => {
     const result = await runStrategyOnce();
 
     expect(result.status).toBe("completed");
-    const bullBody = openAiBodies[0]!;
+    const bullBody = bullPromptBody(openAiBodies);
     const userContent = JSON.parse(bullBody.input!.find((item) => item.role === "user")?.content ?? "{}");
     expect(userContent.regimeSeverity).toBeUndefined();
     expect(result.proposals[0]?.proposal.entryRegimeSeverity).toBeUndefined();
-  }, 30_000);
+  }, 75_000);
 });

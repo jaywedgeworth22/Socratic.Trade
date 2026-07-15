@@ -39,9 +39,32 @@ describe("buildExtraFilters", () => {
     const transcript = { id: "transcript", metadata: { doc_type: "EARNINGS-TRANSCRIPT" } };
     expect(filterMatchesForTranscriptRights([legacy, filing, transcript])).toEqual([legacy, filing]);
   });
-  it("leaves broad transcript matches available while rights are confirmed", () => {
+  it("leaves broad transcript matches available while rights are confirmed", async () => {
+    const { activateFmpTranscriptRightsGeneration } = await import("../src/lib/web-sources/fmp-transcripts");
+    activateFmpTranscriptRightsGeneration();
     const matches = [{ id: "transcript", metadata: { doc_type: "earnings-transcript" } }];
     expect(filterMatchesForTranscriptRights(matches)).toBe(matches);
+  });
+  it("keeps transcripts blocked when the env flag is on but the durable rights gate is revoked", async () => {
+    const {
+      activateFmpTranscriptRightsGeneration
+    } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
+    activateFmpTranscriptRightsGeneration();
+    getDb().prepare(`
+      UPDATE fmp_transcript_rights_gate
+      SET generation = generation + 1, status = 'revoked', updated_at = ?
+      WHERE singleton = 1
+    `).run(new Date().toISOString());
+
+    expect(buildExtraFilters({ docType: ["earnings-transcript"] })).toEqual({
+      doc_type: { $eq: "__earnings_transcript_rights_unconfirmed__" }
+    });
+    expect(buildExtraFilters({ source: "fmp-earnings-transcript" })).toEqual({
+      source: { $eq: "__fmp_transcript_rights_unconfirmed__" }
+    });
+    const matches = [{ id: "transcript", metadata: { doc_type: "earnings-transcript", source: "fmp-earnings-transcript" } }];
+    expect(filterMatchesForTranscriptRights(matches)).toEqual([]);
   });
   it("admits only the active generation of FMP-derived decision memory", async () => {
     const {

@@ -2637,12 +2637,17 @@ async function storeContextsImpl(
       if (records.length > 0) {
         const estimatedWriteUnits = estimatePineconeWriteUnitsForRecords(records);
         assertVectorStoreLease(options?.leaseGuard);
+        const upsertOperation = options?.managedCommit?.namespace === "fmp-transcripts"
+          ? "upsert fmp transcript vectors"
+          : records.some((record) => record.metadata?.fmp_derived === true)
+            ? "upsert fmp-derived private memory"
+            : "upsert";
         // Pinecone JS SDK v8 takes an options object ({ records }), not a bare array.
         await withRagApiHealth(
           "pinecone",
           pineconeSource,
           userId,
-          "upsert",
+          upsertOperation,
           () => index.upsert({ records } as any),
           options?.leaseGuard
         );
@@ -2678,7 +2683,9 @@ async function storeContextsImpl(
           "pinecone",
           pineconeSource,
           userId,
-          "commit managed vectors",
+          options.managedCommit.namespace === "fmp-transcripts"
+            ? "commit fmp transcript vectors"
+            : "commit managed vectors",
           () => index.upsert({ records: committedRecords } as any),
           options.leaseGuard,
           { units: 1 }
@@ -5191,13 +5198,25 @@ export function managedVersionRejectedUpperBound(
 const EARNINGS_TRANSCRIPT_DOC_TYPE = "earnings-transcript";
 const RIGHTS_BLOCKED_DOC_TYPE = "__earnings_transcript_rights_unconfirmed__";
 
+function fmpTranscriptRightsActive(): boolean {
+  if (!envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false)) return false;
+  try {
+    const row = dbModule.getDb().prepare(`
+      SELECT generation, status FROM fmp_transcript_rights_gate WHERE singleton = 1
+    `).get() as { generation?: number; status?: string } | undefined;
+    return row?.status === "active" && Number.isInteger(row.generation) && Number(row.generation) > 0;
+  } catch {
+    return false;
+  }
+}
+
 function docTypeVariants(docTypes: string[]): string[] {
   return Array.from(new Set(docTypes.flatMap((docType) => [docType, docType.toLowerCase(), docType.toUpperCase()])));
 }
 
 export function buildExtraFilters(options?: RetrieveOptions): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
-  const transcriptRightsConfirmed = envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false);
+  const transcriptRightsConfirmed = fmpTranscriptRightsActive();
   if (options?.docType && options.docType.length > 0) {
     const allowedDocTypes = transcriptRightsConfirmed
       ? options.docType
@@ -5226,7 +5245,7 @@ export function buildExtraFilters(options?: RetrieveOptions): Record<string, unk
  * matches before ranking, persistence, or prompt injection without changing missing-field recall.
  */
 export function filterMatchesForTranscriptRights<T extends { metadata?: Record<string, unknown> }>(matches: T[]): T[] {
-  const rightsConfirmed = envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false);
+  const rightsConfirmed = fmpTranscriptRightsActive();
   const hasMarkedDerivative = matches.some((match) => match?.metadata?.fmp_derived === true);
   if (rightsConfirmed && !hasMarkedDerivative) return matches;
   let activeGeneration: number | undefined;
@@ -5488,7 +5507,7 @@ export async function retrieveContextDetailed(
     const queryFmpNamespace = Boolean(
       stableProviderAuthority &&
       currentFmpRecordsExpected &&
-      envFlagOn("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", false)
+      fmpTranscriptRightsActive()
     );
     const fmpIndex = queryFmpNamespace
       ? vectorDataIndex(pc, "fmp-transcripts", ledgerAuthority)

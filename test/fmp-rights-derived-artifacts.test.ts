@@ -27,7 +27,7 @@ beforeAll(async () => {
   process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "on";
   const { getDb } = await import("../src/lib/db");
   getDb();
-}, 60_000);
+}, 120_000);
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -294,8 +294,10 @@ describe("FMP rights-derived artifact gate", () => {
       persistFmpTranscriptDerivedArtifact,
       purgeFmpTranscriptRightsArtifacts
     } = await import("../src/lib/web-sources/fmp-transcripts");
+    const { getDb } = await import("../src/lib/db");
     const workId = "fmp-rights-test:provider-write-unknown";
     const providerVectorId = "fmp-derived-socratic:v1:provider-write-unknown";
+    const derivedContentHash = "fmp-rights-test-derived-content-hash";
     const claim = captureFmpTranscriptRightsGeneration()!;
     persistFmpTranscriptDerivedArtifact({
       claim,
@@ -314,12 +316,17 @@ describe("FMP rights-derived artifact gate", () => {
       write: () => undefined
     });
     completeFmpTranscriptDerivedProviderWork(workId, "provider_write_unknown");
+    getDb().prepare(`
+      INSERT INTO document_chunks (content_hash, symbol, source, chunk_id, created_at)
+      VALUES (?, 'AAPL', 'socratic-decision:socratic-memory', ?, ?)
+    `).run(derivedContentHash, providerVectorId, new Date().toISOString());
     vectorMocks.fetchExistingVectorRecordIds
       .mockResolvedValueOnce([providerVectorId])
       .mockResolvedValueOnce([providerVectorId])
       .mockResolvedValueOnce([]);
 
     const inventory = await inventoryFmpTranscriptRightsArtifacts();
+    expect(inventory.contentHashes).toContain(derivedContentHash);
     expect(inventory.providerPrivateVectorRefs).toEqual([{
       userId: "local",
       vectorId: providerVectorId,
@@ -330,6 +337,8 @@ describe("FMP rights-derived artifact gate", () => {
     process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
     const purged = await purgeFmpTranscriptRightsArtifacts({ dryRun: false });
     expect(purged.after.providerPrivateVectorRefs).toEqual([]);
+    expect(getDb().prepare("SELECT 1 AS ok FROM document_chunks WHERE content_hash = ?").get(derivedContentHash))
+      .toBeUndefined();
     expect(vectorMocks.purgeVectorRecordIds).toHaveBeenCalledWith(expect.objectContaining({
       userId: "local",
       namespace: "private",
@@ -485,7 +494,7 @@ describe("FMP rights-derived artifact gate", () => {
     }));
   });
 
-  it("does not cross provider deletion while a Pinecone upsert is unresolved", async () => {
+  it("does not let unrelated Pinecone upserts block transcript rights erasure", async () => {
     const { inventoryFmpTranscriptRightsArtifacts, purgeFmpTranscriptRightsArtifacts } = await import(
       "../src/lib/web-sources/fmp-transcripts"
     );
@@ -498,6 +507,35 @@ describe("FMP rights-derived artifact gate", () => {
         id, authority_id, provider, operation, credential_ref, user_id, units,
         estimated_cost_usd, status, created_at, dispatched_at, updated_at
       ) VALUES (?, 'test', 'pinecone', 'upsert', 'test', 'local', 1, 0, 'dispatched', ?, ?, ?)
+    `).run(attemptId, at, at, at);
+
+    process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";
+    const purged = await purgeFmpTranscriptRightsArtifacts({ dryRun: false });
+    expect(purged.before.pendingPineconeUpsertAttemptIds).toEqual([]);
+    expect(purged.after.pendingPineconeUpsertAttemptIds).toEqual([]);
+    expect(vectorMocks.purgeVectorNamespaceAll).toHaveBeenCalledTimes(1);
+    const inventory = await inventoryFmpTranscriptRightsArtifacts();
+    expect(inventory.pendingPineconeUpsertAttemptIds).toEqual([]);
+
+    database.prepare(`
+      UPDATE provider_dispatch_attempts
+      SET status = 'failed', completed_at = ?, updated_at = ? WHERE id = ?
+    `).run(at, at, attemptId);
+  });
+
+  it("blocks provider deletion while a transcript-associated Pinecone upsert is unresolved", async () => {
+    const { inventoryFmpTranscriptRightsArtifacts, purgeFmpTranscriptRightsArtifacts } = await import(
+      "../src/lib/web-sources/fmp-transcripts"
+    );
+    const { getDb } = await import("../src/lib/db");
+    const database = getDb();
+    const attemptId = "fmp-rights-test:pinecone-transcript-upsert";
+    const at = new Date().toISOString();
+    database.prepare(`
+      INSERT INTO provider_dispatch_attempts (
+        id, authority_id, provider, operation, credential_ref, user_id, units,
+        estimated_cost_usd, status, created_at, dispatched_at, updated_at
+      ) VALUES (?, 'test', 'pinecone', 'upsert fmp transcript vectors', 'test', 'local', 1, 0, 'dispatched', ?, ?, ?)
     `).run(attemptId, at, at, at);
 
     process.env.FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED = "off";

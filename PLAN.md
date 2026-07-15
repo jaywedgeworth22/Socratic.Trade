@@ -72,9 +72,23 @@
 > accidentally discarding every managed match. Round 21 removes transitive `node:` imports exposed by
 > the production build: immutable derivative IDs use edge-safe Web Crypto SHA-256, the already-tested
 > abort-aware retry pause owns erasure backoff, and document construction requires the precomputed ID
-> to remain paired with its rights generation. Finish hostile re-review, run the ordered
-> Node 24 lint/TypeScript/full-test/build gate, update the PR, resolve hosted findings, merge, and verify
-> the automatic production deployment without enabling transcript ingestion or backfill.
+> to remain paired with its rights generation. Current-main reconciliation includes `origin/main@58de276e`
+> after PR #1607 merged. The doc-type coverage integration test now supplies deterministic encryption, the
+> vector authority mocks required by the licensed-memory path, the required proposal regime field, and
+> realistic timeout headroom; the Infisical signal-forwarding fixture supplies its own fake app identity/login.
+> Focused verification is green at 15/15 and 37/37, and `docs/BRANCH-INTEGRATION-LEDGER.md` records branch
+> dispositions for future agents. Round-23 fixes the final focused rights review: transcript retrieval requires
+> the durable active rights gate, derived Socratic-memory dedup hashes are included in rights purge, and unrelated
+> Pinecone upserts no longer block transcript erasure. Focused remediation verification is green at 31/31.
+> Round-24 closes the focused strategy/regime and suite-load compatibility fallout: Red Team prompt stubs now
+> distinguish review calls from Green/strategy calls, vector-authority mocks match the current licensed-memory
+> contract, heavy strategy cases have realistic timeout headroom, and the Infisical signal-forwarding regression
+> has enough full-suite load margin. Focused verification is green at 23/23 for regime/drawdown, 37/37 for
+> Infisical, 15/15 for RAG doc-type coverage, 31/31 for transcript rights/retrieval, and standalone TypeScript.
+> Local full/grouped gates are currently host-pressure limited rather than assertion-limited: grouped tests ended
+> with 143 and repeated production builds were OS-killed with 137 while other agent runners respawned. Push the
+> current branch and let hosted `verify` provide the authoritative full lint/test/build result, then mark ready, merge,
+> and verify the automatic production deployment without enabling transcript ingestion or backfill.
 > **2026-07-14 - Infisical JSON-export production compatibility (CODEX).** PR #1594 merged,
 > but its automatic Coolify deployment failed health checks and rolled back because pinned
 > Infisical CLI v0.43.98 emits `export --format json` as an array of secret records while the
@@ -122,10 +136,9 @@
 > disposable cache; prove non-empty JS/MJS/DTS/DMTS artifacts and both require/import
 > resolution; then run the serialized lint, standalone TypeScript, full test, and
 > production-build gate on current `origin/main`. Land through `scripts/land.sh`, require
-> hosted verification and protected squash merge, then verify the exact automatic production
-> rollout and dependency health. Ready PR #1607 now has exact-head local and hosted gates
-> green with both review threads resolved; protected squash merge and production verification
-> remain.
+  > hosted verification and protected squash merge, then verify the exact automatic production
+  > rollout and dependency health. Ready PR #1607 merged as `58de276e`; production verification is included
+  > in the final all-PR release check after #1586 lands.
 > See `docs/rollouts/2026-07-14-shared-v171-consumer.md`.
 
 > **2026-07-14 - TypeScript gate repair (CODEX).** Replace PR #1531's split TypeScript 7 CLI /

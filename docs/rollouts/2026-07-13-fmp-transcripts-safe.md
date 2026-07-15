@@ -792,6 +792,84 @@ instead of Node's timers/promises module. The deterministic SHA-256 fixture, adj
 tests (3 files / 20 tests), TypeScript, and a production build with the real TypeScript phase plus all
 32 static pages pass. The ordered full gate must restart after this code change.
 
+### Round-22 current-main PR landing
+
+After PR #1607 merged shared package v1.7.1 to `origin/main@58de276e`, this branch was already
+reconciled with current main but the remote PR head remained stale and draft. The doc-type coverage
+strategy integration test also needed to mirror the new vector authority contract used by
+`indexSocraticDecisionMemory`: it now pins deterministic encryption, provides provider and ledger authority,
+supplies the required proposal regime field, and gives the six heavy strategy integration cases 75s timeouts.
+The focused file passes 15/15 on Node 24.
+
+The Infisical signal-forwarding test was also failing deterministically after the bootstrap hardening landed
+because that fixture had no explicit fake app identity/login path. It now supplies a fake universal-auth pair,
+fake project, and fake login token, keeping the test focused on runner-to-wrapper signal forwarding. The focused
+Infisical bootstrap file passes 37/37 on Node 24.
+
+Added `docs/BRANCH-INTEGRATION-LEDGER.md` with branch/PR dispositions for the current consolidation so future
+agents do not re-inventory stale or overlapping branches.
+
+### Round-23 rights-gate review fixes
+
+A focused read-only review of the current-main landing tree found three pre-merge rights-boundary defects.
+Raw transcript retrieval could be re-enabled by the environment flag even if the durable
+`fmp_transcript_rights_gate` remained revoked; retrieval now requires both the env confirmation and an active
+durable generation. FMP-derived Socratic-memory writes store a `document_chunks` dedup receipt keyed by their
+deterministic private vector ID; the rights inventory now includes those hashes and the verified purge deletes
+them once provider absence is proven. Finally, transcript-rights purge now blocks only transcript-associated
+Pinecone upsert operations (`upsert fmp transcript vectors`, `commit fmp transcript vectors`, and
+`upsert fmp-derived private memory`) instead of every unrelated app-wide Pinecone upsert.
+
+Verification:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/vector-db-retrieval.test.ts test/fmp-rights-derived-artifacts.test.ts --reporter=dot
+```
+
+Results: 2 files / 31 tests green. No transcript flag, FMP request, live Pinecone call, corpus mutation,
+Infisical mutation, merge, or production action ran in this step.
+
+### Round-24 focused suite-load and strategy compatibility fixes
+
+The current-main landing tree exposed two more test-contract drifts before a clean repository gate:
+strategy/regime integration fixtures were still assuming the first OpenAI call was always Green, while
+the current strategy runner can ask Red Team first; and the heavier strategy cases needed explicit
+timeout headroom under parallel full-suite load. The mocks now detect Red Team review prompts, return an
+approval payload for those calls, expose the current vector provider/ledger authority contract, and keep
+the bull-prompt assertions tied to the actual Green request body. The drawdown-flip and regime suites
+now pass together at 23/23 on Node 24.
+
+The Infisical signal-forwarding regression also needed full-suite timing margin after the fake
+universal-auth path was added. The fixture keeps its own fake app identity/project/login token and now
+waits long enough for the wrapped runner's ready and termination markers under repository-wide load. The
+focused Infisical bootstrap suite remains green at 37/37.
+
+Additional verification completed before restarting the ordered full gate:
+
+```bash
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/regime-severity.test.ts test/strategy-moneypath-drawdown-flip.test.ts --reporter=dot
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run test/infisical-bootstrap.test.ts --reporter=dot
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npm run lint
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit
+```
+
+Results: regime/drawdown 2 files / 23 tests green; Infisical 37/37 green; lint exits 0 with inherited
+warnings only; TypeScript is clean. The full repository `npm test` was restarted after these local fixes.
+
+Later landing attempts hit host-level contention rather than assertion failures. A clean full `npm test`
+run emitted no additional assertion summary but ended with SIGTERM 143 after long execution; a grouped
+changed-suite run also ended 143 while the same files continued to pass individually. Multiple
+`npm run build` attempts, including `NEXT_PRIVATE_BUILD_WORKER=1 NODE_OPTIONS=--max-old-space-size=4096`,
+were OS-killed with 137 while other agent build/test processes respawned on the same workstation. Those
+137/143 exits are recorded as local host-pressure blockers; hosted GitHub `verify` must be treated as the
+authoritative full lint/test/build gate for the pushed PR head.
+
+No transcript flag, FMP request, corpus/vector provider write, Infisical mutation, merge, or
+production action ran in this step. The remaining release path is the ordered Node 24 lint,
+hosted TypeScript/full test/build gate, ready PR #1586, protected merge, and exact production verification.
+
 The highest-yield 1,000-stock operational plan remains “archive broadly, embed selectively”: exact
 1,000-CIK manifest plus private priority overlay; historical submissions-shard discovery; immutable raw
 archive; structured XBRL/fundamentals; embedded 10-K/10-Q decision sections and material 8-K exhibits;
