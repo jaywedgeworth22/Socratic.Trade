@@ -1,13 +1,14 @@
 # Current Status
 
-## 2026-07-16 — [codex-autofix] Keep Bearer auth for Vertex OpenAI-compatible endpoints; correct settings rollout note (branch `agent/aiplatform-auth-support-clean`, PR #1677)
+## 2026-07-16 — [codex-autofix] Round 2: scope x-goog-api-key to OpenAI-compatible Vertex URLs only (branch `agent/aiplatform-auth-support-clean`, PR #1677)
 
-Codex review posted 2 P2 findings on PR #1677 (feat(llm): support x-goog-api-key for aiplatform.googleapis.com):
+Codex review posted 2 more P2 findings on the round-1 fixes:
 
-1. **Bearer auth for Vertex OpenAI-compatible endpoints**: The original PR switched ALL `aiplatform.googleapis.com` URLs to `x-goog-api-key` auth, but Agent Platform OpenAI-compatible endpoints (`.../endpoints/openapi/...`) expect `Authorization: Bearer` with an OAuth/ADC access token. Fixed `llmAuthHeaders` to check for `/openapi/` or `/openai/` path segments and use Bearer auth for those, while keeping `x-goog-api-key` for direct Vertex AI endpoints. Added test coverage for all three URL patterns. (P2, resolved)
-2. **False rollout note**: `docs/rollouts/2026-07-16-settings-subpages-redesign.md` claimed `ios-components.tsx` was deleted — it still exists and is imported by settings pages. Corrected the note. (P2, resolved)
+1. **Native Vertex URL support was misleading**: The round-1 fix sent `x-goog-api-key` for all non-OpenAI-compatible `aiplatform.googleapis.com` URLs (e.g. `:generateContent`), but the `chat-completions` transport sends the wrong body format for native Vertex endpoints — full support would require a separate transport. Per Codex's recommendation, scoped the `x-goog-api-key` handling to OpenAI-compatible paths only (`/openapi/`, `/openai/`); native Vertex URLs now fall back to default Bearer auth. Updated the test to accurately describe this limitation. (P2, resolved)
+2. **Stale PR #1616 follow-up in rollout note**: `docs/rollouts/2026-07-15-ag-reconciled-improvements-landed.md` said "Await PR #1616's hosted checks" but #1616 had already merged (`d3efc9a6`) and deployed. Marked it as completed. (P2, resolved)
 
-Verify: tsc clean, 400 files / 4607 tests pass, build clean. Both threads resolved, auto-merge enabled.
+**Round 1 (previous commit):** Bearer auth for Vertex OpenAI-compatible endpoints; corrected false settings rollout note.
+Both rounds verified: tsc clean, 400 files / 4607 tests pass, build clean. All 4 Codex threads resolved, auto-merge enabled.
 Rollout: `docs/rollouts/2026-07-16-aiplatform-auth.md`, `docs/rollouts/2026-07-16-settings-subpages-redesign.md`.
 
 ## 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE)
