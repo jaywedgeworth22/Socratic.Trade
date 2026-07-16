@@ -2044,6 +2044,16 @@ export interface BrokerGateway {
   reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder>;
   placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder>;
   cancelEquityOrder(accountNumber: string, orderId: string): Promise<ExecutedOrder>;
+  /**
+   * Identify and cancel the still-resting sibling legs (take-profit/stop-loss) of a broker-native
+   * bracket order (Alpaca order_class "bracket", Tradier "otoco"), given the ORIGINAL entry order's
+   * own ID — used when a per-position stop plan changes away from "fixed"/"atr" after an earlier
+   * opening already placed a bracket, whose legs `enrichOpeningProposal` has no other way to reach
+   * (only strips bracket fields from the NEW order being placed, not a resting one). Best-effort:
+   * a leg that already filled/cancelled between lookup and cancel is simply skipped, not an error.
+   * Optional — undefined on a broker/adapter with no bracket support (e.g. Robinhood).
+   */
+  cancelBracketSiblingLegs?(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }>;
 }
 
 export interface StrategyRun {

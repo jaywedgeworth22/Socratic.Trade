@@ -14,6 +14,7 @@ import type {
   EquityOrderInput
 } from "./types";
 import { normalizeSymbol } from "./money";
+import { isRejectedOrCanceledState } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount } from "./db";
 import { logApiHealth } from "./db-health";
 import { recordProviderCall, pushBrokerBalance } from "./usage-monitor-push";
@@ -156,6 +157,13 @@ function mapTradierSideRead(raw: unknown): OrderSide {
 // OrderType -> Tradier `type` (WRITE). Tradier's wire word for a stop-market is "stop".
 function mapTradierTypeWrite(type: OrderType): string {
   return type === "stop_market" ? "stop" : type;
+}
+
+// The exit (opposite) side for a bracket's take-profit/stop-loss legs — the leg that closes
+// whatever the entry leg opened. A "buy"/entry long closes with "sell"; a "short"/entry short
+// closes with "cover" (buy_to_cover).
+function exitSideForEntry(entrySide: OrderSide): OrderSide {
+  return entrySide === "short" ? "cover" : "sell";
 }
 
 // Tradier `o.type` -> OrderType (READ-BACK).
@@ -667,9 +675,80 @@ class TradierBrokerGateway implements BrokerGateway {
       throw new Error("Tradier order too small for a whole share.");
     }
 
-    // v1 IGNORES bracketTakeProfit/bracketStopLoss: strategy.ts never sets them for Tradier
-    // (brokerSupportsBrackets is Alpaca-only), and protection comes from the synthetic-stop monitor.
-    // Native Tradier OTOCO brackets are a follow-up.
+    // Native Tradier bracket support: "otoco" (one-triggers-one-cancels-other) when BOTH a
+    // take-profit and stop-loss are set, "oto" (one-triggers-other, single exit) when only one is —
+    // Tradier's OTOCO always implicitly OCO-pairs legs 1+2, so a single-exit bracket uses the
+    // simpler 2-leg class instead of padding a phantom second leg. Leg 0 (entry) only accepts
+    // limit/stop/stop_limit per Tradier's schema — no market-type entry leg exists for a multi-leg
+    // order — so a market-type bracket request falls through to the plain single-leg order below
+    // (no bracket attached; the synthetic-stop monitor remains the protection lane for it, same as
+    // before this native-bracket support existed). UNVERIFIED against a live/sandbox Tradier
+    // account — Tradier's public docs confirm the class/indexed-leg-parameter request shape but
+    // not the exact multi-leg response envelope; the response is assumed to mirror the documented
+    // "combo" class shape (single top-level order id, `leg` array on GET) since OTOCO/OTO share the
+    // same general multi-leg order family in Tradier's own documentation.
+    const isBracket = input.bracketTakeProfit != null || input.bracketStopLoss != null;
+    const entryTypeSupportsBracket = input.type === "limit" || input.type === "stop_market" || input.type === "stop_limit";
+    if (isBracket && entryTypeSupportsBracket) {
+      const exitSide = mapTradierSideWrite(exitSideForEntry(input.side));
+      const hasTakeProfit = input.bracketTakeProfit != null;
+      const hasStopLoss = input.bracketStopLoss != null;
+      const bracketForm: Record<string, string | number | undefined> = {
+        class: hasTakeProfit && hasStopLoss ? "otoco" : "oto",
+        duration: durationFor(input),
+        tag: sanitizeTag(input.refId),
+        "symbol[0]": toTradierSymbol(input.symbol),
+        "side[0]": mapTradierSideWrite(input.side),
+        "quantity[0]": String(wholeQty),
+        "type[0]": mapTradierTypeWrite(input.type)
+      };
+      if (input.limitPrice != null) bracketForm["price[0]"] = input.limitPrice;
+      if (input.stopPrice != null) bracketForm["stop[0]"] = input.stopPrice;
+
+      let legIndex = 1;
+      if (hasTakeProfit) {
+        bracketForm[`symbol[${legIndex}]`] = toTradierSymbol(input.symbol);
+        bracketForm[`side[${legIndex}]`] = exitSide;
+        bracketForm[`quantity[${legIndex}]`] = String(wholeQty);
+        bracketForm[`type[${legIndex}]`] = "limit";
+        bracketForm[`price[${legIndex}]`] = input.bracketTakeProfit;
+        legIndex += 1;
+      }
+      if (hasStopLoss) {
+        bracketForm[`symbol[${legIndex}]`] = toTradierSymbol(input.symbol);
+        bracketForm[`side[${legIndex}]`] = exitSide;
+        bracketForm[`quantity[${legIndex}]`] = String(wholeQty);
+        bracketForm[`type[${legIndex}]`] = input.bracketStopLimit != null ? "stop_limit" : "stop";
+        bracketForm[`stop[${legIndex}]`] = input.bracketStopLoss;
+        if (input.bracketStopLimit != null) bracketForm[`price[${legIndex}]`] = input.bracketStopLimit;
+      }
+
+      let bracketBody: { order?: Record<string, unknown> };
+      try {
+        bracketBody = await this.trackHealth(() =>
+          this.request<{ order?: Record<string, unknown> }>("POST", `/accounts/${input.accountNumber}/orders`, { form: bracketForm })
+        );
+      } catch (error) {
+        throw new Error(`Tradier bracket order failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const bracketOrder = bracketBody.order ?? {};
+      const bracketId = bracketOrder.id;
+      if (bracketId === undefined || bracketId === null || bracketId === "") {
+        throw new Error(`Tradier bracket order failed: response had no order id: ${JSON.stringify(bracketBody)}`);
+      }
+      const bracketRawStatus = String(bracketOrder.status ?? "");
+      return {
+        orderId: String(bracketId),
+        refId: input.refId,
+        state: bracketRawStatus && bracketRawStatus.toLowerCase() !== "ok" ? bracketRawStatus : "pending",
+        filledQuantity: optionalNumber(bracketOrder.exec_quantity),
+        averagePrice: optionalNumber(bracketOrder.avg_fill_price),
+        raw: bracketBody
+      };
+    }
+
+    // No bracket (or a market-type entry that can't carry one): plain single-leg order. Protection
+    // comes from the synthetic-stop monitor / broker-protective-stops.ts instead.
     const form: Record<string, string | number | undefined> = {
       class: "equity",
       symbol: toTradierSymbol(input.symbol),
@@ -737,6 +816,41 @@ class TradierBrokerGateway implements BrokerGateway {
       state,
       raw: body
     };
+  }
+
+  // Identifies and cancels a bracket's (otoco/oto) still-resting sibling legs given the ORIGINAL
+  // entry order's own container ID. Reuses equityRowsFromTradierOrder — the SAME leg-flattening
+  // helper getEquityOrders already relies on for coverage — so this shares its exact (and, per that
+  // function's own note, still webhook/live-unverified) understanding of Tradier's multi-leg
+  // response shape. The entry leg itself is naturally skipped by the terminal-state check below
+  // (it has necessarily already filled, since a bracket-teardown only ever runs against a plan
+  // that already committed from a completed opening fill).
+  async cancelBracketSiblingLegs(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }> {
+    let body: { order?: Record<string, unknown> };
+    try {
+      body = await this.trackHealth(() =>
+        this.request<{ order?: Record<string, unknown> }>("GET", `/accounts/${accountNumber}/orders/${originalOrderId}`)
+      );
+    } catch {
+      return { cancelledOrderIds: [] };
+    }
+    const container = body.order;
+    if (!container) return { cancelledOrderIds: [] };
+    const cancelledOrderIds: string[] = [];
+    for (const legRow of equityRowsFromTradierOrder(container)) {
+      const legId = legRow.id != null ? String(legRow.id) : undefined;
+      if (!legId) continue;
+      const legState = String(legRow.status ?? "");
+      if (isRejectedOrCanceledState(legState) || legState.toLowerCase() === "filled") continue;
+      try {
+        await this.cancelEquityOrder(accountNumber, legId);
+        cancelledOrderIds.push(legId);
+      } catch {
+        // best-effort — a leg that filled/cancelled between the fetch above and this cancel is
+        // fine to skip; Tradier's own OCO cascade may have already resolved it
+      }
+    }
+    return { cancelledOrderIds };
   }
 }
 

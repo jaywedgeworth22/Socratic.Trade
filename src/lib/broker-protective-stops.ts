@@ -50,7 +50,10 @@ import {
   insertFillEvent,
   listBrokerProtectiveStops,
   upsertBrokerProtectiveStop,
-  type BrokerProtectiveStop
+  type BrokerProtectiveStop,
+  listPendingBracketTeardowns,
+  removePendingBracketTeardown,
+  bumpPendingBracketTeardownAttempts
 } from "./db";
 import { isRejectedOrCanceledState, liveExitOrderCoverage } from "./broker-side";
 import { normalizeSymbol } from "./money";
@@ -986,4 +989,55 @@ export async function reconcileBrokerProtectiveStops(args: {
     }
   }
   return out;
+}
+
+// A pending teardown row survives at most this many failed attempts before being dropped — mirrors
+// the "stale placing intents" sweep's own bounded-retry philosophy (db-proposals.ts): a bracket
+// whose sibling legs can't be found/cancelled after repeated tries is most likely already resolved
+// (filled, manually cancelled, or the account/broker no longer has it) rather than something an
+// unbounded retry loop would ever fix.
+const MAX_BRACKET_TEARDOWN_ATTEMPTS = 10;
+
+/**
+ * Sweeps `pending_bracket_teardowns` (enqueued by recordStopPlan/clearStopPlans in db-api-keys.ts
+ * whenever a "fixed"/"atr" plan with a tracked broker-native bracket changes away from that style)
+ * and asks the broker gateway to identify + cancel that bracket's still-resting sibling legs — the
+ * long-deferred "OCO sibling-identity pairing" gap (PR #1331/#1371): `enrichOpeningProposal` only
+ * strips bracket fields from the NEW order being placed, with no reach into an EARLIER opening's
+ * already-resting bracket. Cancellation is broker-gateway-optional (`cancelBracketSiblingLegs` is
+ * undefined on an adapter with no bracket support, e.g. Robinhood) — a row on such an account is
+ * simply dropped immediately, since no bracket could have been placed there to begin with. A row is
+ * removed once cancellation is attempted (successfully or not) unless the broker call itself threw,
+ * in which case attempts is bumped and the row is retried next tick up to MAX_BRACKET_TEARDOWN_ATTEMPTS.
+ */
+export async function reconcilePendingBracketTeardowns(gateway: BrokerGateway, accountNumber: string, userId: string = "local"): Promise<void> {
+  let pending: ReturnType<typeof listPendingBracketTeardowns>;
+  try {
+    pending = listPendingBracketTeardowns(accountNumber, userId);
+  } catch {
+    return;
+  }
+  if (pending.length === 0) return;
+
+  if (!gateway.cancelBracketSiblingLegs) {
+    // No bracket-cancellation capability on this broker adapter — nothing to reconcile against; a
+    // row here would only exist from a stale plan recorded before a broker switch, so just drop it.
+    for (const row of pending) removePendingBracketTeardown(row.id);
+    return;
+  }
+
+  for (const row of pending) {
+    try {
+      const { cancelledOrderIds } = await gateway.cancelBracketSiblingLegs(accountNumber, row.orderId);
+      audit("bracket_sibling_legs_torn_down", { symbol: row.symbol, orderId: row.orderId, cancelledOrderIds }, userId);
+      removePendingBracketTeardown(row.id);
+    } catch (err) {
+      if (row.attempts + 1 >= MAX_BRACKET_TEARDOWN_ATTEMPTS) {
+        audit("bracket_sibling_teardown_abandoned", { symbol: row.symbol, orderId: row.orderId, attempts: row.attempts + 1, error: errMsg(err) }, userId);
+        removePendingBracketTeardown(row.id);
+      } else {
+        bumpPendingBracketTeardownAttempts(row.id);
+      }
+    }
+  }
 }

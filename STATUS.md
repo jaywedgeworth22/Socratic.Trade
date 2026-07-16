@@ -2,6 +2,27 @@
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
+## 2026-07-16 — Alpaca + Tradier bracket sibling-leg cancellation (CLAUDE)
+
+Closed the long-deferred "OCO sibling-identity pairing" gap raised by owner's direct
+question. Alpaca: implemented `cancelBracketSiblingLegs` via nested-order GET + per-leg
+cancel (was an unimplemented adapter capability, not a broker limitation). Tradier: built
+native OTOCO/OTO bracket order placement from scratch (zero bracket support existed before
+this), wired into `brokerSupportsBrackets`, plus sibling-leg cancellation parsing Tradier's
+`leg` array. New `pending_bracket_teardowns` queue decouples "plan changed away from a
+tracked bracket" (cheap DB-write-time detection) from "cancel the broker legs" (reconcile-time,
+`reconcilePendingBracketTeardowns` in `broker-protective-stops.ts`, called from
+`runSyntheticStopMonitor`). New migration v42 (`position_stop_plans.opening_order_id` +
+`pending_bracket_teardowns` table); fixed a migration bug where an unconditional
+`PRAGMA table_info`/`ALTER TABLE` threw against test harnesses with a minimal hand-built
+schema (added the same `sqlite_master`-existence-guard pattern used elsewhere in `db.ts`),
+and updated 10 hardcoded schema-version assertions (41 -> 42) in
+`test/persistence-hardening.test.ts` as legitimate collateral. Owner explicitly directed
+"Build both now" (Alpaca fix + full Tradier bracket feature) via `AskUserQuestion` after I
+flagged the scope difference. Unverified against a live Tradier account (unit-tested only,
+matching this adapter's existing testing posture). **Merged via PR #1661 as `a5c27e8`;
+deployed to production via auto-deploy-on-merge.**
+Rollout: `docs/rollouts/2026-07-16-alpaca-tradier-bracket-sibling-leg-teardown.md`.
 
 ## 2026-07-15 — Per-position stop plans: "none" short bypass, owner-decided (CLAUDE, branch `claude/stop-plans-none-short-override`)
 Resolves the open question left on merged PR #1371's `policy.ts` thread: whether an explicit
