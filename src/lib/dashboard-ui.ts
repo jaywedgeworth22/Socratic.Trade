@@ -311,7 +311,7 @@ export function feedStatusLabel(raw?: string | null): string {
 
 // ── Notifications (decided vocabulary) ──────────────────────────────────────────────────────
 
-const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
+export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
   fill: "Order filled",
   block: "Trade blocked",
   run_failed: "Run failed",

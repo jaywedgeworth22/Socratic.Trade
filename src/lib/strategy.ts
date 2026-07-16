@@ -51,6 +51,7 @@ import { resolveLlmEndpoint } from "./llm-provider";
 import { resolveModelRotationForRun } from "./model-rotation";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
+import { planLlmProviderAttempts, recordLlmProviderFailure } from "./llm-provider-cooldown";
 import { LlmCredentialRequiredError, LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
@@ -145,6 +146,8 @@ import {
 } from "./finalized-sizing-review";
 import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-team-routing";
 import { isEscalationRegime } from "./regime-watch";
+import { getUpcomingEconomicEventsForPrompt } from "./economic-calendar";
+import { compactHeadlinesForPrompt } from "./prompt-headlines";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
 import { computeMultiSignalSeverity } from "./regime-severity";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -3895,6 +3898,12 @@ async function proposeTrades(input: {
   // Fama-French factor regime). Cached 6h; failure-tolerant — never blocks a run.
   const marketSignals = await getMarketSignals(input.userId).catch(() => undefined);
 
+  // Forward economic-event awareness (handoff 3.5): the next ~5 calendar days of scheduled
+  // HIGH-impact US events (CPI/FOMC/NFP class) from the daily-watermarked FMP calendar ingest.
+  // Key-gated + fail-open: no key, an ingest failure, or an empty calendar all yield [] and the
+  // prompt block below is OMITTED entirely — never fabricated, never an empty scaffold.
+  const upcomingEconomicEvents = await getUpcomingEconomicEventsForPrompt(input.userId).catch(() => []);
+
   // Multi-signal regime severity (Lane 5, composite review E/high/S follow-up): blends VIX term
   // structure, HY credit spread, and market breadth (+ VVIX/SKEW when available) into one
   // continuous [0,1] severity reading, floored by the classified enum's own severity so it can
@@ -3962,10 +3971,14 @@ async function proposeTrades(input: {
           const sym = normalizeSymbol(candidate.symbol);
           return {
             ...candidate,
+            // Handoff 3.6: the prompt clone carries the COMPACTED headline sample (markup-stripped,
+            // near-duplicate-deduped, capped at HEADLINES_PER_CANDIDATE, each headline kept whole —
+            // never truncated mid-claim), with EVERY injected headline containment-sanitized.
+            // compactCandidateForPrompt applies the same compaction, so clone == injection.
             ...(candidate.headlines
               ? {
-                  headlines: candidate.headlines.map((headline, index) =>
-                    index < 2 ? containData("news", `headlines:${sym}`, headline) : headline
+                  headlines: compactHeadlinesForPrompt(candidate.headlines).map((headline) =>
+                    containData("news", `headlines:${sym}`, headline)
                   )
                 }
               : {}),
@@ -4253,6 +4266,22 @@ async function proposeTrades(input: {
           }
         }
       : {}),
+    // Forward calendar (handoff 3.5): scheduled high-impact US macro events in the next ~5 days,
+    // adjacent to the regime label so event timing informs entries/sizing around macro catalysts.
+    // Entire block omitted when there is no real calendar data.
+    ...(upcomingEconomicEvents.length > 0
+      ? {
+          upcomingEconomicEvents: {
+            note: "Scheduled HIGH-impact US economic events (FMP economic calendar) within the next 5 calendar days — e.g. CPI, FOMC, NFP. Weigh event timing when opening or sizing positions around these macro catalysts; this is context, not a block. An event carrying timingNote already printed today (or may have) — read it as a fresh release, not a pending catalyst.",
+            events: upcomingEconomicEvents.map((event) => ({
+              event: event.event,
+              date: event.date,
+              ...(event.impact ? { impact: event.impact } : {}),
+              ...(event.timingNote ? { timingNote: event.timingNote } : {})
+            }))
+          }
+        }
+      : {}),
     portfolio: input.portfolio,
     positions: input.positions,
     recentOrders: input.recentOrders,
@@ -4336,9 +4365,10 @@ async function proposeTrades(input: {
 
   // ── Advisory prompt-injection scan (CR-H prompt-safety lane) ─────────────
   // Deterministic receipts over the UNTRUSTED text blocks entering the Bull/Bear prompts. The
-  // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = first 2
-  // headlines, smartMoney = first 3 bulletins). Raw source text is scanned for reviewability;
-  // instruction-like spans in untrusted fields were already quarantined in the prompt-only copy.
+  // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = the
+  // compacted headline sample, max HEADLINES_PER_CANDIDATE; smartMoney = first 3 bulletins).
+  // Raw source text is scanned for reviewability; instruction-like spans in untrusted fields
+  // were already quarantined in the prompt-only copy.
   const untrustedPromptFields: UntrustedPromptField[] = [
     { name: "owner_strategy_prompt", text: input.prompt },
     { name: "reflection_summary", text: reflection },
@@ -4349,7 +4379,7 @@ async function proposeTrades(input: {
     ...(input.marketScan?.topCandidates ?? []).flatMap((candidate) => {
       const sym = normalizeSymbol(candidate.symbol);
       const fields: UntrustedPromptField[] = [];
-      const news = candidate.headlines?.slice(0, 2) ?? [];
+      const news = compactHeadlinesForPrompt(candidate.headlines);
       if (news.length > 0) fields.push({ name: `headlines:${sym}`, text: news.join("\n") });
       const bulletins = candidate.evidenceBulletins?.slice(0, 3) ?? [];
       if (bulletins.length > 0) fields.push({ name: `smartMoney:${sym}`, text: bulletins.join("\n") });
@@ -4561,6 +4591,16 @@ async function proposeTrades(input: {
       )
     });
   }
+  // Cross-run cooldown planning (handoff 6b.4): lanes that just failed with a rate/quota error are
+  // skipped (audited per skip) instead of being re-discovered dead every run; when EVERY lane is
+  // cooling the full chain still runs, least-recently-failed first. Kill switch:
+  // LLM_PROVIDER_COOLDOWN_DISABLED=1 (restores the unfiltered chain exactly).
+  const plannedBullAttempts = planLlmProviderAttempts(bullAttempts, {
+    step: "bull",
+    runId: input.runId,
+    userId: input.userId,
+    connectedAccountId: input.policy.connectedAccountId
+  });
   // Which endpoint actually served the run (starts as the primary; updated on failover). Transport
   // and keySource are tracked too so the served step/audit trail reports the FALLBACK's transport
   // (e.g. anthropic-messages vs the primary's responses), not the primary's — accurate money-path tracing.
@@ -4626,10 +4666,10 @@ async function proposeTrades(input: {
       },
       async () => {
         let lastError: unknown;
-        for (let i = 0; i < bullAttempts.length; i++) {
-          const attempt = bullAttempts[i];
-          const isLast = i === bullAttempts.length - 1;
-          const next = bullAttempts[i + 1];
+        for (let i = 0; i < plannedBullAttempts.length; i++) {
+          const attempt = plannedBullAttempts[i];
+          const isLast = i === plannedBullAttempts.length - 1;
+          const next = plannedBullAttempts[i + 1];
           try {
             const bullSoftTimeoutMs = strategyLlmTimeoutMs(attempt.model, input.policy.llmReasoningEffort);
             // Reasoning-class-aware SOFT wall-clock: a thinking-enabled model gets the widened bound.
@@ -4650,6 +4690,19 @@ async function proposeTrades(input: {
 
             if (!response.ok) {
               const detail = await response.text();
+              // Cross-run memory: a rate/quota failure cools this provider lane so the NEXT run
+              // skips it instead of re-discovering it dead (no-op for non-quota failures).
+              recordLlmProviderFailure({
+                provider: attempt.provider,
+                keySource: attempt.keySource,
+                status: response.status,
+                detail,
+                model: attempt.model,
+                step: "bull",
+                runId: input.runId,
+                userId: input.userId,
+                connectedAccountId: input.policy.connectedAccountId
+              });
               if (!isLast && isRetryableLlmStatus(response.status)) {
                 lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
                 console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
@@ -4660,12 +4713,15 @@ async function proposeTrades(input: {
             }
             const payload = await response.json();
             recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(payload) });
-            if (i > 0) {
+            // Served-by-fallback detection compares the ATTEMPT to the configured primary (not
+            // `i > 0`): cooldown planning can drop the primary from the chain entirely, making a
+            // fallback the first attempt.
+            if (attempt.model !== model || attempt.provider !== provider) {
               bullServedProvider = attempt.provider;
               bullServedModel = attempt.model;
               bullServedTransport = attempt.transport;
               bullServedKeySource = attempt.keySource;
-              bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${bullAttempts.length}).`;
+              bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${plannedBullAttempts.length}).`;
             }
             const text = extractLlmText(payload);
             const truncated = detectLlmTruncation(payload);
@@ -5003,7 +5059,10 @@ export function compactCandidateForPrompt(quote: MarketScan["topCandidates"][num
     smartMoney: quote.evidenceBulletins?.slice(0, 3),
     rating: quote.analystRating,
     ratingScore: quote.analystScore,
-    news: quote.headlines?.slice(0, 2),
+    // Handoff 3.6: bounded RAW headline sample — markup-stripped, near-duplicate-deduped, capped
+    // at HEADLINES_PER_CANDIDATE, each headline whole (never truncated mid-claim). The upstream
+    // pipeline stores bare titles (no per-headline source/timestamp), so none is fabricated here.
+    news: compactHeadlinesForPrompt(quote.headlines),
     sec: quote.sector,
     ind: quote.industry,
     posMV: quote.positionMarketValue,
