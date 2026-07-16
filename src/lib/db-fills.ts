@@ -236,6 +236,23 @@ export function listPendingBrokerReconciliationFills(accountNumber: string, user
   return rows.map(toFillEvent);
 }
 
+/** Signed net position quantity implied by ACCOUNTING fills (filled/partially_filled) for one
+ *  symbol — buy/cover add, sell/short subtract. Used by reconciliation's absent-order escalation
+ *  as DIAGNOSTIC evidence (broker position vs booked net) — never to flip a fill: fill_events is
+ *  not a complete ledger of the broker account (manual/MCP trades and pre-app holdings exist), so
+ *  a matching position delta is not proof the app's order executed. */
+export function netAccountingFillQuantity(accountNumber: string, source: FillSource, symbol: string, userId: string = "local"): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COALESCE(SUM(CASE WHEN side IN ('buy', 'cover') THEN quantity ELSE -quantity END), 0) AS net
+       FROM fill_events
+       WHERE account_number = ? AND source = ? AND symbol = ? AND user_id = ?
+         AND status IN ('filled', 'partially_filled')`
+    )
+    .get(accountNumber, source, symbol, userId) as { net: number };
+  return row.net;
+}
+
 export function updateFillEvent(id: string, patch: Partial<FillEvent>, userId: string = "local"): void {
   const database = getDb();
   const sets: string[] = [];

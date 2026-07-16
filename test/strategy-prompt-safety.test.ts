@@ -188,9 +188,10 @@ async function setupBrokerPaperDecide(): Promise<void> {
 }
 
 describe("prompt-safety fencing + receipts (advisory only)", () => {
-  it("(d) STRATEGY_PROMPT_VERSION bumped for the 2.0.0 single-adversary consolidation", async () => {
+  it("(d) STRATEGY_PROMPT_VERSION bumped for the 2.x single-adversary consolidation line", async () => {
     const { STRATEGY_PROMPT_VERSION } = await import("../src/lib/strategy-prompts");
-    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.0.0");
+    // 2.1.0: labeled two-sided skippedCounterfactuals (missed_winner/avoided_loser) prompt wording.
+    expect(STRATEGY_PROMPT_VERSION).toBe("agentic-strategy@2.1.0");
   });
 
   it("(a) buildBullSystem/buildRedTeamReviewSystem carry the data-not-command clause; reflection only by reference", async () => {

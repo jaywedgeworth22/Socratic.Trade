@@ -82,7 +82,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "red_team_veto_overridden",
   "prompt_injection_suspected",
   "evidence_age_anomaly",
-  "storage_warning"
+  "storage_warning",
+  "autonomy_halted_on_boot"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
