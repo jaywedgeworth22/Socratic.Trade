@@ -235,6 +235,33 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE, PR
+  #1667, branch `claude/bracket-teardown-adversarial-review-fixes`, merged as `0a5c9bd`) —
+  COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.** PR #1661 (merged
+  same day) had no automated review — Codex hit its usage cap on both #1661 and #1662. Ran 2
+  independent adversarial review passes (correctness/races, money-path) against the merged
+  code; both confirmed: a same-style scale-in (fixed->fixed) silently orphaned the OLD
+  bracket's legs forever (only `style` was compared, not the opening order id);
+  `cancelBracketSiblingLegs` on both Alpaca and Tradier swallowed every failure into a fake
+  success, making the bounded-retry mechanism dead code. Fixed and pushed as PR #1667 —
+  Codex's cap then reset and it reviewed #1667 itself, catching a genuine P1 in the FIRST
+  fix's design: comparing opening-order-id and tearing down the OLD bracket on a same-style
+  scale-in cancels STILL-VALID protection (each bracket is sized only to its own lot, not the
+  combined position). Redesigned: new `position_stop_plan_open_brackets` table (migration
+  v46, renumbered from v43 after a concurrent main merge claimed 43-45) tracks EVERY bracket
+  order id placed while a symbol sits in fixed/atr (appended, never overwritten); nothing torn
+  down on a same-style scale-in; ALL tracked brackets torn down together only on a genuine
+  style change or close. Codex found a second gap on that fix (legacy `opening_order_id` rows
+  would lose their bracket reference on first later transition) — fixed via a migration
+  backfill. A third Codex suggestion (tear down on fixed<->atr transitions too) was
+  investigated and explicitly declined with reasoning posted on the PR. The repo's
+  `codex-autofix` bot then independently implemented that declined suggestion anyway in its
+  own commit (`ad4db48`, alongside an equivalent backfill fix) — reconciled by merging the
+  bot's commit and reverting just the fixed<->atr teardown, with a PR comment explaining why
+  and a dedicated regression test locking in the correct behavior; Codex then independently
+  reviewed the bot's commit and flagged the exact same issue, confirming the reasoning was
+  correct. 400 files / 4,604 tests green, tsc/build/lint clean. Rollout:
+  `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
 - **Alpaca + Tradier bracket sibling-leg cancellation (CLAUDE, PR #1661, branch
   `claude/bracket-sibling-leg-cancellation`, merged as `a5c27e8`) — COMPLETED 2026-07-16;
   deployed to production via auto-deploy-on-merge.** Closes the long-deferred "OCO
@@ -1793,30 +1820,6 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **[Socratic.Trade][CLAUDE] Bracket sibling-leg teardown: adversarial review follow-up +
-  Codex P1 catch (branch `claude/bracket-teardown-adversarial-review-fixes`, PR #1667) — IN
-  PROGRESS, gate green, pushing fix.** PR #1661 (merged same day) had no automated review —
-  Codex hit its usage cap on both #1661 and #1662. Ran 2 independent adversarial review
-  passes (correctness/races, money-path) against the merged code; both confirmed: a
-  same-style scale-in (fixed->fixed) silently orphaned the OLD bracket's legs forever (only
-  `style` was compared, not the opening order id); `cancelBracketSiblingLegs` on both Alpaca
-  and Tradier swallowed every failure into a fake success, making the bounded-retry mechanism
-  dead code. Fixed and pushed as PR #1667 — Codex's cap then reset and it reviewed #1667
-  itself, catching a genuine P1 in the FIRST fix's design: comparing opening-order-id and
-  tearing down the OLD bracket on a same-style scale-in cancels STILL-VALID protection (each
-  bracket is sized only to its own lot, not the combined position). Redesigned: new
-  `position_stop_plan_open_brackets` table (migration v46, renumbered from v43 after a
-  concurrent main merge claimed 43-45) tracks EVERY bracket order id placed while a symbol
-  sits in fixed/atr (appended, never overwritten); nothing torn down on a same-style scale-in;
-  ALL tracked brackets torn down together only on a genuine style change or close. Also closed
-  account-deletion/purge coverage for the new table. Codex found a second gap on that fix
-  (legacy `opening_order_id` rows from before this migration would lose their
-  bracket reference on first later transition) — fixed via a migration-43 backfill. A third
-  Codex suggestion (tear down on fixed<->atr transitions too) was investigated and explicitly
-  declined — it would reintroduce the same P1, since fixed and atr brackets are mechanically
-  identical, each sized only to its own lot. 393 files / 4,547 tests green, tsc/build/lint
-  clean. Rollout:
-  `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
 - **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live

@@ -30,8 +30,9 @@ on the PR (doing so would reintroduce the same P1). The repo's `codex-autofix` b
 on this same PR and independently implemented that declined suggestion anyway (alongside its
 own equivalent backfill fix) — reconciled by merging its commit and reverting just the
 fixed<->atr teardown addition, with a PR comment explaining why, and a new dedicated
-regression test locking in the correct (no-teardown) behavior for that transition. 393 files /
-4,547+ tests green, tsc/build/lint clean. Branch `claude/bracket-teardown-adversarial-review-fixes`.
+regression test locking in the correct (no-teardown) behavior for that transition. 400 files /
+4,604 tests green, tsc/build/lint clean. **Merged via PR #1667 as `0a5c9bd`; deployed to
+production via auto-deploy-on-merge.**
 Rollout: `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
 ## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)
 
