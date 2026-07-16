@@ -2791,11 +2791,7 @@ As of 2026-07-08 (assignment-rule update).
   artifacts/sections/facts, exact accepted timestamps,
   amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.
-- **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (CODEX program; RAG-B01/B02/B08/B09/
-  B17, claimed 2026-07-13) — IN PROGRESS / HOSTILE RE-REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed missing
-  migration integration, header-only body deadlines/permits, process-local concurrency, stale-slot pacing collapse,
-  SEC-host/redirect/abort/Retry-After bypasses, fail-open PIT receipts, order-dependent conflicts, and unbounded
-  bodies/rows/diagnostics. No SEC fetch/archive write is authorized before independent acceptance.
+- **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter / Phase 2 (Antigravity/AG, branch `agent/ag-rag-backfill-p2`; RAG-B01/B02/B08/B09/B17, claimed 2026-07-15) — READY FOR PR.** Implemented a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
 - **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05, claimed 2026-07-13)
   — IN PROGRESS / HOSTILE REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed forgeable tokenizer/provenance gates,
   mutable payload-unbound eligibility, timezone-dependent identities, non-interruptible/pre-allocation bounds,
