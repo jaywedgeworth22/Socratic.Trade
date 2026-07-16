@@ -75,54 +75,57 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "openai",
     label: "OpenAI",
     options: [
-      { value: "gpt-5.4-nano", label: "gpt-5.4-nano - lowest cost OpenAI", tier: "$" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini - proven low-cost OpenAI", tier: "$$" },
-      { value: "gpt-5.6-luna", label: "gpt-5.6-luna - current cost-sensitive tier", tier: "$$" },
-      { value: "gpt-5.6-terra", label: "gpt-5.6-terra - balanced current-generation analysis", tier: "$$$", recommendedGreen: true },
-      { value: "gpt-5.6-sol", label: "gpt-5.6-sol - frontier professional reasoning", tier: "$$$", recommendedRed: true }
+      { value: "openrouter/openai/gpt-5.4-nano", label: "gpt-5.4-nano - lowest cost OpenAI", tier: "$" },
+      { value: "openrouter/openai/gpt-5.4-mini", label: "gpt-5.4-mini - proven low-cost OpenAI", tier: "$$" },
+      { value: "openrouter/openai/gpt-5.6-luna", label: "gpt-5.6-luna - current cost-sensitive tier", tier: "$$" },
+      { value: "openrouter/openai/gpt-5.6-luna-pro", label: "gpt-5.6-luna-pro - reasoning", tier: "$$" },
+      { value: "openrouter/openai/gpt-5.6-terra", label: "gpt-5.6-terra - balanced current-generation analysis", tier: "$$$", recommendedGreen: true },
+      { value: "openrouter/openai/gpt-5.6-terra-pro", label: "gpt-5.6-terra-pro - reasoning", tier: "$$$" },
+      { value: "openrouter/openai/gpt-5.6-sol", label: "gpt-5.6-sol - frontier professional reasoning", tier: "$$$", recommendedRed: true },
+      { value: "openrouter/openai/gpt-5.6-sol-pro", label: "gpt-5.6-sol-pro - maximum reasoning effort", tier: "$$$" }
     ]
   },
   {
     provider: "anthropic",
     label: "Anthropic",
     options: [
-      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 - fast low-cost Claude", tier: "$", recommendedGreen: true },
-      { value: "claude-sonnet-5", label: "claude-sonnet-5 - balanced Claude analysis", tier: "$$", recommendedRed: true },
-      { value: "claude-opus-4-8", label: "claude-opus-4-8 - premium Claude reasoning", tier: "$$$" },
-      { value: "claude-fable-5", label: "claude-fable-5 - most capable Claude", tier: "$$$" }
+      { value: "openrouter/anthropic/claude-haiku-4.5", label: "claude-haiku-4.5 - fast low-cost Claude", tier: "$", recommendedGreen: true },
+      { value: "openrouter/anthropic/claude-sonnet-5", label: "claude-sonnet-5 - balanced Claude analysis", tier: "$$", recommendedRed: true },
+      { value: "openrouter/anthropic/claude-opus-4.8", label: "claude-opus-4.8 - premium Claude reasoning", tier: "$$$" },
+      { value: "openrouter/anthropic/claude-fable-5", label: "claude-fable-5 - most capable Claude", tier: "$$$" }
     ]
   },
   {
     provider: "xai",
     label: "xAI",
     options: [
-      { value: "grok-build-0.1", label: "grok-build-0.1 - coding specialist", tier: "$" },
-      { value: "grok-4.3", label: "grok-4.3 - default Grok analysis", tier: "$$" }
+      { value: "openrouter/x-ai/grok-build-0.1", label: "grok-build-0.1 - coding specialist", tier: "$" },
+      { value: "openrouter/x-ai/grok-4.3", label: "grok-4.3 - default Grok analysis", tier: "$$" }
     ]
   },
   {
     provider: "gemini",
     label: "Google",
     options: [
-      { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - deepest Gemini reasoning", tier: "$$$", recommendedRed: true }
+      { value: "openrouter/google/gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
+      { value: "openrouter/google/gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true },
+      { value: "openrouter/google/gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - deepest Gemini reasoning", tier: "$$$", recommendedRed: true }
     ]
   },
   {
     provider: "mistral",
     label: "Mistral",
     options: [
-      { value: "mistral-small-2603", label: "mistral-small-2603 - low-cost Mistral Small 4", tier: "$" },
-      { value: "mistral-medium-3-5", label: "mistral-medium-3-5 - frontier Mistral Medium", tier: "$$" }
+      { value: "openrouter/mistralai/mistral-small-2603", label: "mistral-small-2603 - low-cost Mistral Small 4", tier: "$" },
+      { value: "openrouter/mistralai/mistral-medium-3-5", label: "mistral-medium-3-5 - frontier Mistral Medium", tier: "$$" }
     ]
   },
   {
     provider: "deepseek",
     label: "DeepSeek",
     options: [
-      { value: "deepseek-v4-flash", label: "deepseek-v4-flash - fast DeepSeek V4", tier: "$" },
-      { value: "deepseek-v4-pro", label: "deepseek-v4-pro - stronger DeepSeek V4", tier: "$$" }
+      { value: "openrouter/deepseek/deepseek-v4-flash", label: "deepseek-v4-flash - fast DeepSeek V4", tier: "$" },
+      { value: "openrouter/deepseek/deepseek-v4-pro", label: "deepseek-v4-pro - stronger DeepSeek V4", tier: "$$" }
     ]
   }
 ];
