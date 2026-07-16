@@ -1633,6 +1633,18 @@ export function recordStopPlan(
 ): void {
   const safeStyle = (STOP_PLAN_STYLES as readonly string[]).includes(style) ? style : "default";
   if (safeStyle === "fixed" || safeStyle === "atr") {
+    // A "fixed" <-> "atr" transition is DELIBERATELY treated the same as a same-style scale-in —
+    // never torn down here. A codex-autofix run on this PR briefly added a teardown for exactly
+    // this transition (mirroring Codex's own suggested remedy), but that's a real regression, not
+    // a fix: a fixed and an atr bracket are computed differently, but mechanically they're the
+    // SAME kind of thing — an independent broker-native bracket sized ONLY to its own lot's
+    // quantity, with nothing else ever recreating equivalent protection for an earlier lot.
+    // Tearing down the earlier tracked bracket on a fixed<->atr transition would cancel a still-
+    // resting, still-valid stop-loss/take-profit for the pre-existing shares, leaving them with NO
+    // protection at all — reintroducing the exact P1 this whole redesign exists to prevent. See the
+    // reasoning posted on PR #1667's review thread. Teardown fires ONLY when the plan genuinely
+    // LEAVES the whole distance-bracket family (trailing/none/default, or close) — that's the only
+    // time nothing else is still relying on the old brackets.
     if (openingOrderId) trackOpenBracketOrder(accountNumber, symbol, userId, openingOrderId);
   } else {
     enqueueTeardownForAllOpenBrackets(accountNumber, symbol, userId);
