@@ -53,52 +53,67 @@ const MISTRAL_MEDIUM_ADVICE =
 export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecommendation> = {
   // GPT-5.6: Terra is the default Green/Coach balance; Sol earns deeper compute for adversarial and
   // learning reviews; Luna stays deliberately lean for high-volume work.
-  "gpt-5.6": {
+  "openrouter/openai/gpt-5.6": {
     effort: "medium",
     roleEfforts: { red: "high", review: "high", chat: "medium" },
     advice: "Sol: Medium for Green/Coach; High for Red Team or one-off strategy/learning review. XHigh/Max are available for deliberate manual deep dives."
   },
-  "gpt-5.6-sol": {
+  "openrouter/openai/gpt-5.6-sol": {
     effort: "medium",
     roleEfforts: { red: "high", review: "high", chat: "medium" },
     advice: "Sol: Medium for Green/Coach; High for Red Team or one-off strategy/learning review. XHigh/Max are available for deliberate manual deep dives."
   },
-  "gpt-5.6-terra": {
+  "openrouter/openai/gpt-5.6-sol-pro": {
+    effort: "high",
+    roleEfforts: { chat: "medium", green: "high", red: "high", review: "high" },
+    advice: "Sol Pro: Maximum reasoning effort. Use only for the most challenging tasks."
+  },
+  "openrouter/openai/gpt-5.6-terra": {
     effort: "medium",
     roleEfforts: { red: "high", review: "high", chat: "medium" },
     advice: "Terra: Medium is the recommended Green Team and Coach balance. High is advisable for Red Team and AI strategy review when the extra latency is acceptable."
   },
-  "gpt-5.6-luna": {
+  "openrouter/openai/gpt-5.6-terra-pro": {
+    effort: "high",
+    roleEfforts: { chat: "medium", green: "high", red: "high", review: "high" },
+    advice: "Terra Pro: High reasoning effort. Recommended for deep analysis."
+  },
+  "openrouter/openai/gpt-5.6-luna": {
     effort: "medium",
     roleEfforts: { red: "medium", review: "medium", chat: "low" },
     advice: "Luna: Low for chat/high-volume synthesis; Medium for Green. Use Terra or Sol for the Red Team and consequential strategy review when possible."
   },
+  "openrouter/openai/gpt-5.6-luna-pro": {
+    effort: "high",
+    roleEfforts: { chat: "low", green: "high", red: "high", review: "high" },
+    advice: "Luna Pro: High reasoning effort. Recommended for complex tasks."
+  },
   // Retained lower-cost OpenAI models. Nano is best for mechanical work; Mini remains the cheapest
   // proven full decision option in this catalog.
-  "gpt-5.4-nano": { effort: "low", advice: "Nano at Low: best for extraction, classification, and cheap chat; not advisable as the sole Green or Red Team decision model." },
-  "gpt-5.4-mini": {
+  "openrouter/openai/gpt-5.4-nano": { effort: "low", advice: "Nano at Low: best for extraction, classification, and cheap chat; not advisable as the sole Green or Red Team decision model." },
+  "openrouter/openai/gpt-5.4-mini": {
     effort: "medium",
     roleEfforts: { chat: "low", red: "high", review: "high" },
     advice: "Mini: Low for Coach/chat, Medium for a low-cost Green Team, High if deliberately used for Red Team or strategy review. Keep it when cost matters; Luna is newer but not cheaper."
   },
-  "gpt-5.4": { effort: "medium", roleEfforts: { red: "high", review: "high" }, advice: "Legacy full GPT-5.4: Medium for Green, High for review. Terra is the same list price and the preferable curated successor." },
-  "gpt-5.5": { effort: "medium", advice: GPT_55_INTERACTIVE_HIGH_ADVICE },
+  "openrouter/openai/gpt-5.4": { effort: "medium", roleEfforts: { red: "high", review: "high" }, advice: "Legacy full GPT-5.4: Medium for Green, High for review. Terra is the same list price and the preferable curated successor." },
+  "openrouter/openai/gpt-5.5": { effort: "medium", advice: GPT_55_INTERACTIVE_HIGH_ADVICE },
   // Anthropic adaptive thinking (low..max) — medium balances depth vs the run-lock latency.
-  "claude-haiku-4-5": { effort: "medium" },
-  "claude-sonnet-5": { effort: "medium" },
-  "claude-opus-4-8": { effort: "medium" },
-  "claude-fable-5": { effort: "medium" },
+  "openrouter/anthropic/claude-haiku-4.5": { effort: "medium" },
+  "openrouter/anthropic/claude-sonnet-5": { effort: "medium" },
+  "openrouter/anthropic/claude-opus-4.8": { effort: "medium" },
+  "openrouter/anthropic/claude-fable-5": { effort: "medium" },
   // xAI (none/low/medium/high).
-  "grok-4.3": { effort: "medium" },
+  "openrouter/x-ai/grok-4.3": { effort: "medium" },
   // Gemini thinking (minimal..high; selected Flash models also allow off).
-  "gemini-3.1-flash-lite": { effort: "medium" },
-  "gemini-3.5-flash": { effort: "medium" },
-  "gemini-3.1-pro-preview": { effort: "medium" },
+  "openrouter/google/gemini-3.1-flash-lite": { effort: "medium" },
+  "openrouter/google/gemini-3.5-flash": { effort: "medium" },
+  "openrouter/google/gemini-3.1-pro-preview": { effort: "medium" },
   // Opt-in thinking providers: sub-high resolves to thinking OFF by design (llm-request.ts) —
   // recommend the fast tier explicitly so rotation and the UI say what actually runs.
-  "deepseek-v4-flash": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
-  "deepseek-v4-pro": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
-  "mistral-medium-3-5": { effort: "none", advice: MISTRAL_MEDIUM_ADVICE }
+  "openrouter/deepseek/deepseek-v4-flash": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
+  "openrouter/deepseek/deepseek-v4-pro": { effort: "none", advice: DEEPSEEK_OPT_IN_ADVICE },
+  "openrouter/mistralai/mistral-medium-3-5": { effort: "none", advice: MISTRAL_MEDIUM_ADVICE }
   // mistral-small-2603 / grok-build-0.1: no reasoning capability at all
   // (reasoningCapabilityForModel returns undefined) — no entry on purpose; the unknown-model
   // default is harmless because the call-time clamp sends no reasoning params for them.

@@ -59,23 +59,26 @@ export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
  * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
  */
 export const MODEL_ROTATION_POOL: readonly string[] = [
-  "gpt-5.6-terra",
-  "claude-haiku-4-5",
-  "gemini-3.5-flash",
-  "deepseek-v4-flash",
-  "mistral-small-2603",
-  "gpt-5.6-luna",
-  "claude-sonnet-5",
-  "gemini-3.1-flash-lite",
-  "grok-4.3",
-  "gpt-5.4-mini",
-  "claude-opus-4-8",
-  "gemini-3.1-pro-preview",
-  "deepseek-v4-pro",
-  "mistral-medium-3-5",
-  "gpt-5.6-sol",
-  "gpt-5.4-nano",
-  "claude-fable-5"
+  "openrouter/openai/gpt-5.6-terra",
+  "openrouter/anthropic/claude-haiku-4.5",
+  "openrouter/google/gemini-3.5-flash",
+  "openrouter/deepseek/deepseek-v4-flash",
+  "openrouter/mistralai/mistral-small-2603",
+  "openrouter/openai/gpt-5.6-luna",
+  "openrouter/anthropic/claude-sonnet-5",
+  "openrouter/google/gemini-3.1-flash-lite",
+  "openrouter/x-ai/grok-4.3",
+  "openrouter/openai/gpt-5.4-mini",
+  "openrouter/anthropic/claude-opus-4.8",
+  "openrouter/google/gemini-3.1-pro-preview",
+  "openrouter/deepseek/deepseek-v4-pro",
+  "openrouter/mistralai/mistral-medium-3-5",
+  "openrouter/openai/gpt-5.6-sol",
+  "openrouter/openai/gpt-5.4-nano",
+  "openrouter/anthropic/claude-fable-5",
+  "openrouter/openai/gpt-5.6-luna-pro",
+  "openrouter/openai/gpt-5.6-terra-pro",
+  "openrouter/openai/gpt-5.6-sol-pro"
 ];
 
 /** One seat's pick: the model served this run plus the pointer bookkeeping that produced it. */

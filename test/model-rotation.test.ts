@@ -120,15 +120,15 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     // mistral-small-2603 / mistral-medium-3-5 were re-added 2026-07-10 (owner directive, after
     // the keyed re-benchmark proved both complete real calls) — only grok-build-0.1 (coding
     // specialist, soft-timeouts as a Green strategist) stays excluded.
-    const excluded = ["grok-build-0.1"];
+    const excluded = ["openrouter/x-ai/grok-build-0.1"];
     for (const model of excluded) expect(MODEL_ROTATION_POOL).not.toContain(model);
     // Keep-in-sync check: the pool is exactly the curated catalog minus the exclusions.
     expect(new Set(MODEL_ROTATION_POOL)).toEqual(new Set(CURATED_LLM_MODEL_IDS.filter((id) => !excluded.includes(id))));
-    expect(MODEL_ROTATION_POOL).toContain("gpt-5.4-mini");
-    expect(MODEL_ROTATION_POOL).toContain("claude-fable-5");
-    expect(MODEL_ROTATION_POOL).toContain("grok-4.3");
-    expect(MODEL_ROTATION_POOL).toContain("mistral-small-2603");
-    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3-5");
+    expect(MODEL_ROTATION_POOL).toContain("openrouter/openai/gpt-5.4-mini");
+    expect(MODEL_ROTATION_POOL).toContain("openrouter/anthropic/claude-fable-5");
+    expect(MODEL_ROTATION_POOL).toContain("openrouter/x-ai/grok-4.3");
+    expect(MODEL_ROTATION_POOL).toContain("openrouter/mistralai/mistral-small-2603");
+    expect(MODEL_ROTATION_POOL).toContain("openrouter/mistralai/mistral-medium-3-5");
   });
 });
 
@@ -138,14 +138,18 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     const userId = `rot-cred-${randomUUID()}`;
     const { upsertUserApiKey } = await import("../src/lib/db");
     const { eligibleRotationPool } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openai", "sk-test-openai", "test");
-    upsertUserApiKey(userId, "anthropic", "sk-test-anthropic", "test");
+    
+    // First, no keys: all skipped
+    const { pool: emptyPool, skipped: allSkipped } = eligibleRotationPool(userId);
+    expect(emptyPool.length).toBe(0);
+    expect(allSkipped.length).toBeGreaterThan(0);
+
+    // Add openrouter key: all included
+    upsertUserApiKey(userId, "openrouter", "sk-test-openrouter", "test");
     const { pool, skipped } = eligibleRotationPool(userId);
     expect(pool.length).toBeGreaterThan(0);
-    for (const model of pool) expect(model).toMatch(/^(gpt-|claude-)/);
-    for (const model of skipped) expect(model).not.toMatch(/^(gpt-|claude-)/);
-    expect(skipped).toContain("gemini-3.5-flash");
-    expect(skipped).toContain("deepseek-v4-pro");
+    expect(skipped.length).toBe(0);
+    for (const model of pool) expect(model).toMatch(/^openrouter\//);
   });
 });
 
@@ -157,7 +161,7 @@ describe("resolveModelRotationForRun", () => {
       userId: `rot-none-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
-      policy: { llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-haiku-4-5" }
+      policy: { llmModel: "openrouter/openai/gpt-5.4-mini", redTeamLlmModel: "openrouter/anthropic/claude-haiku-4.5" }
     });
     expect(override).toEqual({});
     expect(typeof commit).toBe("function");
@@ -170,8 +174,7 @@ describe("resolveModelRotationForRun", () => {
     const accountId = "acct-green";
     const { upsertUserApiKey } = await import("../src/lib/db");
     const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openai", "sk-test", "test");
-    upsertUserApiKey(userId, "anthropic", "sk-test", "test");
+    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
     const { pool } = eligibleRotationPool(userId);
     const served: string[] = [];
     for (let i = 0; i < pool.length; i++) {
@@ -200,7 +203,7 @@ describe("resolveModelRotationForRun", () => {
     const userId = `rot-both-${randomUUID()}`;
     const { upsertUserApiKey, getDb } = await import("../src/lib/db");
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openai", "sk-test", "test");
+    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
     const runId = randomUUID();
     const out = resolveModelRotationForRun({
       userId,
@@ -208,8 +211,8 @@ describe("resolveModelRotationForRun", () => {
       runId,
       policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL, redTeamLlmModel: LLM_MODEL_ROTATION_SENTINEL }
     });
-    expect(out.llmModel).toMatch(/^gpt-/);
-    expect(out.redTeamLlmModel).toMatch(/^gpt-/);
+    expect(out.llmModel).toBe("openrouter/openai/gpt-5.6-terra");
+    expect(out.redTeamLlmModel).toBe("openrouter/anthropic/claude-haiku-4.5");
     // Same-model skip end-to-end: both pointers start at 0, but the run never serves the same
     // model to both seats (red consumes the adjacent slot).
     expect(out.redTeamLlmModel).not.toBe(out.llmModel);
@@ -266,7 +269,7 @@ describe("resolveModelRotationForRun", () => {
     const accountId = "acct-commit";
     const { upsertUserApiKey, getDb, getInternalSetting } = await import("../src/lib/db");
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openai", "sk-test", "test");
+    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
     const pointerKey = `model_rotation:${userId}:${accountId}:green`;
     const auditCount = () =>
       (getDb()
@@ -294,7 +297,7 @@ describe("resolveModelRotationForRun", () => {
     const accountId = "acct-abort";
     const { upsertUserApiKey, getInternalSetting } = await import("../src/lib/db");
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openai", "sk-test", "test");
+    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
     const pointerKey = `model_rotation:${userId}:${accountId}:green`;
     // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget) — never commits.
     const first = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
@@ -312,27 +315,27 @@ describe("resolveModelRotationForRun", () => {
 describe("recommendedReasoningEffortForModel (curated rotation efforts)", () => {
   it("uses role-aware GPT-5.6 efforts while preserving provider-safe defaults", async () => {
     const { recommendedReasoningEffortForModel, reasoningAdviceForModel } = await import("../src/lib/model-reasoning-recommendations");
-    expect(recommendedReasoningEffortForModel("deepseek-v4-flash")).toBe("none");
-    expect(recommendedReasoningEffortForModel("deepseek-v4-pro")).toBe("none");
-    expect(recommendedReasoningEffortForModel("gpt-5.5")).toBe("medium");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "chat")).toBe("low");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-luna", "green")).toBe("medium");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-terra", "green")).toBe("medium");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-terra", "red")).toBe("high");
-    expect(recommendedReasoningEffortForModel("gpt-5.6-sol", "review")).toBe("high");
-    expect(recommendedReasoningEffortForModel("gpt-5.4-mini", "chat")).toBe("low");
-    expect(recommendedReasoningEffortForModel("gpt-5.4-mini", "red")).toBe("high");
-    expect(recommendedReasoningEffortForModel("claude-fable-5")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("openrouter/deepseek/deepseek-v4-flash")).toBe("none");
+    expect(recommendedReasoningEffortForModel("openrouter/deepseek/deepseek-v4-pro")).toBe("none");
+    expect(recommendedReasoningEffortForModel("openrouter/openai/gpt-5.5")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("openrouter/openai/gpt-5.6-luna", "chat")).toBe("low");
+    expect(recommendedReasoningEffortForModel("openrouter/openai/gpt-5.6-luna", "green")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("openrouter/openai/gpt-5.6-terra", "green")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("openrouter/openai/gpt-5.6-terra", "red")).toBe("high");
+    expect(recommendedReasoningEffortForModel("openrouter/openai/gpt-5.6-sol", "review")).toBe("high");
+    expect(recommendedReasoningEffortForModel("openrouter/openai/gpt-5.4-mini", "chat")).toBe("low");
+    expect(recommendedReasoningEffortForModel("openrouter/openai/gpt-5.4-mini", "red")).toBe("high");
+    expect(recommendedReasoningEffortForModel("openrouter/anthropic/claude-fable-5")).toBe("medium");
     expect(recommendedReasoningEffortForModel("some-custom-model")).toBe("medium");
     expect(recommendedReasoningEffortForModel(undefined)).toBe("medium");
     // gpt-5.5's advice carries the interactive-high rule the UI surfaces BEFORE save.
-    expect(reasoningAdviceForModel("gpt-5.5")).toMatch(/disabled for interactive/i);
-    expect(reasoningAdviceForModel("gpt-5.4")).toMatch(/Terra.*preferable curated successor/i);
-    expect(reasoningAdviceForModel("gpt-5.6-terra")).toMatch(/Green Team.*Coach/i);
+    expect(reasoningAdviceForModel("openrouter/openai/gpt-5.5")).toMatch(/disabled for interactive/i);
+    expect(reasoningAdviceForModel("openrouter/openai/gpt-5.4")).toMatch(/Terra.*preferable curated successor/i);
+    expect(reasoningAdviceForModel("openrouter/openai/gpt-5.6-terra")).toMatch(/Green Team.*Coach/i);
     // mistral-medium-3-5's advice carries the 2026-07-10 benchmark tradeoff: None is fast/cheap
     // but proposes nothing, High actually proposes but is far slower/costlier.
-    expect(reasoningAdviceForModel("mistral-medium-3-5")).toMatch(/EMPTY proposal list/);
-    expect(reasoningAdviceForModel("mistral-medium-3-5")).toMatch(/\$0\.07/);
+    expect(reasoningAdviceForModel("openrouter/mistralai/mistral-medium-3-5")).toMatch(/EMPTY proposal list/);
+    expect(reasoningAdviceForModel("openrouter/mistralai/mistral-medium-3-5")).toMatch(/\$0\.07/);
   });
 
   it("every rotation-pool model's recommended effort survives the interactive clamp unchanged", async () => {

@@ -55,7 +55,7 @@ export function isModelRotationSentinel(model?: string | null): boolean {
  * spend output budget on hidden reasoning tokens, so the visible-output cap must be raised.
  */
 export function isReasoningModel(model: string | undefined): boolean {
-  return /^(gpt-5|o\d)/i.test((model ?? "").trim());
+  return /^(gpt-5|o\d)/i.test(lowerModel(model));
 }
 
 /**
@@ -97,7 +97,14 @@ function options(values: readonly LlmReasoningEffort[]): LlmReasoningOption[] {
 }
 
 function lowerModel(model: string | undefined): string {
-  return (model ?? "").trim().toLowerCase();
+  let normalized = (model ?? "").trim().toLowerCase();
+  if (normalized.startsWith("openrouter/")) {
+    const parts = normalized.split("/");
+    if (parts.length >= 3) {
+      normalized = parts.slice(2).join("/"); // everything after openrouter/provider/
+    }
+  }
+  return normalized;
 }
 
 function isAnthropicAdaptiveThinkingModel(model: string | undefined): boolean {
