@@ -1835,7 +1835,9 @@ As of 2026-07-08 (assignment-rule update).
   design-sync-only exports (ICON/IconButton/PanelHeader/Chip/Dot/Switch/Segmented/Tabs/Field/
   inputClass/RawNumInput/StatTile/EmptyState) + dead `ThemeToggle` + 8 dead globals.css utilities,
   update `.design-sync` re-exports/previews, document in `docs/design/visual-system.md`.
-  Display-only; full gate + screenshots.
+  Display-only. FULL GATE GREEN (lint 0 errors, tsc clean, 402 files/4,664 tests, build clean,
+  13 full-page screenshots light/dark/mobile — no visual regression) — PR #1685 OPEN + auto-merge
+  armed; merge==auto-deploy.
 - **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
   (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — IN PROGRESS.** Owner-directed
   ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
