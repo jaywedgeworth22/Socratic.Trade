@@ -24,5 +24,15 @@ Ran the following tests and commands under Node 24:
 ## Follow-ups
 Phase 4: Resumable worker integration and RAG ingest job queueing (claimed under CODEX or future Antigravity sessions).
 
-### Codex autofix — 2026-07-16
+### Codex autofix — Round 1 (2026-07-16)
 Addressed 5 P2 findings from Codex review of sec-parser.ts. See STATUS.md for summary.
+
+### Codex autofix — Round 2 (2026-07-16)
+Addressed 5 additional P2 findings:
+- Restrict table rows to current table level (skip nested tr elements via `.closest("table")` check)
+- Avoid classifying wrapper containers as headings (require `!hasBlockChildren` for block tags)
+- Preserve mixed text node siblings around child blocks (emit text node content in recursion)
+- Normalize table colspan (repeat cell text for each spanned column)
+- Only repeat real `<th>` header rows when splitting large tables across token limits
+
+Verification: `npx tsc --noEmit` clean, all 4610 tests pass, `npm run build` clean.
