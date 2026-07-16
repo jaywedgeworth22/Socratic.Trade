@@ -10,9 +10,11 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Keep in lockstep with --con-bg in console.css (light :root / dark override) —
+  // a mismatched themeColor tints the phone status bar a different shade than the app.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#eef1f6" },
-    { media: "(prefers-color-scheme: dark)", color: "#0b0e14" }
+    { media: "(prefers-color-scheme: light)", color: "#f1f4f6" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b1114" }
   ]
 };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Card } from "../../ui/primitives";
+import { Btn, Card, Select, Segmented, Stat, Toggle } from "../../console/ui/primitives";
 import { llmUsageContextLabel } from "../../ui/llm-usage-labels";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -104,33 +104,23 @@ function groupRows(rows: UsageRow[]): Map<string, UsageRow[]> {
 
 // ── Components ────────────────────────────────────────────────────────────────
 
-function SummaryCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <Card className="p-4 flex flex-col gap-1">
-      <div className="text-xs text-muted uppercase tracking-wide">{label}</div>
-      <div className="text-2xl font-semibold text-fg">{value}</div>
-      {sub && <div className="text-xs text-muted">{sub}</div>}
-    </Card>
-  );
-}
-
 function KeyBadge({ row }: { row: UsageRow }) {
   const display = row.keyMasked ?? (row.keyLast4 ? `...${row.keyLast4}` : null);
   const label = row.keyLabel ?? keySourceLabel(row.keySource);
   if (!display) {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-muted bg-surface-2 border border-line rounded px-2 py-0.5">
-        <span className="opacity-50">key removed</span>
-        <span className="text-muted/75">·</span>
+      <span className="con-chip">
+        <span className="opacity-60">key removed</span>
+        <span className="text-[color:var(--con-faint)]">·</span>
         <span>{label}</span>
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs bg-surface-2 border border-line rounded px-2 py-0.5 font-mono">
-      <span className="text-accent">{display}</span>
-      <span className="text-muted/75">·</span>
-      <span className="text-muted font-sans">{label}</span>
+    <span className="con-chip">
+      <span className="con-mono text-[color:var(--con-accent)]">{display}</span>
+      <span className="text-[color:var(--con-faint)]">·</span>
+      <span>{label}</span>
     </span>
   );
 }
@@ -139,11 +129,11 @@ function AccountBadge({ row }: { row: UsageRow }) {
   const unattributed = !row.connectedAccountId;
   return (
     <span
-      className={`inline-flex items-center gap-1 text-xs rounded px-2 py-0.5 border border-line bg-surface-2 ${unattributed ? "text-muted/70" : "text-fg"}`}
+      className="con-chip"
       title={unattributed ? "Not attributed to a connected account" : `Account: ${accountLabelText(row)}`}
     >
-      <span className="text-muted">acct</span>
-      <span className={unattributed ? "italic" : "font-medium"}>{accountLabelText(row)}</span>
+      <span className="text-[color:var(--con-faint)]">acct</span>
+      <span className={unattributed ? "italic" : "font-medium text-[color:var(--con-fg)]"}>{accountLabelText(row)}</span>
     </span>
   );
 }
@@ -156,48 +146,46 @@ function UsageGroupCard({ groupRows: rows }: { groupRows: UsageRow[] }) {
   const totalOut = rows.reduce((s, r) => s + r.completionTokens, 0);
 
   return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between gap-4 mb-3">
+    <Card>
+      <div className="mb-3 flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-fg">{userLabel(first.userId)}</span>
-            <span className="text-xs text-muted bg-surface-2 border border-line rounded px-1.5 py-0.5">
-              {providerLabel(first.provider)}
-            </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[length:var(--con-fs-sm)] font-semibold">{userLabel(first.userId)}</span>
+            <span className="con-chip">{providerLabel(first.provider)}</span>
             <KeyBadge row={first} />
             <AccountBadge row={first} />
           </div>
         </div>
-        <div className="text-right shrink-0">
-          <div className="text-lg font-semibold text-fg">{fmtTotalCost(totalCost)}</div>
-          <div className="text-xs text-muted">{totalCalls} call{totalCalls !== 1 ? "s" : ""}</div>
+        <div className="shrink-0 text-right">
+          <div className="con-num text-lg font-semibold">{fmtTotalCost(totalCost)}</div>
+          <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{totalCalls} call{totalCalls !== 1 ? "s" : ""}</div>
         </div>
       </div>
 
-      <div className="text-xs text-muted mb-2 flex gap-4">
-        <span>In: <span className="text-fg font-mono">{fmtTokens(totalIn)}</span></span>
-        <span>Out: <span className="text-fg font-mono">{fmtTokens(totalOut)}</span></span>
-        <span>Total: <span className="text-fg font-mono">{fmtTokens(totalIn + totalOut)}</span></span>
+      <div className="mb-2 flex gap-4 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+        <span>In: <span className="con-mono text-[color:var(--con-fg)]">{fmtTokens(totalIn)}</span></span>
+        <span>Out: <span className="con-mono text-[color:var(--con-fg)]">{fmtTokens(totalOut)}</span></span>
+        <span>Total: <span className="con-mono text-[color:var(--con-fg)]">{fmtTokens(totalIn + totalOut)}</span></span>
       </div>
 
       {/* Per-model / per-context breakdown */}
-      <div className="border-t border-line mt-2 pt-2 space-y-1">
+      <div className="mt-2 space-y-1 border-t border-[color:var(--con-line)] pt-2">
         {rows
           .slice()
           .sort((a, b) => b.costUsd - a.costUsd)
           .map((r, i) => (
-            <div key={i} className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-muted">
-                <span className="font-mono text-fg/80">{r.model ?? "—"}</span>
-                <span className="text-muted/75">·</span>
+            <div key={i} className="flex items-center justify-between text-[length:var(--con-fs-xs)]">
+              <div className="flex items-center gap-2 text-[color:var(--con-muted)]">
+                <span className="con-mono text-[color:var(--con-fg)]">{r.model ?? "—"}</span>
+                <span className="text-[color:var(--con-faint)]">·</span>
                 <span title={r.context ?? "unknown"}>{llmUsageContextLabel(r.context ?? "unknown")}</span>
-                <span className="text-muted/60">·</span>
+                <span className="text-[color:var(--con-faint)]">·</span>
                 <span>{r.calls} call{r.calls !== 1 ? "s" : ""}</span>
               </div>
-              <div className="flex items-center gap-3 font-mono text-muted">
+              <div className="con-mono flex items-center gap-3 text-[color:var(--con-muted)]">
                 <span title="prompt tokens">{fmtTokens(r.promptTokens)}↑</span>
                 <span title="completion tokens">{fmtTokens(r.completionTokens)}↓</span>
-                <span className="text-fg">{fmtCost(r.costUsd)}</span>
+                <span className="text-[color:var(--con-fg)]">{fmtCost(r.costUsd)}</span>
               </div>
             </div>
           ))}
@@ -272,71 +260,51 @@ export function LlmUsageClient({
   const filteredCalls = filteredRows.reduce((s, r) => s + r.calls, 0);
   const filteredTokens = filteredRows.reduce((s, r) => s + r.totalTokens, 0);
 
-  // max-w-5xl here is independently maintained (this component also renders standalone at
-  // /admin/llm-usage, outside the console shell's CSS tokens) — it only coincidentally matches
-  // ../../console/lib/page-width.ts's CONSOLE_PAGE_WIDTH, which /console/usage's wrapper does not
-  // import.
   return (
-    <div className="min-h-screen bg-base text-fg p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold text-fg">LLM Usage &amp; Cost</h1>
-        <p className="text-sm text-muted mt-1">
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold">LLM usage &amp; cost</h1>
+        <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
           {scope === "admin" ? "Per-key, per-model, per-context breakdown across all LLM calls." : "Your per-key, per-model, per-context LLM usage."}
         </p>
       </div>
 
       {/* Controls */}
-      <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <div className="flex items-center gap-1 bg-surface-2 border border-line rounded-lg p-0.5">
-          {WINDOW_OPTIONS.map((opt) => (
-            <button
-              key={opt.days}
-              onClick={() => setDays(opt.days)}
-              className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                days === opt.days
-                  ? "bg-accent text-accent-fg"
-                  : "text-muted hover:text-fg"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Segmented
+          value={String(days)}
+          onChange={(v) => setDays(Number(v))}
+          ariaLabel="Time window"
+          options={WINDOW_OPTIONS.map((opt) => ({ value: String(opt.days), label: opt.label }))}
+        />
         {scope === "admin" && (
-          <label className="flex items-center gap-2 text-sm text-muted cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={operatorOnly}
-              onChange={(e) => setOperatorOnly(e.target.checked)}
-              className="rounded border-line"
-            />
+          <div className="flex select-none items-center gap-2 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+            <Toggle checked={operatorOnly} onChange={setOperatorOnly} label="Server-failover only" />
             Server-failover only
-          </label>
+          </div>
         )}
         {accountOptions.length > 1 && (
-          <select
-            value={accountFilter}
-            onChange={(e) => setAccountFilter(e.target.value)}
-            className="text-xs bg-surface-2 border border-line rounded-lg px-2 py-1.5 text-fg"
-            aria-label="Filter by account"
-          >
-            <option value="all">All accounts</option>
-            {accountOptions.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          /* con-select is width:100% (unlayered CSS beats Tailwind's w-auto), so size via a wrapper. */
+          <div className="w-56">
+            <Select
+              value={accountFilter}
+              onChange={(e) => setAccountFilter(e.target.value)}
+              aria-label="Filter by account"
+            >
+              <option value="all">All accounts</option>
+              {accountOptions.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </Select>
+          </div>
         )}
-        <button
-          onClick={fetchData}
-          disabled={loading}
-          className="ml-auto text-xs text-muted hover:text-fg border border-line rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50"
-        >
+        <Btn variant="outline" size="sm" className="ml-auto" onClick={fetchData} disabled={loading}>
           {loading ? "Loading…" : "Refresh"}
-        </button>
+        </Btn>
       </div>
 
       {error && (
-        <div className="text-sm text-neg bg-neg/10 border border-neg/20 rounded-lg p-3 mb-4">
+        <div className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]">
           {error}
         </div>
       )}
@@ -344,32 +312,40 @@ export function LlmUsageClient({
       {data && (
         <>
           {/* Summary row */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-            <SummaryCard
-              label="Total cost"
-              value={fmtTotalCost(filteredTotalCost)}
-              sub={accountFilter === "all" ? `last ${days}d` : `filtered · ${days}d`}
-            />
-            <SummaryCard
-              label="Server failover"
-              value={fmtTotalCost(filteredFailoverCost)}
-              sub={data.operatorFallbackEnabled ? "failover on" : "failover off"}
-            />
-            <SummaryCard
-              label="Key × account"
-              value={String(groups.size)}
-              sub={scope === "admin" ? "all visible" : "yours"}
-            />
-            <SummaryCard
-              label="Total calls"
-              value={fmtTokens(filteredCalls)}
-              sub={`${fmtTokens(filteredTokens)} tokens`}
-            />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="con-tile">
+              <Stat
+                label="Total cost"
+                value={fmtTotalCost(filteredTotalCost)}
+                sub={accountFilter === "all" ? `last ${days}d` : `filtered · ${days}d`}
+              />
+            </div>
+            <div className="con-tile">
+              <Stat
+                label="Server failover"
+                value={fmtTotalCost(filteredFailoverCost)}
+                sub={data.operatorFallbackEnabled ? "failover on" : "failover off"}
+              />
+            </div>
+            <div className="con-tile">
+              <Stat
+                label="Key × account"
+                value={String(groups.size)}
+                sub={scope === "admin" ? "all visible" : "yours"}
+              />
+            </div>
+            <div className="con-tile">
+              <Stat
+                label="Total calls"
+                value={fmtTokens(filteredCalls)}
+                sub={`${fmtTokens(filteredTokens)} tokens`}
+              />
+            </div>
           </div>
 
           {/* Per-key groups */}
           {groupList.length === 0 ? (
-            <div className="text-sm text-muted text-center py-12">No usage recorded in this window.</div>
+            <div className="py-12 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">No usage recorded in this window.</div>
           ) : (
             <div className="space-y-3">
               {groupList.map((rows, i) => (
@@ -379,7 +355,7 @@ export function LlmUsageClient({
           )}
 
           {data.operatorFundedTenants.length > 0 && (
-            <div className="mt-4 text-xs text-muted bg-surface-2 border border-line rounded-lg p-3">
+            <div className="con-tile text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
               Server-failover usage: {data.operatorFundedTenants.map(userLabel).join(", ")}
             </div>
           )}
@@ -387,7 +363,7 @@ export function LlmUsageClient({
       )}
 
       {loading && !data && (
-        <div className="text-sm text-muted text-center py-12">Loading…</div>
+        <div className="py-12 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">Loading…</div>
       )}
     </div>
   );

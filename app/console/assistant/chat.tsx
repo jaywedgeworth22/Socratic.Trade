@@ -352,11 +352,14 @@ export function AssistantChat() {
   const canSend = !sending && !clearing && !keyMissing && !customPending && !modelUnselected && input.trim().length > 0;
 
   return (
-    <section className="con-card flex h-[calc(100dvh-14rem)] min-h-[24rem] flex-col overflow-hidden lg:h-[calc(100dvh-12rem)]">
+    // Mobile height budgets the fixed bottom tab bar (~4rem incl. safe area) on top of the
+    // top chrome — 14rem left the composer pinned UNDER the bar. lg has no bottom bar.
+    <section className="con-card flex h-[calc(100dvh-18rem)] min-h-[24rem] flex-col overflow-hidden lg:h-[calc(100dvh-12rem)]">
       {/* Header */}
+      {/* No heading here: the page h1 ("Coach") above this card is the one title —
+          a second in-card h1 ("Assistant") gave the surface two competing names. */}
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-[color:var(--con-line)] px-3 py-2 sm:px-4">
         <Sparkles size={15} className="shrink-0 text-[color:var(--con-accent)]" aria-hidden />
-        <h1 className="text-[length:var(--con-fs-md)] font-bold leading-none">Assistant</h1>
         <Tooltip
           content="The assistant can answer questions and draft orders, but it has no way to place one — every order goes through Approvals.">
           <span

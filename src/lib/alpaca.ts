@@ -157,12 +157,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
     if (accountKeys && !this.isMcp && !keyId) {
       throw new Error(
-        `Alpaca credentials are missing for ${this.label}. Open Settings -> Accounts and re-save the API key.`
+        `Alpaca credentials are missing for ${this.label}. Open Connections and re-save the API key.`
       );
     }
     if (accountKeys && this.isMcp && !this.mcpUrl && !keyId) {
       throw new Error(
-        `Alpaca MCP credentials are missing for ${this.label}. Open Settings -> Accounts and re-save the MCP endpoint or API key.`
+        `Alpaca MCP credentials are missing for ${this.label}. Open Connections and re-save the MCP endpoint or API key.`
       );
     }
 
@@ -312,12 +312,12 @@ class AlpacaBrokerGateway implements BrokerGateway {
       // account these keys belong to. Only flag a GENUINE cross-account mismatch (both numbers present
       // and actually different, ignoring case/whitespace) — a blank configured number or a mere
       // formatting difference must never block a run. The message is actionable so the operator can
-      // correct the stored number in Settings → Accounts.
+      // correct the stored number in Connections.
       const liveNum = String(account.account_number ?? "").trim();
       const wantNum = String(accountNumber ?? "").trim();
       if (wantNum && liveNum && liveNum.toLowerCase() !== wantNum.toLowerCase()) {
         throw new Error(
-          `Account Mismatch: the connected Alpaca credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Settings → Accounts.`
+          `Account Mismatch: the connected Alpaca credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Connections.`
         );
       }
       return {

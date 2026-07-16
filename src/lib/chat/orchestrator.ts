@@ -626,11 +626,11 @@ export function buildProductionDeps(): ToolDeps {
 // stored token — so the research tools return a plain message the model can relay to the user.
 async function robinhoodNotConnected(userId: string): Promise<{ error: string; message: string } | null> {
   if (!robinhoodMcpDataEnabled()) {
-    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Settings → Connections to enable this." };
+    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Connections to enable this." };
   }
   const token = await getMcpAccessToken(userId);
   if (!token) {
-    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Settings → Connections to enable this." };
+    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Connections to enable this." };
   }
   return null;
 }

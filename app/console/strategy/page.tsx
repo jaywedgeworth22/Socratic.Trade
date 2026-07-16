@@ -1,10 +1,12 @@
 "use client";
 
-/** Strategy — how this account trades: the strategist's written instructions
- *  (prompt), the models, the eight scoring-factor weights, the preset
- *  library, and the account's tax treatment. Always account-scoped; the
- *  header repeats the scope. Presets are copy-not-link and can never arm or
- *  disarm anything (server-enforced). */
+/** Strategy — how this account trades: the models, the strategist's written
+ *  instructions (prompt), the eight scoring-factor weights, AI review, and
+ *  the preset library. Always account-scoped; the header repeats the scope.
+ *  Presets are copy-not-link and can never arm or disarm anything
+ *  (server-enforced). Tax treatment lives on Guardrails, not here (moved
+ *  there in the 2026-07-16 IA restructure — it sits next to the Tax rules
+ *  group that references it). */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -44,7 +46,6 @@ import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ALL_DEFS } from "../guardrails/field-defs";
 import { TypedConfirm } from "../components/chrome";
 import { ModelStatsButton } from "../components/model-stats-drawer";
-import { TaxSettingsCard } from "./tax-settings";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput, Tooltip } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
@@ -640,22 +641,6 @@ function AccountScopedStrategyPage() {
         </div>
       </div>
 
-      {/* Prompt */}
-      <Card title="The strategist's written instructions" action={<SaveStatus status={autoSavePrompt.status} />}>
-        <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Free-text brief the proposer LLM runs under: objective, selection logic, sell rules, sizing guidance, output
-          contract. The deterministic policy gate still constrains everything it proposes.
-        </p>
-        <TextArea
-          rows={16}
-          value={prompt}
-          onChange={(e) => setPromptDraft(e.target.value)}
-          onBlur={commitPrompt}
-          spellCheck={false}
-          title="Saves when you click away."
-        />
-      </Card>
-
       {/* Models — id anchor is a deep-link target (old Settings "#models" links
           retargeted here in the 2026-07-10 Settings IA restructure). */}
       <div id="models" className="scroll-mt-28">
@@ -824,7 +809,9 @@ function AccountScopedStrategyPage() {
           </Field>
         </div>
         {showCustomModelWarning && (
-          <div className="mt-3 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50 rounded-md p-2.5 flex items-start gap-1.5">
+          // con-warn tokens (not Tailwind amber + dark:): the console theme is driven by
+          // data-theme on .console-root, which Tailwind's dark: variant never sees.
+          <div className="mt-3 text-[length:var(--con-fs-xs)] rounded-[var(--con-radius-sm)] border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] text-[color:var(--con-warn)] p-2.5 flex items-start gap-1.5">
             <svg className="h-4 w-4 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
             </svg>
@@ -847,6 +834,22 @@ function AccountScopedStrategyPage() {
         </div>
       </Card>
       </div>
+
+      {/* Prompt */}
+      <Card title="The strategist's written instructions" action={<SaveStatus status={autoSavePrompt.status} />}>
+        <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Free-text brief the proposer LLM runs under: objective, selection logic, sell rules, sizing guidance, output
+          contract. The deterministic policy gate still constrains everything it proposes.
+        </p>
+        <TextArea
+          rows={16}
+          value={prompt}
+          onChange={(e) => setPromptDraft(e.target.value)}
+          onBlur={commitPrompt}
+          spellCheck={false}
+          title="Saves when you click away."
+        />
+      </Card>
 
       {/* Scoring weights */}
       <Card title="Scoring-factor weights" action={<SaveStatus status={autoSaveWeights.status} />}>
@@ -958,13 +961,6 @@ function AccountScopedStrategyPage() {
           </div>
         )}
       </Card>
-
-      {/* Tax treatment — account-scoped like the rest of this page; moved here
-          from Settings in the 2026-07-10 IA restructure (Settings is global-only).
-          The id anchor is a deep-link target. */}
-      <div id="tax" className="scroll-mt-28">
-        <TaxSettingsCard />
-      </div>
     </div>
   );
 }
