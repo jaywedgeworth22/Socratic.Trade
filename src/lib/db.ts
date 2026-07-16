@@ -1815,6 +1815,42 @@ const MIGRATIONS: Migration[] = [
           ON fmp_transcript_derived_provider_work (status, lease_expires_at)
       `);
     }
+  },
+  {
+    // Tracks a bracket order's ID (Alpaca native/order_class bracket, Tradier OTOCO) so a later
+    // plan change away from fixed/atr can find and tear down that earlier opening's still-resting
+    // sibling legs — see pending_bracket_teardowns' own comment above CREATE TABLE. Idempotent
+    // (fresh DBs get both from CREATE TABLE).
+    version: 42,
+    name: "bracket_sibling_leg_teardown",
+    up: (database) => {
+      // Guard existence first (mirrors the chunk_occurrences/order_replacements migrations above) —
+      // position_stop_plans is created by the main schema's CREATE TABLE, not by a numbered
+      // migration, so a migration-only test harness that replays versions from an arbitrary
+      // baseline against a minimal hand-built schema may not have it yet.
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'position_stop_plans'")
+        .get();
+      if (tableExists) {
+        const cols = database.prepare("PRAGMA table_info(position_stop_plans)").all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "opening_order_id")) {
+          database.exec("ALTER TABLE position_stop_plans ADD COLUMN opening_order_id TEXT");
+        }
+      }
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS pending_bracket_teardowns (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          order_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_bracket_teardowns_account
+          ON pending_bracket_teardowns(user_id, account_number);
+      `);
+    }
   }
 ];
 
@@ -2267,8 +2303,31 @@ function migrate(database: Database.Database): void {
       avg_cost REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
       side TEXT NOT NULL DEFAULT 'long',
+      opening_order_id TEXT,
       PRIMARY KEY (user_id, account_number, symbol)
     );
+
+    -- A "fixed"/"atr" stop plan on Alpaca/Tradier is enforced via a broker-NATIVE bracket order
+    -- (order_class bracket/otoco) attached at opening-fill time; position_stop_plans.opening_order_id
+    -- tracks that order's ID. When the plan later changes away from fixed/atr (reset to trailing/
+    -- none/default, or the row is cleared on close), the bracket's still-resting take-profit/stop-
+    -- loss legs from that EARLIER opening are not automatically torn down — enrichOpeningProposal
+    -- only strips bracket fields from the NEW order being placed, and has no reach into an already-
+    -- resting broker order (this was the long-deferred "OCO sibling-identity pairing" gap, PR #1331/
+    -- #1371). recordStopPlan/clearStopPlans enqueue a row here (best-effort) whenever they detect
+    -- this transition; reconcilePendingBracketTeardowns (broker-protective-stops.ts) sweeps it,
+    -- asking the broker gateway to identify and cancel the sibling legs by the tracked order ID.
+    CREATE TABLE IF NOT EXISTS pending_bracket_teardowns (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_bracket_teardowns_account
+      ON pending_bracket_teardowns(user_id, account_number);
 
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (

@@ -179,3 +179,77 @@ describe("stop plan is committed ON FILL (an opening buy/short with a fresh stop
     expect(filterStopPlansByLiveBasis(getStopPlans(acct), [livePosition])).toEqual({ NVDA: "fixed" });
   });
 });
+
+describe("bracket sibling-leg teardown queue (position_stop_plans.opening_order_id -> pending_bracket_teardowns)", () => {
+  it("recordStopPlan persists an openingOrderId for a fresh fixed/atr plan", async () => {
+    const { getStopPlans, recordStopPlan } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-1";
+    recordStopPlan(acct, "AAPL", "fixed", "pin to flat stop", 190, "local", undefined, "long", "bracket-order-1");
+    expect(getStopPlans(acct).AAPL).toMatchObject({ style: "fixed", openingOrderId: "bracket-order-1" });
+  });
+
+  it("enqueues a teardown when a fixed/atr plan with a tracked bracket changes to trailing/none", async () => {
+    const { getStopPlans, recordStopPlan, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-2";
+    recordStopPlan(acct, "MSFT", "fixed", "pin to flat stop", 300, "local", undefined, "long", "bracket-order-2");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]); // not yet — still fixed
+
+    recordStopPlan(acct, "MSFT", "trailing", "switch to trailing on a scale-in", 300, "local", undefined, "long");
+    const pending = listPendingBracketTeardowns(acct);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ symbol: "MSFT", orderId: "bracket-order-2", accountNumber: acct, attempts: 0 });
+    // The new row no longer carries the stale bracket order id.
+    expect(getStopPlans(acct).MSFT.openingOrderId).toBeUndefined();
+  });
+
+  it("does NOT enqueue a teardown when transitioning between the SAME distance-plan family (fixed -> fixed)", async () => {
+    const { recordStopPlan, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-3";
+    recordStopPlan(acct, "TSLA", "fixed", "initial", 400, "local", undefined, "long", "bracket-order-3");
+    // A scale-in re-affirms "fixed" with a NEW bracket order id (same distance-plan family) — the
+    // OLD bracket's legs may already be gone/replaced by the new opening, not a stale leftover.
+    recordStopPlan(acct, "TSLA", "fixed", "reaffirmed on scale-in", 405, "local", undefined, "long", "bracket-order-3b");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+  });
+
+  it("does NOT enqueue a teardown when there was no tracked openingOrderId to begin with", async () => {
+    const { recordStopPlan, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-4";
+    recordStopPlan(acct, "AMD", "fixed", "no bracket ever placed (e.g. Robinhood)", 100, "local"); // no openingOrderId
+    recordStopPlan(acct, "AMD", "none", "switched off", 100, "local");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+  });
+
+  it("clearStopPlans enqueues a teardown for a closed position's fixed/atr plan with a tracked bracket", async () => {
+    const { recordStopPlan, clearStopPlans, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-5";
+    recordStopPlan(acct, "GOOG", "atr", "pin to ATR distance", 150, "local", undefined, "long", "bracket-order-5");
+    clearStopPlans(acct, ["GOOG"]);
+    const pending = listPendingBracketTeardowns(acct);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ symbol: "GOOG", orderId: "bracket-order-5" });
+  });
+
+  it("removePendingBracketTeardown removes the row; bumpPendingBracketTeardownAttempts increments attempts", async () => {
+    const { recordStopPlan, clearStopPlans, listPendingBracketTeardowns, removePendingBracketTeardown, bumpPendingBracketTeardownAttempts } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-6";
+    recordStopPlan(acct, "IBM", "fixed", "x", 100, "local", undefined, "long", "bracket-order-6");
+    clearStopPlans(acct, ["IBM"]);
+    const [row] = listPendingBracketTeardowns(acct);
+    expect(row.attempts).toBe(0);
+
+    bumpPendingBracketTeardownAttempts(row.id);
+    expect(listPendingBracketTeardowns(acct)[0].attempts).toBe(1);
+
+    removePendingBracketTeardown(row.id);
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+  });
+
+  it("scopes pending teardowns per account (never leaks across accounts)", async () => {
+    const { recordStopPlan, clearStopPlans, listPendingBracketTeardowns } = await import("../src/lib/db");
+    recordStopPlan("ACCT-BRACKET-7A", "F", "fixed", "x", 10, "local", undefined, "long", "order-7a");
+    clearStopPlans("ACCT-BRACKET-7A", ["F"]);
+    expect(listPendingBracketTeardowns("ACCT-BRACKET-7A")).toHaveLength(1);
+    expect(listPendingBracketTeardowns("ACCT-BRACKET-7B")).toEqual([]);
+  });
+});
