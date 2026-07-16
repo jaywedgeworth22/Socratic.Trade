@@ -279,17 +279,36 @@ describe("executeProposal — approval-time ordinary-limit re-anchor", () => {
     });
   }, 30000);
 
-  it("fallback-stamped anchor (referencePrice === limitPrice): NOT repriced — a reviewed hard limit places verbatim", async () => {
+  it("fallback-stamped anchor (manual proposal, no reference): NOT repriced — a reviewed hard limit places verbatim", async () => {
     await atRegularHours(async () => {
       const userId = `reanchor-hard-limit-${randomUUID()}`;
-      // ensureReferencePrice's defensive stamp makes ref === limit for chat/manual/legacy
-      // proposals that never saw a quote; re-anchoring would turn a hard $200 limit into a
-      // current-market ($202) limit.
-      const proposalId = seedPending(userId, { ...STORED_BUY_LIMIT, limitPrice: 200, referencePrice: 200 });
+      // A chat/manual proposal arrives with NO referencePrice; insertProposal stamps
+      // referencePrice = limitPrice with provenance "limit-fallback". That is a hard price —
+      // re-anchoring would turn a hard $200 limit into a current-market ($202) limit.
+      const { referencePrice: _omitted, ...manual } = { ...STORED_BUY_LIMIT, limitPrice: 200 };
+      const proposalId = seedPending(userId, manual as TradeProposal);
+      const stored = getProposal(proposalId, userId);
+      expect(stored?.proposal.referencePriceProvenance).toBe("limit-fallback");
       const result = await executeProposal(proposalId, userId);
       expect(result.status).toBe("placed");
       expect(broker.placed[0]).toMatchObject({ type: "limit", limitPrice: 200 });
       expect(repriceAudits("approval_limit_repriced", proposalId)).toHaveLength(0);
+    });
+  }, 30000);
+
+  it("GENUINE at-market limit (limit exactly at a provided quote anchor): DOES reprice — provenance beats the equality heuristic", async () => {
+    await atRegularHours(async () => {
+      const userId = `reanchor-at-market-${randomUUID()}`;
+      // The LLM legitimately set the limit exactly at the decision-time quote; insertProposal
+      // stamps provenance "provided" because the reference arrived with the proposal. Skipping
+      // this one would leave the exact class of stale order this feature exists to prevent.
+      const proposalId = seedPending(userId, { ...STORED_BUY_LIMIT, limitPrice: 200, referencePrice: 200 });
+      const stored = getProposal(proposalId, userId);
+      expect(stored?.proposal.referencePriceProvenance).toBe("provided");
+      const result = await executeProposal(proposalId, userId);
+      expect(result.status).toBe("placed");
+      expect(broker.placed[0]).toMatchObject({ type: "limit", limitPrice: 202 }); // 202 * (200/200)
+      expect(repriceAudits("approval_limit_repriced", proposalId)).toHaveLength(1);
     });
   }, 30000);
 
@@ -503,13 +522,20 @@ describe("repriceStoredLimitProposal — sign conventions and precedence (module
     expect(proposal.rationale).not.toContain("bracket");
   });
 
-  it("fallback-stamped anchor is skipped at the module level, but a carried repriceAnchorPrice restores eligibility", () => {
-    const stamped: TradeProposal = { ...base, side: "buy", limitPrice: 200, referencePrice: 200 };
-    expect(repriceStoredLimitProposal(stamped, DEFAULT_POLICY, { price: 210 }).proposal).toBe(stamped);
-    // After a genuine first reprice, repriceAnchorPrice (a real quote) is the anchor — an
-    // equal-by-coincidence limit no longer blocks later rounds.
-    const carried: TradeProposal = { ...stamped, repriceAnchorPrice: 200 };
+  it("provenance discriminates: limit-fallback never reprices, provided reprices even at exact equality, legacy (no provenance) uses the conservative equality skip", () => {
+    const equal: TradeProposal = { ...base, side: "buy", limitPrice: 200, referencePrice: 200 };
+    const fallback: TradeProposal = { ...equal, referencePriceProvenance: "limit-fallback" };
+    expect(repriceStoredLimitProposal(fallback, DEFAULT_POLICY, { price: 210 }).proposal).toBe(fallback);
+    const provided: TradeProposal = { ...equal, referencePriceProvenance: "provided" };
+    expect(repriceStoredLimitProposal(provided, DEFAULT_POLICY, { price: 210 }).proposal).not.toBe(provided);
+    // Pre-marker legacy row: conservative equality skip (48h-TTL-bounded ambiguity window).
+    expect(repriceStoredLimitProposal(equal, DEFAULT_POLICY, { price: 210 }).proposal).toBe(equal);
+    // A carried repriceAnchorPrice (real quote from a prior reprice) restores legacy eligibility.
+    const carried: TradeProposal = { ...equal, repriceAnchorPrice: 200 };
     expect(repriceStoredLimitProposal(carried, DEFAULT_POLICY, { price: 210 }).proposal).not.toBe(carried);
+    // limit-fallback stays hard even with a carried anchor: the human's price is the contract.
+    const fallbackCarried: TradeProposal = { ...fallback, repriceAnchorPrice: 200 };
+    expect(repriceStoredLimitProposal(fallbackCarried, DEFAULT_POLICY, { price: 210 }).proposal).toBe(fallbackCarried);
   });
 
   it("dollar-sized bracket that goes sub-one-share after repricing strips its legs (generation-path parity)", () => {

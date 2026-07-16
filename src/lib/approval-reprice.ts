@@ -75,15 +75,22 @@ export function repriceStoredLimitProposal(
   // time — a bid/ask side would skew the ratio the anchor semantics depend on.
   const fresh = usable(quote?.price);
   if (storedLimit === undefined || anchor === undefined || fresh === undefined) return unchanged;
-  // Anchor provenance: db-proposals' ensureReferencePrice defensively stamps a MISSING
-  // referencePrice from the limitPrice itself (chat/manual/legacy paths that never saw a quote).
-  // That fallback is indistinguishable from a genuine quote anchor except by exact equality — and
-  // ratio-re-anchoring it would turn a reviewed hard "$50 limit" into a current-market limit. An
-  // exactly-equal anchor therefore never repriced (fail-safe: the stored, reviewed limit places
-  // verbatim). Genuine marketable limits carry a bps offset from their quote, so they still
-  // reprice; a first reprice stamps repriceAnchorPrice (a real quote), restoring reprice
-  // eligibility for later rounds.
-  if (anchor === storedLimit && usable(proposal.repriceAnchorPrice) === undefined) return unchanged;
+  // Anchor provenance: db-proposals' ensureReferencePrice stamps referencePriceProvenance at
+  // insert — "limit-fallback" means the reference is a defensive COPY of the limit price
+  // (chat/manual paths that never saw a quote): that is a hard price and ratio-re-anchoring it
+  // would turn a reviewed "$50 limit" into a current-market limit. "provided" means a genuine
+  // decision-time quote — reprice-eligible even when the LLM set the limit exactly at it. Rows
+  // predating the marker fall back to the conservative equality heuristic (a 48h-TTL-bounded
+  // legacy window); a carried repriceAnchorPrice (a real quote from a prior reprice) always
+  // restores eligibility.
+  if (proposal.referencePriceProvenance === "limit-fallback") return unchanged;
+  if (
+    proposal.referencePriceProvenance === undefined &&
+    anchor === storedLimit &&
+    usable(proposal.repriceAnchorPrice) === undefined
+  ) {
+    return unchanged;
+  }
   const anchorDriftBps = (Math.abs(fresh - anchor) / anchor) * 10_000;
   // Strictly-beyond-tolerance, with a float-noise guard: a quote landing EXACTLY on the tolerance
   // must not read as material because (fresh - anchor) picked up ~1e-13 of representation error.
