@@ -32,6 +32,7 @@ import {
 } from "../operation-lease";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { loadCikMap } from "./sec8k";
+import { parseFilingHtml } from "./sec-parser";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -42,7 +43,7 @@ function getLocalArtifactPath(cik: string, accession: string, sequence: number, 
   return path.join(dataDir, "sec-artifacts", paddedCik, accession, `${sequence}-${cleanDocName}`);
 }
 
-async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
+export async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
   const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
   try {
     if (fs.existsSync(filePath)) {
@@ -54,7 +55,7 @@ async function readLocalArtifact(cik: string, accession: string, sequence: numbe
   return null;
 }
 
-async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
+export async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
   const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
   try {
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
@@ -443,7 +444,7 @@ export async function ingestFiling(
     return { skipped: false, chunks: 0, error: `fetch failed: ${error}` };
   }
 
-  const text = extractFilingText(html);
+  const { text, sections } = parseFilingHtml(html);
   if (text.length < 100) {
     return { skipped: false, chunks: 0, error: "extracted text too short (possible XBRL viewer redirect)" };
   }
@@ -465,7 +466,7 @@ export async function ingestFiling(
       type: "html",
       byteCount,
       rawUri: filingRef.url,
-      parserVersion: "v1"
+      parserVersion: "v2"
     });
     assertSecFilingLease(leaseGuard);
   } catch (err) {
@@ -479,6 +480,7 @@ export async function ingestFiling(
   assertSecFilingLease(leaseGuard);
   const document = {
       text,
+      sections,
       doc_id: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
       ticker,
       title: `${ticker} ${filingRef.docType} (${filingRef.filedAt})`,
@@ -489,7 +491,7 @@ export async function ingestFiling(
       url: filingRef.url
     };
   const result = await storeDocument(document, userId, {
-    parserRevision: "sec-edgar-filing-v1",
+    parserRevision: "sec-edgar-filing-v2",
     ...(leaseGuard ? { leaseGuard } : {})
   });
   assertSecFilingLease(leaseGuard);

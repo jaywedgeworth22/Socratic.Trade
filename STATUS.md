@@ -1,5 +1,38 @@
 # Current Status
 
+## 2026-07-16 — SEC/RAG Backfill: Phase 4-7 — Search Fusion and Evaluation (Antigravity/AG, branch `agent/ag-rag-backfill-p4-p7`)
+Implements FTS5 lexical virtual table `document_chunks_fts` (migration v49), RRF (Reciprocal Rank Fusion) and MMR (Maximal Marginal Relevance) cosine/Jaccard similarity diversity filtering in `src/lib/rag/search-fusion.ts` to fuse lexical and dense vector search results. Created retrieval evaluation harness (`scripts/eval/rag-eval-harness.ts`) to query `sec_eval_golden_set` and calculate metrics (Recall@10, Recall@50, nDCG). Verified via new test suites in `test/search-fusion.test.ts` and `test/rag-eval-harness.test.ts` (100% green), clean ESLint/tsc, and successful Next.js production build check.
+
+## 2026-07-16 — SEC/RAG Backfill: Phase 3 — HTML Parsing and Chunker (Antigravity/AG, branch `agent/ag-rag-backfill-p3`)
+Implements cheerio-based HTML parser (`parseFilingHtml` in `src/lib/web-sources/sec-parser.ts`) to strip script/style/hidden tags, normalize Item/Part section headers, and reconstruct clean pipe-delimited Markdown tables (grouping/splitting large tables to fit token caps). Updated chunker in `src/lib/rag/chunk.ts` to be section-aware (resetting overlap across sections) and use token-aware estimation. Integrated this parser in `ingestFiling` inside `src/lib/web-sources/sec-filings.ts` to ingest bodies with parser revision `sec-edgar-filing-v2`. Verified via newly added unit test suite in `test/sec-parser.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
+
+### Codex autofix — P2 review findings (2026-07-16)
+Addressed 14 of 16 Codex P2 findings on sec-parser.ts (last 4 in Round 3):
+
+**Round 1 (commit `b1701243`):**
+1. **Anchor heading detection**: Anchored `isHeadingBlock` regex to `^` so cross-references ("See Part II, Item 1A...") are not classified as section headings.
+2. **Preserve line breaks in table cells**: Replace `<br>` with space before extracting cell text, preventing `Revenue<br>2026` from becoming `Revenue2026`.
+3. **Treat nested tables as block children**: Added `table` to the block-children check so a container wrapping only a table recurses into it rather than emitting the container's flattened text.
+4. **Prune hidden ix descendants**: Remove `ix:hidden`/`ix:header` content entirely instead of unwrapping, preventing non-rendered metadata from entering chunk text.
+5. **Restrict row cells to current table level**: Use `children("td, th")` instead of `find("td, th")` to avoid pulling cells from nested tables into the outer row.
+
+**Round 2 (commit `92fbd644`):**
+6. **Restrict table rows to current table level**: Filter `find("tr")` to only rows whose closest `<table>` parent is the current node, preventing nested tables from emitting duplicate/malformed rows.
+7. **Avoid classifying wrapper containers as headings**: Only treat block tags as headings when they have no block children, preventing wrapper divs/sections containing both heading text and content from being consumed as a heading with lost child content.
+8. **Preserve mixed text around child blocks**: Emit text node siblings when recursing through containers, so prose adjacent to nested tables (e.g. "Note: <table>...</table> See below.") is preserved.
+9. **Normalize table colspan**: Repeat cell text for each spanned column when `colspan > 1`, preventing misaligned Markdown columns.
+10. **Only repeat real table headers when splitting**: Track whether the first row contains `<th>` elements before treating it as a repeatable header across split chunks, preventing data rows from being mislabeled as column headings.
+
+**Round 3 (commit to follow):**
+11. **Preserve nested table content before stripping outer cells**: Process nested tables via `collectBlocks` before `.remove()` so their content is not lost from the corpus.
+12. **Preserve BR separators in prose blocks**: Replace `<br>` with space in leaf block text extraction, preventing `Revenue<br>2026` from becoming `Revenue2026` outside tables too.
+13. **Detect item headings encoded as layout tables**: Check small single-cell tables for heading-like text before table Markdown conversion, so section metadata is not lost.
+14. **Recognize headings in non-block EDGAR wrappers**: Added `HEADING_WRAPPER_TAGS` set (`center`, `font`, `span`, `b`, etc.) so EDGAR formatting wrappers with Item/Part text are classified as headings.
+
+2 remaining P2 findings deferred for owner decision (form-specific Item 1 titles; parser-versioned accession skip).
+
+## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
+Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
 ## 2026-07-16 — Bump congress-trading-shared to fee9937c (PR #1686)
 
 Dependency bump: `@jaywedgeworth22/congress-trading-shared` pinned to

@@ -1488,3 +1488,17 @@ export function insertChunkOccurrences(occurrences: ChunkOccurrence[]): void {
   });
   insertMany(occurrences);
 }
+
+export function insertDocumentChunkFts(
+  contentHash: string,
+  symbol: string,
+  source: string,
+  accession: string,
+  text: string
+): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO document_chunks_fts (content_hash, symbol, source, accession, text)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(contentHash, symbol, source, accession, text);
+}

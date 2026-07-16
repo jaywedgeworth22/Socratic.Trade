@@ -43,6 +43,7 @@ export interface ChunkInput {
   doc_type?: string;
   source?: string;
   url?: string;
+  sections?: Array<{ itemCode: string; itemTitle: string; text: string }>;
 }
 
 export interface DocumentChunk {
@@ -86,23 +87,41 @@ function normalizeDate(value: string | number | Date | undefined, fallback: stri
   return Number.isNaN(d.getTime()) ? fallback : d.toISOString();
 }
 
-/** Approximate token count via whitespace word count (deterministic, dependency-free). */
-function countTokens(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
+/** Token count helper using calibrated character-level ratio. */
+export function countTokens(text: string, isTable: boolean = false): number {
+  const ratio = isTable ? 3.5 : 4.5;
+  return Math.ceil(text.length / ratio);
 }
 
 function tailOverlap(text: string, count: number): string {
   const words = String(text).trim().split(/\s+/).filter(Boolean);
-  return words.slice(Math.max(0, words.length - count)).join(" ");
+  let i = words.length - 1;
+  while (i >= 0) {
+    const proposed = words.slice(i).join(" ");
+    if (countTokens(proposed, false) > count) {
+      break;
+    }
+    i--;
+  }
+  return words.slice(Math.max(0, i + 1)).join(" ");
 }
 
 function splitLongProse(text: string, maxTokens: number, overlapTokens: number): string[] {
   const words = String(text).trim().split(/\s+/).filter(Boolean);
-  const step = Math.max(1, maxTokens - overlapTokens);
   const segments: string[] = [];
-  for (let i = 0; i < words.length; i += step) {
-    segments.push(words.slice(i, i + maxTokens).join(" "));
-    if (i + maxTokens >= words.length) break;
+  let currentWords: string[] = [];
+
+  for (const word of words) {
+    const proposed = [...currentWords, word].join(" ");
+    if (countTokens(proposed, false) > maxTokens && currentWords.length > 0) {
+      segments.push(currentWords.join(" "));
+      const overlapWordCount = Math.floor(currentWords.length * (overlapTokens / maxTokens));
+      currentWords = currentWords.slice(currentWords.length - overlapWordCount);
+    }
+    currentWords.push(word);
+  }
+  if (currentWords.length > 0) {
+    segments.push(currentWords.join(" "));
   }
   return segments;
 }
@@ -231,34 +250,72 @@ export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): Docu
       pending = [];
       return;
     }
-    pushText(text);
+    pushText(text, { isTable: false });
     pending = carryOverlap && overlapTokens ? [tailOverlap(text, overlapTokens)] : [];
   };
 
-  for (const block of blockDocument(doc.text)) {
-    if (block.type === "heading") {
-      flush({ carryOverlap: false });
-      section = block.text;
-      continue;
-    }
-    if (block.type === "table") {
-      flush({ carryOverlap: false });
-      pushText(block.text, { isTable: true });
+  if (doc.sections && doc.sections.length > 0) {
+    for (const sec of doc.sections) {
+      section = `${sec.itemCode}. ${sec.itemTitle}`;
       pending = [];
-      continue;
-    }
-    if (countTokens(block.text) > maxTokens) {
-      flush();
-      for (const segment of splitLongProse(block.text, maxTokens, overlapTokens)) pushText(segment);
-      pending = [];
-      continue;
-    }
 
-    const proposed = [...pending, block.text].join("\n\n");
-    if (pending.length && countTokens(proposed) > maxTokens) flush();
-    pending.push(block.text);
+      const parts = sec.text.split("\n\n");
+      for (const part of parts) {
+        const cleanPart = part.trim();
+        if (!cleanPart) continue;
+
+        const isTable = cleanPart.startsWith("|") && cleanPart.endsWith("|");
+        if (isTable) {
+          flush({ carryOverlap: false });
+          pushText(cleanPart, { isTable: true });
+          pending = [];
+          continue;
+        }
+
+        const partTokens = countTokens(cleanPart, false);
+        if (partTokens > maxTokens) {
+          flush();
+          for (const segment of splitLongProse(cleanPart, maxTokens, overlapTokens)) {
+            pushText(segment);
+          }
+          pending = [];
+          continue;
+        }
+
+        const proposed = [...pending, cleanPart].join("\n\n");
+        if (pending.length && countTokens(proposed, false) > maxTokens) {
+          flush();
+        }
+        pending.push(cleanPart);
+      }
+      flush({ carryOverlap: false }); // Do not carry overlap across sections
+    }
+  } else {
+    for (const block of blockDocument(doc.text)) {
+      if (block.type === "heading") {
+        flush({ carryOverlap: false });
+        section = block.text;
+        continue;
+      }
+      if (block.type === "table") {
+        flush({ carryOverlap: false });
+        pushText(block.text, { isTable: true });
+        pending = [];
+        continue;
+      }
+      if (countTokens(block.text, false) > maxTokens) {
+        flush();
+        for (const segment of splitLongProse(block.text, maxTokens, overlapTokens)) pushText(segment);
+        pending = [];
+        continue;
+      }
+
+      const proposed = [...pending, block.text].join("\n\n");
+      if (pending.length && countTokens(proposed, false) > maxTokens) flush();
+      pending.push(block.text);
+    }
+    flush({ carryOverlap: false });
   }
-  flush({ carryOverlap: false });
 
   return chunks;
 }

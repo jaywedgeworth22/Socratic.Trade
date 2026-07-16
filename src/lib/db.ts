@@ -1989,6 +1989,73 @@ const MIGRATIONS: Migration[] = [
         }
       }
     }
+  },
+  {
+    version: 47,
+    name: "sec_facts_and_transactions",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_facts (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          concept TEXT NOT NULL,
+          value REAL NOT NULL,
+          unit TEXT,
+          period TEXT,
+          start_date TEXT,
+          end_date TEXT NOT NULL,
+          accepted_at TEXT NOT NULL,
+          segment TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_facts_cik_concept ON sec_facts(cik, concept);
+
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_cik ON sec_insider_transactions(cik);
+      `);
+    }
+  },
+  {
+    version: 48,
+    name: "sec_eval_golden_set",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_eval_golden_set (
+          id TEXT PRIMARY KEY,
+          query TEXT NOT NULL,
+          expected_cik TEXT NOT NULL,
+          expected_accession TEXT NOT NULL,
+          expected_text_snippet TEXT NOT NULL,
+          category TEXT NOT NULL
+        );
+      `);
+    }
+  },
+  {
+    version: 49,
+    name: "document_chunks_fts",
+    up: (database) => {
+      database.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(
+          content_hash,
+          symbol,
+          source,
+          accession,
+          text
+        );
+      `);
+    }
   }
 ];
 

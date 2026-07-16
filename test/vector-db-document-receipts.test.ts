@@ -444,7 +444,7 @@ describe("storeDocument receipt transaction", () => {
       source: "sec-edgar",
       published_at: "2026-07-14T12:00:00.000Z"
     };
-    const stored = await storeDocument(document, "local", { maxTokens: 4, overlapRatio: 0 });
+    const stored = await storeDocument(document, "local", { maxTokens: 36, overlapRatio: 0 });
 
     expect(stored).toMatchObject({
       attempted: 2,
@@ -468,7 +468,7 @@ describe("storeDocument receipt transaction", () => {
     // Once capacity returns, the deterministic retry must materialize and commit the complete set.
     db.exec("DELETE FROM rag_usage");
     process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "2";
-    const retried = await storeDocument(document, "local", { maxTokens: 4, overlapRatio: 0 });
+    const retried = await storeDocument(document, "local", { maxTokens: 36, overlapRatio: 0 });
     expect(retried).toMatchObject({ attempted: 2, indexed: 2, documentComplete: true });
     expect(mocks.embed).toHaveBeenCalledTimes(2);
     expect(mocks.upsert).toHaveBeenCalledTimes(3);
@@ -504,7 +504,7 @@ describe("storeDocument receipt transaction", () => {
       source: "sec-edgar",
       published_at: "2026-07-14T12:00:00.000Z"
     };
-    const stored = await storeDocument(document, "local", { maxTokens: 4, overlapRatio: 0 });
+    const stored = await storeDocument(document, "local", { maxTokens: 36, overlapRatio: 0 });
 
     expect(stored).toMatchObject({
       attempted: 2,
@@ -527,7 +527,7 @@ describe("storeDocument receipt transaction", () => {
 
     db.exec("DELETE FROM rag_usage");
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "100";
-    const retried = await storeDocument(document, "local", { maxTokens: 4, overlapRatio: 0 });
+    const retried = await storeDocument(document, "local", { maxTokens: 36, overlapRatio: 0 });
     expect(retried).toMatchObject({ attempted: 2, indexed: 2, documentComplete: true });
     expect(db.prepare("SELECT state FROM vector_ingest_commits WHERE id = ?").get(commit.id))
       .toEqual({ state: "committed" });
