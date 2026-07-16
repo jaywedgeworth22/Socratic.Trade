@@ -1,6 +1,6 @@
 # Current Status
 
-## 2026-07-16 — Exit-strategy intelligence: expert-panel design doc landed (CLAUDE)
+## 2026-07-16 — Exit-strategy intelligence: expert-panel design doc landed (CLAUDE) — MERGED (PR #1688, `b1664d2a`; codex-residual fixes: PR #1689)
 
 Docs-only. `docs/design/exit-strategy-intelligence.md` — synthesized output of an
 owner-directed 13-agent expert-panel workflow (4 code mappers → 4 domain experts → 4
@@ -14,6 +14,10 @@ re-decides blind. 11 ranked consensus recommendations, 7 contested-point rulings
 explicit what-NOT-to-do list, and an A/B/C phased roadmap now on the effort board
 (Planned, unassigned). Rollout: `docs/rollouts/2026-07-16-exit-strategy-expert-panel.md`.
 Branch `claude/stop-loss-preset-options-f1jygn` (restarted from main @ 32362e9).
+**Codex residual fix (PR #1689, this branch):** corrected Robinhood option-positions claim
+(no `getOptionPositions` exists) and 8-K trigger citation path (`sec8k.ts:11-30` →
+`src/lib/web-sources/sec8k.ts:648-666`). Two P1 items deferred to maintainer: missing
+PLAN.md/phase-doc update and paper-verification-gate conflict with prior owner decision.
 ## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE) — MERGED (PR #1673, `2d294b7`)
 
 **Update: PR #1673 merged to `main` as `2d294b7` 2026-07-16 (auto-deploys to production).**
