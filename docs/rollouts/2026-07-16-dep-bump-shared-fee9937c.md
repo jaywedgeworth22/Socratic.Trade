@@ -12,12 +12,17 @@ Keep the shared-contract dependency current. The new commit includes the company
 
 - `package.json` — dependency ref + allowScripts entry updated to `fee9937c`
 - `package-lock.json` — regenerated lockfile reflecting the new commit
+- `STATUS.md` — added entry for this PR
+- `docs/EFFORT-LOG.md` — added Completed row
+- `docs/rollouts/2026-07-16-dep-bump-shared-fee9937c.md` — this file
 
-## Verification
+## Verification (2026-07-16 codex-autofix round)
 
+- `npm run lint` — 0 errors (491 inherited warnings)
 - `npx tsc --noEmit` — clean
-- `npm test` — clean (after merge with origin/main)
-- `npm run build` — clean
+- `npm test` — 402 files / 4665 tests passed
+- `npm run build` — clean (all static pages)
+- Merged `origin/main` to bring branch current before verification
 
 ## Follow-ups
 
