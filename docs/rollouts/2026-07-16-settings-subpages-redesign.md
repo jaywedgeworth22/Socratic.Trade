@@ -8,9 +8,8 @@
   - `app/console/settings/danger.tsx`
   - `app/console/settings/learning-review.tsx`
   - `app/console/guardrails/page.tsx` (fixed a minor import syntax error)
-  - `app/ui/ios-components.tsx` (deleted)
+  - `app/ui/ios-components.tsx` (not deleted — still imported by settings pages; deletion deferred)
 - **Verification:**
   - Replaced components successfully.
-  - Purged `ios-components.tsx`.
   - Ran `npm run build`, fixed a syntax error, then `npm run build` succeeded.
 - **Follow-ups:** None.

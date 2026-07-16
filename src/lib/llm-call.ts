@@ -71,7 +71,14 @@ export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key" | 
   }
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (endpoint.url && endpoint.url.includes("aiplatform.googleapis.com")) {
-    headers["x-goog-api-key"] = endpoint.key ?? "";
+    // Agent Platform OpenAI-compatible endpoints (path contains /openapi/ or /openai/) expect
+    // Bearer auth with an OAuth/ADC access token (https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/openai#authenticate).
+    // Direct Vertex AI Gemini endpoints accept x-goog-api-key for API-key auth.
+    if (/\/openapi\/|\/openai\//.test(endpoint.url)) {
+      headers["authorization"] = `Bearer ${endpoint.key ?? ""}`;
+    } else {
+      headers["x-goog-api-key"] = endpoint.key ?? "";
+    }
   } else {
     headers["authorization"] = `Bearer ${endpoint.key ?? ""}`;
   }

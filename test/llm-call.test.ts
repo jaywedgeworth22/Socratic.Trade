@@ -475,6 +475,36 @@ describe("llmAuthHeaders", () => {
       expect(h["x-api-key"]).toBeUndefined();
     }
   });
+
+  it("Vertex AI direct endpoints use x-goog-api-key", () => {
+    const h = llmAuthHeaders({
+      provider: "gemini",
+      key: "AIza-my-api-key",
+      url: "https://us-central1-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-3.5-flash:generateContent"
+    });
+    expect(h["x-goog-api-key"]).toBe("AIza-my-api-key");
+    expect(h.authorization).toBeUndefined();
+  });
+
+  it("Vertex AI Agent Platform OpenAI-compatible endpoints use Bearer auth", () => {
+    const h = llmAuthHeaders({
+      provider: "gemini",
+      key: "ya29-oauth-token",
+      url: "https://us-central1-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-central1/endpoints/openapi/chat/completions"
+    });
+    expect(h.authorization).toBe("Bearer ya29-oauth-token");
+    expect(h["x-goog-api-key"]).toBeUndefined();
+  });
+
+  it("Vertex AI Agent Platform openai path variant uses Bearer auth", () => {
+    const h = llmAuthHeaders({
+      provider: "gemini",
+      key: "ya29-oauth-token",
+      url: "https://aiplatform.googleapis.com/v1/projects/my-proj/locations/us-central1/endpoints/openai/chat/completions"
+    });
+    expect(h.authorization).toBe("Bearer ya29-oauth-token");
+    expect(h["x-goog-api-key"]).toBeUndefined();
+  });
 });
 
 describe("extractLlmText", () => {
