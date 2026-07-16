@@ -2,10 +2,10 @@ import { resolveLlmCredential } from "./db";
 import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
-export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
 
 export interface LlmEndpoint {
-  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
   url: string;
   key?: string;
   model: string;
@@ -25,6 +25,7 @@ export function llmModelFamily(model: string | undefined): LlmModelFamily {
   if (/^grok/i.test(normalized)) return "xai";
   if (/^gemini/i.test(normalized)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(normalized)) return "mistral";
+  if (/^openrouter\//i.test(normalized)) return "openrouter";
   if (/^deepseek/i.test(normalized)) return "deepseek";
   return "openai";
 }
@@ -143,6 +144,26 @@ export function resolveLlmEndpoint(
       url,
       key: cred.key,
       model,
+      keySource: cred.source === "operator" ? "operator" : "user",
+      keyRef: cred.keyRef,
+      transport: "chat-completions"
+    };
+  }
+
+  if (/^openrouter\//i.test(model)) {
+    const url =
+      process.env.OPENROUTER_API_URL?.trim() ||
+      "https://openrouter.ai/api/v1/chat/completions";
+    const cred = resolveLlmCredential("openrouter", userId);
+    return {
+      provider: "openrouter",
+      url,
+      key: cred.key,
+      // OpenRouter accepts the model ID as-is (e.g. "openrouter/deepseek/deepseek-chat" or just "deepseek/deepseek-chat").
+      // But typically we pass the string exactly as the user typed it. Wait, the Socratic.Trade UI just sets model="deepseek/deepseek-chat".
+      // If we used `openrouter/deepseek/deepseek-chat` in the UI to distinguish it, we should strip `openrouter/`.
+      // Let's strip the `openrouter/` prefix before sending it to the API.
+      model: model.replace(/^openrouter\//i, ""),
       keySource: cred.source === "operator" ? "operator" : "user",
       keyRef: cred.keyRef,
       transport: "chat-completions"

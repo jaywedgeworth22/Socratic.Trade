@@ -24,7 +24,7 @@ export interface LlmUsageOpts {
 }
 
 /** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
-export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
 
 /** Sum usage across the (possibly multi-step) tool loop and record one ledger row. */
 function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: string, prompt: number, completion: number, saw: boolean): void {
@@ -464,7 +464,7 @@ export class OpenAILLM implements ChatLLM {
     private usage: LlmUsageOpts = {},
     // OpenAI-compatible provider serving this model (xAI/Gemini/Mistral/DeepSeek all share this tool loop),
     // recorded on the usage ledger so cost is attributed to the right provider, not always "openai".
-    private provider: "openai" | "xai" | "gemini" | "mistral" | "deepseek" = "openai",
+    private provider: OpenAiCompatProvider = "openai",
     private reasoningEffort?: LlmReasoningEffort
   ) {}
 
@@ -580,6 +580,7 @@ export function chatProviderForModel(model: string): ChatProvider {
   if (/^grok/i.test(model)) return "xai";
   if (/^gemini/i.test(model)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) return "mistral";
+  if (/^openrouter\//i.test(model)) return "openrouter";
   if (/^deepseek/i.test(model)) return "deepseek";
   return "openai";
 }
@@ -592,6 +593,7 @@ function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (prov
   if (provider === "gemini")
     return process.env.GEMINI_API_URL?.trim() || "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
   if (provider === "mistral") return process.env.MISTRAL_API_URL?.trim() || "https://api.mistral.ai/v1/chat/completions";
+  if (provider === "openrouter") return process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
   if (provider === "deepseek") return process.env.DEEPSEEK_API_URL?.trim() || "https://api.deepseek.com/v1/chat/completions";
   return process.env.OPENAI_CHAT_URL?.trim() || "https://api.openai.com/v1/chat/completions";
 }
