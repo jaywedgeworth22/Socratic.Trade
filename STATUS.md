@@ -3,6 +3,16 @@
 ## 2026-07-16 — SEC/RAG Backfill: Phase 3 — HTML Parsing and Chunker (Antigravity/AG, branch `agent/ag-rag-backfill-p3`)
 Implements cheerio-based HTML parser (`parseFilingHtml` in `src/lib/web-sources/sec-parser.ts`) to strip script/style/hidden tags, normalize Item/Part section headers, and reconstruct clean pipe-delimited Markdown tables (grouping/splitting large tables to fit token caps). Updated chunker in `src/lib/rag/chunk.ts` to be section-aware (resetting overlap across sections) and use token-aware estimation. Integrated this parser in `ingestFiling` inside `src/lib/web-sources/sec-filings.ts` to ingest bodies with parser revision `sec-edgar-filing-v2`. Verified via newly added unit test suite in `test/sec-parser.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
 
+### Codex autofix — P2 review findings (2026-07-16)
+Addressed 5 of 7 Codex P2 findings on sec-parser.ts:
+1. **Anchor heading detection**: Anchored `isHeadingBlock` regex to `^` so cross-references ("See Part II, Item 1A...") are not classified as section headings.
+2. **Preserve line breaks in table cells**: Replace `<br>` with space before extracting cell text, preventing `Revenue<br>2026` from becoming `Revenue2026`.
+3. **Treat nested tables as block children**: Added `table` to the block-children check so a container wrapping only a table recurses into it rather than emitting the container's flattened text.
+4. **Prune hidden ix descendants**: Remove `ix:hidden`/`ix:header` content entirely instead of unwrapping, preventing non-rendered metadata from entering chunk text.
+5. **Restrict row cells to current table level**: Use `children("td, th")` instead of `find("td, th")` to avoid pulling cells from nested tables into the outer row.
+
+2 remaining P2 findings deferred for owner decision (form-specific Item 1 titles; parser-versioned accession skip).
+
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
 ## 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE)

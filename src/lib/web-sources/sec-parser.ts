@@ -55,7 +55,8 @@ function hasBlockChildren($: any, node: any): boolean {
   if (!node.children) return false;
   for (const child of node.children) {
     if (child.type === "tag") {
-      if (BLOCK_TAGS.has(child.name.toLowerCase())) {
+      const childName = child.name.toLowerCase();
+      if (BLOCK_TAGS.has(childName) || childName === "table") {
         return true;
       }
       if (hasBlockChildren($, child)) {
@@ -69,7 +70,7 @@ function hasBlockChildren($: any, node: any): boolean {
 function isHeadingBlock(text: string): boolean {
   const clean = text.trim();
   if (clean.length === 0 || clean.length > 150) return false;
-  return /item\s+(\d+[a-z]?)\b/i.test(clean) || /part\s+(\d+|[ivx]+)\b/i.test(clean);
+  return /^\s*item\s+(\d+[a-z]?)\b/i.test(clean) || /^\s*part\s+(\d+|[ivx]+)\b/i.test(clean);
 }
 
 function standardizeTitle(code: string, rawTitle: string): string {
@@ -159,7 +160,9 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
     const tableRows: string[][] = [];
     $(node).find("tr").each((_: any, tr: any) => {
       const row: string[] = [];
-      $(tr).find("td, th").each((_: any, cell: any) => {
+      $(tr).children("td, th").each((_: any, cell: any) => {
+        // Replace <br> with space so concatenated text nodes stay separated
+        $(cell).find("br").replaceWith(" ");
         row.push($(cell).text().replace(/\s+/g, " ").trim());
       });
       if (row.some((c) => c !== "")) {
@@ -216,10 +219,16 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
 export function parseFilingHtml(html: string): ParsedFiling {
   const $ = cheerio.load(html);
 
-  // Clean inline-XBRL tags but keep their contents
+  // Clean inline-XBRL tags: remove ix:hidden/ix:header entirely (their content is
+  // non-rendered metadata or duplicate facts), unwrap the rest keeping their content.
   $("*").each((_, el) => {
     if (el.type === "tag" && el.name && el.name.toLowerCase().startsWith("ix:")) {
-      $(el).replaceWith($(el).contents());
+      const ixName = el.name.toLowerCase();
+      if (ixName === "ix:hidden" || ixName === "ix:header") {
+        $(el).remove();
+      } else {
+        $(el).replaceWith($(el).contents());
+      }
     }
   });
 

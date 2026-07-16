@@ -23,3 +23,6 @@ Ran the following tests and commands under Node 24:
 
 ## Follow-ups
 Phase 4: Resumable worker integration and RAG ingest job queueing (claimed under CODEX or future Antigravity sessions).
+
+### Codex autofix — 2026-07-16
+Addressed 5 P2 findings from Codex review of sec-parser.ts. See STATUS.md for summary.
