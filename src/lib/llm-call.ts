@@ -73,15 +73,17 @@ export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key" | 
   if (endpoint.url && endpoint.url.includes("aiplatform.googleapis.com")) {
     // Agent Platform OpenAI-compatible endpoints (path contains /openapi/ or /openai/) expect
     // Bearer auth with an OAuth/ADC access token (https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/openai#authenticate).
-    // Direct Vertex AI Gemini endpoints accept x-goog-api-key for API-key auth.
+    // Direct Vertex AI endpoints (e.g. :generateContent) are NOT handled here because the
+    // chat-completions transport sends the wrong body format for the native Vertex API shape —
+    // full support for native endpoints would require a separate transport and is deferred.
     if (/\/openapi\/|\/openai\//.test(endpoint.url)) {
       headers["authorization"] = `Bearer ${endpoint.key ?? ""}`;
-    } else {
-      headers["x-goog-api-key"] = endpoint.key ?? "";
+      return headers;
     }
-  } else {
-    headers["authorization"] = `Bearer ${endpoint.key ?? ""}`;
   }
+  // Default: Bearer auth for all other endpoints (OpenAI, xAI, Mistral, DeepSeek,
+  // non-OpenAI-compat Vertex, Google AI Studio, etc.).
+  headers["authorization"] = `Bearer ${endpoint.key ?? ""}`;
   return headers;
 }
 

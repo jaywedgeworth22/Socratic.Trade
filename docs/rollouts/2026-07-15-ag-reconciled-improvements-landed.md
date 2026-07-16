@@ -14,4 +14,4 @@ This branch consolidates all of Antigravity's pending work (PR #1611 transcript 
 - Passed verification gate through `land.sh`.
 
 ## Follow-ups
-- Await PR #1616's hosted checks to pass. Once green, GitHub will auto-merge it into `main`, which will trigger the automatic Coolify production deploy.
+- PR #1616 has been merged (d3efc9a6) and production-deployed via the auto-deploy pipeline. No further action needed on this PR.

@@ -476,14 +476,14 @@ describe("llmAuthHeaders", () => {
     }
   });
 
-  it("Vertex AI direct endpoints use x-goog-api-key", () => {
+  it("Vertex AI native endpoints fall back to Bearer (no native transport — chat-completions body won't match)", () => {
     const h = llmAuthHeaders({
       provider: "gemini",
       key: "AIza-my-api-key",
       url: "https://us-central1-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-3.5-flash:generateContent"
     });
-    expect(h["x-goog-api-key"]).toBe("AIza-my-api-key");
-    expect(h.authorization).toBeUndefined();
+    expect(h.authorization).toBe("Bearer AIza-my-api-key");
+    expect(h["x-goog-api-key"]).toBeUndefined();
   });
 
   it("Vertex AI Agent Platform OpenAI-compatible endpoints use Bearer auth", () => {
