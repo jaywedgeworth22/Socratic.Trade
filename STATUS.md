@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-16 — Bump congress-trading-shared to fee9937c (PR #1686)
+
+Dependency bump: `@jaywedgeworth22/congress-trading-shared` pinned to
+`fee9937c25db1de75c1a676826801e3399f36106` from `ef17b72`. Both `package.json`
+and `package-lock.json` updated. Rollout:
+`docs/rollouts/2026-07-16-dep-bump-shared-fee9937c.md`.
+
 ## 2026-07-16 — Exit-strategy intelligence: expert-panel design doc landed (CLAUDE)
 
 Docs-only. `docs/design/exit-strategy-intelligence.md` — synthesized output of an
@@ -45,6 +52,9 @@ falls back to any connected Tradier account), with a new regression test. tsc cl
 `test/history.test.ts` 14/14 and `test/web-sources-technical.test.ts` 10/10 green
 (unaffected). Branch `claude/tradier-connected-account-history-source`.
 Rollout: `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
+## 2026-07-16 — Shared v1.8.3 dependency bump (ANTIGRAVITY)
+
+Coordinated bump of `@jaywedgeworth22/congress-trading-shared` dependency to `fee9937c25db1de75c1a676826801e3399f36106` to resolve version pin divergence. Build and checks verify clean. Branch `antigravity/company-name-standardization-part2`. Rollout: `docs/rollouts/2026-07-16-shared-v183-dependency-bump.md`.
 
 ## 2026-07-16 — Approval-time limit re-anchor + estimated closing P/L surfaces (MONET)
 
