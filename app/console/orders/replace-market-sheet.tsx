@@ -126,7 +126,7 @@ export function ReplaceMarketSheet({
 
   return (
     <Sheet open={open} onClose={onClose} title="Replace stale limit order" tone={live ? "live" : undefined}>
-      <div className="grid grid-cols-2 gap-3 rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
+      <div className="grid grid-cols-2 gap-3 rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
         <Fact
           label="Order"
           value={`${sideWord} ${order.symbol} ${kind}`}
@@ -165,7 +165,7 @@ export function ReplaceMarketSheet({
 
       {live ? (
         <>
-          <div className="mt-3 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+          <div className="mt-3 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
             <div className="font-bold">Brokerage account</div>
             <p className="con-num mt-1">
               The replacement {sideWord} of {remaining} {order.symbol} goes to the broker at the current market price
@@ -178,7 +178,7 @@ export function ReplaceMarketSheet({
           </div>
 
           {serverReasons.length > 0 && (
-            <div className="mt-3 rounded-lg border border-[color:var(--con-warn-border)] p-3 text-[length:var(--con-fs-xs)]">
+            <div className="mt-3 rounded-control border border-[color:var(--con-warn-border)] p-3 text-[length:var(--con-fs-xs)]">
               <div className="font-semibold text-[color:var(--con-warn)]">The server refused the confirmation:</div>
               <ul className="mt-1 list-disc pl-4 text-[color:var(--con-muted)]">
                 {serverReasons.map((reason, i) => (
@@ -212,7 +212,7 @@ export function ReplaceMarketSheet({
           )}
         </>
       ) : (
-        <p className="mt-3 rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+        <p className="mt-3 rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
           {reality.word} · {reality.phrase} — no real dollars move. The replacement uses the broker&apos;s paper
           execution and stays Working until the broker reports a fill.
         </p>

@@ -211,7 +211,7 @@ export function DeliveryChannelsCard() {
       </p>
 
       {loadError && (
-        <p className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+        <p className="mb-3 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
           {loadError}{" "}
           <button type="button" className="font-semibold underline" onClick={() => void load()} title="Try loading the channels again.">
             Retry
@@ -231,7 +231,7 @@ export function DeliveryChannelsCard() {
             return (
               <div
                 key={ch.id}
-                className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
+                className="rounded-control border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
               >
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex flex-wrap items-center gap-2">
@@ -240,7 +240,7 @@ export function DeliveryChannelsCard() {
                     </span>
                     {ch.id === "push" && ch.available && (
                       <span
-                        className="rounded-full border border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[color:var(--con-pos)]"
+                        className="rounded-full border border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)] px-2 py-0.5 text-[length:var(--con-fs-2xs)] font-bold uppercase tracking-wide text-[color:var(--con-pos)]"
                         title="Push via ntfy needs no account or key and is free — the recommended first channel."
                       >
                         recommended · free

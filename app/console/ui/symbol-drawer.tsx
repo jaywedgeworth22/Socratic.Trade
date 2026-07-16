@@ -68,7 +68,7 @@ function SymbolDrawerHost({ content, onClose }: { content: SymbolDrawerContent; 
           <button
             type="button"
             aria-label="Close"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--con-faint)] transition-colors hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)]"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-control text-[color:var(--con-faint)] transition-colors hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)]"
             onClick={onClose}
           >
             <X size={18} />

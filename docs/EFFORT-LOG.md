@@ -1821,6 +1821,12 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
+  claimed 2026-07-16) — GATE/LANDING.** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
+  128 rounded-md/lg/xl call sites in app/console -> canon rounded-control(8px)/rounded-card(12px)
+  utilities; new --con-fs-2xs:10px micro token + 15 ad-hoc 9-12px sizes onto the --con-fs-* scale.
+  Display-only, 42 tsx + console.css. Computed-style verified live (8/12/10px). Rollout:
+  docs/rollouts/2026-07-16-console-token-sweep.md.
 - **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
   (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — IN PROGRESS.** Owner-directed
   ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the

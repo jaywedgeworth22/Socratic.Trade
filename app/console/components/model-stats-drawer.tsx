@@ -275,7 +275,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
         </p>
         {loading && <p className="py-4 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading model stats…</p>}
         {error && !loading && (
-          <p className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+          <p className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
             {error}
           </p>
         )}

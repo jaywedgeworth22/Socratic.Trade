@@ -360,7 +360,7 @@ export function Segmented<T extends string>({
     <div
       role="group"
       aria-label={ariaLabel}
-      className={cx("inline-flex rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-0.5", className)}
+      className={cx("inline-flex rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-0.5", className)}
     >
       {options.map((opt) => {
         const active = value === opt.value;

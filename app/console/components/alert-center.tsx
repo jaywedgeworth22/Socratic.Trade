@@ -259,7 +259,7 @@ export function AlertCenter({
                 <article
                   key={row.event.id}
                   className={cx(
-                    "rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-3",
+                    "rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-3",
                     acknowledged && "opacity-60"
                   )}
                 >

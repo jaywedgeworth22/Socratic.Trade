@@ -80,6 +80,10 @@
   --con-radius-sm: var(--radius-control);
 
   /* Type scale */
+  /* 2xs is the sanctioned MICRO tier: captions, timestamps, axis/sub-labels only —
+     never interactive text or anything the owner must read to act. Added 2026-07-16
+     to replace ad-hoc text-[9px]/text-[10px] arbitrary values. */
+  --con-fs-2xs: 10px;
   --con-fs-xs: 11px;
   --con-fs-sm: 12.5px;
   --con-fs-base: 13.5px;

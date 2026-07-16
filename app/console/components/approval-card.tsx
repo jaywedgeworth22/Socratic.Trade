@@ -296,7 +296,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             price. Omitted entirely (no dashes-on-card noise) when either is missing. */}
         {estPnl && (
           <div
-            className="rounded-lg border border-[color:var(--con-line)] p-3"
+            className="rounded-control border border-[color:var(--con-line)] p-3"
             title="Estimated at approval-card render time: shares this order would close × (current price − average cost), sign-flipped for a short cover. The server re-prices at the moment you actually approve."
           >
             <div className="con-card-title mb-1 flex items-center gap-1.5">
@@ -428,7 +428,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             twice (was: this block also fired on `!available`, duplicating the panel above). */}
         {redCard === "legacy-unavailable" && (
           <div
-            className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3"
+            className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3"
             title="The adversarial (red team) review was required but could not run, so this trade was routed to you unreviewed — you are the only reviewer it will get."
           >
             <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
@@ -442,7 +442,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         )}
 
         {humanReviewReasons.length > 0 && (
-          <div className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3">
+          <div className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3">
             <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
               <CircleAlert size={12} /> Why your approval is required
             </div>
@@ -459,7 +459,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
 
         {/* Provenance + sizing receipt */}
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(260px,0.95fr)]">
-          <div className="rounded-lg border border-[color:var(--con-line)] p-3">
+          <div className="rounded-control border border-[color:var(--con-line)] p-3">
             <div className="con-card-title mb-2 flex items-center gap-1.5" title="Sizing inputs already available on the approval snapshot; missing values stay blank instead of being inferred.">
               <Ruler size={12} /> Sizing provenance
             </div>
@@ -499,7 +499,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             ) : null}
           </div>
 
-          <div className="rounded-lg border border-[color:var(--con-line)] p-3">
+          <div className="rounded-control border border-[color:var(--con-line)] p-3">
             <div className="con-card-title mb-2 flex items-center gap-1.5" title="Bracket reward:risk geometry from the persisted entry anchor, stop, and take-profit.">
               <TrendingUp size={12} /> Reward:risk geometry
             </div>
@@ -536,7 +536,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           </div>
         </div>
 
-        <div className="rounded-lg border border-[color:var(--con-line)] p-3">
+        <div className="rounded-control border border-[color:var(--con-line)] p-3">
           <div className="con-card-title mb-2 flex items-center gap-1.5" title="Decision-case evidence linked by proposal id.">
             <Database size={12} /> Evidence citations
           </div>
@@ -622,7 +622,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         </div>
 
         {/* Three outcomes */}
-        <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed">
+        <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed">
           <p>
             <strong>If you approve:</strong> {SIDE_LABEL[p.side]?.toLowerCase() ?? p.side} {sizeText} at {p.type.replace("_", " ")}
             {typeof p.limitPrice === "number" ? ` (limit ${fmtMoney(p.limitPrice)})` : ""}.
@@ -762,7 +762,7 @@ function LiveApproveSheet({
 
   return (
     <Sheet open={open} onClose={onClose} title="Broker order approval">
-      <div className="mb-3 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+      <div className="mb-3 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
         <div className="font-bold">Brokerage account</div>
         <p className="con-num mt-1">
           {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()} {pending.proposal.symbol} — estimated{" "}
@@ -776,7 +776,7 @@ function LiveApproveSheet({
       </div>
 
       {serverReasons.length > 0 && (
-        <div className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] p-3 text-[length:var(--con-fs-xs)]">
+        <div className="mb-3 rounded-control border border-[color:var(--con-warn-border)] p-3 text-[length:var(--con-fs-xs)]">
           <div className="font-semibold text-[color:var(--con-warn)]">The server refused the confirmation:</div>
           <ul className="mt-1 list-disc pl-4 text-[color:var(--con-muted)]">
             {serverReasons.map((r, i) => (

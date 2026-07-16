@@ -304,7 +304,7 @@ export default function WatchlistPage() {
           never place orders.
         </p>
 
-        <div ref={alertFormRef} className="mb-4 grid gap-3 rounded-lg border border-[color:var(--con-line)] p-3 sm:grid-cols-[7rem_7rem_8rem_1fr_auto]">
+        <div ref={alertFormRef} className="mb-4 grid gap-3 rounded-control border border-[color:var(--con-line)] p-3 sm:grid-cols-[7rem_7rem_8rem_1fr_auto]">
           <Field label="Symbol" htmlFor="alert-symbol">
             <TextInput
               id="alert-symbol"
@@ -372,7 +372,7 @@ export default function WatchlistPage() {
               .map((alert) => (
                 <div
                   key={alert.id}
-                  className="con-row flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-2"
+                  className="con-row flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control px-1.5 py-2"
                   title={
                     alert.status === "armed"
                       ? `Armed: notifies when ${alert.symbol} trades ${alert.op === ">" ? "above" : "below"} ${fmtMoney(alert.price)}.`
