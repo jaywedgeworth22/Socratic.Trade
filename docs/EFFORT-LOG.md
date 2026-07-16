@@ -236,6 +236,40 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
+  card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
+  `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**
+  Owner request: Tradier shouldn't be a generic API-keys Settings card, "should just be a
+  source that users sync to" (the existing broker-connect flow), with the connected
+  account's data naturally shared since the owner is the sole user. Removed `tradier` from
+  `API_KEY_CATALOG` and its now-dead `API_KEY_ENV_MAP`/aliases/tier entries; `history.ts`'s
+  Tradier price-history fetch now resolves credentials from the connected Tradier broker
+  account (new `getConnectedAccountByBroker`) instead of a separate stored key/env var,
+  cache scope `"shared"`. Codex P2 fixed pre-merge: lookup no longer requires Tradier to be
+  the ACTIVE execution broker (prefer active, fall back to any connected Tradier account) —
+  a user trading through Alpaca/Robinhood with Tradier connected purely as a data source
+  keeps Tradier history. Tests rewired (`test/history.test.ts`; per-user sharing-semantics
+  tests moved to Marketstack as vehicle). Rollout:
+  `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
+- **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
+  claimed 2026-07-16) — COMPLETED + DEPLOYED 2026-07-16 (PR #1683 MERGED, squash 32362e93; production verified serving it, health ok).** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
+  128 rounded-md/lg/xl call sites in app/console -> canon rounded-control(8px)/rounded-card(12px)
+  utilities; new --con-fs-2xs:10px micro token + 15 ad-hoc 9-12px sizes onto the --con-fs-* scale.
+  Display-only, 42 tsx + console.css. Computed-style verified live (8/12/10px). Rollout:
+  docs/rollouts/2026-07-16-console-token-sweep.md.
+- **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
+  (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — COMPLETED + DEPLOYED 2026-07-16 (PR #1679 merged as `61f826ef`).** Owner-directed
+  ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
+  2026-07-12 "iOS UI refresh" (#1476) converted Settings + all sub-cards (brokers/api-keys/delivery/
+  learning-review/sharing/help/danger) from console `Card`/`Field`/`Toggle` primitives to iOS grouped-list
+  components; subsequent fixes (#1535 theme tokens, #1651 con-card containers) only reskinned the outer
+  boxes, leaving iOS row internals — hence "almost zero improvement." Scope: (1) rebuild Settings content
+  on console primitives (restore pre-#1476 architecture with post-#1476 content); (2) admin-only link at
+  top-of-site chrome to /admin + restyle /admin onto the console `con-*` design system with a clear way
+  back; All workstreams IMPLEMENTED (settings de-iOS rebuild incl. ios-components.tsx deletion; admin chrome link + full /admin con-* migration incl. /console/usage P0; Strategy/Guardrails nav renames + NEW /console/connections + tax/webhook card moves + deep-link retargets; h1=rail-label naming canon + journal chip truth + fabricated-tag removal + mobile fixes; consent-decline persistence bug + regression test). COMPLETED + DEPLOYED 2026-07-16: PR #1679 MERGED (squash 61f826ef) and production verified serving it (health/db/scheduler/litestream ok).
+  _(Rows relocated from In Progress to Completed 2026-07-16 by CLAUDE while resolving the
+  Codex thread on PR #1687; status text unchanged from MONET's flip. Also reunited the
+  Durable-state row's opening line with its body -- they had been split by an earlier union merge.)_
 - **Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE, PR
   #1667, branch `claude/bracket-teardown-adversarial-review-fixes`, merged as `0a5c9bd`) —
   COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.** PR #1661 (merged
@@ -598,6 +632,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+- **[Socratic.Trade] Bump congress-trading-shared to fee9937c (PR #1686, branch `antigravity/company-name-standardization-part2`) — IN PROGRESS.** Routine dependency bump — `@jaywedgeworth22/congress-trading-shared` pinned to `fee9937c25db1de75c1a676826801e3399f36106` from `ef17b72`. Both `package.json` and `package-lock.json` updated. Rollout: `docs/rollouts/2026-07-16-shared-v183-dependency-bump.md`.
 - **Approval-flow pricing freshness + estimated closing P/L surfaces (MONET, worktree `todays-errors-triage-handoff-8d809b`, branch `monet/todays-errors-triage-handoff-8d809b`, owner-directed 2026-07-15 evening) — GATING/LANDING 2026-07-16.** Pending limit proposals re-anchor to the fresh approval-time quote at Approve (ratio-preserving; bracket legs scaled+clamped; material drift on live typed-confirmation re-queues for fresh consent; immaterial CAS-persists then places; new `src/lib/approval-reprice.ts`, protective-exit precedence kept, strategy.ts untouched, types.ts additive-only). Est. closing P/L (averageCost basis, fresh mark, position-sign-gated) on console+mobile sell/cover approval cards and Orders-page closing orders + Last-price freshness upgrade. First implementation workflow died mid-run in the 2026-07-16 ~00:30Z network outage; partial tree recovered, completed (bracket clamp was the orchestrator's addition), 2-lens adversarially verified (all FIX findings fixed), 117 tests/6 suites green. Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
 - **Alpha Vantage proactive 23/day global cap + ops broker-reject visibility (MONET, worktree `todays-errors-triage-handoff-8d809b`, branch `monet/todays-errors-triage-handoff-8d809b`, owner-directed 2026-07-15) — GATING/LANDING.** Owner: AV free-tier 25/day is enforced PER IP (key pooling never multiplied capacity); app must self-limit to 23/day. Previously NO proactive counter existed (purely reactive on AV's rejection text). Adds a persisted per-ET-day global budget (`PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY`, default 23) in `alpha-vantage-key-pool.ts` (survives deploy restarts; same internal-settings pattern as the exhaustion map), wired into `AlphaVantageEnrichmentProvider.enrich()` with per-chunk reservation, refund of never-dispatched calls (fetchWithRetry onDispatch hook), and the #1632 once-guarded operator alert + suppress-until-ET-reset plumbing shared between proactive and reactive exhaustion. Complementary to #1640's AV-dereg-when-Alpaca (this covers configs where AV IS registered). Also: `.env.example` stale multi-key advice corrected; `order_rejected_by_broker` added to the ops-snapshot audit allowlist (raw broker-reject reasons were invisible remotely — blocked root-causing today's rejects); pre-existing raw NUL byte in `fingerprintKeySet` replaced with the `\x00` escape (identical string, file greppable again). Investigated + deliberately NOT changed: `order-replacement.ts` held-state check is load-bearing (stale-limit listing deliberately returns held legs; #1632 suppressed only the alert) — the 'dead code' chip premise was wrong. Implemented by 1 sonnet agent + 2-lens adversarial review (test-quality LAND with independent runs; correctness lens re-run post-merge). Focused 177/177 green post-merge with #1634/#1640. Rollout: `docs/rollouts/2026-07-15-av-daily-cap-and-ops-followups.md`.
 - **Pinecone fetch URL-length fix (CLAUDE, branch `claude/pinecone-fetch-url-budget`) — READY PR 2026-07-15.** Prod RAG `inventory fetch: unexpected error` — `index.fetch({ids})` GET URL blew past the limit with 100 long `occ:v3:` managed ids (exposed once today ledger-authority fix `951fe45c` let managed vectors exist). Added `fetchIdChunks` batching by encoded-URL-length budget + count; all 4 `index.fetch` sites switched (upsert/delete unaffected). tsc clean, 5-test regression + 52 adjacent vector tests green. Rollout: `docs/rollouts/2026-07-15-pinecone-fetch-url-budget.md`.
@@ -1822,22 +1857,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
-  claimed 2026-07-16) — GATE/LANDING.** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
-  128 rounded-md/lg/xl call sites in app/console -> canon rounded-control(8px)/rounded-card(12px)
-  utilities; new --con-fs-2xs:10px micro token + 15 ad-hoc 9-12px sizes onto the --con-fs-* scale.
-  Display-only, 42 tsx + console.css. Computed-style verified live (8/12/10px). Rollout:
-  docs/rollouts/2026-07-16-console-token-sweep.md.
-- **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
-  (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — IN PROGRESS.** Owner-directed
-  ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
-  2026-07-12 "iOS UI refresh" (#1476) converted Settings + all sub-cards (brokers/api-keys/delivery/
-  learning-review/sharing/help/danger) from console `Card`/`Field`/`Toggle` primitives to iOS grouped-list
-  components; subsequent fixes (#1535 theme tokens, #1651 con-card containers) only reskinned the outer
-  boxes, leaving iOS row internals — hence "almost zero improvement." Scope: (1) rebuild Settings content
-  on console primitives (restore pre-#1476 architecture with post-#1476 content); (2) admin-only link at
-  top-of-site chrome to /admin + restyle /admin onto the console `con-*` design system with a clear way
-  back; All workstreams IMPLEMENTED (settings de-iOS rebuild incl. ios-components.tsx deletion; admin chrome link + full /admin con-* migration incl. /console/usage P0; Strategy/Guardrails nav renames + NEW /console/connections + tax/webhook card moves + deep-link retargets; h1=rail-label naming canon + journal chip truth + fabricated-tag removal + mobile fixes; consent-decline persistence bug + regression test). FULL GATE GREEN (lint 0 errors, tsc clean, 393 files/4,541 tests after one truthful-tag test update, build clean, 51-shot visual re-shoot, 0 mobile overflow) — PR #1679 OPEN + auto-merge armed; merge==auto-deploy.
+- **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live
   ("persist all variables/counts... have that be the standard... for all things"): a redeploy
@@ -2836,6 +2856,23 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
+- **Exit-strategy intelligence program, Phase A — "make today's promises true" (UNASSIGNED; design landed 2026-07-16, CLAUDE).**
+  Five independently shippable S/S-M lanes from `docs/design/exit-strategy-intelligence.md`: A1 synthetic-stop
+  gap-deadlock fix (confirmation-based bad-tick acceptance, persisted suspect state); A2 `protectWhileHalted`
+  owner toggle (stop monitor protective-only mode in `halted`); A3 prompt visibility (protection-state block +
+  ATR in evidence + `shortStopLossPct` prompt fix, agentic-strategy 2.3.0); A4 honesty notes (Tradier
+  market-entry bracket disclosure, RTH-only stop caveat); A5 options/unmanaged positions read-only visibility +
+  assignment/expiry alerts. Claim per-lane; each stands alone.
+- **Exit-strategy intelligence program, Phase B — Exit Contract + lanes (UNASSIGNED; blocked on nothing, but
+  money-path: frontier-tier adversarial review required).** Persist parameterized exit contract columns on
+  `position_stop_plans` (resolved distance/prices/time/invalidation) written at fill; all enforcement layers read
+  persisted-with-fallback; static-trigger synthetic rows give fixed/atr plans tick-cadence coverage; short-side
+  broker-held buy-stop lane MUST land before live short flow. Detail: design doc Phase B.
+- **Exit-strategy intelligence program, Phase C — revision verb + measurement (UNASSIGNED; gated on Phase B's
+  eval harness).** `exitRevisions[]` sibling array (tighten=auto, widen=propose+heat-recheck, all owner-settable),
+  owner per-position stop editor, `stopBasis` clamped numeric elicitation, `invalidation`/`maxHoldingDays`,
+  counterfactual exit ledger (fixed/time/no-stop only), held-name event triggers + earnings producer. Detail:
+  design doc Phase C + "What NOT to do" list (binding scope cuts from the debate round).
 - **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (CODEX program; RAG-B14/B16, claimed 2026-07-13) —
   IN PROGRESS / BASELINE #1495 MERGED; ACCEPTANCE CURRENTLY FAILS.** A new schema-v2 validator requires a dated,
   checksummed 1,000-operating-issuer snapshot with explicit exchange/security classification, alias verification,

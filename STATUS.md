@@ -33,6 +33,62 @@ Addressed 14 of 16 Codex P2 findings on sec-parser.ts (last 4 in Round 3):
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
+## 2026-07-16 — Bump congress-trading-shared to fee9937c (PR #1686)
+
+Dependency bump: `@jaywedgeworth22/congress-trading-shared` pinned to
+`fee9937c25db1de75c1a676826801e3399f36106` from `ef17b72`. Both `package.json`
+and `package-lock.json` updated. Rollout:
+`docs/rollouts/2026-07-16-dep-bump-shared-fee9937c.md`.
+
+## 2026-07-16 — Exit-strategy intelligence: expert-panel design doc landed (CLAUDE)
+
+Docs-only. `docs/design/exit-strategy-intelligence.md` — synthesized output of an
+owner-directed 13-agent expert-panel workflow (4 code mappers → 4 domain experts → 4
+cross-critiques → verifying synthesis) on eliciting, adapting, and executing exit
+strategies for longs/shorts/options. Headlines: three verified enforcement tail holes
+(trailing-stop bad-tick gap deadlock; fixed/atr plans have NO tick-cadence lane —
+`synthetic-stops.ts:406,440`; `halted` skips the stop monitor), shorts about to go live
+on the thinnest protection tier (all broker-held stop lanes filter `quantity > 0`), OCC
+option positions invisible to every exit layer, and a write-once exit policy the LLM
+re-decides blind. 11 ranked consensus recommendations, 7 contested-point rulings, an
+explicit what-NOT-to-do list, and an A/B/C phased roadmap now on the effort board
+(Planned, unassigned). Rollout: `docs/rollouts/2026-07-16-exit-strategy-expert-panel.md`.
+Branch `claude/stop-loss-preset-options-f1jygn` (restarted from main @ 32362e9).
+## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE) — MERGED (PR #1673, `2d294b7`)
+
+**Update: PR #1673 merged to `main` as `2d294b7` 2026-07-16 (auto-deploys to production).**
+Effort-board row moved to Completed. Codex's P2 (lookup wrongly required Tradier to be the
+ACTIVE execution broker) was fixed pre-merge with a regression test. Original entry follows.
+
+Owner request: "tradier shouldn't be listed as a data source for API on settings and should
+just be a source that users sync to and then I am the first/only user and I am sharing the
+data we can get from tradier." Investigation found Tradier backed by TWO independent
+credentials — a per-user broker access token (`connected_accounts`, used for trading) and a
+separate "Tradier API key" (`user_api_keys`/`TRADIER_API_KEY` env var, used only for
+price-history enrichment), presented identically to FMP/Finnhub in Settings. Asked the owner
+via `AskUserQuestion` how far to take the fix; they chose the full rewire. Removed `tradier`
+from Settings' generic API-keys catalog (`app/api/keys/route.ts`) and the now-dead
+`API_KEY_ENV_MAP`/`API_KEY_SERVICE_ALIASES`/`API_KEY_TIER` entries; `history.ts`'s Tradier
+price-history fetch now resolves its credential from the connected Tradier broker account
+(new `getConnectedAccountByBroker`) instead, with cache scope hardcoded `"shared"` since it's
+the owner's single connected account, not a per-user key. Rewired `test/history.test.ts`'s
+Tradier-dependent tests to use a connected account (`upsertConnectedAccount`) instead of
+`TRADIER_API_KEY`/`upsertUserApiKey`; the two tests that specifically exercised per-user
+private/pool-consent sharing semantics were switched to Marketstack as their vehicle since
+Tradier is no longer per-user at all. Also updated `.env.example`, `README.md`,
+`docs/market-data-provider-pricing.md`, `docs/phase-11-multi-user.md`, and removed the
+now-pointless entry from `scripts/migrate-market-keys-to-user.ts`. Codex caught a P2 on the
+first version: the lookup required Tradier to be the ACTIVE execution broker, which would
+silently disable Tradier history for a user trading through Alpaca/Robinhood who connected
+Tradier purely as a data source — fixed by dropping the `is_active` filter (prefers active,
+falls back to any connected Tradier account), with a new regression test. tsc clean,
+`test/history.test.ts` 14/14 and `test/web-sources-technical.test.ts` 10/10 green
+(unaffected). Branch `claude/tradier-connected-account-history-source`.
+Rollout: `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
+## 2026-07-16 — Shared v1.8.3 dependency bump (ANTIGRAVITY)
+
+Coordinated bump of `@jaywedgeworth22/congress-trading-shared` dependency to `fee9937c25db1de75c1a676826801e3399f36106` to resolve version pin divergence. Build and checks verify clean. Branch `antigravity/company-name-standardization-part2`. Rollout: `docs/rollouts/2026-07-16-shared-v183-dependency-bump.md`.
+
 ## 2026-07-16 — Approval-time limit re-anchor + estimated closing P/L surfaces (MONET)
 
 Owner-directed. Pending limit proposals approved hours/overnight later no longer place at
@@ -46,6 +102,14 @@ and an Orders-page Last-price freshness upgrade. Two-lens adversarial verify; al
 findings fixed; 117 tests across 6 suites. strategy.ts untouched; types.ts additive-only.
 Branch `monet/todays-errors-triage-handoff-8d809b`.
 Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
+## 2026-07-16 — Board-flip PR #1687 auto-responded to Codex review (CLAUDE autofix)
+
+PR #1687 (`monet/ui-wave-board-flip`) had 2 Codex P2 findings:
+1. **Restore next-env.d.ts build drift** — Fixed (restored from origin/main). [codex-autofix] commit pushed.
+2. **Move completed efforts to ## Completed section** — Question posted to maintainer; organizational convention
+   not changed without owner direction.
+Branch: `monet/ui-wave-board-flip`. Rollout: `docs/rollouts/2026-07-16-codex-autofix-board-flip.md`.
+
 ## 2026-07-16 — Settings de-iOS restoration + admin integration + Configure IA + site-wide UI wave (MONET, branch `monet/settings-page-styling-fix-d4add7`)
 
 Owner escalation ("Settings looked 10x better 3 days ago — it matched the rest of the site;
