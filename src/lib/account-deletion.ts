@@ -79,7 +79,11 @@ const DELETE_TABLES_BY_USER_ID = [
   // They must survive until provider-first vector erasure succeeds, then leave in the same local
   // deletion transaction as the decision/chat rows they describe.
   "fmp_transcript_derived_provider_work",
-  "fmp_transcript_derived_artifacts"
+  "fmp_transcript_derived_artifacts",
+  // Added 2026-07-15: retrieval-usefulness aggregates + per-decision credit ledger
+  // (src/lib/db-retrieval-usefulness.ts) — user-scoped learning telemetry.
+  "retrieval_usefulness_stats",
+  "retrieval_usefulness_credited"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];
