@@ -1,5 +1,22 @@
 # Current Status
 
+## 2026-07-15 — Alpha Vantage proactive 23/day cap + ops follow-ups (MONET)
+
+Owner-directed: AV's free-tier 25/day limit is enforced **per IP** (key pooling never
+multiplied capacity), so the app now self-limits with a **persisted per-ET-day global
+budget** — `PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY`, default 23 — that survives deploy
+restarts (previously the only gate was reactive on AV's own rejection text). Per-chunk
+reservation with refund of never-dispatched calls; proactive exhaustion shares #1632's
+once-guarded operator alert + suppress-until-reset plumbing. Complementary to #1640's
+AV-dereg-when-Alpaca. Also: `.env.example` per-IP correction, `order_rejected_by_broker`
+added to the ops-snapshot audit allowlist (was blocking remote broker-reject root-cause),
+NUL-byte cleanup in `fingerprintKeySet`. The "dead held-state check" chip premise was
+disproven (load-bearing for auto-remediation) — left unchanged. Focused 177/177 green on
+merged main. Same day, for the record: PR #1632 (P1 RAG fix) deploy-verified — authority
+minted, ingest writing, Sentry X silent; RAG outage window 11:27Z–19:47Z, fail-open.
+Branch `monet/todays-errors-triage-handoff-8d809b`.
+Rollout: `docs/rollouts/2026-07-15-av-daily-cap-and-ops-followups.md`.
+
 ## 2026-07-15 — Pinecone fetch URL-length fix (CLAUDE)
 
 Production RAG error `inventory fetch: unexpected error … /vectors/fetch?ids=occ%3Av3%3A…`.
