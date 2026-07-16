@@ -759,7 +759,7 @@ export function purgeConnectedAccount(id: string, userId: string = "local"): boo
   const run = database.transaction(() => {
     const result = database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
     if (acct) {
-      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops", "position_stop_plans", "order_replacements", "pending_bracket_teardowns"]) {
+      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops", "position_stop_plans", "order_replacements", "pending_bracket_teardowns", "position_stop_plan_open_brackets"]) {
         database.prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`).run(acct, userId);
       }
     }
@@ -1459,11 +1459,13 @@ export interface PositionStopPlan {
    */
   side?: "long" | "short";
   /**
-   * Order ID of the broker-native bracket (Alpaca order_class "bracket", Tradier "otoco") placed
-   * when this plan's style was recorded as "fixed"/"atr" — undefined for trailing/none/default, or
-   * on an account/broker without native bracket support. Used ONLY to find and tear down that
-   * bracket's still-resting sibling legs if the plan is later changed away from fixed/atr (see
-   * recordStopPlan/clearStopPlans, and pending_bracket_teardowns in db.ts).
+   * Order ID of the MOST RECENT broker-native bracket (Alpaca order_class "bracket", Tradier
+   * "otoco") placed while this plan's style has sat at "fixed"/"atr" — undefined for
+   * trailing/none/default, or on an account/broker without native bracket support. Display-only —
+   * a same-style scale-in places an ADDITIONAL bracket without replacing an earlier one, so this
+   * single field can't represent (and is not used to drive) sibling-leg teardown; that's tracked
+   * separately, across ALL brackets for the symbol, in position_stop_plan_open_brackets (see
+   * trackOpenBracketOrder/enqueueTeardownForAllOpenBrackets and pending_bracket_teardowns in db.ts).
    */
   openingOrderId?: string;
 }
@@ -1545,42 +1547,65 @@ export function filterFullStopPlansByLiveBasis(
 }
 
 /**
- * A "fixed"/"atr" plan's broker-native bracket has no sibling-leg identity captured anywhere else
- * once this row is overwritten/deleted (see PositionStopPlan.openingOrderId's doc comment) — so
- * right before that happens, best-effort enqueue a teardown row for the reconciler
- * (reconcilePendingBracketTeardowns, broker-protective-stops.ts) to pick up. Never throws: plan
- * bookkeeping must never block the write that's actually changing/clearing the plan.
- *
- * Compares the OPENING ORDER ID, not just the style: a same-style scale-in (e.g. "fixed" -> "fixed")
- * places a brand-new, independent broker-native bracket for the added shares — nothing cancels the
- * PRIOR bracket first (Alpaca/Tradier brackets are independent OCO groups; a later one never
- * supersedes an earlier one) — so `nextOpeningOrderId` differing from `previousOpeningOrderId` under
- * the SAME style still needs a teardown for the stale order, or its legs rest on the broker forever
- * (adversarial review of PR #1661, 2026-07-16).
+ * Track a broker-native bracket order placed while a "fixed"/"atr" plan is active for a symbol —
+ * appended to `position_stop_plan_open_brackets`, NOT overwriting anything. A same-style scale-in
+ * (e.g. "fixed" -> "fixed") places a BRAND-NEW, independently-resting bracket sized ONLY to its own
+ * added shares (Alpaca: orderArgs.qty from that order's own quantity; Tradier: each exit leg sized
+ * to that order's wholeQty) — it does NOT replace or resize the PRIOR bracket, which is still the
+ * genuine, still-needed protection for the pre-existing lot. So every distinct bracket order id gets
+ * its own row here, and NONE of them are torn down until the whole family is (see
+ * enqueueTeardownForAllOpenBrackets) — tearing down a same-style scale-in's prior bracket would
+ * cancel a live, correct stop-loss/take-profit and leave that earlier lot with NO protection at all
+ * (Codex review, PR #1667, catching an incomplete first attempt at this same fix). Never throws:
+ * plan bookkeeping must never block the write that's actually recording the plan. De-duplicates on
+ * (symbol, order_id) so a retried/replayed fill-recording call can't double-track the same bracket.
  */
-function enqueueBracketTeardownIfLeavingDistancePlan(
-  accountNumber: string,
-  symbol: string,
-  userId: string,
-  previousStyle: string | undefined,
-  previousOpeningOrderId: string | null | undefined,
-  nextStyle: string,
-  nextOpeningOrderId: string | null | undefined
-): void {
-  if (previousStyle !== "fixed" && previousStyle !== "atr") return;
-  if (!previousOpeningOrderId) return;
-  // Nothing actually changed — still the same plan family AND still the same tracked bracket order
-  // (e.g. a rationale/avgCost-only rewrite with no new fill) — the existing bracket is still wanted.
-  if (nextStyle === previousStyle && nextOpeningOrderId === previousOpeningOrderId) return;
+function trackOpenBracketOrder(accountNumber: string, symbol: string, userId: string, orderId: string): void {
   try {
+    const already = getDb()
+      .prepare(
+        `SELECT 1 FROM position_stop_plan_open_brackets WHERE user_id = ? AND account_number = ? AND symbol = ? AND order_id = ?`
+      )
+      .get(userId, accountNumber, symbol, orderId);
+    if (already) return;
     getDb()
       .prepare(
-        `INSERT INTO pending_bracket_teardowns (id, user_id, account_number, symbol, order_id, created_at, attempts)
-         VALUES (?, ?, ?, ?, ?, ?, 0)`
+        `INSERT INTO position_stop_plan_open_brackets (id, user_id, account_number, symbol, order_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(crypto.randomUUID(), userId, accountNumber, symbol, previousOpeningOrderId, new Date().toISOString());
+      .run(crypto.randomUUID(), userId, accountNumber, symbol, orderId, new Date().toISOString());
   } catch {
-    // best-effort — a missed teardown enqueue leaves a resting bracket leg for a human/later sweep
+    // best-effort — a missed tracking row leaves that one bracket forever untracked for future
+    // teardown, but never breaks the plan write itself
+  }
+}
+
+/**
+ * Enqueues a teardown (via pending_bracket_teardowns, reconciler in broker-protective-stops.ts) for
+ * EVERY broker-native bracket ever tracked for this symbol while it sat in the fixed/atr family — not
+ * just the latest — then clears the tracking rows. Called ONLY when the plan genuinely LEAVES the
+ * fixed/atr family entirely (a real style change to trailing/none/default, or the position closes),
+ * never on a same-style scale-in (see trackOpenBracketOrder's doc comment for why). Never throws.
+ */
+function enqueueTeardownForAllOpenBrackets(accountNumber: string, symbol: string, userId: string): void {
+  try {
+    const rows = getDb()
+      .prepare(`SELECT order_id FROM position_stop_plan_open_brackets WHERE user_id = ? AND account_number = ? AND symbol = ?`)
+      .all(userId, accountNumber, symbol) as Array<{ order_id: string }>;
+    if (rows.length === 0) return;
+    const db = getDb();
+    const insertTeardown = db.prepare(
+      `INSERT INTO pending_bracket_teardowns (id, user_id, account_number, symbol, order_id, created_at, attempts)
+       VALUES (?, ?, ?, ?, ?, ?, 0)`
+    );
+    const now = new Date().toISOString();
+    for (const row of rows) {
+      insertTeardown.run(crypto.randomUUID(), userId, accountNumber, symbol, row.order_id, now);
+    }
+    db.prepare(`DELETE FROM position_stop_plan_open_brackets WHERE user_id = ? AND account_number = ? AND symbol = ?`)
+      .run(userId, accountNumber, symbol);
+  } catch {
+    // best-effort — a missed teardown enqueue leaves resting bracket legs for a human/later sweep
     // to notice, never breaks the plan write itself
   }
 }
@@ -1589,9 +1614,11 @@ function enqueueBracketTeardownIfLeavingDistancePlan(
  * Record (upsert) the stop plan for a position lot. Invalid/unrecognized styles fall back to
  * "default". `openingOrderId` should be set ONLY when this write is establishing a fresh "fixed"/
  * "atr" plan whose opening fill placed a broker-native bracket (Alpaca/Tradier) — omitted for
- * trailing/none/default, or when no bracket was placed. Before overwriting, detects a transition
- * AWAY from a previously-recorded fixed/atr plan with a tracked opening order and best-effort
- * enqueues that bracket's teardown (see enqueueBracketTeardownIfLeavingDistancePlan).
+ * trailing/none/default, or when no bracket was placed. When this write is landing IN the
+ * fixed/atr family, the bracket order id is tracked (never torn down by itself — see
+ * trackOpenBracketOrder). When this write is a genuine transition OUT of the fixed/atr family,
+ * every bracket ever tracked for this symbol is enqueued for teardown together (see
+ * enqueueTeardownForAllOpenBrackets).
  */
 export function recordStopPlan(
   accountNumber: string,
@@ -1605,10 +1632,11 @@ export function recordStopPlan(
   openingOrderId?: string
 ): void {
   const safeStyle = (STOP_PLAN_STYLES as readonly string[]).includes(style) ? style : "default";
-  const existing = getDb()
-    .prepare("SELECT style, opening_order_id FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol = ?")
-    .get(userId, accountNumber, symbol) as { style: string; opening_order_id: string | null } | undefined;
-  enqueueBracketTeardownIfLeavingDistancePlan(accountNumber, symbol, userId, existing?.style, existing?.opening_order_id, safeStyle, openingOrderId ?? null);
+  if (safeStyle === "fixed" || safeStyle === "atr") {
+    if (openingOrderId) trackOpenBracketOrder(accountNumber, symbol, userId, openingOrderId);
+  } else {
+    enqueueTeardownForAllOpenBrackets(accountNumber, symbol, userId);
+  }
   getDb()
     .prepare(
       `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
@@ -1620,24 +1648,20 @@ export function recordStopPlan(
 }
 
 /** Clear stop plans for the given symbols (e.g. positions that have closed). No-op on empty input.
- *  Before deleting, best-effort enqueues a bracket teardown for any cleared fixed/atr row that had
- *  a tracked opening order (see enqueueBracketTeardownIfLeavingDistancePlan) — a closed position's
- *  bracket legs still need cancelling the same as a plan reset does. */
+ *  A closed position needs every bracket ever tracked for it torn down (see
+ *  enqueueTeardownForAllOpenBrackets), regardless of what style it was last recorded at. */
 export function clearStopPlans(accountNumber: string, symbols: string[], userId: string = "local"): void {
   if (symbols.length === 0) return;
   const placeholders = symbols.map(() => "?").join(",");
-  const existingRows = getDb()
-    .prepare(`SELECT symbol, style, opening_order_id FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
-    .all(userId, accountNumber, ...symbols) as Array<{ symbol: string; style: string; opening_order_id: string | null }>;
-  for (const row of existingRows) {
-    enqueueBracketTeardownIfLeavingDistancePlan(accountNumber, row.symbol, userId, row.style, row.opening_order_id, "default", null);
+  for (const symbol of symbols) {
+    enqueueTeardownForAllOpenBrackets(accountNumber, symbol, userId);
   }
   getDb()
     .prepare(`DELETE FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
     .run(userId, accountNumber, ...symbols);
 }
 
-/** A bracket teardown queued by enqueueBracketTeardownIfLeavingDistancePlan, awaiting the sweep. */
+/** A bracket teardown queued by enqueueTeardownForAllOpenBrackets, awaiting the sweep. */
 export interface PendingBracketTeardown {
   id: string;
   accountNumber: string;
@@ -1666,4 +1690,26 @@ export function removePendingBracketTeardown(id: string): void {
 /** Record a failed/inconclusive teardown attempt (bumps the retry counter the sweep uses to age out). */
 export function bumpPendingBracketTeardownAttempts(id: string): void {
   getDb().prepare("UPDATE pending_bracket_teardowns SET attempts = attempts + 1 WHERE id = ?").run(id);
+}
+
+/** A broker-native bracket order tracked by trackOpenBracketOrder, not yet torn down. */
+export interface OpenBracketOrder {
+  id: string;
+  accountNumber: string;
+  symbol: string;
+  orderId: string;
+  createdAt: string;
+}
+
+/** List every bracket order still tracked (not yet torn down) for a symbol, oldest first. Test/
+ *  observability accessor — production code drives entirely off trackOpenBracketOrder/
+ *  enqueueTeardownForAllOpenBrackets. */
+export function listOpenBracketOrders(accountNumber: string, symbol: string, userId: string = "local"): OpenBracketOrder[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, account_number, symbol, order_id, created_at
+       FROM position_stop_plan_open_brackets WHERE user_id = ? AND account_number = ? AND symbol = ? ORDER BY created_at ASC`
+    )
+    .all(userId, accountNumber, symbol) as Array<{ id: string; account_number: string; symbol: string; order_id: string; created_at: string }>;
+  return rows.map((r) => ({ id: r.id, accountNumber: r.account_number, symbol: r.symbol, orderId: r.order_id, createdAt: r.created_at }));
 }

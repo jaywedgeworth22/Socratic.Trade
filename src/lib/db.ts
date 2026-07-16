@@ -1851,6 +1851,27 @@ const MIGRATIONS: Migration[] = [
           ON pending_bracket_teardowns(user_id, account_number);
       `);
     }
+  },
+  {
+    // See position_stop_plan_open_brackets' own comment above CREATE TABLE (adversarial review of
+    // PR #1661/#1667, 2026-07-16, Codex P1): a single opening_order_id scalar can't represent
+    // multiple concurrent brackets from same-style scale-ins, each still protecting its OWN lot.
+    version: 43,
+    name: "position_stop_plan_open_brackets",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS position_stop_plan_open_brackets (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          order_id TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_position_stop_plan_open_brackets_symbol
+          ON position_stop_plan_open_brackets(user_id, account_number, symbol);
+      `);
+    }
   }
 ];
 
@@ -2328,6 +2349,29 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_pending_bracket_teardowns_account
       ON pending_bracket_teardowns(user_id, account_number);
+
+    -- Every broker-native bracket order EVER placed for a (user, account, symbol) while its plan
+    -- sits at "fixed"/"atr", appended on each fill — NOT just the latest. A single opening_order_id
+    -- scalar column can't represent this: a same-style scale-in places a BRAND-NEW, independently
+    -- resting bracket sized ONLY to its own added shares (Alpaca: orderArgs.qty from the order's own
+    -- quantity; Tradier: each exit leg sized to that order's wholeQty) — it does NOT replace or
+    -- resize the PRIOR bracket, which is still the genuine, still-needed protection for the
+    -- pre-existing lot. Tearing down the prior bracket on a mere same-style scale-in (as an earlier,
+    -- incomplete fix briefly did) would cancel a live, correct stop-loss/take-profit and leave that
+    -- earlier lot with NO protection at all (Codex review, PR #1667). So rows here accumulate across
+    -- same-style scale-ins and are ONLY ALL torn down together, via pending_bracket_teardowns, when
+    -- the plan genuinely leaves the fixed/atr family (a real style change, or the position closes) —
+    -- see enqueueTeardownForAllOpenBrackets in db-api-keys.ts.
+    CREATE TABLE IF NOT EXISTS position_stop_plan_open_brackets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_position_stop_plan_open_brackets_symbol
+      ON position_stop_plan_open_brackets(user_id, account_number, symbol);
 
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (

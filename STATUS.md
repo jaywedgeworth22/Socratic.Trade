@@ -1,24 +1,26 @@
 # Current Status
 
-## 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up (CLAUDE)
+## 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE)
 
 PR #1661 merged the same day with no automated review (Codex hit its usage-limit cap on
 both #1661 and #1662, posting only a usage-limit notice). Ran two independent adversarial
 review passes (correctness/races, money-path/financial-risk) against the merged code since
-this touches real order placement/cancellation. Both independently confirmed the same two
-bugs: (1) `enqueueBracketTeardownIfLeavingDistancePlan` only compared plan STYLE, not the
-opening order id, so a same-style scale-in (fixed->fixed) silently orphaned the OLD bracket's
-legs forever — fixed by also comparing `nextOpeningOrderId` vs `previousOpeningOrderId`.
-(2) both Alpaca's and Tradier's `cancelBracketSiblingLegs` swallowed every failure into a
-plain empty success, making the bounded-retry mechanism (`MAX_BRACKET_TEARDOWN_ATTEMPTS`)
-dead code and masking a transient lookup failure as a permanent, silent "nothing to cancel"
-— fixed by only swallowing a genuine "order not found" (404, or Tradier's 200-with-errors
-envelope) and propagating everything else so the retry sweep actually retries. A third
-proposed fix (skip Tradier's first returned leg, assuming it's the entry) was investigated
-and REVERTED after checking it against this codebase's own pre-existing, tested model of
-Tradier's response shape (entry is never one of the container's enumerated legs) — kept a
-different, confirmed fix instead (no-op when `container.class === "equity"`, i.e. no bracket
-was ever attached). 392 files / 4,542 tests green, tsc/build/lint clean. Branch
+this touches real order placement/cancellation, confirming: (1) a same-style scale-in
+(fixed->fixed) silently orphaned the OLD bracket's legs forever (only plan STYLE was
+compared, not the opening order id); (2) both Alpaca's and Tradier's `cancelBracketSiblingLegs`
+swallowed every failure into a plain empty success, making the bounded-retry mechanism dead
+code and masking a transient lookup failure as a permanent silent "nothing to cancel" — fixed
+by only swallowing a genuine "order not found" and propagating everything else. Pushed as PR
+#1667, at which point Codex's cap had reset — it reviewed #1667 and caught a genuine P1 in
+finding (1)'s first fix: comparing opening-order-id and tearing down the OLD bracket on a
+same-style scale-in cancels STILL-VALID protection (each bracket is sized only to its own
+lot, not the combined position), leaving the pre-existing shares with no protection at all.
+Redesigned properly: a new `position_stop_plan_open_brackets` table (migration v43) tracks
+EVERY bracket order id placed while a symbol sits in the fixed/atr family (appended, never
+overwritten); nothing is torn down on a same-style scale-in; ALL tracked brackets for a
+symbol are torn down together only when the plan genuinely leaves the fixed/atr family (real
+style change, or close). Also fixed account-deletion/purge coverage for the new table. 393
+files / 4,546 tests green, tsc/build/lint clean. Branch
 `claude/bracket-teardown-adversarial-review-fixes`.
 Rollout: `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
 

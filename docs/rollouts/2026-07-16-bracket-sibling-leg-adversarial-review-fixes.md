@@ -1,4 +1,4 @@
-# 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up (2 confirmed bugs fixed)
+# 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up (+ Codex P1 catch on my own fix)
 
 ## Summary
 
@@ -10,29 +10,41 @@ placement/cancellation on a live-money app, ran two independent adversarial revi
 code (`a5c27e8`) instead of leaving it unreviewed. Both passes independently surfaced the
 SAME two genuine, confirmed bugs, plus a third distinct one from the correctness pass that
 turned out (after grounded research) to not actually apply to this codebase's Tradier model.
-Fixed the two confirmed bugs; the third was investigated and reverted/corrected rather than
-"fixed" as originally proposed — see below.
+Fixed the two confirmed bugs and pushed as PR #1667 — at which point Codex's usage cap had
+reset, and it reviewed #1667 itself, catching a genuine, more severe flaw in fix #1's first
+attempt (a P1: it could cancel STILL-VALID protection on a live position). That flaw is
+corrected below with a proper design, not a patch — see "1. CONFIRMED (revised)".
 
 ## Findings and fixes
 
-### 1. CONFIRMED — a same-style scale-in orphaned the OLD bracket's legs forever
+### 1. CONFIRMED (revised after Codex's PR #1667 review) — same-style scale-ins need ALL their brackets tracked, and torn down together only on a REAL style change
 
-`enqueueBracketTeardownIfLeavingDistancePlan` (`src/lib/db-api-keys.ts`) only compared
-`nextStyle === previousStyle` to decide whether a teardown was needed. But a scale-in that
-re-affirms the SAME style (e.g. `fixed` -> `fixed`) places a brand-new, independent
-broker-native bracket for the added shares — Alpaca/Tradier brackets are independent OCO
-groups; nothing cancels an EARLIER bracket when a later one is placed. Because only the
-style was compared, the `opening_order_id` UPSERT silently overwrote the old bracket's order
-id with the new one, and the old bracket's take-profit/stop-loss legs became permanently
-unreachable — resting on the broker forever, potentially alongside whatever protection the
-position later switched to (a double-exit-mechanism risk, exactly the class of bug this
-whole feature exists to prevent).
+**First attempt (in this same PR, since superseded):** `enqueueBracketTeardownIfLeavingDistancePlan`
+originally only compared `nextStyle === previousStyle` to decide whether a teardown was
+needed, so a same-style scale-in (`fixed` -> `fixed`) silently orphaned the OLD bracket's
+legs forever (the `opening_order_id` UPSERT overwrote it with the new order's id, with no
+path back to the old one). The first fix pushed to this PR made the same-style case compare
+`nextOpeningOrderId` too and enqueue a teardown for the stale order whenever it changed.
 
-**Fix:** `enqueueBracketTeardownIfLeavingDistancePlan` now takes the NEXT opening order id
-too and only skips enqueueing when `nextStyle === previousStyle && nextOpeningOrderId ===
-previousOpeningOrderId` — i.e. truly nothing changed (a rationale/avgCost-only rewrite). Any
-other combination (style change, OR same style with a genuinely new bracket order id)
-enqueues a teardown for the stale order.
+**Codex correctly flagged that first fix as a NEW, more severe bug (P1):** each bracket order
+is sized ONLY to its own lot's quantity (Alpaca's `orderArgs.qty` from that specific order;
+Tradier's exit legs sized to that order's own `wholeQty`) — a same-style scale-in's new
+bracket does NOT replace or resize the OLD one. The OLD bracket is still the genuine,
+correct, currently-resting stop-loss/take-profit for the PRE-EXISTING shares. Immediately
+tearing it down on the very next scale-in (as the first fix did) cancels a live, correct
+exit and leaves that earlier lot with **no protection at all** — worse than the original
+"untracked forever" bug, which at least left the old bracket actively protecting its shares.
+
+**Actual fix:** replaced the single `position_stop_plans.opening_order_id` scalar's role in
+teardown decisions entirely. A new table, `position_stop_plan_open_brackets`, tracks EVERY
+distinct bracket order id placed for a symbol while its plan sits in the fixed/atr family —
+appended on each fill, never overwritten (`trackOpenBracketOrder`). Nothing is torn down on
+a same-style scale-in; ALL tracked brackets for that symbol are torn down TOGETHER, only when
+the plan genuinely LEAVES the fixed/atr family (a real style change, or the position closes —
+`enqueueTeardownForAllOpenBrackets`, called from `recordStopPlan` and `clearStopPlans`). This
+fixes both the original bug (nothing forgotten forever) and the P1 (nothing torn down while
+still valid). `position_stop_plans.opening_order_id` remains as a display-only "most recent
+bracket" field, decoupled from teardown logic. New migration v43.
 
 ### 2. CONFIRMED — `cancelBracketSiblingLegs` never threw, so the bounded-retry mechanism was dead code
 
@@ -85,21 +97,31 @@ special-casing `class === "equity"` to a no-op before any leg iteration.
 
 ## Files
 
-- `src/lib/db-api-keys.ts` — `enqueueBracketTeardownIfLeavingDistancePlan` gained a
-  `nextOpeningOrderId` parameter; both call sites (`recordStopPlan`, `clearStopPlans`) updated.
+- `src/lib/db.ts` — migration v43 + `position_stop_plan_open_brackets` table (append-only,
+  one row per tracked bracket order id per symbol).
+- `src/lib/db-api-keys.ts` — replaced `enqueueBracketTeardownIfLeavingDistancePlan` with
+  `trackOpenBracketOrder` (append, dedup by order id) and `enqueueTeardownForAllOpenBrackets`
+  (tears down every tracked order for a symbol at once, clears tracking); both `recordStopPlan`
+  and `clearStopPlans` updated to call the appropriate one; new exports `OpenBracketOrder`,
+  `listOpenBracketOrders`.
+- `src/lib/account-deletion.ts`, `src/lib/db-api-keys.ts` (`purgeConnectedAccount`) — added
+  `position_stop_plan_open_brackets` to account-deletion/purge coverage alongside
+  `pending_bracket_teardowns`.
 - `src/lib/alpaca.ts` — `cancelBracketSiblingLegs` only swallows a genuine 404; anything else
   propagates.
 - `src/lib/tradier.ts` — `cancelBracketSiblingLegs` only swallows a genuine "not found" (404
   or the 200-with-errors-envelope form); anything else propagates. Added an early no-op for
   `container.class === "equity"` (no bracket ever attached).
-- `test/position-stop-plans-db.test.ts` — rewrote the "same distance-plan family, no teardown"
-  test (its premise was the bug) to assert a teardown IS now enqueued for the stale order id;
-  added a new test for the genuinely-no-op same-style/same-order-id case.
+- `test/position-stop-plans-db.test.ts` — rewrote the same-style-scale-in test to assert
+  NEITHER bracket is torn down immediately, BOTH are tracked, and a later real style change
+  tears down BOTH together; added a dedup test for a redundant same-order-id re-record.
 - `test/alpaca-brackets.test.ts` — mock `sendRequest` can now simulate a thrown error; added
   tests for the 404-resolves-as-done and non-404-propagates cases.
 - `test/tradier.test.ts` — added tests for: entry-only order (class=equity, still open) never
   gets cancelled; genuine HTTP 404 resolves as done; the 200-with-errors "not found" envelope
   resolves as done; any other failure (503) propagates.
+- `test/persistence-hardening.test.ts` — updated 10 hardcoded schema-version assertions
+  (42->43) now that migration 43 legitimately exists.
 
 ## Verification
 
@@ -107,8 +129,11 @@ special-casing `class === "equity"` to a no-op before any leg iteration.
 npx tsc --noEmit                                                                    # clean
 npx vitest run test/alpaca-brackets.test.ts test/tradier.test.ts \
   test/position-stop-plans-db.test.ts test/broker-protective-stops.test.ts \
-  test/strategy-hardening.test.ts                                                  # 229/229 passed
-npm test                                                                            # full suite
+  test/strategy-hardening.test.ts test/persistence-hardening.test.ts \
+  test/account-deletion-coverage.test.ts                                           # 251/251 passed
+npm test                                                                            # 393 files / 4,546 tests passed
+npm run build                                                                       # clean
+npm run lint                                                                        # 0 errors
 ```
 
 ## Follow-ups
@@ -120,3 +145,8 @@ npm test                                                                        
   newly-introduced bug) that Tradier's per-leg `status` field may not exist independently of
   the container once the entry has filled — genuinely unverifiable without a live account;
   the first live Tradier bracket fill remains the real acceptance test for this whole feature.
+- `position_stop_plan_open_brackets` rows accumulate indefinitely across repeated same-style
+  scale-ins until a real style change or close finally sweeps them — unbounded in the sense
+  that a position scaled into many times over a long fixed/atr holding period could accrue
+  many tracked rows before any teardown fires. Not expected to matter in practice (a handful
+  of scale-ins at most), but worth knowing if a very high-frequency scale-in strategy emerges.
