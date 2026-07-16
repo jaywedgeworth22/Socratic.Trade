@@ -7,6 +7,7 @@
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getInternalSetting, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy, purgeConnectedAccount } from "./db";
+import { isEarningsCallsRefreshDue, refreshEarningsCallsTranscriptsIfDue } from "./earningscalls-transcripts";
 import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
@@ -532,6 +533,17 @@ async function tick(): Promise<void> {
         }
       }
     })();
+  }
+
+  // Once-per-UTC-day EarningsCalls.dev transcript pass (dormant without EARNINGSCALLS_API_KEY;
+  // kill-switch EARNINGSCALLS_DISABLED=1). Holdings-first selection, durable 180/month
+  // reserve-before-call budget under the plan's HARD 200/month — see
+  // src/lib/earningscalls-transcripts.ts. Gated on the monthly LLM/RAG spend ceiling like the
+  // filing/FMP-transcript producers above (its ingest spends Voyage/Pinecone). Self-guarded.
+  if (isEarningsCallsRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
+    void refreshEarningsCallsTranscriptsIfDue().catch((err) =>
+      console.error("[scheduler] earningscalls transcript refresh error:", err instanceof Error ? err.message : err)
+    );
   }
 
   // Once-per-day share of company refs + daily closes + the S&P-500 series to congress.trade

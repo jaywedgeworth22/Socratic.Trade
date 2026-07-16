@@ -6,6 +6,7 @@ import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiK
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { logApiHealth } from "./db-health";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
+import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 import { envFlagOn } from "./rag/env-flag";
 import { fuseHybrid, rrfFuse } from "./rag/hybrid";
 import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
@@ -5250,8 +5251,15 @@ function docTypeVariants(docTypes: string[]): string[] {
 export function buildExtraFilters(options?: RetrieveOptions): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
   const transcriptRightsConfirmed = fmpTranscriptRightsActive();
+  // Two independently-gated transcript producers share the "earnings-transcript" doc type:
+  // FMP (rights-flag + durable gate generation) and EarningsCalls.dev (key = opt-in +
+  // kill-switch; see earningscalls-gate.ts). The doc-type filter stays open when EITHER gate
+  // is active; the post-fetch guard (filterMatchesForTranscriptRights) then enforces the
+  // per-SOURCE gate on each match, so one producer's gate can never leak the other's chunks.
+  const earningsCallsActive = earningsCallsTranscriptsEnabled();
+  const anyTranscriptSourceActive = transcriptRightsConfirmed || earningsCallsActive;
   if (options?.docType && options.docType.length > 0) {
-    const allowedDocTypes = transcriptRightsConfirmed
+    const allowedDocTypes = anyTranscriptSourceActive
       ? options.docType
       : options.docType.filter((docType) => docType.toLowerCase() !== EARNINGS_TRANSCRIPT_DOC_TYPE);
     extra.doc_type = allowedDocTypes.length > 0
@@ -5262,7 +5270,9 @@ export function buildExtraFilters(options?: RetrieveOptions): Record<string, unk
   if (options?.source) {
     extra.source = !transcriptRightsConfirmed && options.source === "fmp-earnings-transcript"
       ? { $eq: "__fmp_transcript_rights_unconfirmed__" }
-      : { $eq: options.source };
+      : !earningsCallsActive && options.source === EARNINGSCALLS_TRANSCRIPT_SOURCE
+        ? { $eq: "__earningscalls_transcripts_disabled__" }
+        : { $eq: options.source };
   }
   if (options?.accountScope === "exact") {
     extra.connected_account_id = { $eq: options.connectedAccountId ?? "__missing_connected_account__" };
@@ -5280,7 +5290,12 @@ export function buildExtraFilters(options?: RetrieveOptions): Record<string, unk
 export function filterMatchesForTranscriptRights<T extends { metadata?: Record<string, unknown> }>(matches: T[]): T[] {
   const rightsConfirmed = fmpTranscriptRightsActive();
   const hasMarkedDerivative = matches.some((match) => match?.metadata?.fmp_derived === true);
-  if (rightsConfirmed && !hasMarkedDerivative) return matches;
+  // The everything-passes fast path is only safe when no earningscalls-sourced match needs its
+  // own (independent) gate applied — an active FMP rights flag must never resurrect
+  // EarningsCalls.dev chunks after the owner pulled that key or set its kill-switch.
+  const hasBlockedEarningsCalls = !earningsCallsTranscriptsEnabled() &&
+    matches.some((match) => match?.metadata?.source === EARNINGSCALLS_TRANSCRIPT_SOURCE);
+  if (rightsConfirmed && !hasMarkedDerivative && !hasBlockedEarningsCalls) return matches;
   let activeGeneration: number | undefined;
   if (rightsConfirmed && hasMarkedDerivative) {
     try {
@@ -5294,6 +5309,7 @@ export function filterMatchesForTranscriptRights<T extends { metadata?: Record<s
       // A marked licensed derivative without an authoritative gate is not eligible for retrieval.
     }
   }
+  const earningsCallsActive = earningsCallsTranscriptsEnabled();
   return matches.filter((match) => {
     const docType = match?.metadata?.doc_type;
     const source = match?.metadata?.source;
@@ -5301,6 +5317,10 @@ export function filterMatchesForTranscriptRights<T extends { metadata?: Record<s
       const generation = Number(match.metadata.fmp_rights_generation);
       return rightsConfirmed && activeGeneration !== undefined && generation === activeGeneration;
     }
+    // EarningsCalls.dev-sourced chunks are gated by their OWN source predicate (key present +
+    // kill-switch off), never by the FMP rights flag — and vice versa: an active FMP gate does
+    // not resurrect earningscalls chunks after the owner pulls the key/sets the kill-switch.
+    if (source === EARNINGSCALLS_TRANSCRIPT_SOURCE) return earningsCallsActive;
     if (rightsConfirmed) return true;
     return source !== "fmp-earnings-transcript" &&
       (typeof docType !== "string" || docType.toLowerCase() !== EARNINGS_TRANSCRIPT_DOC_TYPE);

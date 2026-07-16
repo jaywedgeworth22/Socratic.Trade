@@ -1,5 +1,33 @@
 # Current Status
 
+## 2026-07-16 — EarningsCalls.dev transcript source: free-plan budget design, dual transport (MONET)
+
+Owner-directed: earnings-call transcripts via the EarningsCalls.dev **free plan (HARD 200
+requests/month, RapidAPI marketplace channel)** — FMP transcripts remain entitlement-gated on
+both FMP channels (direct 402; RapidAPI "Exclusive Endpoint" 403, live-probed). New source
+lands **dormant** and self-activating: `EARNINGSCALLS_RAPIDAPI_KEY` is already in Infisical
+prod, so the first deploy after the owner completes the free-plan subscription on the listing
+goes live (probes currently return the listing's 405 "provider has disabled request access" —
+expected pre-subscription state; see rollout note).
+
+Design center = the hard budget: durable UTC-calendar-month counter (default 180, headroom
+under 200), reserve-before-call with `retries: 0` (one reservation can never become two
+provider requests), refund only on pre-dispatch circuit-open; fetch-once-forever cache per
+(symbol, fiscal year, quarter) + 3-day negative TTL (migration **v47** — renumbered around
+main's #1667 v46); holdings-first once-per-UTC-day selection (broker-call-free snapshot read),
+≤6 requests/pass; ingest through the #1586 rights-gated boundary (`doc_type
+"earnings-transcript"`, `source "earningscalls-dev"`), retrieval gated symmetrically — pulling
+the key un-retrieves the corpus. Dual transport: direct `X-API-Key` (paid, wins if both) or
+`x-rapidapi-*` headers.
+
+Two adversarial reviews (budget/rights on the frontier model + structural): **both
+SAFE_TO_LAND, zero must-fix**; the one real finding (timezone-less event datetimes parsed as
+LOCAL time — could mis-bucket the quarter cache key near boundaries) fixed with a UTC-safe
+parser + regression tests run under two host timezones. Build provenance: implementing
+subagent hit a usage cap after essentially completing the work; MONET finished inline
+(dual-transport pivot, RapidAPI verification probes, Infisical key slot, migration renumber).
+Rollout: `docs/rollouts/2026-07-16-earningscalls-transcripts.md`.
+
 ## 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE)
 
 PR #1661 merged the same day with no automated review (Codex hit its usage-limit cap on

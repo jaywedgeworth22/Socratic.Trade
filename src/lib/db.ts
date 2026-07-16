@@ -1989,6 +1989,42 @@ const MIGRATIONS: Migration[] = [
         }
       }
     }
+  },
+  {
+    // EarningsCalls.dev fetch-once-forever transcript cache (CRUD in db-earningscalls.ts;
+    // producer in earningscalls-transcripts.ts). GLOBAL market data — no user_id column,
+    // deliberately exempt from DELETE_TABLES_BY_USER_ID (transcripts are public-company
+    // material shared across users, like economic_events). `content` NULL = negative-cache
+    // row: a budget-costing call found no transcript yet; re-fetch allowed only after the
+    // negative TTL. A row with content is immutable — a cache hit NEVER re-fetches.
+    // NOTE (2026-07-16 merge): renumbered 46 -> 47 — main's #1667 position_stop_plan_open_brackets
+    // took v46 (already deployed) while this branch was in flight.
+    version: 47,
+    name: "earningscalls_transcripts",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS earningscalls_transcripts (
+          symbol TEXT NOT NULL,
+          fiscal_year INTEGER NOT NULL,
+          fiscal_quarter INTEGER NOT NULL,
+          event_id INTEGER,
+          event_date TEXT,
+          content TEXT,
+          fetched_at TEXT NOT NULL,
+          source_meta TEXT,
+          ingested_at TEXT,
+          PRIMARY KEY (symbol, fiscal_year, fiscal_quarter)
+        );
+        CREATE INDEX IF NOT EXISTS idx_earningscalls_transcripts_ingest
+          ON earningscalls_transcripts (ingested_at, fetched_at);
+        CREATE TABLE IF NOT EXISTS earningscalls_symbol_checks (
+          symbol TEXT PRIMARY KEY,
+          checked_at TEXT NOT NULL,
+          latest_event_id INTEGER,
+          latest_event_date TEXT
+        );
+      `);
+    }
   }
 ];
 
@@ -3348,3 +3384,4 @@ export * from "./db-vector-commits";
 export * from "./db-durable-state";
 export * from "./db-economic-events";
 export * from "./db-retrieval-usefulness";
+export * from "./db-earningscalls";
