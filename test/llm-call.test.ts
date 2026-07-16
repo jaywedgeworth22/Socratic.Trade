@@ -212,12 +212,12 @@ describe("buildLlmRequestBody", () => {
   });
 
   it("Anthropic auth headers include the prompt-caching beta; OpenAI-compatible unchanged (item 3)", () => {
-    const anthropic = llmAuthHeaders({ provider: "anthropic", key: "sk-ant" });
+    const anthropic = llmAuthHeaders({ provider: "anthropic", key: "sk-ant", url: "https://api.anthropic.com/v1/messages" });
     expect(anthropic["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
     expect(anthropic["x-api-key"]).toBe("sk-ant");
     expect(anthropic["anthropic-version"]).toBe("2023-06-01");
     // OpenAI-compatible transport is untouched: Bearer auth, no anthropic beta header.
-    const openai = llmAuthHeaders({ provider: "openai", key: "sk" });
+    const openai = llmAuthHeaders({ provider: "openai", key: "sk", url: "https://api.openai.com/v1/responses" });
     expect(openai["anthropic-beta"]).toBeUndefined();
     expect(openai.authorization).toBe("Bearer sk");
   });
@@ -462,7 +462,7 @@ describe("toGeminiJsonSchema", () => {
 
 describe("llmAuthHeaders", () => {
   it("Anthropic uses x-api-key + anthropic-version, not Bearer", () => {
-    const h = llmAuthHeaders({ provider: "anthropic", key: "sk-ant-123" });
+    const h = llmAuthHeaders({ provider: "anthropic", key: "sk-ant-123", url: "https://api.anthropic.com" });
     expect(h["x-api-key"]).toBe("sk-ant-123");
     expect(h["anthropic-version"]).toBe("2023-06-01");
     expect(h.authorization).toBeUndefined();
@@ -470,7 +470,7 @@ describe("llmAuthHeaders", () => {
 
   it("OpenAI-compatible providers use Bearer auth", () => {
     for (const provider of ["openai", "xai", "gemini", "mistral", "deepseek"] as const) {
-      const h = llmAuthHeaders({ provider, key: "k" });
+      const h = llmAuthHeaders({ provider, key: "k", url: "https://example.com" });
       expect(h.authorization).toBe("Bearer k");
       expect(h["x-api-key"]).toBeUndefined();
     }

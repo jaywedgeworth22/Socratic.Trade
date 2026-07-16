@@ -145,7 +145,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
       async () => {
         const response = await llmFetch(url, {
           method: "POST",
-          headers: llmAuthHeaders({ provider, key: openaiKey }),
+          headers: llmAuthHeaders({ provider, key: openaiKey, url }),
           body: JSON.stringify(body)
         });
 

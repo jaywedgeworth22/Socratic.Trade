@@ -850,7 +850,7 @@ export async function callLessonLlm(userId: string, userContent: string): Promis
     async () => {
       const response = await llmFetch(url, {
         method: "POST",
-        headers: llmAuthHeaders({ provider, key }),
+        headers: llmAuthHeaders({ provider, key, url }),
         body: JSON.stringify(body)
       });
       if (!response.ok) {

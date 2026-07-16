@@ -346,7 +346,7 @@ export async function debateProposal(
               attempt.url,
               {
                 method: "POST",
-                headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key }),
+                headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key, url: attempt.url }),
                 body: JSON.stringify(attempt.body)
               },
               {

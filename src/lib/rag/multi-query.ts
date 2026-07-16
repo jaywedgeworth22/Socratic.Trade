@@ -229,7 +229,7 @@ export async function generateHydePassages(
 
     const response = await fetch(endpoint.url, {
       method: "POST",
-      headers: llmAuthHeaders({ provider: endpoint.provider, key: endpoint.key }),
+      headers: llmAuthHeaders({ provider: endpoint.provider, key: endpoint.key, url: endpoint.url }),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(LLM_TIMEOUT_MS)
     });

@@ -59,7 +59,7 @@ export interface LlmRequestSpec {
 }
 
 /** Auth + content headers for the endpoint's provider (Anthropic uses x-api-key, others Bearer). */
-export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key">): Record<string, string> {
+export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key" | "url">): Record<string, string> {
   if (endpoint.provider === "anthropic") {
     return {
       "content-type": "application/json",
@@ -69,10 +69,13 @@ export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key">):
       "anthropic-beta": "prompt-caching-2024-07-31"
     };
   }
-  return {
-    "content-type": "application/json",
-    authorization: `Bearer ${endpoint.key ?? ""}`
-  };
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (endpoint.url && endpoint.url.includes("aiplatform.googleapis.com")) {
+    headers["x-goog-api-key"] = endpoint.key ?? "";
+  } else {
+    headers["authorization"] = `Bearer ${endpoint.key ?? ""}`;
+  }
+  return headers;
 }
 
 /** Build the provider-correct request body (already bounded with token caps / sampling params). */
