@@ -22,6 +22,29 @@ matching this adapter's existing testing posture). Branch
 `claude/bracket-sibling-leg-cancellation`.
 Rollout: `docs/rollouts/2026-07-16-alpaca-tradier-bracket-sibling-leg-teardown.md`.
 
+## 2026-07-15 — Per-position stop plans: "none" short bypass, owner-decided (CLAUDE, branch `claude/stop-plans-none-short-override`)
+Resolves the open question left on merged PR #1371's `policy.ts` thread: whether an explicit
+`stopPlan: "none"` short should bypass the mandatory `shortStopLossPct` gate the same way
+`fixed`/`atr`/`trailing` already do (round 7). Owner's answer: "if the LLM decides it does not
+want a stop plan, that is okay." `evaluateTradeProposal`'s short-stop gate now treats an explicit
+`none` as satisfying the mandatory-stop requirement too — only an ABSENT stopPlan (no explicit
+choice this proposal) still falls through to requiring `shortStopLossPct > 0`. An explicit
+`"default"` deliberately does NOT satisfy the gate (it defers to the account's own precedence,
+which here guarantees nothing — not a genuine choice with a known outcome). New regression tests
+in `test/policy.test.ts` cover both the `none`-bypasses and `default`-does-not-bypass cases.
+Verify: tsc clean, lint 0 errors/488 pre-existing warnings, 382 files/4402 tests passed, build
+clean. Rollout: `docs/rollouts/2026-07-15-stop-plans-none-short-override.md`.
+
+Also researched (not code changes): the deferred OCO/bracket-sibling-leg-cancellation gap flagged
+in PR #1331/#1371/round-8. Confirmed against Alpaca's docs that this is an unimplemented
+capability in this codebase's `alpaca.ts` adapter, not a genuine broker-API wall — each bracket
+leg is already an independent order with its own ID in the plain order list, and fetching the
+original entry order (already tracked as `execution.orderId` on every fill) with `?nested=true`
+returns a `legs` array with the sibling leg IDs; cancelling one leg cascades to the other via
+Alpaca's own OCO logic. Robinhood has no bracket/OCO order support in this codebase at all (RH
+protection is the app's own single synthetic/ratcheted stop, no sibling leg exists) — not
+applicable there. Not implemented this round; flagging as a real, buildable follow-up rather than
+a permanently-deferred broker limitation.
 ## 2026-07-15 — Alpha Vantage proactive 23/day cap + ops follow-ups (MONET)
 
 Owner-directed: AV's free-tier 25/day limit is enforced **per IP** (key pooling never

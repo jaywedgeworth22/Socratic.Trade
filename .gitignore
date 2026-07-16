@@ -71,3 +71,7 @@ ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/
 .design-sync/node_modules
+
+# LLM benchmark run artifacts (scripts/benchmark-llm-models.ts default output when --out is omitted)
+/llm-benchmark-*.json
+/llm-benchmark-*.md
