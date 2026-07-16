@@ -240,7 +240,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
             )}
             <div className="my-0.5 h-px bg-[color:var(--con-line)]" />
             <Link
-              href="/console/settings#brokers"
+              href="/console/connections#brokers"
               role="menuitem"
               onClick={close}
               className="con-scope-row flex w-full items-center gap-2 rounded-lg border border-[color:var(--con-line)] px-3 py-2 text-[length:var(--con-fs-sm)] font-medium"
@@ -566,16 +566,16 @@ function deriveRunBlock(snapshot: DashboardSnapshot): RunBlock | null {
       title: "No LLM key is configured",
       detail:
         "Proposal generation is LLM-driven, so a manual run needs a working LLM provider key. Market data, positions, and guardrails all work without one — only runs and chat are gated.",
-      fixHref: "/console/settings#api-keys",
-      fixLabel: "Open Settings → API keys"
+      fixHref: "/console/connections#api-keys",
+      fixLabel: "Open Connections → API keys"
     };
   }
   if (snapshot.accountReadiness && !snapshot.accountReadiness.ok) {
     return {
       title: snapshot.accountReadiness.reason ?? "The account isn't ready to run",
       detail: snapshot.accountReadiness.detail,
-      fixHref: "/console/settings#brokers",
-      fixLabel: "Open Settings → Broker accounts"
+      fixHref: "/console/connections#brokers",
+      fixLabel: "Open Connections → Broker accounts"
     };
   }
   return null;
@@ -596,15 +596,15 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
       title: "Choose your team models",
       detail: message,
       fixHref: "/console/strategy#models",
-      fixLabel: "Open Framework → Models"
+      fixLabel: "Open Strategy → Models"
     };
   }
   if (status === 412 || m.includes("llm provider") || m.includes("llm key") || m.includes("provider key")) {
     return {
       title: "No LLM key is configured",
       detail: message,
-      fixHref: "/console/settings#api-keys",
-      fixLabel: "Open Settings → API keys"
+      fixHref: "/console/connections#api-keys",
+      fixLabel: "Open Connections → API keys"
     };
   }
   if (m.includes("kill switch")) {
@@ -645,8 +645,8 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
     return {
       title: "Account problem",
       detail: message,
-      fixHref: "/console/settings#brokers",
-      fixLabel: "Open Settings → Broker accounts"
+      fixHref: "/console/connections#brokers",
+      fixLabel: "Open Connections → Broker accounts"
     };
   }
   return {
@@ -657,7 +657,17 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
   };
 }
 
-export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot; size?: "sm" }) {
+export function RunOnceButton({
+  snapshot,
+  size,
+  iconOnly
+}: {
+  snapshot: DashboardSnapshot;
+  size?: "sm";
+  /** Icon-only rendering for the phone chrome bar, where the full label doesn't fit
+   *  but the hero's "Run once" call-to-action still needs a reachable control. */
+  iconOnly?: boolean;
+}) {
   const { refresh } = useConsoleData();
   const toast = useToast();
   const [running, setRunning] = useState(false);
@@ -705,6 +715,7 @@ export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot;
         size={size}
         disabled={running}
         onClick={() => void run()}
+        aria-label={iconOnly ? (running ? "Running…" : "Run once") : undefined}
         title={
           preflight
             ? `Blocked: ${preflight.title}. Click to see why and where to fix it.`
@@ -712,7 +723,7 @@ export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot;
         }
       >
         <Play size={13} />
-        {running ? "Running…" : "Run once"}
+        {iconOnly ? null : running ? "Running…" : "Run once"}
       </Btn>
 
       <Sheet open={block !== null} onClose={() => setBlock(null)} title="Run once can't go ahead">
@@ -872,15 +883,29 @@ export function UserMenu({
                 Signing out only ends this browser session. The strategy keeps its current run state on the server —
                 it does not stop, start, or sell anything.
               </p>
-              {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
-              <a
-                href="/logout"
-                className="con-btn con-btn-outline self-start"
-                title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
-              >
-                <LogOut size={14} />
-                Sign out
-              </a>
+              <div className="flex items-center gap-2">
+                {/* Operator-only admin portal entry — the phone-reachable twin of the
+                    desktop chrome's Admin link (the chrome bar has no room on phones). */}
+                {user.isAdmin && (
+                  <a
+                    href="/admin"
+                    className="con-btn con-btn-outline"
+                    title="Admin portal — operator diagnostics: connections, LLM spend, RAG coverage, server."
+                  >
+                    <ShieldCheck size={14} />
+                    Admin portal
+                  </a>
+                )}
+                {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
+                <a
+                  href="/logout"
+                  className="con-btn con-btn-outline"
+                  title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
+                >
+                  <LogOut size={14} />
+                  Sign out
+                </a>
+              </div>
             </div>
           </div>
         </>

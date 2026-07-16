@@ -623,7 +623,7 @@ const MIGRATIONS: Migration[] = [
         policy.redTeamLlmModel = servedModel;
         update.run(JSON.stringify(policy), row.user_id, row.connected_account_id);
         console.log(
-          `[db] migration 15: seeded redTeamLlmModel="${servedModel}" for account ${row.connected_account_id} (user ${row.user_id}) from the retired RED_TEAM_LLM_PROVIDER env override — review it under Framework → Models.`
+          `[db] migration 15: seeded redTeamLlmModel="${servedModel}" for account ${row.connected_account_id} (user ${row.user_id}) from the retired RED_TEAM_LLM_PROVIDER env override — review it under Strategy → Models.`
         );
       }
     }

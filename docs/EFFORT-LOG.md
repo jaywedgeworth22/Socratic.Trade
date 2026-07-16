@@ -1821,7 +1821,16 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
+- **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
+  (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — IN PROGRESS.** Owner-directed
+  ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
+  2026-07-12 "iOS UI refresh" (#1476) converted Settings + all sub-cards (brokers/api-keys/delivery/
+  learning-review/sharing/help/danger) from console `Card`/`Field`/`Toggle` primitives to iOS grouped-list
+  components; subsequent fixes (#1535 theme tokens, #1651 con-card containers) only reskinned the outer
+  boxes, leaving iOS row internals — hence "almost zero improvement." Scope: (1) rebuild Settings content
+  on console primitives (restore pre-#1476 architecture with post-#1476 content); (2) admin-only link at
+  top-of-site chrome to /admin + restyle /admin onto the console `con-*` design system with a clear way
+  back; All workstreams IMPLEMENTED (settings de-iOS rebuild incl. ios-components.tsx deletion; admin chrome link + full /admin con-* migration incl. /console/usage P0; Strategy/Guardrails nav renames + NEW /console/connections + tax/webhook card moves + deep-link retargets; h1=rail-label naming canon + journal chip truth + fabricated-tag removal + mobile fixes; consent-decline persistence bug + regression test). FULL GATE GREEN (lint 0 errors, tsc clean, 393 files/4,541 tests after one truthful-tag test update, build clean, 51-shot visual re-shoot, 0 mobile overflow) — PR #1679 OPEN + auto-merge armed; merge==auto-deploy.
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live
   ("persist all variables/counts... have that be the standard... for all things"): a redeploy

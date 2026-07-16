@@ -169,7 +169,7 @@ export default function ConsoleHomePage() {
             }
             action={
               <Link href="/console/scan" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                Evidence board <ArrowRight size={12} />
+                Evidence <ArrowRight size={12} />
               </Link>
             }
           >
@@ -294,7 +294,7 @@ export default function ConsoleHomePage() {
                 href={hasFrameworkProposals ? "/console/strategy" : "/console/results#thesis-regime"}
                 className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
               >
-                {hasFrameworkProposals ? "Framework" : "Results"} <ArrowRight size={12} />
+                {hasFrameworkProposals ? "Strategy" : "Results"} <ArrowRight size={12} />
               </Link>
             }
           >

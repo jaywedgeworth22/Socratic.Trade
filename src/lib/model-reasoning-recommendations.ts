@@ -6,7 +6,7 @@
 //   1. Model rotation (src/lib/model-rotation.ts): a rotating seat auto-sets each served model's
 //      reasoning effort to its recommended level (unknown model -> "medium") — there is no manual
 //      effort control under rotation.
-//   2. The Framework Models UI (app/console/strategy/page.tsx): per-seat advice text under each
+//   2. The Strategy Models UI (app/console/strategy/page.tsx): per-seat advice text under each
 //      reasoning control, shown BEFORE any save (e.g. the gpt-5.5 interactive-high rule).
 //
 // Every recommendation is still re-clamped per model at call time by

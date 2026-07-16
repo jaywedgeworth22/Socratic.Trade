@@ -9,6 +9,8 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleFont } from "../lib/useConsoleFont";
@@ -275,12 +277,32 @@ function ChromeBar({
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
         <div className="hidden flex-1 sm:block" />
+        {/* Operator-only: small top-of-site entry to the admin portal (owner-directed —
+            it must not be buried in Settings). Desktop chrome only; phones reach the
+            same link from the profile menu (UserMenu), where there's room. */}
+        {snapshot.currentUser?.isAdmin && (
+          <Link
+            href="/admin"
+            className="hidden items-center gap-1.5 rounded-lg border border-[color:var(--con-line-strong)] px-2.5 text-[length:var(--con-fs-xs)] font-medium text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] md:flex sm:h-8"
+            title="Admin portal — operator diagnostics: connections, LLM spend, RAG coverage, server. Visible because this login has admin rights."
+          >
+            <ShieldCheck size={14} />
+            Admin
+          </Link>
+        )}
         <div className="hidden md:block">
           <CommandPaletteTrigger />
         </div>
         <UserMenu snapshot={snapshot} theme={theme} setTheme={setTheme} />
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
+        </div>
+        {/* Phones get an icon-only Run once: the home hero's call-to-action was
+            unreachable on mobile without scrolling to the very bottom. Icon-only
+            keeps the owner-tuned phone-bar priorities (scope gets the slack,
+            nothing squeezes STOP). */}
+        <div className="sm:hidden">
+          <RunOnceButton snapshot={snapshot} iconOnly />
         </div>
         <RunStateButton snapshot={snapshot} />
       </div>

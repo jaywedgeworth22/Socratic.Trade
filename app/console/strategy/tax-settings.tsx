@@ -1,11 +1,16 @@
 "use client";
 
 /** Tax treatment — account-scoped tax configuration (taxation type, wash-sale
- *  handling, estimated rates, net-of-tax display). Lives on the Framework page
- *  because it is per-account, like everything else here: policy.taxSettings is
- *  an account-level policy field, so the values follow the account you're
- *  viewing, not your login. Moved out of Settings in the 2026-07-10 IA
- *  restructure (Settings is global-only now). */
+ *  handling, estimated rates, net-of-tax display). Rendered on the Guardrails
+ *  page (app/console/guardrails/page.tsx), directly above the Advanced
+ *  rulebook's Tax rules group that references it, because it is per-account
+ *  like everything else there: policy.taxSettings is an account-level policy
+ *  field, so the values follow the account you're viewing, not your login.
+ *  Moved out of Settings in the 2026-07-10 IA restructure (Settings is
+ *  global-only), then from Strategy to Guardrails in the 2026-07-16 IA
+ *  restructure. This module itself stays put — only the page that imports it
+ *  changed. Self-contained (own auto-save) — never wired into the
+ *  PolicySaveBar draft machinery Guardrails uses for everything else. */
 
 import { useState } from "react";
 import type { IraWashSaleHandling, TaxationType } from "@/lib/types";

@@ -20,7 +20,6 @@ import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Card, Field, RawNumInput, Select, Toggle } from "../ui/primitives";
-import { ListSection, ListRow, LabeledContent } from "../../ui/ios-components";
 
 const DEFAULT_MIN_NEW_LESSONS = 5;
 const DEFAULT_MAX_WAIT_DAYS = 7;
@@ -40,7 +39,7 @@ const MODE_OPTIONS = [
 
 // Model shortlist: this is a once-a-day audit of decisions that compound, so the curated
 // options are frontier-tier; the review model is its own user-level pick (unrelated to the
-// per-account team models on Framework → Models). No blank/"default" pseudo-option — the
+// per-account team models on Strategy → Models). No blank/"default" pseudo-option — the
 // field always holds a real, chosen model.
 const REVIEW_MODEL_OPTIONS = [
   { value: "gpt-5.6-sol", label: "gpt-5.6-sol — recommended frontier audit · $$$" },
@@ -107,32 +106,42 @@ export function LearningReviewCard() {
   };
 
   return (
-    <ListSection title="Daily learning review">
-      <div className="px-2 pb-2">
-        <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-          Once a day, a frontier-class model re-examines what the system has been learning — recent learned facts and the
-          pending approval queue — against the system&apos;s own recent failures and fixes. It catches lessons built on
-          corrupted evidence, like a thesis blamed for losses a stuck exit order actually caused. One review call per day.
-        </p>
-      </div>
-      
-      <ListRow>
-        <LabeledContent label="Run the daily review" hint={enabled ? "On — posts findings to the activity log and notifications." : "Off — no review runs, no model call is made."}>
+    <Card title="Daily learning review">
+      <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+        Once a day, a frontier-class model re-examines what the system has been learning — recent learned facts and the
+        pending approval queue — against the system&apos;s own recent failures and fixes. It catches lessons built on
+        corrupted evidence, like a thesis blamed for losses a stuck exit order actually caused. One review call per day.
+      </p>
+      <div className="flex flex-col gap-3">
+        <div
+          className="con-row flex items-center justify-between gap-4 rounded-md px-1.5 py-1.5"
+          title="Run the review once per UTC day. Off = nothing runs and nothing is spent."
+        >
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Run the daily review</div>
+            <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+              {enabled
+                ? "On — the review runs once per day and posts its findings to the activity log and notifications."
+                : "Off — no review runs, no model call is made."}
+            </p>
+          </div>
           <Toggle
             checked={enabled}
             disabled={busy}
+            label="Run the daily review"
             onChange={(next) => void save({ learningReviewEnabled: next }, next ? "Daily learning review on" : "Daily learning review off")}
           />
-        </LabeledContent>
-      </ListRow>
+        </div>
 
-      {enabled && (
-        <>
-          <ListRow>
-            <LabeledContent label="Run after this many new lessons" hint="Whichever fires first: this count, or the max wait below.">
+        {enabled && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Run after this many new lessons"
+              hint="Whichever fires first: this count, or the max wait below."
+              htmlFor="learning-review-min-new-lessons"
+            >
               <RawNumInput
                 id="learning-review-min-new-lessons"
-                className="w-16 text-right bg-transparent border-0 px-0 text-[length:var(--con-fs-sm)] focus:ring-0"
                 value={String(minNewLessons)}
                 emptyValue={DEFAULT_MIN_NEW_LESSONS}
                 disabled={busy}
@@ -147,13 +156,14 @@ export function LearningReviewCard() {
                   )
                 }
               />
-            </LabeledContent>
-          </ListRow>
-          <ListRow>
-            <LabeledContent label="Or after this many days, whichever is first" hint="A slow trickle of lessons still gets swept eventually.">
+            </Field>
+            <Field
+              label="Or after this many days, whichever is first"
+              hint="A slow trickle of lessons still gets swept eventually."
+              htmlFor="learning-review-max-wait-days"
+            >
               <RawNumInput
                 id="learning-review-max-wait-days"
-                className="w-16 text-right bg-transparent border-0 px-0 text-[length:var(--con-fs-sm)] focus:ring-0"
                 value={String(maxWaitDays)}
                 emptyValue={DEFAULT_MAX_WAIT_DAYS}
                 disabled={busy}
@@ -168,17 +178,18 @@ export function LearningReviewCard() {
                   )
                 }
               />
-            </LabeledContent>
-          </ListRow>
-        </>
-      )}
+            </Field>
+          </div>
+        )}
 
-      <ListRow>
-        <div className="w-full py-1">
-          <LabeledContent label="When it disagrees with a lesson" hint="Annotate only flags; Decide also acts on the verdicts.">
-            <select
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="When it disagrees with a lesson"
+            hint="Annotate only flags; Decide also acts on the verdicts."
+            htmlFor="learning-review-mode"
+          >
+            <Select
               id="learning-review-mode"
-              className="bg-transparent text-right text-[length:var(--con-fs-sm)] focus:outline-none focus:ring-0 cursor-pointer"
               value={mode}
               disabled={busy}
               title="Annotate records verdicts without changing anything. Decide applies them — removals, expiries, and pending approvals/rejections — each one audited."
@@ -194,20 +205,18 @@ export function LearningReviewCard() {
                   {o.label}
                 </option>
               ))}
-            </select>
-          </LabeledContent>
-        </div>
-      </ListRow>
-
-      <ListRow>
-        <div className="w-full py-1">
-          <LabeledContent label="Learning-review model" hint="One call per day, so a frontier model is the point. Defaults to claude-fable-5.">
-            <select
+            </Select>
+          </Field>
+          <Field
+            label="Learning-review model"
+            hint="One call per day, so a frontier model is the point. Defaults to claude-fable-5."
+            htmlFor="learning-review-model"
+          >
+            <Select
               id="learning-review-model"
-              className="bg-transparent text-right text-[length:var(--con-fs-sm)] focus:outline-none focus:ring-0 cursor-pointer max-w-[200px]"
               value={model}
               disabled={busy}
-              title="The model that runs the daily learning review. Needs a resolvable key for its provider (Settings → API keys)."
+              title="The model that runs the daily learning review. Needs a resolvable key for its provider (Connections → API keys)."
               onChange={(e) => {
                 const nextModel = e.target.value;
                 void save(
@@ -229,46 +238,39 @@ export function LearningReviewCard() {
                   {o.label}
                 </option>
               ))}
-            </select>
-          </LabeledContent>
+            </Select>
+          </Field>
         </div>
-      </ListRow>
 
-      {reasoningCapability && reasoningEffort && (
-        <ListRow>
-          <div className="w-full py-1">
-            <LabeledContent
-              label={reasoningCapability.settingLabel}
-              hint={`Recommended for this review role: ${recommendedEffort}. ${reasoningCapability.description}`}
+        {reasoningCapability && reasoningEffort && (
+          <Field label={reasoningCapability.settingLabel} htmlFor="learning-review-reasoning-effort">
+            <Select
+              id="learning-review-reasoning-effort"
+              value={reasoningEffort}
+              disabled={busy}
+              title={reasoningAdvice ?? reasoningCapability.description}
+              onChange={(e) =>
+                void save(
+                  { learningReviewReasoningEffort: e.target.value as LlmReasoningEffort },
+                  "Learning-review reasoning effort saved"
+                )
+              }
             >
-              <select
-                id="learning-review-reasoning-effort"
-                className="bg-transparent text-right text-[length:var(--con-fs-sm)] focus:outline-none focus:ring-0 cursor-pointer"
-                value={reasoningEffort}
-                disabled={busy}
-                title={reasoningAdvice ?? reasoningCapability.description}
-                onChange={(e) =>
-                  void save(
-                    { learningReviewReasoningEffort: e.target.value as LlmReasoningEffort },
-                    "Learning-review reasoning effort saved"
-                  )
-                }
-              >
-                {reasoningCapability.options.map((option) => (
-                  <option key={option.value} value={option.value} title={option.hint}>
-                    {option.label}{option.value === recommendedEffort ? " — recommended" : ""}
-                  </option>
-                ))}
-              </select>
-            </LabeledContent>
+              {reasoningCapability.options.map((option) => (
+                <option key={option.value} value={option.value} title={option.hint}>
+                  {option.label}{option.value === recommendedEffort ? " — recommended" : ""}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-1 text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+              {`Recommended for this review role: ${recommendedEffort}. ${reasoningCapability.description}`}
+            </p>
             {reasoningAdvice && (
-              <p className="mt-1 text-right text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-                {reasoningAdvice}
-              </p>
+              <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{reasoningAdvice}</p>
             )}
-          </div>
-        </ListRow>
-      )}
-    </ListSection>
+          </Field>
+        )}
+      </div>
+    </Card>
   );
 }
