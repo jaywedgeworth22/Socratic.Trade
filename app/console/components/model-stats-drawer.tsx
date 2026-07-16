@@ -1,7 +1,7 @@
 "use client";
 
 /** Model stats drawer — the info affordance next to the Proposer/Reviewer/Strategist model
- *  pickers on the Framework (strategy) page and the AI review picker. One small button per
+ *  pickers on the Strategy page and the AI review picker. One small button per
  *  select opens a sheet listing every catalog model with cost per call and latency (live
  *  figures when this user has enough real traffic, otherwise the standardized
  *  offline benchmark — the 2026-07-08 full sweep, topped up 2026-07-10 for
@@ -275,7 +275,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
         </p>
         {loading && <p className="py-4 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading model stats…</p>}
         {error && !loading && (
-          <p className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+          <p className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
             {error}
           </p>
         )}

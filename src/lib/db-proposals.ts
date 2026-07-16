@@ -678,9 +678,17 @@ function ensureReferencePrice(proposal: unknown): unknown {
   if (!proposal || typeof proposal !== "object") return proposal;
   const p = proposal as Record<string, unknown>;
   const ref = Number(p.referencePrice);
-  if (Number.isFinite(ref) && ref > 0) return proposal;
+  // Provenance lets the approval-time re-anchor (src/lib/approval-reprice.ts) distinguish a
+  // genuine decision-time quote (reprice-eligible, even when the limit equals it exactly) from
+  // this function's defensive copy of the limit price (a hard price — never repriced). Without
+  // it, equality is the only heuristic and genuine at-market limits would wrongly stay stale.
+  if (Number.isFinite(ref) && ref > 0) {
+    return p.referencePriceProvenance ? proposal : { ...p, referencePriceProvenance: "provided" };
+  }
   const fallback = Number(p.limitPrice) || Number(p.stopPrice);
-  if (Number.isFinite(fallback) && fallback > 0) return { ...p, referencePrice: fallback };
+  if (Number.isFinite(fallback) && fallback > 0) {
+    return { ...p, referencePrice: fallback, referencePriceProvenance: "limit-fallback" };
+  }
   return proposal;
 }
 

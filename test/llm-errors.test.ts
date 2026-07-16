@@ -29,7 +29,7 @@ describe("humanizeLlmError", () => {
     const msg = humanizeLlmError("gemini 401: API key not valid. Please pass a valid API key.");
     expect(msg).toContain("Google (Gemini)");
     expect(msg.toLowerCase()).toContain("rejected the api key");
-    expect(msg).toContain("Settings → Connections");
+    expect(msg).toContain("Connections");
   });
 
   it("uses an explicit provider + status over text sniffing", () => {

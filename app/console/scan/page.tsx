@@ -27,6 +27,7 @@ import { useToast } from "../ui/toast";
 import { ScanTable } from "./scan-table";
 import { SmartMoneySection } from "./smart-money";
 import { asFullMarketScan, newestScan, useLiveScan } from "./use-live-scan";
+import { destinationLabel } from "../components/nav";
 
 type Tab = "scan" | "smart";
 
@@ -96,7 +97,7 @@ export default function ScanPage() {
     <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       {/* Header: title · freshness · last-scanned · refresh */}
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Scan</h1>
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/scan")}</h1>
         {scan && (
           <Chip
             tone={isFresh ? "accent" : "muted"}
@@ -136,7 +137,7 @@ export default function ScanPage() {
         role="tablist"
         aria-label="Scan views"
         onKeyDown={onTabsKeyDown}
-        className="flex gap-1 self-start rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1"
+        className="flex gap-1 self-start rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1"
       >
         {tabDefs.map((t) => (
           <button
@@ -153,7 +154,7 @@ export default function ScanPage() {
             onClick={() => setTab(t.id)}
             title={t.title}
             className={cx(
-              "rounded-md px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
+              "rounded-control px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
               tab === t.id
                 ? "bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
                 : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)]"
@@ -209,7 +210,7 @@ function MarketScanTab({
         ) : (
           <>
             {error && (
-              <p className="mb-1 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              <p className="mb-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
                 {error}
               </p>
             )}
@@ -280,7 +281,7 @@ function MarketScanTab({
   return (
     <div className="flex flex-col gap-3">
       {congressScoreVerdict && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+        <div className="flex flex-wrap items-center gap-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
           <span className="font-semibold text-[color:var(--con-fg)]">
             Congress Signal Validation:
           </span>
@@ -288,7 +289,14 @@ function MarketScanTab({
             tone={verdictTone}
             title={congressScoreVerdict.reasons.length > 0 ? congressScoreVerdict.reasons.join("\n") : "Signal passed statistical significance validation."}
           >
-            {congressScoreVerdict.verdict}
+            {/* Decided vocabulary, not the raw verdict enum (FAIL_SIGNIFICANCE etc.). */}
+            {congressScoreVerdict.verdict === "PASS"
+              ? "Pass"
+              : congressScoreVerdict.verdict === "FAIL_SIGNIFICANCE"
+                ? "Fails significance"
+                : congressScoreVerdict.verdict === "INSUFFICIENT"
+                  ? "Not enough data"
+                  : congressScoreVerdict.verdict}
           </Chip>
           <span className="text-[color:var(--con-faint)]">
             t-stat: {congressScoreVerdict.stats.rankICTStat.toFixed(2)}
@@ -302,13 +310,13 @@ function MarketScanTab({
       )}
       {/* A failed refresh never contradicts a populated table — muted notice only. */}
       {error && (
-        <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           {error} Showing the last good scan from {fmtExact(scan.generatedAt)}.
         </p>
       )}
       {scan.warnings.length > 0 && (
         <p
-          className="cursor-default rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
+          className="cursor-default rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
           title={scan.warnings.join("\n")}
         >
           {warningText}

@@ -1,12 +1,14 @@
 "use client";
 
 /** Guardrails — the deterministic cage: essentials first (max order, daily
- *  caps, daily-loss breaker, autonomy, extended hours), then EVERY protective
- *  stop rule together under the stop-flow diagram (distance fallback chain,
- *  trailing overlay, broker-held → app-monitor enforcement), then the advanced
- *  rulebook grouped the way the domain groups it. Editing uses a
- *  review-and-commit model with asymmetric friction: tightening is one click,
- *  loosening brokerage-account authority requires typing CONFIRM. Autonomy has its own
+ *  caps, daily-loss breaker, autonomy, schedule, short selling), then EVERY
+ *  protective stop rule together under the stop-flow diagram (distance
+ *  fallback chain, trailing overlay, broker-held → app-monitor enforcement),
+ *  then Tax treatment (moved here from Strategy in the 2026-07-16 IA
+ *  restructure — self-contained, own auto-save), then the advanced rulebook
+ *  grouped the way the domain groups it. Editing uses a review-and-commit
+ *  model with asymmetric friction: tightening is one click, loosening
+ *  brokerage-account authority requires typing CONFIRM. Autonomy has its own
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
 import { useMemo, useState } from "react";
@@ -30,6 +32,7 @@ import {
   PolicySaveBar,
   usePolicyDraft
 } from "../components/policy-form";
+import { TaxSettingsCard } from "../strategy/tax-settings";
 import {
   ALL_DEFS,
   ENTRY_QUALITY,
@@ -164,6 +167,9 @@ const ESSENTIAL_FIELD_PATHS = new Set([
   "maxDailyNotional",
   "maxDailyPctOfNav"
 ]);
+// Splits the tail of ESSENTIALS (§field-defs) into its own "Schedule" sub-heading —
+// purely visual regrouping, no field-def or behavior changes (see PR notes 2026-07-16).
+const SCHEDULE_FIELD_PATHS = new Set(["runCadenceMinutes", "runDuringExtendedHours", "permitExtendedHours"]);
 const EXPOSURE_FIELD_PATHS = new Set(["maxSymbolExposureNotional", "maxSymbolExposurePct"]);
 
 export default function GuardrailsPage() {
@@ -224,7 +230,7 @@ function AccountScopedGuardrailsPage() {
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "no connected account"} — mandates, preference gates, and hard execution constraints
+          for {reality.account?.label ?? "no connected account"} — authority, caps, and hard execution constraints
         </span>
       </div>
 
@@ -258,12 +264,19 @@ function AccountScopedGuardrailsPage() {
             />
             <CapUtilization band={risk.dailyNotional} kind="money" daily />
           </div>
-          {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path)).map((def) => (
+          {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path) && !SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => (
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />
               {def.path === "maxDailyOrders" && <CapUtilization band={risk.dailyOrders} kind="count" daily />}
             </div>
           ))}
+          <div className="con-card-title pt-3">Schedule</div>
+          {ESSENTIALS.filter((def) => SCHEDULE_FIELD_PATHS.has(def.path)).map((def) => (
+            <div key={def.path}>
+              <PolicyFieldRow def={def} policy={policy} draft={draft} />
+            </div>
+          ))}
+          <div className="con-card-title pt-3">Short selling</div>
           {SHORTS.map((def) => (
             <div key={def.path}>
               <PolicyFieldRow def={def} policy={policy} draft={draft} />
@@ -286,6 +299,15 @@ function AccountScopedGuardrailsPage() {
           ))}
         </div>
       </Card>
+
+      {/* Tax treatment — account-scoped like the rest of this page; moved here from
+          Strategy in the 2026-07-16 IA restructure, directly above the Advanced
+          rulebook's Tax rules group that references it. Self-contained (own
+          auto-save) — not wired into the PolicySaveBar draft machinery below.
+          The id anchor is a deep-link target. */}
+      <div id="tax" className="scroll-mt-28">
+        <TaxSettingsCard />
+      </div>
 
       <Card title="Advanced rulebook" padded={false} collapsible defaultOpen>
         <div className="px-4 pb-2">
@@ -338,10 +360,10 @@ function AccountScopedGuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Tax rules">
             <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              The wash-sale guard itself (on/off, account type, rates) lives in Framework → Tax treatment. These rules
-              tune what a rebuy lockout means for this account and how strict it is.
+              The wash-sale guard itself (on/off, account type, rates) lives in the Tax treatment card above. These
+              rules tune what a rebuy lockout means for this account and how strict it is.
             </p>
-            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+            <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
               {isIra ? (
                 <>
                   <strong className="text-[color:var(--con-fg)]">IRA mode:</strong> same-account wash sales are not a

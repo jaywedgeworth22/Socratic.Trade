@@ -18,8 +18,11 @@ import {
   WifiOff,
   X
 } from "lucide-react";
+import { estimatedClosingPnl, isClosingOrder, positionMarkPrice } from "../console/lib/derive";
+import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { modelDisplayName } from "../console/lib/models";
 import { redTeamFailureMeta, redTeamVerdictLabel } from "../console/lib/red-team";
+import { normalizeSymbol } from "@/lib/money";
 
 type CommandStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 type MobileCommand = {
@@ -137,6 +140,35 @@ function modelAttributionLine(pending: PendingProposal): string | null {
     parts.push(`Red team FAILED (${redTeamFailureMeta(verdict.failureKind).label})${reviewer}`);
   }
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** Estimated closing P/L for a sell/cover proposal against a matching held position — same
+ *  math as console's estimatedClosingPnl (app/console/lib/derive.ts), reused rather than
+ *  re-derived. The mobile snapshot's position rows already carry averageCost, so no extra
+ *  fetch is needed. Null (and the card renders no line) when there's no matching position, no
+ *  persisted average cost, or no share quantity on the proposal — never invented. */
+function estimatedExitPnl(proposal: PendingProposal, positions: MobileSnapshot["positions"]) {
+  const p = proposal.proposal;
+  if (p.side !== "sell" && p.side !== "cover") return null;
+  const position = positions?.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(p.symbol));
+  if (!position || typeof position.averageCost !== "number") return null;
+  // Same sign-consistency gate as the console card: the position under a stale card can flip or
+  // close, and a sell over a now-short position is not a closing order.
+  if (!isClosingOrder({ symbol: p.symbol, side: p.side }, { symbol: position.symbol, quantity: position.quantity })) return null;
+  // requestedExitQuantity handles dollarAmount-sized exits too (parity with the console card),
+  // capped to the current holding so a stale oversize exit proposal doesn't overstate the
+  // estimate — same guard as the console card and closingOrderPnl in orders/lib.ts.
+  const requested = requestedExitQuantity(p);
+  const shares = requested != null ? Math.min(requested, Math.abs(position.quantity)) : undefined;
+  // An exact-cost mark is the broker's no-quote fallback (marketValue = qty * averageCost) — a
+  // fake $0.00 P/L; omit the line instead.
+  const mark = positionMarkPrice(position) ?? undefined;
+  const suspicious = mark !== undefined && position.averageCost > 0 && Math.abs(mark - position.averageCost) / position.averageCost < 1e-9;
+  return estimatedClosingPnl({
+    position: { quantity: position.quantity, averageCost: position.averageCost },
+    shares,
+    currentPrice: suspicious ? undefined : mark
+  });
 }
 
 function liveApprovalText(symbol: string): string {
@@ -653,6 +685,7 @@ export function MobilePwaClient() {
               const typedText = liveTextByProposal[proposal.id] ?? "";
               const expectedLiveText = liveApprovalText(proposal.proposal.symbol);
               const livePhraseMatches = !willPromptTyped || typedText.trim().toUpperCase() === expectedLiveText;
+              const estPnl = estimatedExitPnl(proposal, snapshot?.positions);
               return (
                 <div key={proposal.id} className="rounded-md border border-line bg-surface p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -666,6 +699,15 @@ export function MobilePwaClient() {
                   </div>
                   {modelAttributionLine(proposal) && (
                     <p className="mt-1 text-xs text-faint">{modelAttributionLine(proposal)}</p>
+                  )}
+                  {estPnl && (
+                    <p className="mt-1 text-xs text-faint">
+                      Est. P/L:{" "}
+                      <span className={estPnl.pnl >= 0 ? "text-emerald-600 dark:text-emerald-300" : "text-red-600 dark:text-red-300"}>
+                        {money(estPnl.pnl)} ({estPnl.pnlPct >= 0 ? "+" : ""}
+                        {estPnl.pnlPct.toFixed(1)}%)
+                      </span>
+                    </p>
                   )}
                   {proposal.proposal.rationale && (
                     <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{proposal.proposal.rationale}</p>

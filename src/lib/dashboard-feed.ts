@@ -456,6 +456,23 @@ function formatAuditEvent(
     };
   }
 
+  if (kind === "connection_health_alert") {
+    // Plain English instead of the scalar dump ("Key Source: none · User Id: local"):
+    // say WHICH connection is failing and why; the raw payload stays on the toggle.
+    const service = stringValue(payload.service);
+    const errorText = stringValue(payload.errorText);
+    const keySource = stringValue(payload.keySource);
+    return {
+      title: service ? `${capitalize(service)} connection is failing` : "A provider connection is failing",
+      detail:
+        joinDetail([
+          errorText,
+          keySource && keySource !== "none" ? `key from ${keySource}` : "no API key configured"
+        ]) ?? "The server's health check could not reach this provider.",
+      fullText: serializeAuditPayload(payload)
+    };
+  }
+
   // Unknown/unhandled audit kinds NEVER render raw JSON inline — the detail is either a
   // recognized generic field, up to 3 scalar payload fields as "Key: value" fragments, or a
   // plain "Event recorded". The full JSON payload stays available via the existing
@@ -1203,34 +1220,23 @@ export function buildUnifiedFeed(input: {
     } else {
       title = events[0]!.title;
       detail = events[0]!.detail;
-      status = events[0]!.status ?? "completed";
+      // Audit rows carry no status of their own; the old blanket "completed" default
+      // painted a green chip on rows literally titled "Market scan failed". Derive
+      // failure from the title when the event has no explicit status.
+      status =
+        events[0]!.status ??
+        (title.toLowerCase().includes("failed") || title.toLowerCase().includes("error") ? "failed" : "completed");
     }
     // Single-event groups surface the sub-event's fullText (e.g. an ops event's raw
     // JSON payload) so the client can offer a raw-data toggle; grouped cards keep the
     // summary as fullText.
     const groupFullText = proposalId || groupId.startsWith("run-") ? detail : events[0]!.fullText ?? detail;
 
+    // Tags are ONLY what the events themselves earned. Two removed forcing blocks used
+    // to blanket-push "notification failed" onto every non-policy group and a "paper"
+    // tag onto EVERY group ("Live is not tested yet") — fabricated labels on real data,
+    // which the product rules forbid (never mislabel real activity).
     const tagsList = Array.from(tagsSet);
-    const isPolicyUpdate = tagsList.includes("policy change") || title.includes("Policy updated") || title.includes("Profile");
-
-    if (isPolicyUpdate) {
-      if (!tagsList.includes("notification disabled")) {
-        tagsList.push("notification disabled");
-      }
-      const failedIdx = tagsList.indexOf("notification failed");
-      if (failedIdx !== -1) tagsList.splice(failedIdx, 1);
-    } else {
-      if (!tagsList.includes("notification failed")) {
-        tagsList.push("notification failed");
-      }
-      const disabledIdx = tagsList.indexOf("notification disabled");
-      if (disabledIdx !== -1) tagsList.splice(disabledIdx, 1);
-    }
-
-    // Force all events to have the 'paper' tag since Live is not tested yet.
-    if (!tagsList.includes("paper")) {
-      tagsList.push("paper");
-    }
 
     unifiedGroups.push({
       id: groupId,
