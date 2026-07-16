@@ -1821,6 +1821,25 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
+  card (branch `claude/tradier-connected-account-history-source`) — IN PROGRESS, gate green,
+  PR next.** Owner request: Tradier shouldn't be a generic API-keys Settings card, "should
+  just be a source that users sync to" (i.e. the existing broker-connect flow), with the
+  connected account's data naturally shared since the owner is the sole user. Removed
+  `tradier` from `API_KEY_CATALOG` (`app/api/keys/route.ts`) and its now-dead
+  `API_KEY_ENV_MAP`/aliases/tier entries; `history.ts`'s Tradier price-history fetch now
+  resolves credentials from the connected Tradier broker account (new
+  `getConnectedAccountByBroker`) instead of a separate stored key/env var, with cache scope
+  hardcoded `"shared"`. Rewired the affected `test/history.test.ts` cases; the 2 tests
+  exercising per-user private/pool-consent semantics switched to Marketstack as their vehicle.
+  Also updated `.env.example`, `README.md`, and 2 living docs
+  (`market-data-provider-pricing.md`, `phase-11-multi-user.md`). Codex caught a P2: the lookup
+  required Tradier to be the ACTIVE execution broker, silently disabling Tradier history for a
+  user trading through Alpaca/Robinhood with Tradier connected purely as a data source — fixed
+  by dropping the `is_active` filter (prefer active, fall back to any connected Tradier
+  account), plus a regression test. Rollout:
+  `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
+- **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
 - **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
   claimed 2026-07-16) — COMPLETED + DEPLOYED 2026-07-16 (PR #1683 MERGED, squash 32362e93; production verified serving it, health ok).** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
   128 rounded-md/lg/xl call sites in app/console -> canon rounded-control(8px)/rounded-card(12px)
