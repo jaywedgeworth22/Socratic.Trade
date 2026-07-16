@@ -4274,7 +4274,7 @@ async function proposeTrades(input: {
           upcomingEconomicEvents: {
             note: "Scheduled HIGH-impact US economic events (FMP economic calendar) within the next 5 calendar days — e.g. CPI, FOMC, NFP. Weigh event timing when opening or sizing positions around these macro catalysts; this is context, not a block. An event carrying timingNote already printed today (or may have) — read it as a fresh release, not a pending catalyst.",
             events: upcomingEconomicEvents.map((event) => ({
-              event: event.event,
+              event: containData("news", "economicEvent", event.event),
               date: event.date,
               ...(event.impact ? { impact: event.impact } : {}),
               ...(event.timingNote ? { timingNote: event.timingNote } : {})
@@ -4376,6 +4376,9 @@ async function proposeTrades(input: {
     { name: "learnedContext", text: input.learnedContext ?? "" },
     { name: "closestHistoricalAnalogs", text: input.experienceAnalogs ?? "" },
     { name: "ownerCoaching", text: input.ownerCoaching ?? "" },
+    ...(upcomingEconomicEvents.length > 0
+      ? [{ name: "economicCalendar", text: upcomingEconomicEvents.map((e) => e.event).join("\n") }]
+      : []),
     ...(input.marketScan?.topCandidates ?? []).flatMap((candidate) => {
       const sym = normalizeSymbol(candidate.symbol);
       const fields: UntrustedPromptField[] = [];

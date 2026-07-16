@@ -251,20 +251,26 @@ export class QuiverEnrichmentProvider implements MarketEnrichmentProvider {
 
   private async getRows(symbol: string, path: string): Promise<QuiverRow[]> {
     const url = `${QUIVER_BASE_URL}/${path}/${encodeURIComponent(symbol)}`;
-    const response = await fetchWithRetry(
-      url,
-      { cache: "no-store", headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" } },
-      {
-        service: "quiverquant",
-        keySource: "env",
-        // A ticker with no rows for a dataset (e.g. no gov contracts) is a normal empty result,
-        // not a failure. Some deployments 404 rather than return `[]` for that case — treat both
-        // as "no data" and never let it count against the lane's health.
-        suppressHealthStatuses: [404]
-      }
-    );
-    if (response.status === 404) return [];
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return extractQuiverRows(await response.json());
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetchWithRetry(
+        url,
+        { cache: "no-store", headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" }, signal: controller.signal },
+        {
+          service: "quiverquant",
+          keySource: "env",
+          // A ticker with no rows for a dataset (e.g. no gov contracts) is a normal empty result,
+          // not a failure. Some deployments 404 rather than return `[]` for that case — treat both
+          // as "no data" and never let it count against the lane's health.
+          suppressHealthStatuses: [404]
+        }
+      );
+      if (response.status === 404) return [];
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return extractQuiverRows(await response.json());
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }

@@ -1,5 +1,31 @@
 # Current Status
 
+## 2026-07-16 — [codex-autofix] Post-merge Codex review fixes for ST-audit exec wave 2 (PR #1668 follow-up)
+
+Codex reviewed PR #1668 (merged) and posted 7 P2 findings post-merge. This follow-up branch
+addresses 3 of 7 — the clear, directly-actionable items. The remaining 4 are architecturally
+significant and left open for the maintainer:
+
+**Fixed:**
+1. **Require signed samples before reweighting** (`retrieval-usefulness.ts`): `usefulnessMultiplier`
+   was checking `stat.samples >= USEFULNESS_MIN_SAMPLES` when it should check `signed >=
+   USEFULNESS_MIN_SAMPLES`, so 1 signed observation + 4 zero-return outcomes could trigger the
+   max ±10% rank nudge on near-zero directional evidence.
+2. **Contain calendar event names before prompting** (`strategy.ts`): FMP economic-calendar event
+   names were not passed through `containData()` and not in `untrustedPromptFields`, leaving this
+   new provider text outside the prompt-injection quarantine/receipt path. Both gaps now closed.
+3. **Bound Quiver requests with a timeout** (`quiver-provider.ts`): `getRows` had no `AbortController`
+   signal, so a hung Quiver endpoint could hold the whole enrichment batch until the platform timeout.
+   Added a 10s AbortController timeout per subfetch, matching the pattern used by other providers.
+
+**Deferred (architecturally significant — maintainer asked):**
+- Replace stale calendar rows during refresh (`economic-calendar.ts`)
+- Use strategy run window for liveness (`trading-liveness.ts`)
+- Scope usefulness weights to connected account (`experience-memory.ts`)
+- Avoid crediting decisions before all horizons mature (`retrieval-usefulness.ts`)
+
+Rollout: `docs/rollouts/2026-07-16-post-merge-codex-autofix-wave2.md`. Branch: `codex/autofix-st-audit-exec-wave2`.
+
 ## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)
 
 Owner-directed continuation of the CLAUDE handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`

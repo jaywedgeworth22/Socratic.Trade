@@ -141,7 +141,7 @@ export function runRetrievalUsefulnessJoinIfDue(userId: string, now: number = Da
 export function usefulnessMultiplier(stat: { samples: number; wins: number; losses: number } | undefined): number {
   if (!stat) return 1;
   const signed = stat.wins + stat.losses;
-  if (stat.samples < USEFULNESS_MIN_SAMPLES || signed === 0) return 1;
+  if (signed < USEFULNESS_MIN_SAMPLES) return 1;
   const hitRate = stat.wins / signed;
   const raw = 1 + (hitRate - 0.5) * 0.4;
   return Math.min(USEFULNESS_MULTIPLIER_MAX, Math.max(USEFULNESS_MULTIPLIER_MIN, raw));
