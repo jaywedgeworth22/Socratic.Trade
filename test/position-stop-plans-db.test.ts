@@ -226,6 +226,31 @@ describe("bracket sibling-leg teardown queue (position_stop_plan_open_brackets -
     expect(listOpenBracketOrders(acct, "TSLA")).toEqual([]); // tracking cleared once enqueued
   });
 
+  it("does NOT tear down brackets on a fixed<->atr transition either — same reasoning as same-style scale-ins (Codex review, PR #1667, second attempt)", async () => {
+    const { listPendingBracketTeardowns, listOpenBracketOrders, recordStopPlan } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-FIXED-ATR";
+    recordStopPlan(acct, "NVDA", "fixed", "initial fixed stop", 500, "local", undefined, "long", "bracket-fixed-1");
+    // A scale-in switches the STYLE from fixed to atr (still within the distance-bracket family) and
+    // places a new bracket for the added shares. A prior codex-autofix attempt on this PR tore down
+    // the OLD bracket on exactly this transition, reasoning that fixed and atr are "different
+    // distances" — but mechanically both are independent, lot-scoped brackets with nothing else
+    // recreating protection for the earlier lot, so tearing down here is exactly as harmful as doing
+    // it on a same-style scale-in (reverted; see recordStopPlan's doc comment for the full argument).
+    recordStopPlan(acct, "NVDA", "atr", "switched to ATR-based stop on scale-in", 505, "local", undefined, "long", "bracket-atr-1");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+    expect(listOpenBracketOrders(acct, "NVDA").map((r) => r.orderId).sort()).toEqual(["bracket-atr-1", "bracket-fixed-1"]);
+
+    // Switching atr -> fixed again is the same story — still no teardown.
+    recordStopPlan(acct, "NVDA", "fixed", "back to fixed", 505, "local", undefined, "long", "bracket-fixed-2");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+    expect(listOpenBracketOrders(acct, "NVDA")).toHaveLength(3);
+
+    // Only a genuine exit from the whole distance-bracket family tears everything down together.
+    recordStopPlan(acct, "NVDA", "none", "done with distance stops", 505, "local", undefined, "long");
+    expect(listPendingBracketTeardowns(acct).map((r) => r.orderId).sort()).toEqual(["bracket-atr-1", "bracket-fixed-1", "bracket-fixed-2"]);
+    expect(listOpenBracketOrders(acct, "NVDA")).toEqual([]);
+  });
+
   it("does NOT double-track the same bracket order id on a redundant re-record (no new bracket placed)", async () => {
     const { recordStopPlan, listPendingBracketTeardowns, listOpenBracketOrders } = await import("../src/lib/db");
     const acct = "ACCT-BRACKET-3B";

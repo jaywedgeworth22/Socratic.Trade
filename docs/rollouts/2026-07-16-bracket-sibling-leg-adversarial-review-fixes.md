@@ -44,7 +44,7 @@ the plan genuinely LEAVES the fixed/atr family (a real style change, or the posi
 `enqueueTeardownForAllOpenBrackets`, called from `recordStopPlan` and `clearStopPlans`). This
 fixes both the original bug (nothing forgotten forever) and the P1 (nothing torn down while
 still valid). `position_stop_plans.opening_order_id` remains as a display-only "most recent
-bracket" field, decoupled from teardown logic. New migration v43.
+bracket" field, decoupled from teardown logic. New migration v46 (renumbered from v43 after a concurrent main merge claimed 43-45).
 
 ### 2. CONFIRMED — `cancelBracketSiblingLegs` never threw, so the bounded-retry mechanism was dead code
 
@@ -95,9 +95,40 @@ What DID turn out to be a genuine, confirmed gap in the same area: when `contain
 and iterating that WOULD treat the lone entry order as a cancellable "sibling." Fixed by
 special-casing `class === "equity"` to a no-op before any leg iteration.
 
+### 2. CONFIRMED — the codex-autofix backfill was correct, but a second concurrent commit needed reconciling
+
+Two more Codex review rounds landed on PR #1667 itself:
+
+- **Backfill gap (P1, confirmed and fixed):** `enqueueTeardownForAllOpenBrackets` only reads
+  `position_stop_plan_open_brackets`, which the migration creates empty — a
+  `position_stop_plans` row already at fixed/atr with an `opening_order_id` set under the OLD
+  (pre-this-PR) design would have nothing in the new table, silently losing that bracket
+  reference the first time its plan later changed away from fixed/atr. Fixed by backfilling
+  the migration from any such legacy rows (own commit `a70b919`).
+- **fixed<->atr teardown (proposed, explicitly declined):** Codex separately suggested that a
+  scale-in changing style between `fixed` and `atr` should tear down the earlier tracked
+  brackets, since they were "sized to a different stop distance." Declined with reasoning
+  posted on the PR: a fixed and an atr bracket are computed differently but mechanically
+  identical — an independent, lot-scoped broker-native bracket, with nothing else ever
+  recreating protection for an earlier lot. Tearing down on this transition would reintroduce
+  the exact P1 from finding 1 above.
+
+The repo's `codex-autofix` bot then ran on this same PR (triggered by Codex's review) and
+pushed its own commit (`ad4db48`) implementing BOTH: the same backfill fix independently
+(redundant with `a70b919` but harmless), AND the fixed<->atr teardown Codex had proposed and
+I had explicitly declined. Since the bot's commit landed on the shared PR branch, it had to be
+reconciled rather than simply ignored: merged the commit properly (preserving history, not a
+force-push), kept my own backfill implementation (already tested), and reverted the fixed<->atr
+teardown addition back to the declined design — with the reasoning restated in
+`recordStopPlan`'s doc comment, a PR comment explaining the reconciliation, and a dedicated new
+regression test (`test/position-stop-plans-db.test.ts`) locking in that fixed<->atr behaves
+like any same-style transition (track, never teardown, until a real exit from the whole
+family). Codex then independently reviewed the autofix bot's commit too and flagged the exact
+same fixed<->atr issue — confirming the original reasoning was correct.
+
 ## Files
 
-- `src/lib/db.ts` — migration v43 + `position_stop_plan_open_brackets` table (append-only,
+- `src/lib/db.ts` — migration v46 (renumbered from v43 after a concurrent main merge claimed 43-45) + `position_stop_plan_open_brackets` table (append-only,
   one row per tracked bracket order id per symbol).
 - `src/lib/db-api-keys.ts` — replaced `enqueueBracketTeardownIfLeavingDistancePlan` with
   `trackOpenBracketOrder` (append, dedup by order id) and `enqueueTeardownForAllOpenBrackets`
@@ -114,14 +145,18 @@ special-casing `class === "equity"` to a no-op before any leg iteration.
   `container.class === "equity"` (no bracket ever attached).
 - `test/position-stop-plans-db.test.ts` — rewrote the same-style-scale-in test to assert
   NEITHER bracket is torn down immediately, BOTH are tracked, and a later real style change
-  tears down BOTH together; added a dedup test for a redundant same-order-id re-record.
+  tears down BOTH together; added a dedup test for a redundant same-order-id re-record; added a
+  dedicated fixed<->atr regression test (see finding 2 above) locking in the same no-teardown
+  behavior for that transition, plus a new migration-backfill test in
+  `test/persistence-hardening.test.ts`.
 - `test/alpaca-brackets.test.ts` — mock `sendRequest` can now simulate a thrown error; added
   tests for the 404-resolves-as-done and non-404-propagates cases.
 - `test/tradier.test.ts` — added tests for: entry-only order (class=equity, still open) never
   gets cancelled; genuine HTTP 404 resolves as done; the 200-with-errors "not found" envelope
   resolves as done; any other failure (503) propagates.
 - `test/persistence-hardening.test.ts` — updated 10 hardcoded schema-version assertions
-  (42->43) now that migration 43 legitimately exists.
+  (41->46, in two steps as the migration got renumbered) now that migration 46 legitimately
+  exists; added a dedicated backfill-migration test.
 
 ## Verification
 
