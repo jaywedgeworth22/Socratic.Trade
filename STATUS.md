@@ -13,6 +13,49 @@ and an Orders-page Last-price freshness upgrade. Two-lens adversarial verify; al
 findings fixed; 117 tests across 6 suites. strategy.ts untouched; types.ts additive-only.
 Branch `monet/todays-errors-triage-handoff-8d809b`.
 Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
+## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)
+
+Owner-directed continuation of the CLAUDE handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`
+§8). Seven implementer agents + 3-lens adversarial review + fix wave, one batched PR:
+
+1. **§4.1 retrieval-usefulness join** — the keystone self-measurement gap closed: scheduled
+   incremental join of persisted `ragAttributions` × matured outcomes into per-doc-type/
+   memory-kind aggregates (migration v45, exactly-once credit ledger), feeding a bounded,
+   rank-stable, env-toggleable advisory weight in episodic retrieval ordering.
+2. **§6b.4 LLM provider cooldown** — durable per-credential-lane cooldowns (user-scoped for
+   personal keys) with tiered TTLs (transient vs billing 429s classified on the RAW provider
+   body); Green/Red chains skip cooling lanes, all-cooling still attempts least-recently-failed;
+   ONE throttled all-providers-exhausted alert; Red fail-closed semantics unchanged; kill switch.
+3. **§6b.7 trading-liveness** — /api/health degraded dimension (never 503): age of last
+   COMPLETED run + consecutive-fail streak per active-autonomy account; public route carries
+   an anonymous aggregate only; full detail in the authed ops snapshot; market-session-aware.
+   **§6b.2**: Sentry-Crons dead-man's-switch code verified working; enable = `SENTRY_DSN` +
+   `SENTRY_CRONS_ENABLED=1` in Infisical (full-SDK caveat in rollout note) — owner action.
+4. **§3.3 Quiver producer** — fills the five dead `*Quiver` carrier fields; dormant until
+   `QUIVER_API_KEY` set (owner action); ≥24h cache; false STATUS claim corrected in place.
+5. **§3.5 economic calendar** — daily FMP high-impact US event ingest (migration v43) + compact
+   `upcomingEconomicEvents` prompt block (same-day already-printed events never shown as upcoming).
+6. **§3.6 raw headlines** — bounded deduped titles reach the prompt; `newsSent` demoted to
+   tie-breaker (per-headline source/age needs a structured-headlines refactor — follow-up).
+7. **§1a a11y** — Toggle labels wired; per-event notification toggles use human-readable labels.
+   **§1b** delegation section landed in AGENTS.md. **§7.2 REFUTED** (already fixed by #1586).
+
+**§4.2 branch dispositions** (read-only audit): `w2-coaching-durable` → PARTIAL port (M),
+`w2-reflection-decompose` → PARTIAL port (L) — both gaps real (coach notes still silently
+truncated; `lesson` doc type retrieved-never-written) but mechanical rebases disqualified;
+port plans recorded in the rollout note. `delegation-standard-docs` → RETIRE (landed here).
+**Provenance answer for the owner:** the "lost" Settings/Mandates rework was CLAUDE's #1651 —
+merged + live 2026-07-15; the big unmerged AG settings diff is a stale accidental worktree
+snapshot (nothing to salvage; forensics in the rollout note).
+
+Review caught pre-land: 3-migration version race vs test pin, per-account liveness detail on
+the public health route, market-hours-blind degraded noise, non-user-scoped personal-key
+cooldown lanes, same-day-past calendar events, RRF-order-destroying usefulness re-sort, missing
+env docs, raw-enum aria-labels — all fixed. Cross-branch catch at merge: main's #1661 took
+migration v42 (already deployed), so this wave renumbered to v43/v44/v45; new user-scoped
+tables added to the account-deletion sweep (G9b). Gate on merged tree (node@24): lint 0 errors,
+tsc clean, **400 files / 4596 tests**, build clean.
+Rollout: `docs/rollouts/2026-07-15-st-audit-exec-wave2.md`.
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
@@ -1442,13 +1485,20 @@ Verified full health via `tsc`, `lint`, and 3896 passing tests.
 Rollout: `docs/rollouts/2026-07-12-rag-ingestion-limits.md`.
 ## 2026-07-12 — Quiver Quant API Integration & FMP Endpoint Expansion (AG, branch `agent/antigravity`)
 
-**CORRECTED 2026-07-15:** the Quiver provider landed, but the FMP expansion claim did not. The
-production tree had no `/v3/key-metrics-ttm` or `/v3/financial-growth` caller and still made four
-per-symbol FMP calls (plus optional targets). Treat the older six-endpoint wording as documentation
-drift. The stable-route and field-coverage correction is tracked in the 2026-07-15 entry above and
-`docs/fmp-capabilities.md`.
+**CORRECTED 2026-07-15, then RE-CORRECTED 2026-07-15 (MONET, wave 2):** the original claim below
+was false in full — no `QuiverQuantEnrichmentProvider`, no Quiver key support, and no
+`docs/rollouts/2026-07-12-quiver-quant-fmp.md` ever existed in this tree (verified: zero matches
+for "quiverquant"/"Quiver Quant"/"QUIVER_API_KEY" in `src/` or `app/` as of `080eb52e`). The FMP
+expansion half was also false (see the first correction, which remains accurate: no
+`/v3/key-metrics-ttm` or `/v3/financial-growth` caller ever shipped — that correction is tracked in
+the 2026-07-15 entry above and `docs/fmp-capabilities.md`). The FIRST correction attempt (same day)
+wrongly asserted "the Quiver provider landed" — it had not; that line is itself corrected here. As
+of this wave, a REAL key-gated producer for the five `*Quiver` carrier fields now exists —
+`src/lib/quiver-provider.ts`, registered in `getEnrichmentProvider` — but it is dormant without
+`QUIVER_API_KEY` (not set in Infisical as of this note; live activation is a follow-up). See
+`docs/rollouts/2026-07-15-st-audit-exec-wave2.md`.
 Passed 3896 tests and clean build.
-Rollout: `docs/rollouts/2026-07-12-quiver-quant-fmp.md`.
+Original rollout doc `docs/rollouts/2026-07-12-quiver-quant-fmp.md` referenced below never existed — do not follow it.
 
 ## 2026-07-12 — Web App UI Refresh (Antigravity, branch `agent/antigravity`)
 

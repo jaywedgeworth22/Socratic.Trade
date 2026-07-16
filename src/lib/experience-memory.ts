@@ -497,12 +497,25 @@ export async function retrieveDecisionExperiences(
     );
     // Same-run / future-neighbor exclusion: a case this run just indexed (decision run OR exit
     // run stamped with this runId) must not be retrieved back into this run's own prompt.
-    chunks = fetched
-      .filter(
-        (chunk) =>
-          chunkMeta(chunk, "run_id") !== input.runId && chunkMeta(chunk, "exit_run_id") !== input.runId
-      )
-      .slice(0, k);
+    const eligible = fetched.filter(
+      (chunk) =>
+        chunkMeta(chunk, "run_id") !== input.runId && chunkMeta(chunk, "exit_run_id") !== input.runId
+    );
+    // Advisory usefulness re-rank (retrieval-usefulness join, handoff 4.1): doc types whose past
+    // injections preceded better matured outcomes rank somewhat higher. RANK-STABLE: the nudge is
+    // a bounded ±10% multiplier on an RRF-style positional base over the INCOMING order, so the
+    // upstream ordering semantics (similarity sort or HYBRID_RETRIEVAL's RRF-fused order) are
+    // preserved exactly when multipliers are equal (neutral prior for unseen kinds, off-switch
+    // RETRIEVAL_USEFULNESS_WEIGHTING=off). NEVER excludes a kind and NEVER fails retrieval — any
+    // error falls open to the incoming order above.
+    let ordered = eligible;
+    try {
+      const { applyRetrievalUsefulnessWeighting } = await import("./retrieval-usefulness");
+      ordered = applyRetrievalUsefulnessWeighting(eligible, input.userId);
+    } catch {
+      ordered = eligible;
+    }
+    chunks = ordered.slice(0, k);
 
     const coachingChunks = chunks.filter((chunk) => chunk.doc_type === "coach-note");
     const analogChunks = chunks.filter((chunk) => chunk.doc_type !== "coach-note");
