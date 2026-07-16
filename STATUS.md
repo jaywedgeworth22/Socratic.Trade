@@ -13,6 +13,7 @@ and an Orders-page Last-price freshness upgrade. Two-lens adversarial verify; al
 findings fixed; 117 tests across 6 suites. strategy.ts untouched; types.ts additive-only.
 Branch `monet/todays-errors-triage-handoff-8d809b`.
 Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
+→ Codex autofix (2026-07-16): P2 scan-over-cost-fallback detection in `effectiveOrderPrice`; P2 cap oversize exit P/L estimate; P1 asked maintainer about referencePrice fallback ambiguity.
 ## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)
 
 Owner-directed continuation of the CLAUDE handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`

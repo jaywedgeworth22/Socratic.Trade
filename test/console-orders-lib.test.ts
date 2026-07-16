@@ -41,12 +41,22 @@ describe("matchPosition — held position for an order's symbol, normalized", ()
   });
 });
 
-describe("effectiveOrderPrice — held position's own mark beats the market-scan cache", () => {
+describe("effectiveOrderPrice — held position's own mark beats the market-scan cache (except when the mark equals cost — broker fallback)", () => {
   const heldLong: EquityPosition = { symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1_250 };
   const scan = { price: 118, asOf: "2026-07-15T13:50:00.000Z", provider: "yahoo-finance" };
 
   it("prefers the position's own mark when the symbol is held, even with a scan price available", () => {
     expect(effectiveOrderPrice(heldLong, scan)).toEqual({ price: 125, source: "position" });
+  });
+
+  it("prefers the scan price when the position's mark equals its average cost (broker fallback)", () => {
+    const costFallback: EquityPosition = { symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1_000 };
+    expect(effectiveOrderPrice(costFallback, scan)).toEqual({
+      price: 118,
+      source: "scan",
+      asOf: scan.asOf,
+      provider: scan.provider
+    });
   });
 
   it("falls back to the scan price when the symbol isn't held", () => {
@@ -122,5 +132,18 @@ describe("closingOrderPnl — estimated P/L for open orders that would close/red
   it("is null when the order's unfilled remainder is zero (fully filled)", () => {
     const filled = order({ symbol: "AAPL", side: "sell" });
     expect(closingOrderPnl(filled, 0, heldLong, { price: 130, source: "position" })).toBeNull();
+  });
+
+  it("caps the share count to the current position when the order's remainder exceeds the position size", () => {
+    const reducedPosition: EquityPosition = { symbol: "AAPL", quantity: 5, averageCost: 100, marketValue: 600 };
+    const orderForMore = order({ symbol: "AAPL", side: "sell", quantity: 10, filledQuantity: 0 });
+    // remaining = 10, but position is only 5 — caps to 5
+    expect(closingOrderPnl(orderForMore, 10, reducedPosition, { price: 130, source: "position" })).toEqual({
+      pnl: 150, // (130 - 100) * 5
+      pnlPct: 30,
+      basisPrice: 100,
+      currentPrice: 130,
+      shares: 5
+    });
   });
 });
