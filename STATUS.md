@@ -4,7 +4,7 @@
 Implements cheerio-based HTML parser (`parseFilingHtml` in `src/lib/web-sources/sec-parser.ts`) to strip script/style/hidden tags, normalize Item/Part section headers, and reconstruct clean pipe-delimited Markdown tables (grouping/splitting large tables to fit token caps). Updated chunker in `src/lib/rag/chunk.ts` to be section-aware (resetting overlap across sections) and use token-aware estimation. Integrated this parser in `ingestFiling` inside `src/lib/web-sources/sec-filings.ts` to ingest bodies with parser revision `sec-edgar-filing-v2`. Verified via newly added unit test suite in `test/sec-parser.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
 
 ### Codex autofix — P2 review findings (2026-07-16)
-Addressed 10 of 12 Codex P2 findings on sec-parser.ts:
+Addressed 14 of 16 Codex P2 findings on sec-parser.ts (last 4 in Round 3):
 
 **Round 1 (commit `b1701243`):**
 1. **Anchor heading detection**: Anchored `isHeadingBlock` regex to `^` so cross-references ("See Part II, Item 1A...") are not classified as section headings.
@@ -19,6 +19,12 @@ Addressed 10 of 12 Codex P2 findings on sec-parser.ts:
 8. **Preserve mixed text around child blocks**: Emit text node siblings when recursing through containers, so prose adjacent to nested tables (e.g. "Note: <table>...</table> See below.") is preserved.
 9. **Normalize table colspan**: Repeat cell text for each spanned column when `colspan > 1`, preventing misaligned Markdown columns.
 10. **Only repeat real table headers when splitting**: Track whether the first row contains `<th>` elements before treating it as a repeatable header across split chunks, preventing data rows from being mislabeled as column headings.
+
+**Round 3 (commit to follow):**
+11. **Preserve nested table content before stripping outer cells**: Process nested tables via `collectBlocks` before `.remove()` so their content is not lost from the corpus.
+12. **Preserve BR separators in prose blocks**: Replace `<br>` with space in leaf block text extraction, preventing `Revenue<br>2026` from becoming `Revenue2026` outside tables too.
+13. **Detect item headings encoded as layout tables**: Check small single-cell tables for heading-like text before table Markdown conversion, so section metadata is not lost.
+14. **Recognize headings in non-block EDGAR wrappers**: Added `HEADING_WRAPPER_TAGS` set (`center`, `font`, `span`, `b`, etc.) so EDGAR formatting wrappers with Item/Part text are classified as headings.
 
 2 remaining P2 findings deferred for owner decision (form-specific Item 1 titles; parser-versioned accession skip).
 

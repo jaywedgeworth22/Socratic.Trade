@@ -35,6 +35,11 @@ const BLOCK_TAGS = new Set([
   "main"
 ]);
 
+/** Inline/formatting wrappers that EDGAR sometimes uses for headings. */
+const HEADING_WRAPPER_TAGS = new Set([
+  "center", "font", "span", "b", "strong", "i", "em", "u", "a"
+]);
+
 /**
  * Estimates token counts using a calibrated character-level ratio.
  * For English prose, ~4.5 characters per token.
@@ -185,6 +190,16 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
 
   // If table, convert and do not recurse into rows/cells
   if (name === "table") {
+    // Check for heading text in small layout tables (EDGAR sometimes encodes Item
+    // headings as single-cell layout tables). If detected, treat as heading.
+    const cellText = $(node).text().trim();
+    if (isHeadingBlock(cellText) && $(node).find("tr").length <= 1 && $(node).find("td, th").length <= 2) {
+      const norm = normalizeItemCode(cellText);
+      if (norm) {
+        blocks.push({ type: "heading", text: cellText, itemCode: norm.code, itemTitle: norm.title });
+        return;
+      }
+    }
     const tableRows: string[][] = [];
     let firstRowHasHeaders = false;
     let isFirstRow = true;
@@ -197,7 +212,12 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
       const row: string[] = [];
       let hasThCells = false;
       $(tr).children("td, th").each((_: any, cell: any) => {
-        // Remove nested tables from cell text (they will be processed separately)
+        // Process nested tables in this cell FIRST (blocks are emitted before
+        // we strip them from outer cell text)
+        $(cell).find("table").each((__: any, nestedTable: any) => {
+          collectBlocks($, nestedTable, blocks);
+        });
+        // Remove nested tables from cell text now that content is preserved
         $(cell).find("table").remove();
         // Replace <br> with space so concatenated text nodes stay separated
         $(cell).find("br").replaceWith(" ");
@@ -229,8 +249,9 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
 
   const text = $(node).text().trim();
 
-  // If it's a heading tag, or matches heading pattern on a leaf block (no children)
-  if (isHeadingBlock(text) && (name.match(/^h[1-6]$/) || (BLOCK_TAGS.has(name) && !hasBlockChildren($, node)))) {
+  // If it's a heading tag, or matches heading pattern on a leaf block (no children),
+  // or an EDGAR heading wrapper (center/font/span/bold) with heading text
+  if (isHeadingBlock(text) && (name.match(/^h[1-6]$/) || (BLOCK_TAGS.has(name) && !hasBlockChildren($, node)) || (HEADING_WRAPPER_TAGS.has(name) && !hasBlockChildren($, node)))) {
     const norm = normalizeItemCode(text);
     if (norm) {
       blocks.push({
@@ -245,7 +266,9 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
 
   // If it's a block container with no block children, extract text and do not recurse
   if (BLOCK_TAGS.has(name) && !hasBlockChildren($, node)) {
-    const cleanText = text.replace(/\s+/g, " ").trim();
+    // Replace <br> with space so leaf block text doesn't concatenate across line breaks
+    $(node).find("br").replaceWith(" ");
+    const cleanText = $(node).text().replace(/\s+/g, " ").trim();
     if (cleanText) {
       blocks.push({ type: "paragraph", text: cleanText });
     }

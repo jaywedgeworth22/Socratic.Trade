@@ -36,3 +36,12 @@ Addressed 5 additional P2 findings:
 - Only repeat real `<th>` header rows when splitting large tables across token limits
 
 Verification: `npx tsc --noEmit` clean, all 4610 tests pass, `npm run build` clean.
+
+### Codex autofix — Round 3 (2026-07-16)
+Addressed 4 additional P2 findings:
+- Preserve nested table content before stripping outer cells (process via `collectBlocks` before `.remove()`)
+- Preserve BR separators in prose blocks (replace `<br>` with space in leaf text extraction)
+- Detect item headings encoded as layout tables (check small tables for heading text before Markdown conversion)
+- Recognize headings in non-block EDGAR wrappers (added `HEADING_WRAPPER_TAGS`: center, font, span, b, etc.)
+
+2 findings remain deferred for owner decision (form-specific Item 1 titles; parser-versioned accession skip).
