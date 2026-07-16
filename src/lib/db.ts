@@ -1851,6 +1851,144 @@ const MIGRATIONS: Migration[] = [
           ON pending_bracket_teardowns(user_id, account_number);
       `);
     }
+  },
+  {
+    // Handoff 3.5 (forward economic-event awareness): small rolling cache of upcoming
+    // high-impact US economic-calendar events (FMP /economic-calendar via fmp-gamma).
+    // Refreshed at most once per UTC day by src/lib/economic-calendar.ts (persisted
+    // watermark in internal settings); CRUD in db-economic-events.ts. Shared market
+    // data, not per-user state — no user_id column by design.
+    version: 43,
+    name: "economic_events",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS economic_events (
+          id TEXT PRIMARY KEY,
+          event TEXT NOT NULL,
+          event_date TEXT NOT NULL,
+          country TEXT NOT NULL,
+          impact TEXT,
+          estimate REAL,
+          previous REAL,
+          fetched_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_economic_events_event_date
+          ON economic_events (event_date);
+      `);
+    }
+  },
+  {
+    // Handoff 6b.7 (trading-liveness health dimension): /api/health and the ops snapshot need,
+    // per active-autonomy account, the age of the most recent COMPLETED strategy_runs row and a
+    // consecutive-failed-runs count (src/lib/trading-liveness.ts). No new table — this only speeds
+    // up the (user_id, connected_account_id, status, started_at DESC) scan that computation runs on
+    // every /api/health hit, which previously had no covering index.
+    version: 44,
+    name: "strategy_runs_liveness_index",
+    up: (database) => {
+      // Defensive: some migration-regression tests build a minimal synthetic schema (just the
+      // table(s) the specific historical migration under test needs) and then run every migration
+      // from that point forward, including this one — strategy_runs won't exist there. Matches the
+      // guard pattern at migration v28 (order_replacements_user_scoped_active_unique) above.
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'strategy_runs'")
+        .get();
+      if (!tableExists) return;
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_strategy_runs_liveness
+          ON strategy_runs (user_id, connected_account_id, status, started_at DESC);
+      `);
+    }
+  },
+  {
+    // Handoff 4.1 (retrieval-usefulness join): close the self-measurement loop on episodic/RAG
+    // retrieval spend. Every run already persists WHICH vector ids entered its prompts (the
+    // `experience_retrieval` audit event in strategy.ts plus ragAttributions on socratic_decisions
+    // rows) explicitly so usefulness scoring could join later — this migration adds the tables that
+    // join writes into. `retrieval_usefulness_stats` holds per-(docType, memoryKind[, docId],
+    // horizon) outcome aggregates credited by the scheduled incremental join
+    // (src/lib/retrieval-usefulness.ts); `retrieval_usefulness_credited` is the per-decision ledger
+    // that makes the join idempotent across passes (a case is credited exactly once, no matter how
+    // often its row is later re-written by lessons/coach notes). CRUD lives in
+    // db-retrieval-usefulness.ts. Advisory only: stats feed a bounded ranking nudge at retrieval
+    // time — they never gate, exclude, or fail retrieval.
+    version: 45,
+    name: "retrieval_usefulness",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS retrieval_usefulness_stats (
+          user_id TEXT NOT NULL,
+          doc_type TEXT NOT NULL,
+          memory_kind TEXT NOT NULL,
+          doc_id TEXT NOT NULL DEFAULT '',
+          horizon TEXT NOT NULL,
+          samples INTEGER NOT NULL DEFAULT 0,
+          wins INTEGER NOT NULL DEFAULT 0,
+          losses INTEGER NOT NULL DEFAULT 0,
+          return_pct_sum REAL NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, doc_type, memory_kind, doc_id, horizon)
+        );
+        CREATE TABLE IF NOT EXISTS retrieval_usefulness_credited (
+          user_id TEXT NOT NULL,
+          decision_id TEXT NOT NULL,
+          credited_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, decision_id)
+        );
+      `);
+    }
+  },
+  {
+    // Renumbered 43 -> 46 on merge (2026-07-16): main's economic_events/strategy_runs_liveness_index/
+    // retrieval_usefulness already claimed 43/44/45 by the time this PR (#1667) merged. See
+    // position_stop_plan_open_brackets' own comment above CREATE TABLE (adversarial review of PR
+    // #1661/#1667, 2026-07-16, Codex P1): a single opening_order_id scalar can't represent multiple
+    // concurrent brackets from same-style scale-ins, each still protecting its OWN lot.
+    version: 46,
+    name: "position_stop_plan_open_brackets",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS position_stop_plan_open_brackets (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          order_id TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_position_stop_plan_open_brackets_symbol
+          ON position_stop_plan_open_brackets(user_id, account_number, symbol);
+      `);
+      // Backfill: any position_stop_plans row already sitting at fixed/atr with a tracked
+      // opening_order_id (recorded under the OLD single-scalar design, before this table existed —
+      // e.g. a row written by PR #1661 in the window before this migration landed) has NO row here
+      // yet. Without backfilling it, the FIRST later transition away from fixed/atr for that symbol
+      // finds nothing in this new table, enqueues no teardown at all, and the upsert overwrites
+      // opening_order_id with null — permanently losing the only reference to that bracket, and its
+      // legs rest on the broker forever with no path back to them (Codex review, PR #1667).
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'position_stop_plans'")
+        .get();
+      if (tableExists) {
+        const cols = database.prepare("PRAGMA table_info(position_stop_plans)").all() as Array<{ name: string }>;
+        if (cols.some((c) => c.name === "opening_order_id")) {
+          const legacyRows = database
+            .prepare(
+              `SELECT user_id, account_number, symbol, opening_order_id FROM position_stop_plans
+               WHERE style IN ('fixed', 'atr') AND opening_order_id IS NOT NULL AND opening_order_id != ''`
+            )
+            .all() as Array<{ user_id: string; account_number: string; symbol: string; opening_order_id: string }>;
+          const insertBackfill = database.prepare(
+            `INSERT INTO position_stop_plan_open_brackets (id, user_id, account_number, symbol, order_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+          );
+          const now = new Date().toISOString();
+          for (const row of legacyRows) {
+            insertBackfill.run(crypto.randomUUID(), row.user_id, row.account_number, row.symbol, row.opening_order_id, now);
+          }
+        }
+      }
+    }
   }
 ];
 
@@ -2328,6 +2466,29 @@ function migrate(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_pending_bracket_teardowns_account
       ON pending_bracket_teardowns(user_id, account_number);
+
+    -- Every broker-native bracket order EVER placed for a (user, account, symbol) while its plan
+    -- sits at "fixed"/"atr", appended on each fill — NOT just the latest. A single opening_order_id
+    -- scalar column can't represent this: a same-style scale-in places a BRAND-NEW, independently
+    -- resting bracket sized ONLY to its own added shares (Alpaca: orderArgs.qty from the order's own
+    -- quantity; Tradier: each exit leg sized to that order's wholeQty) — it does NOT replace or
+    -- resize the PRIOR bracket, which is still the genuine, still-needed protection for the
+    -- pre-existing lot. Tearing down the prior bracket on a mere same-style scale-in (as an earlier,
+    -- incomplete fix briefly did) would cancel a live, correct stop-loss/take-profit and leave that
+    -- earlier lot with NO protection at all (Codex review, PR #1667). So rows here accumulate across
+    -- same-style scale-ins and are ONLY ALL torn down together, via pending_bracket_teardowns, when
+    -- the plan genuinely leaves the fixed/atr family (a real style change, or the position closes) —
+    -- see enqueueTeardownForAllOpenBrackets in db-api-keys.ts.
+    CREATE TABLE IF NOT EXISTS position_stop_plan_open_brackets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_position_stop_plan_open_brackets_symbol
+      ON position_stop_plan_open_brackets(user_id, account_number, symbol);
 
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (
@@ -3185,3 +3346,5 @@ export * from "./db-tuning-reviews";
 export * from "./db-provider-dispatch";
 export * from "./db-vector-commits";
 export * from "./db-durable-state";
+export * from "./db-economic-events";
+export * from "./db-retrieval-usefulness";

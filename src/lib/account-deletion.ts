@@ -80,9 +80,16 @@ const DELETE_TABLES_BY_USER_ID = [
   // deletion transaction as the decision/chat rows they describe.
   "fmp_transcript_derived_provider_work",
   "fmp_transcript_derived_artifacts",
+  // Added 2026-07-15: retrieval-usefulness aggregates + per-decision credit ledger
+  // (src/lib/db-retrieval-usefulness.ts) — user-scoped learning telemetry.
+  "retrieval_usefulness_stats",
+  "retrieval_usefulness_credited",
   // Added 2026-07-16: pending_bracket_teardowns (src/lib/db.ts) — queued bracket sibling-leg
   // teardowns are user-scoped like position_stop_plans.
-  "pending_bracket_teardowns"
+  "pending_bracket_teardowns",
+  // Added 2026-07-16: position_stop_plan_open_brackets (src/lib/db.ts) — tracked, not-yet-torn-down
+  // bracket orders are user-scoped like pending_bracket_teardowns.
+  "position_stop_plan_open_brackets"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];

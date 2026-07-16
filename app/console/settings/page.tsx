@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { Check, ExternalLink } from "lucide-react";
 import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
+import { NOTIFICATION_EVENT_TYPE_LABELS } from "@/lib/dashboard-ui";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useAutoSave } from "../lib/useAutoSave";
@@ -313,13 +314,19 @@ function EventNotificationsCard() {
     >
       {NOTIFICATION_EVENT_TYPES.map((type) => {
         const on = events.includes(type);
+        // Human-readable label — the raw snake_case enum (e.g. "red_team_veto_override_requested")
+        // must never be shown as visible text or read aloud by a screen reader (Toggle's `label`
+        // prop becomes its aria-label). Fall back to the raw type only if a key were somehow
+        // missing from the map.
+        const eventLabel = NOTIFICATION_EVENT_TYPE_LABELS[type] ?? type;
         return (
           <ListRow key={type}>
-            <LabeledContent label={type} hint={EVENT_HINT[type]}>
+            <LabeledContent label={eventLabel} hint={EVENT_HINT[type]}>
               <Toggle
                 checked={on}
                 disabled={autoSave.saving}
                 onChange={() => toggleEvent(type, on)}
+                label={eventLabel}
               />
             </LabeledContent>
           </ListRow>
@@ -411,6 +418,7 @@ function BootBehaviorCard() {
         <LabeledContent label="Auto-resume on boot">
           <Toggle
             checked={snapshot.autoResumeOnBoot}
+            label="Auto-resume on boot"
             onChange={async (next) => {
               setBusy(true);
               try {
