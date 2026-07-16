@@ -7,7 +7,7 @@ medium-effort + autonomy-observability items), implemented by a 7-agent team (+3
 reviewers +2 fix agents) on branch `monet/st-audit-exec-wave2`, one batched PR.
 
 1. **§4.1 — retrieval-usefulness join (the keystone self-measurement gap).** New
-   `src/lib/retrieval-usefulness.ts` + `db-retrieval-usefulness.ts` + migration **v44**
+   `src/lib/retrieval-usefulness.ts` + `db-retrieval-usefulness.ts` + migration **v45**
    (`retrieval_usefulness_stats` keyed user/docType/memoryKind/docId/horizon, plus a
    per-decision `retrieval_usefulness_credited` exactly-once ledger — the anti-join IS the
    watermark, so passes are incremental/bounded and re-runs cannot double-credit). Scheduled
@@ -29,7 +29,7 @@ reviewers +2 fix agents) on branch `monet/st-audit-exec-wave2`, one batched PR.
    Kill switch `LLM_PROVIDER_COOLDOWN_DISABLED=1` restores exact prior behavior. Also fixes
    served-by-fallback attribution to compare against the configured primary rather than index 0.
 3. **§6b.7 — trading-liveness health dimension.** New `src/lib/trading-liveness.ts` +
-   migration **v43** (strategy_runs liveness index): per active-autonomy account, age of last
+   migration **v44** (strategy_runs liveness index): per active-autonomy account, age of last
    COMPLETED strategy run + consecutive-failed streak. Surfaced as a *degraded indicator*
    (never 503 — a 503 would restart the container and re-halt autonomy, the loop wave 1
    fixed): PUBLIC `/api/health` carries only an anonymous aggregate (counts/oldest age — no
@@ -53,7 +53,7 @@ reviewers +2 fix agents) on branch `monet/st-audit-exec-wave2`, one batched PR.
    docs/EFFORT-LOG.md corrected in place (it was false when written; a dormant producer now
    exists as of this wave).
 6. **§3.5 — forward economic-event awareness.** New `src/lib/economic-calendar.ts` +
-   `db-economic-events.ts` + migration **v42** (`economic_events`): daily (UTC-watermarked,
+   `db-economic-events.ts` + migration **v43** (`economic_events`): daily (UTC-watermarked,
    quota-friendly, fail-open) ingest of FMP `/economic-calendar` US high-impact events via the
    existing quota-reserved FMP lane (`fmp-gamma` — its first production consumer). Compact
    `upcomingEconomicEvents` block (≤6 events) injected next to the regime label; omitted
@@ -100,6 +100,33 @@ reviewers +2 fix agents) on branch `monet/st-audit-exec-wave2`, one batched PR.
 - No retrieval-scaffolding strip is needed (both producers arrive via the PARTIAL ports; the
   audit recorded the exact strip recipe if either port is ever abandoned).
 
+## Post-review catches (after the 3-lens pass)
+
+- **Account-deletion coverage:** the full-suite gate caught the new `retrieval_usefulness_*`
+  tables missing from `DELETE_TABLES_BY_USER_ID` (`test/account-deletion-coverage.test.ts`) —
+  added; the account boundary is the one hard rule and this sweep is its enforcement.
+- **Cross-branch migration-version race:** while this wave was in flight, main merged #1661
+  whose migration also took v42 and auto-deployed. Resolved at merge time by renumbering this
+  wave's migrations to v43/v44/v45 (main's deployed v42 keeps its number — otherwise prod,
+  already at schema 42, would have silently skipped creating `economic_events`).
+
+## Branch-provenance addendum (owner question: "whose Settings/Mandates rework was lost?")
+
+Answered by blob-level forensics (every file hashed against main's full history):
+- The Settings + Guardrails revision the owner saw in progress is **CLAUDE's PR #1651**
+  ("Settings uses con-card like every other page + Guardrails collapsible sections") — it
+  **merged 2026-07-15 20:45Z and is live in production**. Nothing from it was lost.
+- `agent/antigravity-fmp-macro` (the only branch with a large unmerged Settings/Guardrails
+  diff) is **not lost work**: all 13 changed files are byte-identical to historical main
+  versions from 2026-07-02→05 — the branch is AG's stale local worktree (frozen ~07-05/06)
+  accidentally wholesale-committed on 07-12 under a one-line commit message; repo-wide it
+  silently reverts 374 files. Its "new" `settings/models.tsx` is a resurrection of a file the
+  #1340 IA restructure deleted. **Nothing to salvage; superseded by #1340/#1651/#1631; the
+  branch should be deleted, not mined.**
+- `cursor/session-2026-07-05` and `monet/gemini-red-rec-restore`: parallel work that lost
+  landing races to main by minutes (#849 / #1082+#1084); byte-identical or trivially-different
+  to what landed. Nothing to salvage.
+
 ## Why
 
 Owner-directed continuation of the handoff execution ("continue all work"). Same method as
@@ -121,7 +148,7 @@ New: `src/lib/retrieval-usefulness.ts`, `src/lib/db-retrieval-usefulness.ts`,
 `src/lib/prompt-headlines.ts`, `src/lib/quiver-provider.ts`, plus test files
 (`retrieval-usefulness`, `llm-provider-cooldown`, `trading-liveness`, `economic-calendar`,
 `economic-calendar-prompt-wiring`, `strategy-headlines-prompt`, `quiver-provider`).
-Modified: `src/lib/db.ts` (migrations v42/v43/v44), `src/lib/experience-memory.ts`,
+Modified: `src/lib/db.ts` (migrations v43/v44/v45 — renumbered at merge time: main's #1661 `bracket_sibling_leg_teardown` took v42 and was already applied in production, so shipping the original numbers would have made prod silently skip creating `economic_events`), `src/lib/experience-memory.ts`,
 `src/lib/scheduler.ts` (maintenance hook), `src/lib/strategy.ts` (bull-chain cooldown +
 prompt blocks — prompt/LLM-chain regions only), `src/lib/red-team.ts`,
 `src/lib/strategy-prompts.ts`, `src/lib/ops-snapshot.ts`, `app/api/health/route.ts`,
@@ -131,7 +158,25 @@ prompt blocks — prompt/LLM-chain regions only), `src/lib/red-team.ts`,
 
 ## Verification
 
-<!-- GATE-RESULTS-PLACEHOLDER -->
+Full gate on the final merged tree (wave commits `b5043ade` + `9864a4d6` account-deletion fix
++ merge `d219189e` of `origin/main` @ `4877689b`, absorbing everything merged since the fork —
+#1656 AV cap, #1660 OpenRouter, #1661 brackets, #1662, #1665 SEC/RAG backfill P2; conflicts
+resolved by hand in `db.ts` (migration renumbering),
+`account-deletion.ts` (both sides kept), `persistence-hardening.test.ts` (pin → 45)), under
+node@24 (v24.18.0):
+
+```
+npm run lint       # 0 errors (506 grandfathered warnings)
+npx tsc --noEmit   # clean
+npm test           # 400 files, 4596 tests — all passed
+npm run build      # clean
+```
+
+An earlier full-suite run also caught `account-deletion-coverage` failing (new user-scoped
+tables missing from the deletion sweep) — fixed in `9864a4d6` before this gate. Per-item
+targeted suites were run by each implementing/fix agent (llm-provider-cooldown 8/8,
+trading-liveness + siblings 46, economic-calendar 7/7 + wiring 2/2, retrieval-usefulness 8/8,
+quiver-provider 15/15, headlines 13, persistence-hardening 20/20).
 
 ## Follow-ups / owner decisions surfaced
 
