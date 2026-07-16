@@ -1871,6 +1871,36 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_position_stop_plan_open_brackets_symbol
           ON position_stop_plan_open_brackets(user_id, account_number, symbol);
       `);
+      // Backfill existing fixed/atr stop plans that already have an opening_order_id into the new
+      // table. Before v43, a plan's sole bracket id lived in position_stop_plans.opening_order_id
+      // and was overwritten on each same-style scale-in; the new table is append-only and read by
+      // enqueueTeardownForAllOpenBrackets. Without this backfill, a production DB upgraded to v43
+      // would have position_stop_plan_open_brackets empty on first load, so the very first later
+      // transition to trailing/none/default would find nothing to enqueue and leave resting bracket
+      // legs orphaned (Codex review, PR #1667, P1).
+      // Guard: position_stop_plans may not exist in test databases that run versioned migrations
+      // without the full application schema (see persistence-hardening.test.ts).
+      const hasStopPlans = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'position_stop_plans'")
+        .get();
+      if (hasStopPlans) {
+        const legacyRows = database
+          .prepare(
+            `SELECT user_id, account_number, symbol, opening_order_id, updated_at
+             FROM position_stop_plans
+             WHERE style IN ('fixed', 'atr') AND opening_order_id IS NOT NULL`
+          )
+          .all() as Array<{ user_id: string; account_number: string; symbol: string; opening_order_id: string; updated_at: string }>;
+        if (legacyRows.length > 0) {
+          const insert = database.prepare(
+            `INSERT OR IGNORE INTO position_stop_plan_open_brackets (id, user_id, account_number, symbol, order_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+          );
+          for (const row of legacyRows) {
+            insert.run(crypto.randomUUID(), row.user_id, row.account_number, row.symbol, row.opening_order_id, row.updated_at);
+          }
+        }
+      }
     }
   }
 ];

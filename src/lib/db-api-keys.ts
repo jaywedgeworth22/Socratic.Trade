@@ -1632,7 +1632,19 @@ export function recordStopPlan(
   openingOrderId?: string
 ): void {
   const safeStyle = (STOP_PLAN_STYLES as readonly string[]).includes(style) ? style : "default";
-  if (safeStyle === "fixed" || safeStyle === "atr") {
+  const isFixedOrAtr = safeStyle === "fixed" || safeStyle === "atr";
+  if (isFixedOrAtr) {
+    // When the existing plan for this symbol is ALSO in the fixed/atr family but is a DIFFERENT
+    // style (e.g. "fixed" -> "atr" or "atr" -> "fixed"), the prior bracket was sized to a
+    // different stop distance — teardown it and all its sibling brackets before tracking the new
+    // one. A same-style scale-in (e.g. "fixed" -> "fixed") keeps prior brackets, each sized to
+    // its own lot (Codex review, PR #1667, P1).
+    const existing = getDb()
+      .prepare("SELECT style FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol = ?")
+      .get(userId, accountNumber, symbol) as { style: string } | undefined;
+    if (existing && (existing.style === "fixed" || existing.style === "atr") && existing.style !== safeStyle) {
+      enqueueTeardownForAllOpenBrackets(accountNumber, symbol, userId);
+    }
     if (openingOrderId) trackOpenBracketOrder(accountNumber, symbol, userId, openingOrderId);
   } else {
     enqueueTeardownForAllOpenBrackets(accountNumber, symbol, userId);
