@@ -1089,3 +1089,91 @@ describe("reconcileBrokerProtectiveStops — round-9 (Codex review, PR #1331)", 
     expect(fills[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 3, price: 92, status: "filled" }); // the partial, not the full row qty
   });
 });
+
+describe("reconcilePendingBracketTeardowns", () => {
+  function gatewayWithBracketCancel(impl?: (accountNumber: string, orderId: string) => Promise<{ cancelledOrderIds: string[] }>): BrokerGateway & { calls: Array<{ accountNumber: string; orderId: string }> } {
+    const calls: Array<{ accountNumber: string; orderId: string }> = [];
+    return {
+      async getAccounts() { return []; },
+      async getPortfolio() { return { accountNumber: "x", totalMarketValue: 0, buyingPower: 0, equityMarketValue: 0, optionMarketValue: 0, cash: 0 }; },
+      async getEquityPositions() { return []; },
+      async getEquityOrders() { return []; },
+      async getEquityQuotes() { return {}; },
+      async getEquityTradability() { return {}; },
+      async reviewEquityOrder() { return { estimatedNotional: 0, alerts: [], raw: {} }; },
+      async placeEquityOrder() { throw new Error("not used in this test"); },
+      async cancelEquityOrder() { throw new Error("not used in this test"); },
+      calls,
+      cancelBracketSiblingLegs: impl
+        ? async (accountNumber: string, orderId: string) => {
+            calls.push({ accountNumber, orderId });
+            return impl(accountNumber, orderId);
+          }
+        : undefined
+    } as unknown as BrokerGateway & { calls: Array<{ accountNumber: string; orderId: string }> };
+  }
+
+  it("cancels sibling legs and removes the row on success", async () => {
+    const { recordStopPlan, clearStopPlans, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const { reconcilePendingBracketTeardowns } = await import("../src/lib/broker-protective-stops");
+    const acct = "TEARDOWN-1";
+    recordStopPlan(acct, "AAPL", "fixed", "x", 100, "local", undefined, "long", "bracket-1");
+    clearStopPlans(acct, ["AAPL"]);
+    expect(listPendingBracketTeardowns(acct)).toHaveLength(1);
+
+    const gw = gatewayWithBracketCancel(async () => ({ cancelledOrderIds: ["leg-1", "leg-2"] }));
+    await reconcilePendingBracketTeardowns(gw, acct, "local");
+
+    expect(gw.calls).toEqual([{ accountNumber: acct, orderId: "bracket-1" }]);
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+  });
+
+  it("drops pending rows immediately when the gateway has no cancelBracketSiblingLegs capability (e.g. Robinhood)", async () => {
+    const { recordStopPlan, clearStopPlans, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const { reconcilePendingBracketTeardowns } = await import("../src/lib/broker-protective-stops");
+    const acct = "TEARDOWN-2";
+    recordStopPlan(acct, "MSFT", "atr", "x", 200, "local", undefined, "long", "bracket-2");
+    clearStopPlans(acct, ["MSFT"]);
+    expect(listPendingBracketTeardowns(acct)).toHaveLength(1);
+
+    const gw = gatewayWithBracketCancel(undefined);
+    await reconcilePendingBracketTeardowns(gw, acct, "local");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+  });
+
+  it("bumps attempts (not removes) on a failed cancel call, below the max-attempts threshold", async () => {
+    const { recordStopPlan, clearStopPlans, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const { reconcilePendingBracketTeardowns } = await import("../src/lib/broker-protective-stops");
+    const acct = "TEARDOWN-3";
+    recordStopPlan(acct, "TSLA", "fixed", "x", 300, "local", undefined, "long", "bracket-3");
+    clearStopPlans(acct, ["TSLA"]);
+
+    const gw = gatewayWithBracketCancel(async () => { throw new Error("broker unreachable"); });
+    await reconcilePendingBracketTeardowns(gw, acct, "local");
+
+    const pending = listPendingBracketTeardowns(acct);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].attempts).toBe(1);
+  });
+
+  it("abandons (removes) a row once it reaches the max-attempts threshold on repeated failures", async () => {
+    const { recordStopPlan, clearStopPlans, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const { reconcilePendingBracketTeardowns } = await import("../src/lib/broker-protective-stops");
+    const acct = "TEARDOWN-4";
+    recordStopPlan(acct, "GOOG", "fixed", "x", 150, "local", undefined, "long", "bracket-4");
+    clearStopPlans(acct, ["GOOG"]);
+
+    const gw = gatewayWithBracketCancel(async () => { throw new Error("broker unreachable"); });
+    for (let i = 0; i < 10; i++) {
+      await reconcilePendingBracketTeardowns(gw, acct, "local");
+    }
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+  });
+
+  it("no-ops (never throws) when there are no pending teardowns", async () => {
+    const { reconcilePendingBracketTeardowns } = await import("../src/lib/broker-protective-stops");
+    const gw = gatewayWithBracketCancel(async () => ({ cancelledOrderIds: [] }));
+    await expect(reconcilePendingBracketTeardowns(gw, "TEARDOWN-NONE", "local")).resolves.toBeUndefined();
+    expect(gw.calls).toEqual([]);
+  });
+});

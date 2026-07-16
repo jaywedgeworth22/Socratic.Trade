@@ -279,6 +279,7 @@ function providerForModel(model: string | null | undefined): string {
   if (/^grok/.test(m)) return "xai";
   if (/^gemini/.test(m)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
+  if (/^openrouter\//.test(m)) return "openrouter";
   if (/^deepseek/.test(m)) return "deepseek";
   return "openai";
 }

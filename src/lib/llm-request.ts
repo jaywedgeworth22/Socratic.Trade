@@ -350,12 +350,39 @@ export const LLM_REQUEST_DEFAULTS = {
  *  per-user run lock (starving the scheduler) with no error to alert on. */
 export const LLM_TIMEOUT_MS = 60_000;
 
+class RateLimiter {
+  private queue: number[] = [];
+
+  async wait(rpmLimitStr: string | undefined) {
+    if (!rpmLimitStr) return;
+    const rpm = parseInt(rpmLimitStr, 10);
+    if (isNaN(rpm) || rpm <= 0) return;
+
+    const now = Date.now();
+    this.queue = this.queue.filter(t => now - t < 60000);
+
+    if (this.queue.length >= rpm) {
+      const oldest = this.queue[0];
+      const waitTime = 60000 - (now - oldest);
+      if (waitTime > 0) {
+        await new Promise(r => setTimeout(r, waitTime));
+      }
+    }
+    this.queue.push(Date.now());
+  }
+}
+
+const geminiRateLimiter = new RateLimiter();
+
 /**
  * fetch() for LLM endpoints with a bounded timeout. On expiry the request is aborted and the
  * promise rejects (AbortError), which every call site already treats as an LLM failure (falls
  * back / surfaces an error) rather than hanging forever. A caller may pass its own `signal`.
  */
-export function llmFetch(url: string, init: RequestInit = {}): Promise<Response> {
+export async function llmFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  if (url.includes("generativelanguage.googleapis.com")) {
+    await geminiRateLimiter.wait(process.env.GEMINI_RPM_LIMIT);
+  }
   return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) });
 }
 
@@ -402,11 +429,14 @@ export interface LlmCallOutcome {
  * instead of aborting at the wall and discarding the evidence. Unlike `llmFetch`, no soft-timeout
  * abort signal is attached to the fetch — only the hard cap.
  */
-export function llmFetchCapturing(
+export async function llmFetchCapturing(
   url: string,
   init: RequestInit,
   opts: { softTimeoutMs: number; hardCapMs?: number; onOutcome?: (outcome: LlmCallOutcome) => void }
 ): Promise<Response> {
+  if (url.includes("generativelanguage.googleapis.com")) {
+    await geminiRateLimiter.wait(process.env.GEMINI_RPM_LIMIT);
+  }
   const started = Date.now();
   const softMs = opts.softTimeoutMs;
   const hardCap = Math.max(softMs, opts.hardCapMs ?? Math.max(softMs * 2, 300_000));

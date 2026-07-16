@@ -42,7 +42,8 @@ const OPS_AUDIT_KINDS = new Set([
   "policy_violation_cap_exceeded",
   "autonomy_halted_on_boot",
   "order_placement_uncertain",
-  "proposal_skipped_negative_ev"
+  "proposal_skipped_negative_ev",
+  "order_rejected_by_broker"
 ]);
 
 export interface OpsAccountSnapshot {

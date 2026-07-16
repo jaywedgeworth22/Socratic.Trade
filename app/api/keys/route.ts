@@ -69,6 +69,14 @@ const API_KEY_CATALOG = [
     docsUrl: "https://platform.deepseek.com/api_keys"
   },
   {
+    service: "openrouter",
+    label: "OpenRouter",
+    category: "LLM",
+    required: false,
+    unlocks: "Access to OpenRouter models including DeepSeek and Qwen for the Assistant and strategy.",
+    docsUrl: "https://openrouter.ai/keys"
+  },
+  {
     service: "finnhub",
     label: "Finnhub",
     category: "Market data",

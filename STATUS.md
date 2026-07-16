@@ -1,5 +1,69 @@
 # Current Status
 
+## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`)
+Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
+## 2026-07-16 — Alpaca + Tradier bracket sibling-leg cancellation (CLAUDE)
+
+Closed the long-deferred "OCO sibling-identity pairing" gap raised by owner's direct
+question. Alpaca: implemented `cancelBracketSiblingLegs` via nested-order GET + per-leg
+cancel (was an unimplemented adapter capability, not a broker limitation). Tradier: built
+native OTOCO/OTO bracket order placement from scratch (zero bracket support existed before
+this), wired into `brokerSupportsBrackets`, plus sibling-leg cancellation parsing Tradier's
+`leg` array. New `pending_bracket_teardowns` queue decouples "plan changed away from a
+tracked bracket" (cheap DB-write-time detection) from "cancel the broker legs" (reconcile-time,
+`reconcilePendingBracketTeardowns` in `broker-protective-stops.ts`, called from
+`runSyntheticStopMonitor`). New migration v42 (`position_stop_plans.opening_order_id` +
+`pending_bracket_teardowns` table); fixed a migration bug where an unconditional
+`PRAGMA table_info`/`ALTER TABLE` threw against test harnesses with a minimal hand-built
+schema (added the same `sqlite_master`-existence-guard pattern used elsewhere in `db.ts`),
+and updated 10 hardcoded schema-version assertions (41 -> 42) in
+`test/persistence-hardening.test.ts` as legitimate collateral. Owner explicitly directed
+"Build both now" (Alpaca fix + full Tradier bracket feature) via `AskUserQuestion` after I
+flagged the scope difference. Unverified against a live Tradier account (unit-tested only,
+matching this adapter's existing testing posture). **Merged via PR #1661 as `a5c27e8`;
+deployed to production via auto-deploy-on-merge.**
+Rollout: `docs/rollouts/2026-07-16-alpaca-tradier-bracket-sibling-leg-teardown.md`.
+
+## 2026-07-15 — Per-position stop plans: "none" short bypass, owner-decided (CLAUDE, branch `claude/stop-plans-none-short-override`)
+Resolves the open question left on merged PR #1371's `policy.ts` thread: whether an explicit
+`stopPlan: "none"` short should bypass the mandatory `shortStopLossPct` gate the same way
+`fixed`/`atr`/`trailing` already do (round 7). Owner's answer: "if the LLM decides it does not
+want a stop plan, that is okay." `evaluateTradeProposal`'s short-stop gate now treats an explicit
+`none` as satisfying the mandatory-stop requirement too — only an ABSENT stopPlan (no explicit
+choice this proposal) still falls through to requiring `shortStopLossPct > 0`. An explicit
+`"default"` deliberately does NOT satisfy the gate (it defers to the account's own precedence,
+which here guarantees nothing — not a genuine choice with a known outcome). New regression tests
+in `test/policy.test.ts` cover both the `none`-bypasses and `default`-does-not-bypass cases.
+Verify: tsc clean, lint 0 errors/488 pre-existing warnings, 382 files/4402 tests passed, build
+clean. Rollout: `docs/rollouts/2026-07-15-stop-plans-none-short-override.md`.
+
+Also researched (not code changes): the deferred OCO/bracket-sibling-leg-cancellation gap flagged
+in PR #1331/#1371/round-8. Confirmed against Alpaca's docs that this is an unimplemented
+capability in this codebase's `alpaca.ts` adapter, not a genuine broker-API wall — each bracket
+leg is already an independent order with its own ID in the plain order list, and fetching the
+original entry order (already tracked as `execution.orderId` on every fill) with `?nested=true`
+returns a `legs` array with the sibling leg IDs; cancelling one leg cascades to the other via
+Alpaca's own OCO logic. Robinhood has no bracket/OCO order support in this codebase at all (RH
+protection is the app's own single synthetic/ratcheted stop, no sibling leg exists) — not
+applicable there. Not implemented this round; flagging as a real, buildable follow-up rather than
+a permanently-deferred broker limitation.
+## 2026-07-15 — Alpha Vantage proactive 23/day cap + ops follow-ups (MONET)
+
+Owner-directed: AV's free-tier 25/day limit is enforced **per IP** (key pooling never
+multiplied capacity), so the app now self-limits with a **persisted per-ET-day global
+budget** — `PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY`, default 23 — that survives deploy
+restarts (previously the only gate was reactive on AV's own rejection text). Per-chunk
+reservation with refund of never-dispatched calls; proactive exhaustion shares #1632's
+once-guarded operator alert + suppress-until-reset plumbing. Complementary to #1640's
+AV-dereg-when-Alpaca. Also: `.env.example` per-IP correction, `order_rejected_by_broker`
+added to the ops-snapshot audit allowlist (was blocking remote broker-reject root-cause),
+NUL-byte cleanup in `fingerprintKeySet`. The "dead held-state check" chip premise was
+disproven (load-bearing for auto-remediation) — left unchanged. Focused 177/177 green on
+merged main. Same day, for the record: PR #1632 (P1 RAG fix) deploy-verified — authority
+minted, ingest writing, Sentry X silent; RAG outage window 11:27Z–19:47Z, fail-open.
+Branch `monet/todays-errors-triage-handoff-8d809b`.
+Rollout: `docs/rollouts/2026-07-15-av-daily-cap-and-ops-followups.md`.
+
 ## 2026-07-15 — Pinecone fetch URL-length fix (CLAUDE)
 
 Production RAG error `inventory fetch: unexpected error … /vectors/fetch?ids=occ%3Av3%3A…`.

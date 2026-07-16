@@ -1817,12 +1817,50 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    // Tracks a bracket order's ID (Alpaca native/order_class bracket, Tradier OTOCO) so a later
+    // plan change away from fixed/atr can find and tear down that earlier opening's still-resting
+    // sibling legs — see pending_bracket_teardowns' own comment above CREATE TABLE. Idempotent
+    // (fresh DBs get both from CREATE TABLE).
+    version: 42,
+    name: "bracket_sibling_leg_teardown",
+    up: (database) => {
+      // Guard existence first (mirrors the chunk_occurrences/order_replacements migrations above) —
+      // position_stop_plans is created by the main schema's CREATE TABLE, not by a numbered
+      // migration, so a migration-only test harness that replays versions from an arbitrary
+      // baseline against a minimal hand-built schema may not have it yet.
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'position_stop_plans'")
+        .get();
+      if (tableExists) {
+        const cols = database.prepare("PRAGMA table_info(position_stop_plans)").all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === "opening_order_id")) {
+          database.exec("ALTER TABLE position_stop_plans ADD COLUMN opening_order_id TEXT");
+        }
+      }
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS pending_bracket_teardowns (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          order_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_bracket_teardowns_account
+          ON pending_bracket_teardowns(user_id, account_number);
+      `);
+    }
+  },
+  {
+    // NOTE (2026-07-16 merge): renumbered 42/43/44 -> 43/44/45 — main's #1661
+    // bracket_sibling_leg_teardown took v42 and is already applied in production.
     // Handoff 3.5 (forward economic-event awareness): small rolling cache of upcoming
     // high-impact US economic-calendar events (FMP /economic-calendar via fmp-gamma).
     // Refreshed at most once per UTC day by src/lib/economic-calendar.ts (persisted
     // watermark in internal settings); CRUD in db-economic-events.ts. Shared market
     // data, not per-user state — no user_id column by design.
-    version: 42,
+    version: 43,
     name: "economic_events",
     up: (database) => {
       database.exec(`
@@ -1847,7 +1885,7 @@ const MIGRATIONS: Migration[] = [
     // consecutive-failed-runs count (src/lib/trading-liveness.ts). No new table — this only speeds
     // up the (user_id, connected_account_id, status, started_at DESC) scan that computation runs on
     // every /api/health hit, which previously had no covering index.
-    version: 43,
+    version: 44,
     name: "strategy_runs_liveness_index",
     up: (database) => {
       // Defensive: some migration-regression tests build a minimal synthetic schema (just the
@@ -1876,7 +1914,7 @@ const MIGRATIONS: Migration[] = [
     // often its row is later re-written by lessons/coach notes). CRUD lives in
     // db-retrieval-usefulness.ts. Advisory only: stats feed a bounded ranking nudge at retrieval
     // time — they never gate, exclude, or fail retrieval.
-    version: 44,
+    version: 45,
     name: "retrieval_usefulness",
     up: (database) => {
       database.exec(`
@@ -2353,8 +2391,31 @@ function migrate(database: Database.Database): void {
       avg_cost REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
       side TEXT NOT NULL DEFAULT 'long',
+      opening_order_id TEXT,
       PRIMARY KEY (user_id, account_number, symbol)
     );
+
+    -- A "fixed"/"atr" stop plan on Alpaca/Tradier is enforced via a broker-NATIVE bracket order
+    -- (order_class bracket/otoco) attached at opening-fill time; position_stop_plans.opening_order_id
+    -- tracks that order's ID. When the plan later changes away from fixed/atr (reset to trailing/
+    -- none/default, or the row is cleared on close), the bracket's still-resting take-profit/stop-
+    -- loss legs from that EARLIER opening are not automatically torn down — enrichOpeningProposal
+    -- only strips bracket fields from the NEW order being placed, and has no reach into an already-
+    -- resting broker order (this was the long-deferred "OCO sibling-identity pairing" gap, PR #1331/
+    -- #1371). recordStopPlan/clearStopPlans enqueue a row here (best-effort) whenever they detect
+    -- this transition; reconcilePendingBracketTeardowns (broker-protective-stops.ts) sweeps it,
+    -- asking the broker gateway to identify and cancel the sibling legs by the tracked order ID.
+    CREATE TABLE IF NOT EXISTS pending_bracket_teardowns (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_bracket_teardowns_account
+      ON pending_bracket_teardowns(user_id, account_number);
 
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (

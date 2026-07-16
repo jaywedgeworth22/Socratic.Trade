@@ -117,4 +117,42 @@ describe("ops diagnostic snapshot", () => {
 
     delete process.env.OPS_DIAGNOSTIC_TOKEN;
   });
+
+  // Root-cause: today's prod broker-rejection triage was blocked because this kind wasn't in
+  // the ops-snapshot audit allowlist — the raw rejection body (audit()'s `reason` field, the
+  // actual broker error text) never reached remote diagnostics. See OPS_AUDIT_KINDS in
+  // src/lib/ops-snapshot.ts.
+  it("surfaces order_rejected_by_broker audit rows (including the raw broker rejection reason) in recentAudit", async () => {
+    const db = await import("../src/lib/db");
+    const userId = `ops-user-${randomUUID()}`;
+    const accountId = `acct-${randomUUID()}`;
+
+    db.upsertConnectedAccount({
+      id: accountId,
+      userId,
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "REJ-1",
+      label: "Rejection Test",
+      isActive: true
+    });
+
+    const runId = randomUUID();
+    const proposalId = randomUUID();
+    db.audit(
+      "order_rejected_by_broker",
+      { runId, proposalId, symbol: "AAPL", side: "buy", reason: "insufficient buying power" },
+      userId,
+      accountId
+    );
+
+    const { buildOpsSnapshot } = await import("../src/lib/ops-snapshot");
+    const snapshot = buildOpsSnapshot({ runsPerUser: 5, auditPerUser: 5 });
+    const user = snapshot.users.find((row) => row.userId === userId);
+    expect(user).toBeDefined();
+    const rejection = user!.recentAudit.find((a) => a.kind === "order_rejected_by_broker");
+    expect(rejection).toBeDefined();
+    expect(rejection!.detail).toContain("insufficient buying power");
+    expect(rejection!.detail).toContain("symbol=AAPL");
+  });
 });

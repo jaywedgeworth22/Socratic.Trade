@@ -173,6 +173,11 @@ async function commitRecoveredOpeningStopPlan(input: {
   userId: string;
   proposal: TradeProposal;
   price: number;
+  /** The recovered/reconciled order's own broker ID — recorded as the plan's openingOrderId ONLY
+   *  when the proposal carried bracket fields (enrichOpeningProposal strips them unconditionally
+   *  for "trailing"/"none", so this naturally scopes to fixed/atr) — see performance.ts's identical
+   *  reasoning at its own recordStopPlan call site. */
+  orderId?: string;
 }): Promise<void> {
   const { proposal } = input;
   if (!proposal.stopPlan || (proposal.side !== "buy" && proposal.side !== "short")) return;
@@ -188,6 +193,7 @@ async function commitRecoveredOpeningStopPlan(input: {
     } catch {
       // The broker fill price remains a valid fallback for a fresh position.
     }
+    const openingOrderId = (proposal.bracketStopLoss != null || proposal.bracketTakeProfit != null) ? input.orderId : undefined;
     recordStopPlan(
       input.accountNumber,
       proposal.symbol,
@@ -196,7 +202,8 @@ async function commitRecoveredOpeningStopPlan(input: {
       basis,
       input.userId,
       undefined,
-      proposal.side === "short" ? "short" : "long"
+      proposal.side === "short" ? "short" : "long",
+      openingOrderId
     );
   } catch {
     // Stop-plan bookkeeping must never reverse a durable broker-fill receipt.
@@ -1272,6 +1279,13 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
               clearStopPlans(accountNumber, [fill.symbol], userId);
             } else {
               const basis = (await liveBasisFor(fill.symbol)) ?? price;
+              // See performance.ts's identical reasoning: bracket fields survive on the proposal
+              // only when a broker-native bracket was (or was meant to be) attached, so this
+              // naturally scopes to fixed/atr plans.
+              const openingOrderId =
+                (openingProposal.bracketStopLoss != null || openingProposal.bracketTakeProfit != null)
+                  ? matched.id
+                  : undefined;
               recordStopPlan(
                 accountNumber,
                 fill.symbol,
@@ -1280,7 +1294,8 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
                 basis,
                 userId,
                 undefined,
-                openingProposal.side === "short" ? "short" : "long"
+                openingProposal.side === "short" ? "short" : "long",
+                openingOrderId
               );
             }
           } catch {
@@ -1659,7 +1674,7 @@ export async function reconcilePlacementError(p: {
           raw: reconciliationRaw(dup, matched, merged.knownQuantity)
         }, p.userId);
         reconciled = { ...dup, status: fillStatus, price, quantity, notional, filledAt: matched.updatedAt ?? dup.filledAt };
-        await commitRecoveredOpeningStopPlan({ gateway: p.gateway, accountNumber: p.accountNumber, userId: p.userId, proposal: p.proposal, price });
+        await commitRecoveredOpeningStopPlan({ gateway: p.gateway, accountNumber: p.accountNumber, userId: p.userId, proposal: p.proposal, price, orderId: matched.id });
       } else {
         updateFillEvent(dup.id, { raw: reconciliationRaw(dup, matched, merged.knownQuantity) }, p.userId);
       }
@@ -1682,7 +1697,7 @@ export async function reconcilePlacementError(p: {
     });
     if (fillStatus === "filled" || fillStatus === "partially_filled") {
       const price = matched.averagePrice ?? p.proposal.referencePrice ?? 0;
-      await commitRecoveredOpeningStopPlan({ gateway: p.gateway, accountNumber: p.accountNumber, userId: p.userId, proposal: p.proposal, price });
+      await commitRecoveredOpeningStopPlan({ gateway: p.gateway, accountNumber: p.accountNumber, userId: p.userId, proposal: p.proposal, price, orderId: matched.id });
     }
     return { kind: "placed", orderId: matched.id, state: matched.state, fillStatus, fill, alreadyBooked: false };
   } catch (bookError) {
@@ -1786,7 +1801,7 @@ export async function flagStalePlacingIntents(gateway: BrokerGateway, accountNum
         }
 
         if (p) {
-          await commitRecoveredOpeningStopPlan({ gateway, accountNumber, userId, proposal: p, price });
+          await commitRecoveredOpeningStopPlan({ gateway, accountNumber, userId, proposal: p, price, orderId: matched.id });
         }
       } else if (existingReceipt) {
         updateFillEvent(existingReceipt.id, { raw: reconciliationRaw(existingReceipt, matched, merged.knownQuantity) }, userId);
