@@ -250,6 +250,25 @@ As of 2026-07-08 (assignment-rule update).
   keeps Tradier history. Tests rewired (`test/history.test.ts`; per-user sharing-semantics
   tests moved to Marketstack as vehicle). Rollout:
   `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
+- **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
+  claimed 2026-07-16) — COMPLETED + DEPLOYED 2026-07-16 (PR #1683 MERGED, squash 32362e93; production verified serving it, health ok).** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
+  128 rounded-md/lg/xl call sites in app/console -> canon rounded-control(8px)/rounded-card(12px)
+  utilities; new --con-fs-2xs:10px micro token + 15 ad-hoc 9-12px sizes onto the --con-fs-* scale.
+  Display-only, 42 tsx + console.css. Computed-style verified live (8/12/10px). Rollout:
+  docs/rollouts/2026-07-16-console-token-sweep.md.
+- **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
+  (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — COMPLETED + DEPLOYED 2026-07-16 (PR #1679 merged as `61f826ef`).** Owner-directed
+  ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
+  2026-07-12 "iOS UI refresh" (#1476) converted Settings + all sub-cards (brokers/api-keys/delivery/
+  learning-review/sharing/help/danger) from console `Card`/`Field`/`Toggle` primitives to iOS grouped-list
+  components; subsequent fixes (#1535 theme tokens, #1651 con-card containers) only reskinned the outer
+  boxes, leaving iOS row internals — hence "almost zero improvement." Scope: (1) rebuild Settings content
+  on console primitives (restore pre-#1476 architecture with post-#1476 content); (2) admin-only link at
+  top-of-site chrome to /admin + restyle /admin onto the console `con-*` design system with a clear way
+  back; All workstreams IMPLEMENTED (settings de-iOS rebuild incl. ios-components.tsx deletion; admin chrome link + full /admin con-* migration incl. /console/usage P0; Strategy/Guardrails nav renames + NEW /console/connections + tax/webhook card moves + deep-link retargets; h1=rail-label naming canon + journal chip truth + fabricated-tag removal + mobile fixes; consent-decline persistence bug + regression test). COMPLETED + DEPLOYED 2026-07-16: PR #1679 MERGED (squash 61f826ef) and production verified serving it (health/db/scheduler/litestream ok).
+  _(Rows relocated from In Progress to Completed 2026-07-16 by CLAUDE while resolving the
+  Codex thread on PR #1687; status text unchanged from MONET's flip. Also reunited the
+  Durable-state row's opening line with its body -- they had been split by an earlier union merge.)_
 - **Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE, PR
   #1667, branch `claude/bracket-teardown-adversarial-review-fixes`, merged as `0a5c9bd`) —
   COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.** PR #1661 (merged
@@ -1837,22 +1856,6 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
-- **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
-  claimed 2026-07-16) — COMPLETED + DEPLOYED 2026-07-16 (PR #1683 MERGED, squash 32362e93; production verified serving it, health ok).** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
-  128 rounded-md/lg/xl call sites in app/console -> canon rounded-control(8px)/rounded-card(12px)
-  utilities; new --con-fs-2xs:10px micro token + 15 ad-hoc 9-12px sizes onto the --con-fs-* scale.
-  Display-only, 42 tsx + console.css. Computed-style verified live (8/12/10px). Rollout:
-  docs/rollouts/2026-07-16-console-token-sweep.md.
-- **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
-  (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — IN PROGRESS.** Owner-directed
-  ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
-  2026-07-12 "iOS UI refresh" (#1476) converted Settings + all sub-cards (brokers/api-keys/delivery/
-  learning-review/sharing/help/danger) from console `Card`/`Field`/`Toggle` primitives to iOS grouped-list
-  components; subsequent fixes (#1535 theme tokens, #1651 con-card containers) only reskinned the outer
-  boxes, leaving iOS row internals — hence "almost zero improvement." Scope: (1) rebuild Settings content
-  on console primitives (restore pre-#1476 architecture with post-#1476 content); (2) admin-only link at
-  top-of-site chrome to /admin + restyle /admin onto the console `con-*` design system with a clear way
-  back; All workstreams IMPLEMENTED (settings de-iOS rebuild incl. ios-components.tsx deletion; admin chrome link + full /admin con-* migration incl. /console/usage P0; Strategy/Guardrails nav renames + NEW /console/connections + tax/webhook card moves + deep-link retargets; h1=rail-label naming canon + journal chip truth + fabricated-tag removal + mobile fixes; consent-decline persistence bug + regression test). COMPLETED + DEPLOYED 2026-07-16: PR #1679 MERGED (squash 61f826ef) and production verified serving it (health/db/scheduler/litestream ok).
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live
   ("persist all variables/counts... have that be the standard... for all things"): a redeploy
