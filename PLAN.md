@@ -1,5 +1,17 @@
 # Active Implementation Plan
 
+> **2026-07-16 - Public-page renderer decision + legacy `app/ui` primitives slim-down (MONET,
+> branch `monet/vigilant-fermi-220244`).** Settles the "two renderers, one brand core" question
+> for every remaining legacy glass-token consumer (WS-E follow-up to the 2026-07-16 UI wave):
+> ALL public/marketing surfaces (welcome, how-it-works, framework, privacy-policy,
+> terms-and-conditions) plus the root error boundary and `app/ui/theme.tsx` deliberately KEEP
+> the distinct public renderer — no con-* migration (console.css is `.console-root`-scoped and
+> unlayered; the brand core is already shared via `--brand-accent` + the radius canon).
+> `app/ui/primitives.tsx` slims to its real consumers (Card, Button, buttonClass); the
+> design-sync-only exports, dead `ThemeToggle`, and 8 dead globals.css utilities are deleted.
+> Display-only; no scope/timeline impact on other lanes. Rollout:
+> `docs/rollouts/2026-07-16-public-renderer-decision-legacy-primitives-slim.md`.
+
 > **2026-07-15 - SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`).** Implemented Phase 2 (Discovery and Archive) of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. PR #1665 created and auto-merge armed.
 
 > **2026-07-15 - Durable state: persist in-memory rate-limiters/cooldowns across restarts (MONET,
