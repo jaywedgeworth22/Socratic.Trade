@@ -13,6 +13,14 @@ and an Orders-page Last-price freshness upgrade. Two-lens adversarial verify; al
 findings fixed; 117 tests across 6 suites. strategy.ts untouched; types.ts additive-only.
 Branch `monet/todays-errors-triage-handoff-8d809b`.
 Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
+## 2026-07-16 — Board-flip PR #1687 auto-responded to Codex review (CLAUDE autofix)
+
+PR #1687 (`monet/ui-wave-board-flip`) had 2 Codex P2 findings:
+1. **Restore next-env.d.ts build drift** — Fixed (restored from origin/main). [codex-autofix] commit pushed.
+2. **Move completed efforts to ## Completed section** — Question posted to maintainer; organizational convention
+   not changed without owner direction.
+Branch: `monet/ui-wave-board-flip`. Rollout: `docs/rollouts/2026-07-16-codex-autofix-board-flip.md`.
+
 ## 2026-07-16 — Settings de-iOS restoration + admin integration + Configure IA + site-wide UI wave (MONET, branch `monet/settings-page-styling-fix-d4add7`)
 
 Owner escalation ("Settings looked 10x better 3 days ago — it matched the rest of the site;
