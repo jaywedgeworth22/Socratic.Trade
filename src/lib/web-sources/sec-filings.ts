@@ -43,7 +43,7 @@ function getLocalArtifactPath(cik: string, accession: string, sequence: number, 
   return path.join(dataDir, "sec-artifacts", paddedCik, accession, `${sequence}-${cleanDocName}`);
 }
 
-async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
+export async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
   const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
   try {
     if (fs.existsSync(filePath)) {
@@ -55,7 +55,7 @@ async function readLocalArtifact(cik: string, accession: string, sequence: numbe
   return null;
 }
 
-async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
+export async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
   const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
   try {
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true });

@@ -992,7 +992,7 @@ function resolveRagKeyWithSource(service: "pinecone" | "voyage", userId: string)
   return { key, source: key ? "env" : "none", service };
 }
 
-async function getClients(userId: string = "local", leaseGuard?: VectorStoreLeaseGuard) {
+export async function getClients(userId: string = "local", leaseGuard?: VectorStoreLeaseGuard) {
   assertVectorStoreLease(leaseGuard);
   const lookupUserId = userId || "local";
   const pinecone = resolveRagKeyWithSource("pinecone", lookupUserId);

@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-07-16 — SEC/RAG Backfill: Phase 4-7 — Search Fusion and Evaluation (Antigravity/AG, branch `agent/ag-rag-backfill-p4-p7`)
+Implements FTS5 lexical virtual table `document_chunks_fts` (migration v49), RRF (Reciprocal Rank Fusion) and MMR (Maximal Marginal Relevance) cosine/Jaccard similarity diversity filtering in `src/lib/rag/search-fusion.ts` to fuse lexical and dense vector search results. Created retrieval evaluation harness (`scripts/eval/rag-eval-harness.ts`) to query `sec_eval_golden_set` and calculate metrics (Recall@10, Recall@50, nDCG). Verified via new test suites in `test/search-fusion.test.ts` and `test/rag-eval-harness.test.ts` (100% green), clean ESLint/tsc, and successful Next.js production build check.
+
 ## 2026-07-16 — SEC/RAG Backfill: Phase 3 — HTML Parsing and Chunker (Antigravity/AG, branch `agent/ag-rag-backfill-p3`)
 Implements cheerio-based HTML parser (`parseFilingHtml` in `src/lib/web-sources/sec-parser.ts`) to strip script/style/hidden tags, normalize Item/Part section headers, and reconstruct clean pipe-delimited Markdown tables (grouping/splitting large tables to fit token caps). Updated chunker in `src/lib/rag/chunk.ts` to be section-aware (resetting overlap across sections) and use token-aware estimation. Integrated this parser in `ingestFiling` inside `src/lib/web-sources/sec-filings.ts` to ingest bodies with parser revision `sec-edgar-filing-v2`. Verified via newly added unit test suite in `test/sec-parser.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
 
