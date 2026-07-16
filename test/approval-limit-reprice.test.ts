@@ -279,6 +279,40 @@ describe("executeProposal — approval-time ordinary-limit re-anchor", () => {
     });
   }, 30000);
 
+  it("fallback-stamped anchor (referencePrice === limitPrice): NOT repriced — a reviewed hard limit places verbatim", async () => {
+    await atRegularHours(async () => {
+      const userId = `reanchor-hard-limit-${randomUUID()}`;
+      // ensureReferencePrice's defensive stamp makes ref === limit for chat/manual/legacy
+      // proposals that never saw a quote; re-anchoring would turn a hard $200 limit into a
+      // current-market ($202) limit.
+      const proposalId = seedPending(userId, { ...STORED_BUY_LIMIT, limitPrice: 200, referencePrice: 200 });
+      const result = await executeProposal(proposalId, userId);
+      expect(result.status).toBe("placed");
+      expect(broker.placed[0]).toMatchObject({ type: "limit", limitPrice: 200 });
+      expect(repriceAudits("approval_limit_repriced", proposalId)).toHaveLength(0);
+    });
+  }, 30000);
+
+  it("PAPER opening beyond the entry-drift cap: re-queued for fresh consent with the decision receipt flipped to approved:false", async () => {
+    await atRegularHours(async () => {
+      const userId = `reanchor-drift-cap-${randomUUID()}`;
+      // Anchor 180 -> fresh 202 = ~1222 bps, beyond the default maxEntryDriftPct (10% = 1000 bps).
+      // Once the reprice moves the limit, the drift guard's limit-order exemption no longer
+      // holds, so even a PAPER opening goes back to the human.
+      const proposalId = seedPending(userId, { ...STORED_BUY_LIMIT, limitPrice: 178, referencePrice: 180 });
+      const result = await executeProposal(proposalId, userId);
+      expect(result.status).toBe("proposed");
+      expect(result.reasons?.[0]).toContain("entry-drift cap");
+      expect(broker.placed).toHaveLength(0);
+      const requeued = getProposal(proposalId, userId);
+      expect(requeued?.status).toBe("proposed");
+      expect(requeued?.proposal.priceRequoteReason).toContain("entry-drift cap");
+      // The held card must not carry an approved decision receipt (codex P2).
+      expect(requeued?.decision.approved).toBe(false);
+      expect(requeued?.decision.reasons?.join(" ")).toContain("entry-drift cap");
+    });
+  }, 30000);
+
   it("missing referencePrice: unchanged behavior — places at the stored limit, no throw, no reprice", async () => {
     await atRegularHours(async () => {
       const userId = `reanchor-noref-${randomUUID()}`;
@@ -412,6 +446,7 @@ describe("repriceStoredLimitProposal — sign conventions and precedence (module
       side: "buy",
       limitPrice: 100,
       referencePrice: 100,
+      repriceAnchorPrice: 100, // carried genuine anchor — ref===limit alone would read as the fallback stamp
       bracketTakeProfit: 110,
       bracketStopLoss: 95,
       bracketStopLimit: 94.5
@@ -434,6 +469,7 @@ describe("repriceStoredLimitProposal — sign conventions and precedence (module
       side: "short",
       limitPrice: 100,
       referencePrice: 100,
+      repriceAnchorPrice: 100,
       bracketTakeProfit: 90,
       bracketStopLoss: 105
     };
@@ -452,6 +488,7 @@ describe("repriceStoredLimitProposal — sign conventions and precedence (module
       side: "buy",
       limitPrice: 50,
       referencePrice: 50,
+      repriceAnchorPrice: 50,
       bracketStopLoss: 47
     };
     const { proposal } = repriceStoredLimitProposal(bracket, DEFAULT_POLICY, { price: 51 });
@@ -466,12 +503,45 @@ describe("repriceStoredLimitProposal — sign conventions and precedence (module
     expect(proposal.rationale).not.toContain("bracket");
   });
 
+  it("fallback-stamped anchor is skipped at the module level, but a carried repriceAnchorPrice restores eligibility", () => {
+    const stamped: TradeProposal = { ...base, side: "buy", limitPrice: 200, referencePrice: 200 };
+    expect(repriceStoredLimitProposal(stamped, DEFAULT_POLICY, { price: 210 }).proposal).toBe(stamped);
+    // After a genuine first reprice, repriceAnchorPrice (a real quote) is the anchor — an
+    // equal-by-coincidence limit no longer blocks later rounds.
+    const carried: TradeProposal = { ...stamped, repriceAnchorPrice: 200 };
+    expect(repriceStoredLimitProposal(carried, DEFAULT_POLICY, { price: 210 }).proposal).not.toBe(carried);
+  });
+
+  it("dollar-sized bracket that goes sub-one-share after repricing strips its legs (generation-path parity)", () => {
+    const dollarBracket: TradeProposal = {
+      ...base,
+      side: "buy",
+      quantity: undefined,
+      dollarAmount: 100,
+      limitPrice: 99,
+      referencePrice: 100,
+      bracketTakeProfit: 110,
+      bracketStopLoss: 95
+    };
+    // 102 * (99/100) = 100.98 -> floor(100 / 100.98) = 0 whole shares.
+    const { proposal } = repriceStoredLimitProposal(dollarBracket, DEFAULT_POLICY, { price: 102 });
+    expect(proposal.limitPrice).toBe(100.98);
+    expect(proposal.bracketTakeProfit).toBeUndefined();
+    expect(proposal.bracketStopLoss).toBeUndefined();
+    expect(proposal.rationale).toContain("bracket removed");
+    // A larger dollar size keeps its bracket: floor(500 / 100.98) = 4 shares.
+    const kept = repriceStoredLimitProposal({ ...dollarBracket, dollarAmount: 500 }, DEFAULT_POLICY, { price: 102 });
+    expect(kept.proposal.bracketTakeProfit).toBeDefined();
+    expect(kept.proposal.rationale).not.toContain("bracket removed");
+  });
+
   it("collision probe A ($1 tick-factor boundary): TP is clamped a full tick ABOVE the repriced entry, never equal", () => {
     const bracket: TradeProposal = {
       ...base,
       side: "buy",
       limitPrice: 1.03,
       referencePrice: 1.03,
+      repriceAnchorPrice: 1.03,
       bracketTakeProfit: 1.04
     };
     const { proposal } = repriceStoredLimitProposal(bracket, DEFAULT_POLICY, { price: 1.0055 });
@@ -487,6 +557,7 @@ describe("repriceStoredLimitProposal — sign conventions and precedence (module
       side: "buy",
       limitPrice: 2.0,
       referencePrice: 2.0,
+      repriceAnchorPrice: 2.0,
       bracketStopLoss: 1.99
     };
     const { proposal } = repriceStoredLimitProposal(bracket, DEFAULT_POLICY, { price: 1.8 });

@@ -75,6 +75,15 @@ export function repriceStoredLimitProposal(
   // time — a bid/ask side would skew the ratio the anchor semantics depend on.
   const fresh = usable(quote?.price);
   if (storedLimit === undefined || anchor === undefined || fresh === undefined) return unchanged;
+  // Anchor provenance: db-proposals' ensureReferencePrice defensively stamps a MISSING
+  // referencePrice from the limitPrice itself (chat/manual/legacy paths that never saw a quote).
+  // That fallback is indistinguishable from a genuine quote anchor except by exact equality — and
+  // ratio-re-anchoring it would turn a reviewed hard "$50 limit" into a current-market limit. An
+  // exactly-equal anchor therefore never repriced (fail-safe: the stored, reviewed limit places
+  // verbatim). Genuine marketable limits carry a bps offset from their quote, so they still
+  // reprice; a first reprice stamps repriceAnchorPrice (a real quote), restoring reprice
+  // eligibility for later rounds.
+  if (anchor === storedLimit && usable(proposal.repriceAnchorPrice) === undefined) return unchanged;
   const anchorDriftBps = (Math.abs(fresh - anchor) / anchor) * 10_000;
   // Strictly-beyond-tolerance, with a float-noise guard: a quote landing EXACTLY on the tolerance
   // must not read as material because (fresh - anchor) picked up ~1e-13 of representation error.
@@ -113,16 +122,33 @@ export function repriceStoredLimitProposal(
   };
   // Buy-entry bracket: TP is a sell limit above the entry, SL a sell stop below — mirrored for a
   // short entry (buy-side exits: TP below, SL above).
-  const repricedTakeProfit = buyEntry
+  let repricedTakeProfit = buyEntry
     ? scaleLeg(proposal.bracketTakeProfit, "down", "aboveEntry")
     : scaleLeg(proposal.bracketTakeProfit, "up", "belowEntry");
-  const repricedStopLoss = buyEntry
+  let repricedStopLoss = buyEntry
     ? scaleLeg(proposal.bracketStopLoss, "up", "belowEntry")
     : scaleLeg(proposal.bracketStopLoss, "down", "aboveEntry");
-  const repricedStopLimit = buyEntry
+  let repricedStopLimit = buyEntry
     ? scaleLeg(proposal.bracketStopLimit, "up", "belowEntry")
     : scaleLeg(proposal.bracketStopLimit, "down", "aboveEntry");
-  const hasBracket = usable(proposal.bracketTakeProfit) !== undefined || usable(proposal.bracketStopLoss) !== undefined;
+  let hasBracket = usable(proposal.bracketTakeProfit) !== undefined || usable(proposal.bracketStopLoss) !== undefined;
+  // Native brackets require >= 1 whole share (the gateways floor dollarAmount/limitPrice and 422
+  // on zero). A dollar-sized bracket that was placeable at the stored limit can become sub-share
+  // once the limit reprices upward — mirror the generation path (enrichOpeningProposal): place
+  // the order WITHOUT the bracket legs, protection stays with the synthetic-stop monitors.
+  let bracketStrippedSubShare = false;
+  if (
+    hasBracket &&
+    proposal.quantity == null &&
+    typeof proposal.dollarAmount === "number" &&
+    Math.floor(proposal.dollarAmount / repricedLimit) < 1
+  ) {
+    repricedTakeProfit = undefined;
+    repricedStopLoss = undefined;
+    repricedStopLimit = undefined;
+    hasBracket = false;
+    bracketStrippedSubShare = true;
+  }
   // Repeated reprices (e.g. a material re-queue approved later) must not stack an unbounded chain
   // of re-anchor tags onto the rationale — replace any previous tag with the current one.
   const baseRationale = proposal.rationale.replace(/\s*\[Limit re-anchored from [^\]]*\]/g, "");
@@ -135,7 +161,7 @@ export function repriceStoredLimitProposal(
       bracketStopLimit: repricedStopLimit,
       repriceAnchorPrice: fresh,
       repricedFromLimit: storedLimit,
-      rationale: `${baseRationale} [Limit re-anchored from $${dollars(storedLimit)} to $${dollars(repricedLimit)}${hasBracket ? " (bracket legs re-anchored by the same ratio)" : ""}: the quote moved ${anchorDriftBps.toFixed(1)} bps to $${dollars(fresh)} while the proposal awaited approval.]`
+      rationale: `${baseRationale} [Limit re-anchored from $${dollars(storedLimit)} to $${dollars(repricedLimit)}${hasBracket ? " (bracket legs re-anchored by the same ratio)" : ""}${bracketStrippedSubShare ? " (bracket removed: the repriced limit makes the dollar size sub-one-share; synthetic stops still protect the position)" : ""}: the quote moved ${anchorDriftBps.toFixed(1)} bps to $${dollars(fresh)} while the proposal awaited approval.]`
     },
     drift
   };

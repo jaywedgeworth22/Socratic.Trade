@@ -155,12 +155,19 @@ function estimatedExitPnl(proposal: PendingProposal, positions: MobileSnapshot["
   // Same sign-consistency gate as the console card: the position under a stale card can flip or
   // close, and a sell over a now-short position is not a closing order.
   if (!isClosingOrder({ symbol: p.symbol, side: p.side }, { symbol: position.symbol, quantity: position.quantity })) return null;
-  // requestedExitQuantity handles dollarAmount-sized exits too (parity with the console card).
-  const shares = requestedExitQuantity(p);
+  // requestedExitQuantity handles dollarAmount-sized exits too (parity with the console card),
+  // capped to the current holding so a stale oversize exit proposal doesn't overstate the
+  // estimate — same guard as the console card and closingOrderPnl in orders/lib.ts.
+  const requested = requestedExitQuantity(p);
+  const shares = requested != null ? Math.min(requested, Math.abs(position.quantity)) : undefined;
+  // An exact-cost mark is the broker's no-quote fallback (marketValue = qty * averageCost) — a
+  // fake $0.00 P/L; omit the line instead.
+  const mark = positionMarkPrice(position) ?? undefined;
+  const suspicious = mark !== undefined && position.averageCost > 0 && Math.abs(mark - position.averageCost) / position.averageCost < 1e-9;
   return estimatedClosingPnl({
     position: { quantity: position.quantity, averageCost: position.averageCost },
     shares,
-    currentPrice: positionMarkPrice(position) ?? undefined
+    currentPrice: suspicious ? undefined : mark
   });
 }
 

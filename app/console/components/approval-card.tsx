@@ -169,7 +169,19 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const matchedPosition = symbolPosition && isClosingOrder({ symbol: p.symbol, side: p.side }, symbolPosition)
     ? symbolPosition
     : undefined;
-  const exitCurrentPrice = finite(pending.proposalCurrentPrice) ? pending.proposalCurrentPrice : (positionMarkPrice(matchedPosition) ?? undefined);
+  // A price that exactly equals the position's average cost is almost certainly the broker
+  // adapter's no-quote fallback (Robinhood sets marketValue = quantity * averageCost when it
+  // cannot quote, and the server's currentPrices fall back to that mark) — showing it would
+  // render a fake $0.00 P/L. Treat it as unavailable; the line is omitted rather than misleading.
+  const costSuspicious = (price: number | undefined): boolean =>
+    price !== undefined &&
+    matchedPosition !== undefined &&
+    matchedPosition.averageCost > 0 &&
+    Math.abs(price - matchedPosition.averageCost) / matchedPosition.averageCost < 1e-9;
+  const exitPriceCandidate = finite(pending.proposalCurrentPrice)
+    ? pending.proposalCurrentPrice
+    : (positionMarkPrice(matchedPosition) ?? undefined);
+  const exitCurrentPrice = costSuspicious(exitPriceCandidate) ? undefined : exitPriceCandidate;
   // Cap the exit quantity to the current position size so stale oversize exit proposals
   // (e.g. the user manually reduced the position after the approval card was created)
   // don't overstate the estimated closing P/L — same guard as closingOrderPnl in orders/lib.ts.

@@ -113,3 +113,33 @@ Codex posted another finding after round 1 was pushed:
   requested sell/cover size could exceed the current holding, overstating the realized P/L. Now capped
   via `Math.min(exitQty, Math.abs(matchedPosition.quantity))` — same guard as `closingOrderPnl` in
   `orders/lib.ts`. Verify: tsc clean, 4649 tests pass, build clean.
+
+## Codex thread triage round 3 (2026-07-16 afternoon, MONET — all 7 open threads fixed)
+
+- **P1 anchor provenance** (`approval-reprice.ts`): `ensureReferencePrice`'s defensive
+  `referencePrice = limitPrice` stamp is indistinguishable from a genuine quote anchor except by
+  exact equality — re-anchoring it would turn a reviewed hard limit into a current-market limit.
+  An exactly-equal anchor (with no carried `repriceAnchorPrice`) now never reprices; the stored,
+  reviewed limit places verbatim. Genuine marketable limits carry a bps offset so they still
+  reprice. Tests: exec-level hard-limit placement + module-level skip/carried-anchor pair. (Five
+  pre-existing bracket test fixtures coincidentally used ref===limit and passed vacuously — given
+  carried anchors so they exercise the real path.)
+- **P2 entry-drift honor** (`strategy-execution.ts`): once the reprice moves the limit, the drift
+  guard's limit-order exemption no longer protects the thesis — an OPENING whose anchor drifted
+  beyond `policy.maxEntryDriftPct` now re-queues for fresh consent on EVERY execution mode (paper
+  included), not just live+typed. Test: paper opening at ~12.2% drift re-queues, not places.
+- **P2 requeue decision receipt** (`strategy-execution.ts`): the held card now persists
+  `approved: false` + reason (final-size requote pattern) so reloads/other clients can't see an
+  approved receipt for an order explicitly held. Covered in the same test.
+- **P2 sizing-snapshot refresh** (`strategy-execution.ts`): a repriced risk-adding opening
+  recaptures `sizingSnapshot` (same `captureProposalSizingSnapshot` inputs as the final-size path)
+  so learning/lifecycle receipts match the order the broker sees.
+- **P2 bracket whole-share re-check** (`approval-reprice.ts`): a dollar-sized bracket that goes
+  sub-one-share after an upward reprice strips its legs (generation-path parity; synthetic stops
+  still protect) instead of letting the gateway floor to 0 and 422. Test: $100 bracket repriced
+  past $100 strips; $500 keeps.
+- **P2 approval-card cost-suspicious mark** (`approval-card.tsx`): a price exactly equal to
+  `averageCost` is the broker's no-quote fallback — the card now omits the est-P/L line rather
+  than rendering a fake $0.00 (same epsilon rule Codex added to `effectiveOrderPrice`).
+- **P2 mobile cap + suspicious-mark parity** (`mobile-pwa-client.tsx`): exit shares capped to the
+  current holding and the exact-cost mark omitted, matching the console surfaces.

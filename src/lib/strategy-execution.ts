@@ -380,6 +380,19 @@ export async function executeProposal(
         // Fresh estimate for the persisted card and the live typed-confirmation re-check.
         const repricedEstimate = estimateNotional(proposal);
         const repricedNotional = Number.isFinite(repricedEstimate) && repricedEstimate > 0 ? repricedEstimate : undefined;
+        // Receipts must match the order the broker will see: a repriced risk-adding opening
+        // recaptures its sizing snapshot (buildSocraticDecisionCase / lifecycle sync persist the
+        // embedded snapshot — leaving the generation-time size would record stale notional and
+        // pct-of-NAV into learning data).
+        if (repricedNotional !== undefined && isRiskAddingOpening(proposal, account.positions)) {
+          proposal.sizingSnapshot = captureProposalSizingSnapshot({
+            proposal,
+            estimatedNotional: repricedNotional,
+            policy,
+            portfolioValue: account.portfolio.totalMarketValue,
+            dailyNotionalUsed: dailyExecutionStats(policy.accountNumber, new Date(), userId).notional
+          });
+        }
         const repriceChange = {
           proposalId,
           symbol: proposal.symbol,
@@ -395,12 +408,29 @@ export async function executeProposal(
         // price that will actually be placed. Immaterial drift places normally below (audited via
         // the drift payload on approval_limit_repriced).
         const typedConfirmGatesLive = executionMode === "broker/live" && policy.requireTypedConfirmation !== false;
-        if (typedConfirmGatesLive && limitDrift.material) {
-          const reason = `Limit price re-anchored materially while awaiting approval (quote moved ${
-            limitDrift.anchorDriftBps !== undefined ? Math.round(limitDrift.anchorDriftBps) : "unverifiable"
-          } bps vs ${limitDrift.toleranceBps} bps tolerance) — a live typed confirmation covered the prior price, so approve the repriced order again.`;
+        // Once the reprice moves the limit, the entry-drift guard's limit-order exemption
+        // (policy.ts — "the broker's limit caps the fill") no longer protects the thesis: the cap
+        // now tracks the market. An OPENING whose anchor drifted beyond policy.maxEntryDriftPct
+        // therefore goes back to the human on EVERY execution mode, not just live+typed.
+        const isOpeningSide = proposal.side === "buy" || proposal.side === "short";
+        const entryDriftCapBps = (policy.maxEntryDriftPct ?? 0) * 100;
+        const beyondEntryDriftCap =
+          isOpeningSide && entryDriftCapBps > 0 && (limitDrift.anchorDriftBps ?? 0) > entryDriftCapBps;
+        if ((typedConfirmGatesLive && limitDrift.material) || beyondEntryDriftCap) {
+          const driftText = limitDrift.anchorDriftBps !== undefined ? `${Math.round(limitDrift.anchorDriftBps)} bps` : "an unverifiable amount";
+          const reason = beyondEntryDriftCap
+            ? `Quote moved ${driftText} while this opening awaited approval — beyond the ${policy.maxEntryDriftPct}% entry-drift cap. The limit was re-anchored; approve the repriced order again if the thesis still holds.`
+            : `Limit price re-anchored materially while awaiting approval (quote moved ${driftText} vs ${limitDrift.toleranceBps} bps tolerance) — a live typed confirmation covered the prior price, so approve the repriced order again.`;
           proposal = { ...proposal, priceRequoteReason: reason, priceRequotedAt: new Date().toISOString() };
-          const persisted = updatePendingProposalReprice(proposalId, { proposal, estimatedNotional: repricedNotional }, userId);
+          // The held card must not keep an approved:true decision receipt (reloads/other clients
+          // would show an approved decision for an order explicitly held for fresh consent) —
+          // same pattern as the final-size requote below.
+          const heldDecision: PolicyDecision = {
+            ...row.decision,
+            approved: false,
+            reasons: [...new Set([...(row.decision.reasons ?? []), reason])]
+          };
+          const persisted = updatePendingProposalReprice(proposalId, { proposal, estimatedNotional: repricedNotional, decision: heldDecision }, userId);
           audit("approval_limit_reprice_reapproval", { ...repriceChange, reason, persisted }, userId, policy.connectedAccountId);
           if (!persisted) {
             const current = getProposal(proposalId, userId)?.status ?? "removed";
