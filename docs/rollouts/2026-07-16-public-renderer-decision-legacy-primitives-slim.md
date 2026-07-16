@@ -161,3 +161,16 @@ Cloud session, branch `monet/vigilant-fermi-220244`. The branch-neutral live boa
 host filesystem access from a cloud session) — only the repo-tracked mirror
 `docs/EFFORT-LOG.md` was updated. The next host-side agent should sync the live board
 from the repo mirror for this effort's row.
+
+## Codex autofix triage (2026-07-16, round 1)
+
+- **Codex finding:** `.design-sync/conventions.md` (the design-sync `readmeHeader`) still
+  referenced `inputClass` and `StatTile` as importable exports, and the build-snippet example
+  imported `StatTile` — all stale after the UI-primitives slim-down.
+- **Fix:** Already applied by the Monet/parallel agent in commit `3ec84b8d` before this
+  autofix round ran. Prose now explains the removed exports as history; the build snippet
+  imports only `Card`, `Button`, `ConBtn` with inline markup replacing the `StatTile` grid.
+- **Merge resolution:** `origin/main` was merged into the PR branch (was behind/DIRTY);
+  resolved via `git merge` (no conflicts). All 4,665 tests pass (the merge added one test
+  from main).
+- **Auto-merge** (`--squash --auto`) enabled, awaiting the `verify` CI gate.
