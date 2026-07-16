@@ -1821,6 +1821,21 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][MONET] Public-page renderer decision + legacy `app/ui` primitives slim-down
+  (branch `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-16) — IN PROGRESS.** WS-E
+  follow-up to the 2026-07-16 UI wave: settle the remaining legacy glass-token consumers. Decision
+  (per `docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md` "two renderers, one brand
+  core"): ALL public/marketing surfaces (`welcome` ×2, `how-it-works`, `framework` viewer,
+  `privacy-policy`, `terms-and-conditions`) plus the root `app/error.tsx` boundary and
+  `app/ui/theme.tsx` STAY on the deliberately distinct public renderer — no con-* migration
+  (console.css is `.console-root`-scoped + unlayered; brand core already shared via
+  `--brand-accent` + radius canon). Note: the triggering task text claimed "exactly three remaining
+  consumers" — recon found seven (welcome/how-it-works/terms also import legacy `Card`). Scope:
+  slim `app/ui/primitives.tsx` to its real consumers (Card, Button, buttonClass), delete
+  design-sync-only exports (ICON/IconButton/PanelHeader/Chip/Dot/Switch/Segmented/Tabs/Field/
+  inputClass/RawNumInput/StatTile/EmptyState) + dead `ThemeToggle` + 8 dead globals.css utilities,
+  update `.design-sync` re-exports/previews, document in `docs/design/visual-system.md`.
+  Display-only; full gate + screenshots.
 - **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
   (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — IN PROGRESS.** Owner-directed
   ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
