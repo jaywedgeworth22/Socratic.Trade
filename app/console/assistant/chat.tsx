@@ -352,11 +352,14 @@ export function AssistantChat() {
   const canSend = !sending && !clearing && !keyMissing && !customPending && !modelUnselected && input.trim().length > 0;
 
   return (
-    <section className="con-card flex h-[calc(100dvh-14rem)] min-h-[24rem] flex-col overflow-hidden lg:h-[calc(100dvh-12rem)]">
+    // Mobile height budgets the fixed bottom tab bar (~4rem incl. safe area) on top of the
+    // top chrome — 14rem left the composer pinned UNDER the bar. lg has no bottom bar.
+    <section className="con-card flex h-[calc(100dvh-18rem)] min-h-[24rem] flex-col overflow-hidden lg:h-[calc(100dvh-12rem)]">
       {/* Header */}
+      {/* No heading here: the page h1 ("Coach") above this card is the one title —
+          a second in-card h1 ("Assistant") gave the surface two competing names. */}
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-[color:var(--con-line)] px-3 py-2 sm:px-4">
         <Sparkles size={15} className="shrink-0 text-[color:var(--con-accent)]" aria-hidden />
-        <h1 className="text-[length:var(--con-fs-md)] font-bold leading-none">Assistant</h1>
         <Tooltip
           content="The assistant can answer questions and draft orders, but it has no way to place one — every order goes through Approvals.">
           <span
@@ -433,7 +436,7 @@ export function AssistantChat() {
               onClick={() => void clearConversation()}
               disabled={sending || clearing}
               className={cx(
-                "flex h-7 items-center gap-1 rounded-lg border px-2 text-[length:var(--con-fs-xs)] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                "flex h-7 items-center gap-1 rounded-control border px-2 text-[length:var(--con-fs-xs)] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                 clearArmed
                   ? "border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] text-[color:var(--con-neg)]"
                   : "border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)]"
@@ -455,7 +458,7 @@ export function AssistantChat() {
           <Tooltip
             content="Only loading old messages failed — sending new ones still works.">
             <div
-              className="rounded-md bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">Couldn't load the earlier conversation. New messages still work; reload the page to retry.
+              className="rounded-control bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">Couldn't load the earlier conversation. New messages still work; reload the page to retry.
                         </div>
           </Tooltip>
         )}
@@ -491,7 +494,7 @@ export function AssistantChat() {
               <Tooltip content={m.at ? fmtExact(m.at) : undefined}>
                 <div
                   className={cx(
-                    "rounded-xl px-3 py-2 text-[length:var(--con-fs-sm)]",
+                    "rounded-card px-3 py-2 text-[length:var(--con-fs-sm)]",
                     m.role === "user" ? "bg-[color:var(--con-accent-soft)]" : "bg-[color:var(--con-surface-2)]",
                     m.failed && "border border-[color:var(--con-warn-border)]"
                   )}>
@@ -523,7 +526,7 @@ export function AssistantChat() {
                 </div>
               </Tooltip>
               {m.role === "assistant" && m.model && (
-                <div className="mt-0.5 px-1 text-[10px] text-[color:var(--con-faint)]">
+                <div className="mt-0.5 px-1 text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)]">
                   {m.model.trim().toLowerCase() === "mock" ? (
                     // No vendor logo for the offline mock — that would fake a provider.
                     <Tooltip content="The deterministic offline model produced this answer — no LLM provider was called.">
@@ -560,7 +563,7 @@ export function AssistantChat() {
       {/* Composer */}
       <div className="border-t border-[color:var(--con-line)] px-3 py-2.5 sm:px-4">
         {keyMissing && (
-          <p className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+          <p className="mb-2 flex flex-wrap items-center gap-1.5 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
             <AlertTriangle size={13} aria-hidden />
             No {providerDisplayName(provider)} key is connected — this model can&apos;t answer.
             <Link
@@ -614,7 +617,7 @@ export function AssistantChat() {
             </button>
           </Tooltip>
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[10px] text-[color:var(--con-faint)]">
+        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[length:var(--con-fs-2xs)] text-[color:var(--con-faint)]">
           <Tooltip
             content="The assistant reads real quotes and your real account data. When it can't know something, it says so instead of inventing a number.">
             <span>

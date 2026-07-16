@@ -300,11 +300,11 @@ export default function WatchlistPage() {
         <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
           Armed alerts are checked against live quotes about once a minute while the app&apos;s server is running. A
           trigger fires once, then the alert moves to &ldquo;triggered&rdquo; — it never re-arms by itself. Delivery
-          uses the <strong>price_alert</strong> event in Settings → Event notifications. Alerts only notify; they never
-          place orders.
+          uses the &ldquo;Price alert&rdquo; notification in Settings → Event notifications. Alerts only notify; they
+          never place orders.
         </p>
 
-        <div ref={alertFormRef} className="mb-4 grid gap-3 rounded-lg border border-[color:var(--con-line)] p-3 sm:grid-cols-[7rem_7rem_8rem_1fr_auto]">
+        <div ref={alertFormRef} className="mb-4 grid gap-3 rounded-control border border-[color:var(--con-line)] p-3 sm:grid-cols-[7rem_7rem_8rem_1fr_auto]">
           <Field label="Symbol" htmlFor="alert-symbol">
             <TextInput
               id="alert-symbol"
@@ -372,7 +372,7 @@ export default function WatchlistPage() {
               .map((alert) => (
                 <div
                   key={alert.id}
-                  className="con-row flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-2"
+                  className="con-row flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control px-1.5 py-2"
                   title={
                     alert.status === "armed"
                       ? `Armed: notifies when ${alert.symbol} trades ${alert.op === ">" ? "above" : "below"} ${fmtMoney(alert.price)}.`

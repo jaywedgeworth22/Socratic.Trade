@@ -487,7 +487,7 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
  * live doesn't matter.
  *
  * Prefers connected Alpaca accounts (the modern, actively-maintained credential store —
- * same one Settings -> Accounts writes to) over the legacy standalone
+ * same one Connections writes to) over the legacy standalone
  * `alpaca_paper_api_key`/`alpaca_paper_secret_key` user-API-key pair, which is not updated by
  * the connected-accounts UI and can silently go stale (confirmed in production: the legacy
  * pair was last touched 2026-06-22, while the account's real key was rotated 2026-06-29).

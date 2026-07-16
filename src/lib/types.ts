@@ -1192,6 +1192,33 @@ export interface TradeProposal {
    * later or off the run cadence.
    */
   referencePrice?: number;
+  /**
+   * Approval-time limit re-anchor receipts (src/lib/approval-reprice.ts): a pending ordinary limit
+   * proposal is re-anchored to the fresh approval-time quote before placement, preserving the
+   * stored limit-to-anchor ratio. All additive/optional — proposals never repriced don't carry them.
+   *   - `repriceAnchorPrice`: the fresh quote the MOST RECENT reprice anchored to. Subsequent
+   *     reprices measure ratio and drift from here, never compounding off the original
+   *     `referencePrice` (which stays untouched so the entry-drift guard and
+   *     "performance since proposal" analytics keep their generation-time anchor).
+   *   - `repricedFromLimit`: the stored limit the most recent reprice replaced.
+   *   - `priceRequoteReason` / `priceRequotedAt`: stamped only when a MATERIAL reprice on a live
+   *     typed-confirmation account re-queued the card for a fresh approval instead of placing —
+   *     the price analog of `finalSizeReview.ownerApprovalRequoteReason` (which stays a SIZE
+   *     receipt; reusing it for a price requote would misreport a broker_minimum_bump).
+   */
+  repriceAnchorPrice?: number;
+  repricedFromLimit?: number;
+  priceRequoteReason?: string;
+  priceRequotedAt?: string;
+  /**
+   * Where `referencePrice` came from, stamped by insertProposal (db-proposals.ts):
+   * "provided" = the proposal arrived with its own reference (a genuine decision-time quote from
+   * the strategy/enrichment path); "limit-fallback" = insertProposal defensively copied the
+   * limit/stop price because no reference existed (chat/manual/legacy paths). The approval-time
+   * re-anchor treats "limit-fallback" as a hard price (never repriced); rows predating this field
+   * fall back to the conservative equality heuristic.
+   */
+  referencePriceProvenance?: "provided" | "limit-fallback";
   /** Limit price for the take-profit leg of a bracket order. */
   bracketTakeProfit?: number;
   /** Stop price for the stop-loss leg of a bracket order. */
