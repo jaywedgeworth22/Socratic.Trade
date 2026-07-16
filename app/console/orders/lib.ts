@@ -8,7 +8,9 @@
  *  with their source of truth. */
 
 import { isActiveBrokerOrderState } from "@/lib/broker-held-orders";
-import type { EquityOrder, MarketQuoteSummary, TradingPolicy } from "@/lib/types";
+import { normalizeSymbol } from "@/lib/money";
+import type { EquityOrder, EquityPosition, MarketQuoteSummary, TradingPolicy } from "@/lib/types";
+import { estimatedClosingPnl, isClosingOrder, positionMarkPrice, type EstimatedClosingPnl } from "../lib/derive";
 
 /** Mirrors DEFAULT_POLICY.staleLimitOrderMinutes (src/lib/defaults.ts). */
 export const DEFAULT_STALE_LIMIT_MINUTES = 15;
@@ -143,6 +145,48 @@ export function lastScanPrice(
     Object.values(quotesBySymbol).find((q) => q.symbol?.trim().toUpperCase() === normalized);
   if (!quote || typeof quote.price !== "number" || !Number.isFinite(quote.price)) return null;
   return { price: quote.price, asOf: quote.asOf, provider: quote.provider };
+}
+
+/** The held position (if any) matching this order's symbol, normalized the same way the
+ *  drilldown join does — so a bare/exchange-suffixed mismatch can't silently fail. */
+export function matchPosition(positions: EquityPosition[] | undefined, symbol: string): EquityPosition | undefined {
+  if (!positions || positions.length === 0) return undefined;
+  const normalized = normalizeSymbol(symbol);
+  return positions.find((p) => normalizeSymbol(p.symbol) === normalized);
+}
+
+export interface EffectivePrice {
+  price: number;
+  source: "position" | "scan";
+  asOf?: string;
+  provider?: string;
+}
+
+/** The freshest price this screen can show for a symbol: when the account currently holds
+ *  it, the position's OWN mark (marketValue/quantity — from the SAME snapshot as the order,
+ *  so it can't be stale in a way the last scan isn't) beats the market-scan cache, which can
+ *  be minutes old (see lastScanPrice). Falls back to the scan price when the symbol isn't
+ *  held. Null when neither is available — render "—", never invent. */
+export function effectiveOrderPrice(position: EquityPosition | undefined, scan: ScanPrice | null): EffectivePrice | null {
+  const markPrice = positionMarkPrice(position);
+  if (markPrice !== null) return { price: markPrice, source: "position" };
+  if (scan) return { price: scan.price, source: "scan", asOf: scan.asOf, provider: scan.provider };
+  return null;
+}
+
+/** Estimated P/L for an open order that would CLOSE/REDUCE the matched position (see
+ *  isClosingOrder), using the UNFILLED remainder as the closing share count (what would
+ *  actually execute from here) and the freshest available price (see effectiveOrderPrice).
+ *  Null for an opening order, an order with no matching position, or a missing/non-positive
+ *  price or remainder — never fabricated. */
+export function closingOrderPnl(
+  order: EquityOrder,
+  remaining: number,
+  position: EquityPosition | undefined,
+  effectivePrice: EffectivePrice | null
+): EstimatedClosingPnl | null {
+  if (!isClosingOrder(order, position) || !position) return null;
+  return estimatedClosingPnl({ position, shares: remaining, currentPrice: effectivePrice?.price });
 }
 
 /** "17m" / "3h 2m" / "2d 5h" for whole-minute ages. */

@@ -5,6 +5,7 @@
 
 import type { DashboardSnapshot } from "../../dashboard-types";
 import type { PositionStopPlan } from "@/lib/db";
+import { normalizeSymbol } from "@/lib/money";
 import type {
   ConnectedAccount,
   EquityCurvePoint,
@@ -475,6 +476,78 @@ export function deriveMarkToMarket(snapshot: DashboardSnapshot): MarkToMarketInf
     cash: snapshot.portfolio?.cash,
     buyingPower: snapshot.portfolio?.buyingPower
   };
+}
+
+// ── Estimated closing P/L (sell-of-long / cover-of-short) ───────────────────
+
+/** The position's current per-share price implied by its own marked-to-market value
+ *  (marketValue / quantity) — for a short both are negative, so the ratio is still a
+ *  positive price. This is the SAME snapshot the position itself came from, so it is
+ *  fresher than a market-scan cache that can be minutes old. Null when the position is
+ *  missing, flat (quantity 0), or the ratio isn't a finite positive number — never invent
+ *  a price for a closed/degenerate position. */
+export function positionMarkPrice(
+  position: Pick<EquityPosition, "quantity" | "marketValue"> | undefined | null
+): number | null {
+  if (!position || !Number.isFinite(position.quantity) || position.quantity === 0) return null;
+  if (!Number.isFinite(position.marketValue)) return null;
+  const price = position.marketValue / position.quantity;
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
+export interface EstimatedClosingPnl {
+  pnl: number;
+  pnlPct: number;
+  basisPrice: number;
+  currentPrice: number;
+  shares: number;
+}
+
+/** Estimated realized P/L from closing `shares` of an existing position at `currentPrice`
+ *  right now. `shares` is always the POSITIVE count of shares this order would close —
+ *  independent of, and possibly smaller than, the position's own signed quantity (a
+ *  partial exit). Sign-correct for BOTH directions: a long-sell profits when currentPrice
+ *  is above the average cost; a short-cover profits when it's below (mirrors
+ *  positionEconomics's short handling in ui/drilldown-data.ts, which gets the same sign
+ *  for free from `quantity * (currentPrice - averageCost)` since a short's quantity is
+ *  negative — here `shares` is unsigned, so the direction is read explicitly off
+ *  `position.quantity`'s sign instead). Returns null when any input is missing or
+ *  non-positive — never invent a number from a partial picture. */
+export function estimatedClosingPnl(input: {
+  position: Pick<EquityPosition, "quantity" | "averageCost">;
+  shares: number | null | undefined;
+  currentPrice: number | null | undefined;
+}): EstimatedClosingPnl | null {
+  const { position, shares, currentPrice } = input;
+  const basisPrice = position.averageCost;
+  if (!Number.isFinite(basisPrice) || basisPrice <= 0) return null;
+  if (typeof shares !== "number" || !Number.isFinite(shares) || shares <= 0) return null;
+  if (typeof currentPrice !== "number" || !Number.isFinite(currentPrice) || currentPrice <= 0) return null;
+  const isShort = position.quantity < 0;
+  const perShare = isShort ? basisPrice - currentPrice : currentPrice - basisPrice;
+  return {
+    pnl: perShare * shares,
+    pnlPct: (perShare / basisPrice) * 100,
+    basisPrice,
+    currentPrice,
+    shares
+  };
+}
+
+/** True when a resting order would REDUCE/CLOSE the matched position: a long (quantity >
+ *  0) closes with a sell; a short (quantity < 0) closes with a buy or cover (brokers that
+ *  infer open/close from the account's position, e.g. Alpaca, report a short's cover as a
+ *  raw "buy" — src/lib/broker-side.ts toBrokerSide). A flat position (quantity 0, or no
+ *  matching position at all) has nothing to close. Symbols are compared via the same
+ *  normalizeSymbol the drilldown join uses, so a bare/exchange-suffixed mismatch can't
+ *  silently fail the match. */
+export function isClosingOrder(
+  order: Pick<EquityOrder, "symbol" | "side">,
+  position: Pick<EquityPosition, "symbol" | "quantity"> | undefined | null
+): boolean {
+  if (!position || !Number.isFinite(position.quantity) || position.quantity === 0) return false;
+  if (normalizeSymbol(order.symbol) !== normalizeSymbol(position.symbol)) return false;
+  return position.quantity < 0 ? order.side === "buy" || order.side === "cover" : order.side === "sell";
 }
 
 export interface UtilizationMeter {
