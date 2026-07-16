@@ -1,6 +1,6 @@
 # Settings Sub-pages Redesign
 
-- **Summary:** Redesigned the remaining settings sub-pages (`help.tsx`, `sharing.tsx`, `danger.tsx`, `learning-review.tsx`) to use the new `Card` layout, completing the transition away from the legacy iOS-style components.
+- **Summary:** Redesigned select settings sub-pages (`help.tsx`, `sharing.tsx`, `danger.tsx`, `learning-review.tsx`) to use the new `Card` layout as part of the transition away from the legacy iOS-style components.
 - **Why:** The user explicitly requested removing nested boxes and standardizing the UI with the shared `Card` layout across all console pages.
 - **Files:**
   - `app/console/settings/help.tsx`
@@ -12,4 +12,10 @@
 - **Verification:**
   - Replaced components successfully.
   - Ran `npm run build`, fixed a syntax error, then `npm run build` succeeded.
-- **Follow-ups:** None.
+- **Remaining iOS-component imports** (settings pages still importing `ListSection`/`ListRow` from `ios-components.tsx`):
+  - `app/console/settings/delivery.tsx`
+  - `app/console/settings/api-keys.tsx`
+  - `app/console/settings/page.tsx`
+  - `app/console/settings/brokers.tsx`
+  - The four pages listed above in this note were updated to Card layout but still retain the import (it is no longer used on those pages).
+- **Follow-ups:** Convert the remaining settings pages above and delete `ios-components.tsx` once all imports are gone.

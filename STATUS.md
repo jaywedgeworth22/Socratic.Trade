@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-16 — [codex-autofix] Round 4: Correct unfinished settings migration note in rollout note (branch `agent/aiplatform-auth-support-clean`, PR #1677)
+
+Codex review posted 1 new P2 finding after round 3:
+
+1. **Rollout note claimed completed settings migration, but ios-components.tsx still widely imported**: `docs/rollouts/2026-07-16-settings-subpages-redesign.md` said "completing the transition away from the legacy iOS-style components" with "Follow-ups: None", but `rg ios-components app/console/settings` shows 8 files still importing `ListSection`/`ListRow` from `ios-components.tsx`. Corrected summary to "part of the transition", documented the 4 remaining pages that still use ios-components, and added a proper follow-up to convert them and delete the file. (P2, resolved)
+
+Verify trio: lint 0 errors, tsc clean, 400 files / 4607 tests pass, build clean. Rollout: `docs/rollouts/2026-07-16-settings-subpages-redesign.md`.
+
 ## 2026-07-16 — [codex-autofix] Round 3: Fix inaccurate "Google Cloud API Keys" claim in rollout note (branch `agent/aiplatform-auth-support-clean`, PR #1677)
 
 Codex review posted 1 more P2 finding after round 2:
