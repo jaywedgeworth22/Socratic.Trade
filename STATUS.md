@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-07-16 — [codex-autofix] Round 3: Fix inaccurate "Google Cloud API Keys" claim in rollout note (branch `agent/aiplatform-auth-support-clean`, PR #1677)
+
+Codex review posted 1 more P2 finding after round 2:
+
+1. **Rollout note claimed Google Cloud API-key auth, but final code uses Bearer-only**: The round-2 autofix had removed all `x-goog-api-key` references from the code (both native and OpenAI-compatible Vertex URLs use Bearer auth), but the rollout note summary still said "Added support for Vertex AI's ... endpoint authentication via Google Cloud API Keys." Fixed the summary to accurately describe the URL-pattern detection and Bearer-only auth. (P2, resolved)
+
 ## 2026-07-16 — [codex-autofix] Round 2: scope x-goog-api-key to OpenAI-compatible Vertex URLs only (branch `agent/aiplatform-auth-support-clean`, PR #1677)
 
 Codex review posted 2 more P2 findings on the round-1 fixes:
