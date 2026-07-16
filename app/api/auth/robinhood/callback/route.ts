@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
       : null;
     const expectedUserId = sessionEmail ? resolveRequestUserFromEmail(sessionEmail).userId : undefined;
     await completeMcpOAuthCallback({ code, state, expectedUserId });
-    return NextResponse.redirect(new URL("/console/settings?robinhoodMcp=connected", resolvePublicAppOrigin(request)));
+    return NextResponse.redirect(new URL("/console/connections?robinhoodMcp=connected", resolvePublicAppOrigin(request)));
   } catch (callbackError) {
     return new NextResponse(callbackError instanceof Error ? callbackError.message : "Robinhood MCP OAuth callback failed.", {
       status: 500

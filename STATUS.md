@@ -25,6 +25,58 @@ Codex review posted 2 more P2 findings on the round-1 fixes:
 Both rounds verified: tsc clean, 400 files / 4607 tests pass, build clean. All 4 Codex threads resolved, auto-merge enabled.
 Rollout: `docs/rollouts/2026-07-16-aiplatform-auth.md`, `docs/rollouts/2026-07-16-settings-subpages-redesign.md`.
 
+## 2026-07-16 — Approval-time limit re-anchor + estimated closing P/L surfaces (MONET)
+
+Owner-directed. Pending limit proposals approved hours/overnight later no longer place at
+generation-time prices: `executeProposal` re-anchors the stored limit (and bracket legs,
+geometry-preserved and collision-clamped) to the fresh approval-time quote, preserving the
+limit-to-anchor ratio; material drift on live typed-confirmation re-queues for fresh
+consent (protective-exit/finalSize requote semantics), immaterial persists-then-places via
+CAS. Plus estimated closing P/L (broker averageCost basis, freshest snapshot mark,
+position-sign-gated) on sell/cover approval cards (console+mobile) and closing open orders,
+and an Orders-page Last-price freshness upgrade. Two-lens adversarial verify; all FIX
+findings fixed; 117 tests across 6 suites. strategy.ts untouched; types.ts additive-only.
+Branch `monet/todays-errors-triage-handoff-8d809b`.
+Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
+## 2026-07-16 — Settings de-iOS restoration + admin integration + Configure IA + site-wide UI wave (MONET, branch `monet/settings-page-styling-fix-d4add7`)
+
+Owner escalation ("Settings looked 10x better 3 days ago — it matched the rest of the site;
+every fix shows ~zero improvement"). Root cause: the 2026-07-12 "iOS UI refresh" (#1476)
+converted Settings + all 7 sub-cards OFF the console `con-*` primitives onto
+iPhone-Settings components; #1535/#1651 only reskinned containers. This wave, driven by a
+7-expert + design-lead-synthesis review workflow over full-page screenshots of all 16
+surfaces (current vs July-11 baseline captured from a temp worktree at `ffdc9d1f`):
+
+1. **Settings rebuilt on console primitives** — all modules restored to the July-11
+   architecture with every post-July-11 control ported (verified per-file: 4 modules had
+   zero content drift; brokers/danger/learning-review had #1492/#1544/#1631 content
+   preserved, incl. the deliberate Test-Account removal). Event notifications back to the
+   2-col checkbox grid with a full `EVENT_META: Record<NotificationEventType,{label,hint}>`
+   — plain-English labels for all 18 events, compile-error if a future event lacks copy.
+   `app/ui/ios-components.tsx` DELETED. Settings no longer h-scrolls at 390px.
+2. **Admin at top of site + same-app admin portal** — admin-only Admin link in the chrome
+   bar (+ UserMenu twin for phones); `/admin` fully migrated onto the console design system
+   (shared theme/font hooks, "← Console" always visible at top, console rail idiom, all 6
+   page clients on con-* primitives). `/console/usage`'s "admin design inside the console"
+   P0 fixed by the same shared-client port. Legacy `app/ui/markdown.tsx` deleted.
+3. **Configure IA** — nav renamed to match the pages (Strategy, Guardrails); NEW
+   `/console/connections` (brokers + API keys out of the Settings monolith); tax card
+   moved to Guardrails; webhook into Delivery channels; deep links retargeted with a hash
+   safety net; OAuth callback updated; copy sweep.
+4. **Naming canon + quick wins** — h1 = rail label everywhere via `destinationLabel()`
+   (9 of 13 surfaces had diverged); journal "…failed" rows no longer chip green; deleted
+   fabricated forced tags ("paper" / "notification failed") from the unified feed; verdict
+   enums and event ids out of user-facing copy; approvals empty state leads when queue is
+   empty; icon-only mobile Run once; Coach single-h1 + composer clear of the tab bar;
+   assorted token fixes (con-warn box, TONE_VAR.live, themeColor sync, undefined class).
+5. **Bonus bug** — consent-gate DECLINE now persists (was re-prompting on every load;
+   `needsConsent` treated "declined" as "never answered"). Regression test added.
+
+Verification: recorded in the rollout note (lint 0 errors, tsc clean, full suite, build,
+all 15 routes 200 on a local node-24 dev server, full-page re-shoot of every surface ×
+desktop-light/desktop-dark/mobile-light). Deferred WS-E backlog (radius/type sweeps,
+regime dead-tile collapse, public-page design system, etc.) in the rollout note. Rollout:
+`docs/rollouts/2026-07-16-settings-deios-admin-integration-ui-review.md`.
 ## 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE)
 
 PR #1661 merged the same day with no automated review (Codex hit its usage-limit cap on
@@ -59,6 +111,7 @@ regression test locking in the correct (no-teardown) behavior for that transitio
 4,604 tests green, tsc/build/lint clean. **Merged via PR #1667 as `0a5c9bd`; deployed to
 production via auto-deploy-on-merge.**
 Rollout: `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
+→ Codex autofix round 2 (2026-07-16): P2 scan-over-cost-fallback detection in `effectiveOrderPrice`; P2 cap oversize exit P/L estimate; P2 cap approval-card exit P/L to current position; P1 asked maintainer about referencePrice fallback ambiguity.
 ## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)
 
 Owner-directed continuation of the CLAUDE handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`

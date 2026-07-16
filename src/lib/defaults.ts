@@ -68,7 +68,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // NO llmModel / redTeamLlmModel here (owner directive 2026-07-07: no model default for anything,
   // ever). A seeded default here would resurrect the exact silent-default the model layer removed —
   // every new policy would "choose" gpt-5.4-mini without the user ever picking it. Both team models
-  // are REQUIRED explicit picks in Framework → Models; unset fails closed with an actionable
+  // are REQUIRED explicit picks in Strategy → Models; unset fails closed with an actionable
   // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
   // The PROPOSER's reasoning effort (per-team split 2026-07-10). NO redTeamReasoningEffort default
   // on purpose: absent means "inherit the proposer's" (resolveReviewerReasoningEffort) — seeding a

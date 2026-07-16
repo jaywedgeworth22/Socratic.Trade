@@ -4,8 +4,8 @@
 // (chat_turns.model). Reads GET /api/chat-history for the resolved user, chronological order.
 
 import { useCallback, useEffect, useState } from "react";
-import { Card } from "../../ui/primitives";
-import { Markdown } from "../../ui/markdown";
+import { Btn, Card } from "../../console/ui/primitives";
+import { Markdown } from "./markdown";
 
 interface Turn {
   id: string;
@@ -42,42 +42,41 @@ export function TranscriptClient() {
   }, [load]);
 
   return (
-    <div className="mx-auto min-h-screen max-w-4xl bg-base p-6 text-fg">
-      <div className="mb-6 flex items-start justify-between gap-4">
+    <div className="space-y-3">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-fg">Chat Transcript</h1>
-          <p className="mt-1 text-sm text-muted">Every chat turn, with the model that produced each assistant reply.</p>
+          <h1 className="text-xl font-semibold">Chat transcript</h1>
+          <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">Every chat turn, with the model that produced each assistant reply.</p>
         </div>
-        <button
-          onClick={() => void load()}
-          className="rounded-md border border-line bg-surface-2 px-3 py-1 text-xs text-muted transition-colors hover:text-fg"
-        >
+        <Btn variant="outline" size="sm" onClick={() => void load()}>
           Refresh
-        </button>
+        </Btn>
       </div>
 
-      {loading && <p className="text-sm text-muted">Loading…</p>}
-      {error && <p className="text-sm text-neg">{error}</p>}
-      {!loading && !error && turns.length === 0 && <p className="text-sm text-muted">No chat turns yet.</p>}
+      {loading && <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">Loading…</p>}
+      {error && <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]">{error}</p>}
+      {!loading && !error && turns.length === 0 && (
+        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">No chat turns yet.</p>
+      )}
 
       <div className="space-y-3">
         {turns.map((t) => (
-          <Card key={t.id} className="p-3">
-            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
-              <span className={t.role === "assistant" ? "font-medium text-accent" : "font-medium text-fg"}>
+          <Card key={t.id}>
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
+              <span className={t.role === "assistant" ? "font-medium text-[color:var(--con-accent)]" : "font-medium text-[color:var(--con-fg)]"}>
                 {t.role === "assistant" ? "Assistant" : "You"}
               </span>
               {t.role === "assistant" && (
-                <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-muted">{t.model ?? "—"}</span>
+                <span className="con-chip con-mono">{t.model ?? "—"}</span>
               )}
-              {t.intent && <span className="text-muted">· {t.intent}</span>}
-              {t.redacted && <span className="text-neg">· redacted</span>}
-              <span className="ml-auto text-faint">{new Date(t.createdAt).toLocaleString()}</span>
+              {t.intent && <span className="text-[color:var(--con-muted)]">· {t.intent}</span>}
+              {t.redacted && <span className="text-[color:var(--con-neg)]">· redacted</span>}
+              <span className="ml-auto text-[color:var(--con-faint)]">{new Date(t.createdAt).toLocaleString()}</span>
             </div>
             {t.role === "assistant" ? (
               <Markdown>{t.text}</Markdown>
             ) : (
-              <p className="whitespace-pre-wrap text-sm text-fg">{t.text}</p>
+              <p className="whitespace-pre-wrap text-[length:var(--con-fs-sm)]">{t.text}</p>
             )}
           </Card>
         ))}
