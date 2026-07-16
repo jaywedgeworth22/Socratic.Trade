@@ -18,8 +18,8 @@ and updated 10 hardcoded schema-version assertions (41 -> 42) in
 `test/persistence-hardening.test.ts` as legitimate collateral. Owner explicitly directed
 "Build both now" (Alpaca fix + full Tradier bracket feature) via `AskUserQuestion` after I
 flagged the scope difference. Unverified against a live Tradier account (unit-tested only,
-matching this adapter's existing testing posture). Branch
-`claude/bracket-sibling-leg-cancellation`.
+matching this adapter's existing testing posture). **Merged via PR #1661 as `a5c27e8`;
+deployed to production via auto-deploy-on-merge.**
 Rollout: `docs/rollouts/2026-07-16-alpaca-tradier-bracket-sibling-leg-teardown.md`.
 
 ## 2026-07-15 — Per-position stop plans: "none" short bypass, owner-decided (CLAUDE, branch `claude/stop-plans-none-short-override`)
