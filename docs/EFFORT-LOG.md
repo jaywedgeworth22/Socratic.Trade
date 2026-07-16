@@ -235,6 +235,27 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Alpaca + Tradier bracket sibling-leg cancellation (CLAUDE, PR #1661, branch
+  `claude/bracket-sibling-leg-cancellation`, merged as `a5c27e8`) — COMPLETED 2026-07-16;
+  deployed to production via auto-deploy-on-merge.** Closes the long-deferred "OCO
+  sibling-identity pairing" gap (owner asked directly which brokers can identify/cancel a
+  bracket's sibling legs by group ID; owner then directed "Build both now" via
+  `AskUserQuestion` after the Alpaca-vs-Tradier scope difference was flagged). Alpaca:
+  implemented `cancelBracketSiblingLegs` via nested-order GET + per-leg cancel (previously
+  unimplemented adapter capability, not a broker limitation). Tradier: built native
+  OTOCO/OTO bracket order placement from scratch (zero bracket support existed before),
+  wired into `brokerSupportsBrackets`, plus sibling-leg cancellation via Tradier's `leg`
+  array. New `pending_bracket_teardowns` queue + migration v42
+  (`position_stop_plans.opening_order_id` + new table) decouples cheap DB-write-time plan-
+  change detection from reconcile-time broker-side leg cancellation
+  (`reconcilePendingBracketTeardowns`). Fixed a migration guard bug (`sqlite_master`
+  existence check before `ALTER TABLE`), updated 10 hardcoded schema-version assertions
+  (41->42) in `test/persistence-hardening.test.ts`, and closed an account-deletion/purge
+  coverage gap for the new table (caught by the existing `account-deletion-coverage.test.ts`).
+  392 files / 4,536 tests green post-merge, tsc/build/lint clean. Unverified against a live
+  Tradier account (unit-tested only against documented API shape) — treat the first live
+  Tradier bracket fill as the real acceptance test. Rollout:
+  `docs/rollouts/2026-07-16-alpaca-tradier-bracket-sibling-leg-teardown.md`.
 - **Record final PR coordination cleanup (CODEX, PR #1614, branch `codex/final-coordination-cleanup`, merged as `ede902f5`) — COMPLETED 2026-07-15 (row back-filled by MONET board-hygiene pass 2026-07-15, handoff section 2(a): missing Completed row for a merged PR).** Docs-only: recorded that PR #1586 and PR #1612 were merged and production-verified, closed stale coordination wording for superseded PRs #1610/#1611, and added the final rollout receipt for the open-PR cleanup. Verified `git diff --check`; production `/api/health` reported exact `main@3c015a52fbc229036195053aaef5d879bc52ba77`; `gh pr list --state open` returned `[]` before this docs PR was opened. Rollout: `docs/rollouts/2026-07-15-final-coordination-cleanup.md`.
 - **Watchlist & Order Row Button Tooltip Alignment (AG, PR #1575, branch `agent/ag-watchlist-tooltip-fix`) — COMPLETED 2026-07-14 (merged as `07c2da3f`).** Aligned watchlist and order-row action tooltips to the right to prevent edge clipping; TypeScript, lint, tests, and build passed.
 - **Account-relative risk final-size/lifecycle follow-up (CODEX, PR #1587, branch `codex/account-relative-risk-review-fixes`) — COMPLETED 2026-07-14 (merged as `acd67a5c`).** Closed post-merge sizing, lifecycle, consent, fill-accounting, funding-order, and Green/Red receipt findings with local and hosted gates green.
@@ -2770,11 +2791,7 @@ As of 2026-07-08 (assignment-rule update).
   artifacts/sections/facts, exact accepted timestamps,
   amendments/supersession, worker adapters, and PIT-
   safe replay before any bulk embed.
-- **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter (CODEX program; RAG-B01/B02/B08/B09/
-  B17, claimed 2026-07-13) — IN PROGRESS / HOSTILE RE-REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed missing
-  migration integration, header-only body deadlines/permits, process-local concurrency, stale-slot pacing collapse,
-  SEC-host/redirect/abort/Retry-After bypasses, fail-open PIT receipts, order-dependent conflicts, and unbounded
-  bodies/rows/diagnostics. No SEC fetch/archive write is authorized before independent acceptance.
+- **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter / Phase 2 (Antigravity/AG, branch `agent/ag-rag-backfill-p2`; RAG-B01/B02/B08/B09/B17, claimed 2026-07-15) — READY FOR PR.** Implemented a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
 - **SEC/RAG P0 DOM/iXBRL parser + tokenizer-aware section/table chunker (CODEX program; RAG-B04/B05, claimed 2026-07-13)
   — IN PROGRESS / HOSTILE REVIEW REJECTED; FIXES UNDERWAY.** Review confirmed forgeable tokenizer/provenance gates,
   mutable payload-unbound eligibility, timezone-dependent identities, non-interruptible/pre-allocation bounds,
@@ -2819,18 +2836,25 @@ As of 2026-07-08 (assignment-rule update).
   branch `claude/per-position-stop-plans`, stacked on PR #1331) — COMPLETED (merged to `main` via
   PR #1371, 2026-07-11T07:39:12Z; deployed to production via auto-deploy-on-merge).** Landed after
   7 rounds of Codex review + a merge-conflict reconciliation against a concurrent `strategy.ts`
-  split refactor (see `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`). One thread
-  deliberately left open on the merged PR: whether an explicit `none` stopPlan on a SHORT should
-  also bypass the pre-existing mandatory `shortStopLossPct` gate (a distinct short-specific safety
-  invariant, not the general "none is never blocked" rule) — awaiting owner's call, not a bug.
+  split refactor (see `docs/rollouts/2026-07-11-pr1371-strategy-split-merge.md`).
   Round 8 (2026-07-15, `claude/stop-plans-round8-followups`): 2 more genuine Codex findings against
   the merged code fixed (missing stop-plan commit in `reconcilePlacementError`'s fresh-fill path;
   `synthetic-stops.ts` purge gap for a plan reset to default with no account-wide trailing %); one
   finding confirmed not reproducible against current `main` (already self-correcting via live
-  basis lookups added by later hardening PRs); one deferred (OCO/bracket sibling-leg cancellation
-  — same class as the pre-existing deferred OCO-sibling-identity gap, needs a broker API change).
-  Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`. MOVED from Planned (below) —
-  same title, see that entry for the full original design/requirements record.
+  basis lookups added by later hardening PRs); one deferred (OCO/bracket sibling-leg cancellation).
+  Rollout: `docs/rollouts/2026-07-15-stop-plans-round8-followups.md`.
+  Follow-up (2026-07-15, `claude/stop-plans-none-short-override`): the one thread deliberately left
+  open on the merged PR — whether an explicit `none` stopPlan on a SHORT should also bypass the
+  pre-existing mandatory `shortStopLossPct` gate — resolved by owner ("if the LLM decides that it
+  does not want a stop plan, that is okay"); gate updated so `none` (like `fixed`/`atr`/`trailing`)
+  satisfies the requirement, `default` deliberately does not. Also researched (not fixed): the
+  OCO/bracket sibling-leg-cancellation gap is confirmed an UNIMPLEMENTED adapter capability, not a
+  broker-API wall — Alpaca's `?nested=true` order fetch returns sibling leg IDs off the
+  already-tracked original entry order ID; `alpaca.ts` just doesn't use it yet. Not applicable to
+  Robinhood (no bracket/OCO support there at all). Rollout:
+  `docs/rollouts/2026-07-15-stop-plans-none-short-override.md`.
+  MOVED from Planned (below) — same title, see that entry for the full original design/requirements
+  record.
   **Implemented:** `TradeProposal.stopPlan` (`StopPlanStyle` = default/fixed/atr/trailing/none) in
   the LLM structured-output schema + `sanitizeProposals` coercion; `position_stop_plans` table +
   CRUD (`getStopPlans`/`recordStopPlan`/`clearStopPlans`, mirroring `take_profit_trims`), persisted

@@ -214,6 +214,11 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
     expect(p.referencePrice).toBe(100);
     expect(p.bracketStopLoss).toBeUndefined();
   });
+  it("attaches stop/take brackets for Tradier too (native OTOCO/OTO bracket support)", () => {
+    const p = enrichOpeningProposal(buy(), policy({ activeBroker: "tradier", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }), marketScan);
+    expect(p.bracketStopLoss).toBe(92);
+    expect(p.bracketTakeProfit).toBe(120);
+  });
   it("attaches no brackets when brokerBracketsEnabled is false", () => {
     const p = enrichOpeningProposal(buy(), policy({ activeBroker: "alpaca", brokerBracketsEnabled: false, riskRules: { stopLossPct: 8 } }), marketScan);
     expect(p.bracketStopLoss).toBeUndefined();

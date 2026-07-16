@@ -3,7 +3,7 @@
 // provider error (status code + response body) into a short, user-actionable sentence, and falls back
 // to the trimmed raw text when it does not recognize the shape, so nothing is ever hidden.
 
-export type LlmProviderName = "OpenAI" | "Anthropic (Claude)" | "xAI (Grok)" | "Google (Gemini)" | "Mistral" | "DeepSeek" | "the LLM";
+export type LlmProviderName = "OpenAI" | "Anthropic (Claude)" | "xAI (Grok)" | "Google (Gemini)" | "Mistral" | "DeepSeek" | "OpenRouter" | "the LLM";
 
 /** Map an internal provider id (openai/xai/gemini/mistral/deepseek/anthropic) to a display name. */
 export function providerLabel(provider?: string | null): LlmProviderName {
@@ -16,6 +16,8 @@ export function providerLabel(provider?: string | null): LlmProviderName {
       return "Mistral";
     case "deepseek":
       return "DeepSeek";
+    case "openrouter":
+      return "OpenRouter";
     case "anthropic":
       return "Anthropic (Claude)";
     case "openai":
@@ -32,6 +34,7 @@ export function providerFromText(raw: string): LlmProviderName {
   if (/anthropic|claude/.test(s)) return "Anthropic (Claude)";
   if (/generativelanguage|gemini/.test(s)) return "Google (Gemini)";
   if (/mistral|mixtral|codestral|ministral/.test(s)) return "Mistral";
+  if (/openrouter/.test(s)) return "OpenRouter";
   if (/deepseek/.test(s)) return "DeepSeek";
   if (/openai|platform\.openai|^sk-/.test(s)) return "OpenAI";
   return "the LLM";
@@ -72,7 +75,7 @@ function extractStructuredProviderError(
 /** Matches text that is ALREADY a humanizeLlmError output ("<Provider label> error ...: ...") so a
  *  second pass (e.g. humanizeLlmTransportError re-wrapping an Error whose message was humanized at
  *  the throw site) returns it unchanged instead of stuttering "Gemini error: Gemini error: ...". */
-const ALREADY_HUMANIZED = /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|the LLM) error\b/;
+const ALREADY_HUMANIZED = /^(?:OpenAI|Anthropic \(Claude\)|xAI \(Grok\)|Google \(Gemini\)|Mistral|DeepSeek|OpenRouter|the LLM) error\b/;
 
 /**
  * Convert a raw LLM error (and optional HTTP status) into a plain-English, actionable message.

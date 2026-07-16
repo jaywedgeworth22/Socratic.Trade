@@ -32,6 +32,53 @@ import {
 } from "../operation-lease";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { loadCikMap } from "./sec8k";
+import * as fs from "fs";
+import * as path from "path";
+
+function getLocalArtifactPath(cik: string, accession: string, sequence: number, documentName: string): string {
+  const paddedCik = padCik(cik);
+  const cleanDocName = documentName.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const dataDir = process.env.DATA_DIR ?? "data";
+  return path.join(dataDir, "sec-artifacts", paddedCik, accession, `${sequence}-${cleanDocName}`);
+}
+
+async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
+  const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
+  try {
+    if (fs.existsSync(filePath)) {
+      return await fs.promises.readFile(filePath, "utf8");
+    }
+  } catch (err) {
+    console.warn(`[sec-filings] readLocalArtifact failed for ${filePath}:`, err);
+  }
+  return null;
+}
+
+async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
+  const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
+  try {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, content, "utf8");
+  } catch (err) {
+    console.warn(`[sec-filings] writeLocalArtifact failed for ${filePath}:`, err);
+  }
+}
+
+async function getCikForTicker(ticker: string): Promise<string> {
+  try {
+    const cikMap = await loadCikMap(Date.now());
+    if (cikMap && typeof cikMap === "object") {
+      for (const [cik, tick] of Object.entries(cikMap)) {
+        if (tick && tick.toUpperCase() === ticker.toUpperCase()) {
+          return cik;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[sec-filings] getCikForTicker failed for ${ticker}:`, err);
+  }
+  return "0000000000";
+}
 
 const SEC_BASE = "https://www.sec.gov";
 const EDGAR_DATA_BASE = "https://data.sec.gov";
@@ -129,20 +176,20 @@ interface SubmissionsRecent {
 
 interface SubmissionsJson {
   cik?: string | number;
-  filings?: { recent?: SubmissionsRecent };
+  filings?: {
+    recent?: SubmissionsRecent;
+    files?: Array<{ name: string; filingCount: number; filingStart: string; filingEnd: string }>;
+  };
 }
 
-/**
- * Parse a EDGAR submissions JSON blob into FilingRef entries, filtering to the requested
- * docTypes and returning at most `limit` per docType (newest-first).
- */
-export function parseRecentFilings(
-  json: SubmissionsJson,
+/** Helper to parse a flat block of filings (recent or a submissions shard). */
+function parseFilingBlock(
+  recent: SubmissionsRecent | undefined,
   cik: string,
   docTypes: Array<"10-K" | "10-Q">,
-  limitPerType: number
+  limitPerType: number,
+  countPerType: Record<string, number>
 ): FilingRef[] {
-  const recent = json?.filings?.recent;
   if (!recent) return [];
 
   const accessions = recent.accessionNumber ?? [];
@@ -152,9 +199,6 @@ export function parseRecentFilings(
   const primaries = recent.primaryDocument ?? [];
 
   const out: FilingRef[] = [];
-  const countPerType: Record<string, number> = {};
-  for (const dt of docTypes) countPerType[dt] = 0;
-
   for (let i = 0; i < accessions.length; i++) {
     const form = forms[i] as "10-K" | "10-Q" | undefined;
     if (!form || !docTypes.includes(form)) continue;
@@ -179,10 +223,25 @@ export function parseRecentFilings(
   return out;
 }
 
+/**
+ * Parse a EDGAR submissions JSON blob into FilingRef entries, filtering to the requested
+ * docTypes and returning at most `limit` per docType (newest-first).
+ */
+export function parseRecentFilings(
+  json: SubmissionsJson,
+  cik: string,
+  docTypes: Array<"10-K" | "10-Q">,
+  limitPerType: number
+): FilingRef[] {
+  const countPerType: Record<string, number> = {};
+  for (const dt of docTypes) countPerType[dt] = 0;
+  return parseFilingBlock(json?.filings?.recent, cik, docTypes, limitPerType, countPerType);
+}
+
 // ── Network helpers ──────────────────────────────────────────────────────────
 
 /**
- * Fetch the SEC EDGAR submissions JSON for a single CIK.
+ * Fetch the SEC EDGAR submissions JSON for a single CIK, including historical shards if needed.
  * Returns undefined (does NOT throw) if the network call fails — let callers decide.
  */
 export async function fetchRecentFilings(
@@ -192,12 +251,49 @@ export async function fetchRecentFilings(
 ): Promise<FilingRef[]> {
   const padded = padCik(cik);
   const url = `${EDGAR_DATA_BASE}/submissions/CIK${padded}.json`;
-  const raw = await politeFetchText(url, {
-    headers: { "user-agent": secUserAgent(), accept: "application/json" },
-    timeoutMs: 15_000
-  });
+  let raw: string;
+  try {
+    raw = await politeFetchText(url, {
+      headers: { "user-agent": secUserAgent(), accept: "application/json" },
+      timeoutMs: 15_000
+    });
+  } catch (err) {
+    console.warn(`[sec-filings] failed to fetch submissions for CIK ${padded}:`, err);
+    return [];
+  }
+
   const json = JSON.parse(raw) as SubmissionsJson;
-  return parseRecentFilings(json, cik, docTypes, limitPerType);
+  const countPerType: Record<string, number> = {};
+  for (const dt of docTypes) countPerType[dt] = 0;
+
+  const out = parseFilingBlock(json?.filings?.recent, cik, docTypes, limitPerType, countPerType);
+
+  // Check if we need more filings and have shards available
+  const needsMore = docTypes.some(dt => (countPerType[dt] ?? 0) < limitPerType);
+  const files = json?.filings?.files;
+  if (needsMore && Array.isArray(files) && files.length > 0) {
+    // Sort shards in reverse chronological order (newest date first)
+    const sortedFiles = [...files].sort((a, b) => b.filingEnd.localeCompare(a.filingEnd));
+    for (const file of sortedFiles) {
+      const stillNeeds = docTypes.some(dt => (countPerType[dt] ?? 0) < limitPerType);
+      if (!stillNeeds) break;
+
+      try {
+        const shardUrl = `${EDGAR_DATA_BASE}/submissions/${file.name}`;
+        const shardRaw = await politeFetchText(shardUrl, {
+          headers: { "user-agent": secUserAgent(), accept: "application/json" },
+          timeoutMs: 15_000
+        });
+        const shardJson = JSON.parse(shardRaw) as SubmissionsRecent;
+        const shardRefs = parseFilingBlock(shardJson, cik, docTypes, limitPerType, countPerType);
+        out.push(...shardRefs);
+      } catch (err) {
+        console.warn(`[sec-filings] failed to fetch/parse shard ${file.name}:`, err);
+      }
+    }
+  }
+
+  return out;
 }
 
 /**
@@ -210,6 +306,45 @@ export async function fetchFilingHtml(url: string): Promise<string> {
     timeoutMs: 30_000
   });
 }
+
+export interface FilingDirectoryItem {
+  name: string;
+  type?: string;
+  size?: number;
+}
+
+/**
+ * Fetch and parse index.json for a specific filing accession to discover all documents/exhibits.
+ */
+export async function fetchFilingDirectory(cik: string, accession: string): Promise<FilingDirectoryItem[]> {
+  const paddedCik = padCik(cik);
+  const noSlashAcc = accessionNoDashes(accession);
+  const url = `${SEC_BASE}/Archives/edgar/data/${paddedCik}/${noSlashAcc}/index.json`;
+
+  try {
+    const raw = await politeFetchText(url, {
+      headers: { "user-agent": secUserAgent(), accept: "application/json" },
+      timeoutMs: 15_000
+    });
+    const parsed = JSON.parse(raw) as {
+      directory?: { item?: Array<{ name?: string; type?: string; size?: string | number }> };
+    };
+    const items = parsed?.directory?.item;
+    if (!Array.isArray(items)) return [];
+
+    return items
+      .map((item) => ({
+        name: item.name ?? "",
+        type: item.type,
+        size: item.size ? Number(item.size) : undefined
+      }))
+      .filter((item) => item.name !== "");
+  } catch (err) {
+    console.warn(`[sec-filings] fetchFilingDirectory failed for CIK ${paddedCik} accession ${accession}:`, err);
+    return [];
+  }
+}
+
 
 // ── HTML → plain text ────────────────────────────────────────────────────────
 
@@ -290,10 +425,15 @@ export async function ingestFiling(
     return { skipped: true, chunks: 0, budgetExhausted: true };
   }
 
-  let html: string;
+  let html: string | null = null;
+  const cik = await getCikForTicker(ticker);
   try {
     assertSecFilingLease(leaseGuard);
-    html = await fetchFilingHtml(filingRef.url);
+    html = await readLocalArtifact(cik, filingRef.accession, 1, filingRef.primaryDoc || "main.html");
+    if (html === null) {
+      html = await fetchFilingHtml(filingRef.url);
+      await writeLocalArtifact(cik, filingRef.accession, 1, filingRef.primaryDoc || "main.html", html);
+    }
     assertSecFilingLease(leaseGuard);
   } catch (err) {
     // A stale owner must never turn lease loss into an ordinary provider warning and continue

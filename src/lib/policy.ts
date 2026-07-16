@@ -438,17 +438,25 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         : `the connected account does not support short selling`;
       reasons.push(`Order side "${proposal.side}" rejected: ${why}.`);
     } else {
-      // An explicit per-position "fixed"/"atr"/"trailing" plan satisfies the mandatory-stop
-      // requirement the same way it satisfies the bracket-permission gate above — it guarantees this
-      // short a real stop (via STOP_PLAN_FALLBACK_STOP_PCT or the trailing lane) even on an account
-      // with no account-wide shortStopLossPct configured (Codex review, PR #1371). A "none" plan does
-      // NOT satisfy this gate — that's a deliberate, separate safety invariant for shorts specifically
-      // (unbounded loss direction), not the general "risk-increasing choices aren't gated" rule this
-      // repo applies to per-position stop plans elsewhere; see the PR comment for the open question.
-      const hasExplicitDistancePlan =
-        proposal.stopPlan?.style === "fixed" || proposal.stopPlan?.style === "atr" || proposal.stopPlan?.style === "trailing";
-      if ((!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) && !hasExplicitDistancePlan) {
-        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct, or an explicit fixed/atr/trailing stopPlan).`);
+      // An explicit per-position stopPlan satisfies the mandatory-stop requirement the same way it
+      // satisfies the bracket-permission gate above: "fixed"/"atr"/"trailing" guarantee this short a
+      // real stop (via STOP_PLAN_FALLBACK_STOP_PCT or the trailing lane) even on an account with no
+      // account-wide shortStopLossPct configured (Codex review, PR #1371). An explicit "none" ALSO
+      // satisfies this gate (owner decision, 2026-07-15 — "if the LLM decides it does not want a stop
+      // plan, that is okay"): the mandatory-stop-loss requirement exists to prevent an accidental,
+      // un-stopped short, not to override a deliberate, rationale-backed owner/LLM choice to carry
+      // one without a stop — same "real trading, owner's risk" precedent as `stopPlan: "none"` never
+      // being hard-blocked elsewhere in this file. An explicit "default" does NOT satisfy this gate —
+      // it defers to the account's own precedence, which in this branch has no shortStopLossPct
+      // configured, so it guarantees nothing; only fixed/atr/trailing/none are genuine, deliberate
+      // choices with a known outcome.
+      const hasExplicitStopPlan =
+        proposal.stopPlan?.style === "fixed" ||
+        proposal.stopPlan?.style === "atr" ||
+        proposal.stopPlan?.style === "trailing" ||
+        proposal.stopPlan?.style === "none";
+      if ((!context.policy.riskRules?.shortStopLossPct || context.policy.riskRules.shortStopLossPct <= 0) && !hasExplicitStopPlan) {
+        reasons.push(`Short proposals must carry a mandatory stop-loss (policy.riskRules.shortStopLossPct, or an explicit stopPlan).`);
       }
       if (context.policy.maxShortOrderNotional && estimatedNotional > context.policy.maxShortOrderNotional) {
         reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the max short order limit of $${context.policy.maxShortOrderNotional}`);
