@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-07-16 — Approval-time limit re-anchor + estimated closing P/L surfaces (MONET)
+
+Owner-directed. Pending limit proposals approved hours/overnight later no longer place at
+generation-time prices: `executeProposal` re-anchors the stored limit (and bracket legs,
+geometry-preserved and collision-clamped) to the fresh approval-time quote, preserving the
+limit-to-anchor ratio; material drift on live typed-confirmation re-queues for fresh
+consent (protective-exit/finalSize requote semantics), immaterial persists-then-places via
+CAS. Plus estimated closing P/L (broker averageCost basis, freshest snapshot mark,
+position-sign-gated) on sell/cover approval cards (console+mobile) and closing open orders,
+and an Orders-page Last-price freshness upgrade. Two-lens adversarial verify; all FIX
+findings fixed; 117 tests across 6 suites. strategy.ts untouched; types.ts additive-only.
+Branch `monet/todays-errors-triage-handoff-8d809b`.
+Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
+
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
 ## 2026-07-16 — Alpaca + Tradier bracket sibling-leg cancellation (CLAUDE)
