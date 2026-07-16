@@ -268,7 +268,7 @@ function FontOptionGrid<F extends string>({
             aria-pressed={isSelected}
             title={option.description}
             onClick={() => onSelect(option.value)}
-            className={`min-h-[88px] rounded-lg border px-3 py-2 text-left transition-colors ${
+            className={`min-h-[88px] rounded-control border px-3 py-2 text-left transition-colors ${
               isSelected
                 ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
                 : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-accent-border)]"
@@ -328,7 +328,7 @@ function AdminLinksCard() {
           <a
             key={link.href}
             href={link.href}
-            className="con-row flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 text-[length:var(--con-fs-sm)]"
+            className="con-row flex items-center justify-between gap-3 rounded-control px-1.5 py-1.5 text-[length:var(--con-fs-sm)]"
             title={`${link.desc} Opens outside the console.`}
           >
             <span>
@@ -380,7 +380,7 @@ function EventNotificationsCard() {
             <label
               key={type}
               title={`${type} — when on, you get a notification whenever ${hint}. (${type} is the event's id in webhook payloads and the audit log.)`}
-              className="flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
+              className="flex cursor-pointer items-start gap-2 rounded-control px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
             >
               {/* Native checkbox inside its <label>: the visible text IS the accessible
                   name — no aria-label needed (unlike the Toggle primitive elsewhere). */}
@@ -467,7 +467,7 @@ function BootBehaviorCard() {
   return (
     <Card title="After a restart">
       <div
-        className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+        className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
         title="Controls what happens to Running accounts when the server process restarts. Off keeps the safety net: a human must start trading again."
       >
         <div>

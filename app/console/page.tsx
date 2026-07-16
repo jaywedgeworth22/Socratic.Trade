@@ -510,7 +510,7 @@ function ThesisNarrative({
 
   return (
     <div className="mt-3 grid gap-3 text-[length:var(--con-fs-sm)] leading-relaxed">
-      <section className="rounded-lg border border-[color:var(--con-pos-border)] border-l-4 border-l-[color:var(--con-pos)] bg-[color:var(--con-pos-soft)] px-3 py-2.5">
+      <section className="rounded-control border border-[color:var(--con-pos-border)] border-l-4 border-l-[color:var(--con-pos)] bg-[color:var(--con-pos-soft)] px-3 py-2.5">
         <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-pos)]">
           Green Team proposal
         </div>
@@ -518,7 +518,7 @@ function ThesisNarrative({
       </section>
 
       {(parts.checks || sizing) && (
-        <section className="rounded-lg border border-[color:var(--con-line)] px-3 py-2.5">
+        <section className="rounded-control border border-[color:var(--con-line)] px-3 py-2.5">
           <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-faint)]">
             Deterministic sizing &amp; risk receipts
           </div>
@@ -551,7 +551,7 @@ function ThesisNarrative({
       )}
 
       {redTeam && (
-        <section className="rounded-lg border border-[color:var(--con-neg-border)] border-l-4 border-l-[color:var(--con-neg)] bg-[color:var(--con-neg-soft)] px-3 py-2.5">
+        <section className="rounded-control border border-[color:var(--con-neg-border)] border-l-4 border-l-[color:var(--con-neg)] bg-[color:var(--con-neg-soft)] px-3 py-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[length:var(--con-fs-xs)] font-bold uppercase tracking-[0.12em] text-[color:var(--con-neg)]">
               Red Team review
@@ -566,7 +566,7 @@ function ThesisNarrative({
 
       {outcome && (
         <section
-          className={`rounded-lg border px-3 py-2.5 ${
+          className={`rounded-control border px-3 py-2.5 ${
             outcome.tone === "pos"
               ? "border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)]"
               : outcome.tone === "neg"
@@ -1025,7 +1025,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
           </div>
           <p>{proposal.proposedChange}</p>
           {proposal.aiReview && (
-            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+            <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
               <div className="flex items-center gap-2 font-semibold">
                 <Brain size={13} /> AI recommends: {proposal.aiReview.verdict}
               </div>

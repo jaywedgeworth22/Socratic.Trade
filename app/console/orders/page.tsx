@@ -300,7 +300,7 @@ export default function OrdersPage() {
 
       {staleCount > 0 && (
         <div
-          className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-sm)]"
+          className="rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-sm)]"
           title={`Your policy's stale threshold is ${thresholdMinutes} minutes (Settings → "Stale limit alert").`}
         >
           <span className="font-semibold text-[color:var(--con-warn)]">
@@ -606,7 +606,7 @@ function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount,
   return (
     <div
       className={cx(
-        "con-row flex flex-col gap-2 rounded-lg border border-[color:var(--con-line)] p-3",
+        "con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3",
         row.stale && "bg-[color:var(--con-warn-soft)]"
       )}
     >
@@ -628,7 +628,7 @@ function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount,
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 text-[length:var(--con-fs-sm)]">
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Order size as the broker holds it; partial fills shown underneath.">
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Order size as the broker holds it; partial fills shown underneath.">
           <div className="flex justify-between items-baseline gap-0.5">
             <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Size</span>
             <div className="con-num truncate">
@@ -640,7 +640,7 @@ function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount,
           </div>
         </div>
         <div
-          className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
+          className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
           title={
             view.limit !== undefined && view.stop !== undefined
               ? `Stop-limit: triggers at the ${fmtMoney(view.stop)} stop, then rests as a ${fmtMoney(view.limit)} limit.`
@@ -657,7 +657,7 @@ function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount,
           </div>
         </div>
         <div
-          className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
+          className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
           title={
             view.price?.source === "position"
               ? "This account's own held mark for the symbol (marketValue / quantity), from the same snapshot as this order — not a live broker quote."
@@ -674,7 +674,7 @@ function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount,
           </div>
         </div>
         <div
-          className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
+          className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
           title={
             row.thresholdMinutes > 0
               ? `How long the order has been working. Limit/stop-limit orders older than your ${row.thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
@@ -695,7 +695,7 @@ function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount,
         </div>
         {view.estPnl && (
           <div
-            className="col-span-2 rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
+            className="col-span-2 rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
             title="Estimated realized P/L if this order's unfilled remainder closed right now at the last known price."
           >
             <div className="flex justify-between items-baseline gap-0.5">
@@ -716,7 +716,7 @@ function OpenOrderCard({ row, quotes, positions, companyName, halted, noAccount,
  *  actions row. */
 function FinishedOrderCard({ order }: { order: EquityOrder }) {
   return (
-    <div className="con-row flex flex-col gap-2 rounded-lg border border-[color:var(--con-line)] p-3">
+    <div className="con-row flex flex-col gap-2 rounded-control border border-[color:var(--con-line)] p-3">
       <div className="flex items-center justify-between gap-2">
         <SymbolButton symbol={order.symbol} />
         <Chip tone={stateTone(order.state)} title="Final state the broker reported for this order.">
@@ -724,7 +724,7 @@ function FinishedOrderCard({ order }: { order: EquityOrder }) {
         </Chip>
       </div>
       <div className="grid grid-cols-2 gap-2 text-[length:var(--con-fs-sm)]">
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title={SIDE_TITLE[order.side] ?? "Order direction."}>
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title={SIDE_TITLE[order.side] ?? "Order direction."}>
           <div className="flex justify-between items-baseline gap-0.5">
             <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Side</span>
             <div className={cx("con-num truncate", isExit(order.side) ? "font-semibold text-[color:var(--con-warn)]" : "font-semibold")}>
@@ -732,13 +732,13 @@ function FinishedOrderCard({ order }: { order: EquityOrder }) {
             </div>
           </div>
         </div>
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Order size: share quantity or approximate dollar amount.">
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Order size: share quantity or approximate dollar amount.">
           <div className="flex justify-between items-baseline gap-0.5">
             <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Size</span>
             <div className="con-num truncate">{sizeText(order)}</div>
           </div>
         </div>
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Average price the broker reports for the executed part; '—' when nothing executed.">
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Average price the broker reports for the executed part; '—' when nothing executed.">
           <div className="flex justify-between items-baseline gap-0.5">
             <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Avg fill</span>
             <div className="con-num truncate">
@@ -746,7 +746,7 @@ function FinishedOrderCard({ order }: { order: EquityOrder }) {
             </div>
           </div>
         </div>
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="When the broker last updated the order.">
+        <div className="rounded-control bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="When the broker last updated the order.">
           <div className="flex justify-between items-baseline gap-0.5">
             <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Updated</span>
             <div className="con-num text-right">

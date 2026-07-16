@@ -345,19 +345,19 @@ export default function ApprovalsPage() {
         >
           <div className="flex flex-col gap-3">
             <div className="grid gap-2 sm:grid-cols-4">
-              <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+              <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Visible</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{summary.count}</div>
               </div>
-              <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+              <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Live</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{summary.liveCount}</div>
               </div>
-              <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+              <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Risk-reducing exits</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{summary.exitCount}</div>
               </div>
-              <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+              <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
                 <div className="con-card-title">Estimated notional</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{fmtMoney(summary.totalEstimatedNotional)}</div>
               </div>
@@ -584,7 +584,7 @@ function BulkLiveApproveSheet({
 
   return (
     <Sheet open={open} onClose={close} title="Approve live batch" tone="live">
-      <div className="mb-3 rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+      <div className="mb-3 rounded-control border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
         <div className="font-bold">
           {live.length} live order{live.length === 1 ? "" : "s"} selected
         </div>
@@ -598,7 +598,7 @@ function BulkLiveApproveSheet({
         </p>
       </div>
 
-      <div className="mb-3 max-h-48 overflow-auto rounded-lg border border-[color:var(--con-line)]">
+      <div className="mb-3 max-h-48 overflow-auto rounded-control border border-[color:var(--con-line)]">
         {live.map((proposal) => (
           <div key={proposal.id} className="flex items-center justify-between gap-3 border-b border-[color:var(--con-line)] px-3 py-2 last:border-b-0">
             <div>

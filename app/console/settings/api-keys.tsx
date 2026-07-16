@@ -91,7 +91,7 @@ export function ApiKeysCard() {
       </p>
 
       {loadError && (
-        <p className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+        <p className="mb-3 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
           {loadError} — showing nothing rather than something stale.{" "}
           <button type="button" className="font-semibold underline" onClick={() => void load()} title="Try loading the key list again.">
             Retry
@@ -109,7 +109,7 @@ export function ApiKeysCard() {
             <div className="con-card-title mb-1.5" title={`Keys in the "${category}" group.`}>
               {category}
             </div>
-            <div className="flex flex-col divide-y divide-[color:var(--con-line)] rounded-lg border border-[color:var(--con-line)]">
+            <div className="flex flex-col divide-y divide-[color:var(--con-line)] rounded-control border border-[color:var(--con-line)]">
               {list.map((entry) => {
                 const credName = entry.credentialName ?? "key";
                 const source = getSourceCopy(entry.source, credName);
@@ -184,7 +184,7 @@ export function ApiKeysCard() {
                       {entry.unlocks}
                     </p>
                     {isConfirmingDelete && (
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-2.5">
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-control border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-2.5">
                         <span className="text-[length:var(--con-fs-xs)]">
                           Remove your {entry.label} {credName}? This can&apos;t be undone — you&apos;d have to paste a new {credName}.
                         </span>
@@ -252,7 +252,7 @@ function KeyEditor({
   const credName = entry.credentialName ?? "key";
 
   return (
-    <div className="mt-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5">
+    <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5">
       <div className="grid gap-2.5 sm:grid-cols-[1fr_auto]">
         <div className="grid gap-2.5 sm:grid-cols-2">
           <Field
