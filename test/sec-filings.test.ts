@@ -320,7 +320,7 @@ describe("ingestFiling", () => {
         acceptance_datetime: ref.acceptanceDateTime
       }),
       "local",
-      { parserRevision: "sec-edgar-filing-v1" }
+      { parserRevision: "sec-edgar-filing-v2" }
     );
   });
 
@@ -359,7 +359,7 @@ describe("ingestFiling", () => {
     expect(mocks.storeDocument).toHaveBeenCalledWith(
       expect.objectContaining({ source: "sec-edgar", doc_id: `AAPL:${ref.accession}:${ref.docType}` }),
       "local",
-      { leaseGuard: guard, parserRevision: "sec-edgar-filing-v1" }
+      { leaseGuard: guard, parserRevision: "sec-edgar-filing-v2" }
     );
   });
 

@@ -32,6 +32,7 @@ import {
 } from "../operation-lease";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { loadCikMap } from "./sec8k";
+import { parseFilingHtml } from "./sec-parser";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -443,7 +444,7 @@ export async function ingestFiling(
     return { skipped: false, chunks: 0, error: `fetch failed: ${error}` };
   }
 
-  const text = extractFilingText(html);
+  const { text, sections } = parseFilingHtml(html);
   if (text.length < 100) {
     return { skipped: false, chunks: 0, error: "extracted text too short (possible XBRL viewer redirect)" };
   }
@@ -465,7 +466,7 @@ export async function ingestFiling(
       type: "html",
       byteCount,
       rawUri: filingRef.url,
-      parserVersion: "v1"
+      parserVersion: "v2"
     });
     assertSecFilingLease(leaseGuard);
   } catch (err) {
@@ -479,6 +480,7 @@ export async function ingestFiling(
   assertSecFilingLease(leaseGuard);
   const document = {
       text,
+      sections,
       doc_id: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
       ticker,
       title: `${ticker} ${filingRef.docType} (${filingRef.filedAt})`,
@@ -489,7 +491,7 @@ export async function ingestFiling(
       url: filingRef.url
     };
   const result = await storeDocument(document, userId, {
-    parserRevision: "sec-edgar-filing-v1",
+    parserRevision: "sec-edgar-filing-v2",
     ...(leaseGuard ? { leaseGuard } : {})
   });
   assertSecFilingLease(leaseGuard);
