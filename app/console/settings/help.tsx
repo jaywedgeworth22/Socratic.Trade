@@ -261,7 +261,7 @@ export function HelpGlossaryCard() {
                 {group.group}
                 <span className="font-normal text-[color:var(--con-faint)]">· {group.entries.length}</span>
               </summary>
-              <dl className="mb-2 flex flex-col divide-y divide-[color:var(--con-line)] rounded-lg border border-[color:var(--con-line)]">
+              <dl className="mb-2 flex flex-col divide-y divide-[color:var(--con-line)] rounded-control border border-[color:var(--con-line)]">
                 {group.entries.map((entry) => (
                   <div
                     key={entry.term}

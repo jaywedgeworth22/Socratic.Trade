@@ -72,7 +72,7 @@ export function ConsentGate() {
       <div className="absolute inset-0" style={{ background: "var(--con-scrim)" }} aria-hidden />
       <div className="con-card relative z-10 flex w-full max-w-lg flex-col gap-4 p-6">
         <div className="flex items-start gap-3">
-          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]">
             <Network size={20} />
           </span>
           <div>

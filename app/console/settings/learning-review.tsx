@@ -114,7 +114,7 @@ export function LearningReviewCard() {
       </p>
       <div className="flex flex-col gap-3">
         <div
-          className="con-row flex items-center justify-between gap-4 rounded-md px-1.5 py-1.5"
+          className="con-row flex items-center justify-between gap-4 rounded-control px-1.5 py-1.5"
           title="Run the review once per UTC day. Off = nothing runs and nothing is spent."
         >
           <div>

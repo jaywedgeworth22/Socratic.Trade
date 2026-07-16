@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "./cn";
 
-export type PickerProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "offline";
+export type PickerProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter" | "offline";
 
 export interface ModelOption {
   value: string;
@@ -30,6 +30,7 @@ const PROVIDER_META: Record<PickerProviderId, { initial: string; color: string }
   gemini: { initial: "G", color: "#1a73e8" },
   mistral: { initial: "M", color: "#fa520f" },
   deepseek: { initial: "D", color: "#4d6bfe" },
+  openrouter: { initial: "OR", color: "#161b22" },
   offline: { initial: "•", color: "#6b7280" }
 };
 

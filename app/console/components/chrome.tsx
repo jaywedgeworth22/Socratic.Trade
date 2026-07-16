@@ -143,7 +143,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         disabled={isActive || busyId !== null}
         onClick={() => guardAction(() => void switchTo(account.id))}
         className={cx(
-          "con-scope-row flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left",
+          "con-scope-row flex w-full items-start gap-2 rounded-control border px-3 py-2 text-left",
           isActive ? "border-[color:var(--con-accent-border)]" : "border-[color:var(--con-line)]"
         )}
       >
@@ -195,7 +195,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         aria-expanded={open}
         // items-start + a small chevron nudge aligns the chevron with the first
         // (account-name) line rather than floating between the two label lines.
-        className="flex w-full items-start gap-2 overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)]"
+        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)]"
         title="Switch which account this console shows"
       >
         <span className="min-w-0 flex-1">
@@ -219,14 +219,14 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
           <div
             role="menu"
             aria-label="Account scope"
-            className="con-menu-drop absolute left-0 top-[calc(100%+4px)] z-50 flex max-h-[min(70vh,480px)] w-[min(92vw,360px)] flex-col gap-2 overflow-y-auto rounded-xl border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3 shadow-xl"
+            className="con-menu-drop absolute left-0 top-[calc(100%+4px)] z-50 flex max-h-[min(70vh,480px)] w-[min(92vw,360px)] flex-col gap-2 overflow-y-auto rounded-card border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3 shadow-xl"
           >
             <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
               One account is loaded at a time. Switching rescopes everything — balances, guardrails, approvals, run
               state, and decision history.
             </p>
             {ordered.length === 0 ? (
-              <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
+              <div className="rounded-control border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold">No account connected</span>
                   <Chip tone="none">NO ACCOUNT</Chip>
@@ -243,7 +243,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
               href="/console/connections#brokers"
               role="menuitem"
               onClick={close}
-              className="con-scope-row flex w-full items-center gap-2 rounded-lg border border-[color:var(--con-line)] px-3 py-2 text-[length:var(--con-fs-sm)] font-medium"
+              className="con-scope-row flex w-full items-center gap-2 rounded-control border border-[color:var(--con-line)] px-3 py-2 text-[length:var(--con-fs-sm)] font-medium"
               title="Add, remove, or reconnect broker accounts"
             >
               <SlidersHorizontal size={14} className="shrink-0 text-[color:var(--con-faint)]" />
@@ -278,14 +278,14 @@ export function StateChip({ snapshot }: { snapshot: DashboardSnapshot }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
+        className="flex shrink-0 items-center gap-2 rounded-control border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
         title={info.detail}
       >
         <Dot tone={STATE_TONE[info.tone]} pulse={info.state === "active" && snapshot.policy.strategyAuthority === "decide"} />
         <span className="flex flex-col leading-tight sm:flex-row sm:items-center sm:gap-1">
           <span className="whitespace-nowrap text-[length:var(--con-fs-xs)] font-semibold sm:text-[length:var(--con-fs-sm)]">{word}</span>
           {mode && (
-            <span className="whitespace-nowrap text-[10px] text-[color:var(--con-muted)] sm:text-[length:var(--con-fs-sm)] sm:font-semibold sm:text-inherit sm:before:content-['·_']">
+            <span className="whitespace-nowrap text-[length:var(--con-fs-2xs)] text-[color:var(--con-muted)] sm:text-[length:var(--con-fs-sm)] sm:font-semibold sm:text-inherit sm:before:content-['·_']">
               {mode}
             </span>
           )}
@@ -446,7 +446,7 @@ function ControlSheet({
         {options
           .filter((o) => o.available)
           .map((o) => (
-            <div key={o.id} className="rounded-lg border border-[color:var(--con-line)] p-3">
+            <div key={o.id} className="rounded-control border border-[color:var(--con-line)] p-3">
               <div className="flex items-center justify-between gap-3">
                 <span className={cx("font-semibold", o.id === "stop" && "text-[color:var(--con-neg)]")}>{o.title}</span>
                 {o.id === "stop" && (
@@ -521,7 +521,7 @@ export function TypedConfirm({
       ? "border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)]"
       : "border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)]";
   return (
-    <div className={cx("mt-3 rounded-lg border p-3", frameClass)}>
+    <div className={cx("mt-3 rounded-control border p-3", frameClass)}>
       {note && <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{note}</p>}
       <label className="con-label">
         Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{phrase}</span>
@@ -735,7 +735,7 @@ export function RunOnceButton({
             </div>
             <p className="leading-relaxed text-[color:var(--con-muted)]">{block.detail}</p>
             {block.note && (
-              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+              <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
                 {block.note}
               </p>
             )}
@@ -828,7 +828,7 @@ export function UserMenu({
         aria-label={`Signed in as ${user.email ?? who} — account menu`}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
+        className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
       >
         <Avatar imageUrl={user.imageUrl} size="h-full w-full" iconSize={15} />
       </button>
@@ -837,7 +837,7 @@ export function UserMenu({
         <>
           {/* invisible click-away backdrop; the panel sits above it */}
           <div className="fixed inset-0 z-40" onClick={close} aria-hidden />
-          <div className="con-menu-drop absolute right-2 top-[calc(100%+2px)] z-50 w-[min(92vw,340px)] rounded-xl border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-4 shadow-xl">
+          <div className="con-menu-drop absolute right-2 top-[calc(100%+2px)] z-50 w-[min(92vw,340px)] rounded-card border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-4 shadow-xl">
             <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[color:var(--con-line)] text-[color:var(--con-muted)]">
@@ -852,9 +852,9 @@ export function UserMenu({
                   </div>
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-[color:var(--con-line)] px-3 py-2">
+              <div className="flex items-center justify-between gap-3 rounded-control border border-[color:var(--con-line)] px-3 py-2">
                 <span className="text-[color:var(--con-muted)]">Theme</span>
-                <div className="flex items-center gap-1 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-bg)] p-0.5">
+                <div className="flex items-center gap-1 rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-bg)] p-0.5">
                   {(["light", "dark", "system"] as const).map((t) => {
                     const active = theme === t;
                     const Icon = t === "dark" ? Moon : t === "light" ? Sun : Monitor;
@@ -866,7 +866,7 @@ export function UserMenu({
                         title={THEME_WORD[t]}
                         aria-label={`Set theme to ${THEME_WORD[t]}`}
                         className={cx(
-                          "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[length:var(--con-fs-xs)] transition-colors",
+                          "flex items-center gap-1.5 rounded-control px-2.5 py-1 text-[length:var(--con-fs-xs)] transition-colors",
                           active
                             ? "bg-[color:var(--con-surface)] text-[color:var(--con-fg)] font-medium shadow-sm border border-[color:var(--con-line)]"
                             : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)] border border-transparent"
