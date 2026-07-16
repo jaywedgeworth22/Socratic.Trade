@@ -87,7 +87,7 @@ objection).
 - Mobile PWA still renders no open-orders list (data already round-trips) — cheap future
   surface if the owner wants it.
 
-## Codex autofix (2026-07-16, after review)
+## Codex autofix round 1 (2026-07-16, after initial review)
 
 Codex reviewed the PR and flagged three items; two were fixed, one was asked to maintainer:
 
@@ -102,3 +102,14 @@ Codex reviewed the PR and flagged three items; two were fixed, one was asked to 
 - **[fixed] P2 — Cap estimated closing P/L to current holdings** (`app/console/orders/lib.ts`):
   `closingOrderPnl` now caps `shares` to `Math.abs(position.quantity)` so a stale oversize exit
   order (e.g. user partially sold after the card was created) doesn't overstate the P/L estimate.
+
+## Codex autofix round 2 (2026-07-16, second pass)
+
+Codex posted another finding after round 1 was pushed:
+
+- **[fixed] P2 — Cap pending-exit P/L to current holding** (`app/console/components/approval-card.tsx`):
+  The approval-card path still passed `requestedExitQuantity(p)` directly into `estimatedClosingPnl`
+  without capping. When an approval card is stale and the user has already reduced the position, the
+  requested sell/cover size could exceed the current holding, overstating the realized P/L. Now capped
+  via `Math.min(exitQty, Math.abs(matchedPosition.quantity))` — same guard as `closingOrderPnl` in
+  `orders/lib.ts`. Verify: tsc clean, 4649 tests pass, build clean.
