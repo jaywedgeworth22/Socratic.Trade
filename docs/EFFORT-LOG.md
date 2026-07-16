@@ -2835,6 +2835,23 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
+- **Exit-strategy intelligence program, Phase A — "make today's promises true" (UNASSIGNED; design landed 2026-07-16, CLAUDE).**
+  Five independently shippable S/S-M lanes from `docs/design/exit-strategy-intelligence.md`: A1 synthetic-stop
+  gap-deadlock fix (confirmation-based bad-tick acceptance, persisted suspect state); A2 `protectWhileHalted`
+  owner toggle (stop monitor protective-only mode in `halted`); A3 prompt visibility (protection-state block +
+  ATR in evidence + `shortStopLossPct` prompt fix, agentic-strategy 2.3.0); A4 honesty notes (Tradier
+  market-entry bracket disclosure, RTH-only stop caveat); A5 options/unmanaged positions read-only visibility +
+  assignment/expiry alerts. Claim per-lane; each stands alone.
+- **Exit-strategy intelligence program, Phase B — Exit Contract + lanes (UNASSIGNED; blocked on nothing, but
+  money-path: frontier-tier adversarial review required).** Persist parameterized exit contract columns on
+  `position_stop_plans` (resolved distance/prices/time/invalidation) written at fill; all enforcement layers read
+  persisted-with-fallback; static-trigger synthetic rows give fixed/atr plans tick-cadence coverage; short-side
+  broker-held buy-stop lane MUST land before live short flow. Detail: design doc Phase B.
+- **Exit-strategy intelligence program, Phase C — revision verb + measurement (UNASSIGNED; gated on Phase B's
+  eval harness).** `exitRevisions[]` sibling array (tighten=auto, widen=propose+heat-recheck, all owner-settable),
+  owner per-position stop editor, `stopBasis` clamped numeric elicitation, `invalidation`/`maxHoldingDays`,
+  counterfactual exit ledger (fixed/time/no-stop only), held-name event triggers + earnings producer. Detail:
+  design doc Phase C + "What NOT to do" list (binding scope cuts from the debate round).
 - **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (CODEX program; RAG-B14/B16, claimed 2026-07-13) —
   IN PROGRESS / BASELINE #1495 MERGED; ACCEPTANCE CURRENTLY FAILS.** A new schema-v2 validator requires a dated,
   checksummed 1,000-operating-issuer snapshot with explicit exchange/security classification, alias verification,
