@@ -29,7 +29,7 @@ import { runStrategyOnce } from "@/lib/strategy";
 import { getPolicy, setPolicy } from "@/lib/db";
 import { DEV_USER_ID } from "@/lib/auth/identity";
 
-const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-run-once-async-${randomUUID()}.db`)}`;
@@ -48,7 +48,8 @@ afterEach(() => {
 function stubLlmKeyAvailable(): void {
   vi.stubEnv("LLM_OPERATOR_FALLBACK", "on");
   vi.stubEnv("OPENAI_API_KEY", "test-operator-key");
-  setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "gpt-5.4-mini" }, DEV_USER_ID);
+  vi.stubEnv("OPENROUTER_API_KEY", "test-operator-key");
+  setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "openrouter/openai/gpt-5.4-mini" }, DEV_USER_ID);
 }
 
 function stubNoLlmKey(): void {
@@ -128,7 +129,7 @@ describe("POST /api/strategy/run — async run-once", () => {
 
   it("keeps the 412 LLM-gate pre-check synchronous and never launches the run executor", async () => {
     stubNoLlmKey();
-    setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "gpt-5.4-mini" }, DEV_USER_ID);
+    setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "openrouter/openai/gpt-5.4-mini" }, DEV_USER_ID);
     const res = await callRoute();
     expect(res.status).toBe(412);
     expect(runStrategyOnce).not.toHaveBeenCalled();
