@@ -10,7 +10,7 @@
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
-import { fulfillMarketDataDemand, getActiveConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
+import { fulfillMarketDataDemand, getConnectedAccountByBroker, getImportedPriceCloses, getImportedSpxCloses, hasDataPoolConsent, recordMarketDataDemand, resolveApiKeyWithSource, type ApiKeySource } from "./db";
 import { emitDashboardEvent } from "./events";
 import { massiveApiBase, reserveMassiveRestCall } from "./market-signals/massive";
 import { fetchRobinhoodHistoricals } from "./robinhood";
@@ -202,7 +202,8 @@ interface TradierHistoryResponse {
 /**
  * Resolves Tradier's price-history credential from the owner's own CONNECTED broker account
  * (connected_accounts, broker "tradier") rather than a separate stored API key — the owner connects
- * Tradier once to trade through it, and that same connection's access token becomes the app's
+ * Tradier once (even just as a data source, not necessarily as the active EXECUTION broker — see
+ * getConnectedAccountByBroker's doc comment) and that connection's access token becomes the app's
  * Tradier price-history source too. Always resolves the "local" (owner's) connection regardless of
  * the requesting userId — a single connected broker naturally serves the whole app, mirroring the
  * "shared-operator-infra" model every other keyed history provider already uses via an env var, just
@@ -210,7 +211,7 @@ interface TradierHistoryResponse {
  * `environment`, matching tradier.ts's own derivation for order placement.
  */
 function resolveTradierHistoryCredential(): { key?: string; baseUrl: string } {
-  const acct = getActiveConnectedAccountByBroker("tradier", "local");
+  const acct = getConnectedAccountByBroker("tradier", "local");
   return {
     key: acct?.apiKey?.trim() || undefined,
     baseUrl: acct?.environment === "live" ? "https://api.tradier.com" : "https://sandbox.tradier.com"

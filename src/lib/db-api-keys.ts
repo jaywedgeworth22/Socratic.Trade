@@ -655,16 +655,24 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
 }
 
 /**
- * Active connected account for a specific broker (unlike getActiveConnectedAccount, which returns
- * whichever broker happens to be active for the user). Used to source market-data credentials from
- * a broker connection rather than a separate stored API key — e.g. Tradier price-history (see
- * history.ts's resolveTradierHistoryCredential): the owner connects Tradier as a broker to trade
- * through it, and that SAME connection's access token also becomes the app's Tradier price-history
- * source, rather than requiring a duplicate, separate "Tradier API key" entry in Settings.
+ * A connected account for a specific broker, for use as a MARKET-DATA credential source rather than
+ * an execution destination — e.g. Tradier price-history (see history.ts's
+ * resolveTradierHistoryCredential): the owner connects Tradier as a broker to trade through it, and
+ * that SAME connection's access token also becomes the app's Tradier price-history source, rather
+ * than requiring a duplicate, separate "Tradier API key" entry in Settings.
+ *
+ * Deliberately NOT restricted to `is_active = 1` — `isActive` means "the currently loaded/executing
+ * broker" (Settings' single-active-account UI only ever loads one broker at a time), which is an
+ * ORTHOGONAL concept to "this credential exists and can source data." A user trading through Alpaca
+ * as their active account can still connect Tradier purely as a shared data source; requiring it to
+ * ALSO be the active execution broker would silently disable Tradier history for exactly that
+ * legitimate setup (Codex review, PR #1673). Prefers the active row when the connected broker
+ * happens to also be Tradier, otherwise falls back to the most recently updated connected Tradier
+ * account for this user.
  */
-export function getActiveConnectedAccountByBroker(broker: ConnectedAccount["broker"], userId: string = "local"): ConnectedAccount | undefined {
+export function getConnectedAccountByBroker(broker: ConnectedAccount["broker"], userId: string = "local"): ConnectedAccount | undefined {
   const row = getDb()
-    .prepare("SELECT * FROM connected_accounts WHERE user_id = ? AND broker = ? AND is_active = 1 LIMIT 1")
+    .prepare("SELECT * FROM connected_accounts WHERE user_id = ? AND broker = ? ORDER BY is_active DESC, updated_at DESC LIMIT 1")
     .get(userId, broker) as Record<string, unknown> | undefined;
   if (!row) return undefined;
   return {

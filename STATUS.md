@@ -12,17 +12,20 @@ via `AskUserQuestion` how far to take the fix; they chose the full rewire. Remov
 from Settings' generic API-keys catalog (`app/api/keys/route.ts`) and the now-dead
 `API_KEY_ENV_MAP`/`API_KEY_SERVICE_ALIASES`/`API_KEY_TIER` entries; `history.ts`'s Tradier
 price-history fetch now resolves its credential from the connected Tradier broker account
-(new `getActiveConnectedAccountByBroker`) instead, with cache scope hardcoded `"shared"`
-since it's the owner's single connected account, not a per-user key. Rewired
-`test/history.test.ts`'s Tradier-dependent tests to use a connected account
-(`upsertConnectedAccount`) instead of `TRADIER_API_KEY`/`upsertUserApiKey`; the two tests that
-specifically exercised per-user private/pool-consent sharing semantics were switched to
-Marketstack as their vehicle since Tradier is no longer per-user at all. Also updated
-`.env.example`, `README.md`, `docs/market-data-provider-pricing.md`,
-`docs/phase-11-multi-user.md`, and removed the now-pointless entry from
-`scripts/migrate-market-keys-to-user.ts`. tsc clean, `test/history.test.ts` 13/13 and
-`test/web-sources-technical.test.ts` 10/10 green (unaffected). Branch
-`claude/tradier-connected-account-history-source`.
+(new `getConnectedAccountByBroker`) instead, with cache scope hardcoded `"shared"` since it's
+the owner's single connected account, not a per-user key. Rewired `test/history.test.ts`'s
+Tradier-dependent tests to use a connected account (`upsertConnectedAccount`) instead of
+`TRADIER_API_KEY`/`upsertUserApiKey`; the two tests that specifically exercised per-user
+private/pool-consent sharing semantics were switched to Marketstack as their vehicle since
+Tradier is no longer per-user at all. Also updated `.env.example`, `README.md`,
+`docs/market-data-provider-pricing.md`, `docs/phase-11-multi-user.md`, and removed the
+now-pointless entry from `scripts/migrate-market-keys-to-user.ts`. Codex caught a P2 on the
+first version: the lookup required Tradier to be the ACTIVE execution broker, which would
+silently disable Tradier history for a user trading through Alpaca/Robinhood who connected
+Tradier purely as a data source — fixed by dropping the `is_active` filter (prefers active,
+falls back to any connected Tradier account), with a new regression test. tsc clean,
+`test/history.test.ts` 14/14 and `test/web-sources-technical.test.ts` 10/10 green
+(unaffected). Branch `claude/tradier-connected-account-history-source`.
 Rollout: `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
 
 ## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)

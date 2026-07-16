@@ -12,9 +12,9 @@ Marketstack.
   `API_KEY_ENV_MAP`/`API_KEY_SERVICE_ALIASES`/`API_KEY_TIER` entries in `src/lib/db-api-keys.ts`).
 - `src/lib/history.ts` — `fetchDailyOHLC`'s Tradier price-history fetch now resolves its
   credential via a new `resolveTradierHistoryCredential()`, which reads the "local" (owner's)
-  active connected Tradier broker account (`getActiveConnectedAccountByBroker("tradier",
-  "local")`, new export in `src/lib/db-api-keys.ts`) rather than `resolveApiKeyWithSource("tradier",
-  ...)` / `TRADIER_API_KEY`. Base URL (sandbox vs production) tracks the connected account's own
+  connected Tradier broker account (`getConnectedAccountByBroker("tradier", "local")`, new
+  export in `src/lib/db-api-keys.ts`) rather than `resolveApiKeyWithSource("tradier", ...)` /
+  `TRADIER_API_KEY`. Base URL (sandbox vs production) tracks the connected account's own
   `environment`, matching `tradier.ts`'s existing derivation for order placement.
 - Cache scope for Tradier-sourced history is now unconditionally `"shared"` (not routed through
   `cacheScopeForKeySource`) — it's the owner's single connected broker account, not a per-user
@@ -37,12 +37,28 @@ consent sharing mechanism naturally applying (unchanged) as if it were any other
 key — but since only "local" ever exists today, this trivially satisfies "I'm the only user and
 I'm sharing the data."
 
+## Codex P2 follow-up: don't require Tradier to be the ACTIVE execution broker
+
+Codex flagged a real bug in the first version of this PR: `getActiveConnectedAccountByBroker`
+filtered on `is_active = 1`, but `isActive` means "the currently loaded/executing broker"
+(Settings' single-active-account UI only ever loads one broker at a time) — an orthogonal
+concept to "this credential exists and can source data." A user trading through Alpaca as
+their active account, who connects Tradier purely as a shared data source, would have found
+Tradier history silently disabled — exactly the "connect Tradier once as the shared history
+source" flow this PR exists to enable. Renamed the function to `getConnectedAccountByBroker`
+and dropped the `is_active` filter (ordering by `is_active DESC, updated_at DESC` so an
+active Tradier row is still preferred if one happens to exist, otherwise falling back to the
+most recently updated connected Tradier account). Added a regression test connecting Alpaca
+as the active broker and Tradier as a non-active connection, confirming history still
+resolves via Tradier.
+
 ## Files
 
 - `app/api/keys/route.ts` — removed the `tradier` catalog entry.
 - `src/lib/db-api-keys.ts` — removed `tradier` from `API_KEY_ENV_MAP`, `API_KEY_SERVICE_ALIASES`
   (`tradier_api_key` alias), and `API_KEY_TIER` (now unreachable dead entries with the catalog
-  removed); added `getActiveConnectedAccountByBroker(broker, userId)`.
+  removed); added `getConnectedAccountByBroker(broker, userId)` (NOT restricted to the active
+  execution broker — see the Codex P2 follow-up above).
 - `src/lib/history.ts` — `KEYED_HISTORY_SERVICES` no longer includes `"tradier"`; added
   `resolveTradierHistoryCredential()`; `fetchTradier` now takes an explicit `baseUrl` param
   instead of reading `TRADIER_BASE_URL`; the Tradier cascade entry's cache scope is hardcoded
@@ -65,7 +81,7 @@ I'm sharing the data."
 
 ```bash
 npx tsc --noEmit                                                    # clean
-npx vitest run test/history.test.ts                                 # 13/13 passed
+npx vitest run test/history.test.ts                                 # 14/14 passed
 npx vitest run test/web-sources-technical.test.ts                   # 10/10 passed (unaffected)
 npm test                                                            # full suite
 npm run build

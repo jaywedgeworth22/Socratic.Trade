@@ -31,7 +31,7 @@ afterEach(() => vi.unstubAllGlobals());
 // a stored API key — see resolveTradierHistoryCredential in src/lib/history.ts. Connects a fresh
 // account each call; upsertConnectedAccount deactivates any prior active row for the user first, so
 // this is safe to call repeatedly across tests sharing historyTestDb.
-function connectTradier(token: string, environment: "paper" | "live" = "live"): void {
+function connectTradier(token: string, environment: "paper" | "live" = "live", isActive = true): void {
   upsertConnectedAccount({
     id: `trd-history-${randomUUID()}`,
     userId: "local",
@@ -39,7 +39,7 @@ function connectTradier(token: string, environment: "paper" | "live" = "live"): 
     environment,
     label: "Tradier Brokerage",
     apiKey: token,
-    isActive: true
+    isActive
   });
 }
 
@@ -105,6 +105,35 @@ describe("fetchDailyOHLC", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain("api.tradier.com");
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer tradier-test-key" });
+  });
+
+  it("still uses Tradier for history when it's connected but NOT the active execution broker (Codex review, PR #1673)", async () => {
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    // Alpaca is the account the user actually trades through (active); Tradier is connected
+    // purely as a shared data source. "isActive" means "the currently loaded execution broker,"
+    // an orthogonal concept to "this credential exists and can source history" — requiring
+    // Tradier to ALSO be the active broker would silently disable this exact, intended setup.
+    upsertConnectedAccount({
+      id: `alpaca-history-${randomUUID()}`,
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      label: "Alpaca Paper",
+      apiKey: "alpaca-key",
+      apiSecret: "alpaca-secret",
+      isActive: true
+    });
+    connectTradier("tradier-inactive-key", "live", false); // connected, but not active
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("api.tradier.com")
+        ? new Response(tradierBody, { status: 200 })
+        : new Response("unexpected source", { status: 500 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bars = await fetchDailyOHLC("AAPL");
+    expect(bars).not.toBeNull();
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ Authorization: "Bearer tradier-inactive-key" });
   });
 
   it("falls back from Tradier to Marketstack before free sources", async () => {
