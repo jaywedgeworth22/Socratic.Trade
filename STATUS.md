@@ -1,6 +1,24 @@
 # Current Status
 
-## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE)
+## 2026-07-16 — Exit-strategy intelligence: expert-panel design doc landed (CLAUDE)
+
+Docs-only. `docs/design/exit-strategy-intelligence.md` — synthesized output of an
+owner-directed 13-agent expert-panel workflow (4 code mappers → 4 domain experts → 4
+cross-critiques → verifying synthesis) on eliciting, adapting, and executing exit
+strategies for longs/shorts/options. Headlines: three verified enforcement tail holes
+(trailing-stop bad-tick gap deadlock; fixed/atr plans have NO tick-cadence lane —
+`synthetic-stops.ts:406,440`; `halted` skips the stop monitor), shorts about to go live
+on the thinnest protection tier (all broker-held stop lanes filter `quantity > 0`), OCC
+option positions invisible to every exit layer, and a write-once exit policy the LLM
+re-decides blind. 11 ranked consensus recommendations, 7 contested-point rulings, an
+explicit what-NOT-to-do list, and an A/B/C phased roadmap now on the effort board
+(Planned, unassigned). Rollout: `docs/rollouts/2026-07-16-exit-strategy-expert-panel.md`.
+Branch `claude/stop-loss-preset-options-f1jygn` (restarted from main @ 32362e9).
+## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE) — MERGED (PR #1673, `2d294b7`)
+
+**Update: PR #1673 merged to `main` as `2d294b7` 2026-07-16 (auto-deploys to production).**
+Effort-board row moved to Completed. Codex's P2 (lookup wrongly required Tradier to be the
+ACTIVE execution broker) was fixed pre-merge with a regression test. Original entry follows.
 
 Owner request: "tradier shouldn't be listed as a data source for API on settings and should
 just be a source that users sync to and then I am the first/only user and I am sharing the
