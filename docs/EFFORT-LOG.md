@@ -1774,6 +1774,20 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] Bracket sibling-leg teardown: adversarial review follow-up
+  (branch `claude/bracket-teardown-adversarial-review-fixes`) — IN PROGRESS, gate green, PR
+  next.** PR #1661 (merged same day) had no automated review — Codex hit its usage cap on
+  both #1661 and #1662. Ran 2 independent adversarial review passes (correctness/races,
+  money-path) against the merged code; both confirmed the same 2 bugs: a same-style scale-in
+  (fixed->fixed) silently orphaned the OLD bracket's legs forever (only `style` was compared,
+  not the opening order id); `cancelBracketSiblingLegs` on both Alpaca and Tradier swallowed
+  every failure into a fake success, making the bounded-retry mechanism dead code and masking
+  transient lookup failures as permanent silent no-ops. Both fixed. A third proposed fix
+  (Tradier: skip the first returned leg assuming it's the entry) was investigated and
+  reverted after checking against this codebase's own pre-existing tested model of Tradier's
+  response shape; a different, confirmed variant of that same area was kept instead (no-op
+  when the order was never actually a bracket). 392 files / 4,542 tests green. Rollout:
+  `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
 - **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live

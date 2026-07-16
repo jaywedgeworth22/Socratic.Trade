@@ -1,5 +1,27 @@
 # Current Status
 
+## 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up (CLAUDE)
+
+PR #1661 merged the same day with no automated review (Codex hit its usage-limit cap on
+both #1661 and #1662, posting only a usage-limit notice). Ran two independent adversarial
+review passes (correctness/races, money-path/financial-risk) against the merged code since
+this touches real order placement/cancellation. Both independently confirmed the same two
+bugs: (1) `enqueueBracketTeardownIfLeavingDistancePlan` only compared plan STYLE, not the
+opening order id, so a same-style scale-in (fixed->fixed) silently orphaned the OLD bracket's
+legs forever — fixed by also comparing `nextOpeningOrderId` vs `previousOpeningOrderId`.
+(2) both Alpaca's and Tradier's `cancelBracketSiblingLegs` swallowed every failure into a
+plain empty success, making the bounded-retry mechanism (`MAX_BRACKET_TEARDOWN_ATTEMPTS`)
+dead code and masking a transient lookup failure as a permanent, silent "nothing to cancel"
+— fixed by only swallowing a genuine "order not found" (404, or Tradier's 200-with-errors
+envelope) and propagating everything else so the retry sweep actually retries. A third
+proposed fix (skip Tradier's first returned leg, assuming it's the entry) was investigated
+and REVERTED after checking it against this codebase's own pre-existing, tested model of
+Tradier's response shape (entry is never one of the container's enumerated legs) — kept a
+different, confirmed fix instead (no-op when `container.class === "equity"`, i.e. no bracket
+was ever attached). 392 files / 4,542 tests green, tsc/build/lint clean. Branch
+`claude/bracket-teardown-adversarial-review-fixes`.
+Rollout: `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
+
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
 ## 2026-07-16 — Alpaca + Tradier bracket sibling-leg cancellation (CLAUDE)

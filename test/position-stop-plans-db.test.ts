@@ -202,13 +202,30 @@ describe("bracket sibling-leg teardown queue (position_stop_plans.opening_order_
     expect(getStopPlans(acct).MSFT.openingOrderId).toBeUndefined();
   });
 
-  it("does NOT enqueue a teardown when transitioning between the SAME distance-plan family (fixed -> fixed)", async () => {
-    const { recordStopPlan, listPendingBracketTeardowns } = await import("../src/lib/db");
+  it("enqueues a teardown for the OLD bracket when a same-style scale-in places a NEW bracket order (fixed -> fixed)", async () => {
+    const { getStopPlans, recordStopPlan, listPendingBracketTeardowns } = await import("../src/lib/db");
     const acct = "ACCT-BRACKET-3";
     recordStopPlan(acct, "TSLA", "fixed", "initial", 400, "local", undefined, "long", "bracket-order-3");
-    // A scale-in re-affirms "fixed" with a NEW bracket order id (same distance-plan family) — the
-    // OLD bracket's legs may already be gone/replaced by the new opening, not a stale leftover.
+    // A scale-in re-affirms "fixed" but places a BRAND-NEW, independent broker-native bracket for the
+    // added shares — Alpaca/Tradier brackets are independent OCO groups, so nothing cancels the OLD
+    // bracket first. Its legs would rest on the broker forever unless this transition is also caught
+    // (adversarial review of PR #1661, 2026-07-16 — previously this case was wrongly treated as a
+    // no-op because only `style` was compared, not the opening order id).
     recordStopPlan(acct, "TSLA", "fixed", "reaffirmed on scale-in", 405, "local", undefined, "long", "bracket-order-3b");
+    const pending = listPendingBracketTeardowns(acct);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ symbol: "TSLA", orderId: "bracket-order-3", accountNumber: acct });
+    // The row now tracks the NEW bracket's order id, not the old (torn-down) one.
+    expect(getStopPlans(acct).TSLA.openingOrderId).toBe("bracket-order-3b");
+  });
+
+  it("does NOT enqueue a teardown when re-recording the SAME style with the SAME opening order id (no new bracket)", async () => {
+    const { recordStopPlan, listPendingBracketTeardowns } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-3B";
+    recordStopPlan(acct, "TSLA", "fixed", "initial", 400, "local", undefined, "long", "bracket-order-3c");
+    // A rationale/avgCost-only rewrite that doesn't correspond to a fresh fill re-passes the SAME
+    // tracked opening order id — nothing changed about the bracket, so no teardown is warranted.
+    recordStopPlan(acct, "TSLA", "fixed", "rationale tweak only", 401, "local", undefined, "long", "bracket-order-3c");
     expect(listPendingBracketTeardowns(acct)).toEqual([]);
   });
 

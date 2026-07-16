@@ -1550,6 +1550,13 @@ export function filterFullStopPlansByLiveBasis(
  * right before that happens, best-effort enqueue a teardown row for the reconciler
  * (reconcilePendingBracketTeardowns, broker-protective-stops.ts) to pick up. Never throws: plan
  * bookkeeping must never block the write that's actually changing/clearing the plan.
+ *
+ * Compares the OPENING ORDER ID, not just the style: a same-style scale-in (e.g. "fixed" -> "fixed")
+ * places a brand-new, independent broker-native bracket for the added shares — nothing cancels the
+ * PRIOR bracket first (Alpaca/Tradier brackets are independent OCO groups; a later one never
+ * supersedes an earlier one) — so `nextOpeningOrderId` differing from `previousOpeningOrderId` under
+ * the SAME style still needs a teardown for the stale order, or its legs rest on the broker forever
+ * (adversarial review of PR #1661, 2026-07-16).
  */
 function enqueueBracketTeardownIfLeavingDistancePlan(
   accountNumber: string,
@@ -1557,11 +1564,14 @@ function enqueueBracketTeardownIfLeavingDistancePlan(
   userId: string,
   previousStyle: string | undefined,
   previousOpeningOrderId: string | null | undefined,
-  nextStyle: string
+  nextStyle: string,
+  nextOpeningOrderId: string | null | undefined
 ): void {
   if (previousStyle !== "fixed" && previousStyle !== "atr") return;
   if (!previousOpeningOrderId) return;
-  if (nextStyle === previousStyle) return; // same distance-plan family — bracket is still wanted
+  // Nothing actually changed — still the same plan family AND still the same tracked bracket order
+  // (e.g. a rationale/avgCost-only rewrite with no new fill) — the existing bracket is still wanted.
+  if (nextStyle === previousStyle && nextOpeningOrderId === previousOpeningOrderId) return;
   try {
     getDb()
       .prepare(
@@ -1598,7 +1608,7 @@ export function recordStopPlan(
   const existing = getDb()
     .prepare("SELECT style, opening_order_id FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol = ?")
     .get(userId, accountNumber, symbol) as { style: string; opening_order_id: string | null } | undefined;
-  enqueueBracketTeardownIfLeavingDistancePlan(accountNumber, symbol, userId, existing?.style, existing?.opening_order_id, safeStyle);
+  enqueueBracketTeardownIfLeavingDistancePlan(accountNumber, symbol, userId, existing?.style, existing?.opening_order_id, safeStyle, openingOrderId ?? null);
   getDb()
     .prepare(
       `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
@@ -1620,7 +1630,7 @@ export function clearStopPlans(accountNumber: string, symbols: string[], userId:
     .prepare(`SELECT symbol, style, opening_order_id FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
     .all(userId, accountNumber, ...symbols) as Array<{ symbol: string; style: string; opening_order_id: string | null }>;
   for (const row of existingRows) {
-    enqueueBracketTeardownIfLeavingDistancePlan(accountNumber, row.symbol, userId, row.style, row.opening_order_id, "default");
+    enqueueBracketTeardownIfLeavingDistancePlan(accountNumber, row.symbol, userId, row.style, row.opening_order_id, "default", null);
   }
   getDb()
     .prepare(`DELETE FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
