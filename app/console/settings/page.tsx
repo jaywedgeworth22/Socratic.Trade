@@ -1,17 +1,21 @@
 "use client";
 
 /** Settings — GLOBAL-ONLY since the 2026-07-10 IA restructure: everything here
- *  is either ALL YOUR ACCOUNTS (broker connections, API keys, event
- *  notifications, delivery channels, scan shape, learning review, typed
- *  confirmation, boot behavior — user-level, overlaid on every account),
- *  THIS BROWSER (appearance), OPERATOR (admin links), REFERENCE (glossary),
- *  or DANGER (deletion). Nothing account-scoped lives here anymore:
- *  per-account config (models, tax treatment, prompt, weights, guardrails)
- *  belongs to Framework (/console/strategy) and Mandates. Sub-sections live
- *  in sibling modules (brokers/api-keys/delivery/help) with their fetch
- *  helpers in ./lib. */
+ *  is either ALL YOUR ACCOUNTS (event notifications, delivery channels, scan
+ *  shape, learning review, typed confirmation, boot behavior — user-level,
+ *  overlaid on every account), THIS BROWSER (appearance), OPERATOR (admin
+ *  links), REFERENCE (glossary), or DANGER (deletion). Nothing account-scoped
+ *  lives here: per-account config (models, prompt, weights) belongs to
+ *  Strategy (/console/strategy) and Guardrails (/console/guardrails,
+ *  including tax treatment). The one-time-setup half of the old Settings page
+ *  — broker connections and API keys — split out to Connections
+ *  (/console/connections) in the 2026-07-16 IA restructure; a 3-line hash
+ *  safety net below redirects any old #brokers/#api-keys bookmark there.
+ *  Sub-sections live in sibling modules (delivery/danger/help/sharing/
+ *  learning-review) with their fetch helpers in ./lib. */
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Check, ExternalLink } from "lucide-react";
 import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
@@ -22,10 +26,8 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useToast } from "../ui/toast";
-import { Card, Chip, Field, RawNumInput, TextInput, Toggle } from "../ui/primitives";
+import { Card, Chip, Field, RawNumInput, Toggle } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
-import { ApiKeysCard } from "./api-keys";
-import { BrokerAccountsCard } from "./brokers";
 import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
@@ -71,25 +73,34 @@ export default function SettingsPage() {
   const { snapshot } = useConsoleData();
   const ready = snapshot !== null;
 
-  // Deep links (e.g. the Run-once blocked sheet routes to /console/settings#api-keys):
+  const router = useRouter();
+
+  // Deep links (e.g. #sharing, #learning-review, #confirmation, #admin, #danger):
   // the page renders only after the snapshot arrives, so the native anchor jump
-  // misses — scroll once the target section actually exists.
+  // misses — scroll once the target section actually exists. Safety net: #brokers
+  // and #api-keys moved to /console/connections in the 2026-07-16 IA restructure —
+  // an old bookmark or stale link redirects there instead of scrolling to nothing.
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
     const hash = window.location.hash.slice(1);
     if (!hash) return;
+    if (hash === "brokers" || hash === "api-keys") {
+      router.replace(`/console/connections#${hash}`);
+      return;
+    }
     const timer = setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
     return () => clearTimeout(timer);
-  }, [ready]);
+  }, [ready, router]);
 
   if (!snapshot) return null;
 
   return (
     <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
-      <h1 className="px-4 text-[length:var(--con-fs-lg)] font-bold lg:px-0">Settings</h1>
+      <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
 
-      {/* Account-scoped config (models, tax treatment, prompt, weights) lives on
-          Framework (/console/strategy) and Mandates — Settings is global-only. */}
+      {/* Account-scoped config (models, prompt, weights) lives on Strategy
+          (/console/strategy); Guardrails (/console/guardrails) carries the caps,
+          protective stops, tax treatment, and rulebook — Settings is global-only. */}
 
       {/* ── ALL ACCOUNTS ── */}
       <section className="flex flex-col gap-4">
@@ -104,14 +115,6 @@ export default function SettingsPage() {
             applies everywhere, for you
           </span>
         </div>
-        {/* Anchor ids (#brokers/#api-keys) are deep-link targets used by the
-            Run-once blocked-reason sheet; scroll-mt clears the sticky chrome. */}
-        <div id="brokers" className="scroll-mt-28">
-          <BrokerAccountsCard />
-        </div>
-        <div id="api-keys" className="scroll-mt-28">
-          <ApiKeysCard />
-        </div>
         {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
             in db-profiles): one event list + webhook overlaid on every account —
             so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
@@ -120,7 +123,6 @@ export default function SettingsPage() {
         <div id="sharing" className="scroll-mt-28">
           <DataSharingCard />
         </div>
-        <ScanShapeCard />
         {/* learningReviewEnabled/Mode/Model are USER-level policy fields
             (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per
             user per day over user-level learned context, so its config overlays
@@ -130,6 +132,7 @@ export default function SettingsPage() {
         <div id="learning-review" className="scroll-mt-28">
           <LearningReviewCard />
         </div>
+        <ScanShapeCard />
         {/* requireTypedConfirmation is a USER-level policy field
             (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
             phrase ceremony is an owner preference, not a per-account guardrail,
@@ -324,7 +327,7 @@ function AdminLinksCard() {
   return (
     <Card title="Admin pages">
       <p className="mb-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-        Operator diagnostics from the legacy app — they open outside the console and keep their own styling.
+        Server-wide operator diagnostics — also reachable any time from the Admin link in the top bar.
       </p>
       <div className="flex flex-col gap-1">
         {ADMIN_LINKS.map((link) => (
@@ -355,12 +358,10 @@ function EventNotificationsCard() {
   // change for instant feedback, reverted by useAutoSave's onError if the write
   // fails. refresh() keeps the shared snapshot current for the rest of the app.
   const [localEvents, setLocalEvents] = useState<NotificationEventType[] | null>(null);
-  const [localWebhook, setLocalWebhook] = useState<string | null>(null);
   if (!snapshot) return null;
 
   const current = snapshot.policy.notificationSettings;
   const events = localEvents ?? current.enabledEvents;
-  const webhook = localWebhook ?? current.webhookUrl ?? "";
 
   const toggleEvent = (type: NotificationEventType, on: boolean) => {
     const prev = events;
@@ -371,23 +372,11 @@ function EventNotificationsCard() {
     });
   };
 
-  const commitWebhook = () => {
-    const next = webhook.trim();
-    if (next === (current.webhookUrl ?? "")) return; // unchanged → no write
-    const prev = webhook;
-    // Server validates (400 on a non-URL); revert the field on failure.
-    autoSave.save(() => savePolicy({ notificationSettings: { webhookUrl: next } }).then(() => refresh()), {
-      onError: () => setLocalWebhook(prev),
-      errorTitle: "Webhook not saved"
-    });
-  };
-
   return (
     <Card title="Event notifications" action={<SaveStatus status={autoSave.status} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which events send notifications, and the webhook they go to. One list for your whole login — it applies across
-        every account, not just the one you&apos;re viewing. Delivery channels (push/email/SMS) are configured once per
-        user, below.
+        Which events send notifications. One list for your whole login — it applies across every account, not just the
+        one you&apos;re viewing. Where they go (webhook URL, push/email/SMS) is configured in Delivery channels, below.
       </p>
       <div className="grid gap-1.5 sm:grid-cols-2">
         {NOTIFICATION_EVENT_TYPES.map((type) => {
@@ -396,7 +385,7 @@ function EventNotificationsCard() {
           return (
             <label
               key={type}
-              title={`When on, you get a notification whenever ${meta.hint}.`}
+              title={`${type} — when on, you get a notification whenever ${meta.hint}. (${type} is the event's id in webhook payloads and the audit log.)`}
               className="flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
             >
               <input
@@ -413,18 +402,6 @@ function EventNotificationsCard() {
             </label>
           );
         })}
-      </div>
-      <div className="mt-3 max-w-md">
-        <Field label="Webhook URL (optional)" hint="Rich embeds for chat webhooks; generic JSON otherwise." htmlFor="webhook">
-          <TextInput
-            id="webhook"
-            value={webhook}
-            placeholder="https://…"
-            title="Every enabled event is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON. Saves when you click away."
-            onChange={(e) => setLocalWebhook(e.target.value)}
-            onBlur={commitWebhook}
-          />
-        </Field>
       </div>
     </Card>
   );

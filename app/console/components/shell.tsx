@@ -297,6 +297,13 @@ function ChromeBar({
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
         </div>
+        {/* Phones get an icon-only Run once: the home hero's call-to-action was
+            unreachable on mobile without scrolling to the very bottom. Icon-only
+            keeps the owner-tuned phone-bar priorities (scope gets the slack,
+            nothing squeezes STOP). */}
+        <div className="sm:hidden">
+          <RunOnceButton snapshot={snapshot} iconOnly />
+        </div>
         <RunStateButton snapshot={snapshot} />
       </div>
     </header>

@@ -296,7 +296,10 @@ export function BrokerAccountsCard() {
     <Card
       title="Broker connections"
       action={
-        <div className="flex gap-2">
+        // flex-wrap + justify-end: three connect buttons don't fit beside the title on
+        // phone widths — wrapping keeps them on-canvas instead of forcing the whole
+        // page to scroll horizontally (390px viewport regression).
+        <div className="flex flex-wrap justify-end gap-2">
           <Btn
             size="sm"
             variant="outline"

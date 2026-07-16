@@ -17,6 +17,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { AlertCenter } from "../components/alert-center";
 import { Ago, Card, Chip, Empty, SignedText, Tooltip, type ChipTone } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
+import { destinationLabel } from "../components/nav";
 
 type Tab = "all" | "runs" | "fills" | "alerts";
 
@@ -35,7 +36,7 @@ export default function ActivityPage() {
   return (
     <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Activity</h1>
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/activity")}</h1>
         <div className="flex gap-1 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
           {TABS.map((t) => (
             <button

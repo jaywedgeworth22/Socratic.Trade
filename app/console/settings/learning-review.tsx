@@ -39,7 +39,7 @@ const MODE_OPTIONS = [
 
 // Model shortlist: this is a once-a-day audit of decisions that compound, so the curated
 // options are frontier-tier; the review model is its own user-level pick (unrelated to the
-// per-account team models on Framework → Models). No blank/"default" pseudo-option — the
+// per-account team models on Strategy → Models). No blank/"default" pseudo-option — the
 // field always holds a real, chosen model.
 const REVIEW_MODEL_OPTIONS = [
   { value: "gpt-5.6-sol", label: "gpt-5.6-sol — recommended frontier audit · $$$" },
@@ -216,7 +216,7 @@ export function LearningReviewCard() {
               id="learning-review-model"
               value={model}
               disabled={busy}
-              title="The model that runs the daily learning review. Needs a resolvable key for its provider (Settings → API keys)."
+              title="The model that runs the daily learning review. Needs a resolvable key for its provider (Connections → API keys)."
               onChange={(e) => {
                 const nextModel = e.target.value;
                 void save(

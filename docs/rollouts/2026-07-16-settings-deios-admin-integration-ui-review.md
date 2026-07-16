@@ -53,9 +53,45 @@ of every console surface.
    load, contradicting the gate's documented semantics. Any recorded answer at the current
    consent version now resolves the gate; actual pooling stays gated on explicit accept
    (`hasDataPoolConsent` unchanged).
-4. **Admin portal restyle** — (pending workstream)
-5. **Configure IA** — (pending workstream)
-6. **Site-wide quick wins** — (pending workstream)
+4. **Admin portal restyle** — `/admin` moved off the legacy glass-token system onto the
+   console design system: layout imports `console.css`, root is `.console-root` driven by
+   the SHARED `useConsoleTheme`/font hooks (one theme choice across both surfaces), sticky
+   top bar with an always-visible "← Console" as the first control at every breakpoint,
+   Operator rail using the console `con-nav-item` idiom, and all six page clients
+   (overview, connections, llm-usage, rag-coverage, server, transcript) migrated to
+   `Card`/`Chip`/`Btn`/`Meter`/`Segmented`/`con-table`. Deleted: fake ticking-clock pill,
+   hardcoded "LIVE" pulse, bottom-of-sidebar back link. Because `/console/usage` mounts
+   the same `LlmUsageClient`, this also fixed the P0 "admin design system rendered
+   wholesale inside the console" on the Usage page. `app/ui/markdown.tsx` (legacy twin,
+   zero consumers after the port) deleted.
+5. **Configure IA** — nav labels now match what the pages call themselves: "Framework" →
+   **Strategy**, "Mandates" → **Guardrails** (routes unchanged); NEW **Connections** page
+   (`/console/connections`) takes Broker connections + API keys out of Settings (the
+   one-time-setup half of the old monolith); `#brokers`/`#api-keys` deep links retargeted
+   (+3-line hash safety net for old bookmarks; Robinhood OAuth callback redirect updated);
+   Webhook URL moved into Delivery channels next to its channel toggle; Tax treatment
+   moved from Strategy to Guardrails (next to the Tax rules it feeds); Guardrails
+   Essentials got Schedule / Short selling sub-headings; Strategy reordered Models-first;
+   copy sweep so no user-facing string says "Framework"/"Mandates" for a nav destination.
+6. **Site-wide quick wins** — naming canon "h1 = rail label" via a new exported
+   `destinationLabel()` helper (Proposals, Journal, Evidence, Regime, Outcomes, Coach —
+   9 of 13 surfaces had diverged); Journal audit rows titled "… failed" no longer get a
+   green "Completed" chip (status derived from title when the event carries none);
+   deleted two fabricated-tag blocks that forced a "paper" tag ("Live is not tested yet")
+   and a blanket "notification failed" tag onto every feed group; scan's Congress verdict
+   chip renders decided vocabulary (Pass / Fails significance / Not enough data) instead
+   of raw enums; `connection_health_alert` audit rows say which provider is failing in
+   plain English instead of a "Key Source: none" scalar dump; approvals leads with the
+   empty-state card when the queue is empty (triage apparatus only renders with a queue)
+   and its h1 count hides at zero; icon-only Run once in the phone chrome (the hero's
+   call-to-action was unreachable on mobile); Coach lost its duplicate in-card "Assistant"
+   h1 and its composer no longer sits under the mobile tab bar; Strategy custom-model
+   warning box moved from Tailwind amber+dark: (dead under data-theme) to con-warn
+   tokens; `text-muted-foreground` (undefined class) → `--con-faint`; `TONE_VAR.live`
+   aligned to the accent-tinted `.con-chip-live`; PWA themeColor synced to `--con-bg`;
+   "NO ACCOUNT · no account connected" tautology reworded; watchlist copy names the
+   "Price alert" notification instead of the `price_alert` event id; brokers-card connect
+   buttons wrap on phones (Settings no longer scrolls horizontally at 390px).
 
 ## Why
 
@@ -73,6 +109,21 @@ session artifacts, key conclusions recorded here and in the PR description.
 (exact commands + results at land time; includes full-page screenshot re-shoot of all
 16 pages × desktop-light/desktop-dark/mobile-light and acceptance-criteria review)
 
-## Follow-ups
+## Follow-ups (deliberately deferred — WS-E backlog from the panel synthesis)
 
-(deferred findings backlog at land time)
+- Radius canon sweep: ~121 `rounded-md/lg/xl` call sites → `rounded-card`/`rounded-control`
+  (utilities already generated from `@theme`); own mechanical PR after this wave.
+- `--con-fs-2xs` micro-type token + sweep of ~15 ad-hoc 9–12px font sizes.
+- Move Market-scan shape + Daily learning review cards to Strategy with an
+  ALL-YOUR-ACCOUNTS chip — defensible either way; owner call (retargets the
+  `settings#learning-review` deep link).
+- Coach first-run model preselect (behavior semantics — owner sign-off needed).
+- Intro splash polish (pointer-events after dissolve, brand-reveal timeout, theme-var
+  candle colors).
+- Regime board: collapse fully-dead tile sections to one Empty line + reorder live-first.
+- Public/marketing pages (error.tsx, framework viewer, privacy policy) still use the
+  legacy `app/ui/primitives.tsx` glass system — last non-console holdout, separate pass.
+- Watchlist "never trades" reassurance appears in 4 spots — trim to one (kept the alerts
+  paragraph fix only this wave).
+- Consent-gate theme: an explicitly stored `console:theme` isn't applied on first paint
+  (pre-existing, console-wide; admin now matches console behavior).

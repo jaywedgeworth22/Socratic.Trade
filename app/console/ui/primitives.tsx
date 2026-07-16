@@ -127,7 +127,10 @@ export const TONE_VAR: Record<ChipTone, string> = {
   info: "var(--con-info)",
   none: "var(--con-none)",
   paper: "var(--con-paper)",
-  live: "var(--con-live)"
+  // Accent, not --con-live red: .con-chip-live (console.css) deliberately renders the
+  // live state in the accent tint — live trading is this app's normal state, not an
+  // alarm. Dots and chip fallbacks must agree with the chip class.
+  live: "var(--con-accent)"
 };
 
 const CHIP_CLASS: Record<ChipTone, string | undefined> = Object.fromEntries(

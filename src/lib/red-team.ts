@@ -198,13 +198,13 @@ export async function debateProposal(
   // NO MODEL DEFAULTS: an unchosen Red model resolves to "" — fail closed, never guess a model.
   if (!model) {
     return unavailable(
-      "Red Team reviewer model is not chosen — select it under Framework → Models.",
+      "Red Team reviewer model is not chosen — select it under Strategy → Models.",
       "not_configured"
     );
   }
   if (!llmKey) {
     return unavailable(
-      `No API key resolves for the Red Team reviewer's provider (${provider}) — add one under Settings → API keys.`,
+      `No API key resolves for the Red Team reviewer's provider (${provider}) — add one under Connections → API keys.`,
       "not_configured",
       model
     );

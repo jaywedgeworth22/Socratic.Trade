@@ -1783,8 +1783,7 @@ As of 2026-07-08 (assignment-rule update).
   boxes, leaving iOS row internals — hence "almost zero improvement." Scope: (1) rebuild Settings content
   on console primitives (restore pre-#1476 architecture with post-#1476 content); (2) admin-only link at
   top-of-site chrome to /admin + restyle /admin onto the console `con-*` design system with a clear way
-  back; (3) multi-agent UI expert review of every console surface with Configure-tab IA
-  (Framework/Mandates/Settings) recommendations. Land via land.sh.
+  back; All workstreams IMPLEMENTED (settings de-iOS rebuild incl. ios-components.tsx deletion; admin chrome link + full /admin con-* migration incl. /console/usage P0; Strategy/Guardrails nav renames + NEW /console/connections + tax/webhook card moves + deep-link retargets; h1=rail-label naming canon + journal chip truth + fabricated-tag removal + mobile fixes; consent-decline persistence bug + regression test). GATE RUNNING (lint 0 errors + tsc clean done; full suite/build in flight), then re-shoot + land.sh.
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live
   ("persist all variables/counts... have that be the standard... for all things"): a redeploy

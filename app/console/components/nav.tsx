@@ -20,6 +20,7 @@ import {
   ListChecks,
   MessageSquare,
   Pin,
+  Plug,
   Radar,
   ReceiptText,
   Settings as SettingsIcon,
@@ -88,12 +89,20 @@ export const DESTINATIONS: Destination[] = [
   { href: "/console/macro", label: "Regime", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
   { href: "/console/orders", label: "Orders", icon: ListChecks, desc: "Order history and open orders at the broker." },
   { href: "/console/assistant", label: "Coach", icon: MessageSquare, desc: "Coach Socratic Trade about its reasoning, accounts, and market focus." },
-  { href: "/console/strategy", label: "Framework", icon: Brain, desc: "The agent framework: prompts, models, doctrine, and run cadence." },
-  { href: "/console/guardrails", label: "Mandates", icon: Shield, desc: "Delegated authority and hard constraints that bind every trade." },
+  { href: "/console/strategy", label: "Strategy", icon: Brain, desc: "The agent's brain: instructions, models, scoring weights, presets." },
+  { href: "/console/guardrails", label: "Guardrails", icon: Shield, desc: "Autonomy, spending caps, protective stops, schedule, and the trading rulebook." },
+  { href: "/console/connections", label: "Connections", icon: Plug, desc: "Broker accounts and provider API keys." },
   { href: "/console/results", label: "Outcomes", icon: BarChart3, desc: "Realized performance, equity curve, thesis scorecards, and learning evidence." },
   { href: "/console/usage", label: "Usage", icon: ReceiptText, desc: "Your LLM usage and estimated model cost by key, model, and workflow." },
-  { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Accounts, notifications, API keys, and console preferences." }
+  { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Notifications, sharing, confirmations, and console preferences." }
 ];
+
+/** Canonical destination name for page titles. Every page h1 renders through this
+ *  (h1 === rail label, the 2026-07-16 naming canon) so nav and titles can't drift
+ *  apart again — 9 of 13 surfaces had diverged (click "Outcomes", land on "Results"). */
+export function destinationLabel(href: string): string {
+  return DESTINATIONS.find((d) => d.href === href)?.label ?? href;
+}
 
 function isActive(pathname: string, href: string): boolean {
   return href === "/console" ? pathname === "/console" : pathname.startsWith(href);
@@ -110,7 +119,7 @@ const GROUPED_DESTINATION_HREFS: { label: string; hrefs: string[] }[] = [
   { label: "Core", hrefs: ["/console", "/console/approvals", "/console/activity"] },
   { label: "Monitor", hrefs: ["/console/scan", "/console/watchlist", "/console/macro", "/console/orders"] },
   { label: "Review", hrefs: ["/console/assistant", "/console/results", "/console/usage"] },
-  { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/settings"] }
+  { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/connections", "/console/settings"] }
 ];
 
 export function groupedDestinations(destinations: Destination[]): { label: string; items: Destination[] }[] {

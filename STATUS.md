@@ -1,5 +1,45 @@
 # Current Status
 
+## 2026-07-16 — Settings de-iOS restoration + admin integration + Configure IA + site-wide UI wave (MONET, branch `monet/settings-page-styling-fix-d4add7`)
+
+Owner escalation ("Settings looked 10x better 3 days ago — it matched the rest of the site;
+every fix shows ~zero improvement"). Root cause: the 2026-07-12 "iOS UI refresh" (#1476)
+converted Settings + all 7 sub-cards OFF the console `con-*` primitives onto
+iPhone-Settings components; #1535/#1651 only reskinned containers. This wave, driven by a
+7-expert + design-lead-synthesis review workflow over full-page screenshots of all 16
+surfaces (current vs July-11 baseline captured from a temp worktree at `ffdc9d1f`):
+
+1. **Settings rebuilt on console primitives** — all modules restored to the July-11
+   architecture with every post-July-11 control ported (verified per-file: 4 modules had
+   zero content drift; brokers/danger/learning-review had #1492/#1544/#1631 content
+   preserved, incl. the deliberate Test-Account removal). Event notifications back to the
+   2-col checkbox grid with a full `EVENT_META: Record<NotificationEventType,{label,hint}>`
+   — plain-English labels for all 18 events, compile-error if a future event lacks copy.
+   `app/ui/ios-components.tsx` DELETED. Settings no longer h-scrolls at 390px.
+2. **Admin at top of site + same-app admin portal** — admin-only Admin link in the chrome
+   bar (+ UserMenu twin for phones); `/admin` fully migrated onto the console design system
+   (shared theme/font hooks, "← Console" always visible at top, console rail idiom, all 6
+   page clients on con-* primitives). `/console/usage`'s "admin design inside the console"
+   P0 fixed by the same shared-client port. Legacy `app/ui/markdown.tsx` deleted.
+3. **Configure IA** — nav renamed to match the pages (Strategy, Guardrails); NEW
+   `/console/connections` (brokers + API keys out of the Settings monolith); tax card
+   moved to Guardrails; webhook into Delivery channels; deep links retargeted with a hash
+   safety net; OAuth callback updated; copy sweep.
+4. **Naming canon + quick wins** — h1 = rail label everywhere via `destinationLabel()`
+   (9 of 13 surfaces had diverged); journal "…failed" rows no longer chip green; deleted
+   fabricated forced tags ("paper" / "notification failed") from the unified feed; verdict
+   enums and event ids out of user-facing copy; approvals empty state leads when queue is
+   empty; icon-only mobile Run once; Coach single-h1 + composer clear of the tab bar;
+   assorted token fixes (con-warn box, TONE_VAR.live, themeColor sync, undefined class).
+5. **Bonus bug** — consent-gate DECLINE now persists (was re-prompting on every load;
+   `needsConsent` treated "declined" as "never answered"). Regression test added.
+
+Verification: recorded in the rollout note (lint 0 errors, tsc clean, full suite, build,
+all 15 routes 200 on a local node-24 dev server, full-page re-shoot of every surface ×
+desktop-light/desktop-dark/mobile-light). Deferred WS-E backlog (radius/type sweeps,
+regime dead-tile collapse, public-page design system, etc.) in the rollout note. Rollout:
+`docs/rollouts/2026-07-16-settings-deios-admin-integration-ui-review.md`.
+
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
 ## 2026-07-16 — Alpaca + Tradier bracket sibling-leg cancellation (CLAUDE)

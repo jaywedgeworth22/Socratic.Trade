@@ -267,7 +267,7 @@ class TradierBrokerGateway implements BrokerGateway {
     const token = keys.apiKey?.trim();
     if (!token) {
       throw new Error(
-        `Tradier access token is missing for ${keys.label}. Open Settings -> Accounts and re-save the token.`
+        `Tradier access token is missing for ${keys.label}. Open Connections and re-save the token.`
       );
     }
     this.token = token;
@@ -405,7 +405,7 @@ class TradierBrokerGateway implements BrokerGateway {
       const wantNum = String(accountNumber ?? "").trim();
       if (wantNum && liveNum && liveNum.toLowerCase() !== wantNum.toLowerCase()) {
         throw new Error(
-          `Account Mismatch: the connected Tradier credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Settings -> Accounts.`
+          `Account Mismatch: the connected Tradier credentials are for account ${liveNum}, but this profile is configured for ${wantNum}. Update the account number in Connections.`
         );
       }
       const margin = b.margin as Record<string, unknown> | undefined;
