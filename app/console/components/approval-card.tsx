@@ -8,7 +8,9 @@
 
 import { useMemo, useState } from "react";
 import { CircleAlert, Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
+import { requestedExitQuantity } from "@/lib/broker-held-orders";
 import { isModelRotationSentinel } from "@/lib/llm-request";
+import { normalizeSymbol } from "@/lib/money";
 import { resolveDailyOpeningCap } from "@/lib/policy-caps";
 import type { PendingProposal, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
@@ -19,8 +21,8 @@ import {
   LiveConfirmationRequiredError,
   type ApproveResult
 } from "../lib/api";
-import { realityForMode } from "../lib/derive";
-import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
+import { estimatedClosingPnl, isClosingOrder, positionMarkPrice, realityForMode } from "../lib/derive";
+import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, timeUntil, EM_DASH } from "../lib/format";
 import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
 import { redTeamCardState, redTeamFailureMeta, redTeamFailureModel, redTeamVerdictLabel } from "../lib/red-team";
 import { proposalGreenRationale, proposalHumanReviewReasons } from "../lib/thesis";
@@ -153,6 +155,44 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       ? ((pending.proposalCurrentPrice - referencePrice) / referencePrice) * 100
       : undefined;
 
+  // Estimated realized P/L for an exit (sell-of-long or cover-of-short): only meaningful when
+  // there's a matching held position to close against. Fresh price prefers the proposal's own
+  // drift price (pending.proposalCurrentPrice, already fetched for the "Since proposed" line
+  // above) and falls back to the position's own mark (marketValue/quantity, same snapshot).
+  // Missing position or price => estPnl stays null and the line is omitted — never fabricated.
+  // The position's SIGN must agree with the exit side (isClosingOrder): a card can sit for hours
+  // while the position underneath flips or closes — a sell card over a now-short position would
+  // otherwise show a long-exit "P/L" for an order that actually opens more short exposure.
+  const symbolPosition = isExit(p.side)
+    ? snapshot?.positions?.find((pos) => normalizeSymbol(pos.symbol) === normalizeSymbol(p.symbol))
+    : undefined;
+  const matchedPosition = symbolPosition && isClosingOrder({ symbol: p.symbol, side: p.side }, symbolPosition)
+    ? symbolPosition
+    : undefined;
+  // A price that exactly equals the position's average cost is almost certainly the broker
+  // adapter's no-quote fallback (Robinhood sets marketValue = quantity * averageCost when it
+  // cannot quote, and the server's currentPrices fall back to that mark) — showing it would
+  // render a fake $0.00 P/L. Treat it as unavailable; the line is omitted rather than misleading.
+  const costSuspicious = (price: number | undefined): boolean =>
+    price !== undefined &&
+    matchedPosition !== undefined &&
+    matchedPosition.averageCost > 0 &&
+    Math.abs(price - matchedPosition.averageCost) / matchedPosition.averageCost < 1e-9;
+  const exitPriceCandidate = finite(pending.proposalCurrentPrice)
+    ? pending.proposalCurrentPrice
+    : (positionMarkPrice(matchedPosition) ?? undefined);
+  const exitCurrentPrice = costSuspicious(exitPriceCandidate) ? undefined : exitPriceCandidate;
+  // Cap the exit quantity to the current position size so stale oversize exit proposals
+  // (e.g. the user manually reduced the position after the approval card was created)
+  // don't overstate the estimated closing P/L — same guard as closingOrderPnl in orders/lib.ts.
+  const exitQty = requestedExitQuantity(p);
+  const cappedExitQty = exitQty != null
+    ? Math.min(exitQty, Math.abs(matchedPosition?.quantity ?? 0))
+    : undefined;
+  const estPnl = matchedPosition && cappedExitQty != null
+    ? estimatedClosingPnl({ position: matchedPosition, shares: cappedExitQty, currentPrice: exitCurrentPrice })
+    : null;
+
   // Model attribution prefers the PERSISTED per-proposal values (p.proposedByModel /
   // p.redTeamVerdict.model — stamped failover-aware by src/lib/strategy.ts), falling back
   // to the snapshot policy's configured models only for legacy proposals that predate them
@@ -252,6 +292,25 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       </header>
 
       <div className="flex flex-col gap-3 px-4 py-3 text-[length:var(--con-fs-sm)]">
+        {/* Estimated closing P/L: only for exits with a matching held position and a fresh
+            price. Omitted entirely (no dashes-on-card noise) when either is missing. */}
+        {estPnl && (
+          <div
+            className="rounded-lg border border-[color:var(--con-line)] p-3"
+            title="Estimated at approval-card render time: shares this order would close × (current price − average cost), sign-flipped for a short cover. The server re-prices at the moment you actually approve."
+          >
+            <div className="con-card-title mb-1 flex items-center gap-1.5">
+              <TrendingUp size={12} /> Est. P/L if filled
+            </div>
+            <p className="text-[color:var(--con-muted)]">
+              {fmtQty(estPnl.shares)} sh @ {fmtMoney(estPnl.currentPrice)} vs basis {fmtMoney(estPnl.basisPrice)} —{" "}
+              <SignedText value={estPnl.pnl}>
+                {fmtSignedMoney(estPnl.pnl)} ({fmtPct(estPnl.pnlPct, 1, true)})
+              </SignedText>
+            </p>
+          </div>
+        )}
+
         {/* Green team: the proposing (bull) model + its conviction, always shown. */}
         <div className="con-team con-team-green">
           <div className="flex items-start justify-between gap-3">
