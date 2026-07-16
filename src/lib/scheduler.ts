@@ -559,6 +559,16 @@ async function tick(): Promise<void> {
     );
   }
 
+  // Once-per-day retrieval-usefulness join (handoff 4.1): credit the analog/coaching vector ids
+  // each decision case injected (ragAttributions) with that case's matured outcome, into the
+  // retrieval_usefulness_stats aggregates. Bounded batch, credited-ledger watermark (idempotent),
+  // SQLite-only — no provider or LLM calls. Advisory observability + a bounded ranking nudge.
+  for (const userId of listUsers()) {
+    void import("./retrieval-usefulness")
+      .then(({ runRetrievalUsefulnessJoinIfDue }) => runRetrievalUsefulnessJoinIfDue(userId))
+      .catch((err) => console.error(`[scheduler] retrieval-usefulness join error for ${userId}:`, err));
+  }
+
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
   void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));
 

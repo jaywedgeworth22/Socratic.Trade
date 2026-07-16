@@ -8,6 +8,7 @@ import {
   runtimeReleaseIdentity
 } from "@/lib/runtime-health";
 import { getLease } from "@/lib/scheduler-lease";
+import { getTradingLivenessSummary } from "@/lib/trading-liveness";
 import { statSync, statfsSync } from "fs";
 import { dirname } from "path";
 
@@ -63,6 +64,40 @@ export async function GET() {
     }
   } catch {
     // never let lease reporting break the liveness probe
+  }
+
+  // Trading-liveness (handoff 6b.7): the heartbeat above proves the tick FUNCTION runs, not that
+  // trading works — a scheduler that ticks while every run fails keeps this route green for hours.
+  // Per active-autonomy account (policy.systemState === "active"), report the age of the most
+  // recent COMPLETED strategy run and a consecutive-failed-runs count. `degraded`-only — NEVER
+  // 503s (see trading-liveness.ts's header comment: a 503 here would trigger a container restart,
+  // which re-halts autonomy via the boot interlock — the exact loop 6b.1 fixed). Omitted entirely
+  // when there are zero active-autonomy accounts (nothing to be live about).
+  //
+  // PUBLIC route (no requireAdmin): same convention as the dependencies section below — expose
+  // ONLY a minimal aggregate, never the per-account rows. The full summary carries userId,
+  // connectedAccountId, and a user-chosen label per account (plus run timestamps); those stay on
+  // the authed ops snapshot (buildOpsSnapshot -> computeAccountTradingLiveness in
+  // ops-snapshot.ts). Here we fold it down to counts + the oldest age, which is enough for an
+  // external uptime probe without leaking account identity.
+  try {
+    const liveness = getTradingLivenessSummary();
+    if (liveness) {
+      const degradedCount = liveness.accounts.filter((a) => a.degraded).length;
+      const oldestCompletedRunAgeSeconds = liveness.accounts.reduce<number | null>((oldest, a) => {
+        if (a.lastCompletedRunAgeSeconds === null) return oldest;
+        return oldest === null ? a.lastCompletedRunAgeSeconds : Math.max(oldest, a.lastCompletedRunAgeSeconds);
+      }, null);
+      checks.tradingLiveness = {
+        activeAccounts: liveness.accounts.length,
+        degraded: degradedCount,
+        oldestCompletedRunAgeSeconds,
+        marketOpen: liveness.marketOpen
+      };
+      if (liveness.degraded) checks.tradingLivenessDegraded = true;
+    }
+  } catch {
+    // never let trading-liveness reporting break the liveness probe
   }
 
   // Market-data paid-tier watchdog status (per the nightly provider-tier check). Surfaced here so the

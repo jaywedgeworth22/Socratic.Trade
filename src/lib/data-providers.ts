@@ -35,6 +35,7 @@ import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-bre
 import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
+import { QuiverEnrichmentProvider, resolveQuiverApiKey } from "./quiver-provider";
 import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
@@ -958,6 +959,12 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (robinhoodOptionsEnrichmentEnabled() && robinhoodMcpDataEnabled()) {
     providers.push(new RobinhoodOptionsEnrichmentProvider(userId));
   }
+  // QuiverQuant: supplies ONLY the five *Quiver carrier fields (congress/insider trades, gov
+  // contracts, lobbying, patents) nothing else in the cascade produces, so seating it here is
+  // low-stakes for ordering. Key-gated on QUIVER_API_KEY (process.env only) — absent key means
+  // it's never registered, i.e. fully dormant. See src/lib/quiver-provider.ts.
+  const quiverKey = resolveQuiverApiKey();
+  if (quiverKey) providers.push(withHealthLane(new QuiverEnrichmentProvider(quiverKey), "env"));
   providers.push(new YahooFinanceEnrichmentProvider());
   // Opt-in active circuit breaker: skip a lane whose db-health lane is currently `stoppedWorking`,
   // re-probing only after the backoff window. Default OFF so it can't silently black out a
