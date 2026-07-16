@@ -32,6 +32,13 @@ Codex review posted 2 more P2 findings on the round-1 fixes:
 Both rounds verified: tsc clean, 400 files / 4607 tests pass, build clean. All 4 Codex threads resolved, auto-merge enabled.
 Rollout: `docs/rollouts/2026-07-16-aiplatform-auth.md`, `docs/rollouts/2026-07-16-settings-subpages-redesign.md`.
 ## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE)
+## 2026-07-16 — Bump congress-trading-shared to fee9937c (PR #1686)
+
+Dependency bump: `@jaywedgeworth22/congress-trading-shared` pinned to
+`fee9937c25db1de75c1a676826801e3399f36106` from `ef17b72`. Both `package.json`
+and `package-lock.json` updated. Rollout:
+`docs/rollouts/2026-07-16-dep-bump-shared-fee9937c.md`.
+
 ## 2026-07-16 — Exit-strategy intelligence: expert-panel design doc landed (CLAUDE)
 
 Docs-only. `docs/design/exit-strategy-intelligence.md` — synthesized output of an
@@ -77,6 +84,9 @@ falls back to any connected Tradier account), with a new regression test. tsc cl
 `test/history.test.ts` 14/14 and `test/web-sources-technical.test.ts` 10/10 green
 (unaffected). Branch `claude/tradier-connected-account-history-source`.
 Rollout: `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
+## 2026-07-16 — Shared v1.8.3 dependency bump (ANTIGRAVITY)
+
+Coordinated bump of `@jaywedgeworth22/congress-trading-shared` dependency to `fee9937c25db1de75c1a676826801e3399f36106` to resolve version pin divergence. Build and checks verify clean. Branch `antigravity/company-name-standardization-part2`. Rollout: `docs/rollouts/2026-07-16-shared-v183-dependency-bump.md`.
 
 ## 2026-07-16 — Approval-time limit re-anchor + estimated closing P/L surfaces (MONET)
 
@@ -91,6 +101,14 @@ and an Orders-page Last-price freshness upgrade. Two-lens adversarial verify; al
 findings fixed; 117 tests across 6 suites. strategy.ts untouched; types.ts additive-only.
 Branch `monet/todays-errors-triage-handoff-8d809b`.
 Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
+## 2026-07-16 — Board-flip PR #1687 auto-responded to Codex review (CLAUDE autofix)
+
+PR #1687 (`monet/ui-wave-board-flip`) had 2 Codex P2 findings:
+1. **Restore next-env.d.ts build drift** — Fixed (restored from origin/main). [codex-autofix] commit pushed.
+2. **Move completed efforts to ## Completed section** — Question posted to maintainer; organizational convention
+   not changed without owner direction.
+Branch: `monet/ui-wave-board-flip`. Rollout: `docs/rollouts/2026-07-16-codex-autofix-board-flip.md`.
+
 ## 2026-07-16 — Settings de-iOS restoration + admin integration + Configure IA + site-wide UI wave (MONET, branch `monet/settings-page-styling-fix-d4add7`)
 
 Owner escalation ("Settings looked 10x better 3 days ago — it matched the rest of the site;
