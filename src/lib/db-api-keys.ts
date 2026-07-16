@@ -115,7 +115,6 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   fmp: "FMP_API_KEY",
   alphavantage: "ALPHAVANTAGE_API_KEY",
   marketstack: "MARKETSTACK_API_KEY",
-  tradier: "TRADIER_API_KEY",
   fred: "FRED_API_KEY",
   sec_edgar_user_agent: "SEC_EDGAR_USER_AGENT",
   massive: "MASSIVE_API_KEY",
@@ -159,7 +158,6 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   openrouter: "openrouter",
   openrouter_api_key: "openrouter",
   marketstack_api_key: "marketstack",
-  tradier_api_key: "tradier",
   fred_api_key: "fred",
   fintech_studios: "fintechstudios",
   fintech_studios_api_key: "fintechstudios",
@@ -300,7 +298,6 @@ const API_KEY_TIER: Record<string, CredTier> = {
   fmp: "shared-operator-infra",
   alphavantage: "shared-operator-infra",
   marketstack: "shared-operator-infra",
-  tradier: "shared-operator-infra",
   massive: "shared-operator-infra",
   massive_s3_endpoint: "shared-operator-infra",
   massive_bucket: "shared-operator-infra",
@@ -637,6 +634,38 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
   const row = getDb()
     .prepare("SELECT * FROM connected_accounts WHERE user_id = ? AND is_active = 1 LIMIT 1")
     .get(userId) as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    broker: String(row.broker) as "alpaca" | "alpaca-mcp" | "robinhood" | "test" | "tradier",
+    environment: String(row.environment) as "live" | "paper",
+    accountNumber: row.account_number != null ? String(row.account_number) : undefined,
+    label: String(row.label),
+    taxationType: row.taxation_type != null ? (String(row.taxation_type) as ConnectedAccount["taxationType"]) : undefined,
+    apiKey: row.api_key ? decryptValue(String(row.api_key)) : undefined,
+    apiSecret: row.api_secret ? decryptValue(String(row.api_secret)) : undefined,
+    baseUrl: row.base_url != null ? String(row.base_url) : undefined,
+    capabilities: parseCapabilities(row.capabilities),
+    isActive: row.is_active === 1,
+    isDraining: row.is_draining === 1,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+/**
+ * Active connected account for a specific broker (unlike getActiveConnectedAccount, which returns
+ * whichever broker happens to be active for the user). Used to source market-data credentials from
+ * a broker connection rather than a separate stored API key — e.g. Tradier price-history (see
+ * history.ts's resolveTradierHistoryCredential): the owner connects Tradier as a broker to trade
+ * through it, and that SAME connection's access token also becomes the app's Tradier price-history
+ * source, rather than requiring a duplicate, separate "Tradier API key" entry in Settings.
+ */
+export function getActiveConnectedAccountByBroker(broker: ConnectedAccount["broker"], userId: string = "local"): ConnectedAccount | undefined {
+  const row = getDb()
+    .prepare("SELECT * FROM connected_accounts WHERE user_id = ? AND broker = ? AND is_active = 1 LIMIT 1")
+    .get(userId, broker) as Record<string, unknown> | undefined;
   if (!row) return undefined;
   return {
     id: String(row.id),

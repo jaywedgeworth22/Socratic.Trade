@@ -1793,6 +1793,20 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
+  card (branch `claude/tradier-connected-account-history-source`) — IN PROGRESS, gate green,
+  PR next.** Owner request: Tradier shouldn't be a generic API-keys Settings card, "should
+  just be a source that users sync to" (i.e. the existing broker-connect flow), with the
+  connected account's data naturally shared since the owner is the sole user. Removed
+  `tradier` from `API_KEY_CATALOG` (`app/api/keys/route.ts`) and its now-dead
+  `API_KEY_ENV_MAP`/aliases/tier entries; `history.ts`'s Tradier price-history fetch now
+  resolves credentials from the connected Tradier broker account (new
+  `getActiveConnectedAccountByBroker`) instead of a separate stored key/env var, with cache
+  scope hardcoded `"shared"`. Rewired the affected `test/history.test.ts` cases; the 2 tests
+  exercising per-user private/pool-consent semantics switched to Marketstack as their vehicle.
+  Also updated `.env.example`, `README.md`, and 2 living docs
+  (`market-data-provider-pricing.md`, `phase-11-multi-user.md`). Rollout:
+  `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
 - **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live

@@ -120,8 +120,13 @@ per-user via `upsertUserApiKey` under the default user.
 
 Current implementation: Settings -> Connections lists OpenAI, Anthropic,
 xAI/Grok, Google Gemini, Mistral, DeepSeek, Finnhub, FMP, Alpha Vantage,
-Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
+Marketstack, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
 env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
+**Tradier was removed from this generic key catalog on 2026-07-16** — it is
+sourced from the connected Tradier BROKER account (Settings -> Accounts)
+instead, per owner direction that a broker-connection-only source shouldn't
+also appear as a separate, duplicate "API key" (see
+`docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`).
 Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
 secret values. Strategy lets the selected account strategy choose a Green
 Team model for proposal generation and an optional separate Red Team model for

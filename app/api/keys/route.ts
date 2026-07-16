@@ -109,14 +109,6 @@ const API_KEY_CATALOG = [
     docsUrl: "https://marketstack.com/signup/free"
   },
   {
-    service: "tradier",
-    label: "Tradier",
-    category: "Price history",
-    required: false,
-    unlocks: "Primary keyed daily OHLC source for charts and in-house technical signals.",
-    docsUrl: "https://developer.tradier.com/"
-  },
-  {
     service: "fred",
     label: "FRED",
     category: "Macro",
