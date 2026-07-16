@@ -872,15 +872,29 @@ export function UserMenu({
                 Signing out only ends this browser session. The strategy keeps its current run state on the server —
                 it does not stop, start, or sell anything.
               </p>
-              {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
-              <a
-                href="/logout"
-                className="con-btn con-btn-outline self-start"
-                title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
-              >
-                <LogOut size={14} />
-                Sign out
-              </a>
+              <div className="flex items-center gap-2">
+                {/* Operator-only admin portal entry — the phone-reachable twin of the
+                    desktop chrome's Admin link (the chrome bar has no room on phones). */}
+                {user.isAdmin && (
+                  <a
+                    href="/admin"
+                    className="con-btn con-btn-outline"
+                    title="Admin portal — operator diagnostics: connections, LLM spend, RAG coverage, server."
+                  >
+                    <ShieldCheck size={14} />
+                    Admin portal
+                  </a>
+                )}
+                {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
+                <a
+                  href="/logout"
+                  className="con-btn con-btn-outline"
+                  title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
+                >
+                  <LogOut size={14} />
+                  Sign out
+                </a>
+              </div>
             </div>
           </div>
         </>
