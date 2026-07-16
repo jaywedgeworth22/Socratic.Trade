@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-16 — Bump congress-trading-shared to fee9937c (PR #1686)
+
+Dependency bump: `@jaywedgeworth22/congress-trading-shared` pinned to
+`fee9937c25db1de75c1a676826801e3399f36106` from `ef17b72`. Both `package.json`
+and `package-lock.json` updated. Rollout:
+`docs/rollouts/2026-07-16-dep-bump-shared-fee9937c.md`.
+
 ## 2026-07-16 — Exit-strategy intelligence: expert-panel design doc landed (CLAUDE)
 
 Docs-only. `docs/design/exit-strategy-intelligence.md` — synthesized output of an

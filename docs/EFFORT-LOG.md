@@ -235,6 +235,12 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **[Socratic.Trade] Bump congress-trading-shared to fee9937c (PR #1686, branch
+  `antigravity/company-name-standardization-part2`) — COMPLETED 2026-07-16.**
+  Routine dependency bump — `@jaywedgeworth22/congress-trading-shared` pinned to
+  `fee9937c25db1de75c1a676826801e3399f36106` from `ef17b72`. Both `package.json`
+  and `package-lock.json` updated. Rollout:
+  `docs/rollouts/2026-07-16-dep-bump-shared-fee9937c.md`.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**
