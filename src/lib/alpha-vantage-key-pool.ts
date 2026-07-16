@@ -338,7 +338,13 @@ interface PersistedCallBudget {
 
 /** Env-overridable daily call budget. Falls back to DEFAULT_DAILY_CALL_BUDGET on anything
  *  unset/unparsable/non-integer/negative. 0 is a valid override (proactively block all AV
- *  calls for the rest of today without touching ALPHAVANTAGE_API_KEY itself). */
+ *  calls for the rest of today without touching ALPHAVANTAGE_API_KEY itself).
+ *
+ *  Name trap: PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY also matches provider-rate-limit.ts's
+ *  generic resolveProviderQuota env pattern. Nothing calls
+ *  admitProviderRequests("alpha-vantage", ...) today; if that is ever wired, TWO counters with
+ *  DIFFERENT day semantics (its rolling 24h window vs this ET-midnight quota day) would engage
+ *  silently under one env var — pick one owner before wiring it there. */
 export function alphaVantageDailyCallBudget(): number {
   const raw = process.env.PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY;
   if (raw === undefined || raw.trim() === "") return DEFAULT_DAILY_CALL_BUDGET;

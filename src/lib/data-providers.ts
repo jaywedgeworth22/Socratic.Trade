@@ -3198,13 +3198,29 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
                   userId: this.userId,
                   deferSuccessLog: true,
                   apiKey: dispatchKey,
+                  // Exact-quota reserver (fetchWithRetry's own contract): a built-in 429 retry
+                  // would re-dispatch under the SAME daily-budget reservation — one reserved
+                  // call must never cost two real AV calls when the headroom is only 25-23=2.
+                  retries: 0,
                   // Marks the reserved proactive-budget call (see tryReserveAlphaVantageCalls
                   // above) as actually spent the instant it reaches the real network — fires
                   // right before fetchWithRetry's own `fetch()` call, i.e. AFTER the per-
                   // credential circuit breaker and the allExhausted()/no-key throws above have
                   // already had their chance to skip this call without ever touching AV. The
                   // catch block below refunds the reservation when this never flips true.
-                  durableAttempt: { onDispatch: () => { dispatchedToNetwork = true; } }
+                  // Passing durableAttempt makes this call self-recording: fetchWithRetry
+                  // suppresses its default recordProviderCall on both paths for durable
+                  // callers, so the usage-monitor call-volume row is written here instead
+                  // (exactly one per invocation, matching the pre-budget telemetry).
+                  durableAttempt: {
+                    onDispatch: () => { dispatchedToNetwork = true; },
+                    onResponse: (r) => {
+                      recordProviderCall(this.name, { ok: r.ok, keySource: this.keySource, userId: this.userId });
+                    },
+                    onTransportError: () => {
+                      recordProviderCall(this.name, { ok: false, keySource: this.keySource, userId: this.userId });
+                    },
+                  }
                 });
               } finally {
                 clearTimeout(timeout);

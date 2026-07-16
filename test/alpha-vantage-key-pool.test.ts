@@ -777,6 +777,32 @@ describe("proactive daily call budget (tryReserveAlphaVantageCalls / refundAlpha
     for (const s of symbols) expect(res[s]).toEqual({}); // every symbol resolves — dispatched-and-empty or budget-skipped look identical
   });
 
+  it("(a2) an HTTP 429 costs exactly ONE dispatch and ONE budget unit — no built-in retry under the same reservation, no refund of a dispatched call", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    process.env.PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY = "3";
+    __resetAlphaVantageDailyBudgetForTests();
+
+    const pool = new AlphaVantageKeyPool();
+    const KEY = "budget-429-key"; // gitleaks:allow — obviously-fake test fixture, not a credential
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount++;
+      return new Response("rate limited", { status: 429 });
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider([KEY], "env", undefined, pool);
+    const res = await provider.enrich(["AAA"]);
+
+    // fetchWithRetry defaults to one internal 429 retry; the AV site must pin retries: 0 so a
+    // single reservation can never turn into two real AV calls (headroom is only 25-23=2).
+    expect(fetchCount).toBe(1);
+    expect(res.AAA).toEqual({});
+    // The 429 call DID reach Alpha Vantage, so its reservation stays spent (no refund):
+    // exactly 2 of the 3-call budget must remain.
+    expect(tryReserveAlphaVantageCalls(3, Date.now())).toBe(2);
+  });
+
   it("(b) counter persists across a module reset within the same DB (simulates a process restart)", async () => {
     process.env.PROVIDER_QUOTA_ALPHA_VANTAGE_PER_DAY = "5";
     const now = 20_000_000;
