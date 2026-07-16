@@ -27,6 +27,7 @@ import { useToast } from "../ui/toast";
 import { ScanTable } from "./scan-table";
 import { SmartMoneySection } from "./smart-money";
 import { asFullMarketScan, newestScan, useLiveScan } from "./use-live-scan";
+import { destinationLabel } from "../components/nav";
 
 type Tab = "scan" | "smart";
 
@@ -96,7 +97,7 @@ export default function ScanPage() {
     <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       {/* Header: title · freshness · last-scanned · refresh */}
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Scan</h1>
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/scan")}</h1>
         {scan && (
           <Chip
             tone={isFresh ? "accent" : "muted"}
@@ -288,7 +289,14 @@ function MarketScanTab({
             tone={verdictTone}
             title={congressScoreVerdict.reasons.length > 0 ? congressScoreVerdict.reasons.join("\n") : "Signal passed statistical significance validation."}
           >
-            {congressScoreVerdict.verdict}
+            {/* Decided vocabulary, not the raw verdict enum (FAIL_SIGNIFICANCE etc.). */}
+            {congressScoreVerdict.verdict === "PASS"
+              ? "Pass"
+              : congressScoreVerdict.verdict === "FAIL_SIGNIFICANCE"
+                ? "Fails significance"
+                : congressScoreVerdict.verdict === "INSUFFICIENT"
+                  ? "Not enough data"
+                  : congressScoreVerdict.verdict}
           </Chip>
           <span className="text-[color:var(--con-faint)]">
             t-stat: {congressScoreVerdict.stats.rankICTStat.toFixed(2)}

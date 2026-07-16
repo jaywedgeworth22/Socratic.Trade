@@ -25,6 +25,7 @@ import {
   type ApprovalSort
 } from "./triage";
 import { useToast } from "../ui/toast";
+import { destinationLabel } from "../components/nav";
 
 const SIDE_OPTIONS: Array<{ value: ApprovalSideFilter; label: string }> = [
   { value: "all", label: "All ideas" },
@@ -307,10 +308,15 @@ export default function ApprovalsPage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-[length:var(--con-fs-lg)] font-bold">
-              Approvals{" "}
-              <span className="con-num text-[color:var(--con-accent)]">
-                ({filtered.length}/{pending.length})
-              </span>
+              {destinationLabel("/console/approvals")}
+              {pending.length > 0 && (
+                <>
+                  {" "}
+                  <span className="con-num text-[color:var(--con-accent)]">
+                    ({filtered.length}/{pending.length})
+                  </span>
+                </>
+              )}
             </h1>
             {learnedPendingCount > 0 && (
               <button
@@ -326,6 +332,10 @@ export default function ApprovalsPage() {
           <Chip tone={state.tone === "pos" ? "pos" : state.tone === "neg" ? "neg" : "warn"}>{state.label}</Chip>
         </div>
 
+        {/* Triage apparatus (stat tiles, search, filters, bulk actions) only earns its
+            space when there's a queue to triage — an empty queue leads with the
+            empty-state card instead of four zero tiles and disabled controls. */}
+        {pending.length > 0 && (
         <Card
           title={
             <span className="flex items-center gap-1.5">
@@ -437,12 +447,14 @@ export default function ApprovalsPage() {
             </div>
           </div>
         </Card>
+        )}
 
         {stopped && (
           <Card>
             <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]">
               <strong>The system is stopped.</strong> The server refuses approving or rejecting proposals while stopped —
-              start it (or switch to Close-only) from the run-state chip first. Run once can still create proposals.
+              start it (or switch to Close-only) from the Stopped button in the top bar first. Run once can still create
+              proposals.
             </p>
           </Card>
         )}
@@ -450,10 +462,21 @@ export default function ApprovalsPage() {
         {filtered.length === 0 ? (
           <Card>
             <div className="py-8 text-center">
-              <p className="font-semibold">No trade proposals match this triage view.</p>
-              <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                Adjust the filters above or wait for the next run to stage new ideas.
-              </p>
+              {pending.length === 0 ? (
+                <>
+                  <p className="font-semibold">Nothing waiting for your judgment.</p>
+                  <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                    When a run stages a trade that needs your approval, it shows up here.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold">No trade proposals match this triage view.</p>
+                  <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                    Adjust the filters above or wait for the next run to stage new ideas.
+                  </p>
+                </>
+              )}
             </div>
           </Card>
         ) : (

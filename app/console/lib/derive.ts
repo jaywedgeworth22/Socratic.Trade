@@ -28,7 +28,7 @@ export interface RealityInfo {
   /** The load-bearing word. */
   word: "NO ACCOUNT" | "PAPER" | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "no account connected" | "NOT real money" | "connected account";
+  phrase: "nothing connected yet" | "NOT real money" | "connected account";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -61,7 +61,9 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         mode: undefined,
         tone: "none",
         word: "NO ACCOUNT",
-        phrase: "no account connected",
+        // Not "no account connected" — the banner renders "WORD · phrase", and
+        // repeating the word's meaning made it a tautology.
+        phrase: "nothing connected yet",
         clarification: "Connect a broker account (paper or live) before the app can place orders."
       };
   }

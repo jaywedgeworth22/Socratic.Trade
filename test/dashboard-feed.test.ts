@@ -460,18 +460,27 @@ describe("dashboard feed helpers", () => {
       getProposalById: () => ({ proposal: proposal({ symbol: "PLTR", side: "buy" }) })
     });
 
+    // Tags are ONLY what the events earned (2026-07-16): the old blanket blocks that
+    // pushed "notification disabled" onto policy groups, "notification failed" onto
+    // every other group, and a forced "paper" tag onto ALL groups were fabricated
+    // labels on real data and were removed.
     const policyGroup = feed.find(g => g.tags.includes("policy change"));
     expect(policyGroup).toBeDefined();
-    expect(policyGroup!.tags).toContain("notification disabled");
+    expect(policyGroup!.tags).not.toContain("notification disabled");
     expect(policyGroup!.tags).not.toContain("notification failed");
+    expect(policyGroup!.tags).not.toContain("paper");
 
     const tradeGroup = feed.find(g => g.proposalId === "p1");
     expect(tradeGroup).toBeDefined();
     // fill.source "paper" is always a genuine broker-paper fill now (no local-simulation execution
     // path exists anymore), so the group title reads "Paper", not "Test".
     expect(tradeGroup!.title).toBe("Paper BUY PLTR");
-    expect(tradeGroup!.tags).toContain("notification failed");
-    expect(tradeGroup!.tags).not.toContain("notification disabled");
+    // "notification disabled" here is EARNED: the group's own n1 notification has
+    // status "skipped" (webhook not configured). "notification failed" would be a
+    // fabrication — nothing in this group failed to send.
+    expect(tradeGroup!.tags).toContain("notification disabled");
+    expect(tradeGroup!.tags).not.toContain("notification failed");
+    expect(tradeGroup!.tags).not.toContain("paper");
 
     const pendingApprovalEvent = tradeGroup!.events.find(ev => ev.id === "n1");
     expect(pendingApprovalEvent).toBeDefined();
