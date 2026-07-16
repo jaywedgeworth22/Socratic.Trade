@@ -19,7 +19,7 @@ import {
 import { getBrokerGateway } from "./broker";
 import { isLiveExitOrder, isLiveOrderState, isRejectedOrCanceledState, liveExitOrderCoverage } from "./broker-side";
 import { applyPaperExitCost } from "./execution-cost";
-import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops } from "./broker-protective-stops";
+import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops, reconcilePendingBracketTeardowns } from "./broker-protective-stops";
 import { resolveProtectiveExitRouting, type ProtectiveExitQuote } from "./protective-exit-routing";
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
@@ -352,6 +352,14 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     listSyntheticStops(accountNumber, userId).map((s) => [normalizeSymbol(s.symbol), s.extremePrice])
   );
   try {
+    // Best-effort, independent of everything else this monitor does — a bracket teardown never
+    // needs the running/positions/orders context above, just the account + gateway, so this can't
+    // be blocked by (or block) the broker-protective-stops reconciliation below.
+    try {
+      await reconcilePendingBracketTeardowns(gateway, accountNumber, userId);
+    } catch {
+      // never let a bracket-teardown sweep failure block the rest of this monitor's tick
+    }
     const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol, stopPlanBySymbol });
     if (reconciled.cancelledOrderIds.length > 0) {
       const cancelledIds = new Set(reconciled.cancelledOrderIds);

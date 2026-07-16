@@ -5237,7 +5237,9 @@ export function enrichOpeningProposal(
   }
 
   const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
-  const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+  // Tradier gained native OTOCO/OTO bracket support alongside Alpaca's order_class bracket — see
+  // tradier.ts's placeEquityOrder isBracket branch and cancelBracketSiblingLegs.
+  const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp" || policy.activeBroker === "tradier";
   const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / entryPrice) : undefined;
   const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
   if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {

@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import { OrderValidationError } from "./types";
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
-import { toBrokerSide } from "./broker-side";
+import { toBrokerSide, isRejectedOrCanceledState } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { logApiHealth } from "./db-health";
 import { recordProviderCall, pushBrokerBalance } from "./usage-monitor-push";
@@ -648,6 +648,40 @@ class AlpacaBrokerGateway implements BrokerGateway {
       }
       return res;
     });
+  }
+
+  // Identifies and cancels a bracket's still-resting sibling legs given the ORIGINAL entry order's
+  // own ID. Alpaca's `GET /v2/orders/{id}?nested=true` returns the entry order with a `legs` array
+  // — each leg is ALSO independently listed in the plain (non-nested) order list with its own real
+  // order ID, and Alpaca cascades a cancel across the whole OCO group on its own once any one leg is
+  // cancelled/filled. This always goes through native REST (this.alpaca), never the MCP tool
+  // surface — this repo's alpaca-mcp integration has no documented equivalent for a nested-legs
+  // fetch, and `this.alpaca` is constructed with the same REST-capable keys regardless of isMcp
+  // whenever an underlying API key is configured (see the constructor) — so this degrades to a
+  // best-effort no-op only on an MCP-ONLY account with no REST-capable key at all.
+  async cancelBracketSiblingLegs(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }> {
+    let raw: any;
+    try {
+      raw = await this.trackHealth(() => this.alpaca.sendRequest(`/orders/${originalOrderId}`, { nested: true }, null, "GET"));
+    } catch {
+      return { cancelledOrderIds: [] };
+    }
+    const legs = Array.isArray(raw?.legs) ? raw.legs : [];
+    const cancelledOrderIds: string[] = [];
+    for (const leg of legs) {
+      const legId = leg?.id != null ? String(leg.id) : undefined;
+      if (!legId) continue;
+      const legState = String(leg?.status ?? "");
+      if (isRejectedOrCanceledState(legState) || legState.toLowerCase() === "filled") continue;
+      try {
+        await this.trackHealth(() => this.alpaca.cancelOrder(legId));
+        cancelledOrderIds.push(legId);
+      } catch {
+        // best-effort — a leg that filled/cancelled between the fetch above and this cancel is fine
+        // to skip; Alpaca's own OCO cascade may have already resolved it
+      }
+    }
+    return { cancelledOrderIds };
   }
 }
 

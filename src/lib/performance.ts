@@ -333,6 +333,16 @@ export function recordFillFromProposal(input: {
           (existing && Math.abs(existing.quantity) > 0.000001
             ? (existing.averageCost * Math.abs(existing.quantity) + basePrice * quantity) / (Math.abs(existing.quantity) + quantity)
             : basePrice);
+        // A "fixed"/"atr" plan's bracket fields survive on the proposal only when a broker-native
+        // bracket was (or was meant to be) attached at placement — enrichOpeningProposal strips them
+        // unconditionally for "trailing"/"none" — so this naturally scopes to exactly the plans a
+        // bracket teardown could ever need later. Recording the execution's own order ID even when
+        // the broker silently couldn't attach a bracket (e.g. a Tradier market-type entry) is
+        // harmless: cancelBracketSiblingLegs simply finds no sibling legs and no-ops.
+        const openingOrderId =
+          (input.proposal.bracketStopLoss != null || input.proposal.bracketTakeProfit != null)
+            ? input.execution?.orderId
+            : undefined;
         recordStopPlan(
           input.accountNumber,
           symbol,
@@ -341,7 +351,8 @@ export function recordFillFromProposal(input: {
           blendedAvgCost,
           input.userId,
           undefined,
-          input.proposal.side === "short" ? "short" : "long"
+          input.proposal.side === "short" ? "short" : "long",
+          openingOrderId
         );
       }
     } catch {

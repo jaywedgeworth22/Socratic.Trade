@@ -1753,6 +1753,20 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] Alpaca + Tradier bracket sibling-leg cancellation
+  (branch `claude/bracket-sibling-leg-cancellation`) — IN PROGRESS, gate green, PR next.**
+  Closes the long-deferred "OCO sibling-identity pairing" gap (owner asked directly which
+  brokers can identify/cancel a bracket's sibling legs by group ID; owner then directed
+  "Build both now" via `AskUserQuestion` after scope-difference was flagged). Alpaca:
+  implemented `cancelBracketSiblingLegs` via nested-order GET + per-leg cancel (previously
+  unimplemented adapter capability). Tradier: built native OTOCO/OTO bracket order placement
+  from scratch (zero bracket support existed before), wired into `brokerSupportsBrackets`,
+  plus sibling-leg cancellation via Tradier's `leg` array. New `pending_bracket_teardowns`
+  queue + migration v42 (`position_stop_plans.opening_order_id` + new table). Fixed a
+  migration guard bug (`sqlite_master` existence check before `ALTER TABLE`) and updated 10
+  hardcoded schema-version assertions (41->42) in `test/persistence-hardening.test.ts`.
+  Unverified against a live Tradier account (unit-tested only). Rollout:
+  `docs/rollouts/2026-07-16-alpaca-tradier-bracket-sibling-leg-teardown.md`.
 - **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live

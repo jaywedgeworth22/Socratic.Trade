@@ -1,5 +1,27 @@
 # Current Status
 
+## 2026-07-16 — Alpaca + Tradier bracket sibling-leg cancellation (CLAUDE)
+
+Closed the long-deferred "OCO sibling-identity pairing" gap raised by owner's direct
+question. Alpaca: implemented `cancelBracketSiblingLegs` via nested-order GET + per-leg
+cancel (was an unimplemented adapter capability, not a broker limitation). Tradier: built
+native OTOCO/OTO bracket order placement from scratch (zero bracket support existed before
+this), wired into `brokerSupportsBrackets`, plus sibling-leg cancellation parsing Tradier's
+`leg` array. New `pending_bracket_teardowns` queue decouples "plan changed away from a
+tracked bracket" (cheap DB-write-time detection) from "cancel the broker legs" (reconcile-time,
+`reconcilePendingBracketTeardowns` in `broker-protective-stops.ts`, called from
+`runSyntheticStopMonitor`). New migration v42 (`position_stop_plans.opening_order_id` +
+`pending_bracket_teardowns` table); fixed a migration bug where an unconditional
+`PRAGMA table_info`/`ALTER TABLE` threw against test harnesses with a minimal hand-built
+schema (added the same `sqlite_master`-existence-guard pattern used elsewhere in `db.ts`),
+and updated 10 hardcoded schema-version assertions (41 -> 42) in
+`test/persistence-hardening.test.ts` as legitimate collateral. Owner explicitly directed
+"Build both now" (Alpaca fix + full Tradier bracket feature) via `AskUserQuestion` after I
+flagged the scope difference. Unverified against a live Tradier account (unit-tested only,
+matching this adapter's existing testing posture). Branch
+`claude/bracket-sibling-leg-cancellation`.
+Rollout: `docs/rollouts/2026-07-16-alpaca-tradier-bracket-sibling-leg-teardown.md`.
+
 ## 2026-07-15 — Alpha Vantage proactive 23/day cap + ops follow-ups (MONET)
 
 Owner-directed: AV's free-tier 25/day limit is enforced **per IP** (key pooling never
