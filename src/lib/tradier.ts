@@ -822,20 +822,44 @@ class TradierBrokerGateway implements BrokerGateway {
   // entry order's own container ID. Reuses equityRowsFromTradierOrder — the SAME leg-flattening
   // helper getEquityOrders already relies on for coverage — so this shares its exact (and, per that
   // function's own note, still webhook/live-unverified) understanding of Tradier's multi-leg
-  // response shape. The entry leg itself is naturally skipped by the terminal-state check below
-  // (it has necessarily already filled, since a bracket-teardown only ever runs against a plan
-  // that already committed from a completed opening fill).
+  // response shape: a resting otoco/oto container's `leg` array holds ONLY the take-profit/stop-loss
+  // EXIT legs (per that function's own doc comment and its pre-existing getEquityOrders test) — the
+  // entry itself is not one of the container's enumerated legs, so no entry-vs-sibling disambiguation
+  // is needed here; the terminal-state check below is sufficient.
+  //
+  // A container whose own `class` IS "equity" means no bracket was ever attached to this order in
+  // the first place (e.g. Tradier's market-type-entry fallback in placeEquityOrder, where the
+  // tracked `opening_order_id` still gets recorded even though no bracket exists — see
+  // performance.ts's comment on that). In that case equityRowsFromTradierOrder would return the
+  // entry order ITSELF as a pseudo-"leg" (its `[itself]` fallback for plain equity orders) — treating
+  // that as a cancellable sibling would wrongly cancel the entry order, so this is special-cased to
+  // a no-op (adversarial review of PR #1661, 2026-07-16).
   async cancelBracketSiblingLegs(accountNumber: string, originalOrderId: string): Promise<{ cancelledOrderIds: string[] }> {
     let body: { order?: Record<string, unknown> };
     try {
       body = await this.trackHealth(() =>
         this.request<{ order?: Record<string, unknown> }>("GET", `/accounts/${accountNumber}/orders/${originalOrderId}`)
       );
-    } catch {
-      return { cancelledOrderIds: [] };
+    } catch (error) {
+      // "Order gone" means nothing to tear down, safe to resolve as done — Tradier surfaces this
+      // TWO ways: a genuine HTTP 404 (this.request's `!response.ok` branch), or a 200 response with
+      // its own `{errors: {error: "not found"}}` validation envelope (this.request's second throw
+      // path, which carries no HTTP-status prefix at all — see formatTradierError). Any OTHER
+      // failure (network, rate-limit, 5xx, an unrelated validation error) is transient/real and must
+      // propagate so reconcilePendingBracketTeardowns' bounded-retry sweep actually retries it,
+      // instead of the row being silently and permanently dropped on the first hiccup.
+      if (error instanceof Error && (/Tradier HTTP 404/.test(error.message) || /not found/i.test(error.message))) {
+        return { cancelledOrderIds: [] };
+      }
+      throw error;
     }
     const container = body.order;
     if (!container) return { cancelledOrderIds: [] };
+    if (String(container.class ?? "").toLowerCase() === "equity") {
+      // No bracket was ever attached to this order — nothing to tear down, and this must never be
+      // treated as "cancel the entry itself."
+      return { cancelledOrderIds: [] };
+    }
     const cancelledOrderIds: string[] = [];
     for (const legRow of equityRowsFromTradierOrder(container)) {
       const legId = legRow.id != null ? String(legRow.id) : undefined;

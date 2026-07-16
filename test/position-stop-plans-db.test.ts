@@ -180,7 +180,7 @@ describe("stop plan is committed ON FILL (an opening buy/short with a fresh stop
   });
 });
 
-describe("bracket sibling-leg teardown queue (position_stop_plans.opening_order_id -> pending_bracket_teardowns)", () => {
+describe("bracket sibling-leg teardown queue (position_stop_plan_open_brackets -> pending_bracket_teardowns)", () => {
   it("recordStopPlan persists an openingOrderId for a fresh fixed/atr plan", async () => {
     const { getStopPlans, recordStopPlan } = await import("../src/lib/db");
     const acct = "ACCT-BRACKET-1";
@@ -202,13 +202,63 @@ describe("bracket sibling-leg teardown queue (position_stop_plans.opening_order_
     expect(getStopPlans(acct).MSFT.openingOrderId).toBeUndefined();
   });
 
-  it("does NOT enqueue a teardown when transitioning between the SAME distance-plan family (fixed -> fixed)", async () => {
-    const { recordStopPlan, listPendingBracketTeardowns } = await import("../src/lib/db");
+  it("does NOT tear down the OLD bracket on a same-style scale-in — it's still valid protection for the pre-existing lot (Codex review, PR #1667)", async () => {
+    const { getStopPlans, recordStopPlan, listPendingBracketTeardowns, listOpenBracketOrders } = await import("../src/lib/db");
     const acct = "ACCT-BRACKET-3";
     recordStopPlan(acct, "TSLA", "fixed", "initial", 400, "local", undefined, "long", "bracket-order-3");
-    // A scale-in re-affirms "fixed" with a NEW bracket order id (same distance-plan family) — the
-    // OLD bracket's legs may already be gone/replaced by the new opening, not a stale leftover.
+    // A scale-in re-affirms "fixed" and places a BRAND-NEW, independent broker-native bracket for the
+    // ADDED shares only (Alpaca sizes orderArgs.qty from the new order's own quantity; Tradier sizes
+    // each exit leg to that order's own wholeQty) — it does NOT replace or resize the OLD bracket,
+    // which is still the genuine, still-needed protection for the pre-existing lot. An earlier,
+    // incomplete fix (adversarial review of PR #1661) wrongly tore down the OLD bracket here on the
+    // theory that only the LATEST order id should be tracked — Codex correctly flagged that this
+    // cancels a live, correct stop-loss/take-profit and leaves the earlier lot with NO protection.
     recordStopPlan(acct, "TSLA", "fixed", "reaffirmed on scale-in", 405, "local", undefined, "long", "bracket-order-3b");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]); // neither bracket is torn down yet
+    // BOTH bracket orders are tracked — each still protects its own lot.
+    expect(listOpenBracketOrders(acct, "TSLA").map((r) => r.orderId).sort()).toEqual(["bracket-order-3", "bracket-order-3b"]);
+    expect(getStopPlans(acct).TSLA.openingOrderId).toBe("bracket-order-3b"); // display-only, latest
+
+    // Only once the plan genuinely LEAVES the fixed/atr family are BOTH brackets torn down together.
+    recordStopPlan(acct, "TSLA", "trailing", "switch off distance stops entirely", 405, "local", undefined, "long");
+    const pending = listPendingBracketTeardowns(acct);
+    expect(pending.map((r) => r.orderId).sort()).toEqual(["bracket-order-3", "bracket-order-3b"]);
+    expect(listOpenBracketOrders(acct, "TSLA")).toEqual([]); // tracking cleared once enqueued
+  });
+
+  it("does NOT tear down brackets on a fixed<->atr transition either — same reasoning as same-style scale-ins (Codex review, PR #1667, second attempt)", async () => {
+    const { listPendingBracketTeardowns, listOpenBracketOrders, recordStopPlan } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-FIXED-ATR";
+    recordStopPlan(acct, "NVDA", "fixed", "initial fixed stop", 500, "local", undefined, "long", "bracket-fixed-1");
+    // A scale-in switches the STYLE from fixed to atr (still within the distance-bracket family) and
+    // places a new bracket for the added shares. A prior codex-autofix attempt on this PR tore down
+    // the OLD bracket on exactly this transition, reasoning that fixed and atr are "different
+    // distances" — but mechanically both are independent, lot-scoped brackets with nothing else
+    // recreating protection for the earlier lot, so tearing down here is exactly as harmful as doing
+    // it on a same-style scale-in (reverted; see recordStopPlan's doc comment for the full argument).
+    recordStopPlan(acct, "NVDA", "atr", "switched to ATR-based stop on scale-in", 505, "local", undefined, "long", "bracket-atr-1");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+    expect(listOpenBracketOrders(acct, "NVDA").map((r) => r.orderId).sort()).toEqual(["bracket-atr-1", "bracket-fixed-1"]);
+
+    // Switching atr -> fixed again is the same story — still no teardown.
+    recordStopPlan(acct, "NVDA", "fixed", "back to fixed", 505, "local", undefined, "long", "bracket-fixed-2");
+    expect(listPendingBracketTeardowns(acct)).toEqual([]);
+    expect(listOpenBracketOrders(acct, "NVDA")).toHaveLength(3);
+
+    // Only a genuine exit from the whole distance-bracket family tears everything down together.
+    recordStopPlan(acct, "NVDA", "none", "done with distance stops", 505, "local", undefined, "long");
+    expect(listPendingBracketTeardowns(acct).map((r) => r.orderId).sort()).toEqual(["bracket-atr-1", "bracket-fixed-1", "bracket-fixed-2"]);
+    expect(listOpenBracketOrders(acct, "NVDA")).toEqual([]);
+  });
+
+  it("does NOT double-track the same bracket order id on a redundant re-record (no new bracket placed)", async () => {
+    const { recordStopPlan, listPendingBracketTeardowns, listOpenBracketOrders } = await import("../src/lib/db");
+    const acct = "ACCT-BRACKET-3B";
+    recordStopPlan(acct, "TSLA", "fixed", "initial", 400, "local", undefined, "long", "bracket-order-3c");
+    // A rationale/avgCost-only rewrite that doesn't correspond to a fresh fill re-passes the SAME
+    // tracked opening order id — nothing new to track, and no teardown is warranted.
+    recordStopPlan(acct, "TSLA", "fixed", "rationale tweak only", 401, "local", undefined, "long", "bracket-order-3c");
+    expect(listOpenBracketOrders(acct, "TSLA")).toHaveLength(1);
     expect(listPendingBracketTeardowns(acct)).toEqual([]);
   });
 
