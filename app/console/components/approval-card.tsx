@@ -170,8 +170,15 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
     ? symbolPosition
     : undefined;
   const exitCurrentPrice = finite(pending.proposalCurrentPrice) ? pending.proposalCurrentPrice : (positionMarkPrice(matchedPosition) ?? undefined);
-  const estPnl = matchedPosition
-    ? estimatedClosingPnl({ position: matchedPosition, shares: requestedExitQuantity(p), currentPrice: exitCurrentPrice })
+  // Cap the exit quantity to the current position size so stale oversize exit proposals
+  // (e.g. the user manually reduced the position after the approval card was created)
+  // don't overstate the estimated closing P/L — same guard as closingOrderPnl in orders/lib.ts.
+  const exitQty = requestedExitQuantity(p);
+  const cappedExitQty = exitQty != null
+    ? Math.min(exitQty, Math.abs(matchedPosition?.quantity ?? 0))
+    : undefined;
+  const estPnl = matchedPosition && cappedExitQty != null
+    ? estimatedClosingPnl({ position: matchedPosition, shares: cappedExitQty, currentPrice: exitCurrentPrice })
     : null;
 
   // Model attribution prefers the PERSISTED per-proposal values (p.proposedByModel /

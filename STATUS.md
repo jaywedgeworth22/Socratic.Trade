@@ -47,6 +47,7 @@ regression test locking in the correct (no-teardown) behavior for that transitio
 4,604 tests green, tsc/build/lint clean. **Merged via PR #1667 as `0a5c9bd`; deployed to
 production via auto-deploy-on-merge.**
 Rollout: `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
+→ Codex autofix round 2 (2026-07-16): P2 scan-over-cost-fallback detection in `effectiveOrderPrice`; P2 cap oversize exit P/L estimate; P2 cap approval-card exit P/L to current position; P1 asked maintainer about referencePrice fallback ambiguity.
 ## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)
 
 Owner-directed continuation of the CLAUDE handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`
