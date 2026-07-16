@@ -1,5 +1,51 @@
 # Current Status
 
+## 2026-07-16 — Exit-strategy intelligence: expert-panel design doc landed (CLAUDE)
+
+Docs-only. `docs/design/exit-strategy-intelligence.md` — synthesized output of an
+owner-directed 13-agent expert-panel workflow (4 code mappers → 4 domain experts → 4
+cross-critiques → verifying synthesis) on eliciting, adapting, and executing exit
+strategies for longs/shorts/options. Headlines: three verified enforcement tail holes
+(trailing-stop bad-tick gap deadlock; fixed/atr plans have NO tick-cadence lane —
+`synthetic-stops.ts:406,440`; `halted` skips the stop monitor), shorts about to go live
+on the thinnest protection tier (all broker-held stop lanes filter `quantity > 0`), OCC
+option positions invisible to every exit layer, and a write-once exit policy the LLM
+re-decides blind. 11 ranked consensus recommendations, 7 contested-point rulings, an
+explicit what-NOT-to-do list, and an A/B/C phased roadmap now on the effort board
+(Planned, unassigned). Rollout: `docs/rollouts/2026-07-16-exit-strategy-expert-panel.md`.
+Branch `claude/stop-loss-preset-options-f1jygn` (restarted from main @ 32362e9).
+## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE) — MERGED (PR #1673, `2d294b7`)
+
+**Update: PR #1673 merged to `main` as `2d294b7` 2026-07-16 (auto-deploys to production).**
+Effort-board row moved to Completed. Codex's P2 (lookup wrongly required Tradier to be the
+ACTIVE execution broker) was fixed pre-merge with a regression test. Original entry follows.
+
+Owner request: "tradier shouldn't be listed as a data source for API on settings and should
+just be a source that users sync to and then I am the first/only user and I am sharing the
+data we can get from tradier." Investigation found Tradier backed by TWO independent
+credentials — a per-user broker access token (`connected_accounts`, used for trading) and a
+separate "Tradier API key" (`user_api_keys`/`TRADIER_API_KEY` env var, used only for
+price-history enrichment), presented identically to FMP/Finnhub in Settings. Asked the owner
+via `AskUserQuestion` how far to take the fix; they chose the full rewire. Removed `tradier`
+from Settings' generic API-keys catalog (`app/api/keys/route.ts`) and the now-dead
+`API_KEY_ENV_MAP`/`API_KEY_SERVICE_ALIASES`/`API_KEY_TIER` entries; `history.ts`'s Tradier
+price-history fetch now resolves its credential from the connected Tradier broker account
+(new `getConnectedAccountByBroker`) instead, with cache scope hardcoded `"shared"` since it's
+the owner's single connected account, not a per-user key. Rewired `test/history.test.ts`'s
+Tradier-dependent tests to use a connected account (`upsertConnectedAccount`) instead of
+`TRADIER_API_KEY`/`upsertUserApiKey`; the two tests that specifically exercised per-user
+private/pool-consent sharing semantics were switched to Marketstack as their vehicle since
+Tradier is no longer per-user at all. Also updated `.env.example`, `README.md`,
+`docs/market-data-provider-pricing.md`, `docs/phase-11-multi-user.md`, and removed the
+now-pointless entry from `scripts/migrate-market-keys-to-user.ts`. Codex caught a P2 on the
+first version: the lookup required Tradier to be the ACTIVE execution broker, which would
+silently disable Tradier history for a user trading through Alpaca/Robinhood who connected
+Tradier purely as a data source — fixed by dropping the `is_active` filter (prefers active,
+falls back to any connected Tradier account), with a new regression test. tsc clean,
+`test/history.test.ts` 14/14 and `test/web-sources-technical.test.ts` 10/10 green
+(unaffected). Branch `claude/tradier-connected-account-history-source`.
+Rollout: `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
+
 ## 2026-07-16 — Approval-time limit re-anchor + estimated closing P/L surfaces (MONET)
 
 Owner-directed. Pending limit proposals approved hours/overnight later no longer place at

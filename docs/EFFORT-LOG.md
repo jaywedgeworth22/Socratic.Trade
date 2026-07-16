@@ -235,6 +235,21 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
+  card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
+  `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**
+  Owner request: Tradier shouldn't be a generic API-keys Settings card, "should just be a
+  source that users sync to" (the existing broker-connect flow), with the connected
+  account's data naturally shared since the owner is the sole user. Removed `tradier` from
+  `API_KEY_CATALOG` and its now-dead `API_KEY_ENV_MAP`/aliases/tier entries; `history.ts`'s
+  Tradier price-history fetch now resolves credentials from the connected Tradier broker
+  account (new `getConnectedAccountByBroker`) instead of a separate stored key/env var,
+  cache scope `"shared"`. Codex P2 fixed pre-merge: lookup no longer requires Tradier to be
+  the ACTIVE execution broker (prefer active, fall back to any connected Tradier account) —
+  a user trading through Alpaca/Robinhood with Tradier connected purely as a data source
+  keeps Tradier history. Tests rewired (`test/history.test.ts`; per-user sharing-semantics
+  tests moved to Marketstack as vehicle). Rollout:
+  `docs/rollouts/2026-07-16-tradier-connected-account-history-source.md`.
 - **Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE, PR
   #1667, branch `claude/bracket-teardown-adversarial-review-fixes`, merged as `0a5c9bd`) —
   COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.** PR #1661 (merged
@@ -1821,6 +1836,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
 - **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
   claimed 2026-07-16) — GATE/LANDING.** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
   128 rounded-md/lg/xl call sites in app/console -> canon rounded-control(8px)/rounded-card(12px)
@@ -2835,6 +2851,23 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
+- **Exit-strategy intelligence program, Phase A — "make today's promises true" (UNASSIGNED; design landed 2026-07-16, CLAUDE).**
+  Five independently shippable S/S-M lanes from `docs/design/exit-strategy-intelligence.md`: A1 synthetic-stop
+  gap-deadlock fix (confirmation-based bad-tick acceptance, persisted suspect state); A2 `protectWhileHalted`
+  owner toggle (stop monitor protective-only mode in `halted`); A3 prompt visibility (protection-state block +
+  ATR in evidence + `shortStopLossPct` prompt fix, agentic-strategy 2.3.0); A4 honesty notes (Tradier
+  market-entry bracket disclosure, RTH-only stop caveat); A5 options/unmanaged positions read-only visibility +
+  assignment/expiry alerts. Claim per-lane; each stands alone.
+- **Exit-strategy intelligence program, Phase B — Exit Contract + lanes (UNASSIGNED; blocked on nothing, but
+  money-path: frontier-tier adversarial review required).** Persist parameterized exit contract columns on
+  `position_stop_plans` (resolved distance/prices/time/invalidation) written at fill; all enforcement layers read
+  persisted-with-fallback; static-trigger synthetic rows give fixed/atr plans tick-cadence coverage; short-side
+  broker-held buy-stop lane MUST land before live short flow. Detail: design doc Phase B.
+- **Exit-strategy intelligence program, Phase C — revision verb + measurement (UNASSIGNED; gated on Phase B's
+  eval harness).** `exitRevisions[]` sibling array (tighten=auto, widen=propose+heat-recheck, all owner-settable),
+  owner per-position stop editor, `stopBasis` clamped numeric elicitation, `invalidation`/`maxHoldingDays`,
+  counterfactual exit ledger (fixed/time/no-stop only), held-name event triggers + earnings producer. Detail:
+  design doc Phase C + "What NOT to do" list (binding scope cuts from the debate round).
 - **SEC/RAG P0 corpus truth + frozen 1,000-CIK universe (CODEX program; RAG-B14/B16, claimed 2026-07-13) —
   IN PROGRESS / BASELINE #1495 MERGED; ACCEPTANCE CURRENTLY FAILS.** A new schema-v2 validator requires a dated,
   checksummed 1,000-operating-issuer snapshot with explicit exchange/security classification, alias verification,
