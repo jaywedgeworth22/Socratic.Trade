@@ -209,7 +209,7 @@ function PriceHistoryChart({ bars }: { bars: HistoryBar[] }) {
       </div>
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        className="h-auto w-full rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)]"
+        className="h-auto w-full rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)]"
         role="img"
         aria-label={`Daily closes from ${fmtMoney(first)} to ${fmtMoney(last)}`}
       >

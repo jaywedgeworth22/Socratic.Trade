@@ -194,7 +194,7 @@ function NodeBox({ node }: { node: StopFlowNode }) {
   return (
     <div
       title={node.detail}
-      className={`min-w-[7.5rem] rounded-md border px-2.5 py-1.5 ${
+      className={`min-w-[7.5rem] rounded-control border px-2.5 py-1.5 ${
         node.active
           ? "border-[color:var(--con-pos-border)] bg-[color:var(--con-surface-2)]"
           : "border-[color:var(--con-line)] opacity-55"
@@ -211,7 +211,7 @@ function NodeBox({ node }: { node: StopFlowNode }) {
 function Arrow({ caption }: { caption?: string }) {
   return (
     <div className="flex flex-col items-center px-1 text-[color:var(--con-faint)]">
-      {caption ? <span className="text-[10px] leading-tight whitespace-nowrap">{caption}</span> : null}
+      {caption ? <span className="text-[length:var(--con-fs-2xs)] leading-tight whitespace-nowrap">{caption}</span> : null}
       <span aria-hidden className="text-[length:var(--con-fs-sm)] leading-none">⟶</span>
     </div>
   );
@@ -221,7 +221,7 @@ function Arrow({ caption }: { caption?: string }) {
 export function StopFlowDiagram({ policy }: { policy: TradingPolicy }) {
   const lanes = stopFlowModel(policy);
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] p-3">
+    <div className="flex flex-col gap-3 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] p-3">
       {lanes.map((lane) => (
         <div key={lane.key}>
           <div className="mb-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)]">{lane.label}</div>

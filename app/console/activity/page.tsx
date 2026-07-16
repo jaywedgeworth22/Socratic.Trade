@@ -37,14 +37,14 @@ export default function ActivityPage() {
     <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">{destinationLabel("/console/activity")}</h1>
-        <div className="flex gap-1 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
+        <div className="flex gap-1 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
               className={cx(
-                "rounded-md px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
+                "rounded-control px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
                 tab === t.id
                   ? "bg-[color:var(--con-accent-soft)] text-[color:var(--con-accent)]"
                   : "text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)]"
@@ -152,7 +152,7 @@ function RawToggle({ text }: { text: string | undefined }) {
   return (
     <details className="mt-1">
       <summary className="cursor-pointer text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">raw data</summary>
-      <pre className="con-mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-[color:var(--con-surface-2)] p-2 text-[10px] leading-relaxed text-[color:var(--con-muted)]">
+      <pre className="con-mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-control bg-[color:var(--con-surface-2)] p-2 text-[length:var(--con-fs-2xs)] leading-relaxed text-[color:var(--con-muted)]">
         {text}
       </pre>
     </details>
@@ -339,7 +339,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                   {proposals.map((p) => {
                     const r = realityForMode(p.executionMode);
                     return (
-                      <li key={p.id} className="rounded-lg border border-[color:var(--con-line)] p-2.5 text-[length:var(--con-fs-xs)]">
+                      <li key={p.id} className="rounded-control border border-[color:var(--con-line)] p-2.5 text-[length:var(--con-fs-xs)]">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[length:var(--con-fs-sm)] font-bold">
                             {SIDE_LABEL[p.proposal.side] ?? p.proposal.side} <SymbolButton symbol={p.proposal.symbol} showLogo={false} />

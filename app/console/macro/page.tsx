@@ -386,7 +386,7 @@ function MoverList({ title, movers, asOf }: { title: string; movers: Array<{ sym
         {movers.map((m) => (
           <div
             key={m.sym}
-            className="con-row flex items-center justify-between gap-3 rounded-md px-1.5 py-1"
+            className="con-row flex items-center justify-between gap-3 rounded-control px-1.5 py-1"
             title={`${m.sym} closed ${m.pct >= 0 ? "up" : "down"} ${Math.abs(m.pct).toFixed(1)}% versus the prior close.`}
           >
             <span className="text-[length:var(--con-fs-sm)] font-semibold">{m.sym}</span>

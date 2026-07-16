@@ -359,7 +359,7 @@ function FallbackModelSelect({
         autoComplete="off"
       />
       {open && (
-        <div className="absolute z-10 mt-1 w-full max-h-64 overflow-auto rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] shadow-lg py-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-text)]">
+        <div className="absolute z-10 mt-1 w-full max-h-64 overflow-auto rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] shadow-lg py-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-text)]">
           {CURATED_LLM_MODEL_GROUPS.map((group) => (
             <div key={group.label}>
               <div className="px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] bg-[color:var(--con-surface-2)]">
@@ -820,7 +820,7 @@ function AccountScopedStrategyPage() {
             </div>
           </div>
         )}
-        <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+        <div className="mt-3 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
           Green Team: {modelProviderLabel(proposerModel)}. Red Team: {modelProviderLabel(redTeamModel)}.
           {" "}
           {reasoningSummary(reasoningControl)}
@@ -915,7 +915,7 @@ function AccountScopedStrategyPage() {
               // flag only when the account has never had a preset applied.
               const applied = policy.activeProfileId ? policy.activeProfileId === profile.id : profile.active;
               return (
-                <div key={profile.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-line)] p-3">
+                <div key={profile.id} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-[color:var(--con-line)] p-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-semibold">{profile.name || EM_DASH}</span>
@@ -1032,7 +1032,7 @@ function ImportFromAccountControl({
           </Select>
         </Field>
         {source && (
-          <div className="mt-4 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3">
+          <div className="mt-4 rounded-control border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3">
             <p className="mb-2 text-[length:var(--con-fs-xs)] leading-relaxed">
               Copies strategy settings — models, prompt, guardrails, weights, watchlist, tax treatment — from
               “{source.label}” onto {currentLabel ? `“${currentLabel}”` : "this account"}. Does not touch broker
@@ -1313,7 +1313,7 @@ function AiReviewPanel({
       </p>
 
       {review && restoredBanner && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
           <span>
             Restored unapplied review from <Ago iso={restoredBanner.createdAt} /> ({restoredBanner.model}).
           </span>
@@ -1430,7 +1430,7 @@ function AiReviewPanel({
           )}
 
           {/* The diff — exactly what Apply would write. */}
-          <div className="rounded-lg border border-[color:var(--con-line)] p-3">
+          <div className="rounded-control border border-[color:var(--con-line)] p-3">
             <div className="con-card-title mb-1">Proposed changes</div>
             {!hasAnyChange ? (
               <p className="text-[color:var(--con-muted)]">No changes proposed — the reviewer left everything as is.</p>
@@ -1442,11 +1442,11 @@ function AiReviewPanel({
                     <div className="grid gap-2 pb-2 sm:grid-cols-2">
                       <div>
                         <div className="con-card-title mb-1">Current</div>
-                        <pre className="con-mono max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-[color:var(--con-surface-2)] p-2 text-[10px] leading-relaxed">{strategyPrompt}</pre>
+                        <pre className="con-mono max-h-48 overflow-auto whitespace-pre-wrap rounded-control bg-[color:var(--con-surface-2)] p-2 text-[length:var(--con-fs-2xs)] leading-relaxed">{strategyPrompt}</pre>
                       </div>
                       <div>
                         <div className="con-card-title mb-1">Proposed</div>
-                        <pre className="con-mono max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-[color:var(--con-surface-2)] p-2 text-[10px] leading-relaxed">{review.proposedPatch.prompt}</pre>
+                        <pre className="con-mono max-h-48 overflow-auto whitespace-pre-wrap rounded-control bg-[color:var(--con-surface-2)] p-2 text-[length:var(--con-fs-2xs)] leading-relaxed">{review.proposedPatch.prompt}</pre>
                       </div>
                     </div>
                   </details>

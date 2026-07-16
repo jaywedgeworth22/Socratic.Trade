@@ -363,7 +363,7 @@ function AccountScopedGuardrailsPage() {
               The wash-sale guard itself (on/off, account type, rates) lives in the Tax treatment card above. These
               rules tune what a rebuy lockout means for this account and how strict it is.
             </p>
-            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+            <div className="mt-2 rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
               {isIra ? (
                 <>
                   <strong className="text-[color:var(--con-fg)]">IRA mode:</strong> same-account wash sales are not a

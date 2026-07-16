@@ -164,7 +164,7 @@ export function BrokerAccountsCard() {
       <div
         key={account.id}
         tabIndex={0}
-        className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
+        className="rounded-control border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
@@ -380,7 +380,7 @@ export function BrokerAccountsCard() {
           {BROKER_ROADMAP.map((broker) => (
             <div
               key={broker.name}
-              className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
+              className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
               title={broker.detail}
             >
               <div className="flex items-start justify-between gap-2">
@@ -419,7 +419,7 @@ export function BrokerAccountsCard() {
               stay exactly where they are; this app just stops seeing and managing them.
             </p>
             {realityForAccount(confirmRemove).tone === "live" && (
-              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+              <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
                 This is a brokerage connection. After disconnecting, any app-managed stop rules for its
                 positions stop running — only broker-held orders keep protecting them.
               </p>
@@ -737,7 +737,7 @@ function TradierConnectSheet({
           </Field>
         </div>
         {isLive && (
-          <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+          <p className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
             <LiveTag /> A production Tradier token trades <span className="font-semibold">real capital</span>. Orders can
             reach real money only when policy, approval, and risk gates allow them.
           </p>

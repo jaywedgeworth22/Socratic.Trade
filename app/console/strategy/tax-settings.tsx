@@ -146,7 +146,7 @@ export function TaxSettingsCard() {
       </div>
       <div className="mt-3 flex flex-col gap-2.5">
         {isIra ? (
-          <div className="rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+          <div className="rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-[length:var(--con-fs-sm)] font-semibold">Same-IRA wash sales</div>
@@ -183,7 +183,7 @@ export function TaxSettingsCard() {
           </div>
         ) : (
           <div
-            className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+            className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
             title="On: buying back a symbol you sold at a loss in the last 30 days is blocked, so the loss stays deductible."
           >
             <div>
@@ -206,7 +206,7 @@ export function TaxSettingsCard() {
           </div>
         )}
         <div
-          className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+          className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
           title="On: P&L on the Results screen is shown after subtracting estimated taxes at the rates above."
         >
           <div>

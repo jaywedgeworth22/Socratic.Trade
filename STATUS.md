@@ -28,6 +28,19 @@ subagent hit a usage cap after essentially completing the work; MONET finished i
 (dual-transport pivot, RapidAPI verification probes, Infisical key slot, migration renumber).
 Rollout: `docs/rollouts/2026-07-16-earningscalls-transcripts.md`.
 
+## 2026-07-16 — Approval-time limit re-anchor + estimated closing P/L surfaces (MONET)
+
+Owner-directed. Pending limit proposals approved hours/overnight later no longer place at
+generation-time prices: `executeProposal` re-anchors the stored limit (and bracket legs,
+geometry-preserved and collision-clamped) to the fresh approval-time quote, preserving the
+limit-to-anchor ratio; material drift on live typed-confirmation re-queues for fresh
+consent (protective-exit/finalSize requote semantics), immaterial persists-then-places via
+CAS. Plus estimated closing P/L (broker averageCost basis, freshest snapshot mark,
+position-sign-gated) on sell/cover approval cards (console+mobile) and closing open orders,
+and an Orders-page Last-price freshness upgrade. Two-lens adversarial verify; all FIX
+findings fixed; 117 tests across 6 suites. strategy.ts untouched; types.ts additive-only.
+Branch `monet/todays-errors-triage-handoff-8d809b`.
+Rollout: `docs/rollouts/2026-07-16-approval-freshness-and-est-pnl.md`.
 ## 2026-07-16 — Settings de-iOS restoration + admin integration + Configure IA + site-wide UI wave (MONET, branch `monet/settings-page-styling-fix-d4add7`)
 
 Owner escalation ("Settings looked 10x better 3 days ago — it matched the rest of the site;
@@ -101,6 +114,7 @@ regression test locking in the correct (no-teardown) behavior for that transitio
 4,604 tests green, tsc/build/lint clean. **Merged via PR #1667 as `0a5c9bd`; deployed to
 production via auto-deploy-on-merge.**
 Rollout: `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
+→ Codex autofix round 2 (2026-07-16): P2 scan-over-cost-fallback detection in `effectiveOrderPrice`; P2 cap oversize exit P/L estimate; P2 cap approval-card exit P/L to current position; P1 asked maintainer about referencePrice fallback ambiguity.
 ## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)
 
 Owner-directed continuation of the CLAUDE handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`
