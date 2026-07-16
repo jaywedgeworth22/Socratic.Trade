@@ -109,10 +109,38 @@ function normalizeItemCode(text: string): { code: string; title: string } | null
   return null;
 }
 
-function splitTableRows(rows: string[][]): string[] {
+function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): string[] {
   if (rows.length <= 1) {
     return [rows.map((row) => `| ${row.join(" | ")} |`).join("\n")];
   }
+
+  if (!firstRowHasHeaders) {
+    // No real header row — treat all rows as data, just add a divider for Markdown syntax
+    const colCount = rows[0].length;
+    const divider = Array(colCount).fill("---");
+    const tables: string[] = [];
+    let currentGroup: string[][] = [divider];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const proposedGroup = [...currentGroup, row];
+      const markdown = proposedGroup.map((r) => `| ${r.join(" | ")} |`).join("\n");
+
+      if (estimateTableTokens(markdown) > 400 && currentGroup.length > 2) {
+        tables.push(currentGroup.map((r) => `| ${r.join(" | ")} |`).join("\n"));
+        currentGroup = [divider, row];
+      } else {
+        currentGroup.push(row);
+      }
+    }
+
+    if (currentGroup.length > 1) {
+      tables.push(currentGroup.map((r) => `| ${r.join(" | ")} |`).join("\n"));
+    }
+    return tables;
+  }
+
+  // First row is a real header — repeat it across each split
   const headerRow = rows[0];
   const colCount = headerRow.length;
   const divider = Array(colCount).fill("---");
@@ -158,20 +186,40 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
   // If table, convert and do not recurse into rows/cells
   if (name === "table") {
     const tableRows: string[][] = [];
+    let firstRowHasHeaders = false;
+    let isFirstRow = true;
+
     $(node).find("tr").each((_: any, tr: any) => {
+      // Skip rows belonging to nested tables (they will be processed when
+      // collectBlocks recurses into the nested table directly)
+      if ($(tr).closest("table").get(0) !== node) return;
+
       const row: string[] = [];
+      let hasThCells = false;
       $(tr).children("td, th").each((_: any, cell: any) => {
+        // Remove nested tables from cell text (they will be processed separately)
+        $(cell).find("table").remove();
         // Replace <br> with space so concatenated text nodes stay separated
         $(cell).find("br").replaceWith(" ");
-        row.push($(cell).text().replace(/\s+/g, " ").trim());
+        // Honor colspan: repeat the cell text for each spanned column
+        const colspan = parseInt($(cell).attr("colspan") || "1", 10);
+        const cellText = $(cell).text().replace(/\s+/g, " ").trim();
+        for (let c = 0; c < colspan; c++) {
+          row.push(cellText);
+        }
+        if (cell.name?.toLowerCase() === "th") hasThCells = true;
       });
       if (row.some((c) => c !== "")) {
         tableRows.push(row);
+        if (isFirstRow) {
+          firstRowHasHeaders = hasThCells;
+          isFirstRow = false;
+        }
       }
     });
 
     if (tableRows.length > 0) {
-      const splitTables = splitTableRows(tableRows);
+      const splitTables = splitTableRows(tableRows, firstRowHasHeaders);
       for (const tableMd of splitTables) {
         blocks.push({ type: "table", text: tableMd });
       }
@@ -181,8 +229,8 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
 
   const text = $(node).text().trim();
 
-  // If it's a heading tag, or matches heading pattern
-  if (isHeadingBlock(text) && (BLOCK_TAGS.has(name) || name.match(/^h[1-6]$/))) {
+  // If it's a heading tag, or matches heading pattern on a leaf block (no children)
+  if (isHeadingBlock(text) && (name.match(/^h[1-6]$/) || (BLOCK_TAGS.has(name) && !hasBlockChildren($, node)))) {
     const norm = normalizeItemCode(text);
     if (norm) {
       blocks.push({
@@ -204,10 +252,18 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
     return;
   }
 
-  // Recurse into children
+  // Recurse into children; emit text node siblings so mixed-content containers
+  // (e.g. <div>Note:<table>...</table>See below.</div>) don't lose prose.
   if (node.children) {
     for (const child of node.children) {
-      collectBlocks($, child, blocks);
+      if (child.type === "text") {
+        const text = (child.data || "").replace(/\s+/g, " ").trim();
+        if (text) {
+          blocks.push({ type: "paragraph", text });
+        }
+      } else {
+        collectBlocks($, child, blocks);
+      }
     }
   }
 }
