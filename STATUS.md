@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-16 — Fallback model see-through and selection fix (branch `agent/aiplatform-auth-support-clean`, PR #1677)
+
+Fixed strategy settings page where the fallback model selection dropdown was translucent (see-through) and clicks did not register due to focus/blur race. Also fixed translucent background in Guardrails StopFlow diagram.
+
+Verification trio: lint 0 errors, tsc clean, 402 files / 4,668 tests pass, build clean.
+Rollout: `docs/rollouts/2026-07-16-fallback-model-see-through-and-selection-fix.md`.
+
 ## 2026-07-16 — [codex-autofix] Round 4: Correct unfinished settings migration note in rollout note (branch `agent/aiplatform-auth-support-clean`, PR #1677)
 
 Codex review posted 1 new P2 finding after round 3:

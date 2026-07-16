@@ -359,7 +359,10 @@ function FallbackModelSelect({
         autoComplete="off"
       />
       {open && (
-        <div className="absolute z-10 mt-1 w-full max-h-64 overflow-auto rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] shadow-lg py-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-text)]">
+        <div
+          className="absolute z-10 mt-1 w-full max-h-64 overflow-auto rounded-control border border-[color:var(--con-line)] bg-[color:var(--con-surface)] shadow-lg py-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-text)]"
+          onMouseDown={(e) => e.preventDefault()}
+        >
           {CURATED_LLM_MODEL_GROUPS.map((group) => (
             <div key={group.label}>
               <div className="px-3 py-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] bg-[color:var(--con-surface-2)]">
@@ -384,7 +387,7 @@ function FallbackModelSelect({
                         }
                         onChange(Array.from(nextSet).join(", "));
                       }}
-                      className="rounded border border-[color:var(--con-line)] bg-[color:var(--con-surface-1)] text-[color:var(--con-accent)]"
+                      className="rounded border border-[color:var(--con-line)] bg-[color:var(--con-surface)] text-[color:var(--con-accent)]"
                     />
                     <span>{opt.value}</span>
                   </label>
