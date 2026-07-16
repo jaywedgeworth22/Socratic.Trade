@@ -663,8 +663,16 @@ class AlpacaBrokerGateway implements BrokerGateway {
     let raw: any;
     try {
       raw = await this.trackHealth(() => this.alpaca.sendRequest(`/orders/${originalOrderId}`, { nested: true }, null, "GET"));
-    } catch {
-      return { cancelledOrderIds: [] };
+    } catch (error) {
+      // A 404 means the entry order is genuinely gone (expired/purged) — nothing to tear down, safe
+      // to resolve as done. Any OTHER failure (network, rate-limit, 5xx) is transient and must
+      // propagate so reconcilePendingBracketTeardowns' bounded-retry sweep actually retries it,
+      // instead of the row being silently and permanently dropped on the first hiccup (adversarial
+      // review of PR #1661, 2026-07-16).
+      if ((error as { response?: { status?: number } })?.response?.status === 404) {
+        return { cancelledOrderIds: [] };
+      }
+      throw error;
     }
     const legs = Array.isArray(raw?.legs) ? raw.legs : [];
     const cancelledOrderIds: string[] = [];

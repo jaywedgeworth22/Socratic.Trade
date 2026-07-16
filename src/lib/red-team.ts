@@ -29,6 +29,7 @@ import {
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
+import { planLlmProviderAttempts, recordLlmProviderFailure } from "./llm-provider-cooldown";
 import { withLlmGeneration } from "./observability";
 import { buildRedTeamReviewSystem } from "./strategy-prompts";
 import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
@@ -294,6 +295,16 @@ export async function debateProposal(
     });
   }
 
+  // Cross-run cooldown planning (handoff 6b.4): rate/quota-cooled lanes are skipped (audited);
+  // when EVERY lane is cooling the full chain still runs, least-recently-failed first — so the
+  // fail-closed / unavailable outcomes below are decided by exactly the same code as before, the
+  // cooldown only avoids pointless retries. Kill switch: LLM_PROVIDER_COOLDOWN_DISABLED=1.
+  const plannedRedAttempts = planLlmProviderAttempts(redAttempts, {
+    step: "red",
+    userId,
+    connectedAccountId: policy.connectedAccountId
+  });
+
   let finalModel = model;
 
   try {
@@ -322,10 +333,10 @@ export async function debateProposal(
       },
       async (): Promise<{ text: string | undefined; debate: RedTeamDebateResult }> => {
         let lastError: unknown;
-        for (let i = 0; i < redAttempts.length; i++) {
-          const attempt = redAttempts[i];
-          const isLast = i === redAttempts.length - 1;
-          const next = redAttempts[i + 1];
+        for (let i = 0; i < plannedRedAttempts.length; i++) {
+          const attempt = plannedRedAttempts[i];
+          const isLast = i === plannedRedAttempts.length - 1;
+          const next = plannedRedAttempts[i + 1];
           finalModel = attempt.model;
 
           try {
@@ -350,7 +361,20 @@ export async function debateProposal(
             );
 
             if (!response.ok) {
-              const why = humanizeLlmError(await response.text().catch(() => ""), { provider: attempt.provider, status: response.status });
+              // Raw body captured BEFORE humanizing: cooldown classification must see the raw
+              // provider error (the humanized string says "billing" for every 429).
+              const rawDetail = await response.text().catch(() => "");
+              recordLlmProviderFailure({
+                provider: attempt.provider,
+                keySource: attempt.keySource,
+                status: response.status,
+                detail: rawDetail,
+                model: attempt.model,
+                step: "red",
+                userId,
+                connectedAccountId: policy.connectedAccountId
+              });
+              const why = humanizeLlmError(rawDetail, { provider: attempt.provider, status: response.status });
               if (!isLast && isRetryableLlmStatus(response.status)) {
                 lastError = new Error(why);
                 console.warn(`[RedTeam] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);

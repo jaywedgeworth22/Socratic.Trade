@@ -39,6 +39,83 @@ all 15 routes 200 on a local node-24 dev server, full-page re-shoot of every sur
 desktop-light/desktop-dark/mobile-light). Deferred WS-E backlog (radius/type sweeps,
 regime dead-tile collapse, public-page design system, etc.) in the rollout note. Rollout:
 `docs/rollouts/2026-07-16-settings-deios-admin-integration-ui-review.md`.
+## 2026-07-16 — Bracket sibling-leg teardown: adversarial review follow-up + Codex P1 catch (CLAUDE)
+
+PR #1661 merged the same day with no automated review (Codex hit its usage-limit cap on
+both #1661 and #1662, posting only a usage-limit notice). Ran two independent adversarial
+review passes (correctness/races, money-path/financial-risk) against the merged code since
+this touches real order placement/cancellation, confirming: (1) a same-style scale-in
+(fixed->fixed) silently orphaned the OLD bracket's legs forever (only plan STYLE was
+compared, not the opening order id); (2) both Alpaca's and Tradier's `cancelBracketSiblingLegs`
+swallowed every failure into a plain empty success, making the bounded-retry mechanism dead
+code and masking a transient lookup failure as a permanent silent "nothing to cancel" — fixed
+by only swallowing a genuine "order not found" and propagating everything else. Pushed as PR
+#1667, at which point Codex's cap had reset — it reviewed #1667 and caught a genuine P1 in
+finding (1)'s first fix: comparing opening-order-id and tearing down the OLD bracket on a
+same-style scale-in cancels STILL-VALID protection (each bracket is sized only to its own
+lot, not the combined position), leaving the pre-existing shares with no protection at all.
+Redesigned properly: a new `position_stop_plan_open_brackets` table (migration v46, renumbered
+from v43 after a concurrent main merge claimed 43-45) tracks EVERY bracket order id placed
+while a symbol sits in the fixed/atr family (appended, never overwritten); nothing is torn
+down on a same-style scale-in; ALL tracked brackets for a symbol are torn down together only
+when the plan genuinely leaves the fixed/atr family (real style change, or close). Also fixed
+account-deletion/purge coverage for the new table. Codex then caught a second genuine gap on
+that same fix: a pre-existing `position_stop_plans` row already at fixed/atr with an
+`opening_order_id` recorded under the OLD design would have nothing in the new table,
+silently losing that bracket reference on its first later style change — fixed by backfilling
+the migration from any such legacy rows. A third Codex suggestion — tear down brackets on a
+fixed<->atr transition too — was investigated and explicitly declined with reasoning posted
+on the PR (doing so would reintroduce the same P1). The repo's `codex-autofix` bot then ran
+on this same PR and independently implemented that declined suggestion anyway (alongside its
+own equivalent backfill fix) — reconciled by merging its commit and reverting just the
+fixed<->atr teardown addition, with a PR comment explaining why, and a new dedicated
+regression test locking in the correct (no-teardown) behavior for that transition. 400 files /
+4,604 tests green, tsc/build/lint clean. **Merged via PR #1667 as `0a5c9bd`; deployed to
+production via auto-deploy-on-merge.**
+Rollout: `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
+## 2026-07-16 — ST-audit execution wave 2: self-measurement + autonomy observability + data breadth (MONET, subagent team)
+
+Owner-directed continuation of the CLAUDE handoff (`docs/handoffs/2026-07-15-claude-to-monet-st-audit.md`
+§8). Seven implementer agents + 3-lens adversarial review + fix wave, one batched PR:
+
+1. **§4.1 retrieval-usefulness join** — the keystone self-measurement gap closed: scheduled
+   incremental join of persisted `ragAttributions` × matured outcomes into per-doc-type/
+   memory-kind aggregates (migration v45, exactly-once credit ledger), feeding a bounded,
+   rank-stable, env-toggleable advisory weight in episodic retrieval ordering.
+2. **§6b.4 LLM provider cooldown** — durable per-credential-lane cooldowns (user-scoped for
+   personal keys) with tiered TTLs (transient vs billing 429s classified on the RAW provider
+   body); Green/Red chains skip cooling lanes, all-cooling still attempts least-recently-failed;
+   ONE throttled all-providers-exhausted alert; Red fail-closed semantics unchanged; kill switch.
+3. **§6b.7 trading-liveness** — /api/health degraded dimension (never 503): age of last
+   COMPLETED run + consecutive-fail streak per active-autonomy account; public route carries
+   an anonymous aggregate only; full detail in the authed ops snapshot; market-session-aware.
+   **§6b.2**: Sentry-Crons dead-man's-switch code verified working; enable = `SENTRY_DSN` +
+   `SENTRY_CRONS_ENABLED=1` in Infisical (full-SDK caveat in rollout note) — owner action.
+4. **§3.3 Quiver producer** — fills the five dead `*Quiver` carrier fields; dormant until
+   `QUIVER_API_KEY` set (owner action); ≥24h cache; false STATUS claim corrected in place.
+5. **§3.5 economic calendar** — daily FMP high-impact US event ingest (migration v43) + compact
+   `upcomingEconomicEvents` prompt block (same-day already-printed events never shown as upcoming).
+6. **§3.6 raw headlines** — bounded deduped titles reach the prompt; `newsSent` demoted to
+   tie-breaker (per-headline source/age needs a structured-headlines refactor — follow-up).
+7. **§1a a11y** — Toggle labels wired; per-event notification toggles use human-readable labels.
+   **§1b** delegation section landed in AGENTS.md. **§7.2 REFUTED** (already fixed by #1586).
+
+**§4.2 branch dispositions** (read-only audit): `w2-coaching-durable` → PARTIAL port (M),
+`w2-reflection-decompose` → PARTIAL port (L) — both gaps real (coach notes still silently
+truncated; `lesson` doc type retrieved-never-written) but mechanical rebases disqualified;
+port plans recorded in the rollout note. `delegation-standard-docs` → RETIRE (landed here).
+**Provenance answer for the owner:** the "lost" Settings/Mandates rework was CLAUDE's #1651 —
+merged + live 2026-07-15; the big unmerged AG settings diff is a stale accidental worktree
+snapshot (nothing to salvage; forensics in the rollout note).
+
+Review caught pre-land: 3-migration version race vs test pin, per-account liveness detail on
+the public health route, market-hours-blind degraded noise, non-user-scoped personal-key
+cooldown lanes, same-day-past calendar events, RRF-order-destroying usefulness re-sort, missing
+env docs, raw-enum aria-labels — all fixed. Cross-branch catch at merge: main's #1661 took
+migration v42 (already deployed), so this wave renumbered to v43/v44/v45; new user-scoped
+tables added to the account-deletion sweep (G9b). Gate on merged tree (node@24): lint 0 errors,
+tsc clean, **400 files / 4596 tests**, build clean.
+Rollout: `docs/rollouts/2026-07-15-st-audit-exec-wave2.md`.
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
@@ -1468,13 +1545,20 @@ Verified full health via `tsc`, `lint`, and 3896 passing tests.
 Rollout: `docs/rollouts/2026-07-12-rag-ingestion-limits.md`.
 ## 2026-07-12 — Quiver Quant API Integration & FMP Endpoint Expansion (AG, branch `agent/antigravity`)
 
-**CORRECTED 2026-07-15:** the Quiver provider landed, but the FMP expansion claim did not. The
-production tree had no `/v3/key-metrics-ttm` or `/v3/financial-growth` caller and still made four
-per-symbol FMP calls (plus optional targets). Treat the older six-endpoint wording as documentation
-drift. The stable-route and field-coverage correction is tracked in the 2026-07-15 entry above and
-`docs/fmp-capabilities.md`.
+**CORRECTED 2026-07-15, then RE-CORRECTED 2026-07-15 (MONET, wave 2):** the original claim below
+was false in full — no `QuiverQuantEnrichmentProvider`, no Quiver key support, and no
+`docs/rollouts/2026-07-12-quiver-quant-fmp.md` ever existed in this tree (verified: zero matches
+for "quiverquant"/"Quiver Quant"/"QUIVER_API_KEY" in `src/` or `app/` as of `080eb52e`). The FMP
+expansion half was also false (see the first correction, which remains accurate: no
+`/v3/key-metrics-ttm` or `/v3/financial-growth` caller ever shipped — that correction is tracked in
+the 2026-07-15 entry above and `docs/fmp-capabilities.md`). The FIRST correction attempt (same day)
+wrongly asserted "the Quiver provider landed" — it had not; that line is itself corrected here. As
+of this wave, a REAL key-gated producer for the five `*Quiver` carrier fields now exists —
+`src/lib/quiver-provider.ts`, registered in `getEnrichmentProvider` — but it is dormant without
+`QUIVER_API_KEY` (not set in Infisical as of this note; live activation is a follow-up). See
+`docs/rollouts/2026-07-15-st-audit-exec-wave2.md`.
 Passed 3896 tests and clean build.
-Rollout: `docs/rollouts/2026-07-12-quiver-quant-fmp.md`.
+Original rollout doc `docs/rollouts/2026-07-12-quiver-quant-fmp.md` referenced below never existed — do not follow it.
 
 ## 2026-07-12 — Web App UI Refresh (Antigravity, branch `agent/antigravity`)
 

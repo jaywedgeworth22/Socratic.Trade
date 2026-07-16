@@ -12,6 +12,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let lastCreateOrderOpts: any = null;
 // Controllable nested-order response for sendRequest("/orders/{id}", {nested:true}, null, "GET")
 let mockNestedOrder: any = null;
+// When set, sendRequest for an "/orders/" endpoint throws this instead of resolving mockNestedOrder.
+let mockSendRequestError: any = null;
 let cancelledOrderIds: string[] = [];
 
 vi.mock("@alpacahq/alpaca-trade-api", () => {
@@ -28,7 +30,10 @@ vi.mock("@alpacahq/alpaca-trade-api", () => {
       }
       async cancelOrder(id: string) { cancelledOrderIds.push(id); }
       async sendRequest(endpoint: string, _query?: unknown, _body?: unknown, _method?: string) {
-        if (endpoint.startsWith("/orders/")) return mockNestedOrder;
+        if (endpoint.startsWith("/orders/")) {
+          if (mockSendRequestError) throw mockSendRequestError;
+          return mockNestedOrder;
+        }
         throw new Error(`unexpected sendRequest endpoint in test: ${endpoint}`);
       }
     }
@@ -40,6 +45,7 @@ beforeEach(async () => {
   vi.unstubAllEnvs();
   lastCreateOrderOpts = null;
   mockNestedOrder = null;
+  mockSendRequestError = null;
   cancelledOrderIds = [];
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-brackets-${randomUUID()}.db`)}`;
 
@@ -376,5 +382,25 @@ describe("Alpaca cancelBracketSiblingLegs (bracket sibling-leg teardown)", () =>
     mockNestedOrder = undefined; // sendRequest resolves to undefined — simulates an unreachable/missing order
     const result = await gateway.cancelBracketSiblingLegs!("MOCK_ACC", "gone-order");
     expect(result.cancelledOrderIds).toEqual([]);
+  });
+
+  it("resolves as done (empty result) on a genuine 404 — the entry order is gone, nothing to tear down", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+
+    mockSendRequestError = Object.assign(new Error("not found"), { response: { status: 404 } });
+    const result = await gateway.cancelBracketSiblingLegs!("MOCK_ACC", "never-existed-order");
+    expect(result.cancelledOrderIds).toEqual([]);
+  });
+
+  it("propagates a NON-404 lookup failure so the caller's bounded-retry sweep actually retries it", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const gateway = getAlpacaGateway("local");
+
+    // A transient 5xx/rate-limit must NOT be swallowed into a silent "nothing to cancel" — the
+    // teardown row would otherwise be dropped permanently on the very first hiccup instead of
+    // retried (adversarial review of PR #1661, 2026-07-16).
+    mockSendRequestError = Object.assign(new Error("rate limited"), { response: { status: 429 } });
+    await expect(gateway.cancelBracketSiblingLegs!("MOCK_ACC", "entry-order-transient")).rejects.toThrow("rate limited");
   });
 });

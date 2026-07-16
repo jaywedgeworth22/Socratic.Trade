@@ -58,7 +58,7 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(42);
+    expect(getSchemaVersion(db)).toBe(46);
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -72,7 +72,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
     db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(42);
+    expect(getSchemaVersion(db)).toBe(46);
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 
@@ -89,7 +89,7 @@ describe("runMigrations — versioned schema migrations", () => {
 
     db.pragma("user_version = 25");
     applyVersionedMigrations(db);
-    expect(getSchemaVersion(db)).toBe(42);
+    expect(getSchemaVersion(db)).toBe(46);
 
     const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
     const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);
@@ -135,7 +135,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 29");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(42);
+    expect(getSchemaVersion(db)).toBe(46);
     expect(db.prepare(`
       SELECT state, attempt_token, ledger_authority FROM vector_ingest_commits WHERE id = ?
     `).get(commitId)).toEqual({ state: "committed", attempt_token: null, ledger_authority: null });
@@ -181,7 +181,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 31");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(42);
+    expect(getSchemaVersion(db)).toBe(46);
     expect(db.prepare(`
       SELECT id, state, attempt_token, lease_expires_at
       FROM vector_ingest_commits
@@ -258,7 +258,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 32");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(42);
+    expect(getSchemaVersion(db)).toBe(46);
     expect(db.prepare(`
       SELECT commit_id FROM vector_document_heads
       WHERE tenant_scope = ? AND source = ? AND accession = ?
@@ -299,7 +299,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 25");
 
-    expect(applyVersionedMigrations(db)).toBe(42);
+    expect(applyVersionedMigrations(db)).toBe(46);
 
     for (const json of [
       (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
@@ -342,7 +342,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 26");
 
-    expect(applyVersionedMigrations(db)).toBe(42);
+    expect(applyVersionedMigrations(db)).toBe(46);
 
     for (const json of [
       (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
@@ -391,7 +391,7 @@ describe("runMigrations — versioned schema migrations", () => {
     `);
     db.pragma("user_version = 27");
 
-    expect(applyVersionedMigrations(db)).toBe(42);
+    expect(applyVersionedMigrations(db)).toBe(46);
     expect(db.prepare(`
       SELECT status, COUNT(*) AS count
       FROM order_replacements
@@ -427,10 +427,55 @@ describe("runMigrations — versioned schema migrations", () => {
       .run("unrelated:setting", JSON.stringify(now), now);
     db.pragma("user_version = 39");
 
-    expect(applyVersionedMigrations(db)).toBe(42);
+    expect(applyVersionedMigrations(db)).toBe(46);
     expect(db.prepare("SELECT key FROM settings ORDER BY key").all()).toEqual([
       { key: "unrelated:setting" }
     ]);
+    db.close();
+  });
+
+  it("backfills a legacy fixed/atr opening_order_id into position_stop_plan_open_brackets at migration v43 (Codex review, PR #1667)", async () => {
+    const { applyVersionedMigrations } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+    const now = new Date().toISOString();
+    // Minimal position_stop_plans shape as it existed under the OLD (pre-v43) single-scalar design —
+    // a row already sitting at "fixed" with a tracked opening_order_id, recorded before this table
+    // existed to track it, must not lose that reference once v43 creates the new tracking table.
+    db.exec(`
+      CREATE TABLE position_stop_plans (
+        user_id TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        style TEXT NOT NULL,
+        rationale TEXT,
+        avg_cost REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        side TEXT NOT NULL DEFAULT 'long',
+        opening_order_id TEXT,
+        PRIMARY KEY (user_id, account_number, symbol)
+      );
+    `);
+    db.prepare(
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
+       VALUES ('local', 'LEGACY-ACCT', 'AAPL', 'fixed', 'pre-v43 row', 190, ?, 'long', 'legacy-bracket-order-1')`
+    ).run(now);
+    // A non-fixed/atr row, and a fixed row with NO tracked order id, must NOT be backfilled.
+    db.prepare(
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
+       VALUES ('local', 'LEGACY-ACCT', 'TSLA', 'trailing', NULL, 400, ?, 'long', NULL)`
+    ).run(now);
+    db.prepare(
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
+       VALUES ('local', 'LEGACY-ACCT', 'MSFT', 'atr', NULL, 300, ?, 'long', NULL)`
+    ).run(now);
+    db.pragma("user_version = 45");
+
+    expect(applyVersionedMigrations(db)).toBe(46);
+    expect(
+      db.prepare(
+        "SELECT symbol, order_id FROM position_stop_plan_open_brackets WHERE user_id = 'local' AND account_number = 'LEGACY-ACCT'"
+      ).all()
+    ).toEqual([{ symbol: "AAPL", order_id: "legacy-bracket-order-1" }]);
     db.close();
   });
 });

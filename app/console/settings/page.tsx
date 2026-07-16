@@ -19,6 +19,7 @@ import { useRouter } from "next/navigation";
 import { Check, ExternalLink } from "lucide-react";
 import type { NotificationEventType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
+import { NOTIFICATION_EVENT_TYPE_LABELS } from "@/lib/dashboard-ui";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useAutoSave } from "../lib/useAutoSave";
@@ -34,39 +35,32 @@ import { HelpGlossaryCard } from "./help";
 import { LearningReviewCard } from "./learning-review";
 import { DataSharingCard } from "./sharing";
 
-/** Plain-English name + one-line meaning for every notification event. The raw
- *  snake_case type is an internal identifier and must never be user-facing.
- *  A full Record (not Partial) so adding a NotificationEventType without copy
- *  here is a compile error instead of a raw "run_failed" label in production.
- *  Hints complete the sentence "you get a notification whenever ...". */
-const EVENT_META: Record<NotificationEventType, { label: string; hint: string }> = {
-  fill: { label: "Order filled", hint: "an order filled" },
-  block: { label: "Order blocked", hint: "the policy gate blocked an order" },
-  run_failed: { label: "Run failed", hint: "a strategy run failed" },
-  pending_approval: { label: "Pending approval", hint: "a trade is waiting for you" },
-  kill_switch: { label: "Kill switch fired", hint: "a circuit breaker fired" },
-  price_alert: { label: "Price alert", hint: "a price alert triggered" },
-  proposal_withdrawn: { label: "Proposal withdrawn", hint: "the strategist took an idea back" },
-  limit_order_stale: { label: "Stale limit order", hint: "a limit order has been working too long" },
-  provider_degraded: { label: "Data provider degraded", hint: "a data provider is failing" },
-  budget_alert: { label: "Budget alert", hint: "a usage budget threshold was crossed" },
-  learning_review: { label: "Learning review", hint: "the daily learning review posted its findings" },
-  deterministic_bear_veto: { label: "Bear risk veto", hint: "the rule-based bear check vetoed a trade idea" },
-  red_team_veto_override_requested: {
-    label: "Red Team override requested",
-    hint: "an override of a Red Team veto was requested"
-  },
-  red_team_veto_overridden: { label: "Red Team veto overridden", hint: "a human overrode a Red Team veto" },
-  prompt_injection_suspected: {
-    label: "Prompt injection suspected",
-    hint: "injection-like text was found in the evidence sent to the model"
-  },
-  evidence_age_anomaly: { label: "Stale evidence", hint: "a run leaned on evidence older than it should be" },
-  storage_warning: { label: "Storage warning", hint: "the server's database storage crossed a warning threshold" },
-  autonomy_halted_on_boot: {
-    label: "Autonomy halted on boot",
-    hint: "a restart halted trading autonomy until you re-arm it"
-  }
+/** One-line meaning for every notification event, completing the sentence
+ *  "you get a notification whenever ...". VISIBLE LABELS come from the shared
+ *  NOTIFICATION_EVENT_TYPE_LABELS map in src/lib/dashboard-ui.ts, so this page
+ *  names events exactly the way the Alert Center and delivered notifications
+ *  do. Both maps are full Records (not Partial): adding a NotificationEventType
+ *  without copy is a compile error instead of a raw "run_failed" leaking into
+ *  production UI. */
+const EVENT_HINT: Record<NotificationEventType, string> = {
+  fill: "an order filled",
+  block: "the policy gate blocked an order",
+  run_failed: "a strategy run failed",
+  pending_approval: "a trade is waiting for you",
+  kill_switch: "a circuit breaker fired",
+  price_alert: "a price alert triggered",
+  proposal_withdrawn: "the strategist took an idea back",
+  limit_order_stale: "a limit order has been working too long",
+  provider_degraded: "a data provider is failing",
+  budget_alert: "a usage budget threshold was crossed",
+  learning_review: "the daily learning review posted its findings",
+  deterministic_bear_veto: "the rule-based bear check vetoed a trade idea",
+  red_team_veto_override_requested: "an override of a Red Team veto was requested",
+  red_team_veto_overridden: "a human overrode a Red Team veto",
+  prompt_injection_suspected: "injection-like text was found in the evidence sent to the model",
+  evidence_age_anomaly: "a run leaned on evidence older than it should be",
+  storage_warning: "the server's database storage crossed a warning threshold",
+  autonomy_halted_on_boot: "a restart halted trading autonomy until you re-arm it"
 };
 
 export default function SettingsPage() {
@@ -381,13 +375,15 @@ function EventNotificationsCard() {
       <div className="grid gap-1.5 sm:grid-cols-2">
         {NOTIFICATION_EVENT_TYPES.map((type) => {
           const on = events.includes(type);
-          const meta = EVENT_META[type];
+          const hint = EVENT_HINT[type];
           return (
             <label
               key={type}
-              title={`${type} — when on, you get a notification whenever ${meta.hint}. (${type} is the event's id in webhook payloads and the audit log.)`}
+              title={`${type} — when on, you get a notification whenever ${hint}. (${type} is the event's id in webhook payloads and the audit log.)`}
               className="flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
             >
+              {/* Native checkbox inside its <label>: the visible text IS the accessible
+                  name — no aria-label needed (unlike the Toggle primitive elsewhere). */}
               <input
                 type="checkbox"
                 className="mt-1"
@@ -396,8 +392,8 @@ function EventNotificationsCard() {
                 onChange={() => toggleEvent(type, on)}
               />
               <span className="min-w-0">
-                <span className="font-semibold">{meta.label}</span>{" "}
-                <span className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{meta.hint}</span>
+                <span className="font-semibold">{NOTIFICATION_EVENT_TYPE_LABELS[type]}</span>{" "}
+                <span className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{hint}</span>
               </span>
             </label>
           );
