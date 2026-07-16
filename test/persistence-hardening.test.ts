@@ -433,6 +433,51 @@ describe("runMigrations — versioned schema migrations", () => {
     ]);
     db.close();
   });
+
+  it("backfills a legacy fixed/atr opening_order_id into position_stop_plan_open_brackets at migration v43 (Codex review, PR #1667)", async () => {
+    const { applyVersionedMigrations } = await import("../src/lib/db");
+    const db = new RawDatabase(":memory:");
+    const now = new Date().toISOString();
+    // Minimal position_stop_plans shape as it existed under the OLD (pre-v43) single-scalar design —
+    // a row already sitting at "fixed" with a tracked opening_order_id, recorded before this table
+    // existed to track it, must not lose that reference once v43 creates the new tracking table.
+    db.exec(`
+      CREATE TABLE position_stop_plans (
+        user_id TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        style TEXT NOT NULL,
+        rationale TEXT,
+        avg_cost REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        side TEXT NOT NULL DEFAULT 'long',
+        opening_order_id TEXT,
+        PRIMARY KEY (user_id, account_number, symbol)
+      );
+    `);
+    db.prepare(
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
+       VALUES ('local', 'LEGACY-ACCT', 'AAPL', 'fixed', 'pre-v43 row', 190, ?, 'long', 'legacy-bracket-order-1')`
+    ).run(now);
+    // A non-fixed/atr row, and a fixed row with NO tracked order id, must NOT be backfilled.
+    db.prepare(
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
+       VALUES ('local', 'LEGACY-ACCT', 'TSLA', 'trailing', NULL, 400, ?, 'long', NULL)`
+    ).run(now);
+    db.prepare(
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at, side, opening_order_id)
+       VALUES ('local', 'LEGACY-ACCT', 'MSFT', 'atr', NULL, 300, ?, 'long', NULL)`
+    ).run(now);
+    db.pragma("user_version = 42");
+
+    expect(applyVersionedMigrations(db)).toBe(43);
+    expect(
+      db.prepare(
+        "SELECT symbol, order_id FROM position_stop_plan_open_brackets WHERE user_id = 'local' AND account_number = 'LEGACY-ACCT'"
+      ).all()
+    ).toEqual([{ symbol: "AAPL", order_id: "legacy-bracket-order-1" }]);
+    db.close();
+  });
 });
 
 // ── ENCRYPTION_KEY fail-fast ─────────────────────────────────────────────────

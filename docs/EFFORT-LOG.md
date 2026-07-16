@@ -1789,8 +1789,13 @@ As of 2026-07-08 (assignment-rule update).
   `position_stop_plan_open_brackets` table (migration v43) tracks EVERY bracket order id
   placed while a symbol sits in fixed/atr (appended, never overwritten); nothing torn down on
   a same-style scale-in; ALL tracked brackets torn down together only on a genuine style
-  change or close. Also closed account-deletion/purge coverage for the new table. 393 files /
-  4,546 tests green, tsc/build/lint clean. Rollout:
+  change or close. Also closed account-deletion/purge coverage for the new table. Codex found
+  a second gap on that fix (legacy `opening_order_id` rows from before v43 would lose their
+  bracket reference on first later transition) — fixed via a migration-43 backfill. A third
+  Codex suggestion (tear down on fixed<->atr transitions too) was investigated and explicitly
+  declined — it would reintroduce the same P1, since fixed and atr brackets are mechanically
+  identical, each sized only to its own lot. 393 files / 4,547 tests green, tsc/build/lint
+  clean. Rollout:
   `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
 - **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)

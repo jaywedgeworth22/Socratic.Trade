@@ -19,9 +19,15 @@ Redesigned properly: a new `position_stop_plan_open_brackets` table (migration v
 EVERY bracket order id placed while a symbol sits in the fixed/atr family (appended, never
 overwritten); nothing is torn down on a same-style scale-in; ALL tracked brackets for a
 symbol are torn down together only when the plan genuinely leaves the fixed/atr family (real
-style change, or close). Also fixed account-deletion/purge coverage for the new table. 393
-files / 4,546 tests green, tsc/build/lint clean. Branch
-`claude/bracket-teardown-adversarial-review-fixes`.
+style change, or close). Also fixed account-deletion/purge coverage for the new table. Codex
+then caught a second genuine gap on that same fix: a pre-existing `position_stop_plans` row
+already at fixed/atr with an `opening_order_id` recorded under the OLD design would have
+nothing in the new table, silently losing that bracket reference on its first later style
+change — fixed by backfilling migration 43 from any such legacy rows. (A third Codex
+suggestion — tear down brackets on a fixed<->atr transition too — was investigated and
+explicitly declined with reasoning: doing so would reintroduce the same P1, since fixed and
+atr brackets are mechanically identical, each sized only to its own lot.) 393 files / 4,547
+tests green, tsc/build/lint clean. Branch `claude/bracket-teardown-adversarial-review-fixes`.
 Rollout: `docs/rollouts/2026-07-16-bracket-sibling-leg-adversarial-review-fixes.md`.
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG, branch `agent/ag-rag-backfill-p2`)

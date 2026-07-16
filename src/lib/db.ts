@@ -1871,6 +1871,35 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_position_stop_plan_open_brackets_symbol
           ON position_stop_plan_open_brackets(user_id, account_number, symbol);
       `);
+      // Backfill: any position_stop_plans row already sitting at fixed/atr with a tracked
+      // opening_order_id (recorded under the OLD single-scalar design, before this table existed —
+      // e.g. a row written by PR #1661 in the window before this migration landed) has NO row here
+      // yet. Without backfilling it, the FIRST later transition away from fixed/atr for that symbol
+      // finds nothing in this new table, enqueues no teardown at all, and the upsert overwrites
+      // opening_order_id with null — permanently losing the only reference to that bracket, and its
+      // legs rest on the broker forever with no path back to them (Codex review, PR #1667).
+      const tableExists = database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'position_stop_plans'")
+        .get();
+      if (tableExists) {
+        const cols = database.prepare("PRAGMA table_info(position_stop_plans)").all() as Array<{ name: string }>;
+        if (cols.some((c) => c.name === "opening_order_id")) {
+          const legacyRows = database
+            .prepare(
+              `SELECT user_id, account_number, symbol, opening_order_id FROM position_stop_plans
+               WHERE style IN ('fixed', 'atr') AND opening_order_id IS NOT NULL AND opening_order_id != ''`
+            )
+            .all() as Array<{ user_id: string; account_number: string; symbol: string; opening_order_id: string }>;
+          const insertBackfill = database.prepare(
+            `INSERT INTO position_stop_plan_open_brackets (id, user_id, account_number, symbol, order_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+          );
+          const now = new Date().toISOString();
+          for (const row of legacyRows) {
+            insertBackfill.run(crypto.randomUUID(), row.user_id, row.account_number, row.symbol, row.opening_order_id, now);
+          }
+        }
+      }
     }
   }
 ];
