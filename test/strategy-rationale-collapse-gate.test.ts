@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 // Item 7 (Chat A): the rationale-diversity collapse detector was advisory-only (console.warn). Behind
@@ -78,7 +79,7 @@ async function runCollapse(gateOn: boolean) {
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
     const href = String(url);
     // Both the Bull and the surviving-Bear response return the two identical-rationale buys.
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       return new Response(JSON.stringify(bullBearProposals()), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (href.includes("nasdaq.com")) return nasdaqRows();
@@ -95,7 +96,7 @@ async function runCollapse(gateOn: boolean) {
     systemState: "active",
     activeBroker: "alpaca",
     accountNumber: "TEST",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL", "XOM"],
     strategyAuthority: "decide",

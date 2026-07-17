@@ -30,7 +30,7 @@ describe("generateReflectionSummary", () => {
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({
       id: accountId,
@@ -43,7 +43,7 @@ describe("generateReflectionSummary", () => {
     });
     setActiveConnectedAccount(accountId, userId);
     // Classic model so this asserts temperature + exact caps (reasoning bounds: test/llm-request.test.ts).
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "gpt-4.1-mini" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "openai/gpt-4.1-mini" }, userId);
     insertFillEvent({
       userId,
       accountNumber,
@@ -89,11 +89,11 @@ describe("generateReflectionSummary", () => {
     const { generateReflectionSummary, getReflectionSummary } = await import("../src/lib/post-mortem");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber: accountA, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: accountA, activeBroker: "alpaca", llmModel: "gpt-4.1-mini" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: accountA, activeBroker: "alpaca", llmModel: "openai/gpt-4.1-mini" }, userId);
     // IDENTICAL fill count + filled_at across the two accounts: under the old per-user
     // signature key this made account B's run dedupe away against account A's signature.
     const filledAt = new Date().toISOString();
@@ -102,7 +102,7 @@ describe("generateReflectionSummary", () => {
 
     let llmCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-      if (String(url).includes("api.openai.com")) llmCalls += 1;
+      if (String(url).includes("openrouter.ai")) llmCalls += 1;
       return new Response(JSON.stringify({ output_text: `reflection ${llmCalls}` }), { status: 200, headers: { "content-type": "application/json" } });
     });
 
@@ -130,11 +130,11 @@ describe("generateReflectionSummary", () => {
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "gpt-4.1-mini" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "openai/gpt-4.1-mini" }, userId);
 
     // Legacy-shaped proposal row: dedicated columns NULL, tags only inside the proposal JSON —
     // inserted via raw SQL because insertProposal now auto-fills the columns.
@@ -178,11 +178,11 @@ describe("generateReflectionSummary", () => {
     const { generateReflectionSummary, getReflectionSummary } = await import("../src/lib/post-mortem");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "gpt-4.1-mini" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "openai/gpt-4.1-mini" }, userId);
     insertFillEvent({ userId, accountNumber, source: "paper", executionMode: "broker/paper", symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled" });
 
     // Pre-scoping install state: one shared per-user summary row.
@@ -213,11 +213,11 @@ describe("generateReflectionSummary", () => {
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", connectedAccountId: accountId, llmModel: "gpt-4.1-mini" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", connectedAccountId: accountId, llmModel: "openai/gpt-4.1-mini" }, userId);
     insertFillEvent({ userId, accountNumber, source: "paper", executionMode: "broker/paper", symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled" });
 
     vi.stubGlobal("fetch", async () =>
@@ -241,7 +241,7 @@ describe("generateReflectionSummary", () => {
     expect(reflectionPayload.accountNumber).toBe(accountNumber);
     // Model attribution "on every decision surface incl. failure states" (#1076) — the reflection
     // is an LLM decision too, so its Journal entry must be able to show which model produced it.
-    expect(reflectionPayload.model).toBe("gpt-4.1-mini");
+    expect(reflectionPayload.model).toBe("openai/gpt-4.1-mini");
     expect(reflectionPayload.provider).toBe("openai");
 
     // Opt-out is reflection-only: an ordinary user-setting write still emits policy_change.
@@ -260,11 +260,11 @@ describe("generateReflectionSummary", () => {
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", connectedAccountId: accountId, llmModel: "gpt-4.1-mini" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", connectedAccountId: accountId, llmModel: "openai/gpt-4.1-mini" }, userId);
     insertFillEvent({ userId, accountNumber, source: "paper", executionMode: "broker/paper", symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled" });
 
     vi.stubGlobal("fetch", async () => new Response("rate limited", { status: 429, headers: { "content-type": "text/plain" } }));
@@ -280,7 +280,7 @@ describe("generateReflectionSummary", () => {
     expect(reflections[0].connected_account_id).toBe(accountId);
     const failurePayload = JSON.parse(reflections[0].payload);
     expect(failurePayload.status).toBe("failed");
-    expect(failurePayload.model).toBe("gpt-4.1-mini");
+    expect(failurePayload.model).toBe("openai/gpt-4.1-mini");
     expect(failurePayload.provider).toBe("openai");
     expect(typeof failurePayload.reason).toBe("string");
   });
@@ -294,7 +294,7 @@ describe("generateReflectionSummary", () => {
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
     process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET = "1"; // 1-token ceiling → immediately over budget
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
@@ -302,11 +302,11 @@ describe("generateReflectionSummary", () => {
     setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca" }, userId);
     insertFillEvent({ userId, accountNumber, source: "paper", executionMode: "broker/paper", symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled" });
     // Seed usage above the 1-token ceiling for THIS user so the budget is exceeded.
-    recordLlmUsage({ userId, provider: "openai", model: "gpt-4o", context: "strategy", keySource: "user", promptTokens: 10, completionTokens: 0 });
+    recordLlmUsage({ userId, provider: "openai", model: "openai/gpt-4o", context: "strategy", keySource: "user", promptTokens: 10, completionTokens: 0 });
 
     let openaiCalled = false;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-      if (String(url).includes("api.openai.com")) openaiCalled = true; // the reflection LLM endpoint
+      if (String(url).includes("openrouter.ai")) openaiCalled = true; // the reflection LLM endpoint
       return new Response(JSON.stringify({ output_text: "should not be produced" }), { status: 200, headers: { "content-type": "application/json" } });
     });
 

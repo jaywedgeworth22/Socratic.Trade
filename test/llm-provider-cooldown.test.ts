@@ -197,13 +197,17 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
     let openaiCalls = 0;
-    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
-        openaiCalls += 1;
-        return new Response("rate limited", { status: 429 });
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        const isGemini = body.model?.includes("gemini") || body.model?.includes("google");
+        if (!isGemini) {
+          openaiCalls += 1;
+          return new Response("rate limited", { status: 429 });
+        }
+        return geminiOk();
       }
-      if (href.includes("generativelanguage.googleapis.com")) return geminiOk();
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
@@ -217,7 +221,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",
@@ -255,7 +259,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     // Served-model attribution stays failover-aware even when the fallback is the FIRST attempt.
     expect(second.proposals.length).toBeGreaterThan(0);
     for (const p of second.proposals) {
-      expect(p.proposal.proposedByModel).toBe("gemini-2.5-flash");
+      expect(p.proposal.proposedByModel).toBe("google/gemini-2.5-flash");
     }
   }, 60_000);
 });

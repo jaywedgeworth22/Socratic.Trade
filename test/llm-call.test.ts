@@ -145,9 +145,9 @@ describe("buildLlmRequestBody", () => {
   it("Anthropic: system field + forced tool-use for the schema, max_tokens set, no response_format", () => {
     const body = buildLlmRequestBody(
       { provider: "anthropic", transport: "anthropic-messages" },
-      { model: "claude-opus-4-8", systemPrompt: "sys", userContent: "{\"a\":1}", schema: SCHEMA, maxOutputTokens: 1500 }
+      { model: "anthropic/claude-opus-4-8", systemPrompt: "sys", userContent: "{\"a\":1}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as Record<string, any>;
-    expect(body.model).toBe("claude-opus-4-8");
+    expect(body.model).toBe("anthropic/claude-opus-4-8");
     // Prompt caching (Chat A item 3): system is a single ephemeral cache block, not a bare string.
     expect(body.system).toEqual([{ type: "text", text: "sys", cache_control: { type: "ephemeral" } }]);
     expect(body.messages).toEqual([{ role: "user", content: "{\"a\":1}" }]);
@@ -164,7 +164,7 @@ describe("buildLlmRequestBody", () => {
     const body = buildLlmRequestBody(
       { provider: "anthropic", transport: "anthropic-messages" },
       {
-        model: "claude-opus-4-8",
+        model: "anthropic/claude-opus-4-8",
         systemPrompt: "sys",
         userContent: "{}",
         schema: SCHEMA,
@@ -187,7 +187,7 @@ describe("buildLlmRequestBody", () => {
 
     const xai = buildLlmRequestBody(
       { provider: "xai", transport: "chat-completions" },
-      { model: "grok-4.3", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "high" }
+      { model: "xai/grok-4.3", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "high" }
     ) as Record<string, any>;
     expect(xai.reasoning_effort).toBe("high");
 
@@ -225,7 +225,7 @@ describe("buildLlmRequestBody", () => {
   it("openAiJsonObject keeps OpenAI on json_object but Anthropic still uses the forced tool", () => {
     const oa = buildLlmRequestBody(
       { provider: "openai", transport: "chat-completions" },
-      { model: "gpt-4o-mini", systemPrompt: "s", userContent: "{}", schema: SCHEMA, openAiJsonObject: true, maxOutputTokens: 1500 }
+      { model: "openai/gpt-4o-mini", systemPrompt: "s", userContent: "{}", schema: SCHEMA, openAiJsonObject: true, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(oa.response_format).toEqual({ type: "json_object" });
 
@@ -239,7 +239,7 @@ describe("buildLlmRequestBody", () => {
   it("no schema → free-text output (no response_format / tools)", () => {
     const oa = buildLlmRequestBody(
       { provider: "openai", transport: "chat-completions" },
-      { model: "gpt-4o-mini", systemPrompt: "s", userContent: "hi", maxOutputTokens: 500 }
+      { model: "openai/gpt-4o-mini", systemPrompt: "s", userContent: "hi", maxOutputTokens: 500 }
     ) as Record<string, any>;
     expect(oa.response_format).toBeUndefined();
 
@@ -296,7 +296,7 @@ describe("buildLlmRequestBody", () => {
   it("Gemini schema translation is a pure function of provider — xAI/Mistral (also OpenAI-compatible) stay strict-unchanged", () => {
     const xai = buildLlmRequestBody(
       { provider: "xai", transport: "chat-completions" },
-      { model: "grok-4.3", systemPrompt: "sys", userContent: "{}", schema: { name: "trade_proposals", schema: BULL_PROPOSAL_SCHEMA }, maxOutputTokens: 1500 }
+      { model: "xai/grok-4.3", systemPrompt: "sys", userContent: "{}", schema: { name: "trade_proposals", schema: BULL_PROPOSAL_SCHEMA }, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(xai.response_format).toEqual({ type: "json_schema", json_schema: { name: "trade_proposals", strict: true, schema: BULL_PROPOSAL_SCHEMA } });
   });

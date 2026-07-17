@@ -101,20 +101,20 @@ describe("proposeStrategyTuning", () => {
     const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
     setStrategyPrompt("RED TEAM REVIEW STRATEGY", userWithRedTeam);
     setPolicy({
       ...DEFAULT_POLICY,
       accountNumber: "TUNE-RED-INHERIT",
-      llmModel: "gpt-4.1-mini",
-      redTeamLlmModel: "gpt-4.1",
+      llmModel: "openai/gpt-4.1-mini",
+      redTeamLlmModel: "openai/gpt-4.1",
       scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
     }, userWithRedTeam);
     setStrategyPrompt("GREEN TEAM REVIEW STRATEGY", userWithGreenOnly);
     setPolicy({
       ...DEFAULT_POLICY,
       accountNumber: "TUNE-GREEN-INHERIT",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       redTeamLlmModel: undefined,
       scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
     }, userWithGreenOnly);
@@ -167,7 +167,7 @@ describe("proposeStrategyTuning", () => {
     await proposeStrategyTuning(userWithRedTeam);
     await proposeStrategyTuning(userWithGreenOnly);
 
-    expect(requestedModels).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
+    expect(requestedModels).toEqual(["openai/gpt-4.1", "openai/gpt-4.1-mini"]);
   });
 
   it("skips the rotation sentinel and reviews with the concrete Green model (no local-rules degradation)", async () => {
@@ -181,12 +181,12 @@ describe("proposeStrategyTuning", () => {
     const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
     setStrategyPrompt("ROTATE REVIEW STRATEGY", userId);
     setPolicy({
       ...DEFAULT_POLICY,
       accountNumber: "TUNE-ROTATE-INHERIT",
-      llmModel: "gpt-5.5",
+      llmModel: "openai/gpt-5.5",
       redTeamLlmModel: "__rotate__",
       scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
     }, userId);
@@ -224,7 +224,7 @@ describe("proposeStrategyTuning", () => {
     const proposal = await proposeStrategyTuning(userId);
     // The reviewer used the concrete Green model, NOT the "__rotate__" sentinel — and did NOT degrade
     // to local rules (which would mean generatedBy "local_rules" and zero fetch calls).
-    expect(requestedModels).toEqual(["gpt-5.5"]);
+    expect(requestedModels).toEqual(["openai/gpt-5.5"]);
     expect(proposal.generatedBy).toBe("llm");
   });
 
@@ -257,7 +257,7 @@ describe("proposeStrategyTuning", () => {
     const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
     // TEST INFRASTRUCTURE: a connected test-broker account (broker: "test", environment: "paper") so
     // execution/tuning context flows through the normal broker path — an account is an account.
     upsertConnectedAccount({
@@ -275,7 +275,7 @@ describe("proposeStrategyTuning", () => {
       ...DEFAULT_POLICY,
       accountNumber: "TUNE-LLM",
       // Classic model: this asserts temperature + exact caps (reasoning bounds → test/llm-request.test.ts).
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       scoringWeights: { ...DEFAULT_POLICY.scoringWeights },
       // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert clamped weights
       tuning: { oosWithholdUnvalidated: false }
@@ -376,7 +376,7 @@ describe("proposeStrategyTuning", () => {
     const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
     upsertConnectedAccount({
       id: accountId,
       userId,
@@ -392,7 +392,7 @@ describe("proposeStrategyTuning", () => {
       ...DEFAULT_POLICY,
       accountNumber,
       activeBroker: "alpaca",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
     }, userId);
     insertFillEvent({
@@ -471,9 +471,9 @@ describe("proposeStrategyTuning", () => {
     const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
     setStrategyPrompt("CURRENT PROMPT");
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-LLM-GATE", llmModel: "gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-LLM-GATE", llmModel: "openai/gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } });
     // No fills => 0 closed lots; even if the model ignores the prompt and returns weights, they must be stripped.
     vi.stubGlobal("fetch", async () => new Response(
       JSON.stringify({
@@ -499,12 +499,12 @@ describe("proposeStrategyTuning", () => {
     const { proposeStrategyTuning, MAX_WEIGHT_STEP } = await import("../src/lib/strategy-tuning");
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
     setStrategyPrompt("CLAMP TEST PROMPT");
     // Use custom weights so we can assert the clamp precisely.
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
     // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert clamped weights
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", llmModel: "gpt-4.1-mini", scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", llmModel: "openai/gpt-4.1-mini", scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
     // Seed 20 closed lots so the §3.E gate passes.
     let n = 0;
     for (let i = 0; i < 20; i++) {

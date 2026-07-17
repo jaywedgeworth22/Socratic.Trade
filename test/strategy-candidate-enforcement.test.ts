@@ -95,7 +95,7 @@ describe("strict marketScan.topCandidates opening boundary", () => {
     let bullRequest: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
         expect(JSON.stringify(body)).not.toContain("Red Team Risk Agent");
         bullRequest = body;
@@ -147,8 +147,8 @@ describe("strict marketScan.topCandidates opening boundary", () => {
       ...DEFAULT_POLICY,
       systemState: "active",
       accountNumber: "TEST",
-      llmModel: "gpt-4.1-mini",
-      redTeamLlmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
+      redTeamLlmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       // MSFT is policy-allowed but absent from this exact scan result.
       additionalSymbols: ["AAPL", "MSFT"],

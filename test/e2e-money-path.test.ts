@@ -105,7 +105,7 @@ function redTeamOk(): Response {
 function stubFetchE2E(): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = String(init?.body ?? "");
       const isRedTeam = body.includes("Red Team Risk Agent") || body.includes("rigorously critique");
       const isBear = body.includes("Bear Agent") || body.includes("bear_proposals");
@@ -147,11 +147,11 @@ async function setupBrokerLiveAutonomous(label: string): Promise<void> {
     systemState: "active",
     activeBroker: "alpaca",
     accountNumber: "TEST",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
     // No-defaults world: the single Red Team reviewer must be an explicit pick or the risk-adding
     // opening fails closed to human review. Same OpenAI-family model as the proposer so the fetch
-    // stub serves its "Red Team Risk Agent" call through the api.openai.com endpoint.
-    redTeamLlmModel: "gpt-4.1-mini",
+    // stub serves its "Red Team Risk Agent" call through the openrouter.ai endpoint.
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
