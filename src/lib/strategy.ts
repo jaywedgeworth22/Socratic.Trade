@@ -1,4 +1,3 @@
-import { healMalformedJson } from "./response-healing";
 export * from "./strategy-execution";
 export * from "./strategy-risk";
 
@@ -4745,12 +4744,6 @@ async function proposeTrades(input: {
               const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
               return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
             } catch (parseError) {
-              console.warn("Bull Agent returned unparseable JSON; attempting local healing", parseError);
-              const healed = healMalformedJson<{ proposals?: TradeProposal[] }>(text);
-              if (healed) {
-                console.log("Bull Agent response successfully healed locally.");
-                return { text, proposals: healed.proposals ?? [], truncated, wireOutputCap, finishReason };
-              }
               // A truncated/malformed model response must not crash the whole autonomous
               // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
               // record a DISTINCT truncation reason instead of a silent no-op (see below).

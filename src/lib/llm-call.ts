@@ -12,6 +12,7 @@
 import { withLlmRequestBounds, type LlmTransport } from "./llm-request";
 import type { LlmEndpoint } from "./llm-provider";
 import type { LlmReasoningEffort } from "./types";
+import { jsonrepair } from "jsonrepair";
 
 /** A JSON schema plus the name/description used to label it (OpenAI json_schema / Anthropic tool). */
 export interface LlmJsonSchema {
@@ -382,12 +383,29 @@ export function extractLlmText(payload: unknown): string | undefined {
  * `JSON.parse` try/catch still governs the failure — never fabricates valid JSON.
  */
 export function extractJsonPayload(text: string): string {
-  const unfenced = text
+  let unfenced = text
     .trim()
     .replace(/^```(?:json5?|jsonc)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
-  return firstBalancedJson(unfenced) ?? unfenced;
+
+  const balanced = firstBalancedJson(unfenced);
+  if (balanced) {
+    unfenced = balanced;
+  }
+
+  try {
+    JSON.parse(unfenced);
+    return unfenced;
+  } catch (e) {
+    try {
+      // Apply local, deterministic response healing across all LLM parse sites
+      return jsonrepair(unfenced);
+    } catch (repairError) {
+      // Unrepairable; let the caller's JSON.parse fail loudly
+      return unfenced;
+    }
+  }
 }
 
 /** First balanced `{…}`/`[…]` block starting at the first opener, or undefined if none/unbalanced. */

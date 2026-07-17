@@ -1,4 +1,3 @@
-import { healMalformedJson } from "./response-healing";
 // The SINGLE Red Team reviewer (docs/single-adversary-consolidation.md, owner-revised 2026-07-07).
 // One adversarial LLM call per risk-adding opening, run on the FINALIZED (post-sizing) trade. It
 // performs BOTH jobs the two former passes split between them: the in-flow Bear's fact-check of the
@@ -418,13 +417,6 @@ export async function debateProposal(
               console.warn(
                 `Red Team response was not valid JSON (${parseError instanceof Error ? parseError.message : String(parseError)}); attempting local healing.`
               );
-              
-              const healed = healMalformedJson<unknown>(text);
-              if (healed !== undefined) {
-                parsed = healed;
-                console.log("Red Team response successfully healed locally.");
-              }
-              
               if (parsed === undefined) {
                 const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
                 return {

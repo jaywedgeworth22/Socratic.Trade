@@ -51,8 +51,8 @@ describe("extractJsonPayload", () => {
     expect(() => JSON.parse(extractJsonPayload(refusal))).toThrow();
   });
 
-  it("does not fabricate valid JSON from a truncated/unbalanced object", () => {
+  it("heals valid JSON from a truncated/unbalanced object using jsonrepair", () => {
     const truncated = '{"verdict":"approve","reason":"cut off here';
-    expect(() => JSON.parse(extractJsonPayload(truncated))).toThrow();
+    expect(JSON.parse(extractJsonPayload(truncated))).toEqual({ verdict: "approve", reason: "cut off here" });
   });
 });
