@@ -140,10 +140,10 @@ describe("strategy.ts held-position retrieval scope", () => {
     const { clearMarketCache } = await import("../src/lib/market");
     clearMarketCache();
 
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -154,7 +154,7 @@ describe("strategy.ts held-position retrieval scope", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Held Retrieval Scope Test", isActive: true });
     setActiveConnectedAccount(accountId);
@@ -240,10 +240,10 @@ describe("strategy.ts held-position retrieval scope", () => {
     const { clearMarketCache } = await import("../src/lib/market");
     clearMarketCache();
 
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -276,7 +276,7 @@ describe("strategy.ts held-position retrieval scope", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Held Retrieval Scope Dedup Test", isActive: true });
     setActiveConnectedAccount(accountId);

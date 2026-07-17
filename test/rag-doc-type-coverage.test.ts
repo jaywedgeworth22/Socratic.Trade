@@ -154,7 +154,7 @@ function nasdaqResponse(): Response {
 function stubFetch(openAiBodies: OpenAiBody[]): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
       if (JSON.stringify(body).includes("Red Team Risk Agent")) {
@@ -175,7 +175,7 @@ function stubFetch(openAiBodies: OpenAiBody[]): void {
 
 async function setupBrokerPaperDecide(): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -230,7 +230,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
@@ -282,7 +282,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
@@ -330,7 +330,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
@@ -367,7 +367,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("WEB_SOURCE_FMP_TRANSCRIPTS", "off");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
@@ -401,7 +401,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("WEB_SOURCE_FMP_TRANSCRIPTS", "on");
     vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "on");
     const openAiBodies: OpenAiBody[] = [];
@@ -436,7 +436,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();

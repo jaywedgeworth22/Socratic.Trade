@@ -10,7 +10,7 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 describe("framework proposals — global reads + provenance", () => {
@@ -60,7 +60,7 @@ describe("reviewPendingFrameworkProposals — batched single-call reviewer", () 
     const { reviewPendingFrameworkProposals } = await import("../src/lib/framework-review");
     const user = "batch-user";
 
-    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENROUTER_API_KEY = "test-key";
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "REVIEW", llmModel: "openai/gpt-4.1", redTeamLlmModel: "openai/gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } }, user);
 
     const idA = createSocraticFrameworkProposal({ userId: user, connectedAccountId: "acct-A", subsystem: "sizing", title: "A", rationale: "r", proposedChange: "raise size" });
@@ -106,7 +106,7 @@ describe("reviewPendingFrameworkProposals — batched single-call reviewer", () 
     const { createSocraticFrameworkProposal, getSocraticFrameworkProposal, setPolicy, setSocraticFrameworkProposalAiReview } = await import("../src/lib/db");
     const { reviewPendingFrameworkProposals } = await import("../src/lib/framework-review");
     const user = "backlog-user";
-    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENROUTER_API_KEY = "test-key";
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "BACKLOG", llmModel: "openai/gpt-4.1", redTeamLlmModel: "openai/gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } }, user);
 
     const already = createSocraticFrameworkProposal({ userId: user, subsystem: "strategy", title: "already", rationale: "r", proposedChange: "c" });
@@ -141,7 +141,7 @@ describe("reviewPendingFrameworkProposals — batched single-call reviewer", () 
     const user = "nokey-user";
     // Reviewer model IS chosen (so we get past the not-configured guard) but the key is absent.
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "NOKEY", redTeamLlmModel: "openai/gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } }, user);
-    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     createSocraticFrameworkProposal({ userId: user, subsystem: "strategy", title: "x", rationale: "r", proposedChange: "c" });
     const result = await reviewPendingFrameworkProposals(user);
     expect(result.reviewed).toBe(0);
@@ -154,7 +154,7 @@ describe("reviewPendingFrameworkProposals — batched single-call reviewer", () 
     const user = "nomodel-user";
     // Key present, but the RED reviewer seat resolves to "" (no redTeamLlmModel; the red role does
     // NOT fall back to the primary model). Must skip cleanly, NOT send an empty-model request.
-    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENROUTER_API_KEY = "test-key";
     let requestCount = 0;
     vi.stubGlobal("fetch", async () => {
       requestCount += 1;

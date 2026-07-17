@@ -8,6 +8,7 @@
 // Row-level shapes are defined locally (NOT imported from ./congress-share) to keep the db barrel
 // free of a cycle: congress-share imports from ./db, and ./db re-exports this module.
 import { getDb } from "./db";
+import { normalizeCompanyName } from "@jaywedgeworth22/congress-trading-shared";
 
 // ── Row shapes (a structural subset of congress-share's payload types) ──────────
 
@@ -93,7 +94,7 @@ export function upsertImportedRefs(refs: ImportedRefInput[], origin: string = DE
       if (!ticker) continue;
       stmt.run({
         ticker,
-        companyName: r.companyName?.trim() || null,
+        companyName: normalizeCompanyName(r.companyName) ?? null,
         sector: r.sector ?? null,
         industry: r.industry ?? null,
         assetClass: r.assetClass ?? null,

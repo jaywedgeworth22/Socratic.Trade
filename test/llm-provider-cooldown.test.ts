@@ -196,12 +196,12 @@ function geminiOk(): Response {
 
 describe("cross-run cooldown wired into the Bull failover chain", () => {
   it("run 1: primary 429 fails over and cools the lane; run 2: skips straight to the fallback without touching the primary", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
     let openaiCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
+      if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
         const body = init?.body ? JSON.parse(String(init.body)) : {};
         const isGemini = body.model?.includes("gemini") || body.model?.includes("google");
         if (!isGemini) {
@@ -215,7 +215,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "fixture");
     upsertUserApiKey("local", "gemini", "test-gemini-key", "fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Cooldown Test", isActive: true });

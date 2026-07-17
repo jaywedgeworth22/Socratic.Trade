@@ -186,7 +186,7 @@ async function configureAutonomousAccount(
     label: "Autonomous final-size account",
     isActive: true
   });
-  upsertUserApiKey(userId, "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey(userId, "openrouter", "test-openai-key", "test fixture");
   setPolicy(
     {
       ...DEFAULT_POLICY,

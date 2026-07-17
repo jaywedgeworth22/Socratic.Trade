@@ -16,8 +16,8 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.OPENAI_API_URL;
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_URL;
   delete process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET;
 });
 
@@ -29,8 +29,8 @@ describe("generateReflectionSummary", () => {
     const { getUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({
       id: accountId,
@@ -88,8 +88,8 @@ describe("generateReflectionSummary", () => {
     const { getUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary, getReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber: accountA, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -133,8 +133,8 @@ describe("generateReflectionSummary", () => {
     const { getDb, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -181,8 +181,8 @@ describe("generateReflectionSummary", () => {
     const { getUserSetting, setUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary, getReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -216,8 +216,8 @@ describe("generateReflectionSummary", () => {
     const { getDb, setUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -263,8 +263,8 @@ describe("generateReflectionSummary", () => {
     const { getDb, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -297,8 +297,8 @@ describe("generateReflectionSummary", () => {
     const { recordLlmUsage } = await import("../src/lib/llm-usage");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/responses";
     process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET = "1"; // 1-token ceiling → immediately over budget
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });

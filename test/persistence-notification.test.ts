@@ -30,8 +30,8 @@ afterEach(() => {
 
 async function seedLocalOpenAiKey(): Promise<() => void> {
   const { deleteUserApiKey, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
-  return () => deleteUserApiKey("local", "openai");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
+  return () => deleteUserApiKey("local", "openrouter");
 }
 
 describe("persistence and notifications", () => {
@@ -197,12 +197,12 @@ describe("persistence and notifications", () => {
   });
 
   it("writes one strategy_run audit event from runStrategyOnce", async () => {
-    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalOpenAiKey = process.env.OPENROUTER_API_KEY;
     let cleanupOpenAiKey: (() => void) | undefined;
     // Seed a key + stub the LLM so the run completes (0 proposals). The strategy session now
     // requires a resolvable LLM credential — without one runStrategyOnce returns "failed" — and
     // this test only needs the run to complete to assert the audit event was written.
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       if (String(url).includes("openrouter.ai") || String(url).includes("api.openai.com")) {
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
@@ -270,18 +270,18 @@ describe("persistence and notifications", () => {
       expect(after).toBe(before + 1);
     } finally {
       cleanupOpenAiKey?.();
-      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
-      else delete process.env.OPENAI_API_KEY;
+      if (originalOpenAiKey) process.env.OPENROUTER_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENROUTER_API_KEY;
     }
   }, 30_000);
 
   it("records a failed Green Team LLM step when the proposal request times out", async () => {
-    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalOpenAiKey = process.env.OPENROUTER_API_KEY;
     let cleanupOpenAiKey: (() => void) | undefined;
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
         throw new Error("The operation was aborted due to timeout");
       }
       if (href.includes("nasdaq.com")) {
@@ -366,21 +366,21 @@ describe("persistence and notifications", () => {
       expect(runAudit?.llmSteps).toMatchObject([{ step: "bull", status: "failed" }]);
     } finally {
       cleanupOpenAiKey?.();
-      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
-      else delete process.env.OPENAI_API_KEY;
+      if (originalOpenAiKey) process.env.OPENROUTER_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENROUTER_API_KEY;
     }
   }, 30_000);
 
   it("records a pre-run portfolio snapshot before any proposals execute", async () => {
-    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalOpenAiKey = process.env.OPENROUTER_API_KEY;
     let cleanupOpenAiKey: (() => void) | undefined;
     // Seed a key + stub the LLM to return 0 proposals → the run completes as a no-op. (The strategy
     // session now requires a resolvable LLM credential; without one runStrategyOnce returns "failed".)
     // We just need to verify a pre-run snapshot was written with the run's runId.
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -452,19 +452,19 @@ describe("persistence and notifications", () => {
       expect(runSnapshots.length).toBeGreaterThanOrEqual(2);
     } finally {
       cleanupOpenAiKey?.();
-      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
-      else delete process.env.OPENAI_API_KEY;
+      if (originalOpenAiKey) process.env.OPENROUTER_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENROUTER_API_KEY;
     }
   }, 20_000);
 
   it("sends retrieved context in user content instead of the stable system prompt", async () => {
-    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalOpenAiKey = process.env.OPENROUTER_API_KEY;
     let cleanupOpenAiKey: (() => void) | undefined;
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     const openAiBodies: any[] = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
         openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
@@ -555,8 +555,8 @@ describe("persistence and notifications", () => {
       }
     } finally {
       cleanupOpenAiKey?.();
-      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
-      else delete process.env.OPENAI_API_KEY;
+      if (originalOpenAiKey) process.env.OPENROUTER_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENROUTER_API_KEY;
     }
   });
 

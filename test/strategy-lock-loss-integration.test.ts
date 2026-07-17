@@ -363,7 +363,7 @@ async function arrangeStrategyRun(
     isActive: true
   });
   db.setActiveConnectedAccount(accountId, userId);
-  db.upsertUserApiKey(userId, "openai", "test-openai-key", "lease-loss fixture");
+  db.upsertUserApiKey(userId, "openrouter", "test-openai-key", "lease-loss fixture");
   db.setPolicy({
     ...DEFAULT_POLICY,
     connectedAccountId: accountId,
@@ -381,7 +381,7 @@ async function arrangeStrategyRun(
 
 function stubStrategyLlm(): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
-    if (!String(url).includes("openrouter.ai") && !String(url).includes("api.openai.com")) return new Response("not found", { status: 404 });
+    if (!String(url).includes("openrouter.ai") && !String(url).includes("openrouter.ai")) return new Response("not found", { status: 404 });
     const body = init?.body ? String(init.body) : "";
     if (body.includes("Red Team Risk Agent")) {
       return new Response(
@@ -453,7 +453,7 @@ describe("strategy-run ownership loss across broker awaits", () => {
     lockGuardMocks.onStart.mockImplementationOnce(() => db.setActiveConnectedAccount(accountB, userId));
     const requestBodies: string[] = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
-      if (!String(url).includes("openrouter.ai") && !String(url).includes("api.openai.com")) return new Response("not found", { status: 404 });
+      if (!String(url).includes("openrouter.ai") && !String(url).includes("openrouter.ai")) return new Response("not found", { status: 404 });
       const body = init?.body ? String(init.body) : "";
       requestBodies.push(body);
       if (body.includes("Red Team Risk Agent")) {
@@ -561,7 +561,7 @@ describe("strategy-run ownership loss across broker awaits", () => {
       if (ownershipLost) throw new StrategyLockOwnershipLostError();
     });
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
-      if (!String(url).includes("openrouter.ai") && !String(url).includes("api.openai.com")) return new Response("not found", { status: 404 });
+      if (!String(url).includes("openrouter.ai") && !String(url).includes("openrouter.ai")) return new Response("not found", { status: 404 });
       const body = init?.body ? String(init.body) : "";
       if (body.includes("Red Team Risk Agent")) {
         ownershipLost = true;

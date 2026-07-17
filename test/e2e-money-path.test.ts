@@ -107,7 +107,7 @@ function redTeamOk(): Response {
 function stubFetchE2E(): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
       const body = String(init?.body ?? "");
       const isRedTeam = body.includes("Red Team Risk Agent") || body.includes("rigorously critique");
       const isBear = body.includes("Bear Agent") || body.includes("bear_proposals");
@@ -129,7 +129,7 @@ async function setupBrokerLiveAutonomous(label: string): Promise<void> {
   // the live-trading opt-in can't leak into subsequent tests/files.
   vi.stubEnv("ALLOW_LIVE_TRADING", "true");
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   // Broker "alpaca" with environment "live" so this resolves broker/live
   upsertConnectedAccount({
@@ -168,7 +168,7 @@ async function setupBrokerLiveAutonomous(label: string): Promise<void> {
 
 describe("E2E money-path integration test", () => {
   it("runs strategy through to execution", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     // Keys for both LLM families present so Red Team credential resolution never fails-closed; the
     // fetch stub actually serves the Red Team through the OpenAI-family endpoint.
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");

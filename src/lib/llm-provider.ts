@@ -74,7 +74,9 @@ export function resolveLlmEndpoint(
     if (/^claude/i.test(model)) {
       model = `anthropic/${model}`;
     } else if (/^grok/i.test(model)) {
-      model = `xai/${model}`;
+      // OpenRouter's Grok namespace is `x-ai/`, not `xai/` — the latter is an invalid model id
+      // OpenRouter rejects (Codex finding on PR #1703).
+      model = `x-ai/${model}`;
     } else if (/^gemini/i.test(model)) {
       model = `google/${model}`;
     } else if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) {

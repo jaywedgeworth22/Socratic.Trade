@@ -122,7 +122,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 const BULL_OPENING_PROPOSAL = {
@@ -144,7 +144,7 @@ const BULL_OPENING_PROPOSAL = {
 function makeUnavailableFetchStub(proposals: unknown[] = [BULL_OPENING_PROPOSAL]) {
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       const systemContent = JSON.stringify(body);
       if (systemContent.includes("Red Team Risk Agent")) {
@@ -184,7 +184,7 @@ function makeUnavailableFetchStub(proposals: unknown[] = [BULL_OPENING_PROPOSAL]
 
 async function seedTestAccountAndPolicy() {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -211,7 +211,7 @@ async function seedTestAccountAndPolicy() {
 
 describe("Red Team unavailable — opening routing + audit parity (decide authority)", () => {
   it("holds a high-conviction OPENING for human review with failureKind visible, and audits strategy_red_team_unavailable", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeUnavailableFetchStub());
 
     await seedTestAccountAndPolicy();
@@ -288,7 +288,7 @@ async function seedExistingAaplLongPosition() {
 
 describe("Red Team unavailable — exits are STRUCTURALLY EXEMPT (§3.5: never reviewed, never holdable)", () => {
   it("a de-risking SELL of an existing position proceeds to placement with NO review call, no verdict, no unavailable audit — even while the reviewer is down", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeUnavailableFetchStub([SELL_PROPOSAL]));
 
     await seedTestAccountAndPolicy();
@@ -317,7 +317,7 @@ describe("Red Team unavailable — exits are STRUCTURALLY EXEMPT (§3.5: never r
 
 describe("Red Team unavailable — propose authority surfaces the flag on the pending card", () => {
   it("appends a RED TEAM FAILED note to a propose-mode card so the approver sees the adversary never ran", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeUnavailableFetchStub());
 
     await seedTestAccountAndPolicy();
