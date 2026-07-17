@@ -134,6 +134,44 @@ export function insertPortfolioSnapshot(input: {
   return snapshot;
 }
 
+/**
+ * Symbols with a non-zero position in the LATEST portfolio snapshot of every (user, account)
+ * pair, restricted to snapshots recent enough to reflect a live account (default 7 days —
+ * snapshots are written every strategy run, so an older latest-snapshot means the account
+ * isn't actively trading). Broker-call-free holdings read for background producers (e.g. the
+ * EarningsCalls.dev transcript selector) that must not spend broker API calls to learn what
+ * is held. Returns normalized unique symbols, alphabetical.
+ */
+export function listRecentlyHeldSymbolsAllUsers(maxAgeDays = 7, now: number = Date.now()): string[] {
+  const cutoff = new Date(now - maxAgeDays * 86_400_000).toISOString();
+  // SQLite bare-column-with-MAX semantics: with GROUP BY + MAX(created_at), the non-aggregate
+  // `positions` column is taken from the row that supplied the MAX — i.e. each group's latest
+  // snapshot (documented SQLite behavior for a single MAX/MIN aggregate).
+  const rows = getDb()
+    .prepare(
+      `SELECT positions, MAX(created_at) AS created_at
+       FROM portfolio_snapshots
+       GROUP BY user_id, account_number
+       HAVING MAX(created_at) >= ?`
+    )
+    .all(cutoff) as Array<{ positions: string }>;
+  const symbols = new Set<string>();
+  for (const row of rows) {
+    try {
+      const positions = JSON.parse(row.positions) as Array<{ symbol?: unknown; quantity?: unknown }>;
+      if (!Array.isArray(positions)) continue;
+      for (const position of positions) {
+        const symbol = typeof position?.symbol === "string" ? position.symbol.trim().toUpperCase() : "";
+        const quantity = typeof position?.quantity === "number" ? position.quantity : 0;
+        if (symbol && quantity !== 0) symbols.add(symbol);
+      }
+    } catch {
+      // A single malformed snapshot must not break the holdings read.
+    }
+  }
+  return [...symbols].sort();
+}
+
 export function listPortfolioSnapshots(accountNumber: string, source?: FillSource, limit = 100, userId: string = "local"): PortfolioSnapshot[] {
   const rows = source
     ? (getDb()
