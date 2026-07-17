@@ -45,9 +45,10 @@ import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { PrefetchedFills } from "./performance";
-import type { BrokerageAccount, BrokerQuote, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type { BrokerageAccount, BrokerQuote, ConnectedAccount, EquityOrder, EquityPosition, OptionPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
+import { checkAndDispatchOptionAlerts } from "./notifications";
 
 const PROPOSAL_PERFORMANCE_MIN_AGE_MS = 15 * 60_000;
 const RED_TEAM_EFFICACY_AUDIT_LIMIT = 500;
@@ -293,17 +294,18 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // performance summary built from quotes. Everything else — Robinhood MCP health and the whole
   // macro board (macro/signals/history/news) — has no dependency on the broker chain or on each
   // other, so all of it is raced against the chain with one Promise.all.
-  const brokerChainPromise = (async (): Promise<{
+  const brokerChainPromise: Promise<{
     accounts: BrokerageAccount[];
     liveAccounts: BrokerageAccount[];
     brokerAccountReadError?: string;
+    options: OptionPosition[];
     accountNumber?: string;
     portfolio?: Portfolio;
     positions: EquityPosition[];
     orders: EquityOrder[];
     portfolioReadError?: string;
     currentPrices: Record<string, number>;
-  }> => {
+  }> = (async () => {
     let accounts: BrokerageAccount[] = [];
     let brokerAccountReadError: string | undefined;
     const handleAccountsReadFailure = (message: string) => {
@@ -378,6 +380,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
     let portfolio: Portfolio | undefined;
     let positions: EquityPosition[] = [];
+    let options: OptionPosition[] = [];
     let orders: EquityOrder[] = [];
     let portfolioReadError: string | undefined;
     const handlePortfolioReadFailure = (message: string) => {
@@ -388,7 +391,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
         operation: "dashboard.getPortfolioBundle",
         severity: "error",
         message,
-        fallback: "Dashboard snapshot continues without live portfolio, positions, and orders.",
+        fallback: "Dashboard snapshot continues without live portfolio, positions, options, and orders.",
         userId,
         connectedAccountId: policy.connectedAccountId,
         broker: policy.activeBroker,
@@ -413,6 +416,20 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
         );
       } catch (error) {
         handlePortfolioReadFailure(messageFromUnknownError(error));
+      }
+      // Option positions are best-effort: a transient failure (notably an MCP
+      // tool error) must not crash the whole dashboard bundle.
+      if (gateway.getOptionPositions) {
+        try {
+          options = await gateway.getOptionPositions(accountNumber);
+        } catch (err) {
+          console.warn("[Dashboard] options positions unavailable (non-fatal):", err);
+        }
+      }
+      if (options.length > 0) {
+        checkAndDispatchOptionAlerts(userId, policy.connectedAccountId || "", accountNumber, options, gateway).catch((err) =>
+          console.warn("[OptionAlerts] failed:", err)
+        );
       }
     }
 
@@ -443,7 +460,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       }
     }
 
-    return { accounts, liveAccounts, brokerAccountReadError, accountNumber, portfolio, positions, orders, portfolioReadError, currentPrices };
+    return { accounts, liveAccounts, brokerAccountReadError, accountNumber, portfolio, positions, options, orders, portfolioReadError, currentPrices };
   })();
 
   const robinhoodMcpHealthPromise: Promise<RobinhoodMcpHealth | undefined> =
@@ -506,6 +523,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     accountNumber,
     portfolio,
     positions,
+    options,
     orders,
     portfolioReadError,
     currentPrices
@@ -790,6 +808,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     connectedAccountPolicies,
     portfolio: displayPortfolio,
     positions: displayPositions,
+    options,
     symbolMetaBySymbol,
     stopPlanBySymbol,
     orders,

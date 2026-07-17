@@ -24,7 +24,7 @@ import type {
     StrategyProfile,
     StrategyRunRow,
     TradeProposal,
-    TradingPolicy, MarketQuote } from "@/lib/types";
+    TradingPolicy, MarketQuote, OptionPosition } from "@/lib/types";
 export type { AuditFeedItem, SymbolMeta, UnifiedActivityGroup } from "@/lib/dashboard-feed";
 
 export interface AuditEvent {
@@ -65,14 +65,17 @@ export interface DashboardSnapshot {
   connectedAccountPolicies?: Record<string, Pick<TradingPolicy, "systemState" | "strategyAuthority">>;
   portfolio?: Portfolio;
   positions: EquityPosition[];
+  options?: OptionPosition[];
   symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;
   /** Per-position stop PLAN (LLM-chosen stop TYPE, persisted at fill time), keyed by symbol — see
    *  StopPlanStyle/position_stop_plans. Absent entry = "default" (account's own precedence). */
   stopPlanBySymbol?: Record<string, PositionStopPlan>;
   livePortfolio?: Portfolio;
   livePositions?: EquityPosition[];
+  liveOptions?: OptionPosition[];
   paperPortfolio?: Portfolio;
   paperPositions?: EquityPosition[];
+  paperOptions?: OptionPosition[];
   orders: EquityOrder[];
   audit: AuditEvent[];
   auditFeed: DashboardAuditFeedItem[];

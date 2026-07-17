@@ -1,5 +1,9 @@
 # Active Implementation Plan
 
+## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)
+
+Added OpenRouter models to `app/ui/llm-model-catalog.ts` so they can be selected for Green and Red teams. Local response healing via `jsonrepair` integrated globally via `extractJsonPayload` without model-specific fallback calls. `better-sqlite3` native modules rebuilt for Node 24. Tests passed, ready for `main` deployment.
+
 > **2026-07-16 - Public-page renderer decision + legacy `app/ui` primitives slim-down (MONET,
 > branch `monet/vigilant-fermi-220244`).** Settles the "two renderers, one brand core" question
 > for every remaining legacy glass-token consumer (WS-E follow-up to the 2026-07-16 UI wave):

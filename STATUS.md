@@ -92,6 +92,21 @@ veto, not the LLM Red Team). Did NOT reproduce: dark-mode reality ribbon (alread
 Surfaced to owner, not coded: apex-serves-login vs /welcome gating, one 6-day-stale active-autonomy
 account. Gate: tsc clean, lint 0 errors, 403 files/4,724 tests, build via land.sh; live-verified.
 Rollout: `docs/rollouts/2026-07-17-visual-tour-fixes.md`.
+## 2026-07-17 — Codex autofix on PR #1705: OpenRouter chat-prefix + Tradier bracket ordering (CLAUDE)
+
+Fixed the two remaining P1 Codex review threads on PR #1705 (`agent/openrouter-metadata-tracking`):
+- **P1 — Strip OpenRouter routing prefix before chat requests**: `llmForModel` now strips the
+  `openrouter/` prefix from the model ID before passing it to the OpenAI API, matching the strategy
+  path's normalisation in `resolveLlmEndpoint`. Previously, selecting an OpenRouter model in Coach
+  sent `openrouter/openai/gpt-4o` as the API `model`, which OpenRouter rejects as unknown.
+- **P1 — Strip Tradier market-order brackets before the generic bracket path**: Moved the Tradier
+  market-entry bracket-stripping condition ahead of the whole-share bracket logic (it was an
+  unreachable `else if`). The whole-share branch now also explicitly excludes Tradier market orders
+  so it never adds brackets back after stripping. `TradierBrokerGateway.placeEquityOrder` already
+  correctly falls through for market-entry brackets, so the receipt and actual protection state now
+  agree. Test updated (limit order for the supported path; new test for market-order stripping).
+Full gate: lint 0 errors, tsc clean, 4737 tests pass (405 files), build clean.
+Rollout: `docs/rollouts/2026-07-17-openrouter-metadata-codex-autofix.md`.
 
 ## 2026-07-17 — jsonrepair healing: fail-closed boundaries (CLAUDE on PR #1696, cap-reset pickup)
 
@@ -122,6 +137,17 @@ repo's live route kept a separate, still-broken duplicate). Fixed by stripping t
 `sha256=` prefix before comparing, matching `congress-trading-shared`'s verifier. New
 regression test added. Full gate green: lint 0 errors, tsc clean, 404 files/4701 tests,
 build clean. Rollout: `docs/rollouts/2026-07-17-congress-webhook-signature-fix.md`.
+## 2026-07-17 — Exit Strategy Panel Actions (Phase A) (ANTIGRAVITY, branch agent/exit-strategy-phase-a)
+
+All five lanes of Phase A (Exit Strategy Panel Actions) have been completed, verified, and integrated:
+- **A1 — Gap-deadlock fix**: Confirmation-based bad-tick acceptance with `suspectPrice` and `suspectCount` DB columns, session resets on regular-hours opens, and quote corroboration.
+- **A2 — `protectWhileHalted`**: Stop synthetic monitor registration during halts; exits continue to run if toggle is ON.
+- **A3 — Prompt visibility bundle**: Injected ATR stop percentage, active protection state, and resting orders into Green Team LLM prompts.
+- **A4 — Honesty notes**: Disclosed Tradier bracket caveats (stripping brackets and appending warnings to rationale) and RTH execution caveats in Guardrails UI.
+- **A5 — Options/unmanaged visibility**: Option positions fetched concurrently via `getOptionPositions` (implemented for Tradier and Robinhood MCP), mapped in OCC format, and displayed under "Unmanaged Options" card on the dashboard. Checked and dispatched option assignment, expiration (<= 3 days), and ITM alerts exactly once using sqlite payload LIKE deduplication.
+
+Tests: appended option positions Tradier adapter tests (59/59 passed) and option alerts lifecycle tests (20/20 passed). Full test suite (4676 tests passed), lint (0 errors), and build (clean) verified.
+Rollout: `docs/rollouts/2026-07-17-exit-strategy-phase-a.md`.
 
 ## 2026-07-16 — Board state correction: Mistral benchmark-UI row → DEPLOYED (MONET, branch monet/board-flip-benchmark-ui)
 Bookkeeping-only. PR #1361 (Mistral benchmark data in the model-picker UI) merged 2026-07-10 and
@@ -170,6 +196,10 @@ subagent hit a usage cap after essentially completing the work; MONET finished i
 (dual-transport pivot, RapidAPI verification probes, Infisical key slot, migration renumber).
 Rollout: `docs/rollouts/2026-07-16-earningscalls-transcripts.md`.
 ## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE)
+## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)
+
+Added OpenRouter models to `app/ui/llm-model-catalog.ts` so they can be selected for Green and Red teams. Local response healing via `jsonrepair` integrated globally via `extractJsonPayload` without model-specific fallback calls. `better-sqlite3` native modules rebuilt for Node 24. Tests passed, ready for `main` deployment.
+
 ## 2026-07-16 — Public-page renderer decision + legacy app/ui primitives slim-down (MONET, branch monet/vigilant-fermi-220244)
 
 WS-E follow-up to the 2026-07-16 UI wave: after `/admin` moved onto the console `con-*`
