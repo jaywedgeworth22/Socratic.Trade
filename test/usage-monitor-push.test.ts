@@ -69,6 +69,8 @@ describe("usage-monitor-push", () => {
     delete process.env.USAGE_MONITOR_BREAKER_MAX_MS;
     delete process.env.USAGE_MONITOR_QUEUE_MAX_EVENTS;
     delete process.env.USAGE_MONITOR_QUEUE_TTL_MS;
+    delete process.env.USAGE_MONITOR_CALLVOLUME_MAX_KEYS;
+    delete process.env.USAGE_MONITOR_PUSH_TIMEOUT_MS;
   });
 
   it("is a no-op when unconfigured (no network calls)", async () => {
@@ -486,6 +488,121 @@ describe("usage-monitor-push", () => {
       await push.flushUsageMonitor();
       expect(captured).toHaveLength(1);
       expect(captured[0]!.body.events[0]!.occurredAt).toBe("2020-01-01T00:00:00.000Z");
+    });
+
+    it("drops a TTL-expired event at flush entry even when no new telemetry arrives", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
+      process.env.USAGE_MONITOR_QUEUE_TTL_MS = "50";
+      push.pushLlmUsage({ sourceEventId: "flush-ttl", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
+
+      // No further pushes — the only trim opportunity is flush entry itself.
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      await push.flushUsageMonitor();
+      expect(captured).toHaveLength(0);
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+    });
+
+    it("caps the callVolume aggregation map by distinct lane count", () => {
+      process.env.USAGE_MONITOR_CALLVOLUME_MAX_KEYS = "3";
+      // 10 distinct user lanes for the same provider → 10 distinct callVolume keys without a cap.
+      for (let i = 0; i < 10; i += 1) {
+        push.recordProviderCall("finnhub", { ok: true, keySource: "user", userId: `u_${i}` });
+      }
+      expect(push.__usageMonitorDebugState().callVolumeKeys).toBeLessThanOrEqual(3);
+    });
+  });
+
+  describe("live-push per-attempt timeout (half-up receiver)", () => {
+    it("times out a hung send, records a failure, and feeds the breaker", async () => {
+      process.env.USAGE_MONITOR_PUSH_TIMEOUT_MS = "40";
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+      let abortObserved = false;
+      // A monitor that accepts the connection but never responds — resolves only if aborted.
+      push.__setUsageMonitorFetch(((_url: unknown, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal) {
+            signal.addEventListener("abort", () => {
+              abortObserved = true;
+              reject(new DOMException("The operation was aborted", "AbortError"));
+            });
+          }
+        });
+      }) as unknown as typeof fetch);
+
+      push.pushLlmUsage({ sourceEventId: "hung-1", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      const started = Date.now();
+      await push.flushUsageMonitor();
+      // Bounded: the flush returned near the timeout, not hung indefinitely.
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(abortObserved).toBe(true);
+      const debug = push.__usageMonitorDebugState();
+      expect(debug.breaker.consecutiveFailures).toBe(1);
+      expect(debug.breaker.openUntil).toBeGreaterThan(Date.now());
+    });
+  });
+
+  describe("HMR queue shape migration", () => {
+    it("coerces a retained pre-v4 raw-event queue into the wrapper shape on reload", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
+
+      // Simulate a pre-v4 module having left a raw UsageMonitorEvent[] (no receivedAt wrapper) plus
+      // a pendingQueue entry without receivedAt, tagged with the old version so reload sees it stale.
+      const shared = globalThis as unknown as {
+        __usageMonitorPush?: {
+          version: number;
+          queue: unknown[];
+          pendingQueue: unknown[];
+          flushTimer: ReturnType<typeof setTimeout> | null;
+        };
+      };
+      const st = shared.__usageMonitorPush!;
+      if (st.flushTimer) clearTimeout(st.flushTimer);
+      st.flushTimer = null;
+      st.version = 3;
+      // Old-shape queue entry = a RAW event object (no `.event`, no `.receivedAt`).
+      st.queue = [{
+        sourceApp: "socratic-trade",
+        environment: "test",
+        provider: "legacy-hmr",
+        service: "llm",
+        project: "socratic-trade",
+        metricType: "usage",
+        unit: "token",
+        requests: 1,
+        confidence: "estimated",
+        occurredAt: "2026-07-11T00:00:00.000Z",
+        idempotencyKey: "socratic-trade:llm:legacyhmr",
+      }];
+      // Old-shape pendingQueue entry = { event, kind, sourceId } with NO receivedAt.
+      st.pendingQueue = [{
+        kind: "llm",
+        sourceId: "legacy-pending",
+        event: {
+          sourceApp: "socratic-trade",
+          environment: "test",
+          provider: "legacy-pending-provider",
+          service: "llm",
+          project: "socratic-trade",
+          metricType: "usage",
+          unit: "token",
+          requests: 1,
+          confidence: "estimated",
+          occurredAt: "2026-07-11T00:00:00.000Z",
+        },
+      }];
+
+      vi.resetModules();
+      const reloaded = await import("../src/lib/usage-monitor-push");
+
+      // The migrated queues must flush cleanly — no shape crash, both entries delivered.
+      await reloaded.flushUsageMonitor();
+      const providers = captured.flatMap((r) => r.body.events).map((e) => e.provider);
+      expect(providers).toContain("legacy-hmr");
+      expect(providers).toContain("legacy-pending-provider");
     });
   });
 });

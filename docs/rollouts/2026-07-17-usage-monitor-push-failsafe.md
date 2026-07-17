@@ -98,18 +98,48 @@ All five new thresholds are env-overridable with a one-line comment each:
 No changes to `src/lib/usage-monitor-replay.ts`, event schema/shape, or any call site
 (`data-providers.ts`, `alpaca.ts`, `robinhood.ts`, `llm-usage.ts`, `rag-metering.ts`).
 
+## Review round (codex-connector on PR #1711, 4 findings — all addressed)
+
+1. **[P1] Live push had no per-attempt timeout.** A monitor that accepts the TCP connection but
+   never responds would leave `postBatch`'s `client.send` awaiting forever — the attempt never
+   records a failure, so the breaker never trips and the queue never drains: exactly the half-up
+   prod outage. FIXED: `postBatch` now wraps the send in an `AbortController` timeout
+   (`USAGE_MONITOR_PUSH_TIMEOUT_MS`, default 10s), converting a hang into a recorded failure that
+   feeds the breaker. Mirrors the replay lane's existing `REPLAY_SEND_TIMEOUT_MS`. New test drives
+   a fetch that only settles on abort and asserts the flush returns bounded, the breaker records
+   the failure, and it trips.
+2. **[P2] `callVolume` aggregation map was unbounded.** The queue cap only bounded
+   `pendingQueue`+`queue`; `callVolume` (keyed by provider/service/keySource/userId) is drained
+   each flush, but while the breaker is open the next flush can be up to `breakerMaxMs` away, so
+   high-cardinality per-user keys could accumulate for that whole window. FIXED: `recordProviderCall`
+   caps distinct lanes at `USAGE_MONITOR_CALLVOLUME_MAX_KEYS` (default 2000), evicting
+   oldest-inserted lanes (Map insertion order) to make room. New distinct-key-count test.
+3. **[P2] TTL only trimmed on enqueue / failed flush.** An event could age past its TTL while
+   sitting in the buffer with no new telemetry arriving, and still reach the send path. FIXED:
+   `flushUsageMonitor` now calls `trimBufferedEvents` at flush entry. New test: a lone event past
+   its TTL is dropped by the flush itself, with no intervening push.
+4. **[P2] HMR could retain the old queue shape.** `queue` entries changed from raw
+   `UsageMonitorEvent` to the `{ event, receivedAt }` wrapper (and `pendingQueue` gained
+   `receivedAt`), but `STATE_VERSION` wasn't bumped, so a hot-reload from the pre-change module
+   would feed old-shape entries into the new flush path. FIXED: bumped `STATE_VERSION` 3→4 and
+   added `normalizeRetainedQueues()`, which coerces any retained raw-event / receivedAt-less entry
+   into the current wrapper shape on adoption (dev-only concern, cheap to make safe). New test
+   seeds a pre-v4 raw-event `queue` + receivedAt-less `pendingQueue`, reloads the module, and
+   asserts both flush cleanly.
+
 ## Verification
 
 Node 24 (`.nvmrc`), fresh worktree `~/apps/trading-monet-usage-push-failsafe`, `npm ci`:
 
 - `npx tsc --noEmit` — clean.
 - Focused: `npx vitest run test/usage-monitor-push.test.ts test/usage-monitor-replay.test.ts` —
-  24/24 (17 pre-existing + 7 new), all passing including the pre-existing tests that use
+  28/28 (17 pre-existing + 11 new across breaker, bounded buffer, flush-entry TTL, callVolume cap,
+  push timeout, and HMR shape migration), all passing including the pre-existing tests that use
   historical/fixed `occurredAt` values (these initially broke when TTL was first keyed off
   `occurredAt` instead of buffer-residency time — fixed before finalizing).
 - `npm run lint` — 0 errors (493 pre-existing grandfathered warnings, none new).
-- `npm test` — 404 files / 4737 tests, all passing.
-- `npm run build` — clean production build.
+- `npm test` — 404 files / 4741 tests, all passing.
+- `npm run build` — clean production build (exit 0).
 
 ## Follow-ups
 
@@ -118,4 +148,5 @@ Node 24 (`.nvmrc`), fresh worktree `~/apps/trading-monet-usage-push-failsafe`, `
   page just shows the last real health check, which already reads "down" during an outage — no
   functional gap, just a possible future readability improvement).
 - Not landed: branch `monet/usage-push-failsafe` is implementation-complete and gate-green but
-  intentionally NOT pushed/PR'd/merged per the owner-directed task scope (owner gates landing).
+  intentionally NOT pushed/PR'd/merged per the owner-directed task scope (owner gates landing; the
+  coordinator re-pushes + resolves the review threads + merges).

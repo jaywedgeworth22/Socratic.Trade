@@ -107,12 +107,25 @@ function queueMaxEvents(): number {
   return numEnv("USAGE_MONITOR_QUEUE_MAX_EVENTS", 500);
 }
 
-/** Cap on distinct call-volume aggregation keys; see recordProviderCall(). */
-const MAX_CALL_VOLUME_KEYS = 100;
-
-/** TTL for buffered events (by their occurredAt, not arrival time); see trimBufferedEvents(). */
+/** TTL for buffered events (by buffer-residency time, not occurredAt); see trimBufferedEvents(). */
 function queueTtlMs(): number {
   return numEnv("USAGE_MONITOR_QUEUE_TTL_MS", 60 * 60_000);
+}
+
+/** Max distinct provider/service/key/user lanes held in the callVolume aggregate; see recordProviderCall(). */
+function callVolumeMaxKeys(): number {
+  return numEnv("USAGE_MONITOR_CALLVOLUME_MAX_KEYS", 2000);
+}
+
+/**
+ * Per-attempt wall-clock timeout on the LIVE push (postBatch). Without this, a monitor that accepts
+ * the TCP connection but never responds leaves `client.send` awaiting forever — the attempt never
+ * fails, so the breaker never trips and the queue never drains. That is exactly the half-up outage
+ * we just had in prod, so a bounded timeout that CONVERTS a hang into a recorded failure is load-
+ * bearing, not cosmetic. (The replay lane has its own REPLAY_SEND_TIMEOUT_MS for the same reason.)
+ */
+function pushTimeoutMs(): number {
+  return numEnv("USAGE_MONITOR_PUSH_TIMEOUT_MS", 10_000);
 }
 
 interface BreakerState {
@@ -238,7 +251,11 @@ interface PushState {
 }
 
 const host = globalThis as unknown as { __usageMonitorPush?: PushState };
-const STATE_VERSION = 3;
+// v4: `queue` entries changed from raw UsageMonitorEvent to the { event, receivedAt } wrapper and
+// `pendingQueue` entries gained `receivedAt`. Bumping forces the stale-timer cancellation below and
+// pairs with normalizeRetainedQueues() so an HMR reload from a pre-v4 module can't feed old-shape
+// entries into the new flush path.
+const STATE_VERSION = 4;
 const priorState = host.__usageMonitorPush;
 const staleState = priorState !== undefined && priorState.version !== STATE_VERSION;
 if (staleState && priorState.flushTimer) {
@@ -258,25 +275,43 @@ const state: PushState =
     fetchImpl: null,
     breaker: { consecutiveFailures: 0, openUntil: 0, probing: false },
   });
+if (priorState) normalizeRetainedQueues(priorState);
 state.version = STATE_VERSION;
 state.pendingQueue ??= [];
 state.breaker ??= { consecutiveFailures: 0, openUntil: 0, probing: false };
-
-// Migrate legacy raw events in state.queue (stored as bare UsageMonitorEvent from a pre-v4 module)
-// to the current { event, receivedAt } wrapper shape, so the resolved batch mapping at line ~704
-// doesn't pass undefined entries to the shared client.
-state.queue = state.queue.map((item) => {
-  if (typeof (item as QueuedUsageEvent).receivedAt !== "number") {
-    return { event: item as unknown as UsageMonitorEvent, receivedAt: Date.now() };
-  }
-  return item;
-});
 
 if (
   staleState &&
   (state.pendingQueue.length > 0 || state.queue.length > 0 || state.callVolume.size > 0)
 ) {
   scheduleFlush();
+}
+
+/**
+ * Coerce queues retained across an HMR reload into the current wrapper shapes. A pre-v4 module
+ * stored `queue` as raw UsageMonitorEvent[] and `pendingQueue` entries without `receivedAt`; the
+ * v4+ flush path reads `.event` / `.receivedAt` off every entry, so an un-migrated old-shape entry
+ * would throw or send a shapeless payload on hot-reload. Dev-only concern, but cheap to make safe.
+ * A raw event is discriminated by the absence of a nested `.event` object.
+ */
+function normalizeRetainedQueues(prior: PushState): void {
+  const now = Date.now();
+  if (Array.isArray(prior.queue)) {
+    prior.queue = prior.queue.map((entry) => {
+      const wrapper = entry as Partial<QueuedUsageEvent>;
+      if (wrapper && typeof wrapper.event === "object" && wrapper.event !== null) {
+        return { event: wrapper.event, receivedAt: typeof wrapper.receivedAt === "number" ? wrapper.receivedAt : now };
+      }
+      // Old shape: `entry` IS the raw event.
+      return { event: entry as unknown as UsageMonitorEvent, receivedAt: now };
+    });
+  }
+  if (Array.isArray(prior.pendingQueue)) {
+    prior.pendingQueue = prior.pendingQueue.map((entry) => ({
+      ...entry,
+      receivedAt: typeof entry.receivedAt === "number" ? entry.receivedAt : now,
+    }));
+  }
 }
 
 // ── Enqueue: discrete cost events (LLM / RAG) ──────────────────────────────────
@@ -578,8 +613,22 @@ export function recordProviderCall(
     // Key by credential lane too, so a user's own market-data key isn't conflated with shared/
     // operator quota in the monitor.
     const key = [provider, opts.service ?? "", opts.keySource ?? "", opts.userId ?? ""].join("|");
+    const existing = state.callVolume.get(key);
+    if (!existing) {
+      // Bound distinct lanes: callVolume is drained each flush, but while the breaker is open the
+      // next flush can be up to breakerMaxMs away, and high-cardinality per-user market-data keys
+      // could otherwise accumulate one entry per user for that whole window. Evict oldest-inserted
+      // lanes (Map keeps insertion order) to make room — a dropped aggregate is best-effort
+      // telemetry, and the durable ledgers don't depend on it.
+      const maxKeys = callVolumeMaxKeys();
+      while (maxKeys > 0 && state.callVolume.size >= maxKeys) {
+        const oldest = state.callVolume.keys().next().value;
+        if (oldest === undefined) break;
+        state.callVolume.delete(oldest);
+      }
+    }
     const entry =
-      state.callVolume.get(key) ??
+      existing ??
       {
         windowId: randomDeliveryId(),
         provider,
@@ -594,15 +643,6 @@ export function recordProviderCall(
     if (opts.ok === true) entry.successes += 1;
     else if (opts.ok === false) entry.failures += 1;
     state.callVolume.set(key, entry);
-    // Bound the map during a breaker-open period so high-cardinality key combos can't
-    // grow process memory without limit (no event type is dropped permanently — the
-    // entries are merged once per flush via drainCallVolume, so evicting old keys here
-    // is just a memory cap, not data loss for the current window's cumulative counts).
-    while (state.callVolume.size > MAX_CALL_VOLUME_KEYS) {
-      const first = state.callVolume.keys().next().value;
-      if (first === undefined) break;
-      state.callVolume.delete(first);
-    }
     scheduleFlush();
   } catch {
     /* telemetry must never break the caller */
@@ -702,6 +742,8 @@ export async function flushUsageMonitor(): Promise<void> {
     return;
   }
 
+  // Trim by TTL/cap at flush entry, not only on enqueue: an event can age past its TTL while sitting
+  // in the buffer with no new telemetry arriving, and must be dropped BEFORE it reaches the send path.
   trimBufferedEvents(Date.now());
 
   const now = new Date().toISOString();
@@ -741,13 +783,6 @@ export async function flushUsageMonitor(): Promise<void> {
   }
 }
 
-/**
- * Max wall-clock for a single live push POST. Prevents a hung connection from stalling the normal
- * flush loop indefinitely, which would prevent the breaker from ever opening (breakerRecordResult
- * is never reached if the promise never settles).
- */
-const PUSH_SEND_TIMEOUT_MS = 30_000;
-
 async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
@@ -756,15 +791,17 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   if (!breakerAllowsAttempt(Date.now())) return false; // circuit open: no network call
 
   const fetchImpl = state.fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PUSH_SEND_TIMEOUT_MS);
   const start = Date.now();
+  // Bound the attempt: a monitor that accepts the connection but never responds would otherwise
+  // leave client.send awaiting forever, so the attempt never records a failure and the breaker
+  // never trips — the half-up outage. AbortSignal converts that hang into a recorded failure.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), pushTimeoutMs());
   try {
     const client = createUsageTelemetryClient({
       baseUrl,
       token,
-      fetchImpl: (input, init) =>
-        fetchImpl(input, { ...init, signal: controller.signal }),
+      fetchImpl: (input, init) => fetchImpl(input, { ...init, signal: controller.signal }),
     });
     await client.send(events);
     logApiHealth({
@@ -900,9 +937,11 @@ export function __resetUsageMonitorState(): void {
 export function __usageMonitorDebugState(): {
   breaker: { consecutiveFailures: number; openUntil: number; probing: boolean };
   queueDepth: number;
+  callVolumeKeys: number;
 } {
   return {
     breaker: { ...state.breaker },
     queueDepth: state.pendingQueue.length + state.queue.length,
+    callVolumeKeys: state.callVolume.size,
   };
 }

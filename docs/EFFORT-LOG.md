@@ -1875,9 +1875,16 @@ As of 2026-07-08 (assignment-rule update).
   `USAGE_MONITOR_QUEUE_TTL_MS` 1h default, TTL keyed off buffer-residency time, not the event's
   own `occurredAt` — dropped entries are still safe since llm/rag/provider-dispatch events replay
   from the durable DB ledgers regardless). User-facing ledger call sites remain synchronous
-  fire-and-forget (explicit non-blocking test added). Gate: `tsc` clean, lint 0 errors, focused
-  24/24 (7 new), full 404 files/4,737 tests, production build all green. Not pushed/PR'd/merged.
-  Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md`.
+  fire-and-forget (explicit non-blocking test added). Opened PR #1711; codex-connector review round
+  (4 findings): an initial `[codex-autofix]` commit landed first-pass fixes, then a MONET
+  reconciliation commit refined them to the coordinator's spec + added the missing tests — [P1]
+  env-tunable `USAGE_MONITOR_PUSH_TIMEOUT_MS` (10s, was hardcoded 30s) so a half-up receiver trips
+  the breaker; [P2] env-tunable `USAGE_MONITOR_CALLVOLUME_MAX_KEYS` (2000, was hardcoded 100); [P2]
+  trim TTL/cap at flush entry; [P2] HMR migration covers both `queue` + `pendingQueue` via
+  `normalizeRetainedQueues()` + `STATE_VERSION` 3→4. Gate: `tsc` clean, lint 0 errors, focused
+  28/28 (11 new), full 404 files/4,741 tests, production build all green. Not pushed by this session
+  — coordinator re-pushes (fast-forward over the autofix commits) + confirms threads + merges.
+  Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md` (+ codex-autofix note).
 - **[Socratic.Trade][MONET] Visual-tour findings fix wave (branch `monet/visual-tour-fixes`, claimed
   2026-07-17) — IN PROGRESS.** Owner-directed: fix the 13-finding visual-tour list (CLAUDE tour
   2026-07-17) via Sonnet subagent lanes: results paper-framing violation (P1), scan silent-fail +

@@ -2,7 +2,18 @@
 
 ## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, PR #1711, auto-merge enabled — waiting on CI)
 
-Codex review round 1 (chatgpt-codex-connector[bot]): all 4 threads resolved after [codex-autofix] commit 089b7df7. Fixes: trim expired events before flush, wrap HMR legacy queue entries, 30s timeout on live push POST, 100-key cap on callVolume map.
+Codex review round 1 (chatgpt-codex-connector[bot]): 4 findings, all addressed. An initial
+`[codex-autofix]` commit (089b7df7) landed first-pass fixes; a MONET reconciliation commit then
+refined them to match the coordinator's explicit spec and add the test coverage the autofix lacked:
+[P1] live-push timeout is now env-tunable `USAGE_MONITOR_PUSH_TIMEOUT_MS` (default 10s, was a
+hardcoded 30s) so a half-up receiver that never responds becomes a recorded failure that trips the
+breaker; [P2] callVolume cap is now env-tunable `USAGE_MONITOR_CALLVOLUME_MAX_KEYS` (default 2000,
+was a hardcoded 100); [P2] trim TTL/cap at flush entry (kept from autofix); [P2] HMR migration now
+covers BOTH `queue` and `pendingQueue` via `normalizeRetainedQueues()` with a `STATE_VERSION` 3→4
+bump (autofix migrated only `queue`, no bump). 11 new focused tests cover every finding. Gate:
+`tsc` clean, lint 0 errors, focused 28/28, full 404 files/4,741 tests, production build all green.
+Not pushed by this session — coordinator re-pushes (fast-forward on top of the autofix commits) +
+confirms threads resolved + merges.
 
 Owner-directed incident response: `usage.jays.services` (API-usage-monitor) was OOM-down ~2 days;
 both Congress.Trade and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs
