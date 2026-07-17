@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-17 — Codex autofix: 4/5 review findings fixed on PR #1703 (antigravity/openrouter-universal-routing)
+
+Addressed 4 of 5 open Codex review threads on PR #1703 (universal OpenRouter routing):
+
+1. **P1 — Strip `openrouter/` prefix (FIXED):** Added `model.replace(/^openrouter\//i, "")` in `resolveLlmEndpoint` so legacy saved models like `openrouter/google/gemini-2.5-flash` are sent as valid OpenRouter IDs.
+2. **P1 — GPT-5 reasoning after qualification (FIXED):** `isReasoningModel` now uses `lowerModel()` to strip the provider prefix before regex matching, so `openai/gpt-5.4-mini` correctly identifies as a reasoning model.
+3. **P2 — Routed model cost accounting (FIXED):** `priceForModel` strips the routing prefix (e.g. `openai/gpt-5.4-mini` → `gpt-5.4-mini`) before price-table lookup.
+4. **P2 — Whitespace company names (FIXED):** `upsertImportedRefs` now trims company names with `?.trim() || null` to prevent blank overwrites.
+5. **P1 — Credential migration (QUESTION ASKED):** Asked maintainer how to handle users with existing native provider keys but no OpenRouter key.
+
+All 4 fixed threads resolved. Verify trio: tsc clean, tests pass, build clean. Auto-merge enabled.
+Rollout: `docs/rollouts/2026-07-17-codex-autofix-openrouter.md`.
+
 ## 2026-07-16 — Board state correction: Mistral benchmark-UI row → DEPLOYED (MONET, branch monet/board-flip-benchmark-ui)
 Bookkeeping-only. PR #1361 (Mistral benchmark data in the model-picker UI) merged 2026-07-10 and
 auto-deployed, but its `docs/EFFORT-LOG.md` row was left under **In Progress**. Flipped the row's
