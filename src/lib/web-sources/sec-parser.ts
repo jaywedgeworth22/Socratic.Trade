@@ -72,13 +72,69 @@ function hasBlockChildren($: any, node: any): boolean {
   return false;
 }
 
+/**
+ * Bounded set of well-known SEC section headings that appear WITHOUT an
+ * "Item N" prefix (e.g. `<h2>Risk Factors</h2>`). Patterns are anchored to the
+ * FULL trimmed block text \u2014 a prose cross-reference like "See Risk Factors"
+ * never matches \u2014 and the same structural guards as Item/Part headings apply
+ * (heading tag, leaf block, or EDGAR heading wrapper; see collectBlocks).
+ * Codes are deliberately form-agnostic slugs, NOT numeric Item codes: the same
+ * title maps to different Item numbers on 10-K vs 10-Q, and guessing would
+ * mislabel sections (see the form-aware standardizeTitle note below).
+ */
+const STANDALONE_SECTION_HEADINGS: Array<{ pattern: RegExp; code: string; title: string }> = [
+  { pattern: /^risk\s+factors$/i, code: "RISK-FACTORS", title: "Risk Factors" },
+  {
+    pattern: /^management['\u2019]s\s+discussion(\s+and\s+analysis(\s+of\s+financial\s+condition\s+and\s+results\s+of\s+operations)?)?$/i,
+    code: "MDA",
+    title: "Management's Discussion and Analysis"
+  },
+  {
+    pattern: /^(unaudited\s+)?(condensed\s+)?(consolidated\s+)?financial\s+statements(\s+and\s+supplementary\s+data)?$/i,
+    code: "FINANCIAL-STATEMENTS",
+    title: "Financial Statements"
+  },
+  { pattern: /^legal\s+proceedings$/i, code: "LEGAL-PROCEEDINGS", title: "Legal Proceedings" },
+  {
+    pattern: /^quantitative\s+and\s+qualitative\s+disclosures\s+about\s+market\s+risk$/i,
+    code: "MARKET-RISK",
+    title: "Quantitative and Qualitative Disclosures About Market Risk"
+  },
+  { pattern: /^controls\s+and\s+procedures$/i, code: "CONTROLS-AND-PROCEDURES", title: "Controls and Procedures" }
+];
+
+function matchStandaloneHeading(clean: string): { code: string; title: string } | null {
+  for (const entry of STANDALONE_SECTION_HEADINGS) {
+    if (entry.pattern.test(clean)) return { code: entry.code, title: entry.title };
+  }
+  return null;
+}
+
 function isHeadingBlock(text: string): boolean {
   const clean = text.trim();
   if (clean.length === 0 || clean.length > 150) return false;
-  return /^\s*item\s+(\d+[a-z]?)\b/i.test(clean) || /^\s*part\s+(\d+|[ivx]+)\b/i.test(clean);
+  return (
+    /^\s*item\s+(\d+[a-z]?)\b/i.test(clean) ||
+    /^\s*part\s+(\d+|[ivx]+)\b/i.test(clean) ||
+    matchStandaloneHeading(clean) !== null
+  );
 }
 
-function standardizeTitle(code: string, rawTitle: string): string {
+/** Form types whose canonical Item-code \u2192 title mapping below is valid (10-K family). */
+function isTenKForm(formType: string | undefined): boolean {
+  return typeof formType === "string" && /^10-K/i.test(formType.trim());
+}
+
+/**
+ * Canonical Item titles are FORM-SPECIFIC: "Item 1" is "Business" on a 10-K but
+ * "Financial Statements" on a 10-Q. The mapping below is the 10-K mapping, so it
+ * is applied ONLY when the caller explicitly passed a form type proving it valid;
+ * otherwise the raw title parsed from the filing text is preserved as-is.
+ */
+function standardizeTitle(code: string, rawTitle: string, formType?: string): string {
+  if (!isTenKForm(formType)) {
+    return rawTitle || `Item ${code}`;
+  }
   let title = rawTitle;
   if (code === "1") title = "Business";
   else if (code === "1A") title = "Risk Factors";
@@ -90,16 +146,16 @@ function standardizeTitle(code: string, rawTitle: string): string {
   return title || rawTitle || `Item ${code}`;
 }
 
-function normalizeItemCode(text: string): { code: string; title: string } | null {
+function normalizeItemCode(text: string, formType?: string): { code: string; title: string } | null {
   const clean = text.trim();
-  
+
   // Try matching "Item <number><letter>" first (most specific)
   const itemMatch = clean.match(/item\s+(\d+[a-z]?)\b/i);
   if (itemMatch) {
     const code = itemMatch[1].toUpperCase();
     const titleMatch = clean.match(/item\s+\d+[a-z]?[.\s-:\u2013\u2014]*(.*)/i);
     const rawTitle = titleMatch ? titleMatch[1].trim() : "";
-    return { code, title: standardizeTitle(code, rawTitle) };
+    return { code, title: standardizeTitle(code, rawTitle, formType) };
   }
 
   // Try matching "Part <number/roman>"
@@ -111,7 +167,9 @@ function normalizeItemCode(text: string): { code: string; title: string } | null
     return { code: `PART-${code}`, title: rawTitle || `Part ${code}` };
   }
 
-  return null;
+  // Well-known standalone section headings without an "Item"/"Part" prefix
+  // (full-text anchored match \u2014 see STANDALONE_SECTION_HEADINGS).
+  return matchStandaloneHeading(clean);
 }
 
 function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): string[] {
@@ -120,11 +178,15 @@ function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): 
   }
 
   if (!firstRowHasHeaders) {
-    // No real header row — treat all rows as data, just add a divider for Markdown syntax
+    // No real header row — keep every row as DATA (never promote the first data
+    // row to a repeated header; that duplicates values across splits). GFM still
+    // requires a header row before the delimiter, so synthesize a neutral
+    // empty-cell header of the right width to keep each split a valid table.
     const colCount = rows[0].length;
+    const emptyHeader = Array(colCount).fill("");
     const divider = Array(colCount).fill("---");
     const tables: string[] = [];
-    let currentGroup: string[][] = [divider];
+    let currentGroup: string[][] = [emptyHeader, divider];
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -133,13 +195,13 @@ function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): 
 
       if (estimateTableTokens(markdown) > 400 && currentGroup.length > 2) {
         tables.push(currentGroup.map((r) => `| ${r.join(" | ")} |`).join("\n"));
-        currentGroup = [divider, row];
+        currentGroup = [emptyHeader, divider, row];
       } else {
         currentGroup.push(row);
       }
     }
 
-    if (currentGroup.length > 1) {
+    if (currentGroup.length > 2) {
       tables.push(currentGroup.map((r) => `| ${r.join(" | ")} |`).join("\n"));
     }
     return tables;
@@ -173,7 +235,7 @@ function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): 
   return tables;
 }
 
-function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
+function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: string) {
   if (node.type !== "tag") return;
 
   const name = node.name.toLowerCase();
@@ -194,7 +256,7 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
     // headings as single-cell layout tables). If detected, treat as heading.
     const cellText = $(node).text().trim();
     if (isHeadingBlock(cellText) && $(node).find("tr").length <= 1 && $(node).find("td, th").length <= 2) {
-      const norm = normalizeItemCode(cellText);
+      const norm = normalizeItemCode(cellText, formType);
       if (norm) {
         blocks.push({ type: "heading", text: cellText, itemCode: norm.code, itemTitle: norm.title });
         return;
@@ -215,7 +277,7 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
         // Process nested tables in this cell FIRST (blocks are emitted before
         // we strip them from outer cell text)
         $(cell).find("table").each((__: any, nestedTable: any) => {
-          collectBlocks($, nestedTable, blocks);
+          collectBlocks($, nestedTable, blocks, formType);
         });
         // Remove nested tables from cell text now that content is preserved
         $(cell).find("table").remove();
@@ -252,7 +314,7 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
   // If it's a heading tag, or matches heading pattern on a leaf block (no children),
   // or an EDGAR heading wrapper (center/font/span/bold) with heading text
   if (isHeadingBlock(text) && (name.match(/^h[1-6]$/) || (BLOCK_TAGS.has(name) && !hasBlockChildren($, node)) || (HEADING_WRAPPER_TAGS.has(name) && !hasBlockChildren($, node)))) {
-    const norm = normalizeItemCode(text);
+    const norm = normalizeItemCode(text, formType);
     if (norm) {
       blocks.push({
         type: "heading",
@@ -285,7 +347,7 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
           blocks.push({ type: "paragraph", text });
         }
       } else {
-        collectBlocks($, child, blocks);
+        collectBlocks($, child, blocks, formType);
       }
     }
   }
@@ -294,8 +356,14 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[]) {
 /**
  * Parses raw SEC filing HTML using cheerio, removing styles/scripts,
  * extracting sections based on Item headings, and converting tables to Markdown.
+ *
+ * `options.formType` (e.g. "10-K", "10-Q") controls form-aware Item-title
+ * canonicalization: the 10-K Item-code → title map is applied ONLY when the
+ * caller proves the filing is a 10-K; otherwise raw parsed titles are kept
+ * (Item 1 is "Financial Statements" on a 10-Q, not "Business").
  */
-export function parseFilingHtml(html: string): ParsedFiling {
+export function parseFilingHtml(html: string, options?: { formType?: string }): ParsedFiling {
+  const formType = options?.formType;
   const $ = cheerio.load(html);
 
   // Clean inline-XBRL tags: remove ix:hidden/ix:header entirely (their content is
@@ -317,11 +385,11 @@ export function parseFilingHtml(html: string): ParsedFiling {
   const blocks: ParsedBlock[] = [];
   const body = $("body").get(0);
   if (body) {
-    collectBlocks($, body, blocks);
+    collectBlocks($, body, blocks, formType);
   } else {
     // Fallback: collect blocks from root if body doesn't exist
     const root = $.root().get(0);
-    if (root) collectBlocks($, root, blocks);
+    if (root) collectBlocks($, root, blocks, formType);
   }
 
   // Group blocks by section

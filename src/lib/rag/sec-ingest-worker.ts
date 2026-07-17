@@ -125,7 +125,11 @@ export class SecIngestWorker {
       if (documentName.endsWith(".xml")) {
         sections = [{ itemCode: "0", itemTitle: "XML Document", text: content }];
       } else {
-        const parsed = parseFilingHtml(content);
+        // Form-aware title canonicalization: only a proven 10-K gets the 10-K
+        // Item-code -> title map; other forms keep raw parsed titles.
+        const parsed = parseFilingHtml(content, {
+          formType: typeof task.payload.docType === "string" ? task.payload.docType : undefined
+        });
         sections = parsed.sections;
       }
       await writeLocalArtifact(task.cik, task.accession, sequence, "sections.json", JSON.stringify(sections));
