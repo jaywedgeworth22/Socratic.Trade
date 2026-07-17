@@ -504,11 +504,24 @@ export class OpenAILLM implements ChatLLM {
     let text = "";
 
     for (let step = 0; step < MAX_STEPS; step++) {
-      const baseBody = {
+      const baseBody: Record<string, any> = {
         model: this.model,
         messages,
         ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
       };
+      if (this.provider === "openrouter") {
+        baseBody.metadata = {
+          context: this.usage.context ?? "assistant-chat",
+          ...((this.usage as any).metadata || {})
+        };
+        if (this.usage.userId) {
+          baseBody.user = this.usage.userId;
+        }
+      } else if (this.usage.userId) {
+        if (this.provider === "openai" || this.provider === "deepseek" || this.provider === "gemini") {
+          baseBody.user = this.usage.userId;
+        }
+      }
       const requestBody = reasoningCapabilityForModel(this.model)
         ? withLlmRequestBounds(baseBody, "chat-completions", {
             model: this.model,
@@ -601,9 +614,14 @@ function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (prov
 /** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
  *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
 function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {  return async (body: any, apiKey: string) => {
+    const headers: Record<string, string> = { "content-type": "application/json", authorization: `Bearer ${apiKey}` };
+    if (provider === "openrouter") {
+      headers["HTTP-Referer"] = "https://socratictrade.com";
+      headers["X-Title"] = "Socratic.Trade";
+    }
     const res = await llmFetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      headers,
       body: JSON.stringify(body)
     });
     if (!res.ok) {

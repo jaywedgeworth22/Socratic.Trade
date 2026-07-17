@@ -108,6 +108,17 @@ repo's live route kept a separate, still-broken duplicate). Fixed by stripping t
 `sha256=` prefix before comparing, matching `congress-trading-shared`'s verifier. New
 regression test added. Full gate green: lint 0 errors, tsc clean, 404 files/4701 tests,
 build clean. Rollout: `docs/rollouts/2026-07-17-congress-webhook-signature-fix.md`.
+## 2026-07-17 — Exit Strategy Panel Actions (Phase A) (ANTIGRAVITY, branch agent/exit-strategy-phase-a)
+
+All five lanes of Phase A (Exit Strategy Panel Actions) have been completed, verified, and integrated:
+- **A1 — Gap-deadlock fix**: Confirmation-based bad-tick acceptance with `suspectPrice` and `suspectCount` DB columns, session resets on regular-hours opens, and quote corroboration.
+- **A2 — `protectWhileHalted`**: Stop synthetic monitor registration during halts; exits continue to run if toggle is ON.
+- **A3 — Prompt visibility bundle**: Injected ATR stop percentage, active protection state, and resting orders into Green Team LLM prompts.
+- **A4 — Honesty notes**: Disclosed Tradier bracket caveats (stripping brackets and appending warnings to rationale) and RTH execution caveats in Guardrails UI.
+- **A5 — Options/unmanaged visibility**: Option positions fetched concurrently via `getOptionPositions` (implemented for Tradier and Robinhood MCP), mapped in OCC format, and displayed under "Unmanaged Options" card on the dashboard. Checked and dispatched option assignment, expiration (<= 3 days), and ITM alerts exactly once using sqlite payload LIKE deduplication.
+
+Tests: appended option positions Tradier adapter tests (59/59 passed) and option alerts lifecycle tests (20/20 passed). Full test suite (4676 tests passed), lint (0 errors), and build (clean) verified.
+Rollout: `docs/rollouts/2026-07-17-exit-strategy-phase-a.md`.
 
 ## 2026-07-16 — Board state correction: Mistral benchmark-UI row → DEPLOYED (MONET, branch monet/board-flip-benchmark-ui)
 Bookkeeping-only. PR #1361 (Mistral benchmark data in the model-picker UI) merged 2026-07-10 and
