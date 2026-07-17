@@ -648,9 +648,17 @@ describe("codex review fixes (PR #1680)", () => {
     expect(result.ingested).toBe(0);
     expect(getEarningsCallsTranscript("ING1", 2026, 3)?.ingestedAt).toBeUndefined();
     // Phase 2 — full receipt (documentComplete + exact cardinality): marks ingested, ledger
-    // records the full chunk count.
-    storeDocumentStub.impl = () => Promise.resolve({ attempted: 3, indexed: 3, documentComplete: true });
+    // records the full chunk count. Also prove the RAG lease fence is threaded through to
+    // storeDocument (Codex round 2): the default ingest must pass a leaseGuard built from the
+    // pass's durable lease claim.
+    let capturedOptions: { leaseGuard?: { signal?: unknown; assertOwnership?: unknown } } | undefined;
+    storeDocumentStub.impl = (...args: unknown[]) => {
+      capturedOptions = args[2] as typeof capturedOptions;
+      return Promise.resolve({ attempted: 3, indexed: 3, documentComplete: true });
+    };
     result = await refreshEarningsCallsTranscriptsIfDue(NOW, noHttp);
+    expect(capturedOptions?.leaseGuard?.signal).toBeInstanceOf(AbortSignal);
+    expect(typeof capturedOptions?.leaseGuard?.assertOwnership).toBe("function");
     expect(result.ingested).toBe(1);
     expect(getEarningsCallsTranscript("ING1", 2026, 3)?.ingestedAt).toBeDefined();
     const raw = new Database(DB_PATH, { readonly: true });

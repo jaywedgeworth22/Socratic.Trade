@@ -113,10 +113,14 @@ import {
 } from "./earningscalls-gate";
 import { normalizeSymbol } from "./money";
 import {
+  assertOperationLeaseOwnership,
   OPERATION_LEASE_GROUPS,
   runWithOperationLease,
-  type OperationLeaseAware
+  throwIfOperationLeaseCancelled,
+  type OperationLeaseAware,
+  type OperationLeaseClaim
 } from "./operation-lease";
+import type { VectorStoreLeaseGuard } from "./vector-db";
 import { getTechnicalWatchlist } from "./web-sources/technical";
 
 export const EARNINGSCALLS_BASE = "https://earningscalls.dev/api/v1";
@@ -481,7 +485,10 @@ function recordIngestedLedgerRow(accession: string, ticker: string, chunkCount: 
  * budget-skipped stores leave the row un-marked so a later pass retries for FREE (the provider
  * fetch is already cached; only Voyage/Pinecone work re-runs, deduped by content hash).
  */
-async function ingestCachedTranscript(row: EarningsCallsTranscriptRow): Promise<boolean> {
+async function ingestCachedTranscript(
+  row: EarningsCallsTranscriptRow,
+  leaseGuard?: VectorStoreLeaseGuard
+): Promise<boolean> {
   if (!row.content) return false;
   const accession = accessionFor(row);
   const { storeDocument } = await import("./vector-db");
@@ -500,7 +507,7 @@ async function ingestCachedTranscript(row: EarningsCallsTranscriptRow): Promise<
       url: row.eventId ? `${EARNINGSCALLS_BASE}/transcripts/${row.eventId}` : `${EARNINGSCALLS_BASE}/search/by_ticker`
     },
     "local",
-    { parserRevision: "earningscalls-transcript-v1", documentKey: accession }
+    { parserRevision: "earningscalls-transcript-v1", documentKey: accession, leaseGuard }
   );
   // Complete = storeDocument's full receipt: documentComplete === true plus either exact
   // indexed === attempted cardinality or an exact reusedCommitted receipt (reusedCommitted
@@ -645,7 +652,7 @@ export async function refreshEarningsCallsTranscriptsIfDue(
   // INSIDE the lease, so a later scheduler tick simply retries.
   const guarded = await runWithOperationLease(
     { group: OPERATION_LEASE_GROUPS.RAG_REINDEX, operation: "scheduled-earningscalls-transcripts" },
-    async () => runEarningsCallsPass(nowMs, deps, result)
+    async (claim, signal) => runEarningsCallsPass(nowMs, deps, result, claim, signal)
   );
   if (!guarded.acquired) return { ...result, operationLease: guarded.busy };
   return result;
@@ -655,7 +662,9 @@ export async function refreshEarningsCallsTranscriptsIfDue(
 async function runEarningsCallsPass(
   nowMs: number,
   deps: EarningsCallsRefreshDeps,
-  result: EarningsCallsRefreshResult
+  result: EarningsCallsRefreshResult,
+  claim: OperationLeaseClaim,
+  signal: AbortSignal
 ): Promise<void> {
   // Recheck after durable acquisition so a delayed process cannot repeat a pass another owner
   // completed and watermarked in the meantime (same idiom as the FMP transcript producer).
@@ -663,14 +672,27 @@ async function runEarningsCallsPass(
   const day = new Date(nowMs).toISOString().slice(0, 10);
   setInternalSetting(PASS_WATERMARK_KEY, day);
 
+  // Lease fence (same idiom as the FMP producer's purge/refresh paths): assert cancellation +
+  // durable ownership before every provider call and thread the guard into storeDocument, so a
+  // lost/expired lease stops this pass instead of racing the next owner's corpus writes and
+  // duplicating shared Voyage/Pinecone spend (Codex review round 2, PR #1680). A throw here is
+  // swallowed into result.errors by the pass's self-guard — the point is stopping the work,
+  // and runWithOperationLease independently re-asserts ownership at the success boundary.
+  const assertLease = () => {
+    throwIfOperationLeaseCancelled(signal);
+    assertOperationLeaseOwnership(claim);
+  };
+  const leaseGuard: VectorStoreLeaseGuard = { signal, assertOwnership: assertLease };
+
   const http = deps.http ?? earningsCallsGet;
-  const ingest = deps.ingest ?? ingestCachedTranscript;
+  const ingest = deps.ingest ?? ((row: EarningsCallsTranscriptRow) => ingestCachedTranscript(row, leaseGuard));
   const perPassCap = earningsCallsMaxRequestsPerPass();
   const negativeTtlMs = earningsCallsNegativeTtlDays() * 86_400_000;
 
   try {
     // 0) Free work first: retry RAG ingest for transcripts already cached (no provider spend).
     for (const pending of listUningestedEarningsCallsTranscripts(MAX_INGEST_RETRIES_PER_PASS)) {
+      assertLease();
       try {
         if (await ingest(pending)) result.ingested += 1;
       } catch (error) {
@@ -692,6 +714,7 @@ async function runEarningsCallsPass(
     if (reported) queue = queue.filter((symbol) => reported.has(symbol));
 
     for (const symbol of queue) {
+      assertLease();
       if (result.requests >= perPassCap) break;
 
       // Per-symbol probe watermark: a symbol costs at most one probe per negative-TTL window.
@@ -767,6 +790,7 @@ async function runEarningsCallsPass(
         auditBudgetExhaustedOncePerDay(nowMs, { at: "transcript", symbol });
         break;
       }
+      assertLease(); // awaits since the iteration-top fence — re-prove before the second dispatch
       const body = await http(`/transcripts/${latest.eventId}?format=full`, nowMs);
       if (!body.ok && body.kind === "budget") {
         result.skippedBudget += 1;

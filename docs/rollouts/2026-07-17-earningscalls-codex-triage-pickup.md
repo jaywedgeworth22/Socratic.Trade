@@ -49,6 +49,19 @@ and ran the full gate.
    contract `StoreContextsResult` documents. The coverage ledger records `attempted` (the
    proven complete chunk count).
 
+## Round 2 (same session)
+
+Codex re-reviewed `fd943c1` and raised one P2: the leased pass discarded the
+`runWithOperationLease` callback's `claim`/`signal`, and unlike the filings/FMP producers
+passed no `leaseGuard` to `storeDocument`, so a lease lost MID-pass (TTL expiry / failed
+heartbeat) would not have fenced further provider calls or vector writes. Fixed with the
+sibling idiom: `assertLease` (cancellation + durable-ownership check) runs before every HTTP
+dispatch and each free-ingest retry, and `ingestCachedTranscript` threads
+`{ signal, assertOwnership }` into `storeDocument`. A fence throw stops the pass (self-guard
+records it in `result.errors`); `runWithOperationLease` independently re-asserts ownership at
+the success boundary. Test extended: the receipts test now captures `storeDocument`'s options
+and proves the leaseGuard wiring (AbortSignal + assert function).
+
 ## Files
 
 - `src/lib/web-sources/fmp-transcripts.ts` - provenance classification (finding 1)
