@@ -236,6 +236,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **[Socratic.Trade][AG] OpenRouter SiliconFlow embedding and reranking integration (PR #1669, branch `agent/ag-rag-backfill-p3`) — COMPLETED 2026-07-16.** Routed Voyage embedding and reranking calls through SiliconFlow via OpenRouter, utilizing custom model mappings (`baai/bge-m3` for embedding, `cohere/rerank-v3.5` for reranking) with custom HTTP JSON parsing. Hardened rate limit checks, mock fail-open handlers, parent context header prepending, and markdown heading extraction. Fully verified type safety, production Next.js build, and all 4,676 test suites. Rollout note: `docs/rollouts/2026-07-17-openrouter-siliconflow-integration.md`.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**

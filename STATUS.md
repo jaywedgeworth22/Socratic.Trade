@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-07-16 — OpenRouter SiliconFlow Embedding and Reranking Integration (Antigravity/AG, branch `agent/ag-rag-backfill-p3`)
+Routed Voyage embedding and reranking calls through SiliconFlow via OpenRouter, utilizing custom model mappings (`baai/bge-m3` for embedding, `cohere/rerank-v3.5` for reranking) with custom HTTP JSON parsing. Hardened `embedWithRetry` catch blocks, wrapped mock client checks in `rerankMatches` inside the primary `try-catch` blocks, restored context headers for parent context mapping, and fixed markdown heading parsing in `chunk.ts`. Fully verified type safety, Next.js build, and 4,676/4,676 passing tests.
+
 ## 2026-07-16 — SEC/RAG Backfill: Phase 4-7 — Search Fusion and Evaluation (Antigravity/AG, branch `agent/ag-rag-backfill-p4-p7`)
 Implements FTS5 lexical virtual table `document_chunks_fts` (migration v49), RRF (Reciprocal Rank Fusion) and MMR (Maximal Marginal Relevance) cosine/Jaccard similarity diversity filtering in `src/lib/rag/search-fusion.ts` to fuse lexical and dense vector search results. Created retrieval evaluation harness (`scripts/eval/rag-eval-harness.ts`) to query `sec_eval_golden_set` and calculate metrics (Recall@10, Recall@50, nDCG). Verified via new test suites in `test/search-fusion.test.ts` and `test/rag-eval-harness.test.ts` (100% green), clean ESLint/tsc, and successful Next.js production build check.
 
