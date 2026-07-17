@@ -407,7 +407,7 @@ export function parseEarningsCallsTranscript(payload: unknown): string | undefin
 
 export type EarningsCallsHttpResult =
   | { ok: true; payload: unknown }
-  | { ok: false; kind: "budget" | "circuit" | "auth" | "not_found" | "rate_limited" | "transient" };
+  | { ok: false; kind: "budget" | "circuit" | "auth" | "not_found" | "rate_limited" | "transient" | "not_subscribed" };
 
 async function earningsCallsGet(path: string, nowMs: number): Promise<EarningsCallsHttpResult> {
   const credential = earningsCallsCredential();
@@ -453,6 +453,13 @@ async function earningsCallsGet(path: string, nowMs: number): Promise<EarningsCa
   if (response.status === 401 || response.status === 403) return { ok: false, kind: "auth" };
   if (response.status === 404) return { ok: false, kind: "not_found" };
   if (response.status === 402 || response.status === 429) return { ok: false, kind: "rate_limited" };
+  // The known pre-subscription 405 is a CHANNEL-WIDE terminal state (every symbol 405s until the
+  // owner subscribes), not a per-symbol miss. Classify it distinctly so the pass stops after the
+  // first one (see runEarningsCallsPass) instead of burning up to perPassCap budget units/day on
+  // the same guaranteed answer — matching how auth/rate_limited already break the pass. Health
+  // suppression above still spares the Sentry alert. Any OTHER 405 (would be surprising) is not
+  // this documented state; only the pre-subscription status maps here.
+  if (response.status === PRE_SUBSCRIPTION_STATUS) return { ok: false, kind: "not_subscribed" };
   if (!response.ok) return { ok: false, kind: "transient" };
   try {
     return { ok: true, payload: await response.json() };
@@ -759,7 +766,11 @@ async function runEarningsCallsPass(
           recordEarningsCallsSymbolCheck({ symbol, checkedAt: new Date(nowMs).toISOString() });
           continue;
         }
-        if (probe.kind === "auth" || probe.kind === "rate_limited") {
+        // auth/rate_limited/not_subscribed are all channel-wide terminal states this pass —
+        // every remaining symbol would return the same answer, so stop rather than spend more
+        // budget. not_subscribed additionally has its Sentry alert suppressed at the transport
+        // (it's the documented, expected pre-subscription 405), so it only records a pass error.
+        if (probe.kind === "auth" || probe.kind === "rate_limited" || probe.kind === "not_subscribed") {
           result.errors.push(`probe:${symbol}:${probe.kind}`);
           break;
         }
@@ -823,7 +834,7 @@ async function runEarningsCallsPass(
       // negative row for it suppressed the re-fetch for the whole negative TTL, so failures
       // now leave no cache row and stay retryable (Codex review, PR #1680).
       if (!body.ok && body.kind !== "not_found") {
-        if (body.kind === "auth" || body.kind === "rate_limited") {
+        if (body.kind === "auth" || body.kind === "rate_limited" || body.kind === "not_subscribed") {
           result.errors.push(`transcript:${symbol}:${body.kind}`);
           break;
         }

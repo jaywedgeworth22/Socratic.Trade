@@ -185,13 +185,14 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     // relative wrapper: the dropdown anchors to the trigger's own left edge (the
     // scope sits at the LEFT of the bar, so anchoring here can't overflow off the
     // left the way a right-aligned menu would). flex sizing lives on the wrapper
-    // so the trigger fills it. min-w-[88px] on phones: a bare flex-1/min-w-0 let
-    // the other fixed-width chrome controls (state chip, avatar, run-once, run-state)
-    // squeeze this down to ~60px, clipping the label to an unreadable "N.." — a
-    // floor keeps the account name/broker legible (owner report). Paired with the
-    // slightly tighter mobile gap/padding on the header row (shell.tsx ChromeBar)
-    // so the row still fits 375px without overflow.
-    <div className="relative min-w-[88px] flex-1 sm:flex-none sm:min-w-[190px] sm:max-w-[300px]">
+    // so the trigger fills it. On phones the selector is min-w-0 flex-1: it absorbs
+    // exactly the space left by the fixed-width chrome controls (state chip, avatar,
+    // run-once, run-state) — never a fixed floor, which would overflow the row on a
+    // narrow (≤360px Android) viewport (Codex review, PR #1708). Legibility instead of
+    // an "N.." clip comes from the reduced button padding (px-2.5) + truncate: at 360px
+    // the leftover is ~73px, enough for "No con…"/the broker name, and it only grows
+    // from there. Paired with the tighter mobile gap/padding on the header row (shell.tsx).
+    <div className="relative min-w-0 flex-1 sm:flex-none sm:min-w-[190px] sm:max-w-[300px]">
       <button
         ref={triggerRef}
         type="button"
@@ -200,7 +201,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         aria-expanded={open}
         // items-start + a small chevron nudge aligns the chevron with the first
         // (account-name) line rather than floating between the two label lines.
-        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)]"
+        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3"
         title="Switch which account this console shows"
       >
         <span className="min-w-0 flex-1">
