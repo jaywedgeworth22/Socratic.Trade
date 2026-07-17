@@ -206,6 +206,20 @@ the section-aware and fallback paths).
 - `npm run build` — production build succeeded.
 - `npm run lint` — 0 errors (grandfathered warnings only).
 
+## Round 2 addendum — 2 fresh threads on the round-1 push
+
+While round 2 was in flight, Codex reviewed the round-1 commit and posted two
+more threads (06:06 UTC), both on `sec-ingest-worker.ts` and sharing one root
+cause: for multi-document accessions the worker used the bare accession as
+`doc_id`, so (P1 `PRRT_kwDOS7mOVM6Rqjrv`) `storeDocument`'s managed-ledger
+documentKey defaulted to the accession and document B's commit would supersede
+document A's vectors (one active head per document_key), and (P2
+`PRRT_kwDOS7mOVM6Rqjrz`) every document's chunks collided on
+`<accession>#c001` citation ids. Fixed in one change: the worker now builds
+`vectorDocId = `${accession}:${sequence}:${documentName}`` and uses it as
+`doc_id` in both document builds — distinct ledger head AND distinct chunk ids
+per source document. Worker test asserts the id shape.
+
 ## Follow-ups / risks (round 2)
 
 - No production enqueuer sets `payload.acceptanceDateTime` yet (the worker is
