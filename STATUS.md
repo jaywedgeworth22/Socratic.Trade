@@ -1,6 +1,8 @@
 # Current Status
 
-## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, NOT MERGED — owner gates landing)
+## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, PR #1711, auto-merge enabled — waiting on CI)
+
+Codex review round 1 (chatgpt-codex-connector[bot]): all 4 threads resolved after [codex-autofix] commit 089b7df7. Fixes: trim expired events before flush, wrap HMR legacy queue entries, 30s timeout on live push POST, 100-key cap on callVolume map.
 
 Owner-directed incident response: `usage.jays.services` (API-usage-monitor) was OOM-down ~2 days;
 both Congress.Trade and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs
