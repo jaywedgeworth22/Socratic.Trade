@@ -185,8 +185,13 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     // relative wrapper: the dropdown anchors to the trigger's own left edge (the
     // scope sits at the LEFT of the bar, so anchoring here can't overflow off the
     // left the way a right-aligned menu would). flex sizing lives on the wrapper
-    // so the trigger fills it.
-    <div className="relative min-w-0 flex-1 sm:flex-none sm:min-w-[190px] sm:max-w-[300px]">
+    // so the trigger fills it. min-w-[88px] on phones: a bare flex-1/min-w-0 let
+    // the other fixed-width chrome controls (state chip, avatar, run-once, run-state)
+    // squeeze this down to ~60px, clipping the label to an unreadable "N.." — a
+    // floor keeps the account name/broker legible (owner report). Paired with the
+    // slightly tighter mobile gap/padding on the header row (shell.tsx ChromeBar)
+    // so the row still fits 375px without overflow.
+    <div className="relative min-w-[88px] flex-1 sm:flex-none sm:min-w-[190px] sm:max-w-[300px]">
       <button
         ref={triggerRef}
         type="button"
@@ -711,7 +716,12 @@ export function RunOnceButton({
   return (
     <>
       <Btn
-        variant="primary"
+        // iconOnly (phone chrome bar) sits directly beside the filled/soft-green
+        // Start button with no text label of its own — a solid primary fill there
+        // read as a second, ambiguous "start" control (owner report). Outline keeps
+        // it reachable and clearly actionable without competing with Start as a
+        // second primary-looking CTA. The labeled desktop button keeps its filled look.
+        variant={iconOnly ? "outline" : "primary"}
         size={size}
         disabled={running}
         onClick={() => void run()}

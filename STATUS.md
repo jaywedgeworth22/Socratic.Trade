@@ -1,5 +1,23 @@
 # Current Status
 
+## 2026-07-17 — Visual-tour findings fix wave (MONET, branch `monet/visual-tour-fixes`, 4 Sonnet lanes)
+
+Fixed the actionable findings from CLAUDE's 2026-07-17 visual tour via 4 parallel Sonnet
+subagent lanes (disjoint files), reconciled + verified by the MONET main loop. Headline: the
+[P1] Outcomes "PRACTICE MONEY (PAPER BROKER)" section (a no-paper-framing ruling violation that
+even rendered with no account) is now neutral "Account P&L" + a connect-account empty state.
+Also: Usage h1 canon ("Usage"), admin raw "HTTP 403" → human "Operator access required" copy
+(shared helper across 6 admin surfaces), mobile 375px chrome (switcher no longer clips to "N..",
+Run-once outline-variant vs Start, "Tabs"→"More"), stale gpt-4o placeholder → current IDs (string
+only; #1703 owns canonicalization), scan "in Settings"→"in Guardrails", `drawdownBreakerAction`
+hint leak reworded, journal duplicate-row/raw-dotted-type/bogus-chip fixes (+3 tests), welcome
+brand "Socratic.Trade"→"Socratic Trade", earningscalls 405 pre-subscription Sentry-noise suppression.
+Deliberately KEPT (correct-by-design, with evidence): "Vetoed by Bear risk" (distinct deterministic
+veto, not the LLM Red Team). Did NOT reproduce: dark-mode reality ribbon (already token-themed).
+Surfaced to owner, not coded: apex-serves-login vs /welcome gating, one 6-day-stale active-autonomy
+account. Gate: tsc clean, lint 0 errors, 403 files/4,724 tests, build via land.sh; live-verified.
+Rollout: `docs/rollouts/2026-07-17-visual-tour-fixes.md`.
+
 ## 2026-07-17 — jsonrepair healing: fail-closed boundaries (CLAUDE on PR #1696, cap-reset pickup)
 
 Fixed the four unresolved Codex threads on the stalled `agent/local-response-healing` lane:

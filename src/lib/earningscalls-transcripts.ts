@@ -146,6 +146,15 @@ const DEFAULT_MAX_REQUESTS_PER_PASS = 6; // ~180/30
 const REQUEST_TIMEOUT_MS = 20_000;
 const MIN_TRANSCRIPT_CHARS = 100; // same floor as the FMP producer — a stub is not a transcript
 const MAX_INGEST_RETRIES_PER_PASS = 3;
+// The documented pre-subscription response on the RapidAPI channel (see the EARNINGSCALLS_RAPIDAPI_BASE
+// comment above) — every call 405s until the owner completes the free-plan subscription. That is a
+// known, permanent-until-manual-action state, not a provider outage, so it must not feed the generic
+// api_health_log/Sentry "connection failed" alert path (db-health.ts's alertConnectionFailure fires
+// after 5 consecutive logged failures). Suppressing it here mirrors the same precedent used for FMP's
+// own known plan-restriction statuses (fmp-common.ts/fmp-transcripts.ts suppress 402/403 on their
+// entitlement-capability probes) — only this one documented status is excluded; any OTHER failure
+// (500s, timeouts, a genuine 401/403 after subscribing) still logs and can still trip the real alert.
+const PRE_SUBSCRIPTION_STATUS = 405;
 
 function intEnv(raw: string | undefined, fallback: number, min = 0, max = 100_000): number {
   if (raw === undefined || raw.trim() === "") return fallback;
@@ -425,7 +434,10 @@ async function earningsCallsGet(path: string, nowMs: number): Promise<EarningsCa
         // usage-monitor path; this plan costs $0 so only request counts are reported).
         retries: 0,
         service: "earningscalls",
-        apiKey
+        apiKey,
+        // See PRE_SUBSCRIPTION_STATUS above: don't let the known pre-subscription 405 feed
+        // api_health_log and trip the automatic Sentry connection-failed alert.
+        suppressHealthStatuses: [PRE_SUBSCRIPTION_STATUS]
       }
     );
   } catch (error) {

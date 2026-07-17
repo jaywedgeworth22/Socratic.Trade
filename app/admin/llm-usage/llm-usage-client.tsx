@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Btn, Card, Select, Segmented, Stat, Toggle } from "../../console/ui/primitives";
 import { llmUsageContextLabel } from "../../ui/llm-usage-labels";
+import { describeProbeNetworkError, describeProbeStatus, type ProbeErrorDescription } from "../lib/probe-error";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -205,17 +206,22 @@ const WINDOW_OPTIONS = [
 
 export function LlmUsageClient({
   endpoint = "/api/admin/llm-usage",
-  scope = "admin"
+  scope = "admin",
+  title = "LLM usage & cost"
 }: {
   endpoint?: string;
   scope?: "admin" | "user";
+  /** h1 text. Defaults to the admin mount's own title; the console mount
+   *  (/console/usage) overrides this to "Usage" so the h1 matches the nav
+   *  rail label (destinationLabel in app/console/components/nav.tsx). */
+  title?: string;
 }) {
   const [days, setDays] = useState(30);
   const [operatorOnly, setOperatorOnly] = useState(false);
   const [accountFilter, setAccountFilter] = useState<string>("all");
   const [data, setData] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ProbeErrorDescription | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -224,10 +230,16 @@ export function LlmUsageClient({
       const params = new URLSearchParams({ sinceDays: String(days) });
       if (scope === "admin" && operatorOnly) params.set("operatorFundedOnly", "true");
       const res = await fetch(`${endpoint}?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // "admin" scope hits requireAdmin-gated routes (a 403 means no admin identity);
+        // "user" scope (/console/usage → /api/llm-usage) has no admin gate, so wording
+        // there shouldn't claim operator access is the problem.
+        setError(describeProbeStatus(res.status, scope === "admin" ? "operator" : "generic"));
+        return;
+      }
       setData(await res.json());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
+    } catch {
+      setError(describeProbeNetworkError());
     } finally {
       setLoading(false);
     }
@@ -263,7 +275,7 @@ export function LlmUsageClient({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">LLM usage &amp; cost</h1>
+        <h1 className="text-xl font-semibold">{title}</h1>
         <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
           {scope === "admin" ? "Per-key, per-model, per-context breakdown across all LLM calls." : "Your per-key, per-model, per-context LLM usage."}
         </p>
@@ -304,8 +316,11 @@ export function LlmUsageClient({
       </div>
 
       {error && (
-        <div className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]">
-          {error}
+        <div
+          className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]"
+          title={error.rawLabel}
+        >
+          {error.message}
         </div>
       )}
 
