@@ -107,6 +107,9 @@ function queueMaxEvents(): number {
   return numEnv("USAGE_MONITOR_QUEUE_MAX_EVENTS", 500);
 }
 
+/** Cap on distinct call-volume aggregation keys; see recordProviderCall(). */
+const MAX_CALL_VOLUME_KEYS = 100;
+
 /** TTL for buffered events (by their occurredAt, not arrival time); see trimBufferedEvents(). */
 function queueTtlMs(): number {
   return numEnv("USAGE_MONITOR_QUEUE_TTL_MS", 60 * 60_000);
@@ -258,6 +261,16 @@ const state: PushState =
 state.version = STATE_VERSION;
 state.pendingQueue ??= [];
 state.breaker ??= { consecutiveFailures: 0, openUntil: 0, probing: false };
+
+// Migrate legacy raw events in state.queue (stored as bare UsageMonitorEvent from a pre-v4 module)
+// to the current { event, receivedAt } wrapper shape, so the resolved batch mapping at line ~704
+// doesn't pass undefined entries to the shared client.
+state.queue = state.queue.map((item) => {
+  if (typeof (item as QueuedUsageEvent).receivedAt !== "number") {
+    return { event: item as unknown as UsageMonitorEvent, receivedAt: Date.now() };
+  }
+  return item;
+});
 
 if (
   staleState &&
@@ -581,6 +594,15 @@ export function recordProviderCall(
     if (opts.ok === true) entry.successes += 1;
     else if (opts.ok === false) entry.failures += 1;
     state.callVolume.set(key, entry);
+    // Bound the map during a breaker-open period so high-cardinality key combos can't
+    // grow process memory without limit (no event type is dropped permanently — the
+    // entries are merged once per flush via drainCallVolume, so evicting old keys here
+    // is just a memory cap, not data loss for the current window's cumulative counts).
+    while (state.callVolume.size > MAX_CALL_VOLUME_KEYS) {
+      const first = state.callVolume.keys().next().value;
+      if (first === undefined) break;
+      state.callVolume.delete(first);
+    }
     scheduleFlush();
   } catch {
     /* telemetry must never break the caller */
@@ -680,6 +702,8 @@ export async function flushUsageMonitor(): Promise<void> {
     return;
   }
 
+  trimBufferedEvents(Date.now());
+
   const now = new Date().toISOString();
   const unresolved = state.pendingQueue
     .splice(0, state.pendingQueue.length)
@@ -717,6 +741,13 @@ export async function flushUsageMonitor(): Promise<void> {
   }
 }
 
+/**
+ * Max wall-clock for a single live push POST. Prevents a hung connection from stalling the normal
+ * flush loop indefinitely, which would prevent the breaker from ever opening (breakerRecordResult
+ * is never reached if the promise never settles).
+ */
+const PUSH_SEND_TIMEOUT_MS = 30_000;
+
 async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
@@ -725,9 +756,16 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   if (!breakerAllowsAttempt(Date.now())) return false; // circuit open: no network call
 
   const fetchImpl = state.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PUSH_SEND_TIMEOUT_MS);
   const start = Date.now();
   try {
-    const client = createUsageTelemetryClient({ baseUrl, token, fetchImpl });
+    const client = createUsageTelemetryClient({
+      baseUrl,
+      token,
+      fetchImpl: (input, init) =>
+        fetchImpl(input, { ...init, signal: controller.signal }),
+    });
     await client.send(events);
     logApiHealth({
       service: HEALTH_SERVICE,
@@ -745,6 +783,8 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
     });
     breakerRecordResult(false, Date.now());
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
