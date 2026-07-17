@@ -14,7 +14,7 @@ beforeAll(() => {
 
 afterEach(() => vi.unstubAllEnvs());
 
-const LLM_ENV = ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
 
 async function callRoute(): Promise<Record<string, boolean>> {
   const { getDb } = await import("../src/lib/db");

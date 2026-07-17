@@ -41,8 +41,8 @@ describe("account deletion", () => {
     const userA = userIdForEmail(emailA);
     const userB = `u_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 
-    db.upsertUserApiKey(userA, "openrouter", "sk-user-a");
-    db.upsertUserApiKey(userB, "openrouter", "sk-user-b");
+    db.upsertUserApiKey(userA, "openai", "sk-user-a");
+    db.upsertUserApiKey(userB, "openai", "sk-user-b");
     db.upsertConnectedAccount({
       id: `acct-${userA}`,
       userId: userA,
@@ -138,7 +138,7 @@ describe("account deletion", () => {
     const deletion = await import("../src/lib/account-deletion");
     const email = "provider-purge-retry@example.com";
     const userId = userIdForEmail(email);
-    db.upsertUserApiKey(userId, "openrouter", "sk-still-present");
+    db.upsertUserApiKey(userId, "openai", "sk-still-present");
     deletion.prepareAccountDeletion({ userId, email });
     vectorMocks.purgePrivateVectorRecordsForUser.mockRejectedValueOnce(new Error("synthetic provider verification failure"));
 

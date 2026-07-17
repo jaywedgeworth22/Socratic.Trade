@@ -41,7 +41,7 @@ describe("policy notification event settings", () => {
     // resolvable key or the PUT 400s on THAT first — seed one so this test reaches the reasoning rule.
     const { upsertUserApiKey } = await import("../src/lib/db");
     const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
-    upsertUserApiKey(DEFAULT_REQUEST_USER_ID, "openrouter", "sk-test", "test fixture");
+    upsertUserApiKey(DEFAULT_REQUEST_USER_ID, "openai", "sk-test", "test fixture");
 
     const response = await PUT(
       new Request("http://localhost/api/policy", {
@@ -170,7 +170,7 @@ describe("policy notification event settings", () => {
     // (Seed a key so the model-changing write passes the keyed-provider backstop and reaches the
     // reasoning rule.)
     const { upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey(DEFAULT_REQUEST_USER_ID, "openrouter", "sk-test", "test fixture");
+    upsertUserApiKey(DEFAULT_REQUEST_USER_ID, "openai", "sk-test", "test fixture");
     const stillRejected = await PUT(
       new Request("http://localhost/api/policy", {
         method: "PUT",

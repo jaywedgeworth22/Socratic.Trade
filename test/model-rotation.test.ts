@@ -20,7 +20,7 @@ beforeAll(() => {
 
 afterEach(() => vi.unstubAllEnvs());
 
-const LLM_ENV = ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
 
 function noEnvKeys() {
   vi.stubEnv("LLM_OPERATOR_FALLBACK", "off");
@@ -138,7 +138,7 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     const userId = `rot-cred-${randomUUID()}`;
     const { upsertUserApiKey } = await import("../src/lib/db");
     const { eligibleRotationPool } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openrouter", "sk-test-openai", "test");
+    upsertUserApiKey(userId, "openai", "sk-test-openai", "test");
     upsertUserApiKey(userId, "anthropic", "sk-test-anthropic", "test");
     const { pool, skipped } = eligibleRotationPool(userId);
     expect(pool.length).toBeGreaterThan(0);
@@ -170,7 +170,7 @@ describe("resolveModelRotationForRun", () => {
     const accountId = "acct-green";
     const { upsertUserApiKey } = await import("../src/lib/db");
     const { resolveModelRotationForRun, eligibleRotationPool, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
+    upsertUserApiKey(userId, "openai", "sk-test", "test");
     upsertUserApiKey(userId, "anthropic", "sk-test", "test");
     const { pool } = eligibleRotationPool(userId);
     const served: string[] = [];
@@ -200,7 +200,7 @@ describe("resolveModelRotationForRun", () => {
     const userId = `rot-both-${randomUUID()}`;
     const { upsertUserApiKey, getDb } = await import("../src/lib/db");
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
+    upsertUserApiKey(userId, "openai", "sk-test", "test");
     const runId = randomUUID();
     const out = resolveModelRotationForRun({
       userId,
@@ -266,7 +266,7 @@ describe("resolveModelRotationForRun", () => {
     const accountId = "acct-commit";
     const { upsertUserApiKey, getDb, getInternalSetting } = await import("../src/lib/db");
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
+    upsertUserApiKey(userId, "openai", "sk-test", "test");
     const pointerKey = `model_rotation:${userId}:${accountId}:green`;
     const auditCount = () =>
       (getDb()
@@ -294,7 +294,7 @@ describe("resolveModelRotationForRun", () => {
     const accountId = "acct-abort";
     const { upsertUserApiKey, getInternalSetting } = await import("../src/lib/db");
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
+    upsertUserApiKey(userId, "openai", "sk-test", "test");
     const pointerKey = `model_rotation:${userId}:${accountId}:green`;
     // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget) — never commits.
     const first = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
