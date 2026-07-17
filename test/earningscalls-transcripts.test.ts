@@ -565,6 +565,27 @@ describe("codex review fixes (PR #1680)", () => {
     expect(log2.some((entry) => entry.path === "/companies/ticker/RL2/latest")).toBe(false); // break
   });
 
+  it("the pre-subscription 405 (not_subscribed) stops the pass after ONE probe — no per-symbol budget burn", async () => {
+    // Regression (PR #1708, Codex round 1 P1): suppressing the pre-subscription 405 from the
+    // health/circuit-breaker path removed the backpressure that used to cap the quota burn. A 405
+    // is a CHANNEL-WIDE terminal state, so the pass must break on the first one — otherwise every
+    // symbol in the queue dispatches a known-failing, unrefunded call, exhausting the monthly
+    // budget before the subscription is ever enabled. Mirrors auth/rate_limited pass-stop.
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    const log: HttpLogEntry[] = [];
+    const http = makeHttp(() => ({ ok: false, kind: "not_subscribed" }), log);
+    const r = await refreshEarningsCallsTranscriptsIfDue(
+      NOW,
+      passDeps({ http, heldSymbols: () => ["NS1", "NS2", "NS3"] })
+    );
+    // Exactly one probe dispatched, then break — not one-per-symbol.
+    expect(r.probed).toBe(1);
+    expect(log.filter((e) => e.path.endsWith("/latest"))).toHaveLength(1);
+    expect(log.some((e) => e.path === "/companies/ticker/NS2/latest")).toBe(false);
+    expect(r.errors).toContain("probe:NS1:not_subscribed");
+  });
+
   it("a definitive 404 transcript body (call known, transcript unpublished) IS negative-cached", async () => {
     const { refreshEarningsCallsTranscriptsIfDue } = await lib();
     const { getEarningsCallsTranscript } = await dbLib();

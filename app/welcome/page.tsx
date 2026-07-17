@@ -120,7 +120,7 @@ export default function WelcomePage() {
           {/* ── Hero ───────────────────────────────────────────────────────── */}
           <section className="text-center space-y-6">
             <h1 className="text-4xl font-bold tracking-tight text-fg sm:text-5xl">
-              Socratic.Trade is an autonomy desk for market decisions
+              Socratic Trade is an autonomy desk for market decisions
             </h1>
             <p className="mx-auto max-w-2xl text-lg text-muted leading-relaxed">
               It watches markets, forms a thesis, can act under delegated authority, and leaves a
