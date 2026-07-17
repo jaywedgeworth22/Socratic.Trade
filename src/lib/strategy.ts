@@ -5665,7 +5665,21 @@ export function enrichOpeningProposal(
   const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp" || policy.activeBroker === "tradier";
   const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / entryPrice) : undefined;
   const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
-  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {
+  // Tradier market-entry brackets are not supported (Tradier's multi-leg entry only accepts
+  // limit/stop/stop_limit — see tradier.ts placeEquityOrder). Strip them BEFORE the whole-share
+  // branch runs; the old else-if was unreachable for whole-share Tradier market orders because
+  // the preceding whole-share condition always matched first, so the proposal carried brackets
+  // that Tradier's gateway then silently ignored (Codex review, PR #1705).
+  const isTradierMarket = policy.activeBroker === "tradier" && next.type === "market";
+  if (bracketsEnabled && isTradierMarket && (next.bracketStopLoss != null || next.bracketTakeProfit != null)) {
+    next = {
+      ...next,
+      bracketStopLoss: undefined,
+      bracketTakeProfit: undefined,
+      rationale: next.rationale + `\n\n[Risk] Tradier native entry brackets are not supported for market entry orders. The bracket legs have been stripped; this position will have no native broker-held protection (and fixed/atr plans have no synthetic-stop monitor fallback).`
+    };
+  }
+  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket && !isTradierMarket) {
     const flatStopPct = proposal.side === "short"
       ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
       : (policy.riskRules?.stopLossPct ?? 0);
@@ -5740,13 +5754,6 @@ export function enrichOpeningProposal(
       bracketTakeProfit: undefined,
       bracketStopLimit: undefined,
       rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry price; this avoids a broker rejection for sub-share brackets.`
-    };
-  } else if (bracketsEnabled && policy.activeBroker === "tradier" && next.type === "market" && (next.bracketStopLoss != null || next.bracketTakeProfit != null)) {
-    next = {
-      ...next,
-      bracketStopLoss: undefined,
-      bracketTakeProfit: undefined,
-      rationale: next.rationale + `\n\n[Risk] Tradier native entry brackets are not supported for market entry orders. The bracket legs have been stripped; this position will have no native broker-held protection (and fixed/atr plans have no synthetic-stop monitor fallback).`
     };
   } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {
     // Transparency for non-bracket brokers (e.g. Robinhood): the broker can't hold an OCO bracket at

@@ -650,11 +650,15 @@ export function llmForModel(
   const { key, source, keyRef } = resolveLlmCredential(provider, userId);
   if (!key) return new MockLLM();
   const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+  // Strip the `openrouter/` prefix before passing the model ID to the API; OpenRouter
+  // expects the bare model name (e.g. "openai/gpt-4o"), and the strategy path already
+  // normalises this (resolveLlmEndpoint in llm-provider.ts — see that file's model strip).
+  const modelForApi = provider === "openrouter" ? trimmed.replace(/^openrouter\//i, "") : trimmed;
   if (provider === "anthropic") {
     return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
   }
   const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider), provider);
-  return new OpenAILLM(key, trimmed, transport, usage, provider, opts.reasoningEffort);
+  return new OpenAILLM(key, modelForApi, transport, usage, provider, opts.reasoningEffort);
 }
 
 /**

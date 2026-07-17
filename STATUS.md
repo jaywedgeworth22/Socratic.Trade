@@ -78,6 +78,21 @@ veto, not the LLM Red Team). Did NOT reproduce: dark-mode reality ribbon (alread
 Surfaced to owner, not coded: apex-serves-login vs /welcome gating, one 6-day-stale active-autonomy
 account. Gate: tsc clean, lint 0 errors, 403 files/4,724 tests, build via land.sh; live-verified.
 Rollout: `docs/rollouts/2026-07-17-visual-tour-fixes.md`.
+## 2026-07-17 — Codex autofix on PR #1705: OpenRouter chat-prefix + Tradier bracket ordering (CLAUDE)
+
+Fixed the two remaining P1 Codex review threads on PR #1705 (`agent/openrouter-metadata-tracking`):
+- **P1 — Strip OpenRouter routing prefix before chat requests**: `llmForModel` now strips the
+  `openrouter/` prefix from the model ID before passing it to the OpenAI API, matching the strategy
+  path's normalisation in `resolveLlmEndpoint`. Previously, selecting an OpenRouter model in Coach
+  sent `openrouter/openai/gpt-4o` as the API `model`, which OpenRouter rejects as unknown.
+- **P1 — Strip Tradier market-order brackets before the generic bracket path**: Moved the Tradier
+  market-entry bracket-stripping condition ahead of the whole-share bracket logic (it was an
+  unreachable `else if`). The whole-share branch now also explicitly excludes Tradier market orders
+  so it never adds brackets back after stripping. `TradierBrokerGateway.placeEquityOrder` already
+  correctly falls through for market-entry brackets, so the receipt and actual protection state now
+  agree. Test updated (limit order for the supported path; new test for market-order stripping).
+Full gate: lint 0 errors, tsc clean, 4737 tests pass (405 files), build clean.
+Rollout: `docs/rollouts/2026-07-17-openrouter-metadata-codex-autofix.md`.
 
 ## 2026-07-17 — jsonrepair healing: fail-closed boundaries (CLAUDE on PR #1696, cap-reset pickup)
 
