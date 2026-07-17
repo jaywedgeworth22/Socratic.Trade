@@ -675,13 +675,16 @@ function maskWebhookUrl(value: string): string {
 export async function checkAndDispatchOptionAlerts(
   userId: string,
   connectedAccountId: string,
+  accountNumber: string,
   options: OptionPosition[],
   gateway: any
 ): Promise<void> {
   const db = getDb();
+  // Only successfully-delivered events are tracked as sent; skipped or failed
+  // events must not prevent future delivery when the user enables the alert type.
   const recentAlerts = db.prepare(
-    `SELECT payload FROM notification_events 
-     WHERE user_id = ? AND type = 'option_alert' 
+    `SELECT payload FROM notification_events
+     WHERE user_id = ? AND type = 'option_alert' AND status = 'sent'
        AND COALESCE(connected_account_id, '') = ?`
   ).all(userId, connectedAccountId) as Array<{ payload: string }>;
 
@@ -705,7 +708,7 @@ export async function checkAndDispatchOptionAlerts(
   if (optionsExpiringSoon.length > 0) {
     const underlyings = Array.from(new Set(optionsExpiringSoon.map((p) => p.underlyingSymbol)));
     try {
-      const quotes = await gateway.getEquityQuotes(connectedAccountId, underlyings);
+      const quotes = await gateway.getEquityQuotes(accountNumber, underlyings);
       for (const sym of underlyings) {
         if (quotes[sym]?.price) {
           underlyingPrices[sym] = quotes[sym].price;

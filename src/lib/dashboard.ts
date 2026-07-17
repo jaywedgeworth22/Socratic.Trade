@@ -400,26 +400,34 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     };
     if (accountNumber && gateway) {
       try {
-        [portfolio, positions, options, orders] = await withDeadline<[Portfolio | undefined, EquityPosition[], OptionPosition[], EquityOrder[]]>(
+        [portfolio, positions, orders] = await withDeadline<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
           Promise.all([
             gateway.getPortfolio(accountNumber),
             gateway.getEquityPositions(accountNumber),
-            gateway.getOptionPositions ? gateway.getOptionPositions(accountNumber) : Promise.resolve([]),
             gateway.getEquityOrders(accountNumber)
           ]),
           8000,
           () => {
-            handlePortfolioReadFailure("Timed out waiting for portfolio, positions, options, and orders after 8000ms.");
-            return [undefined, [], [], []];
+            handlePortfolioReadFailure("Timed out waiting for portfolio, positions, and orders after 8000ms.");
+            return [undefined, [], []];
           },
-          "portfolio/positions/options/orders",
+          "portfolio/positions/orders",
           timedOutSections
         );
       } catch (error) {
         handlePortfolioReadFailure(messageFromUnknownError(error));
       }
+      // Option positions are best-effort: a transient failure (notably an MCP
+      // tool error) must not crash the whole dashboard bundle.
+      if (gateway.getOptionPositions) {
+        try {
+          options = await gateway.getOptionPositions(accountNumber);
+        } catch (err) {
+          console.warn("[Dashboard] options positions unavailable (non-fatal):", err);
+        }
+      }
       if (options.length > 0) {
-        checkAndDispatchOptionAlerts(userId, policy.connectedAccountId || "", options, gateway).catch((err) =>
+        checkAndDispatchOptionAlerts(userId, policy.connectedAccountId || "", accountNumber, options, gateway).catch((err) =>
           console.warn("[OptionAlerts] failed:", err)
         );
       }

@@ -5109,6 +5109,12 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
       side: order.side,
       type: order.type,
       state: order.state,
+      // orderClass, stopPrice, and limitPrice are needed by activeProtection
+      // evaluation (isBracketOrderClass, broker-stop detection) downstream in
+      // proposeTrades — don't drop them from the compaction.
+      ...(order.orderClass ? { orderClass: order.orderClass } : {}),
+      ...(order.stopPrice !== undefined ? { stopPrice: order.stopPrice } : {}),
+      ...(order.limitPrice !== undefined ? { limitPrice: order.limitPrice } : {}),
       ...(order.dollarAmount ? { dollarAmount: order.dollarAmount } : {}),
       ...(quantity ? { quantity } : {}),
       ...(order.averagePrice ? { avgPrice: order.averagePrice } : {}),
