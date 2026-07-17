@@ -69,6 +69,16 @@ describe("extractJsonPayload", () => {
     expect(() => JSON.parse(extractJsonPayload(sloppy))).toThrow(); // and stays strict by default
   });
 
+  it("repairs single-quoted payloads from the FULL text, preserving string values containing '}' (Codex round 9)", () => {
+    // firstBalancedJson only understands double-quoted strings — it would slice this payload at
+    // the '}' inside the rationale, silently truncating it before repair.
+    const singleQuoted = "{'proposals': [{'symbol': 'AAPL', 'rationale': 'breaks out of the {wedge} pattern', 'confidenceScore': 70}]}";
+    const parsed = JSON.parse(extractJsonPayload(singleQuoted, { repair: true })) as {
+      proposals: Array<{ rationale: string }>;
+    };
+    expect(parsed.proposals[0].rationale).toBe("breaks out of the {wedge} pattern");
+  });
+
   it("returns unrepairable text unchanged even with repair on, so the caller fails loudly", () => {
     const refusal = "I can't help with that request.";
     expect(extractJsonPayload(refusal, { repair: true })).not.toContain("{");

@@ -392,27 +392,38 @@ export function extractLlmText(payload: unknown): string | undefined {
  * schema-required fields on the parsed result (repair proves syntax, never completeness).
  */
 export function extractJsonPayload(text: string, options: { repair?: boolean } = {}): string {
-  let unfenced = text
+  const unfenced = text
     .trim()
     .replace(/^```(?:json5?|jsonc)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
 
-  const balanced = firstBalancedJson(unfenced);
-  if (balanced) {
-    unfenced = balanced;
-  }
+  const primary = firstBalancedJson(unfenced) ?? unfenced;
 
   try {
-    JSON.parse(unfenced);
-    return unfenced;
+    JSON.parse(primary);
+    return primary;
   } catch {
-    if (!options.repair) return unfenced; // caller's own JSON.parse governs the failure
+    if (!options.repair) return primary; // caller's own JSON.parse governs the failure
+    // Repair the ORIGINAL unfenced text before the balanced slice: firstBalancedJson only
+    // understands double-quoted strings, so a single-quoted payload whose string values
+    // contain '}' gets sliced MID-STRING — repairing that fragment silently truncates content
+    // or drops trailing proposals (Codex P2, round 9). Full-text repair sees the whole payload;
+    // the slice remains only as a fallback for prose-wrapped responses where full-text repair
+    // cannot apply. Wrong-content beats no-content on this path: a full-text repair that
+    // yields a non-object degrades to zero proposals downstream, which is the safe direction.
     try {
-      return jsonrepair(unfenced);
+      const repairedFull = jsonrepair(unfenced);
+      JSON.parse(repairedFull);
+      return repairedFull;
+    } catch {
+      // fall through to the balanced slice
+    }
+    try {
+      return jsonrepair(primary);
     } catch {
       // Unrepairable; let the caller's JSON.parse fail loudly
-      return unfenced;
+      return primary;
     }
   }
 }

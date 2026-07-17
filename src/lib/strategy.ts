@@ -4733,6 +4733,19 @@ async function proposeTrades(input: {
                 const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
                 return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
               } catch {
+                // AMBIGUITY GUARD before repair (Codex P1, round 9), mirroring the Red Team's:
+                // a malformed reply carrying MORE THAN ONE `proposals` payload (e.g. a
+                // schema-complete block followed by a corrective `{"proposals":[]}`) must not be
+                // repaired from whichever block extraction keeps — contradictory output degrades
+                // to zero proposals exactly as it did pre-repair. Counted on the raw text with
+                // JSON \uXXXX escapes decoded so an escaped key cannot hide the second block.
+                const escapeNormalizedBullText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
+                  String.fromCharCode(Number.parseInt(hex, 16))
+                );
+                const proposalsKeyOccurrences = (escapeNormalizedBullText.match(/["']proposals["']\s*:/g) ?? []).length;
+                if (proposalsKeyOccurrences > 1) {
+                  throw new Error(`Bull reply contained ${proposalsKeyOccurrences} proposals blocks (ambiguous); refusing repair.`);
+                }
                 // Strict parse failed — retry WITH local jsonrepair, then gate every recovered
                 // proposal through the schema-completeness filter: repair can close a proposal
                 // truncated mid-object, and such partials must not reach sizing where defaults
