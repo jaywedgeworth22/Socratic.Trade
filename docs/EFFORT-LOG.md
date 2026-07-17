@@ -2380,8 +2380,9 @@ As of 2026-07-08 (assignment-rule update).
   branch could already self-merge through the normal PR flow without this side-channel. See
   `docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
 - **Mistral benchmark data in the model-picker UI (MONET, session worktree
-  `distracted-albattani-dfc422`, branch `monet/mistral-benchmark-ui`) — IN PROGRESS
-  2026-07-10, owner-directed, PR landing.** Research found the app already has two
+  `distracted-albattani-dfc422`, branch `monet/mistral-benchmark-ui`) — ✅ DEPLOYED
+  2026-07-10: merged as PR #1361 and auto-deployed to production (state correction
+  2026-07-16 — the row was left at IN PROGRESS when the PR merged).** Research found the app already has two
   purpose-built surfaces for exactly this data — filled both rather than inventing new UI
   (the custom `ModelPicker` listbox that could show subtitles is dead code, zero JSX
   usages; reviving it would have been a much larger out-of-scope rewrite). (1) Model Stats
