@@ -681,9 +681,6 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
     if (resObj.max_completion_tokens !== undefined && resObj.max_output_tokens === undefined) {
       resObj.max_output_tokens = resObj.max_completion_tokens;
     }
-    if (resObj.model && typeof resObj.model === "string") {
-      resObj.model = resObj.model.includes("/") ? resObj.model.split("/").pop()! : resObj.model;
-    }
   }
 
   return result;
