@@ -47,6 +47,10 @@ subagent hit a usage cap after essentially completing the work; MONET finished i
 (dual-transport pivot, RapidAPI verification probes, Infisical key slot, migration renumber).
 Rollout: `docs/rollouts/2026-07-16-earningscalls-transcripts.md`.
 ## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE)
+## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)
+
+Added OpenRouter models to `app/ui/llm-model-catalog.ts` so they can be selected for Green and Red teams. Local response healing via `jsonrepair` integrated globally via `extractJsonPayload` without model-specific fallback calls. `better-sqlite3` native modules rebuilt for Node 24. Tests passed, ready for `main` deployment.
+
 ## 2026-07-16 — Public-page renderer decision + legacy app/ui primitives slim-down (MONET, branch monet/vigilant-fermi-220244)
 
 WS-E follow-up to the 2026-07-16 UI wave: after `/admin` moved onto the console `con-*`
