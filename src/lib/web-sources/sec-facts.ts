@@ -61,9 +61,9 @@ export async function ingestCompanyFacts(cik: string): Promise<void> {
     // 20-F/40-F issuers reporting under IFRS expose concepts under `facts.ifrs-full` rather than
     // `facts.us-gaap` — both taxonomies are supported inputs (the periodic-form allowlist below
     // admits 20-F/40-F), so a missing US-GAAP namespace alone is not "no data".
-    const taxonomies: Array<{ facts: Record<string, unknown>; targets: Set<string> }> = [];
-    if (data?.facts?.["us-gaap"]) taxonomies.push({ facts: data.facts["us-gaap"], targets: targetConcepts });
-    if (data?.facts?.["ifrs-full"]) taxonomies.push({ facts: data.facts["ifrs-full"], targets: ifrsTargetConcepts });
+    const taxonomies: Array<{ name: string; facts: Record<string, unknown>; targets: Set<string> }> = [];
+    if (data?.facts?.["us-gaap"]) taxonomies.push({ name: "us-gaap", facts: data.facts["us-gaap"], targets: targetConcepts });
+    if (data?.facts?.["ifrs-full"]) taxonomies.push({ name: "ifrs-full", facts: data.facts["ifrs-full"], targets: ifrsTargetConcepts });
     if (taxonomies.length === 0) {
       return; // genuinely no supported taxonomy — expected no-data case
     }
@@ -75,7 +75,7 @@ export async function ingestCompanyFacts(cik: string): Promise<void> {
     `);
 
     db.transaction(() => {
-      for (const { facts: taxonomyFacts, targets } of taxonomies) {
+      for (const { name: taxonomyName, facts: taxonomyFacts, targets } of taxonomies) {
       for (const [concept, conceptData] of Object.entries(taxonomyFacts)) {
         if (!targets.has(concept)) continue;
         const units = (conceptData as any).units;
@@ -111,7 +111,7 @@ export async function ingestCompanyFacts(cik: string): Promise<void> {
 
             // Generate deterministic ID
             const id = crypto.createHash("sha256")
-              .update(`${paddedCik}:${accession}:${concept}:${period}:${segment || ""}`)
+              .update(`${paddedCik}:${accession}:${taxonomyName}:${concept}:${period}:${segment || ""}`)
               .digest("hex");
 
             insertStmt.run(
@@ -270,7 +270,7 @@ export function formatInsiderTransactionsEvidenceCard(cik: string): string {
   const txs = db.prepare(`
     SELECT insider_name, relationship, side, shares, price, period_of_report, is_10b5_1, accession
     FROM sec_insider_transactions
-    WHERE cik = ?
+    WHERE cik = ? AND transaction_code IN ('P', 'S')
     ORDER BY period_of_report DESC, price DESC
     LIMIT 30
   `).all(paddedCik) as Array<{

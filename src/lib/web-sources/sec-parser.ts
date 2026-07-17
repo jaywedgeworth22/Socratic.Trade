@@ -262,7 +262,8 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
         return;
       }
     }
-    const tableRows: string[][] = [];
+    const grid: string[][] = [];
+    let r = 0;
     let firstRowHasHeaders = false;
     let isFirstRow = true;
 
@@ -270,10 +271,16 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
       // Skip rows belonging to nested tables (they will be processed when
       // collectBlocks recurses into the nested table directly)
       if ($(tr).closest("table").get(0) !== node) return;
+      if (!grid[r]) grid[r] = [];
 
-      const row: string[] = [];
+      let c = 0;
       let hasThCells = false;
       $(tr).children("td, th").each((_: any, cell: any) => {
+        // Find next empty column slot in grid row r
+        while (grid[r][c] !== undefined) {
+          c++;
+        }
+
         // Process nested tables in this cell FIRST (blocks are emitted before
         // we strip them from outer cell text)
         $(cell).find("table").each((__: any, nestedTable: any) => {
@@ -283,22 +290,47 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
         $(cell).find("table").remove();
         // Replace <br> with space so concatenated text nodes stay separated
         $(cell).find("br").replaceWith(" ");
-        // Honor colspan: repeat the cell text for each spanned column
+
         const colspan = parseInt($(cell).attr("colspan") || "1", 10);
+        const rowspan = parseInt($(cell).attr("rowspan") || "1", 10);
         const cellText = $(cell).text().replace(/\s+/g, " ").trim();
-        for (let c = 0; c < colspan; c++) {
-          row.push(cellText);
+
+        for (let rs = 0; rs < rowspan; rs++) {
+          const targetRow = r + rs;
+          if (!grid[targetRow]) grid[targetRow] = [];
+          for (let cs = 0; cs < colspan; cs++) {
+            grid[targetRow][c + cs] = cellText;
+          }
         }
-        if (cell.name?.toLowerCase() === "th") hasThCells = true;
+
+        const nodeName = cell.name?.toLowerCase() || cell.tagName?.toLowerCase() || "";
+        if (nodeName === "th") {
+          hasThCells = true;
+        }
+        c += colspan;
       });
-      if (row.some((c) => c !== "")) {
-        tableRows.push(row);
+
+      if (grid[r] && grid[r].some((val) => val !== undefined && val !== "")) {
         if (isFirstRow) {
           firstRowHasHeaders = hasThCells;
           isFirstRow = false;
         }
       }
+      r++;
     });
+
+    const tableRows: string[][] = [];
+    const maxCols = grid.length > 0 ? Math.max(...grid.map((row) => (row ? row.length : 0))) : 0;
+    for (let i = 0; i < grid.length; i++) {
+      const row = grid[i] || [];
+      const normalizedRow: string[] = [];
+      for (let j = 0; j < maxCols; j++) {
+        normalizedRow.push(row[j] ?? "");
+      }
+      if (normalizedRow.some((val) => val !== "")) {
+        tableRows.push(normalizedRow);
+      }
+    }
 
     if (tableRows.length > 0) {
       const splitTables = splitTableRows(tableRows, firstRowHasHeaders);

@@ -950,70 +950,76 @@ export async function runStrategyOnce(
         const deepSymbols = uniqueSymbols([...(marketScan?.topCandidates.slice(0, 3).map((c) => c.symbol) || []), ...heldSymbols]);
         const allSymbols = uniqueSymbols([...scoutSymbols, ...deepSymbols]);
 
-        const contexts = await Promise.all(
-          allSymbols.map(async (sym) => {
-            const isDeep = deepSymbols.includes(sym);
-            const limit = isDeep ? 8 : 1;
-            const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
-            let variants: string[] = [];
+        const contexts: Array<{ sym: string; query: string; chunks: any[]; factsCard: string; insiderCard: string }> = [];
+        const batchSize = 5;
+        for (let i = 0; i < allSymbols.length; i += batchSize) {
+          const chunk = allSymbols.slice(i, i + batchSize);
+          const chunkResults = await Promise.all(
+            chunk.map(async (sym) => {
+              const isDeep = deepSymbols.includes(sym);
+              const limit = isDeep ? 8 : 1;
+              const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+              let variants: string[] = [];
 
-            if (wantMultiQuery && isDeep) {
-              const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
-              const breakdown = candidate?.factorBreakdown;
-              let dominantFactor: string | undefined;
-              if (breakdown) {
-                let best = -Infinity;
-                for (const [key, value] of Object.entries(breakdown)) {
-                  if (key === "weightedTotal" || typeof value !== "number") continue;
-                  if (value > best) {
-                    best = value;
-                    dominantFactor = key;
+              if (wantMultiQuery && isDeep) {
+                const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
+                const breakdown = candidate?.factorBreakdown;
+                let dominantFactor: string | undefined;
+                if (breakdown) {
+                  let best = -Infinity;
+                  for (const [key, value] of Object.entries(breakdown)) {
+                    if (key === "weightedTotal" || typeof value !== "number") continue;
+                    if (value > best) {
+                      best = value;
+                      dominantFactor = key;
+                    }
                   }
                 }
+                variants = deriveQueryVariants({
+                  symbol: sym,
+                  sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
+                  dominantFactor,
+                  evidenceBulletins: candidate?.evidenceBulletins
+                });
+                if (wantHyde && variants.length > 0) {
+                  const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
+                  variants = [...variants, ...hydePassages];
+                }
               }
-              variants = deriveQueryVariants({
-                symbol: sym,
-                sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
-                dominantFactor,
-                evidenceBulletins: candidate?.evidenceBulletins
+
+              const chunks = await retrieveContextDetailed(query, sym, limit, userId, {
+                docType: requestedFilingsDocTypes,
+                asOf: runAsOf,
+                minScore: defaultMinScore(),
+                minRelevanceScore: defaultRelevanceFloor(),
+                dedupeSimilarity: defaultDedupeSimilarity(),
+                connectedAccountId: policy.connectedAccountId,
+                runId,
+                ...(variants.length > 0 ? { queries: variants } : {}),
+                onStatus: (status) => {
+                  ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
+                }
               });
-              if (wantHyde && variants.length > 0) {
-                const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
-                variants = [...variants, ...hydePassages];
-              }
-            }
 
-            const chunks = await retrieveContextDetailed(query, sym, limit, userId, {
-              docType: requestedFilingsDocTypes,
-              asOf: runAsOf,
-              minScore: defaultMinScore(),
-              minRelevanceScore: defaultRelevanceFloor(),
-              dedupeSimilarity: defaultDedupeSimilarity(),
-              connectedAccountId: policy.connectedAccountId,
-              runId,
-              ...(variants.length > 0 ? { queries: variants } : {}),
-              onStatus: (status) => {
-                ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
+              // Retrieve structured facts & Form 4 transactions (RAG-B10)
+              const { formatCompanyFactsEvidenceCard, formatInsiderTransactionsEvidenceCard } = await import("./web-sources/sec-facts");
+              let factsCard = "";
+              let insiderCard = "";
+              try {
+                const cik = tickerToCik[sym.toUpperCase()];
+                if (cik) {
+                  factsCard = formatCompanyFactsEvidenceCard(cik);
+                  insiderCard = formatInsiderTransactionsEvidenceCard(cik);
+                }
+              } catch (err) {
+                console.warn(`[Strategy] failed to fetch structured facts for ${sym}:`, err);
               }
-            });
 
-            // Retrieve structured facts & Form 4 transactions (RAG-B10)
-            const { formatCompanyFactsEvidenceCard, formatInsiderTransactionsEvidenceCard } = await import("./web-sources/sec-facts");
-            let factsCard = "";
-            let insiderCard = "";
-            try {
-              const cik = tickerToCik[sym.toUpperCase()];
-              if (cik) {
-                factsCard = formatCompanyFactsEvidenceCard(cik);
-                insiderCard = formatInsiderTransactionsEvidenceCard(cik);
-              }
-            } catch (err) {
-              console.warn(`[Strategy] failed to fetch structured facts for ${sym}:`, err);
-            }
-
-            return { sym, query, chunks, factsCard, insiderCard };
-          })
-        );
+              return { sym, query, chunks, factsCard, insiderCard };
+            })
+          );
+          contexts.push(...chunkResults);
+        }
 
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));

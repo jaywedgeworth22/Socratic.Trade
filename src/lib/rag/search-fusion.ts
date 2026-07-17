@@ -15,7 +15,7 @@ export interface FusionResult {
 }
 
 function getHash(text: string): string {
-  return crypto.createHash("sha256").update(text).digest("hex");
+  return crypto.createHash("sha256").update(text).digest("hex").slice(0, 32);
 }
 
 function getJaccardSimilarity(a: string, b: string): number {
@@ -96,9 +96,9 @@ export async function retrieveFusedContext(
         // of DISTINCT) so the aggregate MIN(bm25) rank is usable in ORDER BY.
         if (asOf) {
           lexicalRows = db.prepare(`
-            SELECT f.content_hash, f.symbol, f.source, o.accession, f.text, MIN(bm25(f)) AS rank
+            SELECT f.content_hash, f.symbol, f.source, o.accession, f.text, MIN(bm25(document_chunks_fts)) AS rank
             FROM document_chunks_fts f
-            JOIN chunk_occurrences o ON f.content_hash = o.content_hash
+            JOIN chunk_occurrences o ON f.content_hash = o.content_hash AND f.symbol = o.symbol AND f.source = o.source
             WHERE f.symbol = ? AND f.text MATCH ? AND o.accepted_at <= ?
             GROUP BY f.content_hash, f.symbol, f.source, o.accession, f.text
             ORDER BY rank ASC
@@ -119,7 +119,7 @@ export async function retrieveFusedContext(
             lexicalRows = db.prepare(`
               SELECT DISTINCT f.content_hash, f.symbol, f.source, o.accession, f.text
               FROM document_chunks_fts f
-              JOIN chunk_occurrences o ON f.content_hash = o.content_hash
+              JOIN chunk_occurrences o ON f.content_hash = o.content_hash AND f.symbol = o.symbol AND f.source = o.source
               WHERE f.symbol = ? AND f.text LIKE ? AND o.accepted_at <= ?
               LIMIT 100
             `).all(symbol, `%${subQuery}%`, String(asOf));

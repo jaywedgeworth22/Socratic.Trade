@@ -1290,7 +1290,7 @@ interface RagDispatchOptions {
 }
 
 async function withDurableRagProviderDispatch<T>(
-  service: "pinecone" | "voyage" | "voyage-rerank",
+  service: "pinecone" | "voyage" | "voyage-rerank" | "openrouter" | "siliconflow",
   source: ApiKeySource,
   userId: string,
   operation: string,
@@ -2087,8 +2087,9 @@ async function embedWithRetry(
         return res;
       };
 
+      const providerName = isOpenRouter ? "openrouter" : isSiliconFlow ? "siliconflow" : "voyage";
       return await withDurableRagProviderDispatch(
-        "voyage",
+        providerName,
         source,
         userId,
         `embed ${inputType}`,

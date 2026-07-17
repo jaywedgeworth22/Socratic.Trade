@@ -264,4 +264,30 @@ describe("SEC Parser and Chunker (Phase 3)", () => {
       expect(chunk.text).not.toContain("Business prose");
     }
   });
+
+  it("should preserve row-spanned table cells correctly", () => {
+    const html = `
+      <table>
+        <tr>
+          <th rowspan="2">Spanned Header</th>
+          <th>Col B</th>
+        </tr>
+        <tr>
+          <td>Row 1 B</td>
+        </tr>
+        <tr>
+          <td>Row 2 A</td>
+          <td>Row 2 B</td>
+        </tr>
+      </table>
+    `;
+    const parsed = parseFilingHtml(html);
+    // Grid representation should repeat the spanned cell in Row 1:
+    // Row 0: | Spanned Header | Col B |
+    // Row 1: | Spanned Header | Row 1 B |
+    // Row 2: | Row 2 A        | Row 2 B |
+    expect(parsed.text).toContain("| Spanned Header | Col B |");
+    expect(parsed.text).toContain("| Spanned Header | Row 1 B |");
+    expect(parsed.text).toContain("| Row 2 A | Row 2 B |");
+  });
 });

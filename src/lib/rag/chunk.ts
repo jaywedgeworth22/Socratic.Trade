@@ -158,7 +158,14 @@ function* splitLongProse(text: string, maxTokens: number, overlapTokens: number)
         // Start next chunk carrying overlap
         if (current.length > 0) {
           const tail = tailOverlap(current.join(" "), overlapTokens);
-          current = [tail, clean];
+          if (tail && countTokens(tail + " " + clean, false) <= maxTokens) {
+            current = [tail, clean];
+          } else {
+            if (tail) {
+              yield tail;
+            }
+            current = [clean];
+          }
         } else {
           current = [clean];
         }
