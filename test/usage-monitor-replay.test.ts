@@ -105,6 +105,9 @@ afterEach(() => {
   delete process.env.USAGE_MONITOR_BASE_URL;
   delete process.env.USAGE_INGEST_TOKEN;
   delete process.env.USAGE_MONITOR_ENV;
+  delete process.env.USAGE_MONITOR_BREAKER_THRESHOLD;
+  delete process.env.USAGE_MONITOR_BREAKER_BASE_MS;
+  delete process.env.USAGE_MONITOR_BREAKER_MAX_MS;
   vi.restoreAllMocks();
 });
 
@@ -309,5 +312,95 @@ describe("usage monitor durable replay", () => {
     delete process.env.USAGE_INGEST_TOKEN;
     replay.startUsageMonitorReplay();
     expect(intervalSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares the live-push circuit breaker: a tripped breaker suppresses replay's own delivery attempts too", async () => {
+    process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+    process.env.USAGE_MONITOR_BREAKER_BASE_MS = "60000";
+    process.env.USAGE_MONITOR_BREAKER_MAX_MS = "60000";
+    insertLlm({ id: "llm-breaker-shared", createdAt: "2026-07-10T16:00:00.000Z", costUsd: 0.1 });
+
+    // Trip the breaker via the live-push lane (a plain failed flush, not replay).
+    let liveAttempts = 0;
+    push.__setUsageMonitorFetch((async () => {
+      liveAttempts += 1;
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch);
+    push.pushLlmUsage({ sourceEventId: "trip-it", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+    await push.flushUsageMonitor();
+    expect(liveAttempts).toBe(1);
+
+    // Now point at a fetch stub that would succeed if called — the open breaker must stop replay
+    // from ever reaching it, proving the two lanes share one breaker instead of hammering
+    // independently (replay's fixed 60s interval would otherwise keep probing on its own cadence).
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const result = await replay.runUsageMonitorReplay();
+    expect(result.llm.failed).toBe(true);
+    expect(captured).toHaveLength(0);
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toBeNull();
+  });
+
+  it("records usage-monitor health from the replay lane on failure AND recovery (not just a breaker trip)", async () => {
+    // Scope health assertions to this test's rows.
+    getDb().prepare("DELETE FROM api_health_log WHERE service = 'usage-monitor'").run();
+    insertLlm({ id: "llm-health-truth", createdAt: "2026-07-10T17:00:00.000Z", costUsd: 0.05 });
+
+    const healthRows = () =>
+      getDb()
+        .prepare("SELECT ok FROM api_health_log WHERE service = 'usage-monitor' ORDER BY ts DESC, rowid DESC")
+        .all() as Array<{ ok: number }>;
+
+    // Replay is the FIRST/only lane to hit a down monitor — without the fix this would open the
+    // shared breaker but leave the admin health row stale-healthy.
+    const failed: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(failed, false));
+    const first = await replay.runUsageMonitorReplay();
+    expect(first.llm.failed).toBe(true);
+    expect(failed.length).toBeGreaterThan(0); // it actually attempted the send
+    const afterFail = healthRows();
+    expect(afterFail.length).toBeGreaterThan(0);
+    expect(afterFail[0]!.ok).toBe(0); // a real FAILURE was recorded, not just a silent breaker trip
+
+    // Monitor recovers. The watermark never advanced on failure, so replay re-sends the same row and
+    // records recovery from the replay lane.
+    const okReq: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(okReq));
+    const second = await replay.runUsageMonitorReplay();
+    expect(second.llm.failed).toBe(false);
+    const afterOk = healthRows();
+    expect(afterOk[0]!.ok).toBe(1); // recovery recorded from the replay lane
+  });
+
+  it("drops a schema-invalid replay event without tripping the breaker and acks it (quarantine, not receiver-down)", async () => {
+    process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    // An all-poison batch (Infinity quantity fails the shared schema's .finite()). client.send would
+    // reject it before any fetch; sendUsageMonitorBatch must NOT read that as a receiver outage.
+    const poison = {
+      sourceApp: "socratic-trade",
+      environment: "test",
+      provider: "poison-replay",
+      service: "broker",
+      project: "socratic-trade",
+      metricType: "balance",
+      quantity: Number.POSITIVE_INFINITY,
+      unit: "usd",
+      confidence: "actual",
+      occurredAt: "2026-07-10T18:00:00.000Z",
+      idempotencyKey: "socratic-trade:poison:replay-1",
+    };
+
+    const ok = await push.sendUsageMonitorBatch(
+      [poison] as unknown as Parameters<typeof push.sendUsageMonitorBatch>[0]
+    );
+    expect(ok).toBe(true); // acknowledged so a durable caller advances its watermark past the bad row
+    expect(captured).toHaveLength(0); // never contacted the receiver
+    const breaker = push.__usageMonitorDebugState().breaker;
+    expect(breaker.consecutiveFailures).toBe(0); // breaker untouched by the local validation reject
+    expect(breaker.openUntil).toBe(0);
   });
 });

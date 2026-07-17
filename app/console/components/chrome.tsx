@@ -185,7 +185,13 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     // relative wrapper: the dropdown anchors to the trigger's own left edge (the
     // scope sits at the LEFT of the bar, so anchoring here can't overflow off the
     // left the way a right-aligned menu would). flex sizing lives on the wrapper
-    // so the trigger fills it.
+    // so the trigger fills it. On phones the selector is min-w-0 flex-1: it absorbs
+    // exactly the space left by the fixed-width chrome controls (state chip, avatar,
+    // run-once, run-state) — never a fixed floor, which would overflow the row on a
+    // narrow (≤360px Android) viewport (Codex review, PR #1708). Legibility instead of
+    // an "N.." clip comes from the reduced button padding (px-2.5) + truncate: at 360px
+    // the leftover is ~73px, enough for "No con…"/the broker name, and it only grows
+    // from there. Paired with the tighter mobile gap/padding on the header row (shell.tsx).
     <div className="relative min-w-0 flex-1 sm:flex-none sm:min-w-[190px] sm:max-w-[300px]">
       <button
         ref={triggerRef}
@@ -195,7 +201,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
         aria-expanded={open}
         // items-start + a small chevron nudge aligns the chevron with the first
         // (account-name) line rather than floating between the two label lines.
-        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)]"
+        className="flex w-full items-start gap-2 overflow-hidden rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-2.5 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:px-3"
         title="Switch which account this console shows"
       >
         <span className="min-w-0 flex-1">
@@ -711,7 +717,12 @@ export function RunOnceButton({
   return (
     <>
       <Btn
-        variant="primary"
+        // iconOnly (phone chrome bar) sits directly beside the filled/soft-green
+        // Start button with no text label of its own — a solid primary fill there
+        // read as a second, ambiguous "start" control (owner report). Outline keeps
+        // it reachable and clearly actionable without competing with Start as a
+        // second primary-looking CTA. The labeled desktop button keeps its filled look.
+        variant={iconOnly ? "outline" : "primary"}
         size={size}
         disabled={running}
         onClick={() => void run()}
