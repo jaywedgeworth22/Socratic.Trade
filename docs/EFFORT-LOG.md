@@ -1878,8 +1878,12 @@ As of 2026-07-08 (assignment-rule update).
   inputClass/RawNumInput/StatTile/EmptyState) + dead `ThemeToggle` + 8 dead globals.css utilities,
   update `.design-sync` re-exports/previews, document in `docs/design/visual-system.md`.
   Display-only. FULL GATE GREEN (lint 0 errors, tsc clean, 402 files/4,664 tests, build clean,
-  13 full-page screenshots light/dark/mobile — no visual regression) — PR #1685 OPEN + auto-merge
-  armed; merge==auto-deploy.
+  13 full-page screenshots light/dark/mobile — no visual regression). **COMPLETED (merged to
+  `main` as `093c6b9`, PR #1685) + DEPLOYED TO PRODUCTION** (auto-deploy; verified 2026-07-17
+  ~02:15Z — `/api/health` release sha matches `093c6b9`, db ok, scheduler ticking, litestream
+  replicating with no degraded reasons). PR also carried the Antigravity seat's OpenRouter
+  UI-support prep (type-union broadening, disclosed in the PR body); the catalog migration
+  itself remains that lane's open effort.
 - **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
   (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — IN PROGRESS.** Owner-directed
   ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
