@@ -45,6 +45,26 @@ Addressed 8 remaining Codex P1/P2 findings across 5 files (search-fusion.ts, rag
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
+## 2026-07-16 — Public-page renderer decision + legacy app/ui primitives slim-down (MONET, branch monet/vigilant-fermi-220244)
+
+WS-E follow-up to the 2026-07-16 UI wave: after `/admin` moved onto the console `con-*`
+system, the legacy glass-token system (`app/ui/primitives.tsx` + `app/globals.css`
+semantic tokens) remained the renderer for public/marketing surfaces. Decision (per
+`docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md`, "two renderers, one
+brand core"): no public page migrates to `con-*` — welcome, how-it-works, framework,
+privacy-policy, terms-and-conditions, login, access-denied, and `app/error.tsx` all keep
+the distinct public renderer deliberately; console.css is `.console-root`-scoped and
+unlayered, and the brand core (`--brand-accent`, radius canon) is already shared. Task
+brief claimed exactly three remaining `primitives.tsx` consumers; recon found seven app
+consumers plus the `.design-sync` UI-Kit re-export. `app/ui/primitives.tsx` slimmed to
+`Card`/`Button`/`buttonClass` only, deleting every `.design-sync`-only export (`ICON`,
+`IconButton`, `PanelHeader`, `Chip`, `Dot`, `Switch`, `Segmented`, `Tabs`, `Field`,
+`inputClass`, `RawNumInput`, `StatTile`, `EmptyState`), dead `ThemeToggle`, and eight
+consumer-free `globals.css` utilities (`.elev-*`, `.backdrop-blur-scrim`, `.skeleton`,
+`.boot-strip-glow`, `.scroll-fade-edge`, `.animate-pulse-fast`). Display-only change;
+gate/screenshot verification recorded in the rollout note. Cloud session; the
+branch-neutral live board could not be updated from this container (repo mirror only).
+Rollout: `docs/rollouts/2026-07-16-public-renderer-decision-legacy-primitives-slim.md`.
 ## 2026-07-16 — Bump congress-trading-shared to fee9937c (PR #1686)
 
 Dependency bump: `@jaywedgeworth22/congress-trading-shared` pinned to

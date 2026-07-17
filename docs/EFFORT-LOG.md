@@ -1858,6 +1858,43 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
+- **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
+  claimed 2026-07-16) — GATE/LANDING.** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
+  128 rounded-md/lg/xl call sites in app/console -> canon rounded-control(8px)/rounded-card(12px)
+  utilities; new --con-fs-2xs:10px micro token + 15 ad-hoc 9-12px sizes onto the --con-fs-* scale.
+  Display-only, 42 tsx + console.css. Computed-style verified live (8/12/10px). Rollout:
+  docs/rollouts/2026-07-16-console-token-sweep.md.
+- **[Socratic.Trade][MONET] Public-page renderer decision + legacy `app/ui` primitives slim-down
+  (branch `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-16) — IN PROGRESS.** WS-E
+  follow-up to the 2026-07-16 UI wave: settle the remaining legacy glass-token consumers. Decision
+  (per `docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md` "two renderers, one brand
+  core"): ALL public/marketing surfaces (`welcome` ×2, `how-it-works`, `framework` viewer,
+  `privacy-policy`, `terms-and-conditions`) plus the root `app/error.tsx` boundary and
+  `app/ui/theme.tsx` STAY on the deliberately distinct public renderer — no con-* migration
+  (console.css is `.console-root`-scoped + unlayered; brand core already shared via
+  `--brand-accent` + radius canon). Note: the triggering task text claimed "exactly three remaining
+  consumers" — recon found seven (welcome/how-it-works/terms also import legacy `Card`). Scope:
+  slim `app/ui/primitives.tsx` to its real consumers (Card, Button, buttonClass), delete
+  design-sync-only exports (ICON/IconButton/PanelHeader/Chip/Dot/Switch/Segmented/Tabs/Field/
+  inputClass/RawNumInput/StatTile/EmptyState) + dead `ThemeToggle` + 8 dead globals.css utilities,
+  update `.design-sync` re-exports/previews, document in `docs/design/visual-system.md`.
+  Display-only. FULL GATE GREEN (lint 0 errors, tsc clean, 402 files/4,664 tests, build clean,
+  13 full-page screenshots light/dark/mobile — no visual regression). **COMPLETED (merged to
+  `main` as `093c6b9`, PR #1685) + DEPLOYED TO PRODUCTION** (auto-deploy; verified 2026-07-17
+  ~02:15Z — `/api/health` release sha matches `093c6b9`, db ok, scheduler ticking, litestream
+  replicating with no degraded reasons). PR also carried the Antigravity seat's OpenRouter
+  UI-support prep (type-union broadening, disclosed in the PR body); the catalog migration
+  itself remains that lane's open effort.
+- **[Socratic.Trade][MONET] Settings de-iOS restoration + admin-link-in-chrome + site-wide UI expert review
+  (branch `monet/settings-page-styling-fix-d4add7`, claimed 2026-07-16) — IN PROGRESS.** Owner-directed
+  ("Settings looked 10x better 3 days ago — it matched the rest of the site"). Root cause identified: the
+  2026-07-12 "iOS UI refresh" (#1476) converted Settings + all sub-cards (brokers/api-keys/delivery/
+  learning-review/sharing/help/danger) from console `Card`/`Field`/`Toggle` primitives to iOS grouped-list
+  components; subsequent fixes (#1535 theme tokens, #1651 con-card containers) only reskinned the outer
+  boxes, leaving iOS row internals — hence "almost zero improvement." Scope: (1) rebuild Settings content
+  on console primitives (restore pre-#1476 architecture with post-#1476 content); (2) admin-only link at
+  top-of-site chrome to /admin + restyle /admin onto the console `con-*` design system with a clear way
+  back; All workstreams IMPLEMENTED (settings de-iOS rebuild incl. ios-components.tsx deletion; admin chrome link + full /admin con-* migration incl. /console/usage P0; Strategy/Guardrails nav renames + NEW /console/connections + tax/webhook card moves + deep-link retargets; h1=rail-label naming canon + journal chip truth + fabricated-tag removal + mobile fixes; consent-decline persistence bug + regression test). FULL GATE GREEN (lint 0 errors, tsc clean, 393 files/4,541 tests after one truthful-tag test update, build clean, 51-shot visual re-shoot, 0 mobile overflow) — PR #1679 OPEN + auto-merge armed; merge==auto-deploy.
   (branch `monet/durable-state-restart-survival`, worktree `nice-heyrovsky-b9d0bd`, claimed 2026-07-15)
   — IN PROGRESS, gate running, PR next.** Owner directive after fleet-wide auto-deploy went live
   ("persist all variables/counts... have that be the standard... for all things"): a redeploy
@@ -3490,3 +3527,4 @@ brackets; effort S/M/L.
 - **Learning-review settings follow-ups + verified UI-wave closeout (MONET, branch `monet/learning-review-settings-followups`) — full gate run 2026-07-15, PR pending.** Owner-directed "ensure all work in this chat is fully complete" sweep. Added the threshold/max-wait UI knobs to the Daily learning review card (backend from #1278 had no UI); ran a 10-claim adversarial verification workflow against LIVE code for the earlier model-attribution/Alert-Center/mobile UI wave — 7/10 confirmed already correct and un-regressed by 5 days of subsequent churn, 3 gaps found and fixed: mobile section spacing (never actually implemented — `ios-components.tsx` List `gap-8 sm:gap-6`), container-width normalization (2 undocumented offenders: `results/page.tsx` now uses `CONSOLE_PAGE_WIDTH`, `approvals/page.tsx` got a documented two-column exception comment), and model attribution's explicitly-deferred post-mortem/reflection gap (`post-mortem.ts` now audits `model`/`provider` on success AND — net-new — on a failed reflection LLM call, surfaced in the Journal via `dashboard-feed.ts` matching the existing `llm_step` text-attribution idiom). Verified-not-touched: "Global Settings" section already satisfied by #1340's global-only restructure; the learning-review cost-line label already fixed by another session. tsc clean, lint 0 errors, 90/90 targeted tests (post-mortem, dashboard-feed, learning-review, learning-review-policy-route). Full suite/build run under heavy fleet contention (load 34-50, many concurrent agent worktrees) — CI `verify` is authoritative if local didn't finish clean. Rollout: `docs/rollouts/2026-07-15-learning-review-settings-followups.md`.
 - **2026-07-15 Coordinated shared-package v1.8.0 pin bump (MONET, branch `monet/shared-v180-pin-bump`).** Bumped `@jaywedgeworth22/congress-trading-shared` from `0bc26ab9` to `2b13da00` (tag `v1.8.0`) in `package.json` + `allowScripts`, regenerated `package-lock.json`; installed version verified as `1.8.0`. Paired with Congress.Trade's matching `monet/shared-v180-pin-bump` lane bumping `app/package.json` to the same commit, so the cross-repo "Shared package pin check" workflow sees matching resolved refs. Additive schema change only (v1.8.0 adds `"executive"` to `ChamberSchema`) -- no ST code changes required. State: **In Progress (PR pending)**.
 - **2026-07-15 Eval-script OpenAI model default bump (CLAUDE, branch `claude/eval-model-defaults`).** Moved two eval-only dev scripts off retired `gpt-4o-mini`: `scripts/eval/faithfulness.ts` RAG faithfulness judge → `gpt-5.4-mini`, `scripts/eval/run-offline.ts` OpenAI bake-off subject → `gpt-5.4-nano`. No live app path uses `gpt-4o-mini` (not in the rotation pool/chat/RAG). Both stay env-overridable; no production runtime impact. Congress.Trade needed no change (live extraction already on `gpt-5.6-terra`). Rollout: `docs/rollouts/2026-07-15-eval-model-default-bump.md`. State: **In Progress (landing via scripts/land.sh)**.
+| 2026-07-16 | Migration | Migrate LLM model catalog to OpenRouter exclusively, add GPT-5.6 Pro variants | In Progress | Antigravity |
