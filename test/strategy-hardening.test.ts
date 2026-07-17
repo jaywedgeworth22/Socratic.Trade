@@ -661,6 +661,17 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(dropped).toBe(3);
   });
 
+  it("drops repaired proposals with null execution enums, out-of-range confidence, or invalid stopPlan (Codex round 5)", () => {
+    const nullTif = { ...complete(), timeInForce: null };
+    const nullHours = { ...complete(), marketHours: null };
+    const maxedConfidence = { ...complete(), confidenceScore: 999 };
+    const bareReset = { ...complete(), stopPlan: { style: "default" } }; // missing required rationale key
+    const nakedNone = { ...complete(), stopPlan: { style: "none", rationale: "  " } }; // no-stop without justification
+    const { kept, dropped } = filterRepairedProposals([nullTif, nullHours, maxedConfidence, bareReset, nakedNone, complete()]);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toBe(5);
+  });
+
   it("drops repaired proposals with out-of-enum timeInForce or coercible autonomyOverride (Codex round 4)", () => {
     // "day" is not in the gfd/gtc schema enum — Alpaca maps unknown strings to gtc.
     const dayTif = { ...complete(), timeInForce: "day" };

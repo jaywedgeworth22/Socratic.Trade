@@ -5183,6 +5183,20 @@ export const BULL_PROPOSAL_REQUIRED_KEYS = [
  * and the three human-judgment fields carry real values (non-empty rationale/tradeThesisTag,
  * finite confidenceScore) — anything less is a truncation artifact, not a trade idea.
  */
+function isSchemaShapedStopPlan(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    "rationale" in o &&
+    (o.rationale === null || typeof o.rationale === "string") &&
+    typeof o.style === "string" &&
+    ["default", "fixed", "atr", "trailing", "none"].includes(o.style) &&
+    // "none" carries no stop at all — the schema prose requires a plain-language justification,
+    // and a repaired response must not strip protection without one.
+    (o.style !== "none" || (typeof o.rationale === "string" && o.rationale.trim() !== ""))
+  );
+}
+
 function isSchemaShapedAutonomyOverride(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const o = value as Record<string, unknown>;
@@ -5224,14 +5238,19 @@ export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProp
       // schema is nullable here); anything else must be a finite number.
       (["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"] as const)
         .every((key) => record[key] === null || (typeof record[key] === "number" && Number.isFinite(record[key] as number))) &&
-      // Enum membership, not just string-ness (Codex P1, round 4): the schema allows only
-      // gfd/gtc and the Alpaca adapter maps any OTHER string to gtc — a repaired
-      // `timeInForce: "day"` would submit a good-til-cancelled order the declared contract
-      // would have rejected.
-      (record.timeInForce === null || record.timeInForce === "gfd" || record.timeInForce === "gtc") &&
-      (record.marketHours === null ||
-        record.marketHours === "regular_hours" || record.marketHours === "extended_hours" || record.marketHours === "all_day_hours") &&
-      (record.stopPlan === null || (typeof record.stopPlan === "object" && !Array.isArray(record.stopPlan))) &&
+      // Schema range for conviction (Codex P1, round 5): the contract bounds confidenceScore to
+      // 1-100; sanitize would CLAMP a repaired 999 to maximum conviction instead of rejecting it.
+      (record.confidenceScore as number) >= 1 && (record.confidenceScore as number) <= 100 &&
+      // Enum membership, exactly as declared (Codex P1, rounds 4-5): timeInForce/marketHours are
+      // NON-NULL enums in the schema — a repaired null would ride sanitize's defaults (gfd,
+      // regular_hours) into silently chosen order semantics, and Alpaca maps any other string
+      // to gtc.
+      (record.timeInForce === "gfd" || record.timeInForce === "gtc") &&
+      (record.marketHours === "regular_hours" || record.marketHours === "extended_hours" || record.marketHours === "all_day_hours") &&
+      // stopPlan must satisfy its subschema (Codex P1, round 5): a repaired {style:"default"}
+      // missing the required rationale key would otherwise carry a RESET instruction that
+      // clears the position's persisted fixed/atr/trailing/none plan at fill commit.
+      (record.stopPlan === null || isSchemaShapedStopPlan(record.stopPlan)) &&
       // A repaired autonomyOverride must satisfy the override subschema (Codex P1, round 4):
       // sanitize coerces a nested-object thesis to "[object Object]", which
       // resolveSocraticOverride would treat as a REAL thesis and use to pass preference gates
