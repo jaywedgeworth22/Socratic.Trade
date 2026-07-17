@@ -60,7 +60,8 @@ const EVENT_HINT: Record<NotificationEventType, string> = {
   prompt_injection_suspected: "injection-like text was found in the evidence sent to the model",
   evidence_age_anomaly: "a run leaned on evidence older than it should be",
   storage_warning: "the server's database storage crossed a warning threshold",
-  autonomy_halted_on_boot: "a restart halted trading autonomy until you re-arm it"
+  autonomy_halted_on_boot: "a restart halted trading autonomy until you re-arm it",
+  option_alert: "an option contract changed status or expired"
 };
 
 export default function SettingsPage() {
