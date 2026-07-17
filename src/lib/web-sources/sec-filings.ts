@@ -413,6 +413,15 @@ export async function ingestFiling(
   leaseGuard?: SecFilingLeaseGuard
 ): Promise<IngestResult> {
   assertSecFilingLease(leaseGuard);
+  // Parser-revision note (deliberate, low-risk choice — PR #1669): this accession
+  // ledger is intentionally NOT versioned by parser revision. Filings ingested under
+  // the v1 parser keep their v1 (flattened) chunks; only filings not yet in the ledger
+  // get the v2 (Cheerio, section-aware) treatment tagged `sec-edgar-filing-v2` below.
+  // Re-embedding the existing corpus was considered and rejected: the embed-budget and
+  // Pinecone-write cost of a full backfill outweighs the retrieval gain on old filings.
+  // If a corpus-wide re-parse is ever wanted, do it as an explicit one-time invalidation
+  // (clear ingested_accessions rows for the affected docTypes), not by weakening this
+  // sole-gate skip.
   if (hasIngestedAccession(filingRef.accession, filingRef.docType)) {
     return { skipped: true, chunks: 0 };
   }
@@ -446,7 +455,9 @@ export async function ingestFiling(
     return { skipped: false, chunks: 0, error: `fetch failed: ${error}` };
   }
 
-  const { text, sections } = parseFilingHtml(html);
+  // Pass the form type so Item-title canonicalization is form-aware (the 10-K
+  // Item-1 -> "Business" mapping must not be applied to 10-Q filings).
+  const { text, sections } = parseFilingHtml(html, { formType: filingRef.docType });
   if (text.length < 100) {
     return { skipped: false, chunks: 0, error: "extracted text too short (possible XBRL viewer redirect)" };
   }

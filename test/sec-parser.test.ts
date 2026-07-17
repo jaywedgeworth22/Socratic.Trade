@@ -52,7 +52,7 @@ describe("SEC Parser and Chunker (Phase 3)", () => {
         </body>
       </html>
     `;
-    const parsed = parseFilingHtml(html);
+    const parsed = parseFilingHtml(html, { formType: "10-K" });
     expect(parsed.sections).toHaveLength(4); // GENERAL + 1 + 1A + 2
 
     expect(parsed.sections[1].itemCode).toBe("1");
@@ -66,6 +66,69 @@ describe("SEC Parser and Chunker (Phase 3)", () => {
     expect(parsed.sections[3].itemCode).toBe("2");
     expect(parsed.sections[3].itemTitle).toBe("Financial Statements");
     expect(parsed.sections[3].text).toContain("Financial statements table is here.");
+  });
+
+  it("should preserve form-specific Item 1 titles (10-Q / unknown form keeps raw title)", () => {
+    const html = `
+      <html>
+        <body>
+          <div>Item 1. Financial Statements</div>
+          <p>Condensed consolidated balance sheets.</p>
+        </body>
+      </html>
+    `;
+
+    // 10-Q: Item 1 is "Financial Statements" — the 10-K "Business" map must NOT apply.
+    const tenQ = parseFilingHtml(html, { formType: "10-Q" });
+    const tenQSection = tenQ.sections.find((s) => s.itemCode === "1");
+    expect(tenQSection?.itemTitle).toBe("Financial Statements");
+
+    // No form context: raw title preserved as well.
+    const unknown = parseFilingHtml(html);
+    const unknownSection = unknown.sections.find((s) => s.itemCode === "1");
+    expect(unknownSection?.itemTitle).toBe("Financial Statements");
+
+    // Proven 10-K: the canonical mapping applies.
+    const tenK = parseFilingHtml(`<html><body><div>Item 1. Business</div><p>Details.</p></body></html>`, {
+      formType: "10-K"
+    });
+    const tenKSection = tenK.sections.find((s) => s.itemCode === "1");
+    expect(tenKSection?.itemTitle).toBe("Business");
+  });
+
+  it("should recognize standalone SEC section headings without an Item prefix", () => {
+    const html = `
+      <html>
+        <body>
+          <p>Cover page text.</p>
+          <h2>Risk Factors</h2>
+          <p>Standalone risk factor prose.</p>
+          <h2>Management's Discussion and Analysis of Financial Condition and Results of Operations</h2>
+          <p>MDA prose lives here.</p>
+          <h2>Financial Statements</h2>
+          <p>Statement prose lives here.</p>
+          <p>For more detail, see Risk Factors above and our audited financial statements included elsewhere.</p>
+        </body>
+      </html>
+    `;
+    const parsed = parseFilingHtml(html);
+
+    const risk = parsed.sections.find((s) => s.itemCode === "RISK-FACTORS");
+    expect(risk?.itemTitle).toBe("Risk Factors");
+    expect(risk?.text).toContain("Standalone risk factor prose.");
+
+    const mda = parsed.sections.find((s) => s.itemCode === "MDA");
+    expect(mda?.itemTitle).toBe("Management's Discussion and Analysis");
+    expect(mda?.text).toContain("MDA prose lives here.");
+
+    const fin = parsed.sections.find((s) => s.itemCode === "FINANCIAL-STATEMENTS");
+    expect(fin?.itemTitle).toBe("Financial Statements");
+    expect(fin?.text).toContain("Statement prose lives here.");
+
+    // A prose paragraph merely REFERENCING a section name must not start a new
+    // section (anchored full-text match) — it stays inside the last section.
+    expect(fin?.text).toContain("see Risk Factors above");
+    expect(parsed.sections.filter((s) => s.itemCode === "RISK-FACTORS")).toHaveLength(1);
   });
 
   it("should convert tables to pipe-delimited Markdown", () => {
@@ -105,6 +168,34 @@ describe("SEC Parser and Chunker (Phase 3)", () => {
     for (const table of tableBlocks) {
       expect(table).toContain("| Col 1 | Col 2 |");
       expect(table).toContain("| --- | --- |");
+    }
+  });
+
+  it("should emit valid Markdown for td-only tables (synthesized empty header, no promoted data row)", () => {
+    // td-only rows (no <th>): each emitted block must still be a valid GFM table.
+    let rowsHtml = "";
+    for (let i = 0; i < 15; i++) {
+      rowsHtml += `<tr><td>Row ${i} Val 1 has a lot of text here to increase length</td><td>Row ${i} Val 2 has a lot of text too</td></tr>`;
+    }
+    const html = `<table>${rowsHtml}</table>`;
+    const parsed = parseFilingHtml(html);
+
+    const tableBlocks = parsed.text.split("\n\n").filter((b) => b.startsWith("|"));
+    expect(tableBlocks.length).toBeGreaterThan(1); // still splits on the token cap
+
+    for (const table of tableBlocks) {
+      const lines = table.split("\n");
+      // Valid GFM: a (neutral, empty-cell) header row precedes the delimiter row —
+      // never a bare "| --- |" first line.
+      expect(lines[0]).toBe("|  |  |");
+      expect(lines[1]).toBe("| --- | --- |");
+      expect(lines[0]).not.toContain("Row 0");
+    }
+
+    // No data row is promoted to a repeated header: every data row appears exactly once.
+    for (let i = 0; i < 15; i++) {
+      const occurrences = parsed.text.split(`Row ${i} Val 1`).length - 1;
+      expect(occurrences).toBe(1);
     }
   });
 
