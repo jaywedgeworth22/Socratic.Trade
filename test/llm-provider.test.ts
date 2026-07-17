@@ -40,15 +40,15 @@ describe("resolveLlmEndpoint", () => {
   });
 
   it("routes gpt-5.4-mini to OpenAI", () => {
-    const savedUrl = process.env.OPENAI_API_URL;
-    delete process.env.OPENAI_API_URL;
+    const savedUrl = process.env.OPENROUTER_API_URL;
+    delete process.env.OPENROUTER_API_URL;
     try {
       const endpoint = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini" });
       expect(endpoint.provider).toBe("openai");
       expect(endpoint.url).toContain("openrouter.ai");
       expect(endpoint.model).toBe("gpt-5.4-mini");
     } finally {
-      if (savedUrl !== undefined) process.env.OPENAI_API_URL = savedUrl;
+      if (savedUrl !== undefined) process.env.OPENROUTER_API_URL = savedUrl;
     }
   });
 
@@ -106,8 +106,8 @@ describe("resolveLlmEndpoint", () => {
   });
 
   it("routes empty/no policy to the OpenAI branch with an unconfigured (\"\") model (owner 2026-07-07)", () => {
-    const savedUrl = process.env.OPENAI_API_URL;
-    delete process.env.OPENAI_API_URL;
+    const savedUrl = process.env.OPENROUTER_API_URL;
+    delete process.env.OPENROUTER_API_URL;
     try {
       const endpoint = resolveLlmEndpoint({});
       // An unset model has no provider prefix, so it falls through to the OpenAI transport — but the
@@ -115,7 +115,7 @@ describe("resolveLlmEndpoint", () => {
       expect(endpoint.provider).toBe("openai");
       expect(endpoint.model).toBe("");
     } finally {
-      if (savedUrl !== undefined) process.env.OPENAI_API_URL = savedUrl;
+      if (savedUrl !== undefined) process.env.OPENROUTER_API_URL = savedUrl;
     }
   });
 

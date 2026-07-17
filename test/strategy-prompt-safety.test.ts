@@ -128,7 +128,7 @@ type OpenAiBody = {
 function stubFetch(openAiBodies: OpenAiBody[]): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
       // The single Red Team review (chat-completions body: `messages`) returns an approve verdict;
@@ -152,7 +152,7 @@ function stubFetch(openAiBodies: OpenAiBody[]): void {
 
 async function setupBrokerPaperDecide(): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, setUserSetting } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -236,7 +236,7 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
   });
 
   it("(b/c/e/f) reflection out of SYSTEM + fenced in userContent; injection + age receipts audited and on the decision case; flow unaffected", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();

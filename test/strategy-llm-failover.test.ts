@@ -53,7 +53,7 @@ function geminiOk(): Response {
 
 async function setup(withFallback: boolean): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "fixture");
   upsertUserApiKey("local", "gemini", "test-gemini-key", "fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Failover Test", isActive: true });
@@ -73,12 +73,12 @@ async function setup(withFallback: boolean): Promise<void> {
 
 describe("cross-provider Bull failover (Chat A item 4)", () => {
   it("flag ON: a 429 from the primary transparently serves via the fallback model and is recorded", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return new Response("rate limited", { status: 429 });
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return geminiOk();
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) return new Response("rate limited", { status: 429 });
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) return geminiOk();
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
@@ -107,10 +107,10 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
   }, 30_000);
 
   it("flag OFF (default): a primary 429 is a hard failure — no failover, behavior unchanged", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return new Response("rate limited", { status: 429 });
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) return new Response("rate limited", { status: 429 });
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });

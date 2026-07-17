@@ -27,7 +27,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 function proposal(symbol: string, side: TradeProposal["side"]): TradeProposal {
@@ -91,11 +91,11 @@ describe("strict marketScan.topCandidates opening boundary", () => {
   });
 
   it("audits and drops a policy-allowed off-candidate opening before Red review or sizing", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     let bullRequest: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
         expect(JSON.stringify(body)).not.toContain("Red Team Risk Agent");
         bullRequest = body;
@@ -131,7 +131,7 @@ describe("strict marketScan.topCandidates opening boundary", () => {
     });
 
     const { setActiveConnectedAccount, setPolicy, upsertConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({
       id: accountId,

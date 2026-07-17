@@ -44,7 +44,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
   delete process.env.USAGE_MONITOR_BASE_URL;
   delete process.env.USAGE_INGEST_TOKEN;
   delete process.env.USAGE_BUDGET_ENFORCE;
@@ -105,7 +105,7 @@ function makeFetchStub(opts: {
         headers: { "content-type": "application/json" }
       });
     }
-    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       opts.onOpenAiBody?.(body);
       const systemContent = JSON.stringify(body);
@@ -149,7 +149,7 @@ function makeFetchStub(opts: {
 
 async function seedTestAccountAndPolicy(overrides: Record<string, unknown> = {}) {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -177,7 +177,7 @@ async function seedTestAccountAndPolicy(overrides: Record<string, unknown> = {})
 
 describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
   it("makes no model change, writes a usage_budget_status receipt, and surfaces the advisory line in the Bull prompt", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     let bullBody: any;
     vi.stubGlobal(
       "fetch",
@@ -226,7 +226,7 @@ describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
 
 describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
   it("swaps llmModel/redTeamLlmModel for this run only and writes a usage_budget_enforced receipt", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     let bullModelUsed: string | undefined;
     let redTeamModelUsed: string | undefined;
@@ -290,7 +290,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     // shared `policy` object in place. After the fix, the downgrade lives only on a separate
     // `runPolicy` never passed to setPolicy, so the persisted row must show the downgrade GONE but
     // the demotion applied.
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     vi.stubGlobal(
       "fetch",
@@ -335,7 +335,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
 
 describe("usage-budget Phase 2: enforcement ON + skip", () => {
   it("ends the run before any LLM call and writes a receipt (no OpenAI call observed)", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     let openAiCalled = false;
     vi.stubGlobal(
@@ -375,7 +375,7 @@ describe("usage-budget Phase 2: enforcement ON + skip", () => {
 
 describe("usage-budget Phase 2: evaluator failure fails open", () => {
   it("proceeds untouched (no crash, no downgrade, no skip) when the budget-status fetch errors", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     vi.stubGlobal(
       "fetch",

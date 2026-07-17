@@ -11,8 +11,8 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.OPENAI_API_URL;
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_URL;
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_URL;
 });
@@ -45,8 +45,8 @@ const policyWithRed = (accountNumber: string, redModel = "openai/gpt-4.1-mini") 
 
 async function setupOpenAi(accountNumber: string, redModel?: string) {
   const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
-  process.env.OPENAI_API_KEY = "test-key";
-  process.env.OPENAI_API_URL = "https://openrouter.ai/v1/chat/completions";
+  process.env.OPENROUTER_API_KEY = "test-key";
+  process.env.OPENROUTER_API_URL = "https://openrouter.ai/v1/chat/completions";
   setPolicy(policyWithRed(accountNumber, redModel));
   setStrategyPrompt("BASE STRATEGY");
 }
@@ -66,7 +66,7 @@ describe("debateProposal — function-contract fail direction", () => {
   it("reports not_configured when NO Red model is chosen (no fallback to Green, no default)", async () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
-    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENROUTER_API_KEY = "test-key";
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOMODEL", llmModel: "openai/gpt-4.1-mini" });
     setStrategyPrompt("BASE STRATEGY");
     let fetched = false;
@@ -86,7 +86,7 @@ describe("debateProposal — function-contract fail direction", () => {
   it("reports not_configured when the Red model's provider has no key", async () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
-    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     setPolicy(policyWithRed("RT_NOKEY"));
     setStrategyPrompt("BASE STRATEGY");
 

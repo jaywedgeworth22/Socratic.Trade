@@ -71,7 +71,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 /** A buy the Bull proposes — every risk-adding opening triggers the single Red Team review now. */
@@ -97,7 +97,7 @@ function makeFetchStub(opts: {
   const proposals = opts.bullProposals ?? [BULL_PROPOSAL];
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       opts.onOpenAiBody?.(body);
       // The Red Team review (debateProposal) system prompt contains "Red Team Risk Agent";
@@ -144,7 +144,7 @@ function makeFetchStub(opts: {
 
 async function seedTestAccountAndPolicy() {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -169,7 +169,7 @@ async function seedTestAccountAndPolicy() {
 
 describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 + F1", () => {
   it("books a broker-paper fill and persists a proposal + fill_event with the redTeamVerdict field (survived)", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." } }));
 
     await seedTestAccountAndPolicy();
@@ -212,7 +212,7 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
   }, 30_000);
 
   it("books a terminal partial execution as filled instead of treating the whole order as declined", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubEnv("PAPER_EXECUTION_COST_MODEL", "off");
     brokerBehavior.terminalPartial = true;
     vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." } }));
@@ -231,7 +231,7 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
   }, 30_000);
 
   it("keeps an autonomous broker execution pending until a positive realized price is reported", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubEnv("PAPER_EXECUTION_COST_MODEL", "off");
     brokerBehavior.unpricedFill = true;
     vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { verdict: "approve", reason: "No fatal flaw found." } }));
@@ -252,7 +252,7 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
 
 describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () => {
   it("skips LLM generation (no OpenAI call, no fill) but still COMPLETES when over the daily budget", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubEnv("TRIGGER_LLM_DAILY_TOKEN_BUDGET", "1000");
     let openAiCalled = false;
     vi.stubGlobal(
@@ -286,7 +286,7 @@ describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () =
 
 describe("strategy Red Team rejection — F2 audit", () => {
   it("writes an audit('proposal_rejected_by_red_team') row and drops the proposal on a reviewer veto", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal(
       "fetch",
       makeFetchStub({ redTeamVerdict: { verdict: "reject", reason: "Overbought into earnings; asymmetric downside." } })

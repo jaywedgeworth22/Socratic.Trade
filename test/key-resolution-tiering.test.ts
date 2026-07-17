@@ -73,14 +73,14 @@ describe("credential tiering — generic resolver", () => {
 
 describe("LLM credential — operator-funded failover", () => {
   it("a tenant's own key wins (source=user)", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "env-openai");
+    vi.stubEnv("OPENROUTER_API_KEY", "env-openai");
     const { upsertUserApiKey, resolveLlmCredential } = await import("../src/lib/db");
-    upsertUserApiKey("u_tenant", "openai", "tenant-openai");
+    upsertUserApiKey("u_tenant", "openrouter", "tenant-openai");
     expect(resolveLlmCredential("openai", "u_tenant")).toMatchObject({ key: "tenant-openai", source: "user" });
   });
 
   it("any user (incl. local) without their own key uses the operator failover when ON (default)", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "env-openai");
+    vi.stubEnv("OPENROUTER_API_KEY", "env-openai");
     const { resolveLlmCredential } = await import("../src/lib/db");
     // No local carve-out — local and tenants alike reach the operator-funded failover.
     expect(resolveLlmCredential("openai", "local")).toMatchObject({ key: "env-openai", source: "operator" });
@@ -88,14 +88,14 @@ describe("LLM credential — operator-funded failover", () => {
   });
 
   it("with the failover OFF, every user (incl. local) needs their own key", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "env-openai");
+    vi.stubEnv("OPENROUTER_API_KEY", "env-openai");
     vi.stubEnv("LLM_OPERATOR_FALLBACK", "off");
     const { resolveLlmCredential, upsertUserApiKey } = await import("../src/lib/db");
     // No local special case: with the failover off and no stored key, even local fails closed.
     expect(resolveLlmCredential("openai", "u_tenant")).toEqual({ source: "none" });
     expect(resolveLlmCredential("openai", "local")).toEqual({ source: "none" });
     // A stored key works for either (this is what the boot migration gives local).
-    upsertUserApiKey("local", "openai", "local-openai");
+    upsertUserApiKey("local", "openrouter", "local-openai");
     expect(resolveLlmCredential("openai", "local")).toMatchObject({ key: "local-openai", source: "user" });
   });
 });
@@ -142,11 +142,11 @@ describe("LLM usage ledger", () => {
   });
 
   it("attributes usage PER ATTACHED KEY via a non-secret fingerprint", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "env-operator-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "env-operator-key");
     const { resolveLlmCredential, upsertUserApiKey } = await import("../src/lib/db");
     const { recordLlmUsage, getLlmUsageSummary, keyFingerprint } = await import("../src/lib/llm-usage");
 
-    upsertUserApiKey("u_tenant", "openai", "tenant-own-key");
+    upsertUserApiKey("u_tenant", "openrouter", "tenant-own-key");
     const own = resolveLlmCredential("openai", "u_tenant"); // user's own key
     const op = resolveLlmCredential("openai", "u_other"); // operator failover
     expect(own.keyRef).toBe(keyFingerprint("tenant-own-key"));
@@ -168,12 +168,12 @@ describe("LLM usage ledger", () => {
   });
 
   it("describeUsageKey resolves a human label (last-4 + name) from the live key store", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "env-operator-key-ABCD");
+    vi.stubEnv("OPENROUTER_API_KEY", "env-operator-key-ABCD");
     const { upsertUserApiKey } = await import("../src/lib/db");
     const { describeUsageKey, keyFingerprint } = await import("../src/lib/llm-usage");
 
-    upsertUserApiKey("u_tenant", "openai", "tenant-own-key-WXYZ");
-    upsertUserApiKey("local", "openai", "local-key-7788");
+    upsertUserApiKey("u_tenant", "openrouter", "tenant-own-key-WXYZ");
+    upsertUserApiKey("local", "openrouter", "local-key-7788");
 
     // A tenant's own key → labeled by user + last-4.
     expect(describeUsageKey({ keyRef: keyFingerprint("tenant-own-key-WXYZ")!, userId: "u_tenant", provider: "openai" })).toEqual({
