@@ -5193,6 +5193,16 @@ export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProp
     const complete =
       record !== undefined &&
       BULL_PROPOSAL_REQUIRED_KEYS.every((key) => key in record) &&
+      // Key presence alone is not enough (Codex P2, round 2): a repaired json_object-mode
+      // response can carry schema-INVALID values (numeric symbol, object side), and
+      // `sanitizeProposals` calls `normalizeSymbol(proposal.symbol)` → `.trim()` which would
+      // throw and abort the entire run instead of taking the zero-proposal path. Type-check
+      // the identity/enum fields the downstream pipeline dereferences unconditionally.
+      typeof record.symbol === "string" && record.symbol.trim() !== "" &&
+      typeof record.side === "string" &&
+      ["buy", "sell", "short", "cover"].includes(record.side) &&
+      typeof record.type === "string" &&
+      ["market", "limit", "stop_market", "stop_limit"].includes(record.type) &&
       typeof record.rationale === "string" && record.rationale.trim() !== "" &&
       typeof record.tradeThesisTag === "string" && record.tradeThesisTag.trim() !== "" &&
       typeof record.confidenceScore === "number" && Number.isFinite(record.confidenceScore);

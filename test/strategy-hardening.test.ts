@@ -649,6 +649,18 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(dropped).toBe(1);
   });
 
+  it("drops a repaired proposal whose identity fields have wrong TYPES even with all keys present (Codex round 2)", () => {
+    // json_object-mode repair can produce schema-invalid values; a numeric symbol would crash
+    // normalizeSymbol(.trim()) downstream and abort the whole run.
+    const wrongTypes = { ...complete(), symbol: 42 };
+    const badSide = { ...complete(), side: { verdict: "buy" } };
+    const badType = { ...complete(), type: "market_if_touched" };
+    const { kept, dropped } = filterRepairedProposals([wrongTypes, badSide, badType, complete()]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.symbol).toBe("AAPL");
+    expect(dropped).toBe(3);
+  });
+
   it("drops non-object entries outright", () => {
     const { kept, dropped } = filterRepairedProposals([null, 42, "proposal", [complete()]]);
     expect(kept).toHaveLength(0);
