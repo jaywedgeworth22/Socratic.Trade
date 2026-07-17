@@ -620,7 +620,7 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     timeInForce: "gfd",
     marketHours: "regular_hours",
     rationale: "Breakout over the 50d with volume confirmation.",
-    tradeThesisTag: "breakout-continuation",
+    tradeThesisTag: "Momentum-Breakout",
     confidenceScore: 72,
     autonomyOverride: null,
     bracketStopLoss: 172.5,
@@ -659,6 +659,16 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(kept).toHaveLength(1);
     expect(kept[0]?.symbol).toBe("AAPL");
     expect(dropped).toBe(3);
+  });
+
+  it("drops a repaired proposal with a fabricated (non-playbook) thesis tag (Codex round 6)", () => {
+    // A tag outside THESIS_PLAYBOOK has no scorecard history, so it would bypass the
+    // negative-expectancy skip gate as "unproven".
+    const madeUpTag = { ...complete(), tradeThesisTag: "vibes-based-momentum" };
+    const { kept, dropped } = filterRepairedProposals([madeUpTag, complete()]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.tradeThesisTag).toBe("Momentum-Breakout");
+    expect(dropped).toBe(1);
   });
 
   it("drops repaired proposals with null execution enums, out-of-range confidence, or invalid stopPlan (Codex round 5)", () => {

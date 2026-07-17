@@ -5230,7 +5230,11 @@ export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProp
       typeof record.type === "string" &&
       ["market", "limit", "stop_market", "stop_limit"].includes(record.type) &&
       typeof record.rationale === "string" && record.rationale.trim() !== "" &&
-      typeof record.tradeThesisTag === "string" && record.tradeThesisTag.trim() !== "" &&
+      // Playbook membership, not just non-emptiness (Codex P1, round 6): a fabricated tag has
+      // no scorecard history, so shouldSkipNegativeExpectancy treats it as unproven and a
+      // repaired reply could bypass a proven negative thesis's skip gate.
+      typeof record.tradeThesisTag === "string" &&
+      (THESIS_PLAYBOOK as readonly string[]).includes(record.tradeThesisTag) &&
       typeof record.confidenceScore === "number" && Number.isFinite(record.confidenceScore) &&
       // Numeric/null sizing fields (Codex P2, round 3): repair can deliver `dollarAmount: "100"`,
       // which sanitize preserves via ?? and Robinhood later dereferences with .toFixed —
