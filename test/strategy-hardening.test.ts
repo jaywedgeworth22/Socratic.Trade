@@ -661,6 +661,16 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(dropped).toBe(3);
   });
 
+  it("drops a repaired proposal whose sizing fields are non-numeric strings (Codex round 3)", () => {
+    // sanitize preserves a string dollarAmount via ??, and Robinhood later calls .toFixed on it.
+    const stringMoney = { ...complete(), dollarAmount: "100" };
+    const stringQty = { ...complete(), quantity: "3" };
+    const nullsOk = { ...complete(), dollarAmount: null, limitPrice: null };
+    const { kept, dropped } = filterRepairedProposals([stringMoney, stringQty, nullsOk]);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toBe(2);
+  });
+
   it("drops non-object entries outright", () => {
     const { kept, dropped } = filterRepairedProposals([null, 42, "proposal", [complete()]]);
     expect(kept).toHaveLength(0);

@@ -5205,7 +5205,17 @@ export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProp
       ["market", "limit", "stop_market", "stop_limit"].includes(record.type) &&
       typeof record.rationale === "string" && record.rationale.trim() !== "" &&
       typeof record.tradeThesisTag === "string" && record.tradeThesisTag.trim() !== "" &&
-      typeof record.confidenceScore === "number" && Number.isFinite(record.confidenceScore);
+      typeof record.confidenceScore === "number" && Number.isFinite(record.confidenceScore) &&
+      // Numeric/null sizing fields (Codex P2, round 3): repair can deliver `dollarAmount: "100"`,
+      // which sanitize preserves via ?? and Robinhood later dereferences with .toFixed —
+      // crashing the run instead of taking the zero-proposal path. null stays allowed (the
+      // schema is nullable here); anything else must be a finite number.
+      (["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"] as const)
+        .every((key) => record[key] === null || (typeof record[key] === "number" && Number.isFinite(record[key] as number))) &&
+      (record.timeInForce === null || typeof record.timeInForce === "string") &&
+      (record.marketHours === null || typeof record.marketHours === "string") &&
+      (record.stopPlan === null || (typeof record.stopPlan === "object" && !Array.isArray(record.stopPlan))) &&
+      (record.autonomyOverride === null || (typeof record.autonomyOverride === "object" && !Array.isArray(record.autonomyOverride)));
     if (complete) kept.push(record as unknown as TradeProposal);
     else dropped += 1;
   }

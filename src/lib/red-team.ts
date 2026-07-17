@@ -415,7 +415,14 @@ export async function debateProposal(
             // would hide the trailing block. A prose false positive (the model echoing the
             // `"verdict":` key while also emitting real JSON) fails CLOSED to unavailable, which
             // is the acceptable direction for this gate.
-            const verdictKeyOccurrences = (text.match(/["']verdict["']\s*:/g) ?? []).length;
+            // JSON permits \uXXXX escapes inside property names (`{"\u0076erdict":...}` parses
+            // with key "verdict"), so decode them before counting or a second, escaped verdict
+            // block slips past a literal-key regex (Codex P1, round 3). Malformed escape tails
+            // are left as-is — they cannot form a parseable key anyway on this strict gate.
+            const escapeNormalizedText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
+              String.fromCharCode(Number.parseInt(hex, 16))
+            );
+            const verdictKeyOccurrences = (escapeNormalizedText.match(/["']verdict["']\s*:/g) ?? []).length;
             if (verdictKeyOccurrences > 1) {
               console.warn(`Red Team response contained ${verdictKeyOccurrences} verdict blocks; treating the review as ambiguous/unavailable.`);
               return {
