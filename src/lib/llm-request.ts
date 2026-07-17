@@ -97,7 +97,12 @@ function options(values: readonly LlmReasoningEffort[]): LlmReasoningOption[] {
 }
 
 function lowerModel(model: string | undefined): string {
-  return (model ?? "").trim().toLowerCase();
+  let name = (model ?? "").trim().toLowerCase();
+  // Strip provider prefixes for capability matching (e.g. anthropic/claude-3 -> claude-3)
+  if (name.includes("/")) {
+    name = name.split("/").pop() || name;
+  }
+  return name;
 }
 
 function isAnthropicAdaptiveThinkingModel(model: string | undefined): boolean {

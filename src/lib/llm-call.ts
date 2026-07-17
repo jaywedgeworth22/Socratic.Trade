@@ -122,7 +122,7 @@ export function buildLlmRequestBody(
 
   if (transport === "chat-completions") {
     const base: Record<string, unknown> = { model: spec.model, messages };
-    const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject);
+    const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject, spec.model);
     if (responseFormat) base.response_format = responseFormat;
     return withLlmRequestBounds(base, transport, bounds);
   }
@@ -247,15 +247,15 @@ export function toGeminiJsonSchema(node: unknown): { schema: unknown; unsupporte
 function openAiChatResponseFormat(
   provider: LlmEndpoint["provider"],
   schema: LlmJsonSchema | undefined,
-  openAiJsonObject: boolean | undefined
+  openAiJsonObject: boolean | undefined,
+  model?: string
 ): Record<string, unknown> | undefined {
-  if (schema && !openAiJsonObject && provider === "gemini") {
+  const isGemini = provider === "gemini" || (model && /^google\//i.test(model));
+  const isDeepSeek = provider === "deepseek" || (model && /^deepseek\//i.test(model));
+
+  if (schema && !openAiJsonObject && isGemini) {
     const { schema: geminiSchema, unsupported } = toGeminiJsonSchema(schema.schema);
     if (unsupported) {
-      // Something in this schema (a type-union or anyOf with more than one non-null alternative) has
-      // no Gemini-dialect equivalent this transform can produce — fall back to a bare JSON object the
-      // same way the DeepSeek branch below does, rather than forwarding a schema Gemini will likely
-      // reject anyway. Logged so an unexpected new schema shape doesn't silently degrade output quality.
       console.warn(
         `[llm-call] Gemini schema "${schema.name}" has a construct toGeminiJsonSchema can't translate ` +
           "(type-union or anyOf with 2+ non-null branches) — falling back to json_object."
@@ -264,10 +264,9 @@ function openAiChatResponseFormat(
     }
     return { type: "json_schema", json_schema: { name: schema.name, strict: true, schema: geminiSchema } };
   }
-  if (schema && !openAiJsonObject && provider !== "deepseek") {
+  if (schema && !openAiJsonObject && !isDeepSeek) {
     return { type: "json_schema", json_schema: { name: schema.name, strict: true, schema: schema.schema } };
   }
-  // DeepSeek rejects strict json_schema; everything else here wants a bare JSON object.
   if (schema || openAiJsonObject) return { type: "json_object" };
   return undefined;
 }
