@@ -56,6 +56,85 @@ Addressed 8 remaining Codex P1/P2 findings across 5 files (search-fusion.ts, rag
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
+## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, PR #1711, auto-merge enabled — waiting on CI)
+
+Codex review round 1 (chatgpt-codex-connector[bot]): 4 findings, all addressed. An initial
+`[codex-autofix]` commit (089b7df7) landed first-pass fixes; a MONET reconciliation commit then
+refined them to match the coordinator's explicit spec and add the test coverage the autofix lacked:
+[P1] live-push timeout is now env-tunable `USAGE_MONITOR_PUSH_TIMEOUT_MS` (default 10s, was a
+hardcoded 30s) so a half-up receiver that never responds becomes a recorded failure that trips the
+breaker; [P2] callVolume cap is now env-tunable `USAGE_MONITOR_CALLVOLUME_MAX_KEYS` (default 2000,
+was a hardcoded 100); [P2] trim TTL/cap at flush entry (kept from autofix); [P2] HMR migration now
+covers BOTH `queue` and `pendingQueue` via `normalizeRetainedQueues()` with a `STATE_VERSION` 3→4
+bump (autofix migrated only `queue`, no bump). Review round 2 added one more [P2] fix: an
+observability-truthfulness bug where the replay lane (`sendUsageMonitorBatch`) opened the shared
+breaker on a replay-first outage WITHOUT recording a `usage-monitor` health failure — then the open
+breaker suppressed every later live-push `postBatch` before it could record health, so the admin
+health row stayed stale-"healthy" for the whole backoff window. Factored a shared
+`recordUsageMonitorHealth()` helper (best-effort) so BOTH lanes record failure (before the breaker
+update) and success (recovery); the health row is now truthful regardless of which lane talks to the
+monitor. Review round 3 added one more [P2] breaker-correctness fix: a schema-INVALID local event
+(e.g. `pushBrokerBalance` admitting NaN/Infinity via `typeof === "number"`) was rejected by the
+shared client's batch validation BEFORE any fetch, but both send paths caught that pre-fetch
+ZodError as a delivery failure and tripped the breaker — a repeated poison event could falsely OPEN
+it and suppress valid telemetry. Fixed belt-and-suspenders: tightened `pushBrokerBalance` admission
+to `Number.isFinite`, and both send paths now prune schema-invalid events (`isDeliverableEvent` via
+the shared `UsageTelemetryEventSchema.safeParse`) BEFORE `client.send` — the live path drops poison
+out of the buffer (never re-queued), the replay path acks it so the watermark advances (quarantine).
+The breaker now only ever sees genuine delivery outcomes. Review round 4 added a final [P2] fix that
+bounds the exact hung-receiver burst from the incident: while a live flush awaited its (up to 10s)
+timeout send, events enqueued in the meantime armed more flush timers on the 2s cadence, each
+starting another concurrent hanging POST before the breaker could register the first failure.
+Serialized the SEND via a single-flight guard (`state.inflightFlush`): `flushUsageMonitor` is now a
+thin wrapper that, if a flush is in flight, defers (re-arms the timer) instead of starting a second
+concurrent send, clearing the marker in `finally`; the body moved to `flushUsageMonitorOnce`. Net:
+at most ONE outstanding POST before the breaker decision. Enqueues still just buffer (only the SEND
+is serialized). 17 new focused tests cover every finding. Gate: `tsc` clean, lint 0 errors, focused
+34/34, full 404 files/4,747 tests, production build all green. Not pushed by this session —
+coordinator re-pushes (fast-forward on top of the autofix commits) + confirms threads resolved +
+merges.
+
+Owner-directed incident response: `usage.jays.services` (API-usage-monitor) was OOM-down ~2 days;
+both Congress.Trade and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs
+aggregate) and ran up a 200GB Render bandwidth overage. This is the Socratic.Trade side (Congress.
+Trade handled separately). `src/lib/usage-monitor-push.ts` already had a capped retry-delay but it
+never fully stopped attempting, and the durable-replay lane (`usage-monitor-replay.ts`, its own
+fixed 60s interval) had no backoff of its own — during an outage that's a second, independent
+hammer. Added a real circuit breaker shared by both real network call sites (`postBatch` for the
+live queue, `sendUsageMonitorBatch` for replay): after `USAGE_MONITOR_BREAKER_THRESHOLD` (default
+3) consecutive failures it opens for an exponential window (`USAGE_MONITOR_BREAKER_BASE_MS`
+default 30s, capped at `USAGE_MONITOR_BREAKER_MAX_MS` default 15min) during which delivery is
+fully suppressed — no fetch call at all — then allows exactly one half-open probe. Also bounded
+the in-memory failure-retry buffer (`USAGE_MONITOR_QUEUE_MAX_EVENTS` default 500,
+`USAGE_MONITOR_QUEUE_TTL_MS` default 1h, TTL keyed off buffer-residency time not the event's
+business `occurredAt` — a real bug caught mid-implementation when historical/replayed timestamps
+were wrongly treated as stale on arrival). Dropped buffer entries are still safe: LLM/RAG/
+provider-dispatch events are independently redelivered from the durable DB ledgers via
+`usage-monitor-replay.ts`; only ephemeral broker-balance snapshots have no backstop, and losing a
+stale one is harmless. User-facing ledger call sites (`pushLlmUsage`/`pushRagUsage`/
+`pushBrokerBalance`/`recordProviderCall`) were already synchronous fire-and-forget and remain so —
+confirmed with an explicit non-blocking test. Gate: `tsc` clean, lint 0 errors, focused 24/24
+(7 new breaker/buffer tests), full 404 files/4,737 tests, production build all green. Not
+pushed/PR'd/merged — owner gates landing. Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md`.
+
+## 2026-07-17 — Visual-tour findings fix wave (MONET, branch `monet/visual-tour-fixes`, 4 Sonnet lanes)
+
+Fixed the actionable findings from CLAUDE's 2026-07-17 visual tour via 4 parallel Sonnet
+subagent lanes (disjoint files), reconciled + verified by the MONET main loop. Headline: the
+[P1] Outcomes "PRACTICE MONEY (PAPER BROKER)" section (a no-paper-framing ruling violation that
+even rendered with no account) is now neutral "Account P&L" + a connect-account empty state.
+Also: Usage h1 canon ("Usage"), admin raw "HTTP 403" → human "Operator access required" copy
+(shared helper across 6 admin surfaces), mobile 375px chrome (switcher no longer clips to "N..",
+Run-once outline-variant vs Start, "Tabs"→"More"), stale gpt-4o placeholder → current IDs (string
+only; #1703 owns canonicalization), scan "in Settings"→"in Guardrails", `drawdownBreakerAction`
+hint leak reworded, journal duplicate-row/raw-dotted-type/bogus-chip fixes (+3 tests), welcome
+brand "Socratic.Trade"→"Socratic Trade", earningscalls 405 pre-subscription Sentry-noise suppression.
+Deliberately KEPT (correct-by-design, with evidence): "Vetoed by Bear risk" (distinct deterministic
+veto, not the LLM Red Team). Did NOT reproduce: dark-mode reality ribbon (already token-themed).
+Surfaced to owner, not coded: apex-serves-login vs /welcome gating, one 6-day-stale active-autonomy
+account. Gate: tsc clean, lint 0 errors, 403 files/4,724 tests, build via land.sh; live-verified.
+Rollout: `docs/rollouts/2026-07-17-visual-tour-fixes.md`.
+
 ## 2026-07-17 — jsonrepair healing: fail-closed boundaries (CLAUDE on PR #1696, cap-reset pickup)
 
 Fixed the four unresolved Codex threads on the stalled `agent/local-response-healing` lane:

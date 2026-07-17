@@ -1,9 +1,10 @@
 "use client";
 
-/** Results — measurement, never fabrication. Practice-money and real-money
- *  buckets are reported separately and never share an axis. Uncomputable
- *  figures render as "—" with a reason, not an estimate. Tax figures are
- *  estimates only, clearly labeled. */
+/** Results — measurement, never fabrication. Paper-account and brokerage-account
+ *  buckets are reported separately and never share an axis — an account is an
+ *  account, distinguished only by its environment, never a "practice" tier.
+ *  Uncomputable figures render as "—" with a reason, not an estimate. Tax
+ *  figures are estimates only, clearly labeled. */
 
 import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
@@ -127,11 +128,15 @@ export default function ResultsPage() {
   // The selected account lives in exactly ONE money-reality, so only its bucket
   // shows by default. A comparison account's bucket is one explicit picker
   // selection away — never silently mixed onto the page as if it belonged to
-  // this account.
+  // this account. With no connected account there is no bucket to show at all —
+  // neither "paper" nor "live" is true, so rendering one anyway (all zeros/dashes)
+  // would misrepresent an account that doesn't exist as if it were a real paper
+  // account with nothing in it.
+  const hasAccount = reality.tone !== "none";
   const liveSelected = reality.tone === "live";
-  const practiceBucket = (
+  const paperBucket = (
     <BucketCard
-      title="Practice money (Paper broker)"
+      title="Paper Account"
       tone="paper"
       realized={perf?.paperRealizedPnl}
       unrealized={perf?.paperUnrealizedPnl}
@@ -184,9 +189,18 @@ export default function ResultsPage() {
         )}
       </div>
 
-      {/* Buckets: selected reality first; a comparison account's bucket only once picked. */}
+      {/* Buckets: selected reality first; a comparison account's bucket only once picked.
+          With no connected account, there is no bucket of either reality to show — an
+          empty state, not a paper bucket full of zeros standing in for an account that
+          doesn't exist. */}
       <div className={compareAccountId ? "grid gap-4 lg:grid-cols-2" : "grid gap-4"}>
-        {liveSelected ? liveBucket : practiceBucket}
+        {hasAccount ? (
+          liveSelected ? liveBucket : paperBucket
+        ) : (
+          <Card title="Account P&L">
+            <Empty>Connect a broker account to see its P&amp;L here.</Empty>
+          </Card>
+        )}
         {compareAccountId &&
           (compareState.status === "ready" ? (
             <BucketCard
@@ -534,7 +548,7 @@ function BucketCard({
         </div>
       </div>
       <div className="mt-3 border-t border-[color:var(--con-line)] pt-3">
-        <EquityChart points={curve} label={tone === "live" ? "real-money" : "practice-money"} />
+        <EquityChart points={curve} label={tone === "live" ? "real-money" : "paper-money"} />
         {curve.length >= 2 && (
           <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             Raw account equity — includes any deposits/withdrawals, so a transfer moves this line without being a
