@@ -24,7 +24,11 @@ vi.mock("../src/lib/vector-db", () => ({
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 // Type-cast mock helper so we don't need to implement the full interface

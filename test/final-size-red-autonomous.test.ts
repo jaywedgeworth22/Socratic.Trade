@@ -44,7 +44,11 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 vi.mock("../src/lib/market", async (importOriginal) => {
@@ -139,7 +143,7 @@ beforeEach(() => {
 
 function stubGreenProposals(proposals: Array<{ symbol: string; dollarAmount: number }>): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-    if (String(url).includes("api.openai.com")) {
+    if (String(url).includes("openrouter.ai")) {
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
@@ -183,7 +187,7 @@ async function configureAutonomousAccount(
     label: "Autonomous final-size account",
     isActive: true
   });
-  upsertUserApiKey(userId, "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey(userId, "openrouter", "test-openai-key", "test fixture");
   setPolicy(
     {
       ...DEFAULT_POLICY,

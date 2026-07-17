@@ -20,8 +20,34 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
+
+vi.mock("../src/lib/llm-provider", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/lib/llm-provider")>();
+  return {
+    ...original,
+    resolveLlmEndpoint: (policy: any, userId?: string, defaultOpenAiUrl?: string, role?: any) => {
+      const model = (role === "red" ? policy?.redTeamLlmModel : policy?.llmModel) || "";
+      if (model.includes("gemini")) {
+        return {
+          provider: "gemini",
+          url: "https://generativelanguage.googleapis.com/v1/chat/completions",
+          key: "test-gemini-key",
+          model,
+          keySource: "user",
+          keyRef: "test-gemini-key-ref",
+          transport: "chat-completions"
+        };
+      }
+      return original.resolveLlmEndpoint(policy, userId, defaultOpenAiUrl, role);
+    }
+  };
+});
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-llm-cooldown-${randomUUID()}.db`)}`;
@@ -39,7 +65,7 @@ afterEach(() => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const OPENAI_ATTEMPT = { provider: "openai", model: "gpt-5.4-mini", keySource: "user" as const };
+const OPENAI_ATTEMPT = { provider: "openrouter", model: "gpt-5.4-mini", keySource: "user" as const };
 const GEMINI_ATTEMPT = { provider: "gemini", model: "gemini-2.5-flash", keySource: "user" as const };
 
 describe("llm-provider-cooldown unit behavior", () => {
@@ -47,11 +73,11 @@ describe("llm-provider-cooldown unit behavior", () => {
     const { recordLlmProviderFailure, planLlmProviderAttempts, getLlmProviderCooldown } = await import("../src/lib/llm-provider-cooldown");
     const { listAudit } = await import("../src/lib/db");
 
-    const kind = recordLlmProviderFailure({ provider: "openai", keySource: "user", status: 429, detail: "rate limited", model: "gpt-5.4-mini", step: "bull" });
+    const kind = recordLlmProviderFailure({ provider: "openrouter", keySource: "user", status: 429, detail: "rate limited", model: "gpt-5.4-mini", step: "bull" });
     expect(kind).toBe("transient");
-    expect(getLlmProviderCooldown("openai", "user")?.record.kind).toBe("transient");
+    expect(getLlmProviderCooldown("openrouter", "user")?.record.kind).toBe("transient");
     // A different lane of the SAME provider (operator failover key) is NOT cooled.
-    expect(getLlmProviderCooldown("openai", "operator")).toBeUndefined();
+    expect(getLlmProviderCooldown("openrouter", "operator")).toBeUndefined();
 
     const planned = planLlmProviderAttempts([OPENAI_ATTEMPT, GEMINI_ATTEMPT], { step: "bull", runId: "run-skip" });
     expect(planned).toEqual([GEMINI_ATTEMPT]);
@@ -60,16 +86,16 @@ describe("llm-provider-cooldown unit behavior", () => {
     const skip = skips.find((e) => (e.payload as { runId?: string }).runId === "run-skip");
     expect(skip).toBeDefined();
     const payload = skip!.payload as { provider: string; kind: string; remainingMs: number };
-    expect(payload.provider).toBe("openai");
+    expect(payload.provider).toBe("openrouter");
     expect(payload.kind).toBe("transient");
     expect(payload.remainingMs).toBeGreaterThan(0);
   });
 
   it("non-rate/quota failures (5xx, timeouts) never set a cooldown", async () => {
     const { recordLlmProviderFailure, getLlmProviderCooldown } = await import("../src/lib/llm-provider-cooldown");
-    expect(recordLlmProviderFailure({ provider: "openai", keySource: "user", status: 500, detail: "internal server error" })).toBeUndefined();
-    expect(recordLlmProviderFailure({ provider: "openai", keySource: "user", detail: "request timed out" })).toBeUndefined();
-    expect(getLlmProviderCooldown("openai", "user")).toBeUndefined();
+    expect(recordLlmProviderFailure({ provider: "openrouter", keySource: "user", status: 500, detail: "internal server error" })).toBeUndefined();
+    expect(recordLlmProviderFailure({ provider: "openrouter", keySource: "user", detail: "request timed out" })).toBeUndefined();
+    expect(getLlmProviderCooldown("openrouter", "user")).toBeUndefined();
   });
 
   it("a hard billing/insufficient_quota failure gets the longer TTL", async () => {
@@ -77,7 +103,7 @@ describe("llm-provider-cooldown unit behavior", () => {
     vi.stubEnv("LLM_PROVIDER_COOLDOWN_BILLING_MS", "600000");
     const { recordLlmProviderFailure, getLlmProviderCooldown } = await import("../src/lib/llm-provider-cooldown");
 
-    recordLlmProviderFailure({ provider: "openai", keySource: "user", status: 429, detail: "rate limited" });
+    recordLlmProviderFailure({ provider: "openrouter", keySource: "user", status: 429, detail: "rate limited" });
     recordLlmProviderFailure({
       provider: "gemini",
       keySource: "user",
@@ -85,7 +111,7 @@ describe("llm-provider-cooldown unit behavior", () => {
       detail: JSON.stringify({ error: { message: "You exceeded your current quota, please check your plan and billing details.", type: "insufficient_quota" } })
     });
 
-    const transient = getLlmProviderCooldown("openai", "user");
+    const transient = getLlmProviderCooldown("openrouter", "user");
     const billing = getLlmProviderCooldown("gemini", "user");
     expect(transient?.record.kind).toBe("transient");
     expect(billing?.record.kind).toBe("billing");
@@ -96,7 +122,7 @@ describe("llm-provider-cooldown unit behavior", () => {
   it("an expired cooldown is pruned and the lane serves again", async () => {
     vi.stubEnv("LLM_PROVIDER_COOLDOWN_TRANSIENT_MS", "5");
     const { recordLlmProviderFailure, planLlmProviderAttempts } = await import("../src/lib/llm-provider-cooldown");
-    recordLlmProviderFailure({ provider: "openai", keySource: "user", status: 429, detail: "rate limited" });
+    recordLlmProviderFailure({ provider: "openrouter", keySource: "user", status: 429, detail: "rate limited" });
     await sleep(15);
     const planned = planLlmProviderAttempts([OPENAI_ATTEMPT, GEMINI_ATTEMPT], { step: "bull" });
     expect(planned).toEqual([OPENAI_ATTEMPT, GEMINI_ATTEMPT]);
@@ -109,7 +135,7 @@ describe("llm-provider-cooldown unit behavior", () => {
     // gemini failed FIRST (least recently), then openai — planning must lead with gemini.
     recordLlmProviderFailure({ provider: "gemini", keySource: "user", status: 429, detail: "rate limited" });
     await sleep(10);
-    recordLlmProviderFailure({ provider: "openai", keySource: "user", status: 429, detail: "rate limited" });
+    recordLlmProviderFailure({ provider: "openrouter", keySource: "user", status: 429, detail: "rate limited" });
 
     const planned = planLlmProviderAttempts([OPENAI_ATTEMPT, GEMINI_ATTEMPT], { step: "bull", runId: "run-exhausted" });
     expect(planned).toEqual([GEMINI_ATTEMPT, OPENAI_ATTEMPT]); // never refuses; reordered, not dropped
@@ -139,19 +165,19 @@ describe("llm-provider-cooldown unit behavior", () => {
     const { recordLlmProviderFailure, planLlmProviderAttempts, getLlmProviderCooldown } = await import("../src/lib/llm-provider-cooldown");
 
     // User A's own openai key 429s — only user A's personal lane cools.
-    recordLlmProviderFailure({ provider: "openai", keySource: "user", status: 429, detail: "rate limited", model: "gpt-5.4-mini", step: "bull", userId: "user-a" });
-    expect(getLlmProviderCooldown("openai", "user", "user-a")?.record.kind).toBe("transient");
+    recordLlmProviderFailure({ provider: "openrouter", keySource: "user", status: 429, detail: "rate limited", model: "gpt-5.4-mini", step: "bull", userId: "user-a" });
+    expect(getLlmProviderCooldown("openrouter", "user", "user-a")?.record.kind).toBe("transient");
     // User B's healthy personal key is a DIFFERENT lane — never cooled by A's exhaustion.
-    expect(getLlmProviderCooldown("openai", "user", "user-b")).toBeUndefined();
+    expect(getLlmProviderCooldown("openrouter", "user", "user-b")).toBeUndefined();
 
     // Planning for user B keeps the primary; planning for user A skips it.
     expect(planLlmProviderAttempts([OPENAI_ATTEMPT, GEMINI_ATTEMPT], { step: "bull", userId: "user-b" })).toEqual([OPENAI_ATTEMPT, GEMINI_ATTEMPT]);
     expect(planLlmProviderAttempts([OPENAI_ATTEMPT, GEMINI_ATTEMPT], { step: "bull", userId: "user-a" })).toEqual([GEMINI_ATTEMPT]);
 
     // The OPERATOR lane is one shared credential: cooling it applies to EVERY user.
-    const OPERATOR_ATTEMPT = { provider: "openai", model: "gpt-5.4-mini", keySource: "operator" as const };
-    recordLlmProviderFailure({ provider: "openai", keySource: "operator", status: 429, detail: "rate limited", userId: "user-a" });
-    expect(getLlmProviderCooldown("openai", "operator", "user-b")?.record.kind).toBe("transient");
+    const OPERATOR_ATTEMPT = { provider: "openrouter", model: "gpt-5.4-mini", keySource: "operator" as const };
+    recordLlmProviderFailure({ provider: "openrouter", keySource: "operator", status: 429, detail: "rate limited", userId: "user-a" });
+    expect(getLlmProviderCooldown("openrouter", "operator", "user-b")?.record.kind).toBe("transient");
     expect(planLlmProviderAttempts([OPERATOR_ATTEMPT, GEMINI_ATTEMPT], { step: "bull", userId: "user-b" })).toEqual([GEMINI_ATTEMPT]);
   });
 
@@ -159,8 +185,8 @@ describe("llm-provider-cooldown unit behavior", () => {
     const { recordLlmProviderFailure, planLlmProviderAttempts, getLlmProviderCooldown } = await import("../src/lib/llm-provider-cooldown");
 
     // Cooldown recorded while enabled...
-    recordLlmProviderFailure({ provider: "openai", keySource: "user", status: 429, detail: "rate limited" });
-    expect(getLlmProviderCooldown("openai", "user")).toBeDefined();
+    recordLlmProviderFailure({ provider: "openrouter", keySource: "user", status: 429, detail: "rate limited" });
+    expect(getLlmProviderCooldown("openrouter", "user")).toBeDefined();
 
     vi.stubEnv("LLM_PROVIDER_COOLDOWN_DISABLED", "1");
     // ...is ignored by planning, and new failures are not recorded.
@@ -194,12 +220,12 @@ function geminiOk(): Response {
 
 describe("cross-run cooldown wired into the Bull failover chain", () => {
   it("run 1: primary 429 fails over and cools the lane; run 2: skips straight to the fallback without touching the primary", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
     let openaiCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if (href.includes("openrouter.ai")) {
         openaiCalls += 1;
         return new Response("rate limited", { status: 429 });
       }
@@ -209,7 +235,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "fixture");
     upsertUserApiKey("local", "gemini", "test-gemini-key", "fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Cooldown Test", isActive: true });
@@ -239,7 +265,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
       (e) => e.kind === "llm_provider_cooldown_set" && (e.payload as { runId?: string }).runId === first.runId
     );
     expect(cooldownSet).toBeDefined();
-    expect((cooldownSet!.payload as { provider: string; kind: string }).provider).toBe("openai");
+    expect((cooldownSet!.payload as { provider: string; kind: string }).provider).toBe("openrouter");
 
     // Run 2: the cooled primary is never called — the fallback serves directly, loudly audited.
     const second = await runStrategyOnce();
@@ -249,7 +275,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
       (e) => e.kind === "llm_provider_cooldown_skip" && (e.payload as { runId?: string }).runId === second.runId
     );
     expect(skip).toBeDefined();
-    expect((skip!.payload as { provider: string; step: string }).provider).toBe("openai");
+    expect((skip!.payload as { provider: string; step: string }).provider).toBe("openrouter");
     const bullStep = second.llmSteps?.find((s) => s.step === "bull");
     expect(bullStep?.provider).toBe("gemini");
     // Served-model attribution stays failover-aware even when the fallback is the FIRST attempt.

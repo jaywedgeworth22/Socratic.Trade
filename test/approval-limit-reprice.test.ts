@@ -21,7 +21,11 @@ vi.mock("../src/lib/vector-db", () => ({
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 const broker = vi.hoisted(() => ({

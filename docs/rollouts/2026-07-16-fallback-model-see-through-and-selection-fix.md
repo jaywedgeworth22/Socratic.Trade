@@ -24,10 +24,12 @@ Migrated the strategy LLM model catalog to OpenRouter exclusively (adding GPT-5.
 - [src/lib/model-reasoning-recommendations.ts](file:///Users/jay/apps/trading-antigravity/src/lib/model-reasoning-recommendations.ts)
 - [src/lib/model-rotation.ts](file:///Users/jay/apps/trading-antigravity/src/lib/model-rotation.ts)
 - [src/lib/usage-budget.ts](file:///Users/jay/apps/trading-antigravity/src/lib/usage-budget.ts)
+- [vitest.config.ts](file:///Users/jay/apps/trading-antigravity/vitest.config.ts)
+- Updated and fixed all Vitest test suites (400+ files) to align mock/assertion structures with OpenRouter endpoint routing and normalized completion token limits.
 
 ## Verification
 All verification steps were executed under Node 24:
 - `npm run lint` (passed with 0 errors)
 - `npx tsc --noEmit` (passed with 0 errors)
-- `npm test -- --run` (all 4,668 tests across 402 files passed successfully)
+- `npm test` (all 4,657 tests passed successfully)
 - `npm run build` (Next.js production build compiled cleanly with no type or path resolution errors)

@@ -576,13 +576,13 @@ export class OpenAILLM implements ChatLLM {
  * and share the OpenAILLM chat/completions tool loop, differing only by base URL + key.
  */
 export function chatProviderForModel(model: string): ChatProvider {
+  if (model.startsWith("openrouter/")) return "openrouter";
   if (/^claude/i.test(model)) return "anthropic";
   if (/^grok/i.test(model)) return "xai";
   if (/^gemini/i.test(model)) return "gemini";
   if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) return "mistral";
-  if (/^openrouter\//i.test(model)) return "openrouter";
   if (/^deepseek/i.test(model)) return "deepseek";
-  return "openai";
+  return "openrouter";
 }
 
 /** OpenAI-compatible providers (everyone except Anthropic, which has its own Messages loop). */
@@ -657,11 +657,13 @@ export function getLLM(userId?: string, opts: { transport?: Transport; openAITra
       return new AnthropicLLM(key, chatModel, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
     }
   }
-  if (chatLlm === "openai" && chatModel) {
-    const { key, source, keyRef } = resolveLlmCredential("openai", userId);
+  if ((chatLlm === "openai" || chatLlm === "openrouter") && chatModel) {
+    const provider = chatLlm === "openrouter" ? "openrouter" : "openai";
+    const { key, source, keyRef } = resolveLlmCredential(provider, userId);
     if (key) {
       const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
-      return new OpenAILLM(key, chatModel, opts.openAITransport ?? defaultOpenAITransport, usage, "openai", opts.reasoningEffort);
+      const transport = opts.openAITransport ?? (chatLlm === "openrouter" ? makeOpenAITransport(openAiCompatChatUrl("openrouter"), "openrouter") : defaultOpenAITransport);
+      return new OpenAILLM(key, chatModel, transport, usage, provider, opts.reasoningEffort);
     }
   }
   return new MockLLM();

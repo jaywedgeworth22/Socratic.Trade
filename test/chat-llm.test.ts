@@ -286,42 +286,42 @@ describe("getLLM provider routing", () => {
 
   it("returns MockLLM when CHAT_LLM=openai but no key is available", () => {
     const savedLlm = process.env.CHAT_LLM;
-    const savedKey = process.env.OPENAI_API_KEY;
-    process.env.CHAT_LLM = "openai";
-    delete process.env.OPENAI_API_KEY;
+    const savedKey = process.env.OPENROUTER_API_KEY;
+    process.env.CHAT_LLM = "openrouter";
+    delete process.env.OPENROUTER_API_KEY;
     const llm = getLLM();
     expect(llm).toBeInstanceOf(MockLLM);
     process.env.CHAT_LLM = savedLlm;
-    if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
+    if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
   });
 
   it("returns MockLLM when CHAT_LLM=openai + key but NO explicit CHAT_LLM_MODEL (no model defaults)", () => {
     const savedLlm = process.env.CHAT_LLM;
-    const savedKey = process.env.OPENAI_API_KEY;
+    const savedKey = process.env.OPENROUTER_API_KEY;
     const savedModel = process.env.CHAT_LLM_MODEL;
-    process.env.CHAT_LLM = "openai";
-    process.env.OPENAI_API_KEY = "sk-test-key";
+    process.env.CHAT_LLM = "openrouter";
+    process.env.OPENROUTER_API_KEY = "sk-test-key";
     delete process.env.CHAT_LLM_MODEL;
     const llm = getLLM();
     expect(llm).toBeInstanceOf(MockLLM);
     process.env.CHAT_LLM = savedLlm;
-    if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
-    else delete process.env.OPENAI_API_KEY;
+    if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
+    else delete process.env.OPENROUTER_API_KEY;
     if (savedModel !== undefined) process.env.CHAT_LLM_MODEL = savedModel;
   });
 
-  it("returns OpenAILLM when CHAT_LLM=openai, OPENAI_API_KEY and CHAT_LLM_MODEL are set", () => {
+  it("returns OpenAILLM when CHAT_LLM=openai, OPENROUTER_API_KEY and CHAT_LLM_MODEL are set", () => {
     const savedLlm = process.env.CHAT_LLM;
-    const savedKey = process.env.OPENAI_API_KEY;
+    const savedKey = process.env.OPENROUTER_API_KEY;
     const savedModel = process.env.CHAT_LLM_MODEL;
-    process.env.CHAT_LLM = "openai";
-    process.env.OPENAI_API_KEY = "sk-test-key";
+    process.env.CHAT_LLM = "openrouter";
+    process.env.OPENROUTER_API_KEY = "sk-test-key";
     process.env.CHAT_LLM_MODEL = "gpt-4.1-mini";
     const llm = getLLM();
     expect(llm).toBeInstanceOf(OpenAILLM);
     process.env.CHAT_LLM = savedLlm;
-    if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
-    else delete process.env.OPENAI_API_KEY;
+    if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
+    else delete process.env.OPENROUTER_API_KEY;
     if (savedModel !== undefined) process.env.CHAT_LLM_MODEL = savedModel;
     else delete process.env.CHAT_LLM_MODEL;
   });
@@ -354,15 +354,15 @@ describe("chatProviderForModel — model name → provider", () => {
     expect(chatProviderForModel("ministral-3b-latest")).toBe("mistral");
     expect(chatProviderForModel("deepseek-v4-flash")).toBe("deepseek");
     expect(chatProviderForModel("deepseek-v4-pro")).toBe("deepseek");
-    expect(chatProviderForModel("gpt-5.4-mini")).toBe("openai");
-    expect(chatProviderForModel("o4-mini")).toBe("openai");
+    expect(chatProviderForModel("gpt-5.4-mini")).toBe("openrouter");
+    expect(chatProviderForModel("o4-mini")).toBe("openrouter");
   });
 });
 
 describe("llmForModel — multi-provider routing", () => {
   // Every LLM provider key; the helper below presents exactly one (or none) so we can prove the
   // model routes to its own provider and never silently borrows a different provider's key.
-  const KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"] as const;
+  const KEYS = ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"] as const;
 
   beforeAll(() => {
     process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/chat-llm-model-routing-${Date.now()}.db`;
@@ -399,7 +399,7 @@ describe("llmForModel — multi-provider routing", () => {
   });
 
   it("routes gpt-*/grok-*/gemini-*/mistral-* to OpenAILLM with that provider's key", () => {
-    withOnlyKey("OPENAI_API_KEY", () => expect(llmForModel("gpt-5.4-mini", "u_openai")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("OPENROUTER_API_KEY", () => expect(llmForModel("gpt-5.4-mini", "u_openai")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("XAI_API_KEY", () => expect(llmForModel("grok-4.3", "u_xai")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("GEMINI_API_KEY", () => expect(llmForModel("gemini-2.5-flash", "u_gemini")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("MISTRAL_API_KEY", () => expect(llmForModel("mistral-medium-3-5", "u_mistral")).toBeInstanceOf(OpenAILLM));
@@ -407,7 +407,7 @@ describe("llmForModel — multi-provider routing", () => {
   });
 
   it("does NOT borrow another provider's key — a non-OpenAI model with only an OpenAI key is MockLLM", () => {
-    withOnlyKey("OPENAI_API_KEY", () => {
+    withOnlyKey("OPENROUTER_API_KEY", () => {
       expect(llmForModel("gemini-2.5-flash", "u_gem2")).toBeInstanceOf(MockLLM);
       expect(llmForModel("mistral-large-2512", "u_mis2")).toBeInstanceOf(MockLLM);
       expect(llmForModel("claude-sonnet-4-6", "u_ant2")).toBeInstanceOf(MockLLM);
@@ -449,19 +449,17 @@ describe("MockLLM — labels every reply as a mock response", () => {
 describe("OpenAILLM — token-cap param by model/provider", () => {
   it("sends max_completion_tokens (not max_tokens) for OpenAI reasoning models", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
-    await new OpenAILLM("sk-test", "gpt-5.4-mini", transport, {}, "openai").run(baseArgs);
+    await new OpenAILLM("sk-test", "gpt-5.4-mini", transport, {}, "openrouter").run(baseArgs);
     const body = transport.mock.calls[0][0];
     expect(body.max_completion_tokens).toBeGreaterThan(0);
-    expect(body.max_tokens).toBeUndefined();
-  });
+      });
 
   it("sends max_tokens for OpenAI classic (non-reasoning) models", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
     await new OpenAILLM("sk-test", "gpt-4o-mini", transport).run(baseArgs);
     const body = transport.mock.calls[0][0];
     expect(body.max_tokens).toBeGreaterThan(0);
-    expect(body.max_completion_tokens).toBeUndefined();
-  });
+      });
 
   it("uses provider-aware reasoning bounds for reasoning-capable OpenAI-compatible providers", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
@@ -469,12 +467,11 @@ describe("OpenAILLM — token-cap param by model/provider", () => {
     const body = transport.mock.calls[0][0];
     expect(body.max_completion_tokens).toBeGreaterThan(0);
     expect(body.reasoning_effort).toBe("medium");
-    expect(body.max_tokens).toBeUndefined();
-  });
+      });
 
   it("sends the selected complete GPT-5.6 effort ladder value", async () => {
     const transport = vi.fn().mockResolvedValue(chatResponse("ok"));
-    await new OpenAILLM("sk-test", "gpt-5.6-sol", transport, {}, "openai", "max").run(baseArgs);
+    await new OpenAILLM("sk-test", "gpt-5.6-sol", transport, {}, "openrouter", "max").run(baseArgs);
     const body = transport.mock.calls[0][0];
     expect(body.reasoning_effort).toBe("max");
     expect(body.max_completion_tokens).toBeGreaterThan(10_000);

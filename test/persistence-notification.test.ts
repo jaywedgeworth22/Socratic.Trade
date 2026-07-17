@@ -15,7 +15,11 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }, symbol?: string) => (symbol ? `[${symbol}]\n${chunk.text}` : chunk.text),
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-test-${randomUUID()}.db`)}`;
@@ -28,8 +32,8 @@ afterEach(() => {
 
 async function seedLocalOpenAiKey(): Promise<() => void> {
   const { deleteUserApiKey, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
-  return () => deleteUserApiKey("local", "openai");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
+  return () => deleteUserApiKey("local", "openrouter");
 }
 
 describe("persistence and notifications", () => {
@@ -195,14 +199,14 @@ describe("persistence and notifications", () => {
   });
 
   it("writes one strategy_run audit event from runStrategyOnce", async () => {
-    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalOpenAiKey = process.env.OPENROUTER_API_KEY;
     let cleanupOpenAiKey: (() => void) | undefined;
     // Seed a key + stub the LLM so the run completes (0 proposals). The strategy session now
     // requires a resolvable LLM credential — without one runStrategyOnce returns "failed" — and
     // this test only needs the run to complete to assert the audit event was written.
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-      if (String(url).includes("api.openai.com")) {
+      if (String(url).includes("openrouter.ai")) {
         return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -268,18 +272,18 @@ describe("persistence and notifications", () => {
       expect(after).toBe(before + 1);
     } finally {
       cleanupOpenAiKey?.();
-      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
-      else delete process.env.OPENAI_API_KEY;
+      if (originalOpenAiKey) process.env.OPENROUTER_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENROUTER_API_KEY;
     }
   }, 30_000);
 
   it("records a failed Green Team LLM step when the proposal request times out", async () => {
-    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalOpenAiKey = process.env.OPENROUTER_API_KEY;
     let cleanupOpenAiKey: (() => void) | undefined;
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
         throw new Error("The operation was aborted due to timeout");
       }
       if (href.includes("nasdaq.com")) {
@@ -338,12 +342,12 @@ describe("persistence and notifications", () => {
       expect(result.status).toBe("failed");
       // gpt-5.5 is a reasoning model, so the strategy call gets the reasoning-class-aware timeout
       // (150s) rather than the base 60s — the message reports the actual bound that elapsed.
-      expect(result.summary).toContain("Green Team proposal timed out after 150s using OpenAI gpt-5.5");
+      expect(result.summary).toContain("Green Team proposal timed out after 150s using OpenRouter gpt-5.5");
       expect(result.llmSteps).toMatchObject([
         {
           step: "bull",
           label: "Green Team proposal",
-          provider: "openai",
+          provider: "openrouter",
           model: "gpt-5.5",
           status: "failed"
         }
@@ -364,21 +368,21 @@ describe("persistence and notifications", () => {
       expect(runAudit?.llmSteps).toMatchObject([{ step: "bull", status: "failed" }]);
     } finally {
       cleanupOpenAiKey?.();
-      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
-      else delete process.env.OPENAI_API_KEY;
+      if (originalOpenAiKey) process.env.OPENROUTER_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENROUTER_API_KEY;
     }
   }, 30_000);
 
   it("records a pre-run portfolio snapshot before any proposals execute", async () => {
-    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalOpenAiKey = process.env.OPENROUTER_API_KEY;
     let cleanupOpenAiKey: (() => void) | undefined;
     // Seed a key + stub the LLM to return 0 proposals → the run completes as a no-op. (The strategy
     // session now requires a resolvable LLM credential; without one runStrategyOnce returns "failed".)
     // We just need to verify a pre-run snapshot was written with the run's runId.
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
         return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -450,19 +454,19 @@ describe("persistence and notifications", () => {
       expect(runSnapshots.length).toBeGreaterThanOrEqual(2);
     } finally {
       cleanupOpenAiKey?.();
-      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
-      else delete process.env.OPENAI_API_KEY;
+      if (originalOpenAiKey) process.env.OPENROUTER_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENROUTER_API_KEY;
     }
   }, 20_000);
 
   it("sends retrieved context in user content instead of the stable system prompt", async () => {
-    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalOpenAiKey = process.env.OPENROUTER_API_KEY;
     let cleanupOpenAiKey: (() => void) | undefined;
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     const openAiBodies: any[] = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
         openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
         return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
           status: 200,
@@ -528,14 +532,14 @@ describe("persistence and notifications", () => {
       // exactly ONE LLM call (the Bull). The Red Team review only runs per risk-adding opening —
       // its request bounds are covered by test/red-team.test.ts.
       expect(openAiBodies).toHaveLength(1);
-      expect(openAiBodies[0].max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
+      expect(openAiBodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
       // The Bull (proposer) stays deterministic, greedy temp-0.
       expect(openAiBodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
-      expect(openAiBodies.every((body) => body.max_completion_tokens === undefined)).toBe(true);
+      expect(openAiBodies.every((body) => body.max_tokens === undefined)).toBe(true);
 
       const bullBody = openAiBodies[0];
-      const systemContent = bullBody.input.find((item: any) => item.role === "system")?.content ?? "";
-      const userContent = JSON.parse(bullBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
+      const systemContent = bullBody.messages.find((item: any) => item.role === "system")?.content ?? "";
+      const userContent = JSON.parse(bullBody.messages.find((item: any) => item.role === "user")?.content ?? "{}");
       expect(systemContent).toContain('Current executionMode is "broker/paper"');
       expect(userContent.executionMode).toBe("broker/paper");
       expect(userContent.executionModeClarification).toContain("deterministic fills");
@@ -549,13 +553,13 @@ describe("persistence and notifications", () => {
       // original chunk text still survives verbatim as a substring (asserted above).
       expect(userContent.retrievedFinancialContext).toMatch(/^\[AAPL\]/);
       for (const body of openAiBodies) {
-        const content = body.input.find((item: any) => item.role === "user")?.content ?? "{}";
+        const content = body.messages.find((item: any) => item.role === "user")?.content ?? "{}";
         expect(JSON.parse(content).executionMode).toBe("broker/paper");
       }
     } finally {
       cleanupOpenAiKey?.();
-      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
-      else delete process.env.OPENAI_API_KEY;
+      if (originalOpenAiKey) process.env.OPENROUTER_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENROUTER_API_KEY;
     }
   });
 

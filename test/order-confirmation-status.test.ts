@@ -18,7 +18,11 @@ vi.mock("../src/lib/vector-db", () => ({
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 // The market scan inside executeProposal is incidental to what this file verifies (broker

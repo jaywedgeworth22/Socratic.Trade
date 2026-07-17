@@ -23,8 +23,8 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.OPENAI_API_URL;
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_URL;
 });
 
 function tuneRequest(email: string, body: Record<string, unknown>): Request {
@@ -158,7 +158,7 @@ describe("/api/strategy/tune route: persistence, targeting, and lifecycle", () =
       await import("../src/lib/db");
     const { POST } = await import("../app/api/strategy/tune/route");
 
-    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     const email = `tune-route-post-${randomUUID()}@example.com`;
     const { resolveRequestUserFromEmail } = await import("../src/lib/request-user");
     const userId = resolveRequestUserFromEmail(email).userId;
@@ -384,8 +384,8 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
     const accountNumber = "TUNE-EVIDENCE";
     const otherAccountNumber = "TUNE-EVIDENCE-OTHER";
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
     upsertConnectedAccount({
       id: accountId,
@@ -529,7 +529,7 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
     let capturedContext: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
-      capturedContext = JSON.parse(body.input.find((item: { role?: string }) => item.role === "user")?.content ?? "{}");
+      capturedContext = JSON.parse(body.messages.find((item: { role?: string }) => item.role === "user")?.content ?? "{}");
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
@@ -619,7 +619,7 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
     const accountId = randomUUID();
     const accountNumber = "TUNE-RESILIENCE";
 
-    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
 
     upsertConnectedAccount({
       id: accountId,

@@ -23,7 +23,11 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 beforeAll(() => {
@@ -74,11 +78,11 @@ function nasdaqRows(): Response {
 }
 
 async function runCollapse(gateOn: boolean) {
-  vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+  vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
     const href = String(url);
     // Both the Bull and the surviving-Bear response return the two identical-rationale buys.
-    if (href.includes("api.openai.com")) {
+    if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
       return new Response(JSON.stringify(bullBearProposals()), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (href.includes("nasdaq.com")) return nasdaqRows();
@@ -86,7 +90,7 @@ async function runCollapse(gateOn: boolean) {
   });
 
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({ id: accountId, userId: "local", broker: "alpaca", environment: "paper", accountNumber: "TEST", label: `collapse ${gateOn}`, apiKey: "PK", apiSecret: "sk", isActive: true });
   setActiveConnectedAccount(accountId);

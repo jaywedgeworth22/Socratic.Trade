@@ -23,7 +23,11 @@ vi.mock("../src/lib/vector-db", () => ({
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 // Stub ONLY scanMarket so approval reconcile doesn't fan out to live fetches (same rationale as the

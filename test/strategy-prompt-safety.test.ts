@@ -28,6 +28,8 @@ vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
+  getCurrentVectorProviderAuthority: async () => ({ db: "pinecone", endpoint: "none", scope: "none", version: 1 }),
+  managedVectorLedgerAuthority: async () => ({ db: "pinecone", endpoint: "none", scope: "none", version: 1 }),
   retrieveContextDetailed: async (
     _query: string,
     _symbol: string,
@@ -127,22 +129,24 @@ type OpenAiBody = {
 function stubFetch(openAiBodies: OpenAiBody[]): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
       // The single Red Team review (chat-completions body: `messages`) returns an approve verdict;
       // the Bull (responses body: `input`) returns the single proposal.
-      const isRedTeamReview = Array.isArray(body.messages);
+      const isRedTeamReview = String(init?.body || "").includes("Red Team Risk Agent");
       if (isRedTeamReview) {
         return new Response(
           JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: "approve", reason: "Evidence checks out." }) } }] }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
-      return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [BULL_PROPOSAL] }) }), {
-        status: 200,
-        headers: { "content-type": "application/json" }
-      });
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ proposals: [BULL_PROPOSAL] }) } }]
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
     }
     if (href.includes("nasdaq.com")) return nasdaqResponse();
     return new Response("not found", { status: 404 });
@@ -151,7 +155,7 @@ function stubFetch(openAiBodies: OpenAiBody[]): void {
 
 async function setupBrokerPaperDecide(): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, setUserSetting } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -235,7 +239,7 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
   });
 
   it("(b/c/e/f) reflection out of SYSTEM + fenced in userContent; injection + age receipts audited and on the decision case; flow unaffected", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
@@ -257,8 +261,8 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
 
     // Identify the Bull (responses API: `input`) and the single Red Team review (chat-completions:
     // `messages`) by their system prompts.
-    const systemOf = (b: OpenAiBody) => b.input?.find((i) => i.role === "system")?.content ?? "";
-    const userOf = (b: OpenAiBody) => b.input?.find((i) => i.role === "user")?.content ?? "";
+    const systemOf = (b: OpenAiBody) => (b.input || b.messages)?.find((i) => i.role === "system")?.content ?? "";
+    const userOf = (b: OpenAiBody) => (b.input || b.messages)?.find((i) => i.role === "user")?.content ?? "";
     const chatUserOf = (b: OpenAiBody) => b.messages?.find((i) => i.role === "user")?.content ?? "";
     const bullBody = openAiBodies.find((b) => systemOf(b).includes("autonomous equity trading agent"));
     const redTeamBody = openAiBodies.find((b) =>

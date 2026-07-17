@@ -29,7 +29,7 @@ import { runStrategyOnce } from "@/lib/strategy";
 import { getPolicy, setPolicy } from "@/lib/db";
 import { DEV_USER_ID } from "@/lib/auth/identity";
 
-const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
+const LLM_ENV = ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-run-once-async-${randomUUID()}.db`)}`;
@@ -47,7 +47,7 @@ afterEach(() => {
 // must have a real Green model persisted, otherwise the second gate 412s first.
 function stubLlmKeyAvailable(): void {
   vi.stubEnv("LLM_OPERATOR_FALLBACK", "on");
-  vi.stubEnv("OPENAI_API_KEY", "test-operator-key");
+  vi.stubEnv("OPENROUTER_API_KEY", "test-operator-key");
   vi.stubEnv("OPENROUTER_API_KEY", "test-operator-key");
   setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "openrouter/openai/gpt-5.4-mini" }, DEV_USER_ID);
 }

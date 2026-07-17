@@ -274,14 +274,7 @@ export async function checkBudgetAndAlert(
 
 /** Provider a model routes to — mirrors resolveLlmEndpoint's prefix logic. */
 function providerForModel(model: string | null | undefined): string {
-  const m = (model ?? "").toLowerCase();
-  if (/^(claude|anthropic)/.test(m)) return "anthropic";
-  if (/^grok/.test(m)) return "xai";
-  if (/^gemini/.test(m)) return "gemini";
-  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
-  if (/^openrouter\//.test(m)) return "openrouter";
-  if (/^deepseek/.test(m)) return "deepseek";
-  return "openai";
+  return "openrouter";
 }
 
 // Cost-ordered downgrade within a provider family (keys/values exist in MODEL_PRICE_PER_M).

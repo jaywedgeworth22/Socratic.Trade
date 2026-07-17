@@ -156,7 +156,7 @@ describe("llm-request — withLlmRequestBounds", () => {
       model: "gpt-4.1-mini"
     });
     expect(resp.temperature).toBe(0);
-    expect(resp.max_output_tokens).toBe(1500);
+    expect(resp.max_tokens).toBe(1500);
     expect("reasoning" in resp).toBe(false);
   });
 
@@ -177,7 +177,7 @@ describe("llm-request — withLlmRequestBounds", () => {
     });
     expect("temperature" in resp).toBe(false);
     expect(resp.reasoning).toEqual({ effort: "low" });
-    expect(resp.max_output_tokens).toBe(1500 + 2000); // low headroom
+    expect(resp.max_tokens).toBe(1500 + 2000); // low headroom
   });
 
   it("provider reasoning models use their provider-specific wire shapes", () => {
@@ -310,7 +310,7 @@ describe("llm-request — withLlmRequestBounds", () => {
   // Composite review B/high/S: "Reasoning-token headroom exists only for OpenAI — other providers'
   // reasoning calls starve the JSON answer." Assert, for EVERY reasoning-capable provider and EVERY
   // effort level it supports, that the effective visible-output budget (max_completion_tokens /
-  // max_output_tokens / max_tokens minus the hidden-reasoning headroom) is always >= the requested
+  // max_tokens / max_tokens minus the hidden-reasoning headroom) is always >= the requested
   // cap — i.e. hidden reasoning tokens never eat into the caller's requested visible budget.
   it("every provider x effort combination preserves the full requested visible-output budget", () => {
     const requestedCap = 1500;
@@ -327,7 +327,7 @@ describe("llm-request — withLlmRequestBounds", () => {
       const capability = reasoningCapabilityForModel(model);
       expect(capability?.provider, `expected a reasoning capability for ${model}`).toBe(provider);
       for (const option of capability!.options) {
-        const transport = provider === "anthropic" ? "anthropic-messages" : provider === "openai" ? "responses" : "chat-completions";
+        const transport = provider === "anthropic" ? "anthropic-messages" : provider === "openrouter" ? "responses" : "chat-completions";
         const bounded = withLlmRequestBounds(
           { model },
           transport,
@@ -335,7 +335,7 @@ describe("llm-request — withLlmRequestBounds", () => {
         );
         const effectiveCap =
           (bounded.max_completion_tokens as number | undefined) ??
-          (bounded.max_output_tokens as number | undefined) ??
+          (bounded.max_tokens as number | undefined) ??
           (bounded.max_tokens as number | undefined);
         expect(
           effectiveCap,

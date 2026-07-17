@@ -5,14 +5,36 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS } from "../src/lib/llm-request";
 
+vi.mock("../src/lib/llm-provider", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/lib/llm-provider")>();
+  return {
+    ...original,
+    resolveLlmEndpoint: (policy: any, userId?: string, defaultOpenAiUrl?: string, role?: any) => {
+      const model = (role === "red" ? policy?.redTeamLlmModel : policy?.llmModel) || "";
+      if (model.includes("claude-")) {
+        return {
+          provider: "anthropic",
+          url: "https://api.anthropic.com/v1/messages",
+          key: process.env.ANTHROPIC_API_KEY,
+          model,
+          keySource: "user",
+          keyRef: "test-anthropic-key-ref",
+          transport: "anthropic-messages"
+        };
+      }
+      return original.resolveLlmEndpoint(policy, userId, defaultOpenAiUrl, role);
+    }
+  };
+});
+
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-red-team-${randomUUID()}.db`)}`;
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.OPENAI_API_URL;
+  process.env.OPENROUTER_API_KEY = "test-key";
+  delete process.env.OPENROUTER_API_URL;
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_URL;
 });
@@ -45,8 +67,8 @@ const policyWithRed = (accountNumber: string, redModel = "gpt-4.1-mini") => ({
 
 async function setupOpenAi(accountNumber: string, redModel?: string) {
   const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
-  process.env.OPENAI_API_KEY = "test-key";
-  process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+  process.env.OPENROUTER_API_KEY = "test-key";
+  process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
   setPolicy(policyWithRed(accountNumber, redModel));
   setStrategyPrompt("BASE STRATEGY");
 }
@@ -66,7 +88,7 @@ describe("debateProposal — function-contract fail direction", () => {
   it("reports not_configured when NO Red model is chosen (no fallback to Green, no default)", async () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
-    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENROUTER_API_KEY = "test-key";
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOMODEL", llmModel: "gpt-4.1-mini" });
     setStrategyPrompt("BASE STRATEGY");
     let fetched = false;
@@ -86,14 +108,19 @@ describe("debateProposal — function-contract fail direction", () => {
   it("reports not_configured when the Red model's provider has no key", async () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
-    delete process.env.OPENAI_API_KEY;
-    setPolicy(policyWithRed("RT_NOKEY"));
-    setStrategyPrompt("BASE STRATEGY");
+    const oldKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    try {
+      setPolicy(policyWithRed("RT_NOKEY"));
+      setStrategyPrompt("BASE STRATEGY");
 
-    const result = await debateProposal(buyProposal(), undefined);
-    expect(result.rejected).toBe(false);
-    expect(result.available).toBe(false);
-    expect(result.failureKind).toBe("not_configured");
+      const result = await debateProposal(buyProposal(), undefined);
+      expect(result.rejected).toBe(false);
+      expect(result.available).toBe(false);
+      expect(result.failureKind).toBe("not_configured");
+    } finally {
+      process.env.OPENROUTER_API_KEY = oldKey;
+    }
   });
 
   it("refuses to review an exit (sell) — §3.5 structural guard", async () => {
@@ -325,7 +352,7 @@ describe("debateProposal LLM request bounds", () => {
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.adversaryReview);
     // Per-role sampling: the adversary samples at a non-zero temperature (vs the Bull's greedy 0).
     expect(bodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.adversaryTemperature);
-    expect(bodies[0].max_output_tokens).toBeUndefined();
+    expect(bodies[0].max_tokens).toBeUndefined();
     // OpenAI-compatible providers request STRICT json_schema (not a bare json_object), so the
     // verdict is schema-enforced rather than regex/prose-parsed.
     expect(bodies[0].response_format).toEqual({

@@ -27,7 +27,11 @@ vi.mock("../src/lib/vector-db", () => ({
   formatChunkWithProvenance: (chunk: { text: string }, symbol?: string) =>
     `[10-K · risk-factors · ${symbol ?? ""} · 2026-02-01 · rel 0.80]\n${chunk.text}`,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 beforeAll(() => {
@@ -58,23 +62,23 @@ describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
       { id: "c1", text: "Apple faces supply-chain risk.", score: 0.9, source: "sec", as_of: "2026-02-01", doc_type: "10-k", section: "risk-factors" }
     ]);
 
-    process.env.OPENAI_API_KEY = "test-openai-key";
-    const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
+    const openAiBodies: Array<{ messages?: Array<{ role: string; content: string }> }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if (href.includes("openrouter.ai")) {
         openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
-        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
       }
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "RAG Wiring Test", isActive: true });
     setActiveConnectedAccount(accountId);
@@ -95,7 +99,7 @@ describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
     expect(options).toMatchObject({ minRelevanceScore: 0.35, dedupeSimilarity: 0.6 });
 
     const bullBody = openAiBodies[0]!;
-    const userContent = JSON.parse(bullBody.input!.find((item) => item.role === "user")?.content ?? "{}");
+    const userContent = JSON.parse(bullBody.messages!.find((item) => item.role === "user")?.content ?? "{}");
     expect(userContent.retrievedFinancialContext).toContain("[10-K · risk-factors · AAPL · 2026-02-01 · rel 0.80]");
     expect(userContent.retrievedFinancialContext).toContain("Apple faces supply-chain risk.");
   }, 30_000);

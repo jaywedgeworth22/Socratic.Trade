@@ -42,7 +42,11 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 beforeEach(() => {
@@ -55,7 +59,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 // Two near-identical proposals so the post-gate rationale-diversity check collapses. (Every
@@ -77,7 +81,7 @@ function makeFetchStub() {
   const bullProposals = [COLLAPSED_PROPOSAL("AAPL"), COLLAPSED_PROPOSAL("MSFT")];
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
       const body = init?.body ? String(init.body) : "{}";
       if (body.includes("Red Team Risk Agent") || body.includes("red_team_verdict")) {
         return new Response(
@@ -112,7 +116,7 @@ function makeFetchStub() {
 
 async function seed() {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "t");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "t");
   const id = randomUUID();
   upsertConnectedAccount({ id, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Test", isActive: true });
   setActiveConnectedAccount(id);
@@ -129,7 +133,7 @@ async function seed() {
 
 describe("observability stamping (G10)", () => {
   it("stamps promptVersion on the bull + red-team review generations, a verdict in the review output, and a diversity-collapse observation", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeFetchStub());
 
     await seed();

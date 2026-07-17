@@ -71,7 +71,7 @@ describe("usage-monitor-push", () => {
     delete process.env.USAGE_INGEST_TOKEN;
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));
-    push.pushLlmUsage({ provider: "openai", userId: "local", keySource: "operator", totalTokens: 100, costUsd: 0.01 });
+    push.pushLlmUsage({ provider: "openrouter", userId: "local", keySource: "operator", totalTokens: 100, costUsd: 0.01 });
     push.recordProviderCall("finnhub", { ok: true });
     await push.flushUsageMonitor();
     expect(captured).toHaveLength(0);
@@ -188,7 +188,7 @@ describe("usage-monitor-push", () => {
       return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
     }) as unknown as typeof fetch);
     expect(() =>
-      recordLlmUsage({ provider: "openai", model: "gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
+      recordLlmUsage({ provider: "openrouter", model: "gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
     ).not.toThrow();
     await expect(push.flushUsageMonitor()).resolves.toBeUndefined();
     expect(attempts).toHaveLength(1);
@@ -208,7 +208,7 @@ describe("usage-monitor-push", () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));
     recordLlmUsage({
-      provider: "openai",
+      provider: "openrouter",
       model: "gpt-4o-mini",
       context: "telemetry-id-test",
       userId: "local",
@@ -257,7 +257,7 @@ describe("usage-monitor-push", () => {
     const entry = {
       sourceEventId: "llm-ledger-replay",
       occurredAt: "2026-07-11T18:00:00.000Z",
-      provider: "openai",
+      provider: "openrouter",
       model: "gpt-5-mini",
       userId: "local",
       keySource: "operator",
@@ -284,7 +284,7 @@ describe("usage-monitor-push", () => {
     const oversized = `ledger-${"x".repeat(10_000)}`;
     const base = {
       occurredAt: "2026-07-11T18:30:00.000Z",
-      provider: "openai",
+      provider: "openrouter",
       userId: "local",
       keySource: "operator",
       totalTokens: 1,
@@ -308,7 +308,7 @@ describe("usage-monitor-push", () => {
     push.pushLlmUsage({
       sourceEventId: "hmr-buffered-event",
       occurredAt: "2026-07-11T19:00:00.000Z",
-      provider: "openai",
+      provider: "openrouter",
       userId: "local",
       keySource: "operator",
       totalTokens: 5,

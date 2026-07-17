@@ -17,7 +17,11 @@ vi.mock("../src/lib/vector-db", () => ({
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 function createMockGateway(overrides: Partial<BrokerGateway>): BrokerGateway {

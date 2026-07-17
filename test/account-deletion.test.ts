@@ -41,8 +41,8 @@ describe("account deletion", () => {
     const userA = userIdForEmail(emailA);
     const userB = `u_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 
-    db.upsertUserApiKey(userA, "openai", "sk-user-a");
-    db.upsertUserApiKey(userB, "openai", "sk-user-b");
+    db.upsertUserApiKey(userA, "openrouter", "sk-user-a");
+    db.upsertUserApiKey(userB, "openrouter", "sk-user-b");
     db.upsertConnectedAccount({
       id: `acct-${userA}`,
       userId: userA,
@@ -96,14 +96,14 @@ describe("account deletion", () => {
     expect(result.ok).toBe(true);
 
     expect(db.listConnectedAccounts(userA)).toHaveLength(0);
-    expect(db.getUserApiKey(userA, "openai")).toBeUndefined();
+    expect(db.getUserApiKey(userA, "openrouter")).toBeUndefined();
     expect(oauth.getStoredMcpOAuthTokens(userA)).toBeUndefined();
     expect(db.getDb().prepare("SELECT COUNT(*) AS count FROM chat_turns WHERE user_id = ?").get(userA)).toMatchObject({ count: 0 });
     expect(db.getDb().prepare("SELECT COUNT(*) AS count FROM learned_context WHERE user_id = ? OR contributor_user_id = ?").get(userA, userA)).toMatchObject({ count: 0 });
     expect(db.getDb().prepare("SELECT COUNT(*) AS count FROM learned_context_pending WHERE user_id = ?").get(userA)).toMatchObject({ count: 0 });
 
     expect(db.listConnectedAccounts(userB)).toHaveLength(1);
-    expect(db.getUserApiKey(userB, "openai")?.apiKey).toBe("sk-user-b");
+    expect(db.getUserApiKey(userB, "openrouter")?.apiKey).toBe("sk-user-b");
     expect(oauth.getStoredMcpOAuthTokens(userB)?.accessToken).toBe("token-b");
 
     const auditRows = db.getDb().prepare("SELECT subject_hash, counts_json FROM account_deletion_audit").all() as Array<{ subject_hash: string; counts_json: string }>;
@@ -138,14 +138,14 @@ describe("account deletion", () => {
     const deletion = await import("../src/lib/account-deletion");
     const email = "provider-purge-retry@example.com";
     const userId = userIdForEmail(email);
-    db.upsertUserApiKey(userId, "openai", "sk-still-present");
+    db.upsertUserApiKey(userId, "openrouter", "sk-still-present");
     deletion.prepareAccountDeletion({ userId, email });
     vectorMocks.purgePrivateVectorRecordsForUser.mockRejectedValueOnce(new Error("synthetic provider verification failure"));
 
     await expect(deletion.confirmAndDeleteAccount({ userId, email, body: confirmation(email) }))
       .rejects.toThrow("synthetic provider verification failure");
 
-    expect(db.getUserApiKey(userId, "openai")?.apiKey).toBe("sk-still-present");
+    expect(db.getUserApiKey(userId, "openrouter")?.apiKey).toBe("sk-still-present");
     expect(db.getDb().prepare(`
       SELECT status FROM account_deletion_requests WHERE user_id = ? ORDER BY requested_at DESC LIMIT 1
     `).get(userId)).toEqual({ status: "prepared" });

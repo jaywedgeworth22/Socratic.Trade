@@ -120,24 +120,24 @@ describe("dashboard feed helpers", () => {
         id: "reflect-ok",
         createdAt: "2026-07-15T00:00:00.000Z",
         kind: "post_mortem_reflection",
-        payload: { summary: "Momentum names outperformed in low-vol regimes.", model: "gpt-5.6-sol", provider: "openai", accountNumber: "ACC-1" }
+        payload: { summary: "Momentum names outperformed in low-vol regimes.", model: "gpt-5.6-sol", provider: "openrouter", accountNumber: "ACC-1" }
       },
       {
         id: "reflect-failed",
         createdAt: "2026-07-15T00:05:00.000Z",
         kind: "post_mortem_reflection",
-        payload: { status: "failed", model: "gpt-5.6-sol", provider: "openai", accountNumber: "ACC-1", reason: "Rate limited (429)" }
+        payload: { status: "failed", model: "gpt-5.6-sol", provider: "openrouter", accountNumber: "ACC-1", reason: "Rate limited (429)" }
       }
     ];
 
     const feed = buildAuditFeed({ audit });
 
     expect(feed[0]?.title).toBe("Post Mortem Reflection");
-    expect(feed[0]?.detail).toContain("gpt-5.6-sol via Openai");
+    expect(feed[0]?.detail).toContain("gpt-5.6-sol via Openrouter");
     expect(feed[0]?.detail).toContain("Momentum names outperformed");
 
     expect(feed[1]?.title).toBe("Post-mortem reflection failed");
-    expect(feed[1]?.detail).toContain("gpt-5.6-sol via Openai");
+    expect(feed[1]?.detail).toContain("gpt-5.6-sol via Openrouter");
     expect(feed[1]?.detail).toContain("Rate limited (429)");
   });
 

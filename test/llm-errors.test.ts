@@ -11,7 +11,7 @@ describe("providerLabel / providerFromText", () => {
     expect(providerLabel("gemini")).toBe("Google (Gemini)");
     expect(providerLabel("mistral")).toBe("Mistral");
     expect(providerLabel("anthropic")).toBe("Anthropic (Claude)");
-    expect(providerLabel("openai")).toBe("OpenAI");
+    expect(providerLabel("openrouter")).toBe("OpenRouter");
     expect(providerLabel(undefined)).toBe("the LLM");
   });
 
@@ -39,9 +39,9 @@ describe("humanizeLlmError", () => {
   });
 
   it("maps 429 to a rate-limit/quota message", () => {
-    const msg = humanizeLlmError("openai 429: You exceeded your current quota", { provider: "openai" });
+    const msg = humanizeLlmError("openai 429: You exceeded your current quota", { provider: "openrouter" });
     expect(msg.toLowerCase()).toMatch(/rate limit|quota|credit/);
-    expect(msg).toContain("OpenAI");
+    expect(msg).toContain("OpenRouter");
   });
 
   it("maps 5xx to a temporary server-error message", () => {
@@ -49,8 +49,8 @@ describe("humanizeLlmError", () => {
   });
 
   it("maps 403 to an access/region message and 404 to model-not-available", () => {
-    expect(humanizeLlmError("forbidden", { provider: "openai", status: 403 }).toLowerCase()).toContain("access");
-    expect(humanizeLlmError("model_not_found", { provider: "openai", status: 404 }).toLowerCase()).toContain("isn't available");
+    expect(humanizeLlmError("forbidden", { provider: "openrouter", status: 403 }).toLowerCase()).toContain("access");
+    expect(humanizeLlmError("model_not_found", { provider: "openrouter", status: 404 }).toLowerCase()).toContain("isn't available");
   });
 
   it("maps Anthropic's workspace usage-limit error to a plain-English message (not raw JSON)", () => {
@@ -65,8 +65,8 @@ describe("humanizeLlmError", () => {
   });
 
   it("falls back to the raw text (single line, provider-prefixed) for unrecognized errors", () => {
-    const msg = humanizeLlmError("some weird\n  multi-line   detail", { provider: "openai" });
-    expect(msg).toContain("OpenAI error:");
+    const msg = humanizeLlmError("some weird\n  multi-line   detail", { provider: "openrouter" });
+    expect(msg).toContain("OpenRouter error:");
     expect(msg).not.toContain("\n");
   });
 
@@ -100,8 +100,8 @@ describe("humanizeLlmError", () => {
 
   it("surfaces an OpenAI-style structured error's own message instead of a truncated JSON dump", () => {
     const raw = '{"error":{"message":"Invalid schema for response_format: maxItems is not permitted.","type":"invalid_request_error","code":null}}';
-    const msg = humanizeLlmError(raw, { provider: "openai", status: 400 });
-    expect(msg).toBe("OpenAI error invalid_request_error: Invalid schema for response_format: maxItems is not permitted.");
+    const msg = humanizeLlmError(raw, { provider: "openrouter", status: 400 });
+    expect(msg).toBe("OpenRouter error invalid_request_error: Invalid schema for response_format: maxItems is not permitted.");
   });
 
   it("is idempotent on already-humanized text (no 'Gemini error: Gemini error:' stutter)", () => {
@@ -120,12 +120,12 @@ describe("humanizeLlmError", () => {
 
   it("adds step/model context for transport timeouts", () => {
     const msg = humanizeLlmTransportError(new Error("The operation was aborted due to timeout"), {
-      provider: "openai",
+      provider: "openrouter",
       model: "gpt-5.5",
       stepLabel: "Green Team proposal",
       timeoutMs: 60_000
     });
 
-    expect(msg).toBe("Green Team proposal timed out after 60s using OpenAI gpt-5.5. Lower reasoning effort, choose a faster model, or retry.");
+    expect(msg).toBe("Green Team proposal timed out after 60s using OpenRouter gpt-5.5. Lower reasoning effort, choose a faster model, or retry.");
   });
 });

@@ -41,6 +41,8 @@ export default defineConfig({
     // land loose in the shared OS temp dir.
     env: {
       AGENTIC_TEST_FORCE_TRADING_DAY: "1",
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000",
+      OPENROUTER_API_KEY: "test-openrouter-key",
       TMPDIR: runTmpRoot,
       TMP: runTmpRoot,
       TEMP: runTmpRoot

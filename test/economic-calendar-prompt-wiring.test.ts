@@ -63,18 +63,18 @@ function isRedTeamRequest(body: unknown): boolean {
   return JSON.stringify(body).includes("Red Team Risk Agent");
 }
 
-function bullPromptBody(openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }>): { input?: Array<{ role: string; content: string }> } {
+function bullPromptBody(openAiBodies: Array<{ messages?: Array<{ role: string; content: string }> }>): { messages?: Array<{ role: string; content: string }> } {
   const body = openAiBodies.find((candidate) => (
-    candidate.input?.some((item) => item.role === "system" && item.content.includes("autonomous equity trading agent"))
+    candidate.messages?.some((item) => item.role === "system" && item.content.includes("autonomous equity trading agent"))
   ));
   if (!body) throw new Error("Bull strategy prompt was not captured");
   return body;
 }
 
-function stubOpenAiAndNasdaq(openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }>): void {
+function stubOpenAiAndNasdaq(openAiBodies: Array<{ messages?: Array<{ role: string; content: string }> }>): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
       const body = JSON.parse(String(init?.body ?? "{}"));
       openAiBodies.push(body);
       if (isRedTeamRequest(body)) {
@@ -95,7 +95,7 @@ function stubOpenAiAndNasdaq(openAiBodies: Array<{ input?: Array<{ role: string;
 
 async function seed(): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Econ Calendar Test", isActive: true });
   setActiveConnectedAccount(accountId);
@@ -119,13 +119,13 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 describe("strategy.ts upcomingEconomicEvents prompt wiring (handoff 3.5)", () => {
   it("cache has forward events: userContent carries a compact upcomingEconomicEvents block next to currentMarketRegime", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
-    const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
+    const openAiBodies: Array<{ messages?: Array<{ role: string; content: string }> }> = [];
     stubOpenAiAndNasdaq(openAiBodies);
     await seed();
 
@@ -142,7 +142,7 @@ describe("strategy.ts upcomingEconomicEvents prompt wiring (handoff 3.5)", () =>
     expect(result.status).toBe("completed");
 
     const bullBody = bullPromptBody(openAiBodies);
-    const userContent = JSON.parse(bullBody.input!.find((item) => item.role === "user")?.content ?? "{}");
+    const userContent = JSON.parse(bullBody.messages!.find((item) => item.role === "user")?.content ?? "{}");
     expect(userContent.currentMarketRegime).toBeDefined();
     expect(userContent.upcomingEconomicEvents).toBeDefined();
     expect(userContent.upcomingEconomicEvents.note).toContain("HIGH-impact US economic events");
@@ -153,8 +153,8 @@ describe("strategy.ts upcomingEconomicEvents prompt wiring (handoff 3.5)", () =>
   }, 75_000);
 
   it("no calendar data: the upcomingEconomicEvents block is ENTIRELY absent — no empty scaffold", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
-    const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
+    const openAiBodies: Array<{ messages?: Array<{ role: string; content: string }> }> = [];
     stubOpenAiAndNasdaq(openAiBodies);
     await seed();
 
@@ -163,7 +163,7 @@ describe("strategy.ts upcomingEconomicEvents prompt wiring (handoff 3.5)", () =>
     expect(result.status).toBe("completed");
 
     const bullBody = bullPromptBody(openAiBodies);
-    const userContent = JSON.parse(bullBody.input!.find((item) => item.role === "user")?.content ?? "{}");
+    const userContent = JSON.parse(bullBody.messages!.find((item) => item.role === "user")?.content ?? "{}");
     expect(userContent.currentMarketRegime).toBeDefined();
     expect("upcomingEconomicEvents" in userContent).toBe(false);
   }, 75_000);

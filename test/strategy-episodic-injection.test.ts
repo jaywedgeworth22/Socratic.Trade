@@ -20,6 +20,8 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 const mocks = vi.hoisted(() => ({ retrieveContextDetailed: vi.fn() }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  findRelevantExperiences: async () => [],
+  upsertExperiences: async () => {},
   retrieveContext: async () => [],
   retrieveContextDetailed: mocks.retrieveContextDetailed,
   defaultMinScore: () => 0.3,
@@ -28,7 +30,11 @@ vi.mock("../src/lib/vector-db", () => ({
   formatChunkWithProvenance: (chunk: { text: string; doc_type?: string }, symbol?: string) =>
     `[${(chunk.doc_type ?? "context").toUpperCase()}${symbol ? ` · ${symbol}` : ""}]\n${chunk.text}`,
   storeContext: async () => {},
-  storeContexts: async () => ({ attempted: 0, indexed: 0 })
+  storeContexts: async () => ({ attempted: 0, indexed: 0 }),
+  getCurrentVectorProviderAuthority: () => "local",
+  managedVectorLedgerAuthority: () => "mock-ledger",
+  namespaceManifestsEnabled: () => false,
+  getRequiredNamespaceConfig: () => undefined
 }));
 
 beforeAll(() => {
@@ -91,19 +97,18 @@ describe("strategy.ts episodic analogs + owner coaching injection", () => {
       }
     );
 
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     const openAiBodies: Array<{
       input?: Array<{ role: string; content: string }>;
       messages?: Array<{ role: string; content: string }>;
     }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if (href.includes("openrouter.ai")) {
         const body = JSON.parse(String(init?.body ?? "{}"));
         openAiBodies.push(body);
-        // The single Red Team review (chat-completions: `messages`) approves; the Bull (responses
-        // API: `input`) proposes one AAPL buy so a review actually runs (evidence-parity subject).
-        if (Array.isArray(body.messages)) {
+        const systemContent = JSON.stringify(body);
+        if (systemContent.includes("Red Team Risk Agent")) {
           return new Response(
             JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: "approve", reason: "ok" }) } }] }),
             { status: 200, headers: { "content-type": "application/json" } }
@@ -111,21 +116,25 @@ describe("strategy.ts episodic analogs + owner coaching injection", () => {
         }
         return new Response(
           JSON.stringify({
-            output_text: JSON.stringify({
-              proposals: [
-                {
-                  symbol: "AAPL",
-                  side: "buy",
-                  type: "market",
-                  dollarAmount: 100,
-                  timeInForce: "gfd",
-                  marketHours: "regular_hours",
-                  rationale: "Momentum evidence for AAPL",
-                  tradeThesisTag: "Momentum-Breakout",
-                  confidenceScore: 70
-                }
-              ]
-            })
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  proposals: [
+                    {
+                      symbol: "AAPL",
+                      side: "buy",
+                      type: "market",
+                      dollarAmount: 100,
+                      timeInForce: "gfd",
+                      marketHours: "regular_hours",
+                      rationale: "Momentum evidence for AAPL",
+                      tradeThesisTag: "Momentum-Breakout",
+                      confidenceScore: 70
+                    }
+                  ]
+                })
+              }
+            }]
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -135,7 +144,7 @@ describe("strategy.ts episodic analogs + owner coaching injection", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Episodic Injection Test", isActive: true });
     setActiveConnectedAccount(accountId);
@@ -173,12 +182,12 @@ describe("strategy.ts episodic analogs + owner coaching injection", () => {
 
     // Evidence parity (R7): the Bull payload AND the single Red Team review payload both carry the
     // labeled blocks — the review's arrive via the adversaryContext threaded from proposeTrades.
-    const bullBody = openAiBodies.find((b) => Array.isArray(b.input));
-    const reviewBody = openAiBodies.find((b) => Array.isArray(b.messages));
+    const bullBody = openAiBodies.find((b) => !JSON.stringify(b).includes("Red Team Risk Agent"));
+    const reviewBody = openAiBodies.find((b) => JSON.stringify(b).includes("Red Team Risk Agent"));
     expect(bullBody).toBeDefined();
     expect(reviewBody).toBeDefined();
     const payloads = [
-      JSON.parse(bullBody!.input!.find((item) => item.role === "user")?.content ?? "{}") as Record<string, unknown>,
+      JSON.parse(bullBody!.messages!.find((item) => item.role === "user")?.content ?? "{}") as Record<string, unknown>,
       JSON.parse(reviewBody!.messages!.find((item) => item.role === "user")?.content ?? "{}") as Record<string, unknown>
     ];
     for (const [index, payload] of payloads.entries()) {

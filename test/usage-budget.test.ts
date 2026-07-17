@@ -72,7 +72,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
       { llmModel: "gpt-4o", redTeamLlmModel: "gpt-4o" },
-      { status: status([{ name: "openai", status: "exceeded" }]) }
+      { status: status([{ name: "openrouter", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
@@ -84,7 +84,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
       { llmModel: "gpt-4o-mini" },
-      { status: status([{ name: "openai", status: "exceeded" }]) }
+      { status: status([{ name: "openrouter", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(true);
     expect(decision.downgraded).toBe(false);
@@ -94,7 +94,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
       { llmModel: "gpt-4o-mini", redTeamLlmModel: "claude-opus-4-8" },
-      { status: status([{ name: "openai", status: "exceeded" }]) }
+      { status: status([{ name: "openrouter", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(true);
     expect(decision.downgraded).toBe(false);
@@ -106,7 +106,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
       {},
-      { status: status([{ name: "openai", status: "exceeded" }]) }
+      { status: status([{ name: "openrouter", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(false);
@@ -117,7 +117,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
       { llmModel: "gpt-4o" },
-      { status: status([{ name: "openai", status: "ok" }, { name: "alpaca", status: "exceeded" }]) }
+      { status: status([{ name: "openrouter", status: "ok" }, { name: "alpaca", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(false);
@@ -128,7 +128,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
       { llmModel: "gpt-4o" },
-      { status: status([{ name: "openai", status: "exceeded" }]) }
+      { status: status([{ name: "openrouter", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(false);
@@ -233,15 +233,15 @@ describe("usage-budget: formatBudgetAdvisory", () => {
   });
 
   it("returns undefined when every provider is ok/unconfigured (nothing worth mentioning)", () => {
-    const s = status([{ name: "openai", status: "ok" }, { name: "anthropic", status: "unconfigured" }]);
+    const s = status([{ name: "openrouter", status: "ok" }, { name: "anthropic", status: "unconfigured" }]);
     expect(budget.formatBudgetAdvisory(s)).toBeUndefined();
   });
 
   it("summarizes an exceeded provider with a downgrade/skip suggestion, not a command", () => {
-    const s = status([{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }]);
+    const s = status([{ name: "openrouter", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }]);
     const line = budget.formatBudgetAdvisory(s);
     expect(line).toBeTruthy();
-    expect(line).toContain("openai");
+    expect(line).toContain("openrouter");
     expect(line).toContain("150.00");
     expect(line).toContain("$100");
     expect(line).toContain("status=exceeded");
@@ -260,11 +260,11 @@ describe("usage-budget: formatBudgetAdvisory", () => {
 
   it("only mentions notable providers, silently omitting ok/unconfigured ones", () => {
     const s = status([
-      { name: "openai", status: "ok" },
+      { name: "openrouter", status: "ok" },
       { name: "anthropic", status: "exceeded", spentUsd: 200, monthlyBudgetUsd: 100 },
     ]);
     const line = budget.formatBudgetAdvisory(s);
     expect(line).toContain("anthropic");
-    expect(line).not.toContain("openai");
+    expect(line).not.toContain("openrouter");
   });
 });

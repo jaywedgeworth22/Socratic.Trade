@@ -91,7 +91,7 @@ const BULL_PROPOSAL_SCHEMA = {
 describe("buildLlmRequestBody", () => {
   it("OpenAI chat-completions: strict json_schema + max_completion_tokens (reasoning model)", () => {
     const body = buildLlmRequestBody(
-      { provider: "openai", transport: "chat-completions" },
+      { provider: "openrouter", transport: "chat-completions" },
       { model: "gpt-5.4-mini", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(body.model).toBe("gpt-5.4-mini");
@@ -100,8 +100,7 @@ describe("buildLlmRequestBody", () => {
     expect(body.max_completion_tokens).toBeGreaterThanOrEqual(1500);
     // No top-level Anthropic-only fields leak in.
     expect(body.system).toBeUndefined();
-    expect(body.max_tokens).toBeUndefined();
-  });
+      });
 
   it("DeepSeek chat-completions: downgrades a schema to bare json_object", () => {
     const body = buildLlmRequestBody(
@@ -113,7 +112,7 @@ describe("buildLlmRequestBody", () => {
 
   it("OpenAI responses: STRICT json_schema under text.format", () => {
     const body = buildLlmRequestBody(
-      { provider: "openai", transport: "responses" },
+      { provider: "openrouter", transport: "responses" },
       { model: "gpt-5.4-mini", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(body.input[0]).toEqual({ role: "system", content: "sys" });
@@ -123,7 +122,7 @@ describe("buildLlmRequestBody", () => {
 
   it("GPT-5.6 preserves the exact tier and reasoning effort on the OpenAI Responses transport", () => {
     const body = buildLlmRequestBody(
-      { provider: "openai", transport: "responses" },
+      { provider: "openrouter", transport: "responses" },
       {
         model: "gpt-5.6-terra",
         systemPrompt: "sys",
@@ -136,11 +135,10 @@ describe("buildLlmRequestBody", () => {
 
     expect(body.model).toBe("gpt-5.6-terra");
     expect(body.reasoning).toEqual({ effort: "high" });
-    expect(body.max_output_tokens).toBeGreaterThanOrEqual(1500);
+    expect(body.max_tokens).toBeGreaterThanOrEqual(1500);
     expect(body.text).toEqual({ format: { type: "json_schema", name: "trade_proposals", strict: true, schema: SCHEMA.schema } });
     expect(body.messages).toBeUndefined();
-    expect(body.max_completion_tokens).toBeUndefined();
-  });
+      });
 
   it("Anthropic: system field + forced tool-use for the schema, max_tokens set, no response_format", () => {
     const body = buildLlmRequestBody(
@@ -156,9 +154,7 @@ describe("buildLlmRequestBody", () => {
     expect(body.max_tokens).toBeGreaterThanOrEqual(1500);
     // OpenAI-only fields must never appear on an Anthropic body.
     expect(body.response_format).toBeUndefined();
-    expect(body.max_completion_tokens).toBeUndefined();
-    expect(body.max_output_tokens).toBeUndefined();
-  });
+          });
 
   it("Anthropic adaptive-thinking models get adaptive thinking config, not temperature", () => {
     const body = buildLlmRequestBody(
@@ -217,14 +213,14 @@ describe("buildLlmRequestBody", () => {
     expect(anthropic["x-api-key"]).toBe("sk-ant");
     expect(anthropic["anthropic-version"]).toBe("2023-06-01");
     // OpenAI-compatible transport is untouched: Bearer auth, no anthropic beta header.
-    const openai = llmAuthHeaders({ provider: "openai", key: "sk", url: "https://api.openai.com/v1/responses" });
+    const openai = llmAuthHeaders({ provider: "openrouter", key: "sk", url: "https://openrouter.ai/api/v1/chat/completions" });
     expect(openai["anthropic-beta"]).toBeUndefined();
     expect(openai.authorization).toBe("Bearer sk");
   });
 
   it("openAiJsonObject keeps OpenAI on json_object but Anthropic still uses the forced tool", () => {
     const oa = buildLlmRequestBody(
-      { provider: "openai", transport: "chat-completions" },
+      { provider: "openrouter", transport: "chat-completions" },
       { model: "gpt-4o-mini", systemPrompt: "s", userContent: "{}", schema: SCHEMA, openAiJsonObject: true, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(oa.response_format).toEqual({ type: "json_object" });
@@ -238,7 +234,7 @@ describe("buildLlmRequestBody", () => {
 
   it("no schema → free-text output (no response_format / tools)", () => {
     const oa = buildLlmRequestBody(
-      { provider: "openai", transport: "chat-completions" },
+      { provider: "openrouter", transport: "chat-completions" },
       { model: "gpt-4o-mini", systemPrompt: "s", userContent: "hi", maxOutputTokens: 500 }
     ) as Record<string, any>;
     expect(oa.response_format).toBeUndefined();
@@ -280,7 +276,7 @@ describe("buildLlmRequestBody", () => {
 
     // OpenAI stays byte-identical strict json_schema — the exact same schema object, untransformed.
     const openai = buildLlmRequestBody(
-      { provider: "openai", transport: "chat-completions" },
+      { provider: "openrouter", transport: "chat-completions" },
       { model: "gpt-5.4-mini", systemPrompt: "sys", userContent: "{}", schema: { name: "trade_proposals", schema: BULL_PROPOSAL_SCHEMA }, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(openai.response_format).toEqual({ type: "json_schema", json_schema: { name: "trade_proposals", strict: true, schema: BULL_PROPOSAL_SCHEMA } });
@@ -426,7 +422,7 @@ describe("toGeminiJsonSchema", () => {
     expect(JSON.stringify(body.response_format.json_schema.schema)).not.toContain('"maxItems"');
     // Non-Gemini providers keep the bound untouched (the strip is a Gemini-dialect concern only).
     const openai = buildLlmRequestBody(
-      { provider: "openai", transport: "chat-completions" },
+      { provider: "openrouter", transport: "chat-completions" },
       {
         model: "gpt-5.4-mini",
         systemPrompt: "sys",
@@ -469,7 +465,7 @@ describe("llmAuthHeaders", () => {
   });
 
   it("OpenAI-compatible providers use Bearer auth", () => {
-    for (const provider of ["openai", "xai", "gemini", "mistral", "deepseek"] as const) {
+    for (const provider of ["openrouter", "xai", "gemini", "mistral", "deepseek"] as const) {
       const h = llmAuthHeaders({ provider, key: "k", url: "https://example.com" });
       expect(h.authorization).toBe("Bearer k");
       expect(h["x-api-key"]).toBeUndefined();

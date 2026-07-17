@@ -154,16 +154,16 @@ function nasdaqResponse(): Response {
 function stubFetch(openAiBodies: OpenAiBody[]): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if (href.includes("openrouter.ai")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
       if (JSON.stringify(body).includes("Red Team Risk Agent")) {
         return new Response(
-          JSON.stringify({ output_text: JSON.stringify({ verdict: "approve", reason: "No fatal flaw found." }) }),
+          JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: "approve", reason: "No fatal flaw found." }) } }] }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
-      return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [BULL_PROPOSAL] }) }), {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [BULL_PROPOSAL] }) } }] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -175,7 +175,7 @@ function stubFetch(openAiBodies: OpenAiBody[]): void {
 
 async function setupBrokerPaperDecide(): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -194,11 +194,11 @@ async function setupBrokerPaperDecide(): Promise<void> {
     systemState: "active",
     activeBroker: "alpaca",
     accountNumber: "TEST",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openrouter/openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
-    redTeamLlmModel: "gpt-4.1-mini",
+    redTeamLlmModel: "openrouter/openai/gpt-4.1-mini",
     maxOrderPctOfNav: 100,
     maxDailyNotional: 400_000,
     maxDailyPctOfNav: 0,
@@ -230,7 +230,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
@@ -282,7 +282,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
@@ -330,7 +330,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
@@ -367,7 +367,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("WEB_SOURCE_FMP_TRANSCRIPTS", "off");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
@@ -401,7 +401,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("WEB_SOURCE_FMP_TRANSCRIPTS", "on");
     vi.stubEnv("FMP_TRANSCRIPT_STORAGE_RIGHTS_CONFIRMED", "on");
     const openAiBodies: OpenAiBody[] = [];
@@ -436,7 +436,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       managedVectorLedgerAuthority: () => "test-ledger"
     }));
 
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
@@ -447,8 +447,8 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     // Proposal flow unaffected: the stubbed LLM's single proposal still survives to completion.
     expect(result.proposals.length).toBeGreaterThanOrEqual(1);
 
-    const systemOf = (b: OpenAiBody) => b.input?.find((i) => i.role === "system")?.content ?? "";
-    const userOf = (b: OpenAiBody) => b.input?.find((i) => i.role === "user")?.content ?? "";
+    const systemOf = (b: any) => (b.messages ?? b.input)?.find((i: any) => i.role === "system")?.content ?? "";
+    const userOf = (b: any) => (b.messages ?? b.input)?.find((i: any) => i.role === "user")?.content ?? "";
     const bullBody = openAiBodies.find((b) => systemOf(b).includes("autonomous equity trading agent"));
     expect(bullBody).toBeDefined();
     const bullUser = JSON.parse(userOf(bullBody!)) as Record<string, unknown>;

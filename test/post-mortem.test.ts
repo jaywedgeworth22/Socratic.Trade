@@ -16,8 +16,8 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENAI_API_KEY;
-  delete process.env.OPENAI_API_URL;
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_API_URL;
   delete process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET;
 });
 
@@ -29,8 +29,8 @@ describe("generateReflectionSummary", () => {
     const { getUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
     upsertConnectedAccount({
       id: accountId,
@@ -68,10 +68,9 @@ describe("generateReflectionSummary", () => {
 
     await generateReflectionSummary(accountNumber, userId);
 
-    expect(requestBody.max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.postMortemReflection);
+    expect(requestBody.max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.postMortemReflection);
     expect(requestBody.temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
-    expect(requestBody.max_completion_tokens).toBeUndefined();
-    const context = JSON.parse(requestBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
+        const context = JSON.parse(requestBody.messages.find((item: any) => item.role === "user")?.content ?? "{}");
     expect(context.executionMode).toBe("broker/paper");
     expect(context.executionModeClarification).toContain("Alpaca Paper");
     expect(context.recentTrades[0]?.symbol).toBe("AAPL");
@@ -88,8 +87,8 @@ describe("generateReflectionSummary", () => {
     const { getUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary, getReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber: accountA, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -102,7 +101,7 @@ describe("generateReflectionSummary", () => {
 
     let llmCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-      if (String(url).includes("api.openai.com")) llmCalls += 1;
+      if (String(url).includes("openrouter.ai")) llmCalls += 1;
       return new Response(JSON.stringify({ output_text: `reflection ${llmCalls}` }), { status: 200, headers: { "content-type": "application/json" } });
     });
 
@@ -129,8 +128,8 @@ describe("generateReflectionSummary", () => {
     const { getDb, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -161,7 +160,7 @@ describe("generateReflectionSummary", () => {
 
     await generateReflectionSummary(accountNumber, userId);
 
-    const context = JSON.parse(requestBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
+    const context = JSON.parse(requestBody.messages.find((item: any) => item.role === "user")?.content ?? "{}");
     // The SELECT's COALESCE recovers the tags from the proposal JSON even though the dedicated
     // columns are NULL — this was the split-brain that told the LLM "thesisTag: null" for every
     // trade while the same prompt's scorecards showed per-thesis rows.
@@ -177,8 +176,8 @@ describe("generateReflectionSummary", () => {
     const { getUserSetting, setUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary, getReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -212,8 +211,8 @@ describe("generateReflectionSummary", () => {
     const { getDb, setUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -242,7 +241,7 @@ describe("generateReflectionSummary", () => {
     // Model attribution "on every decision surface incl. failure states" (#1076) — the reflection
     // is an LLM decision too, so its Journal entry must be able to show which model produced it.
     expect(reflectionPayload.model).toBe("gpt-4.1-mini");
-    expect(reflectionPayload.provider).toBe("openai");
+    expect(reflectionPayload.provider).toBe("openrouter");
 
     // Opt-out is reflection-only: an ordinary user-setting write still emits policy_change.
     setUserSetting(userId, "some_user_pref", "on");
@@ -259,8 +258,8 @@ describe("generateReflectionSummary", () => {
     const { getDb, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
@@ -281,7 +280,7 @@ describe("generateReflectionSummary", () => {
     const failurePayload = JSON.parse(reflections[0].payload);
     expect(failurePayload.status).toBe("failed");
     expect(failurePayload.model).toBe("gpt-4.1-mini");
-    expect(failurePayload.provider).toBe("openai");
+    expect(failurePayload.provider).toBe("openrouter");
     expect(typeof failurePayload.reason).toBe("string");
   });
 
@@ -293,8 +292,8 @@ describe("generateReflectionSummary", () => {
     const { recordLlmUsage } = await import("../src/lib/llm-usage");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
     process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET = "1"; // 1-token ceiling → immediately over budget
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
@@ -302,11 +301,11 @@ describe("generateReflectionSummary", () => {
     setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca" }, userId);
     insertFillEvent({ userId, accountNumber, source: "paper", executionMode: "broker/paper", symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled" });
     // Seed usage above the 1-token ceiling for THIS user so the budget is exceeded.
-    recordLlmUsage({ userId, provider: "openai", model: "gpt-4o", context: "strategy", keySource: "user", promptTokens: 10, completionTokens: 0 });
+    recordLlmUsage({ userId, provider: "openrouter", model: "gpt-4o", context: "strategy", keySource: "user", promptTokens: 10, completionTokens: 0 });
 
     let openaiCalled = false;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-      if (String(url).includes("api.openai.com")) openaiCalled = true; // the reflection LLM endpoint
+      if (String(url).includes("openrouter.ai")) openaiCalled = true; // the reflection LLM endpoint
       return new Response(JSON.stringify({ output_text: "should not be produced" }), { status: 200, headers: { "content-type": "application/json" } });
     });
 
