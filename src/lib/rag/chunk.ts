@@ -313,6 +313,12 @@ export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): Docu
         const proposed = [...pending, cleanPart].join("\n\n");
         if (pending.length && countTokens(proposed, false) > maxTokens) {
           flushParent(true);
+          // Re-check the carried overlap tail: a nearly-full part after a flush would otherwise
+          // become overlap + part and exceed the parent token cap. Drop the overlap rather than
+          // emitting an oversize parent block.
+          if (pending.length && countTokens([...pending, cleanPart].join("\n\n"), false) > maxTokens) {
+            pending = [];
+          }
         }
         pending.push(cleanPart);
       }
@@ -342,7 +348,13 @@ export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): Docu
       }
 
       const proposed = [...pending, block.text].join("\n\n");
-      if (pending.length && countTokens(proposed, false) > maxTokens) flushParent(true);
+      if (pending.length && countTokens(proposed, false) > maxTokens) {
+        flushParent(true);
+        // Same overlap re-check as the section-aware path above.
+        if (pending.length && countTokens([...pending, block.text].join("\n\n"), false) > maxTokens) {
+          pending = [];
+        }
+      }
       pending.push(block.text);
     }
     flushParent(false);

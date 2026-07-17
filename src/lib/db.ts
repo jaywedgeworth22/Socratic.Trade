@@ -2020,7 +2020,8 @@ const MIGRATIONS: Migration[] = [
           shares REAL NOT NULL,
           price REAL NOT NULL,
           period_of_report TEXT NOT NULL,
-          is_10b5_1 INTEGER NOT NULL DEFAULT 0
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_cik ON sec_insider_transactions(cik);
       `);
@@ -2055,6 +2056,20 @@ const MIGRATIONS: Migration[] = [
           text
         );
       `);
+    }
+  },
+  {
+    version: 50,
+    name: "sec_insider_transactions_transaction_code",
+    up: (database) => {
+      // v47's CREATE TABLE now includes transaction_code for fresh databases; this backfills any
+      // database that ran the original v47 before the column existed (PR #1669 review: insider
+      // rows must preserve the SEC transaction code so P/S open-market trades are distinguishable
+      // from grants/exercises/gifts). Guarded because ADD COLUMN fails if the column exists.
+      const cols = database.prepare("PRAGMA table_info(sec_insider_transactions)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "transaction_code")) {
+        database.exec("ALTER TABLE sec_insider_transactions ADD COLUMN transaction_code TEXT NOT NULL DEFAULT ''");
+      }
     }
   }
 ];

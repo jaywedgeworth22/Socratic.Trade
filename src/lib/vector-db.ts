@@ -123,6 +123,50 @@ export function activeEmbeddingModel(userId: string = "local"): string {
   return VOYAGE_MODEL;
 }
 
+/**
+ * Embedding-space isolation (PR #1669 P1). Cosine scores across different embedding models are
+ * meaningless even at equal dimensionality, so vectors from an alternative model (BGE-M3 via
+ * OpenRouter/SiliconFlow) must never be ranked against — or overwrite — the voyage-finance-2
+ * corpus. Two additive mechanisms, both no-ops while the Voyage model is active (today's entire
+ * production corpus, including pre-`embed_model` vectors that lack the metadata field):
+ *
+ * 1. `embeddingSpaceRevisionForModel` — the embed-revision tag baked into managed vector ids,
+ *    commit ids, and receipts. The legacy Voyage space keeps the historical bare `v${EMBED_REV}`
+ *    so existing ids/receipts stay byte-stable; any other model gets a model-suffixed tag so its
+ *    ids can never collide with (or upsert over) Voyage rows for the same content.
+ * 2. `embedSpaceFilterForModel` — a Pinecone metadata clause added to retrieval queries ONLY when
+ *    a non-Voyage model is active, restricting matches to vectors stamped with the same model.
+ *    Until a corpus is backfilled in that space, retrieval honestly returns fewer/no dense
+ *    matches instead of cross-space garbage rankings.
+ *
+ * No existing vectors are purged, rewritten, or re-indexed — switching to a new space is a
+ * deliberate backfill/switchover exercise (see the EMBED_REV comment above).
+ */
+export function embeddingSpaceRevisionForModel(model: string): string {
+  if (model === VOYAGE_MODEL) return `v${EMBED_REV}`;
+  return `v${EMBED_REV}-${model.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+export function embedSpaceFilterForModel(model: string): Record<string, unknown> {
+  if (model === VOYAGE_MODEL) return {};
+  // "baai/bge-m3" (OpenRouter) and "BAAI/bge-m3" (SiliconFlow) are the same model/space; accept
+  // either stamp so the two providers share one BGE corpus.
+  const variants = new Set([model]);
+  if (model.toLowerCase() === "baai/bge-m3") {
+    variants.add("baai/bge-m3");
+    variants.add("BAAI/bge-m3");
+  }
+  return { embed_model: { $in: [...variants] } };
+}
+
+function embeddingSpaceRevision(userId: string = "local"): string {
+  return embeddingSpaceRevisionForModel(activeEmbeddingModel(userId));
+}
+
+function buildEmbedSpaceFilter(userId: string): Record<string, unknown> {
+  return embedSpaceFilterForModel(activeEmbeddingModel(userId));
+}
+
 export function activeRerankModel(userId: string = "local"): string {
   const openrouterKey = resolveApiKey("openrouter", userId);
   if (openrouterKey && !openrouterKey.startsWith("mock")) {
@@ -1983,11 +2027,18 @@ async function embedWithRetry(
   const voyageKey = resolveApiKey("voyage", userId);
 
   const isOpenRouter = !!openrouterKey && !openrouterKey.startsWith("mock");
+  const isSiliconFlow = !isOpenRouter && !!siliconflowKey && !siliconflowKey.startsWith("mock");
   const apiKey = isOpenRouter ? openrouterKey : (siliconflowKey || voyageKey || "");
 
-  const hasMockClient = voyage && typeof voyage.embed === "function";
+  // Route by the ACTIVE embedding provider, not by the mere presence of a client with an `embed`
+  // method: `getClients` supplies a real VoyageAIClient whenever a Voyage key exists, so a
+  // presence-only check made the alternative-provider HTTP branch below unreachable in production
+  // and sent BGE model names to Voyage (PR #1669 P1). The injected client (real or test mock) is
+  // used only when Voyage IS the active provider.
+  const usesAlternativeEmbedProvider = isOpenRouter || isSiliconFlow;
+  const useVoyageClient = !usesAlternativeEmbedProvider && !!voyage && typeof voyage.embed === "function";
 
-  if (!hasMockClient && (apiKey === "voyage-key" || apiKey === "mock-voyage-api-key" || !apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
+  if (!useVoyageClient && (apiKey === "voyage-key" || apiKey === "mock-voyage-api-key" || !apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
     return {
       data: input.map((_, i) => ({
         embedding: Array.from({ length: 1024 }, (_, idx) => (i + idx) / 2048)
@@ -1998,7 +2049,7 @@ async function embedWithRetry(
   for (let attempt = 0; ; attempt++) {
     try {
       const runCall = async () => {
-        if (hasMockClient) {
+        if (useVoyageClient) {
           if (leaseGuard?.signal) {
             return await voyage.embed({
               input,
@@ -2093,16 +2144,22 @@ export async function rerankMatches(
   if (documents.every((d) => !d)) return rerankableMatches;
   
   const modelName = activeRerankModel(userId);
-  const hasMockClient = voyage && typeof voyage.rerank === "function";
 
   const openrouterKey = resolveApiKey("openrouter", userId);
   const siliconflowKey = resolveApiKey("siliconflow", userId);
   const voyageKey = resolveApiKey("voyage", userId);
 
   const isOpenRouter = !!openrouterKey && !openrouterKey.startsWith("mock");
+  const isSiliconFlow = !isOpenRouter && !!siliconflowKey && !siliconflowKey.startsWith("mock");
   const apiKey = isOpenRouter ? openrouterKey : (siliconflowKey || voyageKey || "");
 
-  if (!hasMockClient && (apiKey === "voyage-key" || apiKey === "mock-voyage-api-key" || !apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
+  // Same provider-routing rule as embedWithRetry (PR #1669 P1): the injected Voyage client is
+  // used only when Voyage is the active rerank provider — a presence-only `voyage.rerank` check
+  // would send OpenRouter/SiliconFlow model names to Voyage and make the HTTP branch unreachable.
+  const usesAlternativeRerankProvider = isOpenRouter || isSiliconFlow;
+  const useVoyageClient = !usesAlternativeRerankProvider && !!voyage && typeof voyage.rerank === "function";
+
+  if (!useVoyageClient && (apiKey === "voyage-key" || apiKey === "mock-voyage-api-key" || !apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
     return rerankableMatches.map((match, idx) => ({
       ...match,
       _rerankScore: 0.9 - idx * 0.05
@@ -2116,7 +2173,7 @@ export async function rerankMatches(
       userId,
       "rerank",
       async () => {
-        if (hasMockClient) {
+        if (useVoyageClient) {
           return await voyage.rerank({
             query,
             documents,
@@ -3150,7 +3207,10 @@ async function storeDocumentImpl(
     chunk_id: c.chunk_id
   }));
 
-  const embedRev = `v${EMBED_REV}`;
+  // Model-aware embedding-space revision (PR #1669 P1): stays the historical bare `v1` while the
+  // Voyage model is active; a non-Voyage model yields a suffixed tag so its vector ids/commits can
+  // never collide with or overwrite the Voyage corpus rows for the same content.
+  const embedRev = embeddingSpaceRevision(userId);
   const parserRev = options?.parserRevision?.trim() || "v1";
   const accession = doc.doc_id || "unknown_accession";
   const documentKey = options?.documentKey?.trim() || accession;
@@ -5625,7 +5685,11 @@ export async function retrieveContextDetailed(
   const requestedManagedFetchK = Math.max(baseFetchK, limit + rejectedVersionUpperBound);
   const fetchK = Math.min(managedTopKCap, requestedManagedFetchK);
   const managedTopKCapHit = requestedManagedFetchK > managedTopKCap;
-  const extraFilter = buildExtraFilters(options);
+  // Embedding-space isolation (PR #1669 P1): when a non-Voyage embedding model is active, restrict
+  // every dense query to vectors stamped with that same model — a BGE query vector must never rank
+  // voyage-finance-2 records. Empty (no clause; legacy behavior byte-identical) when Voyage is
+  // active, which keeps pre-`embed_model` vectors retrievable.
+  const extraFilter = { ...buildExtraFilters(options), ...buildEmbedSpaceFilter(userId) };
 
   // server-asof-filter (2026-07-06): the optional server-side point-in-time clause. `undefined`
   // (asOf unset/unparseable, or VECTOR_ASOF_SERVER_FILTER off) means NO clause is added — the

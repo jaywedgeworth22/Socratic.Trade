@@ -18,13 +18,25 @@ export class SecIngestWorker {
   private active = false;
   private intervalId: NodeJS.Timeout | null = null;
   private workerId = `worker:${crypto.randomUUID().slice(0, 8)}`;
+  private tickInFlight = false;
 
   constructor(private intervalMs = 5000) {}
 
   async start() {
     if (this.active) return;
     this.active = true;
-    this.intervalId = setInterval(() => this.runTick(), this.intervalMs);
+    // Serialize ticks: fetching/embedding routinely outlasts intervalMs, and an unguarded
+    // interval would start overlapping runTick() calls that claim extra batches and run
+    // EDGAR/Voyage/Pinecone work concurrently. Skip the tick while one is still in flight.
+    this.intervalId = setInterval(() => {
+      if (this.tickInFlight) return;
+      this.tickInFlight = true;
+      void this.runTick()
+        .catch((err) => console.error("[SecIngestWorker] Tick failed:", err instanceof Error ? err.message : String(err)))
+        .finally(() => {
+          this.tickInFlight = false;
+        });
+    }, this.intervalMs);
   }
 
   async stop() {
@@ -85,6 +97,13 @@ export class SecIngestWorker {
       heartbeat();
       const content = await politeFetchText(task.payload.url as string);
       await writeLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`, content);
+      // writeLocalArtifact swallows filesystem errors, so the await above does not prove the raw
+      // filing was persisted. Verify before advancing: otherwise every retry starts from
+      // `fetched`, reads a missing artifact, and dead-letters a recoverable filing.
+      const persisted = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
+      if (persisted === null || persisted.length !== content.length) {
+        throw new Error("Raw artifact write verification failed (artifact missing or truncated)");
+      }
 
       const ok = advanceSecIngestTask({
         taskId: task.id,
@@ -183,21 +202,20 @@ export class SecIngestWorker {
         doc_type: task.payload.docType as string,
         source: "sec-edgar",
         published_at: task.payload.filedAt as string,
+        // Point-in-time correctness: pass the SEC acceptance timestamp through when the queued
+        // payload carries it, so chunkDocument does not fall back to a date-only stamp that
+        // makes same-day filings retrievable for as-of queries earlier that day.
+        ...(typeof task.payload.acceptanceDateTime === "string" && task.payload.acceptanceDateTime
+          ? { acceptance_datetime: task.payload.acceptanceDateTime }
+          : {}),
         sections
       };
 
       const chunks = chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
       await writeLocalArtifact(task.cik, task.accession, sequence, "chunks.json", JSON.stringify(chunks));
-
-      for (const chunk of chunks) {
-        insertDocumentChunkFts(
-          chunk.content_hash,
-          task.symbol,
-          "sec-edgar",
-          task.accession,
-          chunk.text
-        );
-      }
+      // NOTE: FTS rows are deliberately NOT written here. Lexical indexing happens in the
+      // embed_queued stage AFTER storeDocument commits, so retrieval can never surface chunks
+      // from a document that failed or is still retrying its vector commit.
 
       const ok = advanceSecIngestTask({
         taskId: task.id,
@@ -240,19 +258,53 @@ export class SecIngestWorker {
         doc_type: task.payload.docType as string,
         source: "sec-edgar",
         published_at: task.payload.filedAt as string,
+        // Same acceptance pass-through as the chunk stage: preserve the accepted-at timestamp
+        // for point-in-time (as-of) retrieval instead of a date-only fallback.
+        ...(typeof task.payload.acceptanceDateTime === "string" && task.payload.acceptanceDateTime
+          ? { acceptance_datetime: task.payload.acceptanceDateTime }
+          : {}),
         sections
       };
 
-      const res = await storeDocument(doc, "local", {
-        maxTokens: 400,
-        overlapRatio: 0.15
-      });
+      // Keep the task lease alive across the long embed: storeDocument batches Voyage/Pinecone
+      // work and can easily outlast the 60s lease, after which another worker would reclaim the
+      // task and duplicate provider work. Heartbeat on a timer for the duration of the call.
+      const leaseHeartbeat = setInterval(heartbeat, 20_000);
+      leaseHeartbeat.unref?.();
+      let res;
+      try {
+        res = await storeDocument(doc, "local", {
+          maxTokens: 400,
+          overlapRatio: 0.15
+        });
+      } finally {
+        clearInterval(leaseHeartbeat);
+      }
 
       if (!res.documentComplete) {
         throw new Error("Ingestion budget or capacity exceeded mid-task");
       }
 
       await writeLocalArtifact(task.cik, task.accession, sequence, "storeResult.json", JSON.stringify(res));
+
+      // Lexical (FTS) indexing happens HERE — only after storeDocument reported a complete
+      // committed document — so hybrid retrieval can never surface chunks whose vector commit
+      // failed or is still retrying. insertDocumentChunkFts is idempotent per occurrence
+      // (delete+insert keyed on symbol/source/accession/hash), so a retry of this stage after a
+      // failed checkpoint advance does not duplicate rows.
+      const chunksJson = await readLocalArtifact(task.cik, task.accession, sequence, "chunks.json");
+      const ftsChunks = chunksJson
+        ? JSON.parse(chunksJson)
+        : chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
+      for (const chunk of ftsChunks) {
+        insertDocumentChunkFts(
+          chunk.content_hash,
+          task.symbol,
+          "sec-edgar",
+          task.accession,
+          chunk.text
+        );
+      }
 
       const ok = advanceSecIngestTask({
         taskId: task.id,

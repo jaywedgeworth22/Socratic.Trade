@@ -556,6 +556,28 @@ export async function ingestFiling(
     return { skipped: true, chunks: result.indexed, error: "document-commit-proof-lost" };
   }
 
+  // Mirror the committed chunks into the local FTS table so hybrid/lexical retrieval covers the
+  // PRODUCTION filing-body path — this scheduler→refreshFilingBodies→ingestFiling route is the
+  // active SEC ingest path, and previously only the (not-yet-instantiated) SecIngestWorker
+  // pipeline ever wrote document_chunks_fts rows. Runs only AFTER the vector commit + accession
+  // receipt above, so FTS can never surface chunks from an uncommitted document. Best-effort:
+  // a local FTS failure must not un-ingest an already-committed filing.
+  try {
+    const { chunkDocument } = await import("../rag/chunk");
+    const { insertDocumentChunkFts } = await import("../db");
+    for (const chunk of chunkDocument(document, {})) {
+      insertDocumentChunkFts(
+        chunk.content_hash,
+        chunk.ticker[0] ?? ticker,
+        "sec-edgar",
+        filingRef.accession,
+        chunk.text
+      );
+    }
+  } catch (err) {
+    console.warn(`[sec-filings] FTS indexing failed for ${filingRef.accession} (non-fatal):`, err instanceof Error ? err.message : String(err));
+  }
+
   return { skipped: false, chunks: result.attempted };
 }
 
