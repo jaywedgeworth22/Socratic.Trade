@@ -140,7 +140,8 @@ beforeEach(() => {
 
 function stubGreenProposals(proposals: Array<{ symbol: string; dollarAmount: number }>): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-    if (String(url).includes("openrouter.ai")) {
+    const href = String(url);
+    if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({

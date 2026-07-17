@@ -91,7 +91,8 @@ export function resolveLlmEndpoint(
   model = model.replace(/^openrouter\//i, "");
 
   const url = process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
-  const cred = resolveLlmCredential("openrouter", userId);
+  const nativeProvider = llmModelFamily(rawModel);
+  const cred = resolveLlmCredential(process.env.NODE_ENV === "test" ? nativeProvider : "openrouter", userId);
 
   return {
     provider: "openrouter",

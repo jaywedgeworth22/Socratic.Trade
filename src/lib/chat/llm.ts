@@ -576,12 +576,18 @@ export class OpenAILLM implements ChatLLM {
  * and share the OpenAILLM chat/completions tool loop, differing only by base URL + key.
  */
 export function chatProviderForModel(model: string): ChatProvider {
-  if (/^claude/i.test(model)) return "anthropic";
-  if (/^grok/i.test(model)) return "xai";
-  if (/^gemini/i.test(model)) return "gemini";
-  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) return "mistral";
-  if (/^openrouter\//i.test(model)) return "openrouter";
-  if (/^deepseek/i.test(model)) return "deepseek";
+  const trimmed = model?.trim() ?? "";
+  if (/^openrouter\//i.test(trimmed)) return "openrouter";
+
+  let name = trimmed;
+  if (name.includes("/")) {
+    name = name.split("/").pop() || name;
+  }
+  if (/^claude/i.test(name)) return "anthropic";
+  if (/^grok/i.test(name)) return "xai";
+  if (/^gemini/i.test(name)) return "gemini";
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(name)) return "mistral";
+  if (/^deepseek/i.test(name)) return "deepseek";
   return "openai";
 }
 

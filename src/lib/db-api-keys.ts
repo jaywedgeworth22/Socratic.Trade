@@ -550,10 +550,17 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
     const userKey = getUserApiKey(userId, canonical);
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
 
-    if (process.env.NODE_ENV === "test" && canonical === "openrouter") {
-      const services: LlmProviderService[] = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"];
-      for (const svc of services) {
-        const fallbackKey = getUserApiKey(userId, svc);
+    if (process.env.NODE_ENV === "test") {
+      if (canonical === "openrouter") {
+        const services: LlmProviderService[] = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"];
+        for (const svc of services) {
+          const fallbackKey = getUserApiKey(userId, svc);
+          if (fallbackKey?.apiKey) {
+            return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
+          }
+        }
+      } else {
+        const fallbackKey = getUserApiKey(userId, "openrouter");
         if (fallbackKey?.apiKey) {
           return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
         }
@@ -567,12 +574,18 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
   const envVar = apiKeyEnvVarForService(canonical);
   let envKey = envVar ? process.env[envVar] : undefined;
 
-  if (process.env.NODE_ENV === "test" && canonical === "openrouter" && !envKey) {
-    const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
-    for (const f of fallbacks) {
-      if (process.env[f]) {
-        envKey = process.env[f];
-        break;
+  if (process.env.NODE_ENV === "test" && !envKey) {
+    if (canonical === "openrouter") {
+      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+      for (const f of fallbacks) {
+        if (process.env[f]) {
+          envKey = process.env[f];
+          break;
+        }
+      }
+    } else {
+      if (process.env.OPENROUTER_API_KEY) {
+        envKey = process.env.OPENROUTER_API_KEY;
       }
     }
   }

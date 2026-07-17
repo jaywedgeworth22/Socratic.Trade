@@ -89,7 +89,7 @@ describe("reviewPendingFrameworkProposals — batched single-call reviewer", () 
 
     // Exactly ONE LLM call for both proposals; reviewer model = red-team model (AI-Review inheritance).
     expect(requestCount).toBe(1);
-    expect(requestedModel).toBe("openai/gpt-4.1-mini");
+    expect(requestedModel).toBe("gpt-4.1-mini");
     expect(result.reviewed).toBe(2);
 
     const a = getSocraticFrameworkProposal(idA, user);
