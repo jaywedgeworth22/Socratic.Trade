@@ -26,21 +26,35 @@ function getJaccardSimilarity(a: string, b: string): number {
   return union.size === 0 ? 0 : intersection.size / union.size;
 }
 
-async function fetchSiliconFlowEmbedding(texts: string[], userId: string = "local"): Promise<number[][]> {
-  const apiKey = resolveApiKey("siliconflow", userId) || resolveApiKey("voyage", userId) || "";
-  const response = await fetch("https://api.siliconflow.cn/v1/embeddings", {
+/**
+ * Embed texts through the ACTIVE alternative HTTP embedding provider (SiliconFlow or OpenRouter).
+ * Returns `null` when neither is configured — in the normal Voyage-only deployment there is no
+ * HTTP endpoint that accepts the Voyage credential, so the caller must use the Jaccard MMR
+ * fallback deliberately instead of sending a Voyage key to SiliconFlow and failing every time.
+ */
+async function fetchAlternativeEmbedding(texts: string[], userId: string = "local"): Promise<number[][] | null> {
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+  const openrouterKey = resolveApiKey("openrouter", userId);
+  const useSiliconFlow = !!siliconflowKey && !siliconflowKey.startsWith("mock");
+  const useOpenRouter = !useSiliconFlow && !!openrouterKey && !openrouterKey.startsWith("mock");
+  if (!useSiliconFlow && !useOpenRouter) return null;
+
+  const url = useSiliconFlow ? "https://api.siliconflow.cn/v1/embeddings" : "https://openrouter.ai/api/v1/embeddings";
+  const model = useSiliconFlow ? "BAAI/bge-m3" : "baai/bge-m3";
+  const apiKey = useSiliconFlow ? siliconflowKey : openrouterKey;
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: "BAAI/bge-m3",
+      model,
       input: texts
     })
   });
   if (!response.ok) {
-    throw new Error(`SiliconFlow Embedding failed in search fusion: ${response.status}`);
+    throw new Error(`Alternative embedding failed in search fusion (${useSiliconFlow ? "siliconflow" : "openrouter"}): ${response.status}`);
   }
   const res = await response.json();
   return res.data.map((d: any) => d.embedding);
@@ -76,12 +90,18 @@ export async function retrieveFusedContext(
         .join(" OR ");
 
       try {
+        // FTS5 bm25() returns SMALLER scores for better matches, so rank ascending before the
+        // LIMIT — otherwise SQLite returns rows in unspecified/insertion order and RRF assigns
+        // lexical ranks (and drops rows past 100) arbitrarily. The asOf variant groups (instead
+        // of DISTINCT) so the aggregate MIN(bm25) rank is usable in ORDER BY.
         if (asOf) {
           lexicalRows = db.prepare(`
-            SELECT DISTINCT f.content_hash, f.symbol, f.source, o.accession, f.text
+            SELECT f.content_hash, f.symbol, f.source, o.accession, f.text, MIN(bm25(f)) AS rank
             FROM document_chunks_fts f
             JOIN chunk_occurrences o ON f.content_hash = o.content_hash
             WHERE f.symbol = ? AND f.text MATCH ? AND o.accepted_at <= ?
+            GROUP BY f.content_hash, f.symbol, f.source, o.accession, f.text
+            ORDER BY rank ASC
             LIMIT 100
           `).all(symbol, cleanKeywords, String(asOf));
         } else {
@@ -89,6 +109,7 @@ export async function retrieveFusedContext(
             SELECT content_hash, symbol, source, accession, text
             FROM document_chunks_fts
             WHERE symbol = ? AND text MATCH ?
+            ORDER BY bm25(document_chunks_fts) ASC
             LIMIT 100
           `).all(symbol, cleanKeywords);
         }
@@ -235,18 +256,34 @@ export async function retrieveFusedContext(
     };
   }).sort((a, b) => b.score - a.score);
 
-  // 4. Maximal Marginal Relevance (MMR) cosine similarity filtering
+  // 4. Maximal Marginal Relevance (MMR) diversity filtering. Cosine MMR runs only when an
+  // alternative HTTP embedding provider (SiliconFlow/OpenRouter) is actually configured for this
+  // user; in the normal Voyage-only deployment the Jaccard fallback is selected deliberately up
+  // front — never by sending the Voyage credential to a foreign endpoint and catching the 401.
   const lambda = 0.5;
   const selected: FusionResult[] = [];
   const selectedIndices = new Set<number>();
   const m = Math.min(Math.max(limit, 15), candidates.length);
 
+  let queryVec: number[] | null = null;
+  let candVectors: number[][] | null = null;
   try {
-    const queryVecs = await fetchSiliconFlowEmbedding([query], userId);
-    const queryVec = queryVecs[0];
-    const candTexts = candidates.slice(0, m).map(c => c.text);
-    const candVectors = await fetchSiliconFlowEmbedding(candTexts, userId);
+    const queryVecs = await fetchAlternativeEmbedding([query], userId);
+    if (queryVecs) {
+      const candTexts = candidates.slice(0, m).map(c => c.text);
+      const cand = await fetchAlternativeEmbedding(candTexts, userId);
+      if (cand) {
+        queryVec = queryVecs[0];
+        candVectors = cand;
+      }
+    }
+  } catch (embedErr) {
+    console.warn("[search-fusion] MMR embedding failed; using Jaccard fallback:", embedErr instanceof Error ? embedErr.message : String(embedErr));
+  }
 
+  if (queryVec && candVectors) {
+    const qv = queryVec;
+    const cv = candVectors;
     const cosineSim = (a: number[], b: number[]) => {
       let dot = 0;
       let normA = 0;
@@ -266,43 +303,11 @@ export async function retrieveFusedContext(
       for (let i = 0; i < m; i++) {
         if (selectedIndices.has(i)) continue;
 
-        const relevance = cosineSim(candVectors[i], queryVec);
+        const relevance = cosineSim(cv[i], qv);
         let maxSimilarity = 0;
 
         for (const selIdx of selectedIndices) {
-          const sim = cosineSim(candVectors[i], candVectors[selIdx]);
-          if (sim > maxSimilarity) {
-            maxSimilarity = sim;
-          }
-        }
-
-        const score = lambda * relevance - (1 - lambda) * maxSimilarity;
-        if (score > bestScore) {
-          bestScore = score;
-          bestIndex = i;
-        }
-      }
-
-      if (bestIndex === -1) break;
-      selectedIndices.add(bestIndex);
-      selected.push(candidates[bestIndex]);
-    }
-
-    return selected;
-  } catch (embedErr) {
-    // Fallback Jaccard MMR Similarity
-    while (selected.length < limit && selected.length < candidates.length) {
-      let bestScore = -Infinity;
-      let bestIndex = -1;
-
-      for (let i = 0; i < m; i++) {
-        if (selectedIndices.has(i)) continue;
-
-        const relevance = candidates[i].score; // Use boosted RRF score as relevance proxy
-        let maxSimilarity = 0;
-
-        for (const selIdx of selectedIndices) {
-          const sim = getJaccardSimilarity(candidates[i].text, candidates[selIdx].text);
+          const sim = cosineSim(cv[i], cv[selIdx]);
           if (sim > maxSimilarity) {
             maxSimilarity = sim;
           }
@@ -322,4 +327,36 @@ export async function retrieveFusedContext(
 
     return selected;
   }
+
+  // Fallback Jaccard MMR similarity (no alternative embedding provider configured, or its call failed)
+  while (selected.length < limit && selected.length < candidates.length) {
+    let bestScore = -Infinity;
+    let bestIndex = -1;
+
+    for (let i = 0; i < m; i++) {
+      if (selectedIndices.has(i)) continue;
+
+      const relevance = candidates[i].score; // Use boosted RRF score as relevance proxy
+      let maxSimilarity = 0;
+
+      for (const selIdx of selectedIndices) {
+        const sim = getJaccardSimilarity(candidates[i].text, candidates[selIdx].text);
+        if (sim > maxSimilarity) {
+          maxSimilarity = sim;
+        }
+      }
+
+      const score = lambda * relevance - (1 - lambda) * maxSimilarity;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex === -1) break;
+    selectedIndices.add(bestIndex);
+    selected.push(candidates[bestIndex]);
+  }
+
+  return selected;
 }

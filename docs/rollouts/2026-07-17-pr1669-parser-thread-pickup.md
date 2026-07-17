@@ -1,5 +1,8 @@
 # 2026-07-17 — PR #1669 parser-thread pickup (cap-reset, CLAUDE-sub)
 
+> **Round 2 appended below** ("Round 2 — remaining 21 Codex threads") — same session,
+> coordinator-directed continuation covering the rest of the unresolved review threads.
+
 ## Summary
 
 Owner-directed pickup of the stalled Antigravity lane (`agent/ag-rag-backfill-p3`,
@@ -102,3 +105,115 @@ dependency — package.json/package-lock untouched by --no-save):
 - `/Users/jay/apps/TRADING-EFFORT-LOG.md` (branch-neutral live board) is not
   reachable from this cloud environment — the repo mirror `docs/EFFORT-LOG.md`
   was updated; the next Mac-side session should sync the live board.
+
+---
+
+# Round 2 — remaining 21 Codex threads (same day, coordinator-directed)
+
+## Summary
+
+Continuation of the same cap-reset pickup: all 21 remaining unresolved Codex review
+threads on PR #1669 addressed (2 P1s + 19 P2s). No thread deferred; none declined.
+
+**P1 corpus-integrity pair (`src/lib/vector-db.ts`):**
+
+- **Provider routing** (`PRRT_kwDOS7mOVM6Ro6lJ`): `embedWithRetry` (and the
+  same-pattern `rerankMatches`) now route by the ACTIVE provider instead of
+  "does the injected client have an embed/rerank method" — the old presence
+  check made the OpenRouter/SiliconFlow HTTP branch unreachable whenever a real
+  VoyageAIClient existed and sent BGE/cohere model names to Voyage.
+- **Embedding-space isolation** (`PRRT_kwDOS7mOVM6Ro6lQ`), implemented
+  additively per coordinator decision (no purge/rewrite/re-index, no namespace
+  migration): (1) `embeddingSpaceRevisionForModel` — managed vector ids /
+  commit ids / receipts keep the historical bare `v1` for the Voyage space and
+  get a model-suffixed revision (e.g. `v1-baai-bge-m3`) for any other model, so
+  alternative-space writes can never collide with or overwrite Voyage rows;
+  (2) `embedSpaceFilterForModel` — retrieval adds an `embed_model` Pinecone
+  filter ONLY when a non-Voyage model is active, so a BGE query vector never
+  ranks Voyage records; with Voyage active the filter is empty and legacy
+  behavior (including pre-`embed_model` vectors) is byte-identical.
+
+**Worker pipeline (`src/lib/rag/sec-ingest-worker.ts`):** serialized ticks
+(in-flight guard), raw-artifact write verification before advancing past
+`discovered`, acceptance-timestamp pass-through (`payload.acceptanceDateTime` →
+`acceptance_datetime`) in both document builds, a 20s lease-heartbeat timer
+around the long `storeDocument` call, and FTS indexing MOVED from the
+pre-commit chunk stage to the `embed_queued` stage AFTER `storeDocument`
+reports a complete committed document.
+
+**Production FTS wiring (`src/lib/web-sources/sec-filings.ts`):** `ingestFiling`
+(the active scheduler→refreshFilingBodies path) now mirrors committed chunks
+into `document_chunks_fts` after the vector commit + accession receipt, so
+hybrid retrieval has a lexical SEC corpus in production (previously only the
+never-instantiated worker wrote FTS rows).
+
+**FTS dedupe (`src/lib/db-learning.ts`):** `insertDocumentChunkFts` deletes by
+occurrence identity (symbol+source+accession+hash), not globally by
+content_hash — shared boilerplate across filings keeps one lexical row per
+occurrence.
+
+**Fusion (`src/lib/rag/search-fusion.ts`):** FTS queries now `ORDER BY bm25(...)
+ASC` (smaller = better; the current code shape had NO ordering at all), and the
+MMR embedding step uses the ACTIVE alternative provider
+(SiliconFlow/OpenRouter) or deliberately selects the Jaccard fallback up front
+when neither is configured — never a doomed call sending the Voyage key to a
+foreign endpoint.
+
+**SEC facts (`src/lib/web-sources/sec-facts.ts` + DDL in `src/lib/db.ts`):**
+XML booleans accept `1`/`true` (owner flags and 10b5-1); document-level
+`<aff10b5One>` fallback for transactions without a transaction-level indicator;
+`periodOfReport` read as direct element text (child `<value>` still covered);
+every `<reportingOwner>` recorded (one row per owner per transaction, owner in
+the deterministic id); SEC `transaction_code` preserved in a new column
+(v47 CREATE edited — table unmerged/not in production — plus guarded v50
+ALTER backfill for dev DBs that already ran v47); `ingestCompanyFacts`
+supports `facts.ifrs-full` for 20-F/40-F issuers and PROPAGATES operational
+failures (only the explicit 404 no-data path is swallowed) so the worker
+retry path works; removed a per-fact `[DEBUG]` console.log.
+
+**Eval harness (`scripts/eval/rag-eval-harness.ts`):** metrics divided by
+EVALUATED rows with a separate `skipped` count, and an ESM-safe direct-run
+guard (`pathToFileURL(process.argv[1])` comparison) replacing `require.main`.
+
+**Chunker (`src/lib/rag/chunk.ts`):** carried overlap is re-checked after a
+flush and dropped when overlap+part would exceed the parent token cap (both
+the section-aware and fallback paths).
+
+## Files (round 2)
+
+- `src/lib/vector-db.ts`
+- `src/lib/rag/search-fusion.ts`
+- `src/lib/rag/sec-ingest-worker.ts`
+- `src/lib/rag/chunk.ts`
+- `src/lib/web-sources/sec-facts.ts`
+- `src/lib/web-sources/sec-filings.ts`
+- `src/lib/db-learning.ts`
+- `src/lib/db.ts` (v47 DDL + new guarded migration v50)
+- `scripts/eval/rag-eval-harness.ts`
+- Tests: `test/embedding-space-isolation.test.ts` (new),
+  `test/search-fusion.test.ts` (+3), `test/sec-facts.test.ts` (+3),
+  `test/rag-eval-harness.test.ts` (+1), `test/sec-ingest-worker.test.ts`
+  (acceptance + post-commit FTS assertions), `test/sec-parser.test.ts`
+  (+1 overlap-cap), `test/persistence-hardening.test.ts` (schema-version pins
+  49 → 50 for the new migration).
+
+## Verification (round 2)
+
+- `npx tsc --noEmit` — clean.
+- Targeted: 6 affected test files — 25/25 green.
+- Full `npm test` — 408 files / 4,690 tests, all green (the only initial
+  failure was the schema-version pin, updated 49 → 50 with the new migration).
+- `npm run build` — production build succeeded.
+- `npm run lint` — 0 errors (grandfathered warnings only).
+
+## Follow-ups / risks (round 2)
+
+- No production enqueuer sets `payload.acceptanceDateTime` yet (the worker is
+  not instantiated in production); the pass-through is wired for when discovery
+  starts queueing tasks — set it at enqueue time.
+- The 8-K ingest path (`sec8k.ts`) does not FTS-mirror yet; the flagged filing
+  body path (`ingestFiling`) does. Extend if 8-K lexical coverage is wanted.
+- Switching production to a BGE embedding model remains a deliberate
+  backfill/switchover exercise — the isolation shipped here makes the switch
+  SAFE (no cross-space ranking, no overwrites) but intentionally does not
+  migrate or re-embed the existing Voyage corpus.

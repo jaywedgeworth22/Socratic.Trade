@@ -68,4 +68,24 @@ describe("RAG Evaluation Harness (P7)", () => {
     expect(metrics.recallAt50).toBe(1);
     expect(metrics.ndcg).toBeGreaterThan(0.9); // rank 1 = 1 / log2(2) = 1
   });
+
+  it("divides metrics by EVALUATED rows only — skipped (unresolvable CIK) rows never dilute the denominator", async () => {
+    const db = getDb();
+
+    // A golden row whose CIK has no task mapping: it must be SKIPPED and reported, not counted
+    // as an evaluated miss that halves global recall.
+    db.prepare(`
+      INSERT INTO sec_eval_golden_set (id, query, expected_cik, expected_accession, expected_text_snippet, category)
+      VALUES ('golden-unknown', 'unknown company question', '0009999999', 'acc-x', 'nothing', 'product')
+    `).run();
+
+    vi.mocked(retrieveContextDetailed).mockResolvedValue([]);
+
+    const metrics = await runEvaluationHarness();
+
+    expect(metrics.count).toBe(1); // only golden1 actually ran
+    expect(metrics.skipped).toBe(1); // golden-unknown reported as skipped
+    expect(metrics.recallAt10).toBe(1); // still 1/1, not 1/2
+    expect(metrics.recallAt50).toBe(1);
+  });
 });

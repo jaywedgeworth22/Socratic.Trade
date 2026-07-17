@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseFilingHtml } from "../src/lib/web-sources/sec-parser";
-import { chunkDocument } from "../src/lib/rag/chunk";
+import { chunkDocument, countTokens } from "../src/lib/rag/chunk";
 
 describe("SEC Parser and Chunker (Phase 3)", () => {
   it("should strip script, style, and hidden elements", () => {
@@ -196,6 +196,34 @@ describe("SEC Parser and Chunker (Phase 3)", () => {
     for (let i = 0; i < 15; i++) {
       const occurrences = parsed.text.split(`Row ${i} Val 1`).length - 1;
       expect(occurrences).toBe(1);
+    }
+  });
+
+  it("should never emit a parent block over the token cap when carrying overlap", () => {
+    const maxTokens = 50;
+    // partA (~39 tokens) fits a parent; partB (~46 tokens) nearly fills another. The overlap
+    // tail (~10 tokens) carried after flushing partA must be dropped when tail+partB would
+    // overflow the 50-token parent cap (tail + partB is ~56 tokens without the re-check).
+    const sentenceA = "alpha beta gamma delta epsilon zeta eta theta iota kappa.";
+    const sentenceB = "lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega.";
+    const partA = Array(3).fill(sentenceA).join(" ");
+    const partB = Array(3).fill(sentenceB).join(" ");
+
+    const chunks = chunkDocument({
+      text: `${partA}\n\n${partB}`,
+      sections: [{ itemCode: "1A", itemTitle: "Risk Factors", text: `${partA}\n\n${partB}` }],
+      doc_id: "TEST:overlap:10-K",
+      ticker: "TEST",
+      published_at: "2026-01-01"
+    }, {
+      maxTokens,
+      overlapRatio: 0.2
+    });
+
+    expect(chunks.length).toBeGreaterThan(0);
+    const parentTexts = [...new Set(chunks.map((c) => c.parent_text))];
+    for (const parentText of parentTexts) {
+      expect(countTokens(parentText, false)).toBeLessThanOrEqual(maxTokens);
     }
   });
 

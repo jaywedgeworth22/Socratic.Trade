@@ -2020,7 +2020,8 @@ const MIGRATIONS: Migration[] = [
           shares REAL NOT NULL,
           price REAL NOT NULL,
           period_of_report TEXT NOT NULL,
-          is_10b5_1 INTEGER NOT NULL DEFAULT 0
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_cik ON sec_insider_transactions(cik);
       `);
@@ -2058,14 +2059,28 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    version: 50,
+    name: "sec_insider_transactions_transaction_code",
+    up: (database) => {
+      // v47's CREATE TABLE now includes transaction_code for fresh databases; this backfills any
+      // database that ran the original v47 before the column existed (PR #1669 review: insider
+      // rows must preserve the SEC transaction code so P/S open-market trades are distinguishable
+      // from grants/exercises/gifts). Guarded because ADD COLUMN fails if the column exists.
+      const cols = database.prepare("PRAGMA table_info(sec_insider_transactions)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "transaction_code")) {
+        database.exec("ALTER TABLE sec_insider_transactions ADD COLUMN transaction_code TEXT NOT NULL DEFAULT ''");
+      }
+    }
+  },
+  {
     // EarningsCalls.dev fetch-once-forever transcript cache (CRUD in db-earningscalls.ts;
     // producer in earningscalls-transcripts.ts). GLOBAL market data — no user_id column,
     // deliberately exempt from DELETE_TABLES_BY_USER_ID (transcripts are public-company
     // material shared across users, like economic_events). `content` NULL = negative-cache
     // row: a budget-costing call found no transcript yet; re-fetch allowed only after the
     // negative TTL. A row with content is immutable — a cache hit NEVER re-fetches.
-    // NOTE (2026-07-17 merge): renumbered 47 -> 50 — branch's sec_facts/eval/fts took v47-49.
-    version: 50,
+    // NOTE (2026-07-17 merge): renumbered 50 -> 51 — branch's sec_insider_transactions_transaction_code took v50.
+    version: 51,
     name: "earningscalls_transcripts",
     up: (database) => {
       database.exec(`

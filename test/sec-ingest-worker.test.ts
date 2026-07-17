@@ -46,7 +46,8 @@ describe("SEC Ingestion Worker and State Machine (P5)", () => {
       payload: {
         url: "https://www.sec.gov/Archives/edgar/data/320193/000032019326000010/aapl-20260715.htm",
         docType: "10-K",
-        filedAt: "2026-07-15"
+        filedAt: "2026-07-15",
+        acceptanceDateTime: "2026-07-15T21:37:12.000Z"
       }
     });
 
@@ -97,5 +98,16 @@ describe("SEC Ingestion Worker and State Machine (P5)", () => {
     expect(finalTask!.checkpoint).toBe("complete");
     expect(finalTask!.status).toBe("complete");
     expect(finalTask!.observedChunks).toBe(1);
+
+    // Point-in-time: the queued acceptance timestamp must flow into the stored document, not a
+    // date-only fallback derived from filedAt.
+    const storeCall = vi.mocked(storeDocument).mock.calls[0]?.[0] as any;
+    expect(storeCall.acceptance_datetime).toBe("2026-07-15T21:37:12.000Z");
+
+    // Lexical FTS rows are written only after storeDocument reports a committed document —
+    // and they ARE written (the worker pipeline is the FTS producer for queued ingests).
+    const ftsRows = db.prepare("SELECT symbol, accession FROM document_chunks_fts WHERE accession = ?").all(accession) as any[];
+    expect(ftsRows.length).toBeGreaterThan(0);
+    expect(ftsRows[0].symbol).toBe("AAPL");
   });
 });
