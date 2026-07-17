@@ -30,6 +30,7 @@ describe("detectLlmTruncation (Chat A item 5)", () => {
 });
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

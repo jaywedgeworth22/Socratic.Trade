@@ -17,6 +17,7 @@ import { executeProposal } from "../src/lib/strategy-execution";
 import type { MarketQuote, MarketScan, TradeProposal } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

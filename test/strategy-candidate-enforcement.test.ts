@@ -7,6 +7,7 @@ import { enforceCandidateSetForOpenings, sanitizeProposals } from "../src/lib/st
 import type { TradeProposal } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

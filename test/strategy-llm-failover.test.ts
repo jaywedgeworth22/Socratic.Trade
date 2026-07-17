@@ -9,6 +9,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 // via the next model, recorded loudly (strategy_llm_failover audit + served model/provider on the step).
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -75,10 +76,13 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
   it("flag ON: a 429 from the primary transparently serves via the fallback model and is recorded", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
-    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return new Response("rate limited", { status: 429 });
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return geminiOk();
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+        const bodyStr = init?.body ? String(init.body) : "";
+        if (bodyStr.includes("gpt-")) return new Response("rate limited", { status: 429 });
+        return geminiOk();
+      }
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
@@ -102,7 +106,7 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     // actually generated it, not the configured primary (gpt-4.1-mini).
     expect(result.proposals.length).toBeGreaterThan(0);
     for (const p of result.proposals) {
-      expect(p.proposal.proposedByModel).toBe("gemini-2.5-flash");
+      expect(p.proposal.proposedByModel).toBe("google/gemini-2.5-flash");
     }
   }, 30_000);
 

@@ -11,6 +11,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 // LLM_PROVIDER_COOLDOWN_DISABLED=1 restores exact pre-cooldown behavior.
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

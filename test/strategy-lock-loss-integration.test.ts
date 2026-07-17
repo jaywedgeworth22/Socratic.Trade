@@ -67,6 +67,7 @@ vi.mock("../src/lib/broker", async (importOriginal) => {
 });
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

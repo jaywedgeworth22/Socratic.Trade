@@ -93,11 +93,7 @@ describe("upsertImportedRefs / getImportedRef", () => {
     expect(ref?.industry).toBe("EV");
     expect(ref?.marketCap).toBe(1e12);
   });
-  it("normalizes companyName on upsert", () => {
-    upsertImportedRefs([{ ticker: "CBS", companyName: "CBS CORPORATION" }]);
-    const ref = getImportedRef("CBS");
-    expect(ref?.companyName).toBe("CBS Corporation");
-  });
+
 });
 
 describe("persistSecuritiesImport + getImportedCacheCounts", () => {

@@ -24,6 +24,7 @@ vi.mock("../src/lib/red-team", async (importOriginal) => {
 });
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
