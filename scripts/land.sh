@@ -159,7 +159,8 @@ else
   ok "  tsc clean."
 
   info "  [2/3] npm test"
-  if ! npm test -- --run 2>&1; then
+  PATH_WITHOUT_NODE24="$(echo "$PATH" | sed 's|/opt/homebrew/opt/node@24/bin:||g')"
+  if ! PATH="$PATH_WITHOUT_NODE24" npm test -- --run 2>&1; then
     die "Tests failed.  Fix them, then re-run land.sh."
   fi
   ok "  tests pass."
