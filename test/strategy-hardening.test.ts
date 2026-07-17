@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { evaluateTradeProposal, betaScaledStopPct } from "../src/lib/policy";
 import {
+  BULL_PROPOSAL_REQUIRED_KEYS,
+  firstQuoteTolerantBlockEnd,
   enrichOpeningProposal,
+  filterRepairedProposals,
   filterStopPlansByLiveBasis,
   generateProactiveRiskProposals,
   sanitizeProposals
@@ -603,5 +606,172 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     // filterStopPlansByLiveBasis and never threaded here, so recordFillFromProposal later nulled the
     // stored justification on the scale-in fill's upsert.
     expect(p.stopPlan).toEqual({ style: "none", rationale: "high-conviction thesis, riding through the drawdown" });
+  });
+});
+
+describe("firstQuoteTolerantBlockEnd (Bull trailing-JSON ambiguity, Codex round 11)", () => {
+  it("finds the end of a single-quoted block whose strings contain braces, and exposes trailing JSON", () => {
+    const text = "{'proposals': [{'rationale': 'breaks the {wedge}'}]} Correction: []";
+    const end = firstQuoteTolerantBlockEnd(text);
+    expect(end).toBeGreaterThan(0);
+    expect(text.slice(end + 1)).toContain("[]"); // the guard treats this trailing JSON as ambiguous
+  });
+
+  it("reports no trailing JSON for a clean single block", () => {
+    const text = "{'proposals': []}";
+    const end = firstQuoteTolerantBlockEnd(text);
+    expect(end).toBe(text.length - 1);
+    expect(/[[{]/.test(text.slice(end + 1))).toBe(false);
+  });
+});
+
+describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 PR #1696)", () => {
+  const complete = () => ({
+    symbol: "AAPL",
+    side: "buy",
+    type: "market",
+    quantity: null,
+    dollarAmount: 1000,
+    limitPrice: null,
+    stopPrice: null,
+    timeInForce: "gfd",
+    marketHours: "regular_hours",
+    rationale: "Breakout over the 50d with volume confirmation.",
+    tradeThesisTag: "Momentum-Breakout",
+    confidenceScore: 72,
+    autonomyOverride: null,
+    bracketStopLoss: 172.5,
+    bracketTakeProfit: 205,
+    stopPlan: { style: "atr", rationale: null }
+  });
+
+  it("keeps a schema-complete proposal", () => {
+    const { kept, dropped } = filterRepairedProposals([complete()]);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toBe(0);
+  });
+
+  it("drops a proposal truncated mid-object (missing tail keys), keeping complete siblings", () => {
+    const truncated: Record<string, unknown> = { symbol: "NVDA", side: "buy", type: "market" };
+    const { kept, dropped } = filterRepairedProposals([complete(), truncated]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.symbol).toBe("AAPL");
+    expect(dropped).toBe(1);
+  });
+
+  it("drops a proposal whose judgment fields are empty even when every key is present", () => {
+    const hollow = { ...complete(), rationale: "  ", tradeThesisTag: "", confidenceScore: Number.NaN };
+    const { kept, dropped } = filterRepairedProposals([hollow]);
+    expect(kept).toHaveLength(0);
+    expect(dropped).toBe(1);
+  });
+
+  it("drops a repaired proposal whose identity fields have wrong TYPES even with all keys present (Codex round 2)", () => {
+    // json_object-mode repair can produce schema-invalid values; a numeric symbol would crash
+    // normalizeSymbol(.trim()) downstream and abort the whole run.
+    const wrongTypes = { ...complete(), symbol: 42 };
+    const badSide = { ...complete(), side: { verdict: "buy" } };
+    const badType = { ...complete(), type: "market_if_touched" };
+    const { kept, dropped } = filterRepairedProposals([wrongTypes, badSide, badType, complete()]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.symbol).toBe("AAPL");
+    expect(dropped).toBe(3);
+  });
+
+  it("drops a repaired proposal for a symbol outside the run's schema enum (Codex round 10)", () => {
+    // A repaired sell on an UNHELD symbol would reach Alpaca as side:sell and open an
+    // unintended short — the openings candidate gate only checks buy/short.
+    const offEnum = { ...complete(), symbol: "ZZZQ", side: "sell" };
+    const restricted = filterRepairedProposals([offEnum, complete()], ["buy", "sell"], ["AAPL", "NVDA"]);
+    expect(restricted.kept).toHaveLength(1);
+    expect(restricted.kept[0]?.symbol).toBe("AAPL");
+    expect(restricted.dropped).toBe(1);
+    // No enum (schema bare-string fallback) keeps prior behavior.
+    const unrestricted = filterRepairedProposals([offEnum], ["buy", "sell"]);
+    expect(unrestricted.kept).toHaveLength(1);
+  });
+
+  it("drops a repaired short when the run's schema is long-only (Codex round 8)", () => {
+    const shortIdea = { ...complete(), side: "short" };
+    const longOnly = filterRepairedProposals([shortIdea, complete()], ["buy", "sell"]);
+    expect(longOnly.kept).toHaveLength(1);
+    expect(longOnly.kept[0]?.side).toBe("buy");
+    expect(longOnly.dropped).toBe(1);
+    // Same proposal survives when the run's schema exposes shorts.
+    const shortsOn = filterRepairedProposals([shortIdea], ["buy", "sell", "short", "cover"]);
+    expect(shortsOn.kept).toHaveLength(1);
+  });
+
+  it("strips schema-extraneous fields from kept repaired proposals (Codex round 7)", () => {
+    // additionalProperties: false — a smuggled bracketStopLimit would turn the protective stop
+    // into a stop-limit order at the Alpaca adapter.
+    const smuggler = { ...complete(), bracketStopLimit: 171.9, stopPlan: { style: "atr", rationale: null, resetAll: true } };
+    const { kept, dropped } = filterRepairedProposals([smuggler]);
+    expect(dropped).toBe(0);
+    expect(kept).toHaveLength(1);
+    expect("bracketStopLimit" in (kept[0] as unknown as Record<string, unknown>)).toBe(false);
+    expect("resetAll" in ((kept[0]?.stopPlan ?? {}) as Record<string, unknown>)).toBe(false);
+    expect(kept[0]?.bracketStopLoss).toBe(172.5);
+  });
+
+  it("drops a repaired proposal with a fabricated (non-playbook) thesis tag (Codex round 6)", () => {
+    // A tag outside THESIS_PLAYBOOK has no scorecard history, so it would bypass the
+    // negative-expectancy skip gate as "unproven".
+    const madeUpTag = { ...complete(), tradeThesisTag: "vibes-based-momentum" };
+    const { kept, dropped } = filterRepairedProposals([madeUpTag, complete()]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.tradeThesisTag).toBe("Momentum-Breakout");
+    expect(dropped).toBe(1);
+  });
+
+  it("drops repaired proposals with null execution enums, out-of-range confidence, or invalid stopPlan (Codex round 5)", () => {
+    const nullTif = { ...complete(), timeInForce: null };
+    const nullHours = { ...complete(), marketHours: null };
+    const maxedConfidence = { ...complete(), confidenceScore: 999 };
+    const bareReset = { ...complete(), stopPlan: { style: "default" } }; // missing required rationale key
+    const nakedNone = { ...complete(), stopPlan: { style: "none", rationale: "  " } }; // no-stop without justification
+    const { kept, dropped } = filterRepairedProposals([nullTif, nullHours, maxedConfidence, bareReset, nakedNone, complete()]);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toBe(5);
+  });
+
+  it("drops repaired proposals with out-of-enum timeInForce or coercible autonomyOverride (Codex round 4)", () => {
+    // "day" is not in the gfd/gtc schema enum — Alpaca maps unknown strings to gtc.
+    const dayTif = { ...complete(), timeInForce: "day" };
+    // An object thesis coerces to "[object Object]" and could pass preference gates as a
+    // "real" override thesis under execute mode.
+    const junkOverride = { ...complete(), autonomyOverride: { requested: true, thesis: {} } };
+    const validOverride = {
+      ...complete(),
+      autonomyOverride: { requested: true, thesis: "Earnings momentum intact.", preferenceConflicts: [], invalidation: null, cashDeploymentPct: null }
+    };
+    const { kept, dropped } = filterRepairedProposals([dayTif, junkOverride, validOverride]);
+    expect(kept).toHaveLength(1);
+    expect((kept[0]?.autonomyOverride as { thesis?: string })?.thesis).toBe("Earnings momentum intact.");
+    expect(dropped).toBe(2);
+  });
+
+  it("drops a repaired proposal whose sizing fields are non-numeric strings (Codex round 3)", () => {
+    // sanitize preserves a string dollarAmount via ??, and Robinhood later calls .toFixed on it.
+    const stringMoney = { ...complete(), dollarAmount: "100" };
+    const stringQty = { ...complete(), quantity: "3" };
+    const nullsOk = { ...complete(), dollarAmount: null, limitPrice: null };
+    const { kept, dropped } = filterRepairedProposals([stringMoney, stringQty, nullsOk]);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toBe(2);
+  });
+
+  it("drops non-object entries outright", () => {
+    const { kept, dropped } = filterRepairedProposals([null, 42, "proposal", [complete()]]);
+    expect(kept).toHaveLength(0);
+    expect(dropped).toBe(4);
+  });
+
+  it("the completeness gate and the structured-output schema share one required-keys source", () => {
+    // If a future schema change adds/removes a required key, this import proves the gate moves
+    // with it (the schema literal spreads the same constant).
+    expect(BULL_PROPOSAL_REQUIRED_KEYS).toContain("stopPlan");
+    expect(BULL_PROPOSAL_REQUIRED_KEYS).toContain("tradeThesisTag");
+    expect(new Set(BULL_PROPOSAL_REQUIRED_KEYS).size).toBe(BULL_PROPOSAL_REQUIRED_KEYS.length);
   });
 });

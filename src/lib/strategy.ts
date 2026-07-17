@@ -4509,24 +4509,7 @@ async function proposeTrades(input: {
         items: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "symbol",
-            "side",
-            "type",
-            "quantity",
-            "dollarAmount",
-            "limitPrice",
-            "stopPrice",
-            "timeInForce",
-            "marketHours",
-            "rationale",
-            "tradeThesisTag",
-            "confidenceScore",
-            "autonomyOverride",
-            "bracketStopLoss",
-            "bracketTakeProfit",
-            "stopPlan"
-          ],
+          required: [...BULL_PROPOSAL_REQUIRED_KEYS],
           properties: {
             symbol: proposalSymbolSchema,
             // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
@@ -4746,13 +4729,58 @@ async function proposeTrades(input: {
             try {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
-              const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-              return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+              try {
+                const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
+                return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+              } catch {
+                // AMBIGUITY GUARD before repair (Codex P1, round 9), mirroring the Red Team's:
+                // a malformed reply carrying MORE THAN ONE `proposals` payload (e.g. a
+                // schema-complete block followed by a corrective `{"proposals":[]}`) must not be
+                // repaired from whichever block extraction keeps — contradictory output degrades
+                // to zero proposals exactly as it did pre-repair. Counted on the raw text with
+                // JSON \uXXXX escapes decoded so an escaped key cannot hide the second block.
+                const escapeNormalizedBullText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
+                  String.fromCharCode(Number.parseInt(hex, 16))
+                );
+                // Quotes OPTIONAL (Codex P1, round 10): jsonrepair accepts unquoted JSON5 keys,
+                // so a corrective `{proposals: []}` block must count too. The lookbehind stops
+                // word-suffix matches (e.g. "counterproposals:"); a prose mention still counting
+                // fails CLOSED to zero proposals, the accepted direction on this guard.
+                const proposalsKeyOccurrences = (escapeNormalizedBullText.match(/(?<![\w"'])["']?proposals["']?\s*:/g) ?? []).length;
+                if (proposalsKeyOccurrences > 1) {
+                  throw new Error(`Bull reply contained ${proposalsKeyOccurrences} proposals blocks (ambiguous); refusing repair.`);
+                }
+                // ANY trailing balanced JSON value counts as ambiguous too (Codex P1, round 11):
+                // a corrective bare array (`... Correction: []`) carries no proposals key but
+                // still contradicts the first block. Quote-tolerant scan, since the whole point
+                // of this path is that the reply may be single-quoted.
+                const firstBlockEnd = firstQuoteTolerantBlockEnd(escapeNormalizedBullText);
+                if (firstBlockEnd !== -1 && /[[{]/.test(escapeNormalizedBullText.slice(firstBlockEnd + 1))) {
+                  throw new Error("Bull reply contained trailing JSON after the first block (ambiguous); refusing repair.");
+                }
+                // Strict parse failed — retry WITH local jsonrepair, then gate every recovered
+                // proposal through the schema-completeness filter: repair can close a proposal
+                // truncated mid-object, and such partials must not reach sizing where defaults
+                // would fabricate the missing judgment fields (Codex P1, PR #1696). This
+                // generative path is the ONLY repair opt-in; Red Team / revalidation / tuning
+                // parse strictly and stay fail-closed.
+                const parsed = JSON.parse(extractJsonPayload(text, { repair: true })) as { proposals?: unknown[] };
+                const { kept, dropped } = filterRepairedProposals(
+                  parsed.proposals ?? [],
+                  allowedSides,
+                  proposalSymbols.length > 0 ? proposalSymbols : undefined
+                );
+                if (dropped > 0) {
+                  console.warn(`[Bull] jsonrepair recovered the payload but ${dropped} proposal(s) were incomplete (truncation artifacts) and were dropped; keeping ${kept.length}.`);
+                  audit("strategy_bull_repaired_partial_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
+                }
+                return { text, proposals: kept, truncated, wireOutputCap, finishReason };
+              }
             } catch (parseError) {
               // A truncated/malformed model response must not crash the whole autonomous
               // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
               // record a DISTINCT truncation reason instead of a silent no-op (see below).
-              console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", parseError);
+              console.warn("Bull Agent response local healing failed; degrading to zero proposals this run");
               return { text, proposals: [] as TradeProposal[], truncated, wireOutputCap, finishReason };
             }
           } catch (err) {
@@ -5151,6 +5179,190 @@ function recordLlmOutcome(
 // same binding imported above) so existing consumers (tests included) keep importing it from
 // "./strategy" unchanged.
 export { filterStopPlansByLiveBasis };
+
+/**
+ * Every key the Bull structured-output schema marks `required` on a proposal object (values may
+ * still be null where the schema allows it). Single source for the schema literal AND the
+ * post-repair completeness gate below — they must never drift.
+ */
+export const BULL_PROPOSAL_REQUIRED_KEYS = [
+  "symbol",
+  "side",
+  "type",
+  "quantity",
+  "dollarAmount",
+  "limitPrice",
+  "stopPrice",
+  "timeInForce",
+  "marketHours",
+  "rationale",
+  "tradeThesisTag",
+  "confidenceScore",
+  "autonomyOverride",
+  "bracketStopLoss",
+  "bracketTakeProfit",
+  "stopPlan"
+] as const;
+
+/**
+ * Completeness gate for proposals recovered via jsonrepair (Codex P1, PR #1696): repair proves
+ * SYNTAX, not completeness — a response truncated mid-proposal repairs into an object missing
+ * its tail fields, and `sanitizeProposals` only checks symbol/side/type before sizing fills the
+ * rest with defaults. A repaired proposal is kept only when every schema-required key is present
+ * and the three human-judgment fields carry real values (non-empty rationale/tradeThesisTag,
+ * finite confidenceScore) — anything less is a truncation artifact, not a trade idea.
+ */
+/**
+ * End index of the first balanced {...}/[...] block, scanning BOTH quote styles (the strict
+ * extractor's scanner is deliberately double-quote-only). Used by the Bull ambiguity guard to
+ * detect a trailing corrective JSON value — e.g. `{'proposals':[...]} Correction: []` — which
+ * carries no `proposals:` key yet contradicts the first block (Codex P1, round 11).
+ */
+export function firstQuoteTolerantBlockEnd(text: string): number {
+  const start = text.search(/[[{]/);
+  if (start === -1) return -1;
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === "{" || ch === "[") depth += 1;
+    else if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function isSchemaShapedStopPlan(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    "rationale" in o &&
+    (o.rationale === null || typeof o.rationale === "string") &&
+    typeof o.style === "string" &&
+    ["default", "fixed", "atr", "trailing", "none"].includes(o.style) &&
+    // "none" carries no stop at all — the schema prose requires a plain-language justification,
+    // and a repaired response must not strip protection without one.
+    (o.style !== "none" || (typeof o.rationale === "string" && o.rationale.trim() !== ""))
+  );
+}
+
+function isSchemaShapedAutonomyOverride(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    typeof o.requested === "boolean" &&
+    typeof o.thesis === "string" && o.thesis.trim() !== "" &&
+    Array.isArray(o.preferenceConflicts) && o.preferenceConflicts.every((item) => typeof item === "string") &&
+    (o.invalidation === null || typeof o.invalidation === "string") &&
+    (o.cashDeploymentPct === null || (typeof o.cashDeploymentPct === "number" && Number.isFinite(o.cashDeploymentPct)))
+  );
+}
+
+export function filterRepairedProposals(
+  proposals: unknown[],
+  // The RUN's schema enum, not the global four (Codex P1, round 8): when shortSellingEnabled is
+  // off or the account lacks short capability, the strict path rejects short/cover at
+  // `side: { enum: allowedSides }` — and the policy-level short gate is deliberately
+  // owner-overrideable, so the repair path must enforce the same schema boundary.
+  allowedSides: readonly string[] = ["buy", "sell", "short", "cover"],
+  // The RUN's symbol enum (Codex P1, round 10): the schema restricts symbols to the scan's
+  // candidates plus current holdings; a repaired `sell` on an UNHELD symbol bypasses both the
+  // openings candidate gate (buy/short only) and the policy holdings check, and Alpaca infers
+  // open-vs-close from `side: sell` — an unintended short. undefined mirrors the schema's
+  // bare-string fallback when the run has no candidates/holdings to enumerate.
+  allowedSymbols?: readonly string[]
+): { kept: TradeProposal[]; dropped: number } {
+  const kept: TradeProposal[] = [];
+  let dropped = 0;
+  for (const candidate of proposals) {
+    const record = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+      ? (candidate as Record<string, unknown>)
+      : undefined;
+    const complete =
+      record !== undefined &&
+      BULL_PROPOSAL_REQUIRED_KEYS.every((key) => key in record) &&
+      // Key presence alone is not enough (Codex P2, round 2): a repaired json_object-mode
+      // response can carry schema-INVALID values (numeric symbol, object side), and
+      // `sanitizeProposals` calls `normalizeSymbol(proposal.symbol)` → `.trim()` which would
+      // throw and abort the entire run instead of taking the zero-proposal path. Type-check
+      // the identity/enum fields the downstream pipeline dereferences unconditionally.
+      typeof record.symbol === "string" && record.symbol.trim() !== "" &&
+      (allowedSymbols === undefined || allowedSymbols.includes(normalizeSymbol(record.symbol))) &&
+      typeof record.side === "string" &&
+      allowedSides.includes(record.side) &&
+      typeof record.type === "string" &&
+      ["market", "limit", "stop_market", "stop_limit"].includes(record.type) &&
+      typeof record.rationale === "string" && record.rationale.trim() !== "" &&
+      // Playbook membership, not just non-emptiness (Codex P1, round 6): a fabricated tag has
+      // no scorecard history, so shouldSkipNegativeExpectancy treats it as unproven and a
+      // repaired reply could bypass a proven negative thesis's skip gate.
+      typeof record.tradeThesisTag === "string" &&
+      (THESIS_PLAYBOOK as readonly string[]).includes(record.tradeThesisTag) &&
+      typeof record.confidenceScore === "number" && Number.isFinite(record.confidenceScore) &&
+      // Numeric/null sizing fields (Codex P2, round 3): repair can deliver `dollarAmount: "100"`,
+      // which sanitize preserves via ?? and Robinhood later dereferences with .toFixed —
+      // crashing the run instead of taking the zero-proposal path. null stays allowed (the
+      // schema is nullable here); anything else must be a finite number.
+      (["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"] as const)
+        .every((key) => record[key] === null || (typeof record[key] === "number" && Number.isFinite(record[key] as number))) &&
+      // Schema range for conviction (Codex P1, round 5): the contract bounds confidenceScore to
+      // 1-100; sanitize would CLAMP a repaired 999 to maximum conviction instead of rejecting it.
+      (record.confidenceScore as number) >= 1 && (record.confidenceScore as number) <= 100 &&
+      // Enum membership, exactly as declared (Codex P1, rounds 4-5): timeInForce/marketHours are
+      // NON-NULL enums in the schema — a repaired null would ride sanitize's defaults (gfd,
+      // regular_hours) into silently chosen order semantics, and Alpaca maps any other string
+      // to gtc.
+      (record.timeInForce === "gfd" || record.timeInForce === "gtc") &&
+      (record.marketHours === "regular_hours" || record.marketHours === "extended_hours" || record.marketHours === "all_day_hours") &&
+      // stopPlan must satisfy its subschema (Codex P1, round 5): a repaired {style:"default"}
+      // missing the required rationale key would otherwise carry a RESET instruction that
+      // clears the position's persisted fixed/atr/trailing/none plan at fill commit.
+      (record.stopPlan === null || isSchemaShapedStopPlan(record.stopPlan)) &&
+      // A repaired autonomyOverride must satisfy the override subschema (Codex P1, round 4):
+      // sanitize coerces a nested-object thesis to "[object Object]", which
+      // resolveSocraticOverride would treat as a REAL thesis and use to pass preference gates
+      // under socraticOverrideMode: "execute". requested must be boolean and thesis a real
+      // string before a repaired proposal may carry an override request at all.
+      (record.autonomyOverride === null || isSchemaShapedAutonomyOverride(record.autonomyOverride));
+    if (complete && record !== undefined) {
+      // additionalProperties: false, enforced by PROJECTION (Codex P1, round 7): a validated
+      // record may still smuggle unvalidated extras — e.g. a repaired `bracketStopLimit` that
+      // the Alpaca adapter would honor, turning the protective stop into a stop-limit order the
+      // declared schema rejects. Rebuild the kept proposal from exactly the schema's keys, and
+      // project the two nested objects onto THEIR declared keys for the same reason.
+      const projected: Record<string, unknown> = {};
+      for (const key of BULL_PROPOSAL_REQUIRED_KEYS) projected[key] = record[key];
+      if (projected.stopPlan && typeof projected.stopPlan === "object") {
+        const sp = projected.stopPlan as Record<string, unknown>;
+        projected.stopPlan = { style: sp.style, rationale: sp.rationale ?? null };
+      }
+      if (projected.autonomyOverride && typeof projected.autonomyOverride === "object") {
+        const ao = projected.autonomyOverride as Record<string, unknown>;
+        projected.autonomyOverride = {
+          requested: ao.requested,
+          thesis: ao.thesis,
+          preferenceConflicts: ao.preferenceConflicts,
+          invalidation: ao.invalidation ?? null,
+          cashDeploymentPct: ao.cashDeploymentPct ?? null
+        };
+      }
+      kept.push(projected as unknown as TradeProposal);
+    } else {
+      dropped += 1;
+    }
+  }
+  return { kept, dropped };
+}
 
 export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
