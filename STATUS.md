@@ -56,6 +56,22 @@ Addressed 8 remaining Codex P1/P2 findings across 5 files (search-fusion.ts, rag
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
+## 2026-07-17 — jsonrepair healing: fail-closed boundaries (CLAUDE on PR #1696, cap-reset pickup)
+
+Fixed the four unresolved Codex threads on the stalled `agent/local-response-healing` lane:
+`extractJsonPayload` repair is now OPT-IN (default strict) — global repair was converting
+fail-closed gates into fail-open (truncated `{"verdict":"approve"` repaired into a valid
+approval; truncated revalidation `withdraw` repaired into a real withdrawal). Red Team /
+revalidation / tuning parse strictly and stay fail-closed; Red Team gains a multiple-verdict
+ambiguity guard. Bull proposals are the one repair opt-in, gated by a new
+`filterRepairedProposals` schema-completeness check sharing `BULL_PROPOSAL_REQUIRED_KEYS`
+with the structured-output schema. Rollout:
+`docs/rollouts/2026-07-17-jsonrepair-fail-closed-boundaries.md`.
+Also this cycle: PR #1697 (EarningsCalls) MERGED to production after phantom-conflict unstick;
+#1687/#1686/#1688 merged earlier; #1669 thread burn-down delegated to a sub-agent; #1677
+(OpenRouter migration, 22 threads) is next in the pickup queue.
+
+
 ## 2026-07-16 — Board state correction: Mistral benchmark-UI row → DEPLOYED (MONET, branch monet/board-flip-benchmark-ui)
 Bookkeeping-only. PR #1361 (Mistral benchmark data in the model-picker UI) merged 2026-07-10 and
 auto-deployed, but its `docs/EFFORT-LOG.md` row was left under **In Progress**. Flipped the row's
