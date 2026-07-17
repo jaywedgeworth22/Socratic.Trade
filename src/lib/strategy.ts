@@ -60,7 +60,7 @@ import { OrderValidationError } from "./types";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
 import { planFundingSells } from "./sell-to-fund";
-import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState, isBracketOrderClass } from "./broker-side";
+import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState, isBracketOrderClass, isLiveExitOrder } from "./broker-side";
 import {
   calibratedConviction,
   getClosedLotCount,
@@ -4069,7 +4069,7 @@ async function proposeTrades(input: {
         })
       }
     : undefined;
-  const compactPromptMarketScan = compactMarketScanForPrompt(promptMarketScan);
+  const compactPromptMarketScan = compactMarketScanForPrompt(promptMarketScan, input.candidateAtrStopPctBySymbol);
   const evidenceSourceCoverage = summarizeSourceCoverage(input.marketScan?.topCandidates ?? []);
   const decisionAsOf = input.asOf;
   const evidenceSubject = input.policy.connectedAccountId ?? input.policy.accountNumber ?? input.userId;
@@ -4339,9 +4339,9 @@ async function proposeTrades(input: {
     const symbolOrders = (input.recentOrders as EquityOrder[]).filter(
       (o) => normalizeSymbol(o.symbol) === sym
     );
-    const exitSide = pos.quantity > 0 ? "sell" : "cover";
+    const positionSide = pos.quantity > 0 ? "long" : "short";
     const openExitOrders = symbolOrders.filter(
-      (o) => o.side === exitSide && ["open", "pending_new", "accepted", "partially_filled"].includes(o.state)
+      (o) => isLiveExitOrder(o, positionSide)
     );
 
     const hasBracket = openExitOrders.some((o) => isBracketOrderClass(o.orderClass));
