@@ -1044,3 +1044,58 @@ describe("Tradier adapter — cancelBracketSiblingLegs (bracket sibling-leg tear
     await expect(getTradierGateway("local").cancelBracketSiblingLegs!(ACCT, "901-transient")).rejects.toThrow();
   });
 });
+
+describe("Tradier adapter — option positions", () => {
+  it("fetches and maps option positions, parses OCC symbols, and prices them via getEquityQuotes", async () => {
+    await seedTradier();
+    installFetchMock([
+      {
+        match: (u, m) => m === "GET" && u.includes(`/accounts/${ACCT}/positions`),
+        body: {
+          positions: {
+            position: [
+              {
+                symbol: "DELL  260717C00150000",
+                quantity: 2,
+                cost_basis: 500.0,
+                date_acquired: "2026-07-01T00:00:00Z"
+              },
+              {
+                symbol: "AAPL",
+                quantity: 10,
+                cost_basis: 1500.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        match: (u, m) => m === "GET" && u.includes("/markets/quotes") && u.includes("DELL260717C00150000"),
+        body: {
+          quotes: {
+            quote: {
+              symbol: "DELL260717C00150000",
+              last: 3.5,
+              volume: 100
+            }
+          }
+        }
+      }
+    ]);
+    const { getTradierGateway } = await import("../src/lib/tradier");
+    const gateway = getTradierGateway("local");
+    const result = await gateway.getOptionPositions!(ACCT);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      symbol: "DELL260717C00150000",
+      underlyingSymbol: "DELL",
+      expirationDate: "2026-07-17",
+      optionType: "call",
+      strikePrice: 150.0,
+      quantity: 2,
+      averageCost: 2.5,
+      marketValue: 700.0
+    });
+  });
+});
+

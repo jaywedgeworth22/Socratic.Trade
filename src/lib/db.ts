@@ -2420,6 +2420,8 @@ function migrate(database: Database.Database): void {
       last_price REAL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      suspect_price REAL,
+      suspect_count INTEGER NOT NULL DEFAULT 0,
       UNIQUE(user_id, account_number, symbol)
     );
     CREATE INDEX IF NOT EXISTS idx_synthetic_stops_account ON synthetic_trailing_stops (user_id, account_number);
@@ -3185,6 +3187,15 @@ function migrate(database: Database.Database): void {
   const connectedAccountDrainingColumns = database.prepare("PRAGMA table_info(connected_accounts)").all() as Array<{ name: string }>;
   if (!connectedAccountDrainingColumns.some((c) => c.name === "is_draining")) {
     database.exec("ALTER TABLE connected_accounts ADD COLUMN is_draining INTEGER DEFAULT 0");
+  }
+
+  // Exit-strategy Phase A: confirmation-based bad-tick acceptance (suspect_price, suspect_count)
+  const syntheticStopCols = database.prepare("PRAGMA table_info(synthetic_trailing_stops)").all() as Array<{ name: string }>;
+  if (!syntheticStopCols.some((c) => c.name === "suspect_price")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN suspect_price REAL");
+  }
+  if (!syntheticStopCols.some((c) => c.name === "suspect_count")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN suspect_count INTEGER NOT NULL DEFAULT 0");
   }
 
   const now = new Date().toISOString();
