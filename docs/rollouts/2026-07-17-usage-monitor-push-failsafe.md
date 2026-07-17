@@ -127,18 +127,37 @@ No changes to `src/lib/usage-monitor-replay.ts`, event schema/shape, or any call
    seeds a pre-v4 raw-event `queue` + receivedAt-less `pendingQueue`, reloads the module, and
    asserts both flush cleanly.
 
+## Review round 2 (codex-connector on PR #1711, 1 finding — observability truthfulness)
+
+**[P2] The replay lane didn't record `usage-monitor` health, so the admin health row could lie.**
+Only `postBatch` (the live-push lane) wrote `logApiHealth({ service: "usage-monitor", ... })`. If
+the durable-replay worker (`sendUsageMonitorBatch`) was the FIRST lane to hit a down monitor, its
+failure opened the shared breaker WITHOUT recording a health failure — and then every later
+live-push flush was suppressed by the now-open breaker before `postBatch` ever ran, so the admin
+connections-health row stayed "healthy"/stale for the entire backoff window while the monitor was
+actually down. That is the same class of stale-observability bug this whole incident was about.
+FIXED: factored the health write into a shared `recordUsageMonitorHealth(ok, startedAt, err?)`
+helper (best-effort, never throws — `logApiHealth` already swallows its own errors, and the helper
+adds a defensive guard so it can never break a fire-and-forget caller). BOTH lanes now call it —
+`postBatch` and `sendUsageMonitorBatch` — on success (recovery) and failure, recorded before the
+shared breaker update to mirror `postBatch`'s existing ordering. `sendUsageMonitorBatch` gained an
+error binding (`catch (err)`) so the failure's `errorText` is preserved. New test
+(`usage-monitor-replay.test.ts`): a replay-lane failure records a `usage-monitor` health FAILURE
+row (`ok = 0`, not just a breaker trip), and a subsequent replay success records recovery
+(`ok = 1`). No change to what telemetry is sent or the breaker/buffer behavior.
+
 ## Verification
 
 Node 24 (`.nvmrc`), fresh worktree `~/apps/trading-monet-usage-push-failsafe`, `npm ci`:
 
 - `npx tsc --noEmit` — clean.
 - Focused: `npx vitest run test/usage-monitor-push.test.ts test/usage-monitor-replay.test.ts` —
-  28/28 (17 pre-existing + 11 new across breaker, bounded buffer, flush-entry TTL, callVolume cap,
-  push timeout, and HMR shape migration), all passing including the pre-existing tests that use
-  historical/fixed `occurredAt` values (these initially broke when TTL was first keyed off
-  `occurredAt` instead of buffer-residency time — fixed before finalizing).
+  29/29 (17 pre-existing + 12 new across breaker, bounded buffer, flush-entry TTL, callVolume cap,
+  push timeout, HMR shape migration, and replay-lane health truthfulness), all passing including the
+  pre-existing tests that use historical/fixed `occurredAt` values (these initially broke when TTL
+  was first keyed off `occurredAt` instead of buffer-residency time — fixed before finalizing).
 - `npm run lint` — 0 errors (493 pre-existing grandfathered warnings, none new).
-- `npm test` — 404 files / 4741 tests, all passing.
+- `npm test` — 404 files / 4742 tests, all passing.
 - `npm run build` — clean production build (exit 0).
 
 ## Follow-ups

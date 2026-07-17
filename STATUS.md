@@ -10,10 +10,16 @@ hardcoded 30s) so a half-up receiver that never responds becomes a recorded fail
 breaker; [P2] callVolume cap is now env-tunable `USAGE_MONITOR_CALLVOLUME_MAX_KEYS` (default 2000,
 was a hardcoded 100); [P2] trim TTL/cap at flush entry (kept from autofix); [P2] HMR migration now
 covers BOTH `queue` and `pendingQueue` via `normalizeRetainedQueues()` with a `STATE_VERSION` 3→4
-bump (autofix migrated only `queue`, no bump). 11 new focused tests cover every finding. Gate:
-`tsc` clean, lint 0 errors, focused 28/28, full 404 files/4,741 tests, production build all green.
-Not pushed by this session — coordinator re-pushes (fast-forward on top of the autofix commits) +
-confirms threads resolved + merges.
+bump (autofix migrated only `queue`, no bump). Review round 2 added one more [P2] fix: an
+observability-truthfulness bug where the replay lane (`sendUsageMonitorBatch`) opened the shared
+breaker on a replay-first outage WITHOUT recording a `usage-monitor` health failure — then the open
+breaker suppressed every later live-push `postBatch` before it could record health, so the admin
+health row stayed stale-"healthy" for the whole backoff window. Factored a shared
+`recordUsageMonitorHealth()` helper (best-effort) so BOTH lanes record failure (before the breaker
+update) and success (recovery); the health row is now truthful regardless of which lane talks to the
+monitor. 12 new focused tests cover every finding. Gate: `tsc` clean, lint 0 errors, focused 29/29,
+full 404 files/4,742 tests, production build all green. Not pushed by this session — coordinator
+re-pushes (fast-forward on top of the autofix commits) + confirms threads resolved + merges.
 
 Owner-directed incident response: `usage.jays.services` (API-usage-monitor) was OOM-down ~2 days;
 both Congress.Trade and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs

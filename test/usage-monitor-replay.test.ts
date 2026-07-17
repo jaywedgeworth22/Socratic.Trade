@@ -341,4 +341,35 @@ describe("usage monitor durable replay", () => {
     expect(captured).toHaveLength(0);
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toBeNull();
   });
+
+  it("records usage-monitor health from the replay lane on failure AND recovery (not just a breaker trip)", async () => {
+    // Scope health assertions to this test's rows.
+    getDb().prepare("DELETE FROM api_health_log WHERE service = 'usage-monitor'").run();
+    insertLlm({ id: "llm-health-truth", createdAt: "2026-07-10T17:00:00.000Z", costUsd: 0.05 });
+
+    const healthRows = () =>
+      getDb()
+        .prepare("SELECT ok FROM api_health_log WHERE service = 'usage-monitor' ORDER BY ts DESC, rowid DESC")
+        .all() as Array<{ ok: number }>;
+
+    // Replay is the FIRST/only lane to hit a down monitor — without the fix this would open the
+    // shared breaker but leave the admin health row stale-healthy.
+    const failed: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(failed, false));
+    const first = await replay.runUsageMonitorReplay();
+    expect(first.llm.failed).toBe(true);
+    expect(failed.length).toBeGreaterThan(0); // it actually attempted the send
+    const afterFail = healthRows();
+    expect(afterFail.length).toBeGreaterThan(0);
+    expect(afterFail[0]!.ok).toBe(0); // a real FAILURE was recorded, not just a silent breaker trip
+
+    // Monitor recovers. The watermark never advanced on failure, so replay re-sends the same row and
+    // records recovery from the replay lane.
+    const okReq: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(okReq));
+    const second = await replay.runUsageMonitorReplay();
+    expect(second.llm.failed).toBe(false);
+    const afterOk = healthRows();
+    expect(afterOk[0]!.ok).toBe(1); // recovery recorded from the replay lane
+  });
 });

@@ -1881,9 +1881,13 @@ As of 2026-07-08 (assignment-rule update).
   env-tunable `USAGE_MONITOR_PUSH_TIMEOUT_MS` (10s, was hardcoded 30s) so a half-up receiver trips
   the breaker; [P2] env-tunable `USAGE_MONITOR_CALLVOLUME_MAX_KEYS` (2000, was hardcoded 100); [P2]
   trim TTL/cap at flush entry; [P2] HMR migration covers both `queue` + `pendingQueue` via
-  `normalizeRetainedQueues()` + `STATE_VERSION` 3→4. Gate: `tsc` clean, lint 0 errors, focused
-  28/28 (11 new), full 404 files/4,741 tests, production build all green. Not pushed by this session
-  — coordinator re-pushes (fast-forward over the autofix commits) + confirms threads + merges.
+  `normalizeRetainedQueues()` + `STATE_VERSION` 3→4. Review round 2 (1 finding): [P2]
+  observability-truthfulness — the replay lane opened the shared breaker on a replay-first outage
+  without recording a `usage-monitor` health failure, leaving the admin health row stale-"healthy"
+  for the whole backoff window; factored a shared `recordUsageMonitorHealth()` so BOTH lanes record
+  failure + recovery. Gate: `tsc` clean, lint 0 errors, focused 29/29 (12 new), full 404
+  files/4,742 tests, production build all green. Not pushed by this session — coordinator re-pushes
+  (fast-forward over the autofix commits) + confirms threads + merges.
   Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md` (+ codex-autofix note).
 - **[Socratic.Trade][MONET] Visual-tour findings fix wave (branch `monet/visual-tour-fixes`, claimed
   2026-07-17) — IN PROGRESS.** Owner-directed: fix the 13-finding visual-tour list (CLAUDE tour

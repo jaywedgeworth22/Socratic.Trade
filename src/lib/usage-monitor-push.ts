@@ -783,6 +783,28 @@ export async function flushUsageMonitor(): Promise<void> {
   }
 }
 
+/**
+ * Record the `usage-monitor` connection result for the admin health page. BOTH the live-push
+ * (postBatch) and durable-replay (sendUsageMonitorBatch) lanes call this, so the health row reflects
+ * reality no matter which lane actually talked to the monitor. Without this in the replay lane, a
+ * replay-first failure would open the shared breaker and then suppress every later postBatch attempt
+ * for the whole backoff window — leaving the health row "healthy"/stale even though the monitor is
+ * down (the very stale-observability bug this incident was about). `logApiHealth` already swallows
+ * its own errors, but keep this best-effort so it can never break a fire-and-forget caller.
+ */
+function recordUsageMonitorHealth(ok: boolean, startedAt: number, err?: unknown): void {
+  try {
+    logApiHealth({
+      service: HEALTH_SERVICE,
+      ok,
+      latencyMs: Date.now() - startedAt,
+      ...(ok ? {} : { errorText: err instanceof Error ? err.message : String(err) }),
+    });
+  } catch {
+    /* health recording is best-effort; never break the caller/replay path */
+  }
+}
+
 async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
@@ -804,20 +826,11 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
       fetchImpl: (input, init) => fetchImpl(input, { ...init, signal: controller.signal }),
     });
     await client.send(events);
-    logApiHealth({
-      service: HEALTH_SERVICE,
-      ok: true,
-      latencyMs: Date.now() - start,
-    });
+    recordUsageMonitorHealth(true, start);
     breakerRecordResult(true, Date.now());
     return true;
   } catch (err) {
-    logApiHealth({
-      service: HEALTH_SERVICE,
-      ok: false,
-      latencyMs: Date.now() - start,
-      errorText: err instanceof Error ? err.message : String(err),
-    });
+    recordUsageMonitorHealth(false, start, err);
     breakerRecordResult(false, Date.now());
     return false;
   } finally {
@@ -856,6 +869,7 @@ export async function sendUsageMonitorBatch(
   const fetchImpl = state.fetchImpl ?? fetch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REPLAY_SEND_TIMEOUT_MS);
+  const start = Date.now();
 
   try {
     const client = createUsageTelemetryClient({
@@ -865,9 +879,14 @@ export async function sendUsageMonitorBatch(
         fetchImpl(input, { ...init, signal: controller.signal }),
     });
     await client.send(events);
+    // Record health from the replay lane too — if replay is the first/only lane talking to a down
+    // monitor, this is what keeps the admin health row truthful instead of stale-healthy while the
+    // shared breaker (below) suppresses the live-push lane's own health writes.
+    recordUsageMonitorHealth(true, start);
     breakerRecordResult(true, Date.now());
     return true;
-  } catch {
+  } catch (err) {
+    recordUsageMonitorHealth(false, start, err);
     breakerRecordResult(false, Date.now());
     return false;
   } finally {
