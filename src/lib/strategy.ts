@@ -4438,8 +4438,16 @@ async function proposeTrades(input: {
   const llmSteps: StrategyLlmStep[] = [];
 
   const recordStep = (step: StrategyLlmStep, options: { includeInResult?: boolean } = {}) => {
-    if (options.includeInResult !== false) llmSteps.push(step);
-    audit("llm_step", { runId: input.runId, ...step }, input.userId, input.policy.connectedAccountId);
+    let provider = step.provider;
+    if (provider === "openrouter" && step.model && step.model.includes("/")) {
+      const raw = step.model.split("/")[0];
+      if (raw === "google") provider = "gemini";
+      else if (raw === "mistralai") provider = "mistral";
+      else provider = raw;
+    }
+    const mappedStep = { ...step, provider };
+    if (options.includeInResult !== false) llmSteps.push(mappedStep);
+    audit("llm_step", { runId: input.runId, ...mappedStep }, input.userId, input.policy.connectedAccountId);
   };
 
   const autonomyOverrideSchema = {
