@@ -20,7 +20,7 @@ import { getBrokerGateway } from "./broker";
 import { isLiveExitOrder, isLiveOrderState, isRejectedOrCanceledState, liveExitOrderCoverage } from "./broker-side";
 import { applyPaperExitCost } from "./execution-cost";
 import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops, reconcilePendingBracketTeardowns } from "./broker-protective-stops";
-import { resolveProtectiveExitRouting, type ProtectiveExitQuote } from "./protective-exit-routing";
+import { resolveProtectiveExitRouting, protectiveExitMarketSession, type ProtectiveExitQuote } from "./protective-exit-routing";
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
 import { evaluateTradeProposal } from "./policy";
@@ -144,7 +144,7 @@ export interface MonitorResult {
  * a stop for each open position when `policy.riskRules.trailingStopPct` is configured and none
  * exists yet.
  */
-export async function runSyntheticStopMonitor(userId: string, policy: TradingPolicy, running: boolean): Promise<MonitorResult> {
+export async function runSyntheticStopMonitor(userId: string, policy: TradingPolicy, running: boolean, now = new Date()): Promise<MonitorResult> {
   const result: MonitorResult = { evaluated: 0, triggered: 0, exited: 0, purged: 0 };
   // The scheduler monitors every connected account, not just whichever account the UI currently
   // marks active. Resolve the policy's explicit account target through the ownership-scoped lookup;
@@ -418,74 +418,76 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // sell; shorts (only when short selling is enabled) trail from a low-watermark and exit with a
   // cover. A "none" plan never registers (purged above, and skipped below too); "fixed"/"atr"
   // plans don't touch this lane (they pin generateProactiveRiskProposals' distance instead).
-  const trailPct = policy.riskRules?.trailingStopPct ?? 0;
-  const anyTrailingPlan = positions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "trailing");
-  if (trailPct > 0 || anyTrailingPlan) {
-    // "Already protected" includes TRIGGERED stops: a triggered stop's exit order may still be
-    // resting at the broker (e.g. a market sell placed after hours). Re-registering over it flipped
-    // the row back to 'active' and re-fired the same stop every tick all night (MU, 2026-07-08).
-    const existing = new Set(
-      [...listSyntheticStops(accountNumber, userId), ...listSyntheticStops(accountNumber, userId, "triggered")]
-        .map((s) => s.symbol.toUpperCase())
-    );
-    for (const pos of positions) {
-      const sym = normalizeSymbol(pos.symbol);
-      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
-      const planStyle: StopPlanStyle = stopPlanBySymbol[sym] ?? "default";
-      // "none"/"fixed"/"atr" all explicitly exclude the trailing lane for this symbol (mirrors the
-      // purge just above) — without this, an account-wide trailingStopPct > 0 would fall through to
-      // effectiveTrailPct = trailPct for a "fixed"/"atr" plan and re-register a trailing row in the
-      // SAME pass the purge just removed one from, contrary to the plan's pinned protection (Codex
-      // review, PR #1371).
-      if (planStyle === "none" || planStyle === "fixed" || planStyle === "atr") continue;
-      const effectiveTrailPct = planStyle === "trailing" ? (trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT) : trailPct;
-      if (!(effectiveTrailPct > 0)) continue;
-      const isShort = pos.quantity < 0;
-      if (isShort && !policy.shortSellingEnabled) continue;
-      // Reconcile PLACED (or cancel/REPLACED) a broker-held protective stop for this symbol THIS
-      // tick. That fresh full-size stop cannot appear in the pre-reconcile order list, so the
-      // coverage check below would undercount — the synthetic would register against stale
-      // coverage, and if the quote already breaches the trail it would fire the same tick, selling
-      // shares the replacement already covers and then cancelling that replacement
-      // (cancelBrokerProtectiveStop after the fill booking), leaving the remainder unprotected
-      // until the re-arm grace. Treat the symbol as broker-covered for THIS tick; the next tick's
-      // fresh order fetch sees the real resting order and normal quantity-aware coverage takes
-      // over. The fire path of ALREADY-registered rows carries the same gate (see the fire loop
-      // below): an active row armed on an earlier tick (e.g. one where placement threw, or before
-      // the feature was enabled) would otherwise fire against the same undercount and then cancel
-      // the fresh stop.
-      if (justPlacedBrokerStopSymbols.has(sym)) continue;
-      // Live open exit orders (market/limit/stop — a full-size broker-held stop leg included) are
-      // protection — but only for the shares they actually cover. Skip registering ONLY when the
-      // whole position is covered (or a live exit order's quantity is unknowable — then assume full
-      // coverage, failing toward no-duplicate-sell). A partial exit (e.g. a 10-of-100-share GTC
-      // take-profit trim, or an undersized broker stop) must NOT leave the remaining shares
-      // trailing-stop-less through a crash: the stop registers, and the fire path below sells only
-      // the uncovered remainder. Re-checked every tick.
-      // A PARTIAL broker-held stop this SAME reconcile just placed (e.g. a fractional remainder a
-      // whole-share-only native trail floored away) can't appear in `registrationOrders` — it was
-      // fetched before reconcile ran — so its coverage must be folded in explicitly, exactly like
-      // the fire path below does. Without this, a partial placement that happens to fully cover the
-      // remainder (combined with what registrationOrders already sees) still looks uncovered here
-      // and arms an unnecessary synthetic row that then fights the fresh broker stop on a later tick
-      // (Codex review, PR #1331, round 10).
-      const coverage = liveExitOrderCoverage(registrationOrders, sym, isShort ? "short" : "long");
-      const justPlacedPartialQty = justPlacedPartialBrokerStopQty.get(sym) ?? 0;
-      const effectiveCoveredQty = coverage.coveredQty + justPlacedPartialQty;
-      if (coverage.unknownQty || effectiveCoveredQty >= Math.abs(pos.quantity) - QTY_EPSILON) continue;
-      const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
-      upsertSyntheticStop({
-        id: `synstop-${userId}-${accountNumber}-${sym}`,
-        userId,
-        accountNumber,
-        symbol: sym,
-        side: isShort ? "short" : "long",
-        quantity: Math.abs(pos.quantity),
-        entryPrice: pos.averageCost,
-        extremePrice: isShort ? Math.min(mark, pos.averageCost) : Math.max(mark, pos.averageCost),
-        trailPercent: effectiveTrailPct,
-        status: "active"
-      });
+  if (policy.systemState !== "halted") {
+    const trailPct = policy.riskRules?.trailingStopPct ?? 0;
+    const anyTrailingPlan = positions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "trailing");
+    if (trailPct > 0 || anyTrailingPlan) {
+      // "Already protected" includes TRIGGERED stops: a triggered stop's exit order may still be
+      // resting at the broker (e.g. a market sell placed after hours). Re-registering over it flipped
+      // the row back to 'active' and re-fired the same stop every tick all night (MU, 2026-07-08).
+      const existing = new Set(
+        [...listSyntheticStops(accountNumber, userId), ...listSyntheticStops(accountNumber, userId, "triggered")]
+          .map((s) => s.symbol.toUpperCase())
+      );
+      for (const pos of positions) {
+        const sym = normalizeSymbol(pos.symbol);
+        if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
+        const planStyle: StopPlanStyle = stopPlanBySymbol[sym] ?? "default";
+        // "none"/"fixed"/"atr" all explicitly exclude the trailing lane for this symbol (mirrors the
+        // purge just above) — without this, an account-wide trailingStopPct > 0 would fall through to
+        // effectiveTrailPct = trailPct for a "fixed"/"atr" plan and re-register a trailing row in the
+        // SAME pass the purge just removed one from, contrary to the plan's pinned protection (Codex
+        // review, PR #1371).
+        if (planStyle === "none" || planStyle === "fixed" || planStyle === "atr") continue;
+        const effectiveTrailPct = planStyle === "trailing" ? (trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT) : trailPct;
+        if (!(effectiveTrailPct > 0)) continue;
+        const isShort = pos.quantity < 0;
+        if (isShort && !policy.shortSellingEnabled) continue;
+        // Reconcile PLACED (or cancel/REPLACED) a broker-held protective stop for this symbol THIS
+        // tick. That fresh full-size stop cannot appear in the pre-reconcile order list, so the
+        // coverage check below would undercount — the synthetic would register against stale
+        // coverage, and if the quote already breaches the trail it would fire the same tick, selling
+        // shares the replacement already covers and then cancelling that replacement
+        // (cancelBrokerProtectiveStop after the fill booking), leaving the remainder unprotected
+        // until the re-arm grace. Treat the symbol as broker-covered for THIS tick; the next tick's
+        // fresh order fetch sees the real resting order and normal quantity-aware coverage takes
+        // over. The fire path of ALREADY-registered rows carries the same gate (see the fire loop
+        // below): an active row armed on an earlier tick (e.g. one where placement threw, or before
+        // the feature was enabled) would otherwise fire against the same undercount and then cancel
+        // the fresh stop.
+        if (justPlacedBrokerStopSymbols.has(sym)) continue;
+        // Live open exit orders (market/limit/stop — a full-size broker-held stop leg included) are
+        // protection — but only for the shares they actually cover. Skip registering ONLY when the
+        // whole position is covered (or a live exit order's quantity is unknowable — then assume full
+        // coverage, failing toward no-duplicate-sell). A partial exit (e.g. a 10-of-100-share GTC
+        // take-profit trim, or an undersized broker stop) must NOT leave the remaining shares
+        // trailing-stop-less through a crash: the stop registers, and the fire path below sells only
+        // the uncovered remainder. Re-checked every tick.
+        // A PARTIAL broker-held stop this SAME reconcile just placed (e.g. a fractional remainder a
+        // whole-share-only native trail floored away) can't appear in `registrationOrders` — it was
+        // fetched before reconcile ran — so its coverage must be folded in explicitly, exactly like
+        // the fire path below does. Without this, a partial placement that happens to fully cover the
+        // remainder (combined with what registrationOrders already sees) still looks uncovered here
+        // and arms an unnecessary synthetic row that then fights the fresh broker stop on a later tick
+        // (Codex review, PR #1331, round 10).
+        const coverage = liveExitOrderCoverage(registrationOrders, sym, isShort ? "short" : "long");
+        const justPlacedPartialQty = justPlacedPartialBrokerStopQty.get(sym) ?? 0;
+        const effectiveCoveredQty = coverage.coveredQty + justPlacedPartialQty;
+        if (coverage.unknownQty || effectiveCoveredQty >= Math.abs(pos.quantity) - QTY_EPSILON) continue;
+        const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
+        upsertSyntheticStop({
+          id: `synstop-${userId}-${accountNumber}-${sym}`,
+          userId,
+          accountNumber,
+          symbol: sym,
+          side: isShort ? "short" : "long",
+          quantity: Math.abs(pos.quantity),
+          entryPrice: pos.averageCost,
+          extremePrice: isShort ? Math.min(mark, pos.averageCost) : Math.max(mark, pos.averageCost),
+          trailPercent: effectiveTrailPct,
+          status: "active"
+        });
+      }
     }
   }
 
@@ -518,14 +520,69 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     if (!q) return undefined;
     return { price: q.price, bid: q.syntheticBid ? undefined : q.bid, ask: q.syntheticAsk ? undefined : q.ask };
   };
+  const currSession = protectiveExitMarketSession(now);
   for (const stop of stops) {
     const price = priceFor(stop.symbol);
     result.evaluated++;
     if (price == null) continue;
 
-    const evaln = evaluateStop(stop, price);
+    const q = quotes[stop.symbol] ?? quotes[normalizeSymbol(stop.symbol)];
+
+    // A1: session boundary reset at the regular-hours open
+    const prevSession = stop.updatedAt ? protectiveExitMarketSession(new Date(stop.updatedAt)) : "closed";
+    if (prevSession !== "regular" && currSession === "regular" && ((stop.suspectCount ?? 0) > 0 || stop.suspectPrice != null)) {
+      stop.suspectPrice = undefined;
+      stop.suspectCount = 0;
+    }
+
+    const prev = stop.lastPrice;
+    const isOutOfBand = prev != null && prev > 0 && Math.abs(price - prev) / prev > BAD_TICK_PCT;
+
+    let evaln: StopEvaluation;
+    let finalSuspectPrice = stop.suspectPrice;
+    let finalSuspectCount = stop.suspectCount ?? 0;
+
+    if (!isOutOfBand) {
+      evaln = evaluateStop(stop, price);
+      finalSuspectPrice = undefined;
+      finalSuspectCount = 0;
+    } else {
+      let corroborated = true;
+      if (currSession === "pre" || currSession === "post") {
+        const hasRealBid = q && q.bid != null && q.syntheticBid !== true;
+        const hasRealAsk = q && q.ask != null && q.syntheticAsk !== true;
+        corroborated = hasRealBid || hasRealAsk;
+      }
+
+      if (!corroborated) {
+        evaln = evaluateStop(stop, price);
+      } else {
+        const agrees = finalSuspectPrice != null && Math.abs(price - finalSuspectPrice) / finalSuspectPrice <= 0.015;
+        if (agrees) {
+          finalSuspectCount++;
+          if (finalSuspectCount >= 3) {
+            evaln = evaluateStop({ ...stop, lastPrice: undefined }, price);
+            finalSuspectPrice = undefined;
+            finalSuspectCount = 0;
+          } else {
+            evaln = evaluateStop(stop, price);
+          }
+        } else {
+          finalSuspectPrice = price;
+          finalSuspectCount = 1;
+          evaln = evaluateStop(stop, price);
+        }
+      }
+    }
+
     // Persist the updated extreme + last good price (a bad tick keeps the previous lastPrice).
-    upsertSyntheticStop({ ...stop, extremePrice: evaln.newExtreme, lastPrice: evaln.badTick ? stop.lastPrice : price });
+    upsertSyntheticStop({
+      ...stop,
+      extremePrice: evaln.newExtreme,
+      lastPrice: evaln.badTick ? stop.lastPrice : price,
+      suspectPrice: finalSuspectPrice,
+      suspectCount: finalSuspectCount
+    });
     if (!evaln.triggered) continue;
     result.triggered++;
 
@@ -736,7 +793,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         await cancelBrokerProtectiveStop(userId, accountNumber, stop.symbol, gateway, policy.connectedAccountId).catch(() => {});
       }
       // Already 'triggered' via the claim; this just records the final lastPrice.
-      upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price });
+      upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price, suspectPrice: finalSuspectPrice, suspectCount: finalSuspectCount });
       result.exited++;
       audit("synthetic_stop_triggered", { symbol: stop.symbol, side: stop.side, exitSide, price, triggerPrice: evaln.triggerPrice, quantity: qty, orderId: exec.orderId }, userId, policy.connectedAccountId);
     } catch (err) {

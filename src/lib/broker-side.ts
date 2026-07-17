@@ -107,7 +107,7 @@ export function isLiveExitOrder(order: EquityOrder, positionSide: "long" | "shor
 // not a standalone order" (Alpaca `order_class`). Case-insensitive match against EquityOrder.orderClass.
 const BRACKET_ORDER_CLASSES = new Set(["bracket", "oco", "oto"]);
 
-function isBracketOrderClass(orderClass: string | undefined): boolean {
+export function isBracketOrderClass(orderClass: string | undefined): boolean {
   return typeof orderClass === "string" && BRACKET_ORDER_CLASSES.has(orderClass.trim().toLowerCase());
 }
 

@@ -11,7 +11,8 @@ import type {
   Portfolio,
   ReviewedOrder,
   BrokerGateway,
-  EquityOrderInput
+  EquityOrderInput,
+  OptionPosition
 } from "./types";
 import { normalizeSymbol } from "./money";
 import { isRejectedOrCanceledState } from "./broker-side";
@@ -534,6 +535,42 @@ class TradierBrokerGateway implements BrokerGateway {
     });
   }
 
+  async getOptionPositions(accountNumber: string): Promise<OptionPosition[]> {
+    return this.trackHealth(async () => {
+      const body = await this.request<{ positions?: { position?: unknown } | string }>("GET", `/accounts/${accountNumber}/positions`);
+      const positionsField = typeof body.positions === "object" && body.positions ? (body.positions as Record<string, unknown>).position : undefined;
+      const rows = arr<Record<string, unknown>>(positionsField);
+      if (rows.length === 0) return [];
+      
+      const optionRows = rows.filter((p) => /\d{6}[CP]\d{8}$/.test(String(p.symbol ?? "").trim().toUpperCase()));
+      if (optionRows.length === 0) return [];
+
+      const symbols = optionRows.map((p) => String(p.symbol).trim().toUpperCase().replace(/\s+/g, ""));
+      const quotes = await this.getEquityQuotes(accountNumber, symbols).catch(() => ({} as Record<string, BrokerQuote>));
+
+      return optionRows.map((p) => {
+        const symbol = String(p.symbol).trim().toUpperCase().replace(/\s+/g, "");
+        const parsed = parseOccSymbol(symbol);
+        const qty = number(p.quantity);
+        const costBasis = number(p.cost_basis);
+        const averageCost = qty !== 0 ? Math.abs(costBasis / (qty * 100)) : 0;
+        const price = quotes[symbol]?.price;
+        const marketValue = price !== undefined && price > 0 ? qty * price * 100 : costBasis;
+
+        return {
+          symbol,
+          underlyingSymbol: parsed.underlyingSymbol,
+          expirationDate: parsed.expirationDate,
+          optionType: parsed.optionType,
+          strikePrice: parsed.strikePrice,
+          quantity: qty,
+          averageCost: Number(averageCost.toFixed(2)),
+          marketValue: Number(marketValue.toFixed(2))
+        } satisfies OptionPosition;
+      });
+    });
+  }
+
   async getEquityOrders(accountNumber: string): Promise<EquityOrder[]> {
     return this.trackHealth(async () => {
       const all: Record<string, unknown>[] = [];
@@ -681,12 +718,9 @@ class TradierBrokerGateway implements BrokerGateway {
     // simpler 2-leg class instead of padding a phantom second leg. Leg 0 (entry) only accepts
     // limit/stop/stop_limit per Tradier's schema — no market-type entry leg exists for a multi-leg
     // order — so a market-type bracket request falls through to the plain single-leg order below
-    // (no bracket attached; the synthetic-stop monitor remains the protection lane for it, same as
-    // before this native-bracket support existed). UNVERIFIED against a live/sandbox Tradier
-    // account — Tradier's public docs confirm the class/indexed-leg-parameter request shape but
-    // not the exact multi-leg response envelope; the response is assumed to mirror the documented
-    // "combo" class shape (single top-level order id, `leg` array on GET) since OTOCO/OTO share the
-    // same general multi-leg order family in Tradier's own documentation.
+    // (no bracket attached). Note: because fixed and atr plans are not registered in the synthetic-stop
+    // monitor, a market entry on Tradier with fixed/atr leaves the position unprotected between
+    // hourly proactive strategy runs.
     const isBracket = input.bracketTakeProfit != null || input.bracketStopLoss != null;
     const entryTypeSupportsBracket = input.type === "limit" || input.type === "stop_market" || input.type === "stop_limit";
     if (isBracket && entryTypeSupportsBracket) {
@@ -943,4 +977,30 @@ function formatTradierError(parsed: unknown): string {
     if (err != null) return String(err);
   }
   return "";
+}
+
+export function parseOccSymbol(occ: string): {
+  underlyingSymbol: string;
+  expirationDate: string;
+  optionType: "call" | "put";
+  strikePrice: number;
+} {
+  const clean = occ.replace(/\s+/g, "").toUpperCase();
+  const match = clean.match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
+  if (!match) {
+    return {
+      underlyingSymbol: clean,
+      expirationDate: "",
+      optionType: "call",
+      strikePrice: 0
+    };
+  }
+  const [, underlying, yymmdd, cp, strikeDigits] = match;
+  const yy = yymmdd.slice(0, 2);
+  const mm = yymmdd.slice(2, 4);
+  const dd = yymmdd.slice(4, 6);
+  const expirationDate = `20${yy}-${mm}-${dd}`;
+  const optionType = cp === "P" ? ("put" as const) : ("call" as const);
+  const strikePrice = Number(strikeDigits) / 1000;
+  return { underlyingSymbol: underlying, expirationDate, optionType, strikePrice };
 }
