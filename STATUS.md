@@ -51,6 +51,53 @@ Addressed 8 remaining Codex P1/P2 findings across 5 files (search-fusion.ts, rag
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
+## 2026-07-16 — Board state correction: Mistral benchmark-UI row → DEPLOYED (MONET, branch monet/board-flip-benchmark-ui)
+Bookkeeping-only. PR #1361 (Mistral benchmark data in the model-picker UI) merged 2026-07-10 and
+auto-deployed, but its `docs/EFFORT-LOG.md` row was left under **In Progress**. Flipped the row's
+marker to ✅ DEPLOYED with a dated state-correction note. No code change; the live board
+`/Users/jay/apps/TRADING-EFFORT-LOG.md` already showed DEPLOYED. See
+`docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
+
+## 2026-07-17 — EarningsCalls: all 7 Codex review findings fixed (cap-reset pickup, MONET, branch `monet/earningscalls-transcripts`)
+
+Cap-reset pickup finishing PR #1680's review. All 7 unresolved Codex threads addressed +
+regression-tested (31/31 file tests): P1 provenance fix (EarningsCalls chunks no longer
+classify as FMP-derived — strategy runs no longer throw on retrieval without the FMP rights
+claim), failed requests/probes stay retryable (no negative-cache/watermark on failure), per-pass
+cap clamped to the provider-safe ceiling of 6 (32-day rolling window × 6 = 192 ≤ 200),
+unentitled FMP calendar now falls back to probes instead of deselecting every symbol, the pass
+runs under the durable RAG_REINDEX lease like sibling producers, and ingest completion requires
+`storeDocument`'s full receipt (partial writes stay retryable). Feature still lands DORMANT.
+Rollout: `docs/rollouts/2026-07-17-earningscalls-codex-triage-pickup.md`.
+
+## 2026-07-16 — EarningsCalls.dev transcript source: free-plan budget design, dual transport (MONET)
+
+Owner-directed: earnings-call transcripts via the EarningsCalls.dev **free plan (HARD 200
+requests/month, RapidAPI marketplace channel)** — FMP transcripts remain entitlement-gated on
+both FMP channels (direct 402; RapidAPI "Exclusive Endpoint" 403, live-probed). New source
+lands **dormant** and self-activating: `EARNINGSCALLS_RAPIDAPI_KEY` is already in Infisical
+prod, so the first deploy after the owner completes the free-plan subscription on the listing
+goes live (probes currently return the listing's 405 "provider has disabled request access" —
+expected pre-subscription state; see rollout note).
+
+Design center = the hard budget: durable UTC-calendar-month counter (default 180, headroom
+under 200), reserve-before-call with `retries: 0` (one reservation can never become two
+provider requests), refund only on pre-dispatch circuit-open; fetch-once-forever cache per
+(symbol, fiscal year, quarter) + 3-day negative TTL (migration **v47** — renumbered around
+main's #1667 v46); holdings-first once-per-UTC-day selection (broker-call-free snapshot read),
+≤6 requests/pass; ingest through the #1586 rights-gated boundary (`doc_type
+"earnings-transcript"`, `source "earningscalls-dev"`), retrieval gated symmetrically — pulling
+the key un-retrieves the corpus. Dual transport: direct `X-API-Key` (paid, wins if both) or
+`x-rapidapi-*` headers.
+
+Two adversarial reviews (budget/rights on the frontier model + structural): **both
+SAFE_TO_LAND, zero must-fix**; the one real finding (timezone-less event datetimes parsed as
+LOCAL time — could mis-bucket the quarter cache key near boundaries) fixed with a UTC-safe
+parser + regression tests run under two host timezones. Build provenance: implementing
+subagent hit a usage cap after essentially completing the work; MONET finished inline
+(dual-transport pivot, RapidAPI verification probes, Infisical key slot, migration renumber).
+Rollout: `docs/rollouts/2026-07-16-earningscalls-transcripts.md`.
+## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE)
 ## 2026-07-16 — Public-page renderer decision + legacy app/ui primitives slim-down (MONET, branch monet/vigilant-fermi-220244)
 
 WS-E follow-up to the 2026-07-16 UI wave: after `/admin` moved onto the console `con-*`

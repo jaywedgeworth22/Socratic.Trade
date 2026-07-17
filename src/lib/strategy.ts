@@ -115,6 +115,7 @@ import {
   type FmpTranscriptDerivedProvenance,
   type FmpTranscriptRightsGenerationClaim
 } from "./web-sources/fmp-transcripts";
+import { earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -897,7 +898,11 @@ export async function runStrategyOnce(
       "10-k",
       "10-q",
       "8-k",
-      ...(fmpRightsClaim ? ["earnings-transcript"] : []),
+      // Transcript retrieval joins when EITHER transcript producer's gate is active: FMP's
+      // durable rights claim, or the EarningsCalls.dev source (key = opt-in, kill-switch off —
+      // see earningscalls-gate.ts). Per-source enforcement stays inside vector-db's
+      // buildExtraFilters/filterMatchesForTranscriptRights; this only controls the REQUEST.
+      ...(fmpRightsClaim || earningsCallsTranscriptsEnabled() ? ["earnings-transcript"] : []),
       "fundamentals"
     ];
     const coverageCheckedDocTypes = coverageCheckedFilingsDocTypes();

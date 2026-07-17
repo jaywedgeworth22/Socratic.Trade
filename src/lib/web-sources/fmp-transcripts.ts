@@ -473,7 +473,17 @@ export function fmpTranscriptDerivedProvenance(values: readonly unknown[]): FmpT
     const row = value as Record<string, unknown>;
     const source = exactString(row.source);
     const docType = exactString(row.doc_type ?? row.docType)?.toLowerCase();
-    if (source !== FMP_TRANSCRIPT_SOURCE && docType !== FMP_TRANSCRIPT_DOC_TYPE) continue;
+    // FMP-derived means FMP-SOURCED. The "earnings-transcript" doc type is shared with the
+    // independently-gated EarningsCalls.dev producer (source "earningscalls-dev" — see
+    // earningscalls-gate.ts), so doc type alone only implies FMP when the row carries NO
+    // explicit source identity (conservative fallback for legacy rows). A row that declares a
+    // different source is that source's rights lane, not FMP's — classifying it here made the
+    // strategy throw "FMP-derived strategy context has no active rights generation" whenever
+    // an EarningsCalls chunk was retrieved without the FMP rights claim (Codex review, PR #1680).
+    const fmpDerived =
+      source === FMP_TRANSCRIPT_SOURCE ||
+      (source === undefined && docType === FMP_TRANSCRIPT_DOC_TYPE);
+    if (!fmpDerived) continue;
     const vectorId = exactString(row.chunk_id ?? row.chunkId ?? row.vectorId ?? row.id);
     const accession = exactString(row.accession ?? row.doc_id);
     const key = `${vectorId ?? ""}\u0000${accession ?? ""}`;

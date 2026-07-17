@@ -49,6 +49,10 @@ import {
   recordFmpTranscriptDerivedAudit,
   type FmpTranscriptDerivedProvenance
 } from "../web-sources/fmp-transcripts";
+import {
+  EARNINGSCALLS_TRANSCRIPT_SOURCE,
+  earningsCallsTranscriptsEnabled
+} from "../earningscalls-gate";
 
 function toolEvidenceFamily(name: string): EvidenceSourceFamily {
   if (name === "kb_search") return "filings";
@@ -262,10 +266,14 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
           }
           if (!generationActive) {
             // Retrieval may have started just before revocation. Do not expose licensed chunks to
-            // the model once the durable generation is stale.
+            // the model once the durable generation is stale. EarningsCalls.dev-sourced transcript
+            // rows share the doc type but are gated by their OWN predicate (key + kill-switch,
+            // already enforced by vector-db's post-fetch guard) — a stale FMP generation must not
+            // collaterally strip them.
             sanitized = sanitized.filter((item) => {
               if (!item || typeof item !== "object" || Array.isArray(item)) return true;
               const row = item as Record<string, unknown>;
+              if (row.source === EARNINGSCALLS_TRANSCRIPT_SOURCE) return earningsCallsTranscriptsEnabled();
               return row.source !== FMP_TRANSCRIPT_SOURCE &&
                 String(row.doc_type ?? "").toLowerCase() !== FMP_TRANSCRIPT_DOC_TYPE;
             });
