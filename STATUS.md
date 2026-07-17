@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-16 — Board state correction: Mistral benchmark-UI row → DEPLOYED (MONET, branch monet/board-flip-benchmark-ui)
+Bookkeeping-only. PR #1361 (Mistral benchmark data in the model-picker UI) merged 2026-07-10 and
+auto-deployed, but its `docs/EFFORT-LOG.md` row was left under **In Progress**. Flipped the row's
+marker to ✅ DEPLOYED with a dated state-correction note. No code change; the live board
+`/Users/jay/apps/TRADING-EFFORT-LOG.md` already showed DEPLOYED. See
+`docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
+
 ## 2026-07-17 — EarningsCalls: all 7 Codex review findings fixed (cap-reset pickup, MONET, branch `monet/earningscalls-transcripts`)
 
 Cap-reset pickup finishing PR #1680's review. All 7 unresolved Codex threads addressed +
