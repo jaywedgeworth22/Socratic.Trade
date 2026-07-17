@@ -236,7 +236,8 @@ export function AssistantChat() {
   const modelUnselected = !model;
   const provider = modelUnselected ? "mock" : providerForModel(model);
   const statusLoaded = Object.keys(providerStatus).length > 0;
-  const keyMissing = provider !== "mock" && statusLoaded && providerStatus[provider] === false;
+  const keyCheckingProvider = (model && model.toLowerCase().startsWith("openrouter/")) ? "openrouter" : provider;
+  const keyMissing = provider !== "mock" && statusLoaded && providerStatus[keyCheckingProvider] === false;
   const customPending = model === CUSTOM_MODEL_VALUE;
 
   const send = useCallback(
@@ -410,7 +411,11 @@ export function AssistantChat() {
             >
               <option value="" disabled>Choose a model…</option>
               {MODEL_GROUPS.map((g) => {
-                const noKey = g.provider !== "offline" && statusLoaded && providerStatus[g.provider] === false;
+                const noKey = g.provider !== "offline" && statusLoaded && (
+                  g.options.every((o) => o.value.startsWith("openrouter/"))
+                    ? providerStatus["openrouter"] === false
+                    : providerStatus[g.provider] === false
+                );
                 return (
                   <optgroup key={g.provider} label={`${g.label}${noKey ? " — no key" : ""}`}>
                     {g.options.map((o) => (

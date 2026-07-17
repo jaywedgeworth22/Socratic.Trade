@@ -100,7 +100,8 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "xAI",
     options: [
       { value: "openrouter/x-ai/grok-build-0.1", label: "grok-build-0.1 - coding specialist", tier: "$" },
-      { value: "openrouter/x-ai/grok-4.3", label: "grok-4.3 - default Grok analysis", tier: "$$" }
+      { value: "openrouter/x-ai/grok-4.3", label: "grok-4.3 - default Grok analysis", tier: "$$" },
+      { value: "openrouter/x-ai/grok-4.5", label: "grok-4.5 - smartest Grok model", tier: "$$$" }
     ]
   },
   {

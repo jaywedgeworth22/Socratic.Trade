@@ -71,6 +71,7 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "gpt-5.6-luna": [1, 6],
   "grok-build-0.1": [1, 2],
   "grok-4.3": [1.25, 2.5],
+  "grok-4.5": [2, 6],
   "claude-fable-5": [10, 50],
   "claude-opus-4-8": [5, 25],
   "claude-sonnet-5": [3, 15],
@@ -105,7 +106,25 @@ function defaultModelPricePerM(): [number, number] {
 
 function priceForModel(model: string | undefined): [number, number] {
   if (!model) return defaultModelPricePerM();
-  const m = model.toLowerCase();
+  let m = model.toLowerCase();
+  
+  // Normalize OpenRouter wrapper and provider prefix (e.g. "openrouter/openai/gpt-5.6-terra" or "openai/gpt-5.6-terra" -> "gpt-5.6-terra")
+  if (m.startsWith("openrouter/")) {
+    const parts = m.split("/");
+    if (parts.length >= 3) {
+      m = parts.slice(2).join("/"); // everything after openrouter/provider/
+    }
+  } else {
+    // If it starts with a known provider and a slash (e.g. "openai/", "anthropic/"), strip it
+    const providers = ["openai", "anthropic", "xai", "google", "mistralai", "deepseek", "gemini", "mistral"];
+    for (const prov of providers) {
+      if (m.startsWith(prov + "/")) {
+        m = m.slice(prov.length + 1);
+        break;
+      }
+    }
+  }
+
   if (MODEL_PRICE_PER_M[m]) return MODEL_PRICE_PER_M[m];
   // Prefix match (e.g. dated suffixes like claude-haiku-4-5-20251001).
   // Longest-prefix wins so family aliases cannot shadow a more specific tier snapshot

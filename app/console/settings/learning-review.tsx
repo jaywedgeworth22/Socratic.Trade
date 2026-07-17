@@ -42,12 +42,12 @@ const MODE_OPTIONS = [
 // per-account team models on Strategy → Models). No blank/"default" pseudo-option — the
 // field always holds a real, chosen model.
 const REVIEW_MODEL_OPTIONS = [
-  { value: "gpt-5.6-sol", label: "gpt-5.6-sol — recommended frontier audit · $$$" },
-  { value: "gpt-5.6-terra", label: "gpt-5.6-terra — balanced current-generation audit · $$$" },
-  { value: "gpt-5.6-luna", label: "gpt-5.6-luna — lower-cost current-generation audit · $$" },
-  { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" },
-  { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
-  { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$" }
+  { value: "openrouter/openai/gpt-5.6-sol", label: "gpt-5.6-sol — recommended frontier audit · $$$" },
+  { value: "openrouter/openai/gpt-5.6-terra", label: "gpt-5.6-terra — balanced current-generation audit · $$$" },
+  { value: "openrouter/openai/gpt-5.6-luna", label: "gpt-5.6-luna — lower-cost current-generation audit · $$" },
+  { value: "openrouter/anthropic/claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" },
+  { value: "openrouter/anthropic/claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
+  { value: "openrouter/google/gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$" }
 ];
 
 export function LearningReviewCard() {
@@ -62,8 +62,17 @@ export function LearningReviewCard() {
   const enabled = policy.learningReviewEnabled === true;
   // "decide" is the default; only an explicit "annotate" opts out.
   const mode = policy.learningReviewMode === "annotate" ? "annotate" : "decide";
-  // Real default value (never blank-means-Fable).
-  const model = policy.learningReviewModel?.trim() || "claude-fable-5";
+  
+  // Real default value (never blank-means-Fable). Map legacy unprefixed values to prefixed equivalents.
+  let model = policy.learningReviewModel?.trim();
+  if (model === "gpt-5.6-sol") model = "openrouter/openai/gpt-5.6-sol";
+  else if (model === "gpt-5.6-terra") model = "openrouter/openai/gpt-5.6-terra";
+  else if (model === "gpt-5.6-luna") model = "openrouter/openai/gpt-5.6-luna";
+  else if (model === "claude-fable-5") model = "openrouter/anthropic/claude-fable-5";
+  else if (model === "claude-opus-4-8") model = "openrouter/anthropic/claude-opus-4-8";
+  else if (model === "gemini-3.1-pro-preview") model = "openrouter/google/gemini-3.1-pro-preview";
+  if (!model) model = "openrouter/anthropic/claude-fable-5";
+
   const customModel = model && !REVIEW_MODEL_OPTIONS.some((o) => o.value === model) ? model : null;
   const reasoningCapability = reasoningCapabilityForModel(model);
   const recommendedEffort = recommendedReasoningEffortForModel(model, "review");

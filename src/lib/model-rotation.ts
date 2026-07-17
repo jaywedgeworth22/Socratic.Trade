@@ -68,6 +68,7 @@ export const MODEL_ROTATION_POOL: readonly string[] = [
   "openrouter/anthropic/claude-sonnet-5",
   "openrouter/google/gemini-3.1-flash-lite",
   "openrouter/x-ai/grok-4.3",
+  "openrouter/x-ai/grok-4.5",
   "openrouter/openai/gpt-5.4-mini",
   "openrouter/anthropic/claude-opus-4.8",
   "openrouter/google/gemini-3.1-pro-preview",

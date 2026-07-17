@@ -631,12 +631,13 @@ export function llmForModel(
   const provider = chatProviderForModel(trimmed);
   const { key, source, keyRef } = resolveLlmCredential(provider, userId);
   if (!key) return new MockLLM();
+  const apiModel = provider === "openrouter" ? trimmed.replace(/^openrouter\//i, "") : trimmed;
   const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
   if (provider === "anthropic") {
-    return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
+    return new AnthropicLLM(key, apiModel, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
   }
   const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider), provider);
-  return new OpenAILLM(key, trimmed, transport, usage, provider, opts.reasoningEffort);
+  return new OpenAILLM(key, apiModel, transport, usage, provider, opts.reasoningEffort);
 }
 
 /**

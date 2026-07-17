@@ -133,7 +133,11 @@ export function ModelPicker({
           className="absolute z-50 mt-1 max-h-80 w-[20rem] max-w-[80vw] overflow-y-auto rounded-lg border border-line bg-surface shadow-lg"
         >
           {groups.map((g) => {
-            const missing = g.provider !== "offline" && providerStatus[g.provider] === false;
+            const missing = g.provider !== "offline" && (
+              g.options.every((o) => o.value.startsWith("openrouter/"))
+                ? providerStatus["openrouter"] === false
+                : providerStatus[g.provider] === false
+            );
             return (
               <div key={g.provider} className="py-1">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">

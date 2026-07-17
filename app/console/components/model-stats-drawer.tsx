@@ -351,7 +351,7 @@ function ProviderRows({
   return (
     <>
       {models.map((model, idx) => {
-        const s = byModel.get(model);
+        const s = byModel.get(model) || byModel.get(model.replace(/^openrouter\//i, ""));
         return (
           <tr key={model} className={idx === 0 ? "border-t border-[color:var(--con-border)]" : ""}>
             {idx === 0 && (

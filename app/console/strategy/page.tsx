@@ -301,13 +301,15 @@ function FallbackModelSelect({
   value,
   onChange,
   onCommit,
-  disabled
+  disabled,
+  primaryModel
 }: {
   id: string;
   value: string;
   onChange: (val: string) => void;
   onCommit: () => void;
   disabled?: boolean;
+  primaryModel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -331,15 +333,23 @@ function FallbackModelSelect({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const selectedSet = new Set(value.split(",").map(s => s.trim()).filter(Boolean));
+  const rawSet = new Set(value.split(",").map(s => s.trim()).filter(Boolean));
+  const selectedSet = new Set(Array.from(rawSet).filter(s => s !== primaryModel));
+  const cleanValue = Array.from(selectedSet).join(", ");
 
   return (
     <div className="relative" ref={containerRef}>
       <TextInput
         id={id}
-        value={value}
+        value={cleanValue}
         placeholder="e.g. gpt-4o, claude-3-5-sonnet-20240620"
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          const typedSet = new Set(e.target.value.split(",").map(s => s.trim()).filter(Boolean));
+          if (primaryModel) {
+            typedSet.delete(primaryModel);
+          }
+          onChange(Array.from(typedSet).join(", "));
+        }}
         onFocus={() => setOpen(true)}
         onBlur={() => {
           // Defer commit to let any in-flight checkbox onChange events settle
@@ -369,16 +379,24 @@ function FallbackModelSelect({
                 {group.label}
               </div>
               {group.options.map((opt) => {
-                const checked = selectedSet.has(opt.value);
+                const isPrimary = opt.value === primaryModel;
+                const checked = selectedSet.has(opt.value) && !isPrimary;
+                const optDisabled = disabled || isPrimary;
                 return (
                   <label
                     key={opt.value}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-[color:var(--con-surface-2)] cursor-pointer"
+                    className={`flex items-center gap-2 px-3 py-1.5 ${
+                      isPrimary
+                        ? "opacity-40 cursor-not-allowed bg-[color:var(--con-surface-2)] text-[color:var(--con-faint)]"
+                        : "hover:bg-[color:var(--con-surface-2)] cursor-pointer"
+                    }`}
                   >
                     <input
                       type="checkbox"
                       checked={checked}
+                      disabled={optDisabled}
                       onChange={(e) => {
+                        if (isPrimary) return;
                         const nextSet = new Set(selectedSet);
                         if (e.target.checked) {
                           nextSet.add(opt.value);
@@ -387,9 +405,11 @@ function FallbackModelSelect({
                         }
                         onChange(Array.from(nextSet).join(", "));
                       }}
-                      className="rounded border border-[color:var(--con-line)] bg-[color:var(--con-surface)] text-[color:var(--con-accent)]"
+                      className={`rounded border border-[color:var(--con-line)] bg-[color:var(--con-surface)] text-[color:var(--con-accent)] ${
+                        isPrimary ? "cursor-not-allowed opacity-50" : ""
+                      }`}
                     />
-                    <span>{opt.value}</span>
+                    <span>{opt.label}</span>
                   </label>
                 );
               })}
@@ -545,29 +565,51 @@ function AccountScopedStrategyPage() {
   // clamped to medium in the patch instead of bouncing off the server).
   const commitProposerModel = (model: string, prev: string) => {
     if (model === (policy.llmModel ?? "")) return; // unchanged from the saved value -> no write
+    const currentFallback = policy.llmFallbackModels || [];
+    const nextFallback = currentFallback.filter((m) => m !== model);
     const patch = {
       llmModel: model,
-      ...seatReasoningPatch("llmReasoningEffort", model, storedProposerEffort)
+      ...seatReasoningPatch("llmReasoningEffort", model, storedProposerEffort),
+      ...(nextFallback.length !== currentFallback.length ? { llmFallbackModels: nextFallback } : {})
     };
     setLocalProposerModel(model);
+    if (nextFallback.length !== currentFallback.length) {
+      setLocalFallbackModels(nextFallback.join(", "));
+    }
     autoSaveModels.save(() => savePolicy(patch, policy.connectedAccountId).then(() => refresh()), {
-      onError: () => setLocalProposerModel(prev),
+      onError: () => {
+        setLocalProposerModel(prev);
+        if (nextFallback.length !== currentFallback.length) {
+          setLocalFallbackModels(currentFallback.join(", "));
+        }
+      },
       errorTitle: "Green Team not saved"
     });
   };
   const commitRedTeamModel = (model: string, prev: string) => {
     if (model === (policy.redTeamLlmModel ?? "")) return; // unchanged from the saved value -> no write
+    const currentFallback = policy.redTeamFallbackModels || [];
+    const nextFallback = currentFallback.filter((m) => m !== model);
     const patch = {
       // "" (blank = same as proposer) -> null: the policy route strips nulls back to absent,
       // which is how this optional field is actually cleared (an empty string is rejected).
       redTeamLlmModel: model || null,
       // Renormalize ONLY an explicit reviewer effort against the seat's new effective model — an
       // inheriting (unset) reviewer stays unset (seatReasoningPatch no-ops on undefined effort).
-      ...seatReasoningPatch("redTeamReasoningEffort", model || proposerModel, storedReviewerEffort)
+      ...seatReasoningPatch("redTeamReasoningEffort", model || proposerModel, storedReviewerEffort),
+      ...(nextFallback.length !== currentFallback.length ? { redTeamFallbackModels: nextFallback } : {})
     };
     setLocalRedTeamModel(model);
+    if (nextFallback.length !== currentFallback.length) {
+      setLocalRedTeamFallbackModels(nextFallback.join(", "));
+    }
     autoSaveModels.save(() => savePolicy(patch, policy.connectedAccountId).then(() => refresh()), {
-      onError: () => setLocalRedTeamModel(prev),
+      onError: () => {
+        setLocalRedTeamModel(prev);
+        if (nextFallback.length !== currentFallback.length) {
+          setLocalRedTeamFallbackModels(currentFallback.join(", "));
+        }
+      },
       errorTitle: "Red Team not saved"
     });
   };
@@ -787,6 +829,7 @@ function AccountScopedStrategyPage() {
                   onChange={(val) => setLocalFallbackModels(val)}
                   onCommit={commitFallbackModels}
                   disabled={autoSaveFallback.saving}
+                  primaryModel={proposerModel}
                 />
               </div>
               <SaveStatus status={autoSaveFallback.status} />
@@ -805,6 +848,7 @@ function AccountScopedStrategyPage() {
                   onChange={(val) => setLocalRedTeamFallbackModels(val)}
                   onCommit={commitRedTeamFallbackModels}
                   disabled={autoSaveRedTeamFallback.saving}
+                  primaryModel={redTeamModel}
                 />
               </div>
               <SaveStatus status={autoSaveRedTeamFallback.status} />

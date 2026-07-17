@@ -1,7 +1,8 @@
 import type { LlmReasoningEffort } from "./types";
 
 /** OpenAI and OpenAI-compatible (xAI/Gemini/Mistral/DeepSeek) HTTP shapes. */
-export type OpenAiTransport = "responses" | "chat-completions";
+export type LlmTransport = "chat-completions";
+
 /** "rotation" is a UI-ONLY pseudo-provider for the "__rotate__" seat sentinel (see
  *  ROTATION_UI_REASONING_CAPABILITY) — no wire-shaping branch may ever match it. */
 export type LlmReasoningProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "rotation";
@@ -19,14 +20,6 @@ export interface LlmReasoningCapability {
   description: string;
   options: LlmReasoningOption[];
 }
-
-/**
- * Every LLM wire transport the app speaks. Anthropic's Messages API ("anthropic-messages") is NOT
- * OpenAI-compatible (top-level `system`, `max_tokens`, `x-api-key` header, content-block responses,
- * forced tool-use for structured JSON), so it is modelled as its own transport rather than folded
- * into the OpenAI-compatible pair. See `llm-call.ts` for the per-transport request/response shaping.
- */
-export type LlmTransport = OpenAiTransport | "anthropic-messages";
 
 // DEFAULT_OPENAI_MODEL removed 2026-07-07 (owner directive: no model is a default for anything,
 // ever). Strategy Green/Red resolve to explicit per-user choices ("" when unset → fail closed);
@@ -118,7 +111,7 @@ function isAnthropicAdaptiveThinkingModel(model: string | undefined): boolean {
 }
 
 function isXaiReasoningModel(model: string | undefined): boolean {
-  return /^grok-4(?:\.3)?(?:$|[-.:_])/.test(lowerModel(model));
+  return /^grok-4(?:\.\d+)?(?:$|[-.:_])/.test(lowerModel(model));
 }
 
 function isGeminiModel(model: string | undefined): boolean {
@@ -595,13 +588,11 @@ const ANTHROPIC_MIN_MAX_TOKENS = 4096;
  * alone doesn't reflect.
  */
 export function resolveLlmWireOutputCap(transport: LlmTransport, bounds: RequestBounds): number {
-  if (transport === "anthropic-messages") return Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS);
   const capability = reasoningCapabilityForModel(bounds.model);
   const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);
   if (capability?.provider === "openai" && normalizedEffort) {
     return bounds.maxOutputTokens + reasoningTokenHeadroom(normalizedEffort as "low" | "medium" | "high");
   }
-  if (transport === "responses") return bounds.maxOutputTokens;
   if (capability && normalizedEffort) return bounds.maxOutputTokens + reasoningTokenHeadroom(normalizedEffort);
   return bounds.maxOutputTokens;
 }
@@ -613,33 +604,16 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
 ): T & Record<string, unknown> {
   const capability = reasoningCapabilityForModel(bounds.model);
   const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);
-  if (transport === "anthropic-messages") {
-    // Anthropic's Messages API takes a REQUIRED top-level `max_tokens` (not max_output_tokens /
-    // max_completion_tokens). Newer Claude adaptive-thinking models reject non-default sampling knobs,
-    // so omit temperature when adaptive thinking is active.
-    const base = { ...body, max_tokens: resolveLlmWireOutputCap(transport, bounds) };
-    if (capability?.provider === "anthropic" && normalizedEffort) {
-      return { ...base, thinking: { type: "adaptive" }, output_config: { effort: normalizedEffort } };
-    }
-    const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
-    return { ...base, temperature };
-  }
 
   if (capability?.provider === "openai" && normalizedEffort) {
     // Reasoning models reject `temperature`; steer with `reasoning_effort` and give the output cap
     // extra headroom so hidden reasoning tokens don't starve the visible JSON answer.
     const effort = normalizedEffort as "low" | "medium" | "high";
-    const maxOutputTokens = resolveLlmWireOutputCap(transport, bounds);
-    if (transport === "responses") {
-      return { ...body, max_output_tokens: maxOutputTokens, reasoning: { effort } };
-    }
-    return { ...body, max_completion_tokens: maxOutputTokens, reasoning_effort: effort };
+    const maxCompletionTokens = resolveLlmWireOutputCap(transport, bounds);
+    return { ...body, max_completion_tokens: maxCompletionTokens, reasoning_effort: effort };
   }
 
   const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
-  if (transport === "responses") {
-    return { ...body, max_output_tokens: resolveLlmWireOutputCap(transport, bounds), temperature };
-  }
   if (capability && normalizedEffort) {
     // Same headroom rationale as the OpenAI branch above, extended to every other
     // reasoning-capable chat-completions provider (xAI, Gemini, Mistral, DeepSeek): these all bill

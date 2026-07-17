@@ -105,6 +105,11 @@ export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecom
   "openrouter/anthropic/claude-fable-5": { effort: "medium" },
   // xAI (none/low/medium/high).
   "openrouter/x-ai/grok-4.3": { effort: "medium" },
+  "openrouter/x-ai/grok-4.5": {
+    effort: "high",
+    roleEfforts: { chat: "medium", green: "high", red: "high", review: "high" },
+    advice: "Grok 4.5: High reasoning effort. Recommended for deep reasoning."
+  },
   // Gemini thinking (minimal..high; selected Flash models also allow off).
   "openrouter/google/gemini-3.1-flash-lite": { effort: "medium" },
   "openrouter/google/gemini-3.5-flash": { effort: "medium" },
@@ -120,8 +125,13 @@ export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecom
 };
 
 function lookup(model: string | undefined): ModelReasoningRecommendation | undefined {
-  const id = (model ?? "").trim();
-  return id ? MODEL_REASONING_RECOMMENDATIONS[id] : undefined;
+  const id = (model ?? "").trim().toLowerCase();
+  if (!id) return undefined;
+  const cleanId = id.replace(/^openrouter\//i, "");
+  const foundKey = Object.keys(MODEL_REASONING_RECOMMENDATIONS).find(
+    (k) => k.replace(/^openrouter\//i, "").toLowerCase() === cleanId
+  );
+  return foundKey ? MODEL_REASONING_RECOMMENDATIONS[foundKey] : undefined;
 }
 
 /** The curated recommended effort for a model; unknown/custom ids get the "medium" default.
