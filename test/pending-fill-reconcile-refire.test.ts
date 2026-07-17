@@ -16,6 +16,7 @@ const { storeContextsMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

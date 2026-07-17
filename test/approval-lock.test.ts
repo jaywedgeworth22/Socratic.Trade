@@ -27,6 +27,7 @@ import {
 import { executeProposal } from "../src/lib/strategy-execution";
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

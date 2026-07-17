@@ -6,6 +6,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS } from "../src/lib/llm-request";
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => ["SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition."],

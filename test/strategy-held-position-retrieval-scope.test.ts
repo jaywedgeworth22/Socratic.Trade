@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   retrieveContext: async () => [],
   retrieveContextDetailed: mocks.retrieveContextDetailed,
   defaultMinScore: () => 0.3,

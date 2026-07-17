@@ -15,6 +15,7 @@ vi.mock("../src/lib/broker", async (importOriginal) => {
   return { ...actual, getBrokerGateway: (_policy: unknown, userId: string = "local") => getTestGateway(userId) };
 });
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

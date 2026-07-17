@@ -167,7 +167,7 @@ describe("proposeStrategyTuning", () => {
     await proposeStrategyTuning(userWithRedTeam);
     await proposeStrategyTuning(userWithGreenOnly);
 
-    expect(requestedModels).toEqual(["openai/gpt-4.1", "openai/gpt-4.1-mini"]);
+    expect(requestedModels).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
   });
 
   it("skips the rotation sentinel and reviews with the concrete Green model (no local-rules degradation)", async () => {
@@ -223,8 +223,8 @@ describe("proposeStrategyTuning", () => {
 
     const proposal = await proposeStrategyTuning(userId);
     // The reviewer used the concrete Green model, NOT the "__rotate__" sentinel — and did NOT degrade
-    // to local rules (which would mean generatedBy "local_rules" and zero fetch calls).
-    expect(requestedModels).toEqual(["openai/gpt-5.5"]);
+    // to local rules (which would mean generatedBy "local_rules" and model-tracking ignored).
+    expect(requestedModels).toEqual(["gpt-5.5"]);
     expect(proposal.generatedBy).toBe("llm");
   });
 
@@ -292,9 +292,9 @@ describe("proposeStrategyTuning", () => {
     let sawMockLocalContext = false;
     vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
-      expect(body.max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyTuning);
+      expect(body.max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyTuning);
       expect(body.temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
-      expect(body.max_completion_tokens).toBeUndefined();
+      expect(body.max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyTuning);
       const context = JSON.parse(body.input.find((item: any) => item.role === "user")?.content ?? "{}");
       // An account is an account: the connected test-broker account's environment is "paper", so
       // execution mode is broker/paper — there is no separate "test/local" mode anymore.

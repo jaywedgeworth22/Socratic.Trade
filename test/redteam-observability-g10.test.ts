@@ -33,6 +33,7 @@ vi.mock("../src/lib/observability", () => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

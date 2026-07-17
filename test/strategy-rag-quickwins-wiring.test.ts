@@ -18,6 +18,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 const mocks = vi.hoisted(() => ({ retrieveContextDetailed: vi.fn() }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

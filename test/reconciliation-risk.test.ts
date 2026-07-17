@@ -20,6 +20,7 @@ import { reconcilePendingFills } from "../src/lib/strategy-execution";
 import { isRiskAddingOpening } from "../src/lib/strategy-risk";
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

@@ -20,6 +20,7 @@ import type { BrokerGateway, ConnectedAccount, EquityOrder, TradingPolicy } from
 import { reconcilePendingFills } from "../src/lib/strategy-execution";
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

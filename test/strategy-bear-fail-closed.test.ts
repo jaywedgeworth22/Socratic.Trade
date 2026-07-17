@@ -12,6 +12,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 // deleted and the same guarantees now live on the consolidated post-sizing review.)
 
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

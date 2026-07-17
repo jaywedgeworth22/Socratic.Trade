@@ -15,9 +15,13 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   return { ...actual, storeContexts: mocks.storeContexts };
 });
 
-vi.mock("../src/lib/strategy", () => ({
-  runStrategyOnce: (...args: unknown[]) => mocks.runStrategyOnce(...args)
-}));
+vi.mock("../src/lib/strategy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/strategy")>();
+  return {
+    ...actual,
+    runStrategyOnce: (...args: unknown[]) => mocks.runStrategyOnce(...args)
+  };
+});
 
 vi.mock("../src/lib/market-hours", () => ({
   isRunAllowedNow: () => true

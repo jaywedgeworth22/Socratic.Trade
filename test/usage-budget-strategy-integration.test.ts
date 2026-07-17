@@ -12,6 +12,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 //
 // The vector-db is mocked so the run needs no embeddings provider.
 vi.mock("../src/lib/vector-db", () => ({
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

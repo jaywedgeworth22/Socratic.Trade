@@ -13,9 +13,13 @@ const runStrategyOnceMock = vi.fn().mockResolvedValue({
   summary: "test strategy run completed",
   proposals: []
 });
-vi.mock("../src/lib/strategy", () => ({
-  runStrategyOnce: (...args: unknown[]) => runStrategyOnceMock(...args)
-}));
+vi.mock("../src/lib/strategy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/strategy")>();
+  return {
+    ...actual,
+    runStrategyOnce: (...args: unknown[]) => runStrategyOnceMock(...args)
+  };
+});
 
 // Market hours are wall-clock dependent; force "always open" so admitRun's market-hours check never
 // blocks the budget-ceiling assertions below (that gate has its own coverage elsewhere).
