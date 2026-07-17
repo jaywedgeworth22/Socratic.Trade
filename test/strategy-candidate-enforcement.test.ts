@@ -7,6 +7,7 @@ import { enforceCandidateSetForOpenings, sanitizeProposals } from "../src/lib/st
 import type { TradeProposal } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
   getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
@@ -164,11 +165,8 @@ describe("strict marketScan.topCandidates opening boundary", () => {
     const rejection = listAudit(500).find((entry) => entry.kind === "proposal_rejected_off_candidate_opening");
     expect(rejection?.payload).toMatchObject({ runId: result.runId, symbol: "MSFT", side: "buy", candidates: ["AAPL"] });
 
-    const symbolSchema = (
-      bullRequest as {
-        text?: { format?: { schema?: { properties?: { proposals?: { items?: { properties?: { symbol?: { enum?: string[] } } } } } } } };
-      }
-    )?.text?.format?.schema?.properties?.proposals?.items?.properties?.symbol;
+    const schemaObj = (bullRequest as any)?.text?.format?.schema ?? (bullRequest as any)?.response_format?.json_schema?.schema;
+    const symbolSchema = schemaObj?.properties?.proposals?.items?.properties?.symbol;
     expect(symbolSchema?.enum).toEqual(["AAPL"]);
   }, 30_000);
 });

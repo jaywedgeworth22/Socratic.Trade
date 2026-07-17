@@ -100,6 +100,7 @@ describe("describeRedTeamFailureKind", () => {
 // for human review with the failureKind visible in its persisted reason, and the parity audit event
 // (strategy_red_team_unavailable) is emitted.
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
   getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},

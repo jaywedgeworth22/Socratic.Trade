@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
   getCurrentVectorProviderAuthority: vi.fn(),
   storeContexts: mocks.storeContexts,
   storeContext: async () => {},

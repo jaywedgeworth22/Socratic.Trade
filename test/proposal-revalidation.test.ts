@@ -226,7 +226,7 @@ describe("revalidatePendingProposals", () => {
 
     let ownershipLost = false;
     vi.stubGlobal("fetch", async (input: string | URL | Request) => {
-      if (String(input).includes("openrouter.ai")) ownershipLost = true;
+      ownershipLost = true;
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({

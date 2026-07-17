@@ -147,7 +147,7 @@ describe("buildLlmRequestBody", () => {
       { provider: "anthropic", transport: "anthropic-messages" },
       { model: "anthropic/claude-opus-4-8", systemPrompt: "sys", userContent: "{\"a\":1}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as Record<string, any>;
-    expect(body.model).toBe("anthropic/claude-opus-4-8");
+    expect(body.model).toBe("claude-opus-4-8");
     // Prompt caching (Chat A item 3): system is a single ephemeral cache block, not a bare string.
     expect(body.system).toEqual([{ type: "text", text: "sys", cache_control: { type: "ephemeral" } }]);
     expect(body.messages).toEqual([{ role: "user", content: "{\"a\":1}" }]);

@@ -17,6 +17,7 @@ vi.mock("../src/lib/db", async (importOriginal) => {
 });
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
   getCurrentVectorProviderAuthority: vi.fn(),
   reconcileManagedVectorRecords: schedulerMocks.reconcileManagedVectorRecords
 }));

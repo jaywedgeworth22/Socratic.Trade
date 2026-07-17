@@ -9,6 +9,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 // via the next model, recorded loudly (strategy_llm_failover audit + served model/provider on the step).
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
   getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},

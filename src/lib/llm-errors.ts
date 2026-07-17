@@ -173,7 +173,10 @@ export function humanizeLlmTransportError(
   opts: { provider?: string; model?: string; stepLabel?: string; timeoutMs?: number } = {}
 ): string {
   const provider = providerLabel(opts.provider);
-  const model = opts.model?.trim();
+  let model = opts.model?.trim();
+  if (model && model.includes("/")) {
+    model = model.split("/").pop();
+  }
   const modelPart = model ? ` ${model}` : "";
   const step = opts.stepLabel?.trim() || "LLM request";
   const raw = errorText(error);

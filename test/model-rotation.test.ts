@@ -126,7 +126,7 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     expect(new Set(MODEL_ROTATION_POOL)).toEqual(new Set(CURATED_LLM_MODEL_IDS.filter((id) => !excluded.includes(id))));
     expect(MODEL_ROTATION_POOL).toContain("gpt-5.4-mini");
     expect(MODEL_ROTATION_POOL).toContain("claude-fable-5");
-    expect(MODEL_ROTATION_POOL).toContain("xai/grok-4.3");
+    expect(MODEL_ROTATION_POOL).toContain("grok-4.3");
     expect(MODEL_ROTATION_POOL).toContain("mistral-small-2603");
     expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3-5");
   });

@@ -6,6 +6,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS } from "../src/lib/llm-request";
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
   getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
@@ -203,7 +204,7 @@ describe("persistence and notifications", () => {
     // this test only needs the run to complete to assert the audit event was written.
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-      if (String(url).includes("openrouter.ai")) {
+      if (String(url).includes("openrouter.ai") || String(url).includes("api.openai.com")) {
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -339,7 +340,7 @@ describe("persistence and notifications", () => {
       expect(result.status).toBe("failed");
       // gpt-5.5 is a reasoning model, so the strategy call gets the reasoning-class-aware timeout
       // (150s) rather than the base 60s — the message reports the actual bound that elapsed.
-      expect(result.summary).toContain("Green Team proposal timed out after 150s using OpenAI gpt-5.5");
+      expect(result.summary).toContain("Green Team proposal timed out after 150s using OpenRouter gpt-5.5");
       expect(result.llmSteps).toMatchObject([
         {
           step: "bull",
@@ -529,10 +530,9 @@ describe("persistence and notifications", () => {
       // exactly ONE LLM call (the Bull). The Red Team review only runs per risk-adding opening —
       // its request bounds are covered by test/red-team.test.ts.
       expect(openAiBodies).toHaveLength(1);
-      expect(openAiBodies[0].max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
+      expect(openAiBodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
       // The Bull (proposer) stays deterministic, greedy temp-0.
       expect(openAiBodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
-      expect(openAiBodies.every((body) => body.max_completion_tokens === undefined)).toBe(true);
 
       const bullBody = openAiBodies[0];
       const systemContent = bullBody.input.find((item: any) => item.role === "system")?.content ?? "";

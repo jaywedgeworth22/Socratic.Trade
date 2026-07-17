@@ -26,6 +26,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 const FRESH_CHUNK_AS_OF = new Date().toISOString();
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
   getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},

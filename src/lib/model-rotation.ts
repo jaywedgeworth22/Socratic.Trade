@@ -153,10 +153,8 @@ export function advanceRotationPointers(input: {
 export function eligibleRotationPool(userId: string): { pool: string[]; skipped: string[] } {
   const pool: string[] = [];
   const skipped: string[] = [];
-  // Since all calls are routed through OpenRouter, checking the openrouter credential is correct.
-  const hasOpenRouterKey = !!resolveLlmCredential("openrouter", userId).key;
   for (const model of MODEL_ROTATION_POOL) {
-    if (hasOpenRouterKey) pool.push(model);
+    if (resolveLlmCredential(llmModelFamily(model), userId).key) pool.push(model);
     else skipped.push(model);
   }
   return { pool, skipped };

@@ -9,6 +9,7 @@ const vectorMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
   getCurrentVectorProviderAuthority: vi.fn(),
   purgePrivateVectorRecordsForUser: vectorMocks.purgePrivateVectorRecordsForUser
 }));

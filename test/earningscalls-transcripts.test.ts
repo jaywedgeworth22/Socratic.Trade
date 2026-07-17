@@ -30,6 +30,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
   return {
     ...actual,
+    managedVectorLedgerAuthority: vi.fn(),
     storeDocument: (...args: Parameters<typeof actual.storeDocument>) =>
       storeDocumentStub.impl ? storeDocumentStub.impl(...args) : actual.storeDocument(...args)
   };
@@ -37,7 +38,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
 
 vi.mock("../src/lib/fmp-common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/fmp-common")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     requestFmp: (...args: Parameters<typeof actual.requestFmp>) =>
       requestFmpStub.impl ? requestFmpStub.impl(...args) : actual.requestFmp(...args)
@@ -94,7 +95,7 @@ const NOW = Date.UTC(2026, 6, 16, 12); // 2026-07-16T12:00Z, matches fixture eve
 
 function latestCallPayload(overrides: Record<string, unknown> = {}): unknown {
   // Researched shape expectation: `data`-enveloped call metadata.
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     data: {
       earnings_call_id: 48291,
       company_ticker: "AAPL",
@@ -110,11 +111,11 @@ function latestCallPayload(overrides: Record<string, unknown> = {}): unknown {
 const LONG_TEXT = "Operator remarks and prepared statements. ".repeat(20);
 
 function transcriptPayload(): unknown {
-  return { data: { earnings_call_id: 48291, full_text: LONG_TEXT } };
+  return { managedVectorLedgerAuthority: vi.fn(), data: { earnings_call_id: 48291, full_text: LONG_TEXT } };
 }
 
 function speakerPayload(): unknown {
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     data: {
       earnings_call_id: 48291,
       speakers: [
@@ -505,7 +506,7 @@ describe("codex review fixes (PR #1680)", () => {
     let fail = true;
     const http = makeHttp(
       (path) => {
-        if (path.startsWith("/transcripts/")) return { ok: true, payload: transcriptPayload() };
+        if (path.startsWith("/transcripts/")) return { managedVectorLedgerAuthority: vi.fn(), ok: true, payload: transcriptPayload() };
         return fail
           ? { ok: false, kind: "transient" }
           : { ok: true, payload: latestCallPayload({ company_ticker: "TRNS1" }) };

@@ -108,7 +108,7 @@ function reviewApprove(): Response {
 function stubFetchReviewFailure(reviewFailure: "http429" | "throw" | "malformed"): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+    if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
       const body = String(init?.body ?? "");
       const isReview = body.includes("Red Team Risk Agent") || body.includes("red_team_verdict");
       if (isReview) {
@@ -130,7 +130,7 @@ function stubFetchReviewFailure(reviewFailure: "http429" | "throw" | "malformed"
 
 async function setupBrokerPaperDecide(label: string): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -176,7 +176,7 @@ describe("single Red Team review fail-closed (§3.7)", () => {
   ] as const)(
     "routes the opening to human review (never auto-executes) when the review fails (%s → %s) in decide mode",
     async (reviewFailure, expectedKind) => {
-      vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+      vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
       stubFetchReviewFailure(reviewFailure);
       await setupBrokerPaperDecide(`Review ${reviewFailure}`);
       const { runStrategyOnce } = await import("../src/lib/strategy");
@@ -206,11 +206,47 @@ describe("single Red Team review fail-closed (§3.7)", () => {
     },
     30_000
   );
-  it("routes the opening to human review when NO Red model is chosen at all (blank — no Green fallback)", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+
+  it("routes the opening to human review when the Red model's provider has no key (not_configured)", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    vi.stubEnv("OPENAI_API_KEY", "");
+    // Point the Red Team at a provider with no configured key so the review resolves keyless.
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return bullOk();
+      // Only the Bull runs (the review is skipped keyless, no fetch); return the buy.
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) return bullOk();
+      if (href.includes("nasdaq.com")) return nasdaqResponse();
+      return new Response("not found", { status: 404 });
+    });
+    await setupBrokerPaperDecide("Review no-key");
+
+    const { setPolicy, getPolicy, listAudit, deleteUserApiKey, upsertUserApiKey } = await import("../src/lib/db");
+    deleteUserApiKey("local", "gemini");
+    deleteUserApiKey("local", "openrouter");
+    upsertUserApiKey("local", "openai", "test-openai-key", "test");
+
+    setPolicy({ ...getPolicy(), redTeamLlmModel: "gemini-2.5-flash" });
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+
+    const result = await runStrategyOnce();
+
+    const statuses = result.proposals.map((p) => p.status);
+    expect(statuses).toContain("proposed");
+    expect(statuses).not.toContain("paper");
+    expect(statuses).not.toContain("filled");
+    const runAudits = listAudit(500).filter((e) => (e.payload as { runId?: string })?.runId === result.runId);
+    const unavailable = runAudits.filter((e) => e.kind === "strategy_red_team_unavailable");
+    expect(unavailable.length).toBeGreaterThanOrEqual(1);
+    expect((unavailable[0].payload as { failureKind?: string }).failureKind).toBe("not_configured");
+  }, 30_000);
+
+  it("routes the opening to human review when NO Red model is chosen at all (blank — no Green fallback)", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) return bullOk();
       if (href.includes("nasdaq.com")) return nasdaqResponse();
       return new Response("not found", { status: 404 });
     });
@@ -235,10 +271,10 @@ describe("single Red Team review fail-closed (§3.7)", () => {
   }, 30_000);
 
   it("does NOT flag unavailable when the review succeeds — the verdict is stamped and no hold audit fires", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
         const body = String(init?.body ?? "");
         if (body.includes("Red Team Risk Agent") || body.includes("red_team_verdict")) return reviewApprove();
         return bullOk();
