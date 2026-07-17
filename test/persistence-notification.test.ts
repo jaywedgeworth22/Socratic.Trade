@@ -547,7 +547,9 @@ describe("persistence and notifications", () => {
       // header (via formatChunkWithProvenance, stubbed above to prepend "[SYMBOL]") before joining
       // into ragContext, so the model sees which symbol each chunk came from and can cite it — the
       // original chunk text still survives verbatim as a substring (asserted above).
-      expect(userContent.retrievedFinancialContext).toMatch(/^\[AAPL\]/);
+      // 2026-07-17 RAG-B10/B13: strategy.ts now wraps each symbol's chunks in a dossier header
+      // ("### RAG Dossier for SYMBOL") before the provenance-prefixed chunks.
+      expect(userContent.retrievedFinancialContext).toMatch(/^### RAG Dossier for AAPL/);
       for (const body of openAiBodies) {
         const content = body.input.find((item: any) => item.role === "user")?.content ?? "{}";
         expect(JSON.parse(content).executionMode).toBe("broker/paper");
