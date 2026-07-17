@@ -17,9 +17,18 @@ breaker suppressed every later live-push `postBatch` before it could record heal
 health row stayed stale-"healthy" for the whole backoff window. Factored a shared
 `recordUsageMonitorHealth()` helper (best-effort) so BOTH lanes record failure (before the breaker
 update) and success (recovery); the health row is now truthful regardless of which lane talks to the
-monitor. 12 new focused tests cover every finding. Gate: `tsc` clean, lint 0 errors, focused 29/29,
-full 404 files/4,742 tests, production build all green. Not pushed by this session — coordinator
-re-pushes (fast-forward on top of the autofix commits) + confirms threads resolved + merges.
+monitor. Review round 3 added one more [P2] breaker-correctness fix: a schema-INVALID local event
+(e.g. `pushBrokerBalance` admitting NaN/Infinity via `typeof === "number"`) was rejected by the
+shared client's batch validation BEFORE any fetch, but both send paths caught that pre-fetch
+ZodError as a delivery failure and tripped the breaker — a repeated poison event could falsely OPEN
+it and suppress valid telemetry. Fixed belt-and-suspenders: tightened `pushBrokerBalance` admission
+to `Number.isFinite`, and both send paths now prune schema-invalid events (`isDeliverableEvent` via
+the shared `UsageTelemetryEventSchema.safeParse`) BEFORE `client.send` — the live path drops poison
+out of the buffer (never re-queued), the replay path acks it so the watermark advances (quarantine).
+The breaker now only ever sees genuine delivery outcomes. 16 new focused tests cover every finding.
+Gate: `tsc` clean, lint 0 errors, focused 33/33, full 404 files/4,746 tests, production build all
+green. Not pushed by this session — coordinator re-pushes (fast-forward on top of the autofix
+commits) + confirms threads resolved + merges.
 
 Owner-directed incident response: `usage.jays.services` (API-usage-monitor) was OOM-down ~2 days;
 both Congress.Trade and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs

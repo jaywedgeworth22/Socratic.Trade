@@ -605,4 +605,84 @@ describe("usage-monitor-push", () => {
       expect(providers).toContain("legacy-pending-provider");
     });
   });
+
+  describe("poison-event isolation (local validation error is NOT a receiver outage)", () => {
+    it("rejects NaN/Infinity broker balances at admission so they never enter the buffer", () => {
+      push.pushBrokerBalance({
+        provider: "alpaca",
+        userId: "local",
+        accountNumber: "1234567890",
+        cash: Number.NaN,
+        buyingPower: Number.POSITIVE_INFINITY,
+        equity: Number.NEGATIVE_INFINITY,
+      });
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(0);
+
+      // A finite reading in the same shape is still admitted; only the non-finite fields are dropped.
+      push.pushBrokerBalance({
+        provider: "alpaca",
+        userId: "local",
+        accountNumber: "1234567890",
+        cash: Number.NaN,
+        equity: 1000,
+      });
+      expect(push.__usageMonitorDebugState().queueDepth).toBe(1);
+    });
+
+    it("discards a schema-invalid event at flush WITHOUT tripping the breaker; valid events still send", async () => {
+      const captured: CapturedRequest[] = [];
+      push.__setUsageMonitorFetch(makeFetchStub(captured));
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+
+      // A valid event through the normal path...
+      push.pushLlmUsage({ sourceEventId: "valid-alongside-poison", provider: "openai", userId: "local", keySource: "operator", totalTokens: 5, costUsd: 0.01 });
+      // ...plus a poison event injected straight into the buffer (bypassing admission guards) to
+      // simulate a NaN quantity that slipped past some producer. client.send would reject the whole
+      // batch BEFORE any fetch, so counting it as a delivery failure would falsely trip the breaker.
+      const shared = (globalThis as unknown as {
+        __usageMonitorPush?: { pendingQueue: Array<Record<string, unknown>> };
+      }).__usageMonitorPush!;
+      shared.pendingQueue.push({
+        kind: "poison",
+        sourceId: "poison-1",
+        receivedAt: Date.now(),
+        event: {
+          sourceApp: "socratic-trade",
+          environment: "test",
+          provider: "poison-provider",
+          service: "broker",
+          project: "socratic-trade",
+          metricType: "balance",
+          quantity: Number.NaN, // schema .finite() rejects this
+          unit: "usd",
+          confidence: "actual",
+          occurredAt: "2026-07-11T00:00:00.000Z",
+          idempotencyKey: "socratic-trade:poison:poison-1",
+        },
+      });
+
+      await push.flushUsageMonitor();
+
+      const sentProviders = captured.flatMap((r) => r.body.events).map((e) => e.provider);
+      expect(sentProviders).toContain("openai"); // the valid event was delivered
+      expect(sentProviders).not.toContain("poison-provider"); // poison never sent
+      const debug = push.__usageMonitorDebugState();
+      expect(debug.breaker.consecutiveFailures).toBe(0); // breaker untouched by the local bad data
+      expect(debug.breaker.openUntil).toBe(0);
+      expect(debug.queueDepth).toBe(0); // poison quarantined out of the buffer, not re-queued
+    });
+
+    it("still trips the breaker on a genuine receiver failure (delivery error, not validation)", async () => {
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+      push.__setUsageMonitorFetch((async () => {
+        throw new Error("ECONNREFUSED");
+      }) as unknown as typeof fetch);
+      // A fully valid event whose SEND fails at the network layer.
+      push.pushLlmUsage({ sourceEventId: "genuine-fail", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+      await push.flushUsageMonitor();
+      const debug = push.__usageMonitorDebugState();
+      expect(debug.breaker.consecutiveFailures).toBe(1);
+      expect(debug.breaker.openUntil).toBeGreaterThan(Date.now());
+    });
+  });
 });

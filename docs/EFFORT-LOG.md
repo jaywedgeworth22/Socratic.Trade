@@ -1885,9 +1885,14 @@ As of 2026-07-08 (assignment-rule update).
   observability-truthfulness — the replay lane opened the shared breaker on a replay-first outage
   without recording a `usage-monitor` health failure, leaving the admin health row stale-"healthy"
   for the whole backoff window; factored a shared `recordUsageMonitorHealth()` so BOTH lanes record
-  failure + recovery. Gate: `tsc` clean, lint 0 errors, focused 29/29 (12 new), full 404
-  files/4,742 tests, production build all green. Not pushed by this session — coordinator re-pushes
-  (fast-forward over the autofix commits) + confirms threads + merges.
+  failure + recovery. Review round 3 (1 finding): [P2] breaker correctness — a schema-invalid local
+  event (e.g. `pushBrokerBalance` NaN/Infinity via `typeof === "number"`) was rejected by the shared
+  client BEFORE any fetch, but both send paths caught that pre-fetch ZodError as a delivery failure
+  and could falsely OPEN the breaker; fixed belt-and-suspenders — `Number.isFinite` admission +
+  pre-send prune (`isDeliverableEvent`) so poison never touches the breaker (live path drops it from
+  the buffer, replay path acks so the watermark advances). Gate: `tsc` clean, lint 0 errors, focused
+  33/33 (16 new), full 404 files/4,746 tests, production build all green. Not pushed by this session
+  — coordinator re-pushes (fast-forward over the autofix commits) + confirms threads + merges.
   Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md` (+ codex-autofix note).
 - **[Socratic.Trade][MONET] Visual-tour findings fix wave (branch `monet/visual-tour-fixes`, claimed
   2026-07-17) — IN PROGRESS.** Owner-directed: fix the 13-finding visual-tour list (CLAUDE tour

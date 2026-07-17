@@ -146,18 +146,48 @@ error binding (`catch (err)`) so the failure's `errorText` is preserved. New tes
 row (`ok = 0`, not just a breaker trip), and a subsequent replay success records recovery
 (`ok = 1`). No change to what telemetry is sent or the breaker/buffer behavior.
 
+## Review round 3 (codex-connector on PR #1711, 1 finding — breaker correctness)
+
+**[P2] A schema-INVALID local event falsely tripped the shared breaker.** The shared client's
+`send` calls `UsageTelemetryBatchSchema.parse` synchronously BEFORE any fetch, so a schema-invalid
+event throws a ZodError with zero receiver contact. `pushBrokerBalance` admitted `NaN`/`Infinity`
+via `typeof x === "number"` (both are `"number"`), the schema's `.finite()` rejects them, and both
+`postBatch` and `sendUsageMonitorBatch` caught that pre-fetch ZodError and called
+`breakerRecordResult(false)` — so a repeated poison event kept incrementing the breaker until it
+falsely OPENED and suppressed valid live + replay telemetry for the backoff window. A local
+bad-data error must never be read as "receiver down". FIXED, belt and suspenders:
+
+- **Admission guard (belt):** `pushBrokerBalance` now gates `cash`/`buyingPower`/`equity` on
+  `Number.isFinite(...)` instead of `typeof === "number"`, so a NaN/Infinity reading never enters
+  the buffer in the first place.
+- **Pre-send prune (suspenders):** the shared client does NOT surface a typed validation-vs-delivery
+  error (both the pre-fetch batch parse and a garbage-response parse throw), so rather than guess
+  from the error, both send paths now validate/prune the batch themselves via `isDeliverableEvent`
+  (`UsageTelemetryEventSchema.safeParse(...).success`) BEFORE `client.send`. In the live path,
+  `flushUsageMonitor` partitions poison OUT of the buffer (dropped, best-effort `console.warn`, never
+  re-queued) so it can't re-fail forever; only valid events reach `postBatch`/the breaker. In the
+  replay path, `sendUsageMonitorBatch` drops poison and returns `true` when nothing valid remains, so
+  the durable caller advances its watermark past the bad row (quarantine) instead of re-failing it.
+  The breaker now only ever sees genuine delivery outcomes (network error / timeout / non-2xx).
+
+New tests: a NaN/Infinity broker balance is rejected at admission (never buffered); a poison event
+injected into the buffer is dropped at flush WITHOUT tripping the breaker while the valid event in
+the same batch still sends; a genuine receiver failure still trips the breaker; and (replay lane) an
+all-poison batch is acked (`true`, watermark can advance) without receiver contact or a breaker trip.
+
 ## Verification
 
 Node 24 (`.nvmrc`), fresh worktree `~/apps/trading-monet-usage-push-failsafe`, `npm ci`:
 
 - `npx tsc --noEmit` — clean.
 - Focused: `npx vitest run test/usage-monitor-push.test.ts test/usage-monitor-replay.test.ts` —
-  29/29 (17 pre-existing + 12 new across breaker, bounded buffer, flush-entry TTL, callVolume cap,
-  push timeout, HMR shape migration, and replay-lane health truthfulness), all passing including the
-  pre-existing tests that use historical/fixed `occurredAt` values (these initially broke when TTL
-  was first keyed off `occurredAt` instead of buffer-residency time — fixed before finalizing).
+  33/33 (17 pre-existing + 16 new across breaker, bounded buffer, flush-entry TTL, callVolume cap,
+  push timeout, HMR shape migration, replay-lane health truthfulness, and poison-event isolation),
+  all passing including the pre-existing tests that use historical/fixed `occurredAt` values (these
+  initially broke when TTL was first keyed off `occurredAt` instead of buffer-residency time — fixed
+  before finalizing).
 - `npm run lint` — 0 errors (493 pre-existing grandfathered warnings, none new).
-- `npm test` — 404 files / 4742 tests, all passing.
+- `npm test` — 404 files / 4746 tests, all passing.
 - `npm run build` — clean production build (exit 0).
 
 ## Follow-ups

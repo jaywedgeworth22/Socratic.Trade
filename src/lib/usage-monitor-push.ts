@@ -24,6 +24,7 @@
 import { logApiHealth } from "./db-health";
 import {
   createUsageTelemetryClient,
+  UsageTelemetryEventSchema,
   type UsageTelemetryEvent,
   type UsageTelemetryMetricType,
   type UsageTelemetryUnit,
@@ -526,7 +527,10 @@ export function pushBrokerBalance(entry: {
     const occurredAt = new Date().toISOString();
     const snapshotId = randomDeliveryId();
     const maskedAcc = maskAccountNumber(entry.accountNumber);
-    if (typeof entry.cash === "number") {
+    // Number.isFinite (not typeof === "number") at admission: NaN and Infinity are both typeof
+    // "number" but the shared UsageTelemetryEvent schema rejects them (.finite()), so a NaN balance
+    // would poison the batch. Reject it here so the bad reading never enters the buffer.
+    if (Number.isFinite(entry.cash)) {
       enqueuePending({
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
@@ -547,7 +551,7 @@ export function pushBrokerBalance(entry: {
         }),
       }, "broker-balance", `${snapshotId}:cash`);
     }
-    if (typeof entry.buyingPower === "number") {
+    if (Number.isFinite(entry.buyingPower)) {
       enqueuePending({
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
@@ -568,7 +572,7 @@ export function pushBrokerBalance(entry: {
         }),
       }, "broker-balance", `${snapshotId}:buying-power`);
     }
-    if (typeof entry.equity === "number") {
+    if (Number.isFinite(entry.equity)) {
       enqueuePending({
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
@@ -762,7 +766,20 @@ export async function flushUsageMonitor(): Promise<void> {
     scheduleFlush();
     return;
   }
-  const pending = state.queue.splice(0, state.queue.length).concat(resolved);
+  const all = state.queue.splice(0, state.queue.length).concat(resolved);
+  if (all.length === 0) return;
+
+  // Quarantine schema-invalid (poison) events OUT of the buffer before sending: client.send parses
+  // the batch before any fetch, so a poison event's ZodError would otherwise be caught as a delivery
+  // failure and falsely trip the breaker — and re-fail on every flush forever. A local bad-data error
+  // is not "receiver down". Drop them (best-effort log) and only ever send/re-queue valid events.
+  const pending: QueuedUsageEvent[] = [];
+  let poisonCount = 0;
+  for (const q of all) {
+    if (isDeliverableEvent(q.event)) pending.push(q);
+    else poisonCount += 1;
+  }
+  warnPoisonDropped(poisonCount, "live-push");
   if (pending.length === 0) return;
 
   for (let i = 0; i < pending.length; i += MAX_BATCH) {
@@ -770,7 +787,8 @@ export async function flushUsageMonitor(): Promise<void> {
     const sent = await postBatch(batch.map((q) => q.event));
     if (!sent) {
       // Keep the exact event objects — including explicit key + occurredAt —
-      // so an ambiguous accepted-then-disconnected response retries safely.
+      // so an ambiguous accepted-then-disconnected response retries safely. Only deliverable events
+      // are re-queued (poison was already dropped above), so a bad-data event can't re-fail forever.
       state.queue.unshift(...pending.slice(i));
       trimBufferedEvents(Date.now());
       // While the breaker is open, wait out its window instead of retrying on the short flush
@@ -802,6 +820,30 @@ function recordUsageMonitorHealth(ok: boolean, startedAt: number, err?: unknown)
     });
   } catch {
     /* health recording is best-effort; never break the caller/replay path */
+  }
+}
+
+/**
+ * True when an event passes the shared UsageTelemetryEvent schema — i.e. it is safe to hand to
+ * `client.send`, which parses the batch BEFORE any fetch. An event that fails here (e.g. a NaN /
+ * Infinity `quantity` that slipped past an admission guard) would throw a ZodError before the
+ * network is ever touched. That is a LOCAL data bug, not a receiver outage, so we must never let it
+ * reach the send path where its throw would be misread as a delivery failure and trip the breaker.
+ */
+function isDeliverableEvent(event: UsageMonitorEvent): boolean {
+  return UsageTelemetryEventSchema.safeParse(event).success;
+}
+
+/** Best-effort visibility for dropped poison events; never throws. */
+function warnPoisonDropped(count: number, lane: string): void {
+  if (count <= 0) return;
+  try {
+    console.warn(
+      `[usage-monitor-push] dropped ${count} schema-invalid telemetry event(s) from ${lane} ` +
+        `(local validation failure — not a receiver outage; breaker untouched)`
+    );
+  } catch {
+    /* logging is best-effort */
   }
 }
 
@@ -861,6 +903,16 @@ export async function sendUsageMonitorBatch(
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
   if (!baseUrl || !token) return false;
+
+  // Drop schema-invalid (poison) events before the breaker check / fetch: client.send validates the
+  // batch before any network call, so a poison event is a LOCAL data bug, not a receiver outage —
+  // it must not trip the breaker. Reporting the delivery as acknowledged (return true when nothing
+  // valid remains) lets the durable caller advance its watermark past the bad row instead of
+  // re-failing it forever.
+  const deliverable = events.filter(isDeliverableEvent);
+  warnPoisonDropped(events.length - deliverable.length, "replay");
+  if (deliverable.length === 0) return true;
+
   // Shares the live-push breaker: the replay interval fires every 60s regardless, but while the
   // circuit is open this returns false immediately with no fetch call, so replay's fixed cadence
   // can't turn into a second continuous hammer on top of the live queue's own backoff.
@@ -878,7 +930,7 @@ export async function sendUsageMonitorBatch(
       fetchImpl: (input, init) =>
         fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    await client.send(events);
+    await client.send(deliverable);
     // Record health from the replay lane too — if replay is the first/only lane talking to a down
     // monitor, this is what keeps the admin health row truthful instead of stale-healthy while the
     // shared breaker (below) suppresses the live-push lane's own health writes.

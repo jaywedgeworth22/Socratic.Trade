@@ -372,4 +372,35 @@ describe("usage monitor durable replay", () => {
     const afterOk = healthRows();
     expect(afterOk[0]!.ok).toBe(1); // recovery recorded from the replay lane
   });
+
+  it("drops a schema-invalid replay event without tripping the breaker and acks it (quarantine, not receiver-down)", async () => {
+    process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    // An all-poison batch (Infinity quantity fails the shared schema's .finite()). client.send would
+    // reject it before any fetch; sendUsageMonitorBatch must NOT read that as a receiver outage.
+    const poison = {
+      sourceApp: "socratic-trade",
+      environment: "test",
+      provider: "poison-replay",
+      service: "broker",
+      project: "socratic-trade",
+      metricType: "balance",
+      quantity: Number.POSITIVE_INFINITY,
+      unit: "usd",
+      confidence: "actual",
+      occurredAt: "2026-07-10T18:00:00.000Z",
+      idempotencyKey: "socratic-trade:poison:replay-1",
+    };
+
+    const ok = await push.sendUsageMonitorBatch(
+      [poison] as unknown as Parameters<typeof push.sendUsageMonitorBatch>[0]
+    );
+    expect(ok).toBe(true); // acknowledged so a durable caller advances its watermark past the bad row
+    expect(captured).toHaveLength(0); // never contacted the receiver
+    const breaker = push.__usageMonitorDebugState().breaker;
+    expect(breaker.consecutiveFailures).toBe(0); // breaker untouched by the local validation reject
+    expect(breaker.openUntil).toBe(0);
+  });
 });
