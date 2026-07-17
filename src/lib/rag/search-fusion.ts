@@ -2,6 +2,7 @@ import { getDb, resolveApiKey } from "../db";
 import { retrieveContextDetailed, getClients } from "../vector-db";
 import { deconstructQuery } from "./query-deconstruct";
 import { routeRetrievalIntent } from "./intent-router";
+import { hashContent } from "./chunk";
 import crypto from "crypto";
 
 export interface FusionResult {
@@ -15,7 +16,7 @@ export interface FusionResult {
 }
 
 function getHash(text: string): string {
-  return crypto.createHash("sha256").update(text).digest("hex").slice(0, 32);
+  return hashContent(text);
 }
 
 function getJaccardSimilarity(a: string, b: string): number {

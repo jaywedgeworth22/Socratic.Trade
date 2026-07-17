@@ -132,7 +132,8 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
             : "") +
           (policy.shortSellingEnabled === true
             ? " Broker-held trailing is LONG positions only — a short position's trail is always the app monitor, even on Alpaca (broker-held short trails are a planned follow-up, not yet built)."
-            : "")
+            : "") +
+          " Note: Broker-held stops execute during Regular Trading Hours (RTH) only — overnight and pre-market price gaps will only fill at the next regular-hours open."
       },
       {
         key: "app",
@@ -144,7 +145,10 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
         value: trailingOn ? "trail: every tick · stops: each strategy run" : "stops: each strategy run",
         active: true,
         detail:
-          "The always-on, quantity-aware fallback. Fixed/ATR/beta breaches exit through the deterministic risk check at the start of each strategy run; the trailing monitor evaluates every scheduler tick (~1 min) when a trailing % is set — covering fractional shares, brokers without a needed order type, and anything a broker-held order doesn't. Pauses while the account is Stopped; broker-held orders keep resting."
+          "The always-on, quantity-aware fallback. Fixed/ATR/beta breaches exit through the deterministic risk check at the start of each strategy run; the trailing monitor evaluates every scheduler tick (~1 min) when a trailing % is set — covering fractional shares, brokers without a needed order type, and anything a broker-held order doesn't. Pauses while the account is Stopped; broker-held orders keep resting." +
+          (policy.strategyAuthority === "propose"
+            ? " [Blind Spot] Under 'propose' authority, the app produces approval cards on stop breach instead of executing exits automatically — if the owner is offline, positions can drift past stops without exits executing."
+            : "")
       }
     ],
     note: "A position's shares can only back ONE resting sell at the broker — the app monitor layers the remaining rules on top."

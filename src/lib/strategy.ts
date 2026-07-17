@@ -60,7 +60,7 @@ import { OrderValidationError } from "./types";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
 import { planFundingSells } from "./sell-to-fund";
-import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState } from "./broker-side";
+import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState, isBracketOrderClass } from "./broker-side";
 import {
   calibratedConviction,
   getClosedLotCount,
@@ -122,7 +122,7 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
-import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan } from "./db";
+import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
@@ -818,12 +818,13 @@ export async function runStrategyOnce(
     // wide). Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the
     // fixed/beta stop (or the per-position fallback flat %, resolved downstream).
     const atrStopPctBySymbol: Record<string, number> = {};
+    const candidateAtrStopPctBySymbol: Record<string, number> = {};
     const anyHeldAtrPlan = workingPositions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "atr");
     if ((policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) || anyHeldAtrPlan) {
       const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
       const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
-      await Promise.all(
-        workingPositions
+      await Promise.all([
+        ...workingPositions
           .filter((p) => Math.abs(p.quantity) > 0.000001 && p.averageCost > 0)
           .map(async (p) => {
             const sym = normalizeSymbol(p.symbol);
@@ -835,8 +836,21 @@ export async function runStrategyOnce(
             } catch {
               // best-effort — fall back to the fixed/beta stop for this name
             }
-          })
-      );
+          }),
+        ...(marketScan
+          ? marketScan.topCandidates.map(async (c) => {
+              const sym = normalizeSymbol(c.symbol);
+              try {
+                const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+                if (!bars) return;
+                const pct = atrStopPct(atr(bars, period), c.price, multiple);
+                if (typeof pct === "number") candidateAtrStopPctBySymbol[sym] = pct;
+              } catch {
+                // best-effort
+              }
+            })
+          : [])
+      ]);
       lockGuard.assertOwned();
     }
     // Extended-hours protective-exit routing is decided ONCE here (the run knows the wall-clock
@@ -1411,6 +1425,8 @@ export async function runStrategyOnce(
         positions: workingPositions,
         recentOrders: compactRecentOrders(orders),
         marketScan,
+        candidateAtrStopPctBySymbol,
+        atrStopPctBySymbol,
         dailyNotionalUsed: daily.notional,
         dailyOrderCount: daily.openingOrderCount,
         ragContext,
@@ -3744,6 +3760,8 @@ async function proposeTrades(input: {
    */
   budgetAdvisory?: string;
   prefetched?: PrefetchedFills;
+  candidateAtrStopPctBySymbol?: Record<string, number>;
+  atrStopPctBySymbol?: Record<string, number>;
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -3928,7 +3946,8 @@ async function proposeTrades(input: {
     holdingHorizon: input.policy.holdingHorizon ?? "swing",
     maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
     stopLossPct: input.policy.riskRules.stopLossPct ?? 8,
-    takeProfitPct: input.policy.riskRules.takeProfitPct ?? 20
+    takeProfitPct: input.policy.riskRules.takeProfitPct ?? 20,
+    shortStopLossPct: input.policy.riskRules.shortStopLossPct ?? 8
   });
 
   // Delta-only macro: macro moves slowly, so on repeat runs send just the changed
@@ -4303,6 +4322,121 @@ async function proposeTrades(input: {
     input.userId,
     input.policy.connectedAccountId
   );
+  const rawStopPlans = input.policy.accountNumber ? getStopPlans(input.policy.accountNumber, input.userId) : {};
+  const stopPlanBySymbol = filterStopPlansByLiveBasis(rawStopPlans, input.positions);
+  const stopPlanRationaleBySymbol: Record<string, string | undefined> = {};
+  for (const sym of Object.keys(stopPlanBySymbol)) {
+    stopPlanRationaleBySymbol[sym] = rawStopPlans[sym]?.rationale;
+  }
+  const activeSyntheticStops = input.policy.accountNumber ? listSyntheticStops(input.policy.accountNumber, input.userId) : [];
+  const syntheticStopBySymbol = new Map<string, any>(activeSyntheticStops.map((s: any) => [normalizeSymbol(s.symbol), s]));
+
+  const activeProtection = input.positions.map((pos) => {
+    const sym = normalizeSymbol(pos.symbol);
+    const planStyle = stopPlanBySymbol[sym] ?? "default";
+    const rationale = stopPlanRationaleBySymbol[sym];
+    
+    const symbolOrders = (input.recentOrders as EquityOrder[]).filter(
+      (o) => normalizeSymbol(o.symbol) === sym
+    );
+    const exitSide = pos.quantity > 0 ? "sell" : "cover";
+    const openExitOrders = symbolOrders.filter(
+      (o) => o.side === exitSide && ["open", "pending_new", "accepted", "partially_filled"].includes(o.state)
+    );
+
+    const hasBracket = openExitOrders.some((o) => isBracketOrderClass(o.orderClass));
+    const hasSimpleStop = openExitOrders.some((o) => o.type === "stop_market" || o.type === "stop_limit");
+    const hasNativeTrail = openExitOrders.some((o) => (o.type as string) === "trailing_stop_market" || (o.type as string) === "trailing_stop_limit");
+    
+    const synStop = syntheticStopBySymbol.get(sym);
+
+    let enforcementLane: "bracket" | "broker_stop" | "native_trail" | "synthetic" | "NONE" = "NONE";
+    if (hasBracket) enforcementLane = "bracket";
+    else if (hasNativeTrail) enforcementLane = "native_trail";
+    else if (hasSimpleStop) enforcementLane = "broker_stop";
+    else if (synStop) enforcementLane = "synthetic";
+
+    const unprotected = enforcementLane === "NONE";
+
+    let effectiveStopPrice: number | undefined;
+    if (enforcementLane === "bracket" || enforcementLane === "broker_stop") {
+      const stopOrder = openExitOrders.find((o) => o.type === "stop_market" || o.type === "stop_limit");
+      effectiveStopPrice = stopOrder?.stopPrice;
+    } else if (enforcementLane === "synthetic" && synStop) {
+      const isShort = pos.quantity < 0;
+      effectiveStopPrice = isShort 
+        ? synStop.extremePrice * (1 + synStop.trailPercent / 100)
+        : synStop.extremePrice * (1 - synStop.trailPercent / 100);
+    }
+
+    if (effectiveStopPrice !== undefined) {
+      effectiveStopPrice = Number(effectiveStopPrice.toFixed(2));
+    }
+
+    const mark = pos.marketValue / pos.quantity;
+    let distancePct: number | undefined;
+    let distanceR: number | undefined;
+    if (effectiveStopPrice !== undefined && mark > 0) {
+      distancePct = Number((Math.abs(mark - effectiveStopPrice) / mark * 100).toFixed(2));
+      const atrPct = input.atrStopPctBySymbol?.[sym];
+      if (atrPct && atrPct > 0) {
+        distanceR = Number((distancePct / atrPct).toFixed(2));
+      }
+    }
+
+    const trailHwm = synStop ? Number(synStop.extremePrice.toFixed(2)) : undefined;
+
+    let holdingDays: number | undefined;
+    if (input.policy.accountNumber) {
+      try {
+        const query = getDb().prepare(`
+          SELECT julianday('now') - julianday(timestamp) as holding_days
+          FROM fill_events
+          WHERE account_number = ? AND symbol = ? AND side = ?
+          ORDER BY timestamp ASC LIMIT 1
+        `).get(input.policy.accountNumber, sym, pos.quantity > 0 ? "buy" : "short") as { holding_days: number } | undefined;
+        if (query) {
+          holdingDays = Math.max(0, Math.round(query.holding_days));
+        }
+      } catch {
+        // best-effort fallback
+      }
+    }
+
+    const q = input.marketScan?.quotesBySymbol[sym];
+    const daysToEarnings = q?.daysToEarnings;
+    const earningsDate = typeof daysToEarnings === "number"
+      ? new Date(Date.now() + daysToEarnings * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      : undefined;
+
+    const restingExitOrders = openExitOrders.map((o) => ({
+      id: o.id,
+      type: o.type,
+      qty: o.quantity,
+      limitPrice: o.limitPrice,
+      stopPrice: o.stopPrice
+    }));
+
+    return compactPromptObject({
+      symbol: pos.symbol,
+      qty: pos.quantity,
+      averageCost: Number(pos.averageCost.toFixed(2)),
+      marketValue: Number(pos.marketValue.toFixed(2)),
+      currentPrice: Number(mark.toFixed(2)),
+      planStyle,
+      rationale,
+      enforcementLane,
+      effectiveStopPrice,
+      effectiveStopDistancePct: distancePct,
+      effectiveStopDistanceR: distanceR,
+      trailHwm,
+      restingExitOrders: restingExitOrders.length > 0 ? restingExitOrders : undefined,
+      holdingDays,
+      earningsDate,
+      unprotected: unprotected ? true : undefined
+    });
+  });
+
   const userContent = {
     currentDate: decisionAsOf,
     evidenceManifest,
@@ -4310,6 +4444,7 @@ async function proposeTrades(input: {
     executionMode,
     executionModeClarification,
     currentMarketRegime,
+    activeProtection,
     ...(regimeSeverity
       ? {
           regimeSeverity: {
@@ -5026,6 +5161,12 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
       side: order.side,
       type: order.type,
       state: order.state,
+      // orderClass, stopPrice, and limitPrice are needed by activeProtection
+      // evaluation (isBracketOrderClass, broker-stop detection) downstream in
+      // proposeTrades — don't drop them from the compaction.
+      ...(order.orderClass ? { orderClass: order.orderClass } : {}),
+      ...(order.stopPrice !== undefined ? { stopPrice: order.stopPrice } : {}),
+      ...(order.limitPrice !== undefined ? { limitPrice: order.limitPrice } : {}),
       ...(order.dollarAmount ? { dollarAmount: order.dollarAmount } : {}),
       ...(quantity ? { quantity } : {}),
       ...(order.averagePrice ? { avgPrice: order.averagePrice } : {}),
@@ -5040,7 +5181,7 @@ function hasRealAsk(quote: MarketQuote): boolean {
   return Boolean(quote.ask && quote.ask > 0 && !quote.syntheticAsk);
 }
 
-function compactMarketScanForPrompt(marketScan?: MarketScan) {
+function compactMarketScanForPrompt(marketScan?: MarketScan, candidateAtrStopPctBySymbol?: Record<string, number>) {
   if (!marketScan) return undefined;
   const hasAskData = marketScan.topCandidates.some(hasRealAsk);
   return {
@@ -5054,7 +5195,7 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
     cacheTtlMs: marketScan.cacheTtlMs,
     cached: marketScan.cached,
     hasAskData,
-    topCandidates: marketScan.topCandidates.map(compactCandidateForPrompt),
+    topCandidates: marketScan.topCandidates.map((c, i) => compactCandidateForPrompt(c, i, candidateAtrStopPctBySymbol)),
     instructions: hasAskData
       ? "Ask-relative buy limits are allowed only for candidates that include ask."
       : "No ask prices are available in this scan. Do not invent ask-relative limit prices."
@@ -5094,12 +5235,17 @@ function targetUpsidePct(quote: { price?: number; targetMean?: number }): number
 }
 
 // Exported for tests (prompt-field wiring assertions); only compactMarketScanForPrompt calls it in production.
-export function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+export function compactCandidateForPrompt(
+  quote: MarketScan["topCandidates"][number],
+  index: number,
+  candidateAtrStopPctBySymbol?: Record<string, number>
+): Record<string, unknown> {
   // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread —
   // it would wrongly anchor ask-relative limit-price reasoning. Emit each side only when it is not
   // synthetic (compactPromptObject drops undefined keys, matching hasAskData).
   const realBid = !quote.syntheticBid ? quote.bid : undefined;
   const realAsk = !quote.syntheticAsk ? quote.ask : undefined;
+  const sym = normalizeSymbol(quote.symbol);
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
@@ -5124,6 +5270,7 @@ export function compactCandidateForPrompt(quote: MarketScan["topCandidates"][num
     tgtUpsidePct: targetUpsidePct(quote),
     shortFloat: quote.shortPercentOfFloat,
     beta: quote.beta,
+    atrStopPct: candidateAtrStopPctBySymbol?.[sym] ? Number(candidateAtrStopPctBySymbol[sym].toFixed(2)) : undefined,
     earnIn: quote.daysToEarnings,
     instOwn: quote.institutionOwnershipPct,
     iv: quote.nearTheMoneyIv,
@@ -5570,7 +5717,21 @@ export function enrichOpeningProposal(
   const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp" || policy.activeBroker === "tradier";
   const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / entryPrice) : undefined;
   const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
-  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {
+  // Tradier market-entry brackets are not supported (Tradier's multi-leg entry only accepts
+  // limit/stop/stop_limit — see tradier.ts placeEquityOrder). Strip them BEFORE the whole-share
+  // branch runs; the old else-if was unreachable for whole-share Tradier market orders because
+  // the preceding whole-share condition always matched first, so the proposal carried brackets
+  // that Tradier's gateway then silently ignored (Codex review, PR #1705).
+  const isTradierMarket = policy.activeBroker === "tradier" && next.type === "market";
+  if (bracketsEnabled && isTradierMarket && (next.bracketStopLoss != null || next.bracketTakeProfit != null)) {
+    next = {
+      ...next,
+      bracketStopLoss: undefined,
+      bracketTakeProfit: undefined,
+      rationale: next.rationale + `\n\n[Risk] Tradier native entry brackets are not supported for market entry orders. The bracket legs have been stripped; this position will have no native broker-held protection (and fixed/atr plans have no synthetic-stop monitor fallback).`
+    };
+  }
+  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket && !isTradierMarket) {
     const flatStopPct = proposal.side === "short"
       ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
       : (policy.riskRules?.stopLossPct ?? 0);

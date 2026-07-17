@@ -329,7 +329,8 @@ export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, strin
   prompt_injection_suspected: "Prompt injection suspected",
   evidence_age_anomaly: "Evidence age anomaly",
   storage_warning: "Storage warning",
-  autonomy_halted_on_boot: "Autonomy halted on boot"
+  autonomy_halted_on_boot: "Autonomy halted on boot",
+  option_alert: "Option alert"
 };
 
 export function notificationTypeLabel(type?: string | null): string {
@@ -393,6 +394,8 @@ export function formatNotificationDisplay(
     title = `Prompt Injection Suspected ${symbol ? `for ${symbol}` : ""}`;
   } else if (event.type === "evidence_age_anomaly") {
     title = `Evidence Age Anomaly ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "option_alert") {
+    title = event.title;
   }
 
   return {
@@ -405,6 +408,10 @@ export function formatNotificationDisplay(
 }
 
 function notificationDetail(event: NotificationEvent): string {
+  if (event.type === "option_alert") {
+    const payload = asRecord(event.payload);
+    return stringValue(payload.detail) || "Option alert";
+  }
   if (
     event.type === "deterministic_bear_veto" ||
     event.type === "red_team_veto_override_requested" ||
