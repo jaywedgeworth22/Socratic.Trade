@@ -1,5 +1,20 @@
 # Current Status
 
+## 2026-07-17 — jsonrepair healing: fail-closed boundaries (CLAUDE on PR #1696, cap-reset pickup)
+
+Fixed the four unresolved Codex threads on the stalled `agent/local-response-healing` lane:
+`extractJsonPayload` repair is now OPT-IN (default strict) — global repair was converting
+fail-closed gates into fail-open (truncated `{"verdict":"approve"` repaired into a valid
+approval; truncated revalidation `withdraw` repaired into a real withdrawal). Red Team /
+revalidation / tuning parse strictly and stay fail-closed; Red Team gains a multiple-verdict
+ambiguity guard. Bull proposals are the one repair opt-in, gated by a new
+`filterRepairedProposals` schema-completeness check sharing `BULL_PROPOSAL_REQUIRED_KEYS`
+with the structured-output schema. Rollout:
+`docs/rollouts/2026-07-17-jsonrepair-fail-closed-boundaries.md`.
+Also this cycle: PR #1697 (EarningsCalls) MERGED to production after phantom-conflict unstick;
+#1687/#1686/#1688 merged earlier; #1669 thread burn-down delegated to a sub-agent; #1677
+(OpenRouter migration, 22 threads) is next in the pickup queue.
+
 ## 2026-07-17 — Fix congress.trade webhook signature verification (MONET, branch `monet/fix-congress-webhook-signature-verify`)
 
 Congress.Trade's admin dashboard showed a recurring wall of `HTTP 401` delivery failures

@@ -286,6 +286,9 @@ export async function revalidatePendingProposals(input: {
         const text = extractLlmText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.
+        // STRICT parse — no jsonrepair (Codex P2, PR #1696): a truncated response repaired into a
+        // syntactically valid `withdraw` assessment would withdraw a pending proposal on garbage.
+        // Malformed output takes the catch path below, which leaves the queue untouched.
         const parsed = JSON.parse(extractJsonPayload(text)) as { assessments?: RevalidationAssessment[] };
         return { text, assessments: parsed.assessments ?? [] };
       }
