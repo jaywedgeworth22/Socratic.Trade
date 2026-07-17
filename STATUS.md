@@ -15,6 +15,20 @@ Also this cycle: PR #1697 (EarningsCalls) MERGED to production after phantom-con
 #1687/#1686/#1688 merged earlier; #1669 thread burn-down delegated to a sub-agent; #1677
 (OpenRouter migration, 22 threads) is next in the pickup queue.
 
+## 2026-07-17 — Fix congress.trade webhook signature verification (MONET, branch `monet/fix-congress-webhook-signature-verify`)
+
+Congress.Trade's admin dashboard showed a recurring wall of `HTTP 401` delivery failures
+(batches of 5, matching congress.trade's `MAX_ATTEMPTS`) for its webhook subscriber pointed
+at this app. Root cause: this repo's live receiver (`app/api/webhooks/congress/route.ts`
+via `src/lib/congress-webhook-auth.ts`) compared the raw `X-Signature: sha256=<hex>` header
+against the bare hex HMAC digest with an exact byte-length check, so it always failed and
+fell through to a 401 — every signed delivery was rejected, only SSE interoperated. This was
+already flagged in a Congress.Trade cross-agent audit closeout in `#agent-sync` on
+2026-07-12 but never actually fixed here (the shared package got a correct verifier; this
+repo's live route kept a separate, still-broken duplicate). Fixed by stripping the optional
+`sha256=` prefix before comparing, matching `congress-trading-shared`'s verifier. New
+regression test added. Full gate green: lint 0 errors, tsc clean, 404 files/4701 tests,
+build clean. Rollout: `docs/rollouts/2026-07-17-congress-webhook-signature-fix.md`.
 
 ## 2026-07-16 — Board state correction: Mistral benchmark-UI row → DEPLOYED (MONET, branch monet/board-flip-benchmark-ui)
 Bookkeeping-only. PR #1361 (Mistral benchmark data in the model-picker UI) merged 2026-07-10 and
