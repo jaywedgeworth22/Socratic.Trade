@@ -661,6 +661,18 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(dropped).toBe(3);
   });
 
+  it("strips schema-extraneous fields from kept repaired proposals (Codex round 7)", () => {
+    // additionalProperties: false — a smuggled bracketStopLimit would turn the protective stop
+    // into a stop-limit order at the Alpaca adapter.
+    const smuggler = { ...complete(), bracketStopLimit: 171.9, stopPlan: { style: "atr", rationale: null, resetAll: true } };
+    const { kept, dropped } = filterRepairedProposals([smuggler]);
+    expect(dropped).toBe(0);
+    expect(kept).toHaveLength(1);
+    expect("bracketStopLimit" in (kept[0] as unknown as Record<string, unknown>)).toBe(false);
+    expect("resetAll" in ((kept[0]?.stopPlan ?? {}) as Record<string, unknown>)).toBe(false);
+    expect(kept[0]?.bracketStopLoss).toBe(172.5);
+  });
+
   it("drops a repaired proposal with a fabricated (non-playbook) thesis tag (Codex round 6)", () => {
     // A tag outside THESIS_PLAYBOOK has no scorecard history, so it would bypass the
     // negative-expectancy skip gate as "unproven".

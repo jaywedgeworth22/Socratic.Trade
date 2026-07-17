@@ -5261,8 +5261,32 @@ export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProp
       // under socraticOverrideMode: "execute". requested must be boolean and thesis a real
       // string before a repaired proposal may carry an override request at all.
       (record.autonomyOverride === null || isSchemaShapedAutonomyOverride(record.autonomyOverride));
-    if (complete) kept.push(record as unknown as TradeProposal);
-    else dropped += 1;
+    if (complete && record !== undefined) {
+      // additionalProperties: false, enforced by PROJECTION (Codex P1, round 7): a validated
+      // record may still smuggle unvalidated extras — e.g. a repaired `bracketStopLimit` that
+      // the Alpaca adapter would honor, turning the protective stop into a stop-limit order the
+      // declared schema rejects. Rebuild the kept proposal from exactly the schema's keys, and
+      // project the two nested objects onto THEIR declared keys for the same reason.
+      const projected: Record<string, unknown> = {};
+      for (const key of BULL_PROPOSAL_REQUIRED_KEYS) projected[key] = record[key];
+      if (projected.stopPlan && typeof projected.stopPlan === "object") {
+        const sp = projected.stopPlan as Record<string, unknown>;
+        projected.stopPlan = { style: sp.style, rationale: sp.rationale ?? null };
+      }
+      if (projected.autonomyOverride && typeof projected.autonomyOverride === "object") {
+        const ao = projected.autonomyOverride as Record<string, unknown>;
+        projected.autonomyOverride = {
+          requested: ao.requested,
+          thesis: ao.thesis,
+          preferenceConflicts: ao.preferenceConflicts,
+          invalidation: ao.invalidation ?? null,
+          cashDeploymentPct: ao.cashDeploymentPct ?? null
+        };
+      }
+      kept.push(projected as unknown as TradeProposal);
+    } else {
+      dropped += 1;
+    }
   }
   return { kept, dropped };
 }
