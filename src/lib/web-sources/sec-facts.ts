@@ -268,7 +268,7 @@ export function formatInsiderTransactionsEvidenceCard(cik: string): string {
   const paddedCik = padCik(cik);
 
   const txs = db.prepare(`
-    SELECT insider_name, relationship, side, shares, price, period_of_report, is_10b5_1, accession
+    SELECT insider_name, relationship, side, shares, price, period_of_report, is_10b5_1, transaction_code, accession
     FROM sec_insider_transactions
     WHERE cik = ?
     ORDER BY period_of_report DESC, price DESC
@@ -281,6 +281,7 @@ export function formatInsiderTransactionsEvidenceCard(cik: string): string {
     price: number;
     period_of_report: string;
     is_10b5_1: number;
+    transaction_code: string;
     accession: string;
   }>;
 
@@ -288,8 +289,9 @@ export function formatInsiderTransactionsEvidenceCard(cik: string): string {
 
   const lines = [`[SEC Insider Transactions (Form 4) for CIK ${paddedCik}]`];
   for (const t of txs) {
+    const codeLabel = t.transaction_code || "?";
     lines.push(
-      `- ${t.period_of_report}: ${t.insider_name} (${t.relationship}) ${t.side.toUpperCase()} ${t.shares.toLocaleString()} shares @ $${t.price.toFixed(2)} (10b5-1: ${t.is_10b5_1 ? "Yes" : "No"}) [acc: ${t.accession}]`
+      `- ${t.period_of_report}: ${t.insider_name} (${t.relationship}) ${t.side.toUpperCase()} ${t.shares.toLocaleString()} shares @ $${t.price.toFixed(2)} [code: ${codeLabel}] (10b5-1: ${t.is_10b5_1 ? "Yes" : "No"}) [acc: ${t.accession}]`
     );
   }
   return lines.join("\n");

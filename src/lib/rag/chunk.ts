@@ -159,6 +159,12 @@ function* splitLongProse(text: string, maxTokens: number, overlapTokens: number)
         if (current.length > 0) {
           const tail = tailOverlap(current.join(" "), overlapTokens);
           current = [tail, clean];
+          // If overlap tail pushes the new sentence over the budget, drop the overlap
+          // rather than emitting an oversize chunk (same pattern as the parent-level
+          // re-check at the pending flush boundary below).
+          if (countTokens(current.join(" "), false) > maxTokens) {
+            current = [clean];
+          }
         } else {
           current = [clean];
         }

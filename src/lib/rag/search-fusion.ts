@@ -2,6 +2,7 @@ import { getDb, resolveApiKey } from "../db";
 import { retrieveContextDetailed, getClients } from "../vector-db";
 import { deconstructQuery } from "./query-deconstruct";
 import { routeRetrievalIntent } from "./intent-router";
+import { hashContent } from "./chunk";
 import crypto from "crypto";
 
 export interface FusionResult {
@@ -15,7 +16,7 @@ export interface FusionResult {
 }
 
 function getHash(text: string): string {
-  return crypto.createHash("sha256").update(text).digest("hex");
+  return hashContent(text);
 }
 
 function getJaccardSimilarity(a: string, b: string): number {
@@ -96,7 +97,7 @@ export async function retrieveFusedContext(
         // of DISTINCT) so the aggregate MIN(bm25) rank is usable in ORDER BY.
         if (asOf) {
           lexicalRows = db.prepare(`
-            SELECT f.content_hash, f.symbol, f.source, o.accession, f.text, MIN(bm25(f)) AS rank
+            SELECT f.content_hash, f.symbol, f.source, o.accession, f.text, MIN(bm25(document_chunks_fts)) AS rank
             FROM document_chunks_fts f
             JOIN chunk_occurrences o ON f.content_hash = o.content_hash
             WHERE f.symbol = ? AND f.text MATCH ? AND o.accepted_at <= ?
