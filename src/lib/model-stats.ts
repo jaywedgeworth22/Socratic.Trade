@@ -151,11 +151,33 @@ export function medianMs(values: number[]): number | null {
   return sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid] + sorted[mid + 1]) / 2);
 }
 
+/** Known OpenRouter provider slugs whose prefix is stripped during model-ID normalization.
+ *  OpenRouter-qualified model IDs look like "openai/gpt-4o", "anthropic/claude-3.5-sonnet",
+ *  or "openrouter/anthropic/claude-3.5-sonnet" (with the routing-layer prefix).
+ *  Only these known slugs are stripped — arbitrary vendor-qualified IDs like
+ *  "vendor-a/shared-model" keep their full form to prevent false merges. */
+const OPENROUTER_SLUGS = new Set([
+  "openai", "anthropic", "google", "gemini", "mistral", "mistralai",
+  "deepseek", "xai", "meta", "cohere", "perplexity", "together"
+]);
+
 function cleanModelId(model: string | null | undefined): string {
   if (!model) return "";
-  const name = model.trim();
+  let name = model.trim();
+  // Strip the outermost "openrouter/" routing-layer prefix first (it's the routing
+  // mechanism, not the model name — see llm-provider.ts's model.replace(/^openrouter\//i, "")).
+  if (name.toLowerCase().startsWith("openrouter/")) {
+    name = name.slice("openrouter/".length);
+  }
+  // If the remaining name starts with a known OpenRouter provider slug, strip it
+  // to get the canonical base model name. Arbitrary qualifiers are preserved so
+  // unrelated vendor-qualified IDs like "vendor-a/shared-model" don't collide.
   if (name.includes("/")) {
-    return name.split("/").pop() || name;
+    const slashIdx = name.indexOf("/");
+    const prefix = name.slice(0, slashIdx).toLowerCase();
+    if (OPENROUTER_SLUGS.has(prefix)) {
+      return name.slice(slashIdx + 1) || name;
+    }
   }
   return name;
 }
