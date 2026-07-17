@@ -40,6 +40,26 @@ subagent hit a usage cap after essentially completing the work; MONET finished i
 (dual-transport pivot, RapidAPI verification probes, Infisical key slot, migration renumber).
 Rollout: `docs/rollouts/2026-07-16-earningscalls-transcripts.md`.
 ## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE)
+## 2026-07-16 — Public-page renderer decision + legacy app/ui primitives slim-down (MONET, branch monet/vigilant-fermi-220244)
+
+WS-E follow-up to the 2026-07-16 UI wave: after `/admin` moved onto the console `con-*`
+system, the legacy glass-token system (`app/ui/primitives.tsx` + `app/globals.css`
+semantic tokens) remained the renderer for public/marketing surfaces. Decision (per
+`docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md`, "two renderers, one
+brand core"): no public page migrates to `con-*` — welcome, how-it-works, framework,
+privacy-policy, terms-and-conditions, login, access-denied, and `app/error.tsx` all keep
+the distinct public renderer deliberately; console.css is `.console-root`-scoped and
+unlayered, and the brand core (`--brand-accent`, radius canon) is already shared. Task
+brief claimed exactly three remaining `primitives.tsx` consumers; recon found seven app
+consumers plus the `.design-sync` UI-Kit re-export. `app/ui/primitives.tsx` slimmed to
+`Card`/`Button`/`buttonClass` only, deleting every `.design-sync`-only export (`ICON`,
+`IconButton`, `PanelHeader`, `Chip`, `Dot`, `Switch`, `Segmented`, `Tabs`, `Field`,
+`inputClass`, `RawNumInput`, `StatTile`, `EmptyState`), dead `ThemeToggle`, and eight
+consumer-free `globals.css` utilities (`.elev-*`, `.backdrop-blur-scrim`, `.skeleton`,
+`.boot-strip-glow`, `.scroll-fade-edge`, `.animate-pulse-fast`). Display-only change;
+gate/screenshot verification recorded in the rollout note. Cloud session; the
+branch-neutral live board could not be updated from this container (repo mirror only).
+Rollout: `docs/rollouts/2026-07-16-public-renderer-decision-legacy-primitives-slim.md`.
 ## 2026-07-16 — Bump congress-trading-shared to fee9937c (PR #1686)
 
 Dependency bump: `@jaywedgeworth22/congress-trading-shared` pinned to
