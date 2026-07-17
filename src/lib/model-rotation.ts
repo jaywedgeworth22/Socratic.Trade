@@ -75,7 +75,15 @@ export const MODEL_ROTATION_POOL: readonly string[] = [
   "mistral-medium-3-5",
   "gpt-5.6-sol",
   "gpt-5.4-nano",
-  "claude-fable-5"
+  "claude-fable-5",
+  "openrouter/openai/gpt-4o",
+  "openrouter/openai/gpt-4o-mini",
+  "openrouter/anthropic/claude-3.5-sonnet",
+  "openrouter/anthropic/claude-3-5-haiku",
+  "openrouter/google/gemini-2.5-pro",
+  "openrouter/google/gemini-2.5-flash",
+  "openrouter/meta-llama/llama-3.3-70b-instruct",
+  "openrouter/deepseek/deepseek-r1"
 ];
 
 /** One seat's pick: the model served this run plus the pointer bookkeeping that produced it. */

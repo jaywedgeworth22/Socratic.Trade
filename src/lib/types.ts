@@ -83,7 +83,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "prompt_injection_suspected",
   "evidence_age_anomaly",
   "storage_warning",
-  "autonomy_halted_on_boot"
+  "autonomy_halted_on_boot",
+  "option_alert"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -639,6 +640,11 @@ export interface RiskRules {
    * The breaker itself is still opt-in via the thresholds above (unset ⇒ no breaker at all).
    */
   drawdownBreakerAction?: "advisory" | "close_only" | "halt";
+  /**
+   * Allow synthetic trailing-stops to fire exits even when systemState is 'halted'.
+   * Never registers or updates to looser stops, but will trigger existing ones.
+   */
+  protectWhileHalted?: boolean;
 }
 
 export interface NotificationSettings {
@@ -702,6 +708,17 @@ export interface EquityPosition {
   marketValue: number;
   sector?: string;
   industry?: string;
+}
+
+export interface OptionPosition {
+  symbol: string;
+  underlyingSymbol: string;
+  expirationDate: string;
+  optionType: "call" | "put";
+  strikePrice: number;
+  quantity: number;
+  averageCost: number;
+  marketValue: number;
 }
 
 export interface EquityOrder {
@@ -2065,6 +2082,7 @@ export interface BrokerGateway {
   getAccounts(): Promise<BrokerageAccount[]>;
   getPortfolio(accountNumber: string): Promise<Portfolio>;
   getEquityPositions(accountNumber: string): Promise<EquityPosition[]>;
+  getOptionPositions?(accountNumber: string): Promise<OptionPosition[]>;
   getEquityOrders(accountNumber: string): Promise<EquityOrder[]>;
   getEquityQuotes(accountNumber: string, symbols: string[]): Promise<Record<string, BrokerQuote>>;
   getEquityTradability(accountNumber: string, symbols: string[]): Promise<Record<string, { tradable: boolean; fractional: boolean; reason?: string }>>;

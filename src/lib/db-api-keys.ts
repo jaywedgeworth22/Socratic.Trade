@@ -867,6 +867,8 @@ export interface SyntheticTrailingStop {
   lastAttemptRefId?: string;
   createdAt: string;
   updatedAt: string;
+  suspectPrice?: number;
+  suspectCount?: number;
 }
 
 function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
@@ -886,7 +888,9 @@ function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
     fireGeneration: r.fire_generation != null ? Number(r.fire_generation) : 0,
     lastAttemptRefId: r.last_attempt_ref_id != null ? String(r.last_attempt_ref_id) : undefined,
     createdAt: String(r.created_at),
-    updatedAt: String(r.updated_at)
+    updatedAt: String(r.updated_at),
+    suspectPrice: r.suspect_price != null ? Number(r.suspect_price) : undefined,
+    suspectCount: r.suspect_count != null ? Number(r.suspect_count) : 0
   };
 }
 
@@ -911,8 +915,8 @@ export function upsertSyntheticStop(
       // routine upserts (auto-register, per-tick extreme/lastPrice persistence) must never reset the
       // exit-attempt ledger — generation moves only forward (advanceSyntheticStopGeneration) and the
       // possibly-live attempt id is recorded/cleared only by recordSyntheticStopAttempt / the advance.
-      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at, suspect_price, suspect_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
         side = excluded.side,
         quantity = excluded.quantity,
@@ -926,13 +930,15 @@ export function upsertSyntheticStop(
           ELSE excluded.status
         END,
         last_price = excluded.last_price,
-        updated_at = excluded.updated_at`
+        updated_at = excluded.updated_at,
+        suspect_price = excluded.suspect_price,
+        suspect_count = excluded.suspect_count`
     )
     .run(
       stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.side, stop.quantity,
       stop.entryPrice, stop.extremePrice, stop.trailPercent ?? null, stop.trailAmount ?? null,
       stop.status, stop.lastPrice ?? null, stop.fireGeneration ?? 0, stop.lastAttemptRefId ?? null,
-      stop.createdAt ?? now, now
+      stop.createdAt ?? now, now, stop.suspectPrice ?? null, stop.suspectCount ?? 0
     );
 }
 
