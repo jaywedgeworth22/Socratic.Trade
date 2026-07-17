@@ -1,5 +1,10 @@
 # Current Status
 
+## 2026-07-17 — OpenRouter Model Stats Canonicalization: prefix-stripping in aggregateModelStats (Antigravity, branch `antigravity/openrouter-universal-routing`)
+
+Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts`. This strips provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs so that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`). This preserves historical benchmarks, avoids splitting stats by routing provider, and prevents live stats from displaying empty dashes (`—`) in the UI Model Stats drawer. Cleaned up Vitest test assertions in `test/model-stats.test.ts` to verify the canonicalization behavior. Full verification passed: lint 0 errors, tsc clean, tests pass.
+Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
+
 ## 2026-07-17 — Codex autofix: 4/5 review findings fixed on PR #1703 (antigravity/openrouter-universal-routing)
 
 Addressed 4 of 5 open Codex review threads on PR #1703 (universal OpenRouter routing):
