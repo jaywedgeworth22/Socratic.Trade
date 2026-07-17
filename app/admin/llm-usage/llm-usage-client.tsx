@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Btn, Card, Select, Segmented, Stat, Toggle } from "../../console/ui/primitives";
 import { llmUsageContextLabel } from "../../ui/llm-usage-labels";
 import { describeProbeNetworkError, describeProbeStatus, type ProbeErrorDescription } from "../lib/probe-error";
+import { aggregateUsageByModel, displayModelName, type ModelUsageAggregate } from "./model-merge";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -177,7 +178,9 @@ function UsageGroupCard({ groupRows: rows }: { groupRows: UsageRow[] }) {
           .map((r, i) => (
             <div key={i} className="flex items-center justify-between text-[length:var(--con-fs-xs)]">
               <div className="flex items-center gap-2 text-[color:var(--con-muted)]">
-                <span className="con-mono text-[color:var(--con-fg)]">{r.model ?? "—"}</span>
+                {/* displayModelName strips the OpenRouter vendor prefix so a routed
+                    "anthropic/claude-x" reads the same as the directly-called "claude-x". */}
+                <span className="con-mono text-[color:var(--con-fg)]">{r.model ? displayModelName(r.model) : "—"}</span>
                 <span className="text-[color:var(--con-faint)]">·</span>
                 <span title={r.context ?? "unknown"}>{llmUsageContextLabel(r.context ?? "unknown")}</span>
                 <span className="text-[color:var(--con-faint)]">·</span>
@@ -190,6 +193,66 @@ function UsageGroupCard({ groupRows: rows }: { groupRows: UsageRow[] }) {
               </div>
             </div>
           ))}
+      </div>
+    </Card>
+  );
+}
+
+// "By model" merged view: one row per canonical model, combining OpenRouter-routed and
+// direct-provider calls for the same underlying model into one total, with a per-provider
+// breakdown so the pre-OpenRouter (direct) and OpenRouter portions stay visible. The raw
+// ledger rows are never rewritten — this is a read-time aggregation only (see model-merge.ts).
+function ModelBreakdownCard({ models }: { models: ModelUsageAggregate[] }) {
+  return (
+    <Card>
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <span className="con-card-title">By model</span>
+        <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">merged across providers</span>
+      </div>
+      <p className="mb-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+        Calls for the same model are combined here whether they were routed through OpenRouter or sent
+        directly to the provider. The breakdown shows each route so earlier direct-provider usage stays visible.
+      </p>
+      <div className="space-y-1">
+        {models.map((m) => {
+          const multiRoute = m.providers.length > 1;
+          return (
+            <div key={m.canonicalId} className="border-t border-[color:var(--con-line)] pt-2 first:border-t-0 first:pt-0">
+              <div className="flex items-center justify-between gap-3 text-[length:var(--con-fs-sm)]">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="con-mono truncate font-medium text-[color:var(--con-fg)]">
+                    {m.canonicalId === "unknown" ? "—" : m.displayName}
+                  </span>
+                  {!multiRoute && (
+                    <span className="con-chip" title="Only one route recorded for this model in this window">
+                      {providerLabel(m.providers[0]!.provider)}
+                    </span>
+                  )}
+                </div>
+                <div className="con-num flex shrink-0 items-center gap-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                  <span>{m.calls} call{m.calls !== 1 ? "s" : ""}</span>
+                  <span title="total tokens">{fmtTokens(m.totalTokens)}</span>
+                  <span className="text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-fg)]">{fmtCost(m.costUsd)}</span>
+                </div>
+              </div>
+              {multiRoute && (
+                <div className="mt-1 space-y-0.5 pl-3">
+                  {m.providers.map((p) => (
+                    <div key={p.provider} className="flex items-center justify-between text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-[color:var(--con-muted)]">
+                          {p.provider === "openrouter" ? "via OpenRouter" : `${providerLabel(p.provider)} · direct`}
+                        </span>
+                        <span>· {p.calls} call{p.calls !== 1 ? "s" : ""}</span>
+                      </span>
+                      <span className="con-mono">{fmtCost(p.costUsd)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </Card>
   );
@@ -267,6 +330,7 @@ export function LlmUsageClient({
       b.reduce((s: number, r: UsageRow) => s + r.costUsd, 0) -
       a.reduce((s: number, r: UsageRow) => s + r.costUsd, 0)
     );
+  const modelBreakdown = aggregateUsageByModel(filteredRows);
   const filteredTotalCost = filteredRows.reduce((s, r) => s + r.costUsd, 0);
   const filteredFailoverCost = filteredRows.filter((r) => r.keySource === "operator").reduce((s, r) => s + r.costUsd, 0);
   const filteredCalls = filteredRows.reduce((s, r) => s + r.calls, 0);
@@ -358,7 +422,10 @@ export function LlmUsageClient({
             </div>
           </div>
 
-          {/* Per-key groups */}
+          {/* By-model merged view (OpenRouter + direct combined per model) */}
+          {modelBreakdown.length > 0 && <ModelBreakdownCard models={modelBreakdown} />}
+
+          {/* Per-key / per-account detail */}
           {groupList.length === 0 ? (
             <div className="py-12 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">No usage recorded in this window.</div>
           ) : (

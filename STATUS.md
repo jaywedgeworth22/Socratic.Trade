@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-07-17 — Usage page canonical-model merge (MONET, branch `monet/usage-canonical-model-merge`)
+
+Owner-directed: preserve pre-OpenRouter usage stats + merge OpenRouter-routed calls with
+direct-provider calls for the SAME underlying model on the LLM Usage page. New "By model"
+section shows the merged per-model total with a per-provider breakdown (Anthropic direct / via
+OpenRouter …), so earlier direct usage stays visible while OpenRouter usage folds into the same
+model. Display/read-layer only via a new pure `app/admin/llm-usage/model-merge.ts`
+(`canonicalModelId` = #1703's vendor-prefix strip; `aggregateUsageByModel`); raw `llm_usage`
+rows never rewritten. Client-side only to avoid conflict with the in-flight #1703 (Antigravity
+universal-OpenRouter routing that creates the split); correct whether or not #1703 is merged.
+Gate: tsc clean, lint 0 errors, 7/7 new merge tests + full suite, build; live-verified with
+seeded same-model direct+OpenRouter rows. Rollout:
+`docs/rollouts/2026-07-17-usage-canonical-model-merge.md`.
+
 ## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, PR #1711, auto-merge enabled — waiting on CI)
 
 Codex review round 1 (chatgpt-codex-connector[bot]): 4 findings, all addressed. An initial
