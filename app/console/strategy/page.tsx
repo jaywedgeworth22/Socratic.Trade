@@ -404,6 +404,10 @@ function FallbackModelSelect({
                           nextSet.delete(opt.value);
                         }
                         onChange(Array.from(nextSet).join(", "));
+                        // Commit immediately so a click-selection isn't lost if the user
+                        // navigates away before a blur event fires (the dropdown's
+                        // mousedown default prevention blocks blur from firing).
+                        setTimeout(() => onCommitRef.current(), 0);
                       }}
                       className={`rounded border border-[color:var(--con-line)] bg-[color:var(--con-surface)] text-[color:var(--con-accent)] ${
                         isPrimary ? "cursor-not-allowed opacity-50" : ""
