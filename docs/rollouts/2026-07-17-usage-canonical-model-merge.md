@@ -63,3 +63,30 @@ Modified: `app/admin/llm-usage/llm-usage-client.tsx`.
 - The Overview page "COST BY MODEL" tile (`app/admin/page.tsx`) could reuse
   `aggregateUsageByModel`/`canonicalModelId` for the same merge — deferred, out of scope for
   this Usage-page change; low effort follow-up.
+
+## Update — benchmark/perf continuity folded in (2026-07-17, MONET + AG)
+
+The owner's priority was preserving the accumulated per-model PERFORMANCE experience (the
+benchmark), not just cost. `src/lib/model-stats.ts` keys realized-P&L/win-rate, latency, and
+the static benchmark JSON by model, and the closed-lot `proposedByModel`/`reviewedByModel`
+feed it — so #1703's route-qualified model IDs would split all of it at the cutover.
+
+Antigravity (AG) implemented the server-side fix inside #1703 (`cleanModelId` canonicalization
+at every keying point in `aggregateModelStats` — live cost, latency, benchmark summaries, and
+proposer/reviewer closed-lot attribution). Because #1703 (universal OpenRouter routing, 70
+files) is currently CONFLICTING against a fast-moving main and the owner wants the continuity
+fix in production NOW, AG's model-stats canonicalization + its test changes
+(`test/model-stats.test.ts`, `test/performance.test.ts`) are landed here — AG's exact,
+verified code, credited — independent of the big routing PR. It is a no-op today (bare names)
+and correct once routing lands. Coordinated on #agent-sync: AG drops the now-redundant
+model-stats piece from #1703 on their next rebase and keeps the routing/recording changes.
+
+Result: the model performance benchmark stays continuous across the OpenRouter cutover (no lost
+experience), the Model Stats drawer keeps resolving live stats for active models, and the Usage
+cost page merges the same model across routes — all in one shippable change.
+
+## Follow-up (added)
+
+- Consolidate AG's `cleanModelId` (model-stats.ts) and my `canonicalModelId` (model-merge.ts)
+  into one shared `src/lib/model-identity.ts` — behaviorally equivalent today; kept separate
+  now to preserve AG's verified benchmark code untouched for a fast, low-risk ship.
