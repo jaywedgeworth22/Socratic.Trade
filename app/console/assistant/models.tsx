@@ -19,7 +19,7 @@ export interface ModelOption {
 
 export interface ModelGroup {
   /** Internal provider id, matching GET /api/chat/providers keys ("offline" is local-only). */
-  provider: "offline" | "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+  provider: "offline" | "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
   label: string;
   options: ModelOption[];
 }
