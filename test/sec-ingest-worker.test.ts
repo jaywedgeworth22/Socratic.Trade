@@ -104,6 +104,11 @@ describe("SEC Ingestion Worker and State Machine (P5)", () => {
     const storeCall = vi.mocked(storeDocument).mock.calls[0]?.[0] as any;
     expect(storeCall.acceptance_datetime).toBe("2026-07-15T21:37:12.000Z");
 
+    // Multi-document accessions: the vector document id must carry the task's document identity
+    // (sequence + documentName) so a second document in the same accession can never supersede
+    // this one's managed-ledger head or collide on chunk citations.
+    expect(storeCall.doc_id).toBe(`${accession}:1:document.html`);
+
     // Lexical FTS rows are written only after storeDocument reports a committed document —
     // and they ARE written (the worker pipeline is the FTS producer for queued ingests).
     const ftsRows = db.prepare("SELECT symbol, accession FROM document_chunks_fts WHERE accession = ?").all(accession) as any[];

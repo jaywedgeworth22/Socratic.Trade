@@ -91,6 +91,14 @@ export class SecIngestWorker {
       });
     };
 
+    // Multi-document accessions: a filing can queue several documents (primary HTML, exhibits,
+    // ownership XML), each its own task with a distinct sequence/documentName. The vector
+    // document id must carry that identity: storeDocument defaults its managed-ledger
+    // documentKey to doc_id and keeps only ONE active head per (tenant_scope, source,
+    // document_key), so a bare-accession id would let document B's commit supersede document
+    // A's vectors — and every document's chunks would collide on `<accession>#c001` citations.
+    const vectorDocId = `${task.accession}:${sequence}:${documentName}`;
+
     const checkpoint = task.checkpoint;
 
     if (checkpoint === "discovered") {
@@ -196,7 +204,7 @@ export class SecIngestWorker {
       const sections = JSON.parse(sectionsJson);
       const doc = {
         text: rawContent,
-        doc_id: task.accession,
+        doc_id: vectorDocId,
         ticker: task.symbol,
         title: `${task.symbol} ${task.payload.docType || "Filing"}`,
         doc_type: task.payload.docType as string,
@@ -252,7 +260,7 @@ export class SecIngestWorker {
       const sections = JSON.parse(sectionsJson);
       const doc = {
         text: rawContent,
-        doc_id: task.accession,
+        doc_id: vectorDocId,
         ticker: task.symbol,
         title: `${task.symbol} ${task.payload.docType || "Filing"}`,
         doc_type: task.payload.docType as string,
