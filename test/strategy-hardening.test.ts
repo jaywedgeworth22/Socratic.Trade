@@ -617,8 +617,8 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     dollarAmount: 1000,
     limitPrice: null,
     stopPrice: null,
-    timeInForce: "day",
-    marketHours: "regular",
+    timeInForce: "gfd",
+    marketHours: "regular_hours",
     rationale: "Breakout over the 50d with volume confirmation.",
     tradeThesisTag: "breakout-continuation",
     confidenceScore: 72,
@@ -659,6 +659,22 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(kept).toHaveLength(1);
     expect(kept[0]?.symbol).toBe("AAPL");
     expect(dropped).toBe(3);
+  });
+
+  it("drops repaired proposals with out-of-enum timeInForce or coercible autonomyOverride (Codex round 4)", () => {
+    // "day" is not in the gfd/gtc schema enum — Alpaca maps unknown strings to gtc.
+    const dayTif = { ...complete(), timeInForce: "day" };
+    // An object thesis coerces to "[object Object]" and could pass preference gates as a
+    // "real" override thesis under execute mode.
+    const junkOverride = { ...complete(), autonomyOverride: { requested: true, thesis: {} } };
+    const validOverride = {
+      ...complete(),
+      autonomyOverride: { requested: true, thesis: "Earnings momentum intact.", preferenceConflicts: [], invalidation: null, cashDeploymentPct: null }
+    };
+    const { kept, dropped } = filterRepairedProposals([dayTif, junkOverride, validOverride]);
+    expect(kept).toHaveLength(1);
+    expect((kept[0]?.autonomyOverride as { thesis?: string })?.thesis).toBe("Earnings momentum intact.");
+    expect(dropped).toBe(2);
   });
 
   it("drops a repaired proposal whose sizing fields are non-numeric strings (Codex round 3)", () => {

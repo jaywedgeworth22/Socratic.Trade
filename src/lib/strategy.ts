@@ -5183,6 +5183,18 @@ export const BULL_PROPOSAL_REQUIRED_KEYS = [
  * and the three human-judgment fields carry real values (non-empty rationale/tradeThesisTag,
  * finite confidenceScore) — anything less is a truncation artifact, not a trade idea.
  */
+function isSchemaShapedAutonomyOverride(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    typeof o.requested === "boolean" &&
+    typeof o.thesis === "string" && o.thesis.trim() !== "" &&
+    Array.isArray(o.preferenceConflicts) && o.preferenceConflicts.every((item) => typeof item === "string") &&
+    (o.invalidation === null || typeof o.invalidation === "string") &&
+    (o.cashDeploymentPct === null || (typeof o.cashDeploymentPct === "number" && Number.isFinite(o.cashDeploymentPct)))
+  );
+}
+
 export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProposal[]; dropped: number } {
   const kept: TradeProposal[] = [];
   let dropped = 0;
@@ -5212,10 +5224,20 @@ export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProp
       // schema is nullable here); anything else must be a finite number.
       (["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"] as const)
         .every((key) => record[key] === null || (typeof record[key] === "number" && Number.isFinite(record[key] as number))) &&
-      (record.timeInForce === null || typeof record.timeInForce === "string") &&
-      (record.marketHours === null || typeof record.marketHours === "string") &&
+      // Enum membership, not just string-ness (Codex P1, round 4): the schema allows only
+      // gfd/gtc and the Alpaca adapter maps any OTHER string to gtc — a repaired
+      // `timeInForce: "day"` would submit a good-til-cancelled order the declared contract
+      // would have rejected.
+      (record.timeInForce === null || record.timeInForce === "gfd" || record.timeInForce === "gtc") &&
+      (record.marketHours === null ||
+        record.marketHours === "regular_hours" || record.marketHours === "extended_hours" || record.marketHours === "all_day_hours") &&
       (record.stopPlan === null || (typeof record.stopPlan === "object" && !Array.isArray(record.stopPlan))) &&
-      (record.autonomyOverride === null || (typeof record.autonomyOverride === "object" && !Array.isArray(record.autonomyOverride)));
+      // A repaired autonomyOverride must satisfy the override subschema (Codex P1, round 4):
+      // sanitize coerces a nested-object thesis to "[object Object]", which
+      // resolveSocraticOverride would treat as a REAL thesis and use to pass preference gates
+      // under socraticOverrideMode: "execute". requested must be boolean and thesis a real
+      // string before a repaired proposal may carry an override request at all.
+      (record.autonomyOverride === null || isSchemaShapedAutonomyOverride(record.autonomyOverride));
     if (complete) kept.push(record as unknown as TradeProposal);
     else dropped += 1;
   }
