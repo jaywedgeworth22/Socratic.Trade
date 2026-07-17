@@ -68,6 +68,7 @@ export class SecIngestWorker {
     const leaseToken = task.leaseToken || "";
     const owner = task.leaseOwner || this.workerId;
     const documentName = task.documentName || "document.html";
+    const sequence = task.sequence ?? 1;
 
     const heartbeat = () => {
       heartbeatSecIngestTask({
@@ -83,7 +84,7 @@ export class SecIngestWorker {
     if (checkpoint === "discovered") {
       heartbeat();
       const content = await politeFetchText(task.payload.url as string);
-      await writeLocalArtifact(task.cik, task.accession, 1, `raw-${documentName}`, content);
+      await writeLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`, content);
 
       const ok = advanceSecIngestTask({
         taskId: task.id,
@@ -99,7 +100,7 @@ export class SecIngestWorker {
 
     if (checkpoint === "fetched") {
       heartbeat();
-      const content = await readLocalArtifact(task.cik, task.accession, 1, `raw-${documentName}`);
+      const content = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
       if (!content || content.length < 100) {
         throw new Error("Validation failed: empty or tiny content");
       }
@@ -117,17 +118,17 @@ export class SecIngestWorker {
 
     if (checkpoint === "validated") {
       heartbeat();
-      const content = await readLocalArtifact(task.cik, task.accession, 1, `raw-${documentName}`);
+      const content = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
       if (!content) throw new Error("Raw content artifact missing");
 
       let sections: any[];
       if (documentName.endsWith(".xml")) {
-        sections = [{ title: "XML Document", text: content }];
+        sections = [{ itemCode: "0", itemTitle: "XML Document", text: content }];
       } else {
         const parsed = parseFilingHtml(content);
         sections = parsed.sections;
       }
-      await writeLocalArtifact(task.cik, task.accession, 1, "sections.json", JSON.stringify(sections));
+      await writeLocalArtifact(task.cik, task.accession, sequence, "sections.json", JSON.stringify(sections));
 
       const ok = advanceSecIngestTask({
         taskId: task.id,
@@ -143,7 +144,7 @@ export class SecIngestWorker {
 
     if (checkpoint === "parsed") {
       heartbeat();
-      const content = await readLocalArtifact(task.cik, task.accession, 1, `raw-${documentName}`);
+      const content = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
       if (!content) throw new Error("Raw content artifact missing");
 
       if (documentName.endsWith(".xml")) {
@@ -165,8 +166,8 @@ export class SecIngestWorker {
 
     if (checkpoint === "facts_extracted") {
       heartbeat();
-      const rawContent = await readLocalArtifact(task.cik, task.accession, 1, `raw-${documentName}`);
-      const sectionsJson = await readLocalArtifact(task.cik, task.accession, 1, "sections.json");
+      const rawContent = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
+      const sectionsJson = await readLocalArtifact(task.cik, task.accession, sequence, "sections.json");
       if (!rawContent || !sectionsJson) throw new Error("Parsed/Raw artifacts missing");
 
       const sections = JSON.parse(sectionsJson);
@@ -182,7 +183,7 @@ export class SecIngestWorker {
       };
 
       const chunks = chunkDocument(doc, { maxTokens: 400, overlapRatio: 0.15 });
-      await writeLocalArtifact(task.cik, task.accession, 1, "chunks.json", JSON.stringify(chunks));
+      await writeLocalArtifact(task.cik, task.accession, sequence, "chunks.json", JSON.stringify(chunks));
 
       for (const chunk of chunks) {
         insertDocumentChunkFts(
@@ -222,8 +223,8 @@ export class SecIngestWorker {
 
     if (checkpoint === "embed_queued") {
       heartbeat();
-      const rawContent = await readLocalArtifact(task.cik, task.accession, 1, `raw-${documentName}`);
-      const sectionsJson = await readLocalArtifact(task.cik, task.accession, 1, "sections.json");
+      const rawContent = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
+      const sectionsJson = await readLocalArtifact(task.cik, task.accession, sequence, "sections.json");
       if (!rawContent || !sectionsJson) throw new Error("Parsed/Raw artifacts missing");
 
       const sections = JSON.parse(sectionsJson);
@@ -247,7 +248,7 @@ export class SecIngestWorker {
         throw new Error("Ingestion budget or capacity exceeded mid-task");
       }
 
-      await writeLocalArtifact(task.cik, task.accession, 1, "storeResult.json", JSON.stringify(res));
+      await writeLocalArtifact(task.cik, task.accession, sequence, "storeResult.json", JSON.stringify(res));
 
       const ok = advanceSecIngestTask({
         taskId: task.id,
@@ -305,7 +306,7 @@ export class SecIngestWorker {
 
     if (checkpoint === "verified") {
       heartbeat();
-      const storeResultJson = await readLocalArtifact(task.cik, task.accession, 1, "storeResult.json");
+      const storeResultJson = await readLocalArtifact(task.cik, task.accession, sequence, "storeResult.json");
       if (!storeResultJson) throw new Error("storeResult artifact missing");
       const res = JSON.parse(storeResultJson);
 

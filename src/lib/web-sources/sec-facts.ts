@@ -122,8 +122,10 @@ export function parseAndSaveForm4(xmlContent: string, cik: string, accession: st
   const paddedCik = padCik(cik);
 
   const insiderName = $("reportingOwner > reportingOwnerId > rptOwnerName").first().text().trim();
-  const relationship = $("reportingOwner > reportingOwnerRelationship > officerTitle").first().text().trim() ||
-    ($("reportingOwner > reportingOwnerRelationship > isDirector").first().text() === "true" ? "Director" : "Ten Percent Owner");
+  const isOfficer = $("reportingOwner > reportingOwnerRelationship > isOfficer").first().text().trim() === "true";
+  const officerTitle = $("reportingOwner > reportingOwnerRelationship > officerTitle").first().text().trim();
+  const isDirector = $("reportingOwner > reportingOwnerRelationship > isDirector").first().text().trim() === "true";
+  const relationship = officerTitle || (isOfficer ? "Officer" : isDirector ? "Director" : "Ten Percent Owner");
 
   const periodOfReport = $("periodOfReport > value").first().text().trim();
 
@@ -140,7 +142,7 @@ export function parseAndSaveForm4(xmlContent: string, cik: string, accession: st
       const sharesVal = $(el).find("transactionAmounts > transactionShares > value").text().trim();
       const priceVal = $(el).find("transactionAmounts > transactionPricePerShare > value").text().trim();
       const ad = $(el).find("transactionAmounts > transactionAcquiredDisposedCode > value").text().trim(); // A or D
-      const is10b5_1 = $(el).find("transactionCoding > equitySwapInvolved").text().trim() === "true" ? 1 : 0; // fallback proxy detection
+      const is10b5_1 = $(el).find("transactionCoding > rule10b51Transaction").text().trim() === "true" ? 1 : 0;
 
       if (!sharesVal || !ad) return;
 

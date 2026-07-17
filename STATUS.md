@@ -29,6 +29,18 @@ Addressed 14 of 16 Codex P2 findings on sec-parser.ts (last 4 in Round 3):
 13. **Detect item headings encoded as layout tables**: Check small single-cell tables for heading-like text before table Markdown conversion, so section metadata is not lost.
 14. **Recognize headings in non-block EDGAR wrappers**: Added `HEADING_WRAPPER_TAGS` set (`center`, `font`, `span`, `b`, etc.) so EDGAR formatting wrappers with Item/Part text are classified as headings.
 
+### Codex autofix — Round 3 (2026-07-16)
+Addressed 8 remaining Codex P1/P2 findings across 5 files (search-fusion.ts, rag-eval-harness.ts, sec-facts.ts, db-learning.ts, sec-ingest-worker.ts):
+
+1. **Rank FTS matches before applying RRF** (P2): Added `ORDER BY bm25(...)` to FTS5 query so lexical relevance is the basis for RRF scoring rather than insertion order.
+2. **Return as many fused results as requested** (P2): Changed MMR candidate pool from `min(15, candidates)` to `min(max(limit, 15), candidates)` so callers requesting >15 results actually get them.
+3. **Do not evaluate unknown CIKs as AAPL** (P2): Skip CIKs with no matching task row instead of silently benchmarking AAPL.
+4. **Classify untitled officers as officers** (P2): Check the `isOfficer` flag from Form 4 XML before defaulting to "Ten Percent Owner".
+5. **Read Form 4 10b5-1 indicator directly** (P2): Parse `rule10b51Transaction` field instead of proxying via `equitySwapInvolved`.
+6. **Deduplicate FTS rows before inserting** (P2): Delete old `content_hash` row before inserting into FTS5 virtual table (INSERT OR REPLACE is a no-op on FTS5 rowid).
+7. **Namespace worker artifacts by task document** (P1): Use `task.sequence` instead of hardcoded `1` in all local artifact paths, so multi-document accessions don't collide.
+8. **Supply section fields for XML tasks** (P2): Changed `{title, text}` to `{itemCode, itemTitle, text}` so Form 4 chunks don't get `undefined. undefined` context headers.
+
 2 remaining P2 findings deferred for owner decision (form-specific Item 1 titles; parser-versioned accession skip).
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)

@@ -46,6 +46,7 @@ export async function retrieveFusedContext(
       SELECT content_hash, symbol, source, accession, text
       FROM document_chunks_fts
       WHERE symbol = ? AND text MATCH ?
+      ORDER BY bm25(document_chunks_fts, 0, 1, 0, 0, 1) DESC
       LIMIT 100
     `).all(symbol, cleanKeywords);
   } catch (err) {
@@ -157,7 +158,7 @@ export async function retrieveFusedContext(
   const lambda = 0.5;
   const selected: FusionResult[] = [];
   const selectedIndices = new Set<number>();
-  const m = Math.min(15, candidates.length);
+  const m = Math.min(Math.max(limit, 15), candidates.length);
 
   if (voyageClient) {
     try {

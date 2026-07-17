@@ -26,9 +26,13 @@ export async function runEvaluationHarness() {
   const categoryStats: Record<string, { count: number; recallAt10: number; recallAt50: number; ndcg: number }> = {};
 
   for (const item of items) {
-    // Resolve symbol from CIK
+    // Resolve symbol from CIK, skip if CIK has no matching task row
     const taskRow = db.prepare("SELECT symbol FROM sec_ingest_tasks WHERE cik = ? LIMIT 1").get(item.expected_cik) as any;
-    const symbol = taskRow?.symbol || "AAPL";
+    if (!taskRow?.symbol) {
+      console.warn(`[rag-eval] No task found for CIK ${item.expected_cik} (${item.category}: "${item.query.slice(0, 60)}...") — skipping`);
+      continue;
+    }
+    const symbol = taskRow.symbol;
 
     // Retrieve top 50 fused context results
     const results = await retrieveFusedContext(item.query, symbol, 50);

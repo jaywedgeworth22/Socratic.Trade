@@ -1497,8 +1497,11 @@ export function insertDocumentChunkFts(
   text: string
 ): void {
   const db = getDb();
+  // FTS5 is a virtual table — INSERT OR REPLACE does not deduplicate on content_hash.
+  // Delete any existing row with this hash first to prevent duplicates on retry/re-run.
+  db.prepare(`DELETE FROM document_chunks_fts WHERE content_hash = ?`).run(contentHash);
   db.prepare(`
-    INSERT OR REPLACE INTO document_chunks_fts (content_hash, symbol, source, accession, text)
+    INSERT INTO document_chunks_fts (content_hash, symbol, source, accession, text)
     VALUES (?, ?, ?, ?, ?)
   `).run(contentHash, symbol, source, accession, text);
 }

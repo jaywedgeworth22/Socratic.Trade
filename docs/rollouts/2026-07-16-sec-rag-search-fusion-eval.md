@@ -28,3 +28,17 @@ npx vitest run test/sec-facts.test.ts test/sec-ingest-worker.test.ts test/search
 npm run build
 ```
 All checks passed successfully.
+
+### Codex autofix — Round 3 (2026-07-16)
+Addressed 8 remaining Codex P1/P2 findings:
+
+| Finding | File | Severity | Fix |
+|---|---|---|---|
+| Rank FTS matches before applying RRF | search-fusion.ts | P2 | Added `ORDER BY bm25(...)` to FTS5 query |
+| Return as many fused results as requested | search-fusion.ts | P2 | Changed MMR candidate pool to at least `limit` |
+| Do not evaluate unknown CIKs as AAPL | rag-eval-harness.ts | P2 | Skip CIKs with no matching task row |
+| Classify untitled officers as officers | sec-facts.ts | P2 | Check `isOfficer` flag from Form 4 XML |
+| Read Form 4 10b5-1 indicator directly | sec-facts.ts | P2 | Parse `rule10b51Transaction` field |
+| Deduplicate FTS rows before inserting | db-learning.ts | P2 | Delete old row before FTS5 insert |
+| Namespace worker artifacts by task document | sec-ingest-worker.ts | P1 | Use `task.sequence` instead of hardcoded `1` |
+| Supply section fields for XML tasks | sec-ingest-worker.ts | P2 | Use `{itemCode, itemTitle, text}` for XML sections |
