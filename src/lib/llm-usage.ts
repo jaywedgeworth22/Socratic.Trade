@@ -105,7 +105,11 @@ function defaultModelPricePerM(): [number, number] {
 
 function priceForModel(model: string | undefined): [number, number] {
   if (!model) return defaultModelPricePerM();
-  const m = model.toLowerCase();
+  // Strip OpenRouter routing prefix (e.g. "openai/gpt-5.4-mini" → "gpt-5.4-mini")
+  // so the price table's bare model IDs can match the outbound model.
+  let m = model.toLowerCase();
+  const slashIdx = m.indexOf("/");
+  if (slashIdx !== -1) m = m.slice(slashIdx + 1);
   if (MODEL_PRICE_PER_M[m]) return MODEL_PRICE_PER_M[m];
   // Prefix match (e.g. dated suffixes like claude-haiku-4-5-20251001).
   // Longest-prefix wins so family aliases cannot shadow a more specific tier snapshot

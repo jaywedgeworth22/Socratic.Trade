@@ -86,6 +86,10 @@ export function resolveLlmEndpoint(
     }
   }
 
+  // Strip a legacy openrouter/ prefix that may have been saved in older policy selections
+  // (e.g. "openrouter/google/gemini-2.5-flash" → "google/gemini-2.5-flash").
+  model = model.replace(/^openrouter\//i, "");
+
   const url = process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
   const cred = resolveLlmCredential("openrouter", userId);
 

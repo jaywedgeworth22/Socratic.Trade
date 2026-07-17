@@ -55,7 +55,7 @@ export function isModelRotationSentinel(model?: string | null): boolean {
  * spend output budget on hidden reasoning tokens, so the visible-output cap must be raised.
  */
 export function isReasoningModel(model: string | undefined): boolean {
-  return /^(gpt-5|o\d)/i.test((model ?? "").trim());
+  return /^(gpt-5|o\d)/i.test(lowerModel(model));
 }
 
 /**

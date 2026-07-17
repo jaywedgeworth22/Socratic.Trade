@@ -93,7 +93,7 @@ export function upsertImportedRefs(refs: ImportedRefInput[], origin: string = DE
       if (!ticker) continue;
       stmt.run({
         ticker,
-        companyName: r.companyName ?? null,
+        companyName: r.companyName?.trim() || null,
         sector: r.sector ?? null,
         industry: r.industry ?? null,
         assetClass: r.assetClass ?? null,
