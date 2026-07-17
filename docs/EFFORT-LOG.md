@@ -1858,6 +1858,46 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][MONET] Usage Monitor push failsafe: circuit breaker + bounded buffer (branch
+  `monet/usage-push-failsafe`, worktree `~/apps/trading-monet-usage-push-failsafe`, claimed
+  2026-07-17, owner-directed) — IMPLEMENTATION COMPLETE / GATE GREEN / NOT MERGED (owner gates
+  landing).** Incident response: `usage.jays.services` was OOM-down ~2 days; both Congress.Trade
+  and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs aggregate),
+  running up a 200GB Render bandwidth overage. This row is the ST side (CT handled separately).
+  `src/lib/usage-monitor-push.ts` had a capped retry-delay but never fully stopped attempting, and
+  `usage-monitor-replay.ts`'s independent fixed 60s interval had no backoff of its own — a second,
+  separate hammer during an outage. Added a circuit breaker shared by both real network call sites
+  (`postBatch` for the live queue, `sendUsageMonitorBatch` for replay): opens after
+  `USAGE_MONITOR_BREAKER_THRESHOLD` (default 3) consecutive failures, suppresses delivery
+  entirely (no fetch call) for an exponential window (`USAGE_MONITOR_BREAKER_BASE_MS` 30s default,
+  capped `USAGE_MONITOR_BREAKER_MAX_MS` 15min), then allows one half-open probe. Bounded the
+  in-memory failure-retry buffer (`USAGE_MONITOR_QUEUE_MAX_EVENTS` 500 default,
+  `USAGE_MONITOR_QUEUE_TTL_MS` 1h default, TTL keyed off buffer-residency time, not the event's
+  own `occurredAt` — dropped entries are still safe since llm/rag/provider-dispatch events replay
+  from the durable DB ledgers regardless). User-facing ledger call sites remain synchronous
+  fire-and-forget (explicit non-blocking test added). Opened PR #1711; codex-connector review round
+  (4 findings): an initial `[codex-autofix]` commit landed first-pass fixes, then a MONET
+  reconciliation commit refined them to the coordinator's spec + added the missing tests — [P1]
+  env-tunable `USAGE_MONITOR_PUSH_TIMEOUT_MS` (10s, was hardcoded 30s) so a half-up receiver trips
+  the breaker; [P2] env-tunable `USAGE_MONITOR_CALLVOLUME_MAX_KEYS` (2000, was hardcoded 100); [P2]
+  trim TTL/cap at flush entry; [P2] HMR migration covers both `queue` + `pendingQueue` via
+  `normalizeRetainedQueues()` + `STATE_VERSION` 3→4. Review round 2 (1 finding): [P2]
+  observability-truthfulness — the replay lane opened the shared breaker on a replay-first outage
+  without recording a `usage-monitor` health failure, leaving the admin health row stale-"healthy"
+  for the whole backoff window; factored a shared `recordUsageMonitorHealth()` so BOTH lanes record
+  failure + recovery. Review round 3 (1 finding): [P2] breaker correctness — a schema-invalid local
+  event (e.g. `pushBrokerBalance` NaN/Infinity via `typeof === "number"`) was rejected by the shared
+  client BEFORE any fetch, but both send paths caught that pre-fetch ZodError as a delivery failure
+  and could falsely OPEN the breaker; fixed belt-and-suspenders — `Number.isFinite` admission +
+  pre-send prune (`isDeliverableEvent`) so poison never touches the breaker (live path drops it from
+  the buffer, replay path acks so the watermark advances). Review round 4 (1 finding): [P2]
+  single-flight the SEND (`state.inflightFlush`) so a hung receiver can't accumulate a burst of
+  concurrent hanging POSTs before the breaker registers the first failure — `flushUsageMonitor` now
+  defers (re-arms) instead of starting a second concurrent send while one is in flight; body moved to
+  `flushUsageMonitorOnce`. Gate: `tsc` clean, lint 0 errors, focused 34/34 (17 new), full 404
+  files/4,747 tests, production build all green. Not pushed by this session — coordinator re-pushes
+  (fast-forward over the autofix commits) + confirms threads + merges.
+  Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md` (+ codex-autofix note).
 - **[Socratic.Trade][MONET] Visual-tour findings fix wave (branch `monet/visual-tour-fixes`, claimed
   2026-07-17) — IN PROGRESS.** Owner-directed: fix the 13-finding visual-tour list (CLAUDE tour
   2026-07-17) via Sonnet subagent lanes: results paper-framing violation (P1), scan silent-fail +
