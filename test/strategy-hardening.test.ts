@@ -661,6 +661,17 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(dropped).toBe(3);
   });
 
+  it("drops a repaired short when the run's schema is long-only (Codex round 8)", () => {
+    const shortIdea = { ...complete(), side: "short" };
+    const longOnly = filterRepairedProposals([shortIdea, complete()], ["buy", "sell"]);
+    expect(longOnly.kept).toHaveLength(1);
+    expect(longOnly.kept[0]?.side).toBe("buy");
+    expect(longOnly.dropped).toBe(1);
+    // Same proposal survives when the run's schema exposes shorts.
+    const shortsOn = filterRepairedProposals([shortIdea], ["buy", "sell", "short", "cover"]);
+    expect(shortsOn.kept).toHaveLength(1);
+  });
+
   it("strips schema-extraneous fields from kept repaired proposals (Codex round 7)", () => {
     // additionalProperties: false — a smuggled bracketStopLimit would turn the protective stop
     // into a stop-limit order at the Alpaca adapter.

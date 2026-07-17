@@ -4740,7 +4740,7 @@ async function proposeTrades(input: {
                 // generative path is the ONLY repair opt-in; Red Team / revalidation / tuning
                 // parse strictly and stay fail-closed.
                 const parsed = JSON.parse(extractJsonPayload(text, { repair: true })) as { proposals?: unknown[] };
-                const { kept, dropped } = filterRepairedProposals(parsed.proposals ?? []);
+                const { kept, dropped } = filterRepairedProposals(parsed.proposals ?? [], allowedSides);
                 if (dropped > 0) {
                   console.warn(`[Bull] jsonrepair recovered the payload but ${dropped} proposal(s) were incomplete (truncation artifacts) and were dropped; keeping ${kept.length}.`);
                   audit("strategy_bull_repaired_partial_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
@@ -5209,7 +5209,14 @@ function isSchemaShapedAutonomyOverride(value: unknown): boolean {
   );
 }
 
-export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProposal[]; dropped: number } {
+export function filterRepairedProposals(
+  proposals: unknown[],
+  // The RUN's schema enum, not the global four (Codex P1, round 8): when shortSellingEnabled is
+  // off or the account lacks short capability, the strict path rejects short/cover at
+  // `side: { enum: allowedSides }` — and the policy-level short gate is deliberately
+  // owner-overrideable, so the repair path must enforce the same schema boundary.
+  allowedSides: readonly string[] = ["buy", "sell", "short", "cover"]
+): { kept: TradeProposal[]; dropped: number } {
   const kept: TradeProposal[] = [];
   let dropped = 0;
   for (const candidate of proposals) {
@@ -5226,7 +5233,7 @@ export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProp
       // the identity/enum fields the downstream pipeline dereferences unconditionally.
       typeof record.symbol === "string" && record.symbol.trim() !== "" &&
       typeof record.side === "string" &&
-      ["buy", "sell", "short", "cover"].includes(record.side) &&
+      allowedSides.includes(record.side) &&
       typeof record.type === "string" &&
       ["market", "limit", "stop_market", "stop_limit"].includes(record.type) &&
       typeof record.rationale === "string" && record.rationale.trim() !== "" &&
