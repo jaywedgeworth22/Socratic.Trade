@@ -1890,9 +1890,13 @@ As of 2026-07-08 (assignment-rule update).
   client BEFORE any fetch, but both send paths caught that pre-fetch ZodError as a delivery failure
   and could falsely OPEN the breaker; fixed belt-and-suspenders — `Number.isFinite` admission +
   pre-send prune (`isDeliverableEvent`) so poison never touches the breaker (live path drops it from
-  the buffer, replay path acks so the watermark advances). Gate: `tsc` clean, lint 0 errors, focused
-  33/33 (16 new), full 404 files/4,746 tests, production build all green. Not pushed by this session
-  — coordinator re-pushes (fast-forward over the autofix commits) + confirms threads + merges.
+  the buffer, replay path acks so the watermark advances). Review round 4 (1 finding): [P2]
+  single-flight the SEND (`state.inflightFlush`) so a hung receiver can't accumulate a burst of
+  concurrent hanging POSTs before the breaker registers the first failure — `flushUsageMonitor` now
+  defers (re-arms) instead of starting a second concurrent send while one is in flight; body moved to
+  `flushUsageMonitorOnce`. Gate: `tsc` clean, lint 0 errors, focused 34/34 (17 new), full 404
+  files/4,747 tests, production build all green. Not pushed by this session — coordinator re-pushes
+  (fast-forward over the autofix commits) + confirms threads + merges.
   Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md` (+ codex-autofix note).
 - **[Socratic.Trade][MONET] Visual-tour findings fix wave (branch `monet/visual-tour-fixes`, claimed
   2026-07-17) — IN PROGRESS.** Owner-directed: fix the 13-finding visual-tour list (CLAUDE tour

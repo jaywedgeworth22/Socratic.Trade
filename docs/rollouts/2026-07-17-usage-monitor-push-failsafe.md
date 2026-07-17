@@ -175,19 +175,38 @@ injected into the buffer is dropped at flush WITHOUT tripping the breaker while 
 the same batch still sends; a genuine receiver failure still trips the breaker; and (replay lane) an
 all-poison batch is acked (`true`, watermark can advance) without receiver contact or a breaker trip.
 
+## Review round 4 (codex-connector on PR #1711, 1 finding — bound the hung-receiver burst)
+
+**[P2] A hung receiver could accumulate a burst of concurrent hanging POSTs before the breaker
+opened.** The timer callback clears `state.flushTimer` before calling `flushUsageMonitor`, so while
+a live flush was awaiting its (up to 10s) timeout send, telemetry enqueued in the meantime armed
+MORE flush timers on the 2s cadence — each starting another concurrent hanging POST to the dead
+receiver. The breaker only protects AFTER those sends' failures register, so several simultaneous
+hanging requests could pile up in that window. FIXED (single-flight): the SEND is now serialized via
+`state.inflightFlush`. `flushUsageMonitor` became a thin wrapper — if a flush is already in flight it
+does NOT start a second concurrent send; it re-arms the timer (defer) so events buffered in the
+meantime are picked up once the current send settles, and clears the marker in `finally`. The actual
+flush body moved to a private `flushUsageMonitorOnce`. Net: at most ONE outstanding POST before the
+breaker decision, so a hung receiver can't accumulate a burst. Enqueues are unaffected (they still
+just buffer — only the SEND is serialized), and the finally-clear plus the bounded send timeout
+guarantee no deadlock. No change to the breaker, timeout, buffer bounds, or poison handling. New
+test: with a never-resolving send, five enqueues spread across the flush cadence result in the fetch
+stub's concurrent in-flight count never exceeding 1, and once the timeout fires and the breaker
+opens, a further flush makes no new network attempt.
+
 ## Verification
 
 Node 24 (`.nvmrc`), fresh worktree `~/apps/trading-monet-usage-push-failsafe`, `npm ci`:
 
 - `npx tsc --noEmit` — clean.
 - Focused: `npx vitest run test/usage-monitor-push.test.ts test/usage-monitor-replay.test.ts` —
-  33/33 (17 pre-existing + 16 new across breaker, bounded buffer, flush-entry TTL, callVolume cap,
-  push timeout, HMR shape migration, replay-lane health truthfulness, and poison-event isolation),
-  all passing including the pre-existing tests that use historical/fixed `occurredAt` values (these
-  initially broke when TTL was first keyed off `occurredAt` instead of buffer-residency time — fixed
-  before finalizing).
+  34/34 (17 pre-existing + 17 new across breaker, bounded buffer, flush-entry TTL, callVolume cap,
+  push timeout, HMR shape migration, replay-lane health truthfulness, poison-event isolation, and
+  single-flight send serialization), all passing including the pre-existing tests that use
+  historical/fixed `occurredAt` values (these initially broke when TTL was first keyed off
+  `occurredAt` instead of buffer-residency time — fixed before finalizing).
 - `npm run lint` — 0 errors (493 pre-existing grandfathered warnings, none new).
-- `npm test` — 404 files / 4746 tests, all passing.
+- `npm test` — 404 files / 4747 tests, all passing.
 - `npm run build` — clean production build (exit 0).
 
 ## Follow-ups

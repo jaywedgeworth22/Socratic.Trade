@@ -71,6 +71,7 @@ describe("usage-monitor-push", () => {
     delete process.env.USAGE_MONITOR_QUEUE_TTL_MS;
     delete process.env.USAGE_MONITOR_CALLVOLUME_MAX_KEYS;
     delete process.env.USAGE_MONITOR_PUSH_TIMEOUT_MS;
+    delete process.env.USAGE_MONITOR_FLUSH_MS;
   });
 
   it("is a no-op when unconfigured (no network calls)", async () => {
@@ -541,6 +542,49 @@ describe("usage-monitor-push", () => {
       const debug = push.__usageMonitorDebugState();
       expect(debug.breaker.consecutiveFailures).toBe(1);
       expect(debug.breaker.openUntil).toBeGreaterThan(Date.now());
+    });
+
+    it("single-flights the send: a hung receiver never accumulates more than one concurrent POST", async () => {
+      process.env.USAGE_MONITOR_FLUSH_MS = "10"; // fast re-arm cadence, so multiple flushes are attempted
+      process.env.USAGE_MONITOR_PUSH_TIMEOUT_MS = "80"; // each hung send aborts after 80ms
+      process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1"; // one recorded failure opens the breaker
+
+      let inFlight = 0;
+      let maxInFlight = 0;
+      let totalStarts = 0;
+      // A receiver that accepts the connection but never responds — the request only settles on abort.
+      push.__setUsageMonitorFetch(((_url: unknown, init?: RequestInit) => {
+        totalStarts += 1;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal) {
+            signal.addEventListener("abort", () => {
+              inFlight -= 1;
+              reject(new DOMException("The operation was aborted", "AbortError"));
+            });
+          }
+        });
+      }) as unknown as typeof fetch);
+
+      // Enqueue several events spread ACROSS the flush cadence while the first send hangs. Without
+      // single-flight, each would schedule its own concurrent live send → a burst of hanging POSTs.
+      for (let i = 0; i < 5; i += 1) {
+        push.pushLlmUsage({ sourceEventId: `burst-${i}`, provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+        await new Promise((r) => setTimeout(r, 15)); // longer than the 10ms cadence
+      }
+      // Let the first hung send abort (80ms) and the breaker open.
+      await new Promise((r) => setTimeout(r, 150));
+
+      // At no point were two POSTs outstanding at once, even though 5 flushes were attempted.
+      expect(maxInFlight).toBe(1);
+      expect(push.__usageMonitorDebugState().breaker.openUntil).toBeGreaterThan(Date.now());
+
+      // With the breaker now open, a further flush makes NO new network attempt (suppressed before fetch).
+      const startsBeforeOpenFlush = totalStarts;
+      await push.flushUsageMonitor();
+      expect(totalStarts).toBe(startsBeforeOpenFlush);
     });
   });
 

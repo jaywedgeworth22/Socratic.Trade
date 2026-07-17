@@ -25,10 +25,18 @@ it and suppress valid telemetry. Fixed belt-and-suspenders: tightened `pushBroke
 to `Number.isFinite`, and both send paths now prune schema-invalid events (`isDeliverableEvent` via
 the shared `UsageTelemetryEventSchema.safeParse`) BEFORE `client.send` — the live path drops poison
 out of the buffer (never re-queued), the replay path acks it so the watermark advances (quarantine).
-The breaker now only ever sees genuine delivery outcomes. 16 new focused tests cover every finding.
-Gate: `tsc` clean, lint 0 errors, focused 33/33, full 404 files/4,746 tests, production build all
-green. Not pushed by this session — coordinator re-pushes (fast-forward on top of the autofix
-commits) + confirms threads resolved + merges.
+The breaker now only ever sees genuine delivery outcomes. Review round 4 added a final [P2] fix that
+bounds the exact hung-receiver burst from the incident: while a live flush awaited its (up to 10s)
+timeout send, events enqueued in the meantime armed more flush timers on the 2s cadence, each
+starting another concurrent hanging POST before the breaker could register the first failure.
+Serialized the SEND via a single-flight guard (`state.inflightFlush`): `flushUsageMonitor` is now a
+thin wrapper that, if a flush is in flight, defers (re-arms the timer) instead of starting a second
+concurrent send, clearing the marker in `finally`; the body moved to `flushUsageMonitorOnce`. Net:
+at most ONE outstanding POST before the breaker decision. Enqueues still just buffer (only the SEND
+is serialized). 17 new focused tests cover every finding. Gate: `tsc` clean, lint 0 errors, focused
+34/34, full 404 files/4,747 tests, production build all green. Not pushed by this session —
+coordinator re-pushes (fast-forward on top of the autofix commits) + confirms threads resolved +
+merges.
 
 Owner-directed incident response: `usage.jays.services` (API-usage-monitor) was OOM-down ~2 days;
 both Congress.Trade and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs

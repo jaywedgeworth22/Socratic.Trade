@@ -246,6 +246,13 @@ interface PushState {
   queue: QueuedUsageEvent[];
   callVolume: Map<string, CallVolumeEntry>;
   flushTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * The single in-flight live flush, or null. Serializes the SEND (not enqueues): while one flush is
+   * awaiting its POST — including a hung 10s-timeout send to a half-up receiver — a second flush must
+   * NOT start a concurrent send. This bounds a dead receiver to one outstanding POST before the
+   * breaker records the failure and opens.
+   */
+  inflightFlush: Promise<void> | null;
   /** Test seam: overrides global fetch when set. */
   fetchImpl: typeof fetch | null;
   breaker: BreakerState;
@@ -265,6 +272,11 @@ if (staleState && priorState.flushTimer) {
   clearTimeout(priorState.flushTimer);
   priorState.flushTimer = null;
 }
+if (staleState) {
+  // A carried-over in-flight promise closes over the old module; drop the marker so the new module's
+  // single-flight guard isn't wedged closed forever (the old promise still self-settles harmlessly).
+  priorState!.inflightFlush = null;
+}
 const state: PushState =
   priorState ??
   (host.__usageMonitorPush = {
@@ -273,12 +285,14 @@ const state: PushState =
     queue: [],
     callVolume: new Map(),
     flushTimer: null,
+    inflightFlush: null,
     fetchImpl: null,
     breaker: { consecutiveFailures: 0, openUntil: 0, probing: false },
   });
 if (priorState) normalizeRetainedQueues(priorState);
 state.version = STATE_VERSION;
 state.pendingQueue ??= [];
+state.inflightFlush ??= null;
 state.breaker ??= { consecutiveFailures: 0, openUntil: 0, probing: false };
 
 if (
@@ -732,8 +746,32 @@ async function resolvePendingEvents(
 /**
  * Flush all buffered events (discrete cost events + aggregated call-volume) to the monitor. Batched
  * at MAX_BATCH per POST. Never throws. Exported for tests and internal scheduling.
+ *
+ * Single-flight wrapper: only ONE live flush's SEND may be outstanding at a time. If a flush is
+ * already in flight (e.g. awaiting a hung 10s-timeout POST to a half-up receiver), this does NOT
+ * start a second concurrent send — it re-arms the timer so events buffered in the meantime are
+ * picked up once the current send settles. Net: at most one outstanding POST before the breaker
+ * decision, so a dead receiver can't accumulate a burst of concurrent hanging requests. Enqueues are
+ * unaffected — they still just buffer; only the SEND is serialized, and the finally-clear plus the
+ * bounded send timeout guarantee no deadlock.
  */
 export async function flushUsageMonitor(): Promise<void> {
+  if (state.inflightFlush) {
+    // A send is already outstanding — defer instead of starting a concurrent one. Re-arm so the
+    // events buffered during this window flush after the current send settles.
+    scheduleFlush();
+    return;
+  }
+  const work = flushUsageMonitorOnce();
+  state.inflightFlush = work;
+  try {
+    await work;
+  } finally {
+    state.inflightFlush = null;
+  }
+}
+
+async function flushUsageMonitorOnce(): Promise<void> {
   if (state.flushTimer) {
     clearTimeout(state.flushTimer);
     state.flushTimer = null;
@@ -1001,6 +1039,7 @@ export function __resetUsageMonitorState(): void {
   state.queue.length = 0;
   state.callVolume.clear();
   state.fetchImpl = null;
+  state.inflightFlush = null;
   state.breaker = { consecutiveFailures: 0, openUntil: 0, probing: false };
 }
 
