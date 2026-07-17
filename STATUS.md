@@ -1459,7 +1459,7 @@ the semantic console-token arbitrary-value form the same file already uses at it
 typo fixes in `app/console/components/chrome.tsx` (theme-picker active state used `var(--con-text)`, an
 undefined token → corrected to `var(--con-fg)`). Display-only CSS-class change, no logic touched. Grep
 confirms 0 standalone legacy classes and 0 `con-text` remaining. Rollout:
-`docs/rollouts/2026-07-13-console-theme-token-fix.md`. Next action: land via `scripts/land.sh`, arm
+`docs/rollouts/2026-07-13-console-theme-token-fix.md`. Next action: Verify Response Healing is stable and land PR. Update Effort log.
 `gh pr merge <N> --squash --auto` (auto-deploys on merge). Follow-up (NOT fixed here): `/console/usage`
 uses the fully-legacy design system and is a separate pre-existing issue.
 

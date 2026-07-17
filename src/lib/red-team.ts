@@ -1,3 +1,4 @@
+import { healMalformedJson } from "./response-healing";
 // The SINGLE Red Team reviewer (docs/single-adversary-consolidation.md, owner-revised 2026-07-07).
 // One adversarial LLM call per risk-adding opening, run on the FINALIZED (post-sizing) trade. It
 // performs BOTH jobs the two former passes split between them: the in-flow Bear's fact-check of the
@@ -414,22 +415,33 @@ export async function debateProposal(
             try {
               parsed = JSON.parse(extractJsonPayload(text));
             } catch (parseError) {
-              // §4.6: log a raw-text prefix so a safety-filter refusal ("I can't…") is distinguishable
-              // from malformed JSON in the operator log.
               console.warn(
-                `Red Team response was not valid JSON (${parseError instanceof Error ? parseError.message : String(parseError)}); first 200 chars: ${text.slice(0, 200)}`
+                `Red Team response was not valid JSON (${parseError instanceof Error ? parseError.message : String(parseError)}); attempting to heal.`
               );
-              const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
-              return {
-                text,
-                debate: unavailable(
-                  looksLikeRefusal
-                    ? "Red Team model refused to answer (safety-filter style response); treating the review as unavailable."
-                    : "Red Team returned an unparseable response (not valid JSON); treating the review as unavailable.",
-                  "malformed_response",
-                  attempt.model
-                )
-              };
+              
+              const healedJson = await healMalformedJson(text, { userId: policy.userId, connectedAccountId: policy.connectedAccountId });
+              if (healedJson) {
+                try {
+                  parsed = JSON.parse(healedJson);
+                  console.log("Red Team response successfully healed.");
+                } catch {
+                  // Fall through
+                }
+              }
+              
+              if (parsed === undefined) {
+                const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
+                return {
+                  text,
+                  debate: unavailable(
+                    looksLikeRefusal
+                      ? "Red Team model refused to answer (safety-filter style response); treating the review as unavailable."
+                      : "Red Team returned an unparseable response (not valid JSON); treating the review as unavailable.",
+                    "malformed_response",
+                    attempt.model
+                  )
+                };
+              }
             }
             // Bare-array unwrap (#1091): DeepSeek v4 Flash and other small/fast json_object-mode
             // providers sometimes wrap a correct verdict object in an array (e.g.
