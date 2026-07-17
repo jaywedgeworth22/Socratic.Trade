@@ -419,7 +419,7 @@ export async function debateProposal(
                 `Red Team response was not valid JSON (${parseError instanceof Error ? parseError.message : String(parseError)}); attempting to heal.`
               );
               
-              const healedJson = await healMalformedJson(text, { userId: policy.userId, connectedAccountId: policy.connectedAccountId });
+              const healedJson = await healMalformedJson(text, { userId, connectedAccountId: policy.connectedAccountId });
               if (healedJson) {
                 try {
                   parsed = JSON.parse(healedJson);
