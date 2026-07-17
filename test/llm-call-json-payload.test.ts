@@ -51,8 +51,27 @@ describe("extractJsonPayload", () => {
     expect(() => JSON.parse(extractJsonPayload(refusal))).toThrow();
   });
 
-  it("heals valid JSON from a truncated/unbalanced object using jsonrepair", () => {
+  it("does NOT repair by default — a truncated object stays unparseable (fail-closed for safety sites)", () => {
+    // Codex P1/P2, PR #1696: global repair turned truncated Red Team approvals and revalidation
+    // withdrawals from fail-closed "unavailable" into fail-open acceptance. Repair is opt-in.
     const truncated = '{"verdict":"approve","reason":"cut off here';
-    expect(JSON.parse(extractJsonPayload(truncated))).toEqual({ verdict: "approve", reason: "cut off here" });
+    expect(() => JSON.parse(extractJsonPayload(truncated))).toThrow();
+  });
+
+  it("heals a truncated/unbalanced object with jsonrepair ONLY when repair is opted in", () => {
+    const truncated = '{"verdict":"approve","reason":"cut off here';
+    expect(JSON.parse(extractJsonPayload(truncated, { repair: true }))).toEqual({ verdict: "approve", reason: "cut off here" });
+  });
+
+  it("repairs style defects (single quotes, trailing commas) under repair without changing content", () => {
+    const sloppy = "{'a': 1, 'b': [1, 2,],}";
+    expect(JSON.parse(extractJsonPayload(sloppy, { repair: true }))).toEqual({ a: 1, b: [1, 2] });
+    expect(() => JSON.parse(extractJsonPayload(sloppy))).toThrow(); // and stays strict by default
+  });
+
+  it("returns unrepairable text unchanged even with repair on, so the caller fails loudly", () => {
+    const refusal = "I can't help with that request.";
+    expect(extractJsonPayload(refusal, { repair: true })).not.toContain("{");
+    expect(() => JSON.parse(extractJsonPayload(refusal, { repair: true }))).toThrow();
   });
 });

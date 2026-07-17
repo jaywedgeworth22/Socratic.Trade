@@ -204,6 +204,46 @@ describe("debateProposal — three-way verdict + shape-violation fail-closed (§
     expect(result.failureKind).toBe("malformed_response");
   });
 
+  // Codex P1 (PR #1696): jsonrepair must never resurrect a TRUNCATED approval. A reply cut off
+  // mid-object is repairable into `{"verdict":"approve"}` syntactically — but this gate is
+  // fail-closed, so the parse stays strict and the review is unavailable.
+  it("fails closed (unavailable) on a truncated approval — repair is never applied here", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_TRUNCATED");
+    vi.stubGlobal("fetch", async () => new Response(
+      JSON.stringify({ choices: [{ message: { content: '{"verdict":"approve","reason":"looks fi' } }] }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    ));
+
+    const result = await debateProposal(buyProposal(), undefined);
+    expect(result.available).toBe(false);
+    expect(result.rejected).toBe(false);
+    expect(result.verdict).toBeUndefined();
+    expect(result.failureKind).toBe("malformed_response");
+  });
+
+  // Codex P1 (PR #1696): a reply carrying TWO verdict blocks must not resolve to whichever block
+  // is extracted first — ambiguous reviewer output is unavailable, whatever each block says.
+  it.each([
+    ["well-formed double block", '{"verdict":"approve","reason":"ok"} {"verdict":"reject","reason":"bad"}'],
+    ["single-quoted double block", "{'verdict':'approve','reason':'ok'} {'verdict':'reject','reason':'bad'}"],
+    ["multi-element conflicting array", '[{"verdict":"approve","reason":"ok"},{"verdict":"reject","reason":"bad"}]']
+  ])("fails closed on multiple verdict blocks (%s)", async (_label, content) => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_AMBIGUOUS");
+    vi.stubGlobal("fetch", async () => new Response(
+      JSON.stringify({ choices: [{ message: { content } }] }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    ));
+
+    const result = await debateProposal(buyProposal(), undefined);
+    expect(result.available).toBe(false);
+    expect(result.rejected).toBe(false);
+    expect(result.verdict).toBeUndefined();
+    expect(result.failureKind).toBe("malformed_response");
+    expect(result.reason).toMatch(/ambiguous|multiple/i);
+  });
+
   it("classifies a persistent 429 as rate_limited (after the bounded retry)", async () => {
     const { debateProposal } = await import("../src/lib/red-team");
     await setupOpenAi("RT_429");

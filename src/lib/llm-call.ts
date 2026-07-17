@@ -381,8 +381,17 @@ export function extractLlmText(payload: unknown): string | undefined {
  * stray bracket or multiple JSON-looking blocks. When no balanced block is found (e.g. a
  * truncated response), returns the trimmed/unfenced text unchanged so the caller's own
  * `JSON.parse` try/catch still governs the failure — never fabricates valid JSON.
+ *
+ * `repair` (default OFF) additionally runs local, deterministic jsonrepair when the
+ * extracted payload still isn't valid JSON. Opt-in ONLY, per call site, because repair can
+ * turn a TRUNCATED response into syntactically valid JSON — e.g. `{"verdict":"approve"`
+ * becomes a well-formed approval object. On safety-critical parse paths (Red Team verdicts,
+ * proposal revalidation, tuning payloads) that converts fail-closed "unavailable" handling
+ * into fail-open acceptance, which is exactly the defect class Codex flagged on PR #1696.
+ * Those sites MUST call this without `repair`; generative sites that opt in MUST re-validate
+ * schema-required fields on the parsed result (repair proves syntax, never completeness).
  */
-export function extractJsonPayload(text: string): string {
+export function extractJsonPayload(text: string, options: { repair?: boolean } = {}): string {
   let unfenced = text
     .trim()
     .replace(/^```(?:json5?|jsonc)?\s*/i, "")
@@ -397,11 +406,11 @@ export function extractJsonPayload(text: string): string {
   try {
     JSON.parse(unfenced);
     return unfenced;
-  } catch (e) {
+  } catch {
+    if (!options.repair) return unfenced; // caller's own JSON.parse governs the failure
     try {
-      // Apply local, deterministic response healing across all LLM parse sites
       return jsonrepair(unfenced);
-    } catch (repairError) {
+    } catch {
       // Unrepairable; let the caller's JSON.parse fail loudly
       return unfenced;
     }

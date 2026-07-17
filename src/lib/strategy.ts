@@ -4504,24 +4504,7 @@ async function proposeTrades(input: {
         items: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "symbol",
-            "side",
-            "type",
-            "quantity",
-            "dollarAmount",
-            "limitPrice",
-            "stopPrice",
-            "timeInForce",
-            "marketHours",
-            "rationale",
-            "tradeThesisTag",
-            "confidenceScore",
-            "autonomyOverride",
-            "bracketStopLoss",
-            "bracketTakeProfit",
-            "stopPlan"
-          ],
+          required: [...BULL_PROPOSAL_REQUIRED_KEYS],
           properties: {
             symbol: proposalSymbolSchema,
             // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
@@ -4741,8 +4724,24 @@ async function proposeTrades(input: {
             try {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
-              const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-              return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+              try {
+                const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
+                return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+              } catch {
+                // Strict parse failed — retry WITH local jsonrepair, then gate every recovered
+                // proposal through the schema-completeness filter: repair can close a proposal
+                // truncated mid-object, and such partials must not reach sizing where defaults
+                // would fabricate the missing judgment fields (Codex P1, PR #1696). This
+                // generative path is the ONLY repair opt-in; Red Team / revalidation / tuning
+                // parse strictly and stay fail-closed.
+                const parsed = JSON.parse(extractJsonPayload(text, { repair: true })) as { proposals?: unknown[] };
+                const { kept, dropped } = filterRepairedProposals(parsed.proposals ?? []);
+                if (dropped > 0) {
+                  console.warn(`[Bull] jsonrepair recovered the payload but ${dropped} proposal(s) were incomplete (truncation artifacts) and were dropped; keeping ${kept.length}.`);
+                  audit("strategy_bull_repaired_partial_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
+                }
+                return { text, proposals: kept, truncated, wireOutputCap, finishReason };
+              }
             } catch (parseError) {
               // A truncated/malformed model response must not crash the whole autonomous
               // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
@@ -5146,6 +5145,57 @@ function recordLlmOutcome(
 // same binding imported above) so existing consumers (tests included) keep importing it from
 // "./strategy" unchanged.
 export { filterStopPlansByLiveBasis };
+
+/**
+ * Every key the Bull structured-output schema marks `required` on a proposal object (values may
+ * still be null where the schema allows it). Single source for the schema literal AND the
+ * post-repair completeness gate below — they must never drift.
+ */
+export const BULL_PROPOSAL_REQUIRED_KEYS = [
+  "symbol",
+  "side",
+  "type",
+  "quantity",
+  "dollarAmount",
+  "limitPrice",
+  "stopPrice",
+  "timeInForce",
+  "marketHours",
+  "rationale",
+  "tradeThesisTag",
+  "confidenceScore",
+  "autonomyOverride",
+  "bracketStopLoss",
+  "bracketTakeProfit",
+  "stopPlan"
+] as const;
+
+/**
+ * Completeness gate for proposals recovered via jsonrepair (Codex P1, PR #1696): repair proves
+ * SYNTAX, not completeness — a response truncated mid-proposal repairs into an object missing
+ * its tail fields, and `sanitizeProposals` only checks symbol/side/type before sizing fills the
+ * rest with defaults. A repaired proposal is kept only when every schema-required key is present
+ * and the three human-judgment fields carry real values (non-empty rationale/tradeThesisTag,
+ * finite confidenceScore) — anything less is a truncation artifact, not a trade idea.
+ */
+export function filterRepairedProposals(proposals: unknown[]): { kept: TradeProposal[]; dropped: number } {
+  const kept: TradeProposal[] = [];
+  let dropped = 0;
+  for (const candidate of proposals) {
+    const record = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+      ? (candidate as Record<string, unknown>)
+      : undefined;
+    const complete =
+      record !== undefined &&
+      BULL_PROPOSAL_REQUIRED_KEYS.every((key) => key in record) &&
+      typeof record.rationale === "string" && record.rationale.trim() !== "" &&
+      typeof record.tradeThesisTag === "string" && record.tradeThesisTag.trim() !== "" &&
+      typeof record.confidenceScore === "number" && Number.isFinite(record.confidenceScore);
+    if (complete) kept.push(record as unknown as TradeProposal);
+    else dropped += 1;
+  }
+  return { kept, dropped };
+}
 
 export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals

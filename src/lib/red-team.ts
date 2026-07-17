@@ -408,28 +408,47 @@ export async function debateProposal(
               };
             }
 
+            // AMBIGUITY GUARD (Codex, PR #1696): a malformed reply carrying MORE THAN ONE verdict
+            // block (e.g. `{"verdict":"approve",...} {"verdict":"reject",...}`, or a multi-element
+            // array of conflicting verdicts) must never resolve to whichever block happens to be
+            // extracted first. Counted on the RAW text — first-balanced-block extraction below
+            // would hide the trailing block. A prose false positive (the model echoing the
+            // `"verdict":` key while also emitting real JSON) fails CLOSED to unavailable, which
+            // is the acceptable direction for this gate.
+            const verdictKeyOccurrences = (text.match(/["']verdict["']\s*:/g) ?? []).length;
+            if (verdictKeyOccurrences > 1) {
+              console.warn(`Red Team response contained ${verdictKeyOccurrences} verdict blocks; treating the review as ambiguous/unavailable.`);
+              return {
+                text,
+                debate: unavailable(
+                  "Red Team returned multiple conflicting verdict blocks (ambiguous response); treating the review as unavailable.",
+                  "malformed_response",
+                  attempt.model
+                )
+              };
+            }
+
             // Fence/prose-tolerant parse (§4.1 / R9 — the gemini-3.5-flash root cause) + strict shape
             // validation (§4.4): anything that isn't exactly one of the three verdicts fails CLOSED.
+            // DELIBERATELY parsed WITHOUT jsonrepair (extractJsonPayload's repair stays off): repair
+            // would turn a TRUNCATED reply like `{"verdict":"approve"` into a well-formed approval,
+            // converting this fail-closed gate into fail-open on a risk-adding opening (Codex P1,
+            // PR #1696). A response that doesn't parse as-is is UNAVAILABLE, exactly as before.
             let parsed: unknown;
             try {
               parsed = JSON.parse(extractJsonPayload(text));
-            } catch (parseError) {
-              console.warn(
-                `Red Team response was not valid JSON (${parseError instanceof Error ? parseError.message : String(parseError)}); attempting local healing.`
-              );
-              if (parsed === undefined) {
-                const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
-                return {
-                  text,
-                  debate: unavailable(
-                    looksLikeRefusal
-                      ? "Red Team model refused to answer (safety-filter style response); treating the review as unavailable."
-                      : "Red Team returned an unparseable response (not valid JSON); treating the review as unavailable.",
-                    "malformed_response",
-                    attempt.model
-                  )
-                };
-              }
+            } catch {
+              const looksLikeRefusal = /^(i can'?t|i cannot|i'?m not able|i am not able|as an ai)/i.test(text.trim());
+              return {
+                text,
+                debate: unavailable(
+                  looksLikeRefusal
+                    ? "Red Team model refused to answer (safety-filter style response); treating the review as unavailable."
+                    : "Red Team returned an unparseable response (not valid JSON); treating the review as unavailable.",
+                  "malformed_response",
+                  attempt.model
+                )
+              };
             }
             // Bare-array unwrap (#1091): DeepSeek v4 Flash and other small/fast json_object-mode
             // providers sometimes wrap a correct verdict object in an array (e.g.

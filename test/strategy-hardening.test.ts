@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { evaluateTradeProposal, betaScaledStopPct } from "../src/lib/policy";
 import {
+  BULL_PROPOSAL_REQUIRED_KEYS,
   enrichOpeningProposal,
+  filterRepairedProposals,
   filterStopPlansByLiveBasis,
   generateProactiveRiskProposals,
   sanitizeProposals
@@ -603,5 +605,61 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     // filterStopPlansByLiveBasis and never threaded here, so recordFillFromProposal later nulled the
     // stored justification on the scale-in fill's upsert.
     expect(p.stopPlan).toEqual({ style: "none", rationale: "high-conviction thesis, riding through the drawdown" });
+  });
+});
+
+describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 PR #1696)", () => {
+  const complete = () => ({
+    symbol: "AAPL",
+    side: "buy",
+    type: "market",
+    quantity: null,
+    dollarAmount: 1000,
+    limitPrice: null,
+    stopPrice: null,
+    timeInForce: "day",
+    marketHours: "regular",
+    rationale: "Breakout over the 50d with volume confirmation.",
+    tradeThesisTag: "breakout-continuation",
+    confidenceScore: 72,
+    autonomyOverride: null,
+    bracketStopLoss: 172.5,
+    bracketTakeProfit: 205,
+    stopPlan: { style: "atr", rationale: null }
+  });
+
+  it("keeps a schema-complete proposal", () => {
+    const { kept, dropped } = filterRepairedProposals([complete()]);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toBe(0);
+  });
+
+  it("drops a proposal truncated mid-object (missing tail keys), keeping complete siblings", () => {
+    const truncated: Record<string, unknown> = { symbol: "NVDA", side: "buy", type: "market" };
+    const { kept, dropped } = filterRepairedProposals([complete(), truncated]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.symbol).toBe("AAPL");
+    expect(dropped).toBe(1);
+  });
+
+  it("drops a proposal whose judgment fields are empty even when every key is present", () => {
+    const hollow = { ...complete(), rationale: "  ", tradeThesisTag: "", confidenceScore: Number.NaN };
+    const { kept, dropped } = filterRepairedProposals([hollow]);
+    expect(kept).toHaveLength(0);
+    expect(dropped).toBe(1);
+  });
+
+  it("drops non-object entries outright", () => {
+    const { kept, dropped } = filterRepairedProposals([null, 42, "proposal", [complete()]]);
+    expect(kept).toHaveLength(0);
+    expect(dropped).toBe(4);
+  });
+
+  it("the completeness gate and the structured-output schema share one required-keys source", () => {
+    // If a future schema change adds/removes a required key, this import proves the gate moves
+    // with it (the schema literal spreads the same constant).
+    expect(BULL_PROPOSAL_REQUIRED_KEYS).toContain("stopPlan");
+    expect(BULL_PROPOSAL_REQUIRED_KEYS).toContain("tradeThesisTag");
+    expect(new Set(BULL_PROPOSAL_REQUIRED_KEYS).size).toBe(BULL_PROPOSAL_REQUIRED_KEYS.length);
   });
 });

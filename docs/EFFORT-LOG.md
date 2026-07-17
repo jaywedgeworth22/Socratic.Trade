@@ -1856,6 +1856,14 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] PR #1696 jsonrepair fail-closed boundaries (branch
+  `agent/local-response-healing`, cap-reset pickup 2026-07-17, owner-directed) — IN PROGRESS,
+  gate running, push next.** Adopted the stalled healing lane's 4 unresolved Codex threads:
+  repair now opt-in per parse site (strict default); Red Team/revalidation/tuning fail-closed
+  (+ Red Team multi-verdict ambiguity guard); Bull proposals repair-opt-in behind a
+  schema-completeness gate (`filterRepairedProposals` sharing `BULL_PROPOSAL_REQUIRED_KEYS`
+  with the schema literal). Original lane (AG) resumes ownership on return. Rollout:
+  `docs/rollouts/2026-07-17-jsonrepair-fail-closed-boundaries.md`.
 - **[Socratic.Trade][MONET] Durable state: persist in-memory rate-limiters/cooldowns across restarts
 - **[Socratic.Trade][MONET] Console radius + micro-type token sweep (branch `monet/console-token-sweep`,
   claimed 2026-07-16) — GATE/LANDING.** Owner-chip follow-up of the same-day UI wave (WS-E item 1+2):
