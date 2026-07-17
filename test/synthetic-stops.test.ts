@@ -1050,61 +1050,73 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
 
   describe("Exit Strategy Phase A: confirmation-based bad-tick acceptance & halted protection", () => {
     it("bad tick confirmation: N=3 consecutive out-of-band prints accept the new level and trigger", async () => {
-      connectTestAccount("SYN-CONFIRM");
-      upsertSyntheticStop({
-        id: "stop-confirm", userId: "local", accountNumber: "SYN-CONFIRM", symbol: "AAPL",
-        side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
-        lastPrice: 100
-      });
-      broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-15T10:00:00-04:00")); // 10:00 AM EDT = regular hours
+      try {
+        connectTestAccount("SYN-CONFIRM");
+        upsertSyntheticStop({
+          id: "stop-confirm", userId: "local", accountNumber: "SYN-CONFIRM", symbol: "AAPL",
+          side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
+          lastPrice: 100
+        });
+        broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
 
-      // Tick 1: Out-of-band print (85, -15% off 100). Should NOT trigger, should set suspect state.
-      broker.quotes = { AAPL: { price: 85 } };
-      let res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
-      expect(res.exited).toBe(0);
-      let stops = listSyntheticStops("SYN-CONFIRM", "local");
-      expect(stops[0].suspectPrice).toBe(85);
-      expect(stops[0].suspectCount).toBe(1);
-      expect(stops[0].lastPrice).toBe(100);
+        // Tick 1: Out-of-band print (85, -15% off 100). Should NOT trigger, should set suspect state.
+        broker.quotes = { AAPL: { price: 85 } };
+        let res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
+        expect(res.exited).toBe(0);
+        let stops = listSyntheticStops("SYN-CONFIRM", "local");
+        expect(stops[0].suspectPrice).toBe(85);
+        expect(stops[0].suspectCount).toBe(1);
+        expect(stops[0].lastPrice).toBe(100);
 
-      // Tick 2: Second out-of-band print (84.5) agreeing with 85 (diff ~0.6% <= 1.5%). Should NOT trigger.
-      broker.quotes = { AAPL: { price: 84.5 } };
-      res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
-      expect(res.exited).toBe(0);
-      stops = listSyntheticStops("SYN-CONFIRM", "local");
-      expect(stops[0].suspectPrice).toBe(85);
-      expect(stops[0].suspectCount).toBe(2);
-      expect(stops[0].lastPrice).toBe(100);
+        // Tick 2: Second out-of-band print (84.5) agreeing with 85 (diff ~0.6% <= 1.5%). Should NOT trigger.
+        broker.quotes = { AAPL: { price: 84.5 } };
+        res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
+        expect(res.exited).toBe(0);
+        stops = listSyntheticStops("SYN-CONFIRM", "local");
+        expect(stops[0].suspectPrice).toBe(85);
+        expect(stops[0].suspectCount).toBe(2);
+        expect(stops[0].lastPrice).toBe(100);
 
-      // Tick 3: Third out-of-band print (85.2) agreeing with 85. Should trigger!
-      broker.quotes = { AAPL: { price: 85.2 } };
-      res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
-      expect(res.exited).toBe(1);
-      stops = listSyntheticStops("SYN-CONFIRM", "local", "triggered");
-      expect(stops[0].status).toBe("triggered");
-      expect(stops[0].suspectPrice).toBeUndefined();
-      expect(stops[0].suspectCount).toBe(0);
+        // Tick 3: Third out-of-band print (85.2) agreeing with 85. Should trigger!
+        broker.quotes = { AAPL: { price: 85.2 } };
+        res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
+        expect(res.exited).toBe(1);
+        stops = listSyntheticStops("SYN-CONFIRM", "local", "triggered");
+        expect(stops[0].status).toBe("triggered");
+        expect(stops[0].suspectPrice).toBeUndefined();
+        expect(stops[0].suspectCount).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("bad tick non-confirmation: non-agreeing out-of-band prints reset suspect count", async () => {
-      connectTestAccount("SYN-RESET");
-      upsertSyntheticStop({
-        id: "stop-reset", userId: "local", accountNumber: "SYN-RESET", symbol: "AAPL",
-        side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
-        lastPrice: 100
-      });
-      broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-15T10:00:00-04:00")); // 10:00 AM EDT = regular hours
+      try {
+        connectTestAccount("SYN-RESET");
+        upsertSyntheticStop({
+          id: "stop-reset", userId: "local", accountNumber: "SYN-RESET", symbol: "AAPL",
+          side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
+          lastPrice: 100
+        });
+        broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
 
-      // Tick 1: Out-of-band print (85). suspectPrice=85, suspectCount=1.
-      broker.quotes = { AAPL: { price: 85 } };
-      await runSyntheticStopMonitor("local", policyFor("SYN-RESET"), true);
+        // Tick 1: Out-of-band print (85). suspectPrice=85, suspectCount=1.
+        broker.quotes = { AAPL: { price: 85 } };
+        await runSyntheticStopMonitor("local", policyFor("SYN-RESET"), true);
 
-      // Tick 2: Out-of-band print (80) not agreeing with 85 (diff > 1.5%). suspectPrice=80, suspectCount=1.
-      broker.quotes = { AAPL: { price: 80 } };
-      await runSyntheticStopMonitor("local", policyFor("SYN-RESET"), true);
-      const stops = listSyntheticStops("SYN-RESET", "local");
-      expect(stops[0].suspectPrice).toBe(80);
-      expect(stops[0].suspectCount).toBe(1);
+        // Tick 2: Out-of-band print (80) not agreeing with 85 (diff > 1.5%). suspectPrice=80, suspectCount=1.
+        broker.quotes = { AAPL: { price: 80 } };
+        await runSyntheticStopMonitor("local", policyFor("SYN-RESET"), true);
+        const stops = listSyntheticStops("SYN-RESET", "local");
+        expect(stops[0].suspectPrice).toBe(80);
+        expect(stops[0].suspectCount).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("extended-hours corroboration: requires real bid/ask quote", async () => {
