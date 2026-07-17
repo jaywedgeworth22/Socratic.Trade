@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 // Single-adversary consolidation (2026-07-07): the ONE Red Team review MUST fail closed. When the
@@ -105,7 +106,7 @@ function reviewApprove(): Response {
 function stubFetchReviewFailure(reviewFailure: "http429" | "throw" | "malformed"): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = String(init?.body ?? "");
       const isReview = body.includes("Red Team Risk Agent") || body.includes("red_team_verdict");
       if (isReview) {
@@ -146,9 +147,9 @@ async function setupBrokerPaperDecide(label: string): Promise<void> {
     systemState: "active",
     activeBroker: "alpaca",
     accountNumber: "TEST",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
     // Both models are required explicit picks now (no defaults, no fallback to Green).
-    redTeamLlmModel: "gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
@@ -212,7 +213,7 @@ describe("single Red Team review fail-closed (§3.7)", () => {
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
       // Only the Bull runs (the review is skipped keyless, no fetch); return the buy.
-      if (href.includes("api.openai.com")) return bullOk();
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return bullOk();
       if (href.includes("nasdaq.com")) return nasdaqResponse();
       return new Response("not found", { status: 404 });
     });
@@ -237,7 +238,7 @@ describe("single Red Team review fail-closed (§3.7)", () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) return bullOk();
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return bullOk();
       if (href.includes("nasdaq.com")) return nasdaqResponse();
       return new Response("not found", { status: 404 });
     });
@@ -265,7 +266,7 @@ describe("single Red Team review fail-closed (§3.7)", () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = String(init?.body ?? "");
         if (body.includes("Red Team Risk Agent") || body.includes("red_team_verdict")) return reviewApprove();
         return bullOk();

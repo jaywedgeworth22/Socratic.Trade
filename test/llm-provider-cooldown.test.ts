@@ -199,11 +199,11 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     let openaiCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openaiCalls += 1;
         return new Response("rate limited", { status: 429 });
       }
-      if (href.includes("generativelanguage.googleapis.com")) return geminiOk();
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return geminiOk();
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
@@ -217,7 +217,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",

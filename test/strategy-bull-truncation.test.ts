@@ -69,11 +69,11 @@ describe("Bull truncation is not a silent no-op (Chat A item 5)", () => {
     // other files' Bull-body assertions when vitest shares a process across test files.
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     // chat-completions transport so the mock can return a finish_reason=length truncation signal.
-    vi.stubEnv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions");
+    vi.stubEnv("OPENAI_API_URL", "https://openrouter.ai/v1/chat/completions");
     let openAiCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openAiCalls += 1;
         if (openAiCalls === 1) {
           // Truncated Bull: finish_reason "length" with cut-off, unparseable JSON content.
@@ -100,7 +100,7 @@ describe("Bull truncation is not a silent no-op (Chat A item 5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide"

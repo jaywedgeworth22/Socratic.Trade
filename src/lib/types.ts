@@ -1104,6 +1104,14 @@ export interface TradingPolicy {
   /** Max age (seconds) of the scan's fundamentals/enrichment data, using MarketScan.generatedAt as the
    *  available proxy (no per-symbol fundamentals timestamp is surfaced on the quote). Undefined/<=0 disables. */
   maxFundamentalsAgeSec?: number;
+  /** Whether the FMP Real-Time Quotes and ETF data integration is enabled. */
+  fmpRealTimeDataEnabled?: boolean;
+  /** Whether the FMP Macro & Commodities data integration is enabled. */
+  fmpMacroDataEnabled?: boolean;
+  /** Whether the FMP Events & News data integration is enabled. */
+  fmpEventsDataEnabled?: boolean;
+  /** Whether the FMP Deep Fundamentals data integration is enabled. */
+  fmpFundamentalsDataEnabled?: boolean;
 }
 
 export interface ProposalSizingSnapshot {

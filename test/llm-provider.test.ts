@@ -24,17 +24,17 @@ describe("resolveLlmEndpoint", () => {
   });
 
   it("routes grok-4.3 to xAI with chat-completions transport", () => {
-    const endpoint = resolveLlmEndpoint({ llmModel: "grok-4.3" });
+    const endpoint = resolveLlmEndpoint({ llmModel: "xai/grok-4.3" });
     expect(endpoint.provider).toBe("xai");
-    expect(endpoint.url).toContain("api.x.ai");
+    expect(endpoint.url).toContain("openrouter.ai");
     expect(endpoint.transport).toBe("chat-completions");
-    expect(endpoint.model).toBe("grok-4.3");
+    expect(endpoint.model).toBe("xai/grok-4.3");
   });
 
   it("routes grok-build-0.1 to xAI (case-insensitive prefix match)", () => {
     const endpoint = resolveLlmEndpoint({ llmModel: "grok-build-0.1" });
     expect(endpoint.provider).toBe("xai");
-    expect(endpoint.url).toContain("api.x.ai");
+    expect(endpoint.url).toContain("openrouter.ai");
     expect(endpoint.transport).toBe("chat-completions");
     expect(endpoint.model).toBe("grok-build-0.1");
   });
@@ -45,7 +45,7 @@ describe("resolveLlmEndpoint", () => {
     try {
       const endpoint = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini" });
       expect(endpoint.provider).toBe("openai");
-      expect(endpoint.url).toContain("api.openai.com");
+      expect(endpoint.url).toContain("openrouter.ai");
       expect(endpoint.model).toBe("gpt-5.4-mini");
     } finally {
       if (savedUrl !== undefined) process.env.OPENAI_API_URL = savedUrl;
@@ -54,13 +54,13 @@ describe("resolveLlmEndpoint", () => {
 
   it("routes the Red Team through redTeamLlmModel when configured", () => {
     const endpoint = resolveLlmEndpoint(
-      { llmModel: "gpt-5.4-mini", redTeamLlmModel: "grok-4.3" },
+      { llmModel: "gpt-5.4-mini", redTeamLlmModel: "xai/grok-4.3" },
       "local",
-      "https://api.openai.com/v1/responses",
+      "https://openrouter.ai/v1/responses",
       "red"
     );
     expect(endpoint.provider).toBe("xai");
-    expect(endpoint.model).toBe("grok-4.3");
+    expect(endpoint.model).toBe("xai/grok-4.3");
     expect(endpoint.transport).toBe("chat-completions");
   });
 
@@ -68,7 +68,7 @@ describe("resolveLlmEndpoint", () => {
     const endpoint = resolveLlmEndpoint(
       { llmModel: "gpt-5.4-mini" },
       "local",
-      "https://api.openai.com/v1/responses",
+      "https://openrouter.ai/v1/responses",
       "red"
     );
     // No default for anything: an unset Red model is unconfigured (""), NOT the Green model.
@@ -85,7 +85,7 @@ describe("resolveLlmEndpoint", () => {
       const endpoint = resolveLlmEndpoint(
         { llmModel: "gpt-5.4-mini" },
         "cross-family-user",
-        "https://api.openai.com/v1/responses",
+        "https://openrouter.ai/v1/responses",
         "red"
       );
       expect(endpoint.model).toBe("");
@@ -98,7 +98,7 @@ describe("resolveLlmEndpoint", () => {
     const endpoint = resolveLlmEndpoint(
       { llmModel: "gpt-5.4-mini", redTeamLlmModel: "gpt-5.4-mini" },
       "local",
-      "https://api.openai.com/v1/responses",
+      "https://openrouter.ai/v1/responses",
       "red"
     );
     expect(endpoint.provider).toBe("openai");
@@ -122,7 +122,7 @@ describe("resolveLlmEndpoint", () => {
   it("uses XAI_API_URL override when set", () => {
     process.env.XAI_API_URL = "https://custom.xai.example.com/v1/chat/completions";
     try {
-      const endpoint = resolveLlmEndpoint({ llmModel: "grok-4.3" });
+      const endpoint = resolveLlmEndpoint({ llmModel: "xai/grok-4.3" });
       expect(endpoint.url).toBe("https://custom.xai.example.com/v1/chat/completions");
     } finally {
       delete process.env.XAI_API_URL;
@@ -135,7 +135,7 @@ describe("resolveLlmEndpoint", () => {
     try {
       const endpoint = resolveLlmEndpoint({ llmModel: "gemini-2.5-flash" });
       expect(endpoint.provider).toBe("gemini");
-      expect(endpoint.url).toContain("generativelanguage.googleapis.com");
+      expect(endpoint.url).toContain("openrouter.ai");
       expect(endpoint.transport).toBe("chat-completions");
       expect(endpoint.model).toBe("gemini-2.5-flash");
     } finally {
@@ -150,7 +150,7 @@ describe("resolveLlmEndpoint", () => {
       for (const model of ["mistral-large-2512", "ministral-3b-latest", "codestral-latest"]) {
         const endpoint = resolveLlmEndpoint({ llmModel: model });
         expect(endpoint.provider).toBe("mistral");
-        expect(endpoint.url).toContain("api.mistral.ai");
+        expect(endpoint.url).toContain("openrouter.ai");
         expect(endpoint.transport).toBe("chat-completions");
         expect(endpoint.model).toBe(model);
       }
@@ -172,9 +172,9 @@ describe("resolveLlmEndpoint", () => {
   });
 
   it("routes the Red Team to Gemini/Mistral via redTeamLlmModel", () => {
-    const gem = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "gemini-2.5-flash" }, "local", "https://api.openai.com/v1/responses", "red");
+    const gem = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "gemini-2.5-flash" }, "local", "https://openrouter.ai/v1/responses", "red");
     expect(gem.provider).toBe("gemini");
-    const mis = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "mistral-large-2512" }, "local", "https://api.openai.com/v1/responses", "red");
+    const mis = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "mistral-large-2512" }, "local", "https://openrouter.ai/v1/responses", "red");
     expect(mis.provider).toBe("mistral");
   });
 
@@ -182,10 +182,10 @@ describe("resolveLlmEndpoint", () => {
     const savedUrl = process.env.ANTHROPIC_API_URL;
     delete process.env.ANTHROPIC_API_URL;
     try {
-      for (const model of ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "Claude-Haiku-4-5-20251001"]) {
+      for (const model of ["anthropic/claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5", "Claude-Haiku-4-5-20251001"]) {
         const endpoint = resolveLlmEndpoint({ llmModel: model });
         expect(endpoint.provider).toBe("anthropic");
-        expect(endpoint.url).toContain("api.anthropic.com");
+        expect(endpoint.url).toContain("openrouter.ai");
         expect(endpoint.url).toContain("/v1/messages");
         expect(endpoint.transport).toBe("anthropic-messages");
         expect(endpoint.model).toBe(model);
@@ -197,24 +197,24 @@ describe("resolveLlmEndpoint", () => {
 
   it("routes the Red Team to Claude via redTeamLlmModel (Green stays OpenAI)", () => {
     const endpoint = resolveLlmEndpoint(
-      { llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" },
+      { llmModel: "gpt-5.4-mini", redTeamLlmModel: "anthropic/claude-opus-4-8" },
       "local",
-      "https://api.openai.com/v1/responses",
+      "https://openrouter.ai/v1/responses",
       "red"
     );
     expect(endpoint.provider).toBe("anthropic");
-    expect(endpoint.model).toBe("claude-opus-4-8");
+    expect(endpoint.model).toBe("anthropic/claude-opus-4-8");
     expect(endpoint.transport).toBe("anthropic-messages");
 
     // Green role with the same policy still resolves to OpenAI — the two teams are independent.
-    const green = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" }, "local");
+    const green = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini", redTeamLlmModel: "anthropic/claude-opus-4-8" }, "local");
     expect(green.provider).toBe("openai");
   });
 
   it("honors the ANTHROPIC_API_URL override", () => {
     process.env.ANTHROPIC_API_URL = "https://custom.anthropic.example.com/v1/messages";
     try {
-      expect(resolveLlmEndpoint({ llmModel: "claude-opus-4-8" }).url).toBe("https://custom.anthropic.example.com/v1/messages");
+      expect(resolveLlmEndpoint({ llmModel: "anthropic/claude-opus-4-8" }).url).toBe("https://custom.anthropic.example.com/v1/messages");
     } finally {
       delete process.env.ANTHROPIC_API_URL;
     }

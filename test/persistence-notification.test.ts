@@ -202,8 +202,8 @@ describe("persistence and notifications", () => {
     // this test only needs the run to complete to assert the audit event was written.
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-      if (String(url).includes("api.openai.com")) {
-        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+      if (String(url).includes("openrouter.ai")) {
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -256,7 +256,7 @@ describe("persistence and notifications", () => {
         systemState: "active",
         // Classic model so request-body assertions check temperature + exact caps
         // (reasoning-model bounds are covered by test/llm-request.test.ts).
-        llmModel: "gpt-4.1-mini",
+        llmModel: "openai/gpt-4.1-mini",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"
@@ -279,7 +279,7 @@ describe("persistence and notifications", () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         throw new Error("The operation was aborted due to timeout");
       }
       if (href.includes("nasdaq.com")) {
@@ -327,7 +327,7 @@ describe("persistence and notifications", () => {
       setPolicy({
         ...DEFAULT_POLICY,
         systemState: "active",
-        llmModel: "gpt-5.5",
+        llmModel: "openai/gpt-5.5",
         llmReasoningEffort: "high",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
@@ -344,7 +344,7 @@ describe("persistence and notifications", () => {
           step: "bull",
           label: "Green Team proposal",
           provider: "openai",
-          model: "gpt-5.5",
+          model: "openai/gpt-5.5",
           status: "failed"
         }
       ]);
@@ -378,8 +378,8 @@ describe("persistence and notifications", () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
-        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -433,7 +433,7 @@ describe("persistence and notifications", () => {
         systemState: "active",
         // Classic model so request-body assertions check temperature + exact caps
         // (reasoning-model bounds are covered by test/llm-request.test.ts).
-        llmModel: "gpt-4.1-mini",
+        llmModel: "openai/gpt-4.1-mini",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"
@@ -462,9 +462,9 @@ describe("persistence and notifications", () => {
     const openAiBodies: any[] = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
-        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -516,7 +516,7 @@ describe("persistence and notifications", () => {
         systemState: "active",
         // Classic model so request-body assertions check temperature + exact caps
         // (reasoning-model bounds are covered by test/llm-request.test.ts).
-        llmModel: "gpt-4.1-mini",
+        llmModel: "openai/gpt-4.1-mini",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"

@@ -166,7 +166,7 @@ describe("getDashboardSnapshot fill/proposal batching", () => {
 
     db.audit(
       "proposal_rejected_by_red_team",
-      { runId: "run-rt-1", symbol: "AAPL", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "gpt-4.1-mini" },
+      { runId: "run-rt-1", symbol: "AAPL", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "openai/gpt-4.1-mini" },
       userId,
       connectedAccountId
     );

@@ -41,6 +41,7 @@ export default defineConfig({
     // land loose in the shared OS temp dir.
     env: {
       AGENTIC_TEST_FORCE_TRADING_DAY: "1",
+      OPENROUTER_API_URL: "https://api.openai.com/v1/chat/completions",
       TMPDIR: runTmpRoot,
       TMP: runTmpRoot,
       TEMP: runTmpRoot

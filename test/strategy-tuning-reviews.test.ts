@@ -65,7 +65,7 @@ describe("db-tuning-reviews CRUD", () => {
     const firstId = insertStrategyTuningReview({
       userId,
       connectedAccountId: accountId,
-      model: "gpt-4.1-mini",
+      model: "openai/gpt-4.1-mini",
       reasoningEffort: "low",
       generatedBy: "local_rules",
       result: { summary: "First review", cautions: [] }
@@ -80,7 +80,7 @@ describe("db-tuning-reviews CRUD", () => {
     const secondId = insertStrategyTuningReview({
       userId,
       connectedAccountId: accountId,
-      model: "gpt-4.1-mini",
+      model: "openai/gpt-4.1-mini",
       reasoningEffort: "low",
       generatedBy: "llm",
       result: { summary: "Second review", cautions: [] }
@@ -306,7 +306,7 @@ describe("/api/strategy/tune route: persistence, targeting, and lifecycle", () =
     const reviewId = insertStrategyTuningReview({
       userId,
       connectedAccountId: accountId,
-      model: "gpt-4.1-mini",
+      model: "openai/gpt-4.1-mini",
       reasoningEffort: "low",
       generatedBy: "llm",
       result: { summary: "GET me", cautions: [], generatedBy: "llm" }
@@ -385,7 +385,7 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
     const otherAccountNumber = "TUNE-EVIDENCE-OTHER";
 
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
 
     upsertConnectedAccount({
       id: accountId,
@@ -408,7 +408,7 @@ describe("proposeStrategyTuning evidence-pack widening", () => {
     setActiveConnectedAccount(accountId, userId);
     setStrategyPrompt("EVIDENCE STRATEGY", userId, accountId);
     setPolicy(
-      { ...DEFAULT_POLICY, accountNumber, llmModel: "gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } },
+      { ...DEFAULT_POLICY, accountNumber, llmModel: "openai/gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } },
       userId,
       accountId
     );

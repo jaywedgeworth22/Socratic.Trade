@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 const FRESH_CHUNK_AS_OF = new Date().toISOString();
@@ -127,12 +128,12 @@ type OpenAiBody = {
 function stubFetch(openAiBodies: OpenAiBody[]): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
       // The single Red Team review (chat-completions body: `messages`) returns an approve verdict;
       // the Bull (responses body: `input`) returns the single proposal.
-      const isRedTeamReview = Array.isArray(body.messages);
+      const isRedTeamReview = body.messages?.some((m: any) => String(m.content).includes("Red Team Risk Agent"));
       if (isRedTeamReview) {
         return new Response(
           JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: "approve", reason: "Evidence checks out." }) } }] }),
@@ -170,10 +171,10 @@ async function setupBrokerPaperDecide(): Promise<void> {
     systemState: "active",
     activeBroker: "alpaca",
     accountNumber: "TEST",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
     // Single-adversary consolidation: the Red model is REQUIRED (no fallback to Green) and every
     // risk-adding opening is reviewed — the stub answers it with an approve verdict.
-    redTeamLlmModel: "gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",

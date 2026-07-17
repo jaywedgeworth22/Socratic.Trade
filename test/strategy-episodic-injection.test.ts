@@ -98,7 +98,7 @@ describe("strategy.ts episodic analogs + owner coaching injection", () => {
     }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = JSON.parse(String(init?.body ?? "{}"));
         openAiBodies.push(body);
         // The single Red Team review (chat-completions: `messages`) approves; the Bull (responses
@@ -142,8 +142,8 @@ describe("strategy.ts episodic analogs + owner coaching injection", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
-      redTeamLlmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
+      redTeamLlmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide"

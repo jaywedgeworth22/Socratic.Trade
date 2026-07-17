@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 const mocks = vi.hoisted(() => ({ retrieveContextDetailed: vi.fn() }));
@@ -62,9 +63,9 @@ describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
-        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -81,7 +82,7 @@ describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide"

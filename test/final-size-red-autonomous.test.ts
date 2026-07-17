@@ -139,7 +139,7 @@ beforeEach(() => {
 
 function stubGreenProposals(proposals: Array<{ symbol: string; dollarAmount: number }>): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-    if (String(url).includes("api.openai.com")) {
+    if (String(url).includes("openrouter.ai")) {
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
@@ -192,7 +192,7 @@ async function configureAutonomousAccount(
       activeBroker: "robinhood",
       systemState: "active",
       strategyAuthority: "decide",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       redTeamLlmModel: "gpt-5.6-terra",
       includedIndices: [],
       additionalSymbols: marketState.symbols,

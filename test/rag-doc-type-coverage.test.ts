@@ -154,7 +154,7 @@ function nasdaqResponse(): Response {
 function stubFetch(openAiBodies: OpenAiBody[]): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
       if (JSON.stringify(body).includes("Red Team Risk Agent")) {
@@ -194,11 +194,11 @@ async function setupBrokerPaperDecide(): Promise<void> {
     systemState: "active",
     activeBroker: "alpaca",
     accountNumber: "TEST",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
-    redTeamLlmModel: "gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     maxOrderPctOfNav: 100,
     maxDailyNotional: 400_000,
     maxDailyPctOfNav: 0,

@@ -61,7 +61,7 @@ async function setup(withFallback: boolean): Promise<void> {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
@@ -77,8 +77,8 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) return new Response("rate limited", { status: 429 });
-      if (href.includes("generativelanguage.googleapis.com")) return geminiOk();
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return new Response("rate limited", { status: 429 });
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return geminiOk();
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
@@ -110,7 +110,7 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) return new Response("rate limited", { status: 429 });
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return new Response("rate limited", { status: 429 });
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });

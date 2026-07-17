@@ -36,17 +36,17 @@ const buyProposal = (): any => ({
 });
 
 /** Policy with an EXPLICIT Red model (no-defaults world: blank Red = not_configured before any fetch). */
-const policyWithRed = (accountNumber: string, redModel = "gpt-4.1-mini") => ({
+const policyWithRed = (accountNumber: string, redModel = "openai/gpt-4.1-mini") => ({
   ...DEFAULT_POLICY,
   accountNumber,
-  llmModel: "gpt-4.1-mini",
+  llmModel: "openai/gpt-4.1-mini",
   redTeamLlmModel: redModel
 });
 
 async function setupOpenAi(accountNumber: string, redModel?: string) {
   const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
   process.env.OPENAI_API_KEY = "test-key";
-  process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+  process.env.OPENAI_API_URL = "https://openrouter.ai/v1/chat/completions";
   setPolicy(policyWithRed(accountNumber, redModel));
   setStrategyPrompt("BASE STRATEGY");
 }
@@ -67,7 +67,7 @@ describe("debateProposal — function-contract fail direction", () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
     process.env.OPENAI_API_KEY = "test-key";
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOMODEL", llmModel: "gpt-4.1-mini" });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOMODEL", llmModel: "openai/gpt-4.1-mini" });
     setStrategyPrompt("BASE STRATEGY");
     let fetched = false;
     vi.stubGlobal("fetch", async () => {
@@ -319,7 +319,7 @@ describe("debateProposal LLM request bounds", () => {
       rejected: false,
       available: true,
       reason: "No fatal flaw found.",
-      model: "gpt-4.1-mini"
+      model: "openai/gpt-4.1-mini"
     });
     expect(bodies).toHaveLength(1);
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.adversaryReview);
@@ -345,7 +345,7 @@ describe("debateProposal — Claude Red Team (first-class anthropic routing)", (
     const { debateProposal } = await import("../src/lib/red-team");
 
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_CLAUDE", llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_CLAUDE", llmModel: "gpt-5.4-mini", redTeamLlmModel: "anthropic/claude-opus-4-8" });
     setStrategyPrompt("BASE STRATEGY");
 
     const calls: Array<{ url: string; headers: Record<string, string>; body: any }> = [];
@@ -386,10 +386,10 @@ describe("debateProposal — Claude Red Team (first-class anthropic routing)", (
       rejected: true,
       available: true,
       reason: "Overbought into earnings.",
-      model: "claude-opus-4-8"
+      model: "anthropic/claude-opus-4-8"
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toContain("api.anthropic.com");
+    expect(calls[0].url).toContain("openrouter.ai");
     expect(calls[0].headers["x-api-key"]).toBe("sk-ant-test");
     expect(calls[0].headers["anthropic-version"]).toBe("2023-06-01");
     expect(calls[0].headers["anthropic-beta"]).toBe("prompt-caching-2024-07-31");

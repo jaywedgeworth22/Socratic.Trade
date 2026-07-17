@@ -178,12 +178,12 @@ describe("aggregateModelStats — strategist (AI review / strategy-tune) rollup"
 
   it("reports zero calls and null cost for a strategist row with no strategy-tuning usage", () => {
     const stats = aggregateModelStats({
-      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: []
     });
-    const strategist = statFor(stats, "grok-4.3", "strategist");
+    const strategist = statFor(stats, "xai/grok-4.3", "strategist");
     expect(strategist.liveCalls).toBe(0);
     expect(strategist.avgCostUsd).toBeNull();
     expect(strategist.totalCostUsd).toBeNull();
@@ -230,12 +230,12 @@ describe("aggregateModelStats — performance gating", () => {
 
   it("reports zero closed trades + null perf for a model with no attributed lots", () => {
     const stats = aggregateModelStats({
-      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 2, costUsd: 0.02 }],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: []
     });
-    const green = statFor(stats, "grok-4.3", "green");
+    const green = statFor(stats, "xai/grok-4.3", "green");
     expect(green.closedTrades).toBe(0);
     expect(green.perf).toBeNull();
   });
@@ -334,14 +334,14 @@ describe("aggregateModelStats — reviewer veto value-add", () => {
 
   it("leaves reviewerPerf null on RED rows without matching veto data (and defaults to null with no input)", () => {
     const stats = aggregateModelStats({
-      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 1, costUsd: 0.01 }],
+      usageRows: [{ model: "xai/grok-4.3", context: "strategy", calls: 1, costUsd: 0.01 }],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: [],
       reviewerPerfByModel: [{ model: "claude-sonnet-5", maturedVetoes: 30, vetoValueAddRate: 60, survivorRiskHitRate: 40, avgReturnPct: -2 }]
     });
     // grok-4.3 has usage but no reviewer data → its RED row is null.
-    expect(statFor(stats, "grok-4.3", "red").reviewerPerf).toBeNull();
+    expect(statFor(stats, "xai/grok-4.3", "red").reviewerPerf).toBeNull();
     // A model with reviewer data still has a null RED row default when reviewerPerfByModel is omitted.
     const noReviewerInput = aggregateModelStats({ usageRows: [], latencyEvents: [], benchmarkSummaries: NO_BENCH, closedLots: [], models: ["claude-sonnet-5"] });
     expect(statFor(noReviewerInput, "claude-sonnet-5", "red").reviewerPerf).toBeNull();

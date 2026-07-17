@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 // End-to-end "money-path" + red-team wiring tests (audit work-split Chat F/G).
@@ -96,7 +97,7 @@ function makeFetchStub(opts: {
   const proposals = opts.bullProposals ?? [BULL_PROPOSAL];
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       opts.onOpenAiBody?.(body);
       // The Red Team review (debateProposal) system prompt contains "Red Team Risk Agent";
@@ -109,7 +110,7 @@ function makeFetchStub(opts: {
         );
       }
       // The Bull returns the proposal set (there is no second in-flow Bear pass anymore).
-      return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals }) }), {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals }) } }] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -137,7 +138,7 @@ function makeFetchStub(opts: {
         { status: 200, headers: { "content-type": "application/json" } }
       );
     }
-    return new Response("not found", { status: 404 });
+    console.error("404 FOR URL:", href); return new Response("not found", { status: 404 });
   };
 }
 
@@ -158,8 +159,8 @@ async function seedTestAccountAndPolicy() {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    llmModel: "gpt-4.1-mini",
-    redTeamLlmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide"
@@ -198,12 +199,12 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
       rejected: false,
       available: true,
       reason: "No fatal flaw found.",
-      model: "gpt-4.1-mini",
+      model: "openai/gpt-4.1-mini",
       trigger: "all_openings"
     });
     // t3: the persisted proposal carries the FAILOVER-AWARE served Green model (here the primary),
     // so approval-time attribution doesn't drift with later policy edits.
-    expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4.1-mini");
+    expect(aaplProposal?.proposal.proposedByModel).toBe("openai/gpt-4.1-mini");
     // Backward-compat rationale text is still appended.
     expect(aaplProposal?.proposal.rationale).toContain("Red Team review — approved at full size");
     // The proposal's numeric conviction score survives end-to-end (no second schema pass anymore).
@@ -316,7 +317,7 @@ describe("strategy Red Team rejection — F2 audit", () => {
     // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
     // counterfactual return.
     expect(payload.runId).toBe(result.runId);
-    expect(payload.model).toBe("gpt-4.1-mini");
+    expect(payload.model).toBe("openai/gpt-4.1-mini");
 
     // A rejected proposal never reaches execution → no AAPL fill was booked.
     const fills = listFillEvents("TEST", undefined, 100, "local");

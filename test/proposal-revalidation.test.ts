@@ -219,14 +219,14 @@ describe("revalidatePendingProposals", () => {
     const { StrategyLockOwnershipLostError } = await import("../src/lib/strategy-lock-guard");
     const account = `REVAL-LEASE-${randomUUID()}`;
     process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    process.env.OPENAI_API_URL = "https://openrouter.ai/v1/responses";
     const policy: TradingPolicy = { ...DEFAULT_POLICY, accountNumber: account, proposalRevalidateCadenceHours: 0 };
     const proposalId = `${account}-pending`;
     await seedPending(account, proposalId);
 
     let ownershipLost = false;
     vi.stubGlobal("fetch", async (input: string | URL | Request) => {
-      if (String(input).includes("api.openai.com")) ownershipLost = true;
+      if (String(input).includes("openrouter.ai")) ownershipLost = true;
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
