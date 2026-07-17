@@ -12,9 +12,37 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { EarningsCallsHttpResult, EarningsCallsRefreshDeps } from "../src/lib/earningscalls-transcripts";
 import type { EarningsCallsTranscriptRow } from "../src/lib/db-earningscalls";
+
+// Controllable stubs for the two modules the producer reaches through dynamic import. Default
+// (impl undefined) = passthrough to the real module, so every pre-existing test is unaffected;
+// individual tests install an impl and afterEach clears it.
+const storeDocumentStub = vi.hoisted(() => ({
+  impl: undefined as undefined | ((...args: unknown[]) => unknown)
+}));
+const requestFmpStub = vi.hoisted(() => ({
+  impl: undefined as undefined | ((...args: unknown[]) => unknown)
+}));
+
+vi.mock("../src/lib/vector-db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
+  return {
+    ...actual,
+    storeDocument: (...args: Parameters<typeof actual.storeDocument>) =>
+      storeDocumentStub.impl ? storeDocumentStub.impl(...args) : actual.storeDocument(...args)
+  };
+});
+
+vi.mock("../src/lib/fmp-common", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/fmp-common")>();
+  return {
+    ...actual,
+    requestFmp: (...args: Parameters<typeof actual.requestFmp>) =>
+      requestFmpStub.impl ? requestFmpStub.impl(...args) : actual.requestFmp(...args)
+  };
+});
 
 const DB_PATH = join(tmpdir(), `agentic-earningscalls-${randomUUID()}.db`);
 
@@ -42,6 +70,8 @@ afterEach(() => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+  storeDocumentStub.impl = undefined;
+  requestFmpStub.impl = undefined;
 });
 
 async function lib() {
@@ -452,5 +482,185 @@ describe("cache CRUD invariants", () => {
     expect(pending.some((row: EarningsCallsTranscriptRow) => row.symbol === "AMD")).toBe(true);
     markEarningsCallsTranscriptIngested("AMD", 2026, 1);
     expect(listUningestedEarningsCallsTranscripts(50).some((row) => row.symbol === "AMD")).toBe(false);
+  });
+});
+
+describe("codex review fixes (PR #1680)", () => {
+  it("clamps the per-pass request cap to the provider-safe ceiling (env can lower, never raise)", async () => {
+    const { earningsCallsMaxRequestsPerPass } = await lib();
+    process.env.EARNINGSCALLS_MAX_REQUESTS_PER_PASS = "50"; // out of range -> default 6
+    expect(earningsCallsMaxRequestsPerPass()).toBe(6);
+    process.env.EARNINGSCALLS_MAX_REQUESTS_PER_PASS = "7"; // 7 x 32 UTC days = 224 > 200
+    expect(earningsCallsMaxRequestsPerPass()).toBe(6);
+    process.env.EARNINGSCALLS_MAX_REQUESTS_PER_PASS = "3"; // lowering is allowed
+    expect(earningsCallsMaxRequestsPerPass()).toBe(3);
+    process.env.EARNINGSCALLS_MAX_REQUESTS_PER_PASS = "0"; // pause is allowed
+    expect(earningsCallsMaxRequestsPerPass()).toBe(0);
+  });
+
+  it("a FAILED (transient) probe is not watermarked — the symbol is re-probed on the next pass", async () => {
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    const log: HttpLogEntry[] = [];
+    let fail = true;
+    const http = makeHttp(
+      (path) => {
+        if (path.startsWith("/transcripts/")) return { ok: true, payload: transcriptPayload() };
+        return fail
+          ? { ok: false, kind: "transient" }
+          : { ok: true, payload: latestCallPayload({ company_ticker: "TRNS1" }) };
+      },
+      log
+    );
+    await refreshEarningsCallsTranscriptsIfDue(NOW, passDeps({ http, heldSymbols: () => ["TRNS1"] }));
+    // One day later (inside the 3d negative TTL): the failed probe left no watermark, so the
+    // symbol is probed again — the OLD behavior would have skipped it until the TTL expired.
+    fail = false;
+    log.length = 0;
+    const second = await refreshEarningsCallsTranscriptsIfDue(NOW + 86_400_000, passDeps({ http, heldSymbols: () => ["TRNS1"] }));
+    expect(log.map((entry) => entry.path)).toContain("/companies/ticker/TRNS1/latest");
+    expect(second.probed).toBe(1);
+  });
+
+  it("a definitive 404 probe IS watermarked — no repeat probe inside the TTL", async () => {
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    const log: HttpLogEntry[] = [];
+    const http = makeHttp(() => ({ ok: false, kind: "not_found" }), log);
+    const first = await refreshEarningsCallsTranscriptsIfDue(NOW, passDeps({ http, heldSymbols: () => ["NF1"] }));
+    expect(first.probed).toBe(1);
+    expect(first.errors).toHaveLength(0); // a known-miss is an answer, not an error
+    log.length = 0;
+    await refreshEarningsCallsTranscriptsIfDue(NOW + 86_400_000, passDeps({ http, heldSymbols: () => ["NF1"] }));
+    expect(log).toHaveLength(0);
+  });
+
+  it("a FAILED transcript body is never negative-cached; transient continues, rate-limit stops the pass", async () => {
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    const { getEarningsCallsTranscript } = await dbLib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    // Phase 1 — transient body failure: no cache row, and the pass CONTINUES to the next symbol.
+    const log1: HttpLogEntry[] = [];
+    const http1 = makeHttp(
+      (path) => path.startsWith("/transcripts/")
+        ? { ok: false, kind: "transient" }
+        : { ok: true, payload: latestCallPayload() },
+      log1
+    );
+    const r1 = await refreshEarningsCallsTranscriptsIfDue(NOW, passDeps({ http: http1, heldSymbols: () => ["TB1", "TB2"] }));
+    expect(getEarningsCallsTranscript("TB1", 2026, 3)).toBeUndefined(); // stays retryable
+    expect(r1.probed).toBe(2); // continue, not break
+    expect(r1.errors).toHaveLength(0);
+    // Phase 2 — rate-limited body: no cache row, error recorded, pass stops early.
+    const log2: HttpLogEntry[] = [];
+    const http2 = makeHttp(
+      (path) => path.startsWith("/transcripts/")
+        ? { ok: false, kind: "rate_limited" }
+        : { ok: true, payload: latestCallPayload() },
+      log2
+    );
+    const r2 = await refreshEarningsCallsTranscriptsIfDue(NOW, passDeps({ http: http2, heldSymbols: () => ["RL1", "RL2"] }));
+    expect(getEarningsCallsTranscript("RL1", 2026, 3)).toBeUndefined();
+    expect(r2.errors).toContain("transcript:RL1:rate_limited");
+    expect(log2.some((entry) => entry.path === "/companies/ticker/RL2/latest")).toBe(false); // break
+  });
+
+  it("a definitive 404 transcript body (call known, transcript unpublished) IS negative-cached", async () => {
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    const { getEarningsCallsTranscript } = await dbLib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    const http = makeHttp(
+      (path) => path.startsWith("/transcripts/")
+        ? { ok: false, kind: "not_found" }
+        : { ok: true, payload: latestCallPayload() },
+      []
+    );
+    await refreshEarningsCallsTranscriptsIfDue(NOW, passDeps({ http, heldSymbols: () => ["NB1"] }));
+    const row = getEarningsCallsTranscript("NB1", 2026, 3);
+    expect(row).toBeDefined();
+    expect(row?.content).toBeUndefined();
+  });
+
+  it("an UNAVAILABLE FMP calendar (unentitled 402/403 -> null) falls back to probing; a real empty calendar is authoritative", async () => {
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    process.env.FMP_API_KEY = "fmp-test-key";
+    // Phase 1 — requestFmp returns null (endpoint unentitled): the prefilter must NOT be treated
+    // as an authoritative empty calendar; the probe fallback engages.
+    requestFmpStub.impl = () => Promise.resolve(null);
+    const log1: HttpLogEntry[] = [];
+    const r1 = await refreshEarningsCallsTranscriptsIfDue(NOW, passDeps({
+      http: makeHttp(() => ({ ok: true, payload: latestCallPayload({ event_date_time: "2025-01-05 21:00:00" }) }), log1),
+      heldSymbols: () => ["FMPX"],
+      recentlyReported: undefined // use the real FMP prefilter path
+    }));
+    expect(r1.probed).toBe(1);
+    expect(log1.map((entry) => entry.path)).toEqual(["/companies/ticker/FMPX/latest"]);
+    // Phase 2 — a REAL empty calendar array is an authoritative "nothing reported": zero probes.
+    requestFmpStub.impl = () => Promise.resolve([]);
+    const log2: HttpLogEntry[] = [];
+    const r2 = await refreshEarningsCallsTranscriptsIfDue(NOW, passDeps({
+      http: makeHttp(() => ({ ok: true, payload: latestCallPayload() }), log2),
+      heldSymbols: () => ["FMPY"],
+      recentlyReported: undefined
+    }));
+    expect(r2.probed).toBe(0);
+    expect(log2).toHaveLength(0);
+  });
+
+  it("a busy RAG_REINDEX lease defers the pass (no HTTP, watermark untouched, operationLease surfaced)", async () => {
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    const { runWithOperationLease, OPERATION_LEASE_GROUPS } = await import("../src/lib/operation-lease");
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    const log: HttpLogEntry[] = [];
+    const deps = passDeps({
+      http: makeHttp(() => ({ ok: true, payload: latestCallPayload() }), log),
+      heldSymbols: () => ["LEASE1"]
+    });
+    const held = await runWithOperationLease(
+      { group: OPERATION_LEASE_GROUPS.RAG_REINDEX, operation: "test-holds-the-lease" },
+      async () => refreshEarningsCallsTranscriptsIfDue(NOW, deps)
+    );
+    expect(held.acquired).toBe(true);
+    const deferred = (held as { value?: Awaited<ReturnType<typeof refreshEarningsCallsTranscriptsIfDue>> }).value;
+    expect(deferred?.operationLease).toBeDefined();
+    expect(deferred?.requests).toBe(0);
+    expect(log).toHaveLength(0);
+    // Lease released: the same pass now runs.
+    const after = await refreshEarningsCallsTranscriptsIfDue(NOW, deps);
+    expect(after.operationLease).toBeUndefined();
+    expect(after.probed).toBe(1);
+  });
+
+  it("ingest completion requires storeDocument's full receipt — partial multi-chunk writes stay retryable", async () => {
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    const { upsertEarningsCallsTranscript, getEarningsCallsTranscript, listUningestedEarningsCallsTranscripts, markEarningsCallsTranscriptIngested } = await dbLib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    // Isolate the free-retry queue: mark every leftover pending row from earlier tests.
+    for (const leftover of listUningestedEarningsCallsTranscripts(500)) {
+      markEarningsCallsTranscriptIngested(leftover.symbol, leftover.fiscalYear, leftover.fiscalQuarter);
+    }
+    upsertEarningsCallsTranscript({ symbol: "ING1", fiscalYear: 2026, fiscalQuarter: 3, content: LONG_TEXT, fetchedAt: new Date(NOW).toISOString(), eventId: 555 });
+    const noHttp = passDeps({ http: makeHttp(() => ({ ok: false, kind: "transient" }), []), heldSymbols: () => [], ingest: undefined });
+    // Phase 1 — PARTIAL write (documentComplete=false despite indexed>0): must NOT mark ingested.
+    storeDocumentStub.impl = () => Promise.resolve({ attempted: 3, indexed: 1, documentComplete: false });
+    let result = await refreshEarningsCallsTranscriptsIfDue(NOW, noHttp);
+    expect(result.ingested).toBe(0);
+    expect(getEarningsCallsTranscript("ING1", 2026, 3)?.ingestedAt).toBeUndefined();
+    // Phase 2 — full receipt (documentComplete + exact cardinality): marks ingested, ledger
+    // records the full chunk count.
+    storeDocumentStub.impl = () => Promise.resolve({ attempted: 3, indexed: 3, documentComplete: true });
+    result = await refreshEarningsCallsTranscriptsIfDue(NOW, noHttp);
+    expect(result.ingested).toBe(1);
+    expect(getEarningsCallsTranscript("ING1", 2026, 3)?.ingestedAt).toBeDefined();
+    const raw = new Database(DB_PATH, { readonly: true });
+    try {
+      const ledger = raw
+        .prepare("SELECT chunk_count FROM ingested_accessions WHERE accession = ?")
+        .get("earningscalls:ING1:2026Q3") as { chunk_count: number } | undefined;
+      expect(ledger?.chunk_count).toBe(3);
+    } finally {
+      raw.close();
+    }
   });
 });

@@ -69,9 +69,13 @@
 // Earnings recency comes from data the app already has when possible: with FMP_API_KEY set,
 // one FMP earnings-calendar read (FMP's quota, not this budget) prefilters to symbols that
 // actually reported in the window. Without it, recency is discovered by the latest-call probe
-// itself, bounded by the per-symbol negative-TTL watermark so a symbol costs at most one probe
-// per EARNINGSCALLS_NEGATIVE_TTL_DAYS. Each pass is additionally capped at
-// EARNINGSCALLS_MAX_REQUESTS_PER_PASS (default 6) HTTP calls.
+// itself, bounded by the per-symbol negative-TTL watermark so a symbol costs at most one
+// ANSWERED probe (success or definitive 404 — failed probes stay retryable) per
+// EARNINGSCALLS_NEGATIVE_TTL_DAYS. Each pass is additionally capped at
+// EARNINGSCALLS_MAX_REQUESTS_PER_PASS (default 6; hard ceiling 6 — see
+// earningsCallsMaxRequestsPerPass for the provider-window derivation) HTTP calls. The whole
+// pass runs under the shared durable RAG_REINDEX operation lease, like every other producer
+// that spends shared Voyage/Pinecone capacity.
 //
 // ── Cache + downstream ─────────────────────────────────────────────────────────────────────
 // Transcripts are immutable once published: fetch-once-forever cache keyed
@@ -108,6 +112,11 @@ import {
   earningsCallsTranscriptsEnabled
 } from "./earningscalls-gate";
 import { normalizeSymbol } from "./money";
+import {
+  OPERATION_LEASE_GROUPS,
+  runWithOperationLease,
+  type OperationLeaseAware
+} from "./operation-lease";
 import { getTechnicalWatchlist } from "./web-sources/technical";
 
 export const EARNINGSCALLS_BASE = "https://earningscalls.dev/api/v1";
@@ -159,8 +168,25 @@ export function earningsCallsNegativeTtlDays(): number {
   return intEnv(process.env.EARNINGSCALLS_NEGATIVE_TTL_DAYS, DEFAULT_NEGATIVE_TTL_DAYS, 1, 90);
 }
 
+/** Provider-quota-safe ceiling for the per-pass request cap. The plan's HARD 200/month resets
+ *  on the SUBSCRIPTION anniversary (a rolling ~31-day window), while the durable budget above
+ *  counts UTC calendar months — the two windows can misalign, so the calendar budget alone
+ *  cannot bound an arbitrary 31-day span. The pass cadence is once per UTC day
+ *  (PASS_WATERMARK_KEY), and a rolling 31-day window intersects at most 32 distinct UTC days
+ *  (partial first + last day), so a per-pass cap of 6 keeps ANY such window at
+ *  <= 32 * 6 = 192 <= 200 requests; 7 would allow 224. */
+const MAX_SAFE_REQUESTS_PER_PASS = 6;
+
+/** Per-pass HTTP request cap. The env override can LOWER the cap, never raise it past the
+ *  provider-safe ceiling (an out-of-range value falls back to the default 6) — see
+ *  MAX_SAFE_REQUESTS_PER_PASS for the 31-day-window derivation (Codex review, PR #1680). */
 export function earningsCallsMaxRequestsPerPass(): number {
-  return intEnv(process.env.EARNINGSCALLS_MAX_REQUESTS_PER_PASS, DEFAULT_MAX_REQUESTS_PER_PASS, 0, 200);
+  return intEnv(
+    process.env.EARNINGSCALLS_MAX_REQUESTS_PER_PASS,
+    DEFAULT_MAX_REQUESTS_PER_PASS,
+    0,
+    MAX_SAFE_REQUESTS_PER_PASS
+  );
 }
 
 // ── Durable calendar-month (UTC) request budget ────────────────────────────────
@@ -476,19 +502,24 @@ async function ingestCachedTranscript(row: EarningsCallsTranscriptRow): Promise<
     "local",
     { parserRevision: "earningscalls-transcript-v1", documentKey: accession }
   );
-  // Complete = a real commit or a proven committed reuse (reusedCommitted stores have indexed=0
-  // but documentComplete=true). Budget-skips/unconfigured keys leave the row pending for a free
-  // retry, mirroring sec-filings' "never record a partial ingest" discipline.
+  // Complete = storeDocument's full receipt: documentComplete === true plus either exact
+  // indexed === attempted cardinality or an exact reusedCommitted receipt (reusedCommitted
+  // stores have indexed=0 but documentComplete=true) — the contract StoreContextsResult
+  // documents for source-level completion ledgers. indexed > 0 alone can be a PARTIAL
+  // multi-chunk write (documentComplete=false); marking that ingested would permanently drop
+  // the row from the free retry queue (Codex review, PR #1680). Budget-skips/unconfigured keys
+  // leave the row pending for a free retry, mirroring sec-filings' "never record a partial
+  // ingest" discipline.
+  const reusedCommitted =
+    stored.reusedCommitted === true && stored.documentComplete === true && stored.attempted > 0;
   const complete = !stored.error && !stored.unconfigured &&
-    (stored.documentComplete === true || (stored.indexed ?? 0) > 0);
+    stored.documentComplete === true &&
+    (reusedCommitted || stored.indexed === stored.attempted);
   if (!complete) return false;
   const at = new Date().toISOString();
-  recordIngestedLedgerRow(
-    accession,
-    normalizeSymbol(row.symbol),
-    (stored.indexed ?? 0) > 0 ? stored.indexed : stored.attempted,
-    at
-  );
+  // `attempted` is the complete document chunk count (a reusedCommitted store indexes 0 this
+  // run but proves the full cardinality), so it is what the coverage ledger must record.
+  recordIngestedLedgerRow(accession, normalizeSymbol(row.symbol), stored.attempted, at);
   markEarningsCallsTranscriptIngested(row.symbol, row.fiscalYear, row.fiscalQuarter, at);
   return true;
 }
@@ -522,17 +553,27 @@ export interface EarningsCallsRefreshDeps {
 }
 
 /** FMP earnings-calendar prefilter (spends FMP quota, not this budget). undefined on any
- *  failure or when FMP is unconfigured — callers then fall back to probe mode. */
+ *  failure or when FMP is unconfigured/unentitled — callers then fall back to probe mode.
+ *  Deliberately calls requestFmp directly instead of fmp-gamma's getEarningsCalendar: that
+ *  wrapper normalizes the null requestFmp returns for a 402/403 (key configured but the
+ *  /earnings-calendar endpoint unentitled) into [], which is indistinguishable from a REAL
+ *  empty calendar — and an empty Set here is authoritative, so it would remove every symbol
+ *  instead of engaging the documented latest-call-probe fallback (Codex review, PR #1680). */
 async function fmpRecentlyReportedSymbols(nowMs: number): Promise<Set<string> | undefined> {
   if (!process.env.FMP_API_KEY) return undefined;
   try {
-    const { getEarningsCalendar } = await import("./fmp-gamma");
+    const { requestFmp } = await import("./fmp-common");
     const to = new Date(nowMs).toISOString().slice(0, 10);
     const from = new Date(nowMs - earningsCallsRecentDays() * 86_400_000).toISOString().slice(0, 10);
-    const rows = await getEarningsCalendar(from, to);
+    const rows = await requestFmp<unknown>("/earnings-calendar", { from, to });
+    // null = the calendar is UNAVAILABLE (402/403 unentitled), and a non-array body is an
+    // unknown shape. Neither is a real "nothing reported" answer — keep unavailability
+    // undefined so the probe fallback engages. Only a real array (even an empty one) is an
+    // authoritative calendar.
+    if (!Array.isArray(rows)) return undefined;
     const reported = new Set<string>();
-    for (const row of rows ?? []) {
-      const symbol = normalizeSymbol(String((row as { symbol?: unknown }).symbol ?? ""));
+    for (const row of rows) {
+      const symbol = normalizeSymbol(String((row as { symbol?: unknown } | null)?.symbol ?? ""));
       if (symbol) reported.add(symbol);
     }
     return reported;
@@ -572,12 +613,15 @@ export const calendarPeriodForTest = calendarPeriodFor;
 
 /**
  * The daily pass. Dormant (zero calls, zero writes) without EARNINGSCALLS_API_KEY or with
- * EARNINGSCALLS_DISABLED=1. Self-guarded: never throws into the scheduler tick.
+ * EARNINGSCALLS_DISABLED=1. The pass BODY is self-guarded (a pass failure becomes an errors
+ * entry, never a throw); like the neighboring filings/FMP producers, a lost RAG_REINDEX lease
+ * ownership at the success boundary is the one condition allowed to propagate — the
+ * scheduler's catch handles it.
  */
 export async function refreshEarningsCallsTranscriptsIfDue(
   nowMs: number = Date.now(),
   deps: EarningsCallsRefreshDeps = {}
-): Promise<EarningsCallsRefreshResult> {
+): Promise<OperationLeaseAware<EarningsCallsRefreshResult>> {
   const result: EarningsCallsRefreshResult = {
     enabled: false,
     due: false,
@@ -592,6 +636,30 @@ export async function refreshEarningsCallsTranscriptsIfDue(
   result.enabled = true;
   if (!deps.force && !isEarningsCallsRefreshDue(nowMs)) return result;
   result.due = true;
+
+  // Serialize with every other producer that spends shared Voyage/Pinecone capacity — filings,
+  // FMP transcripts, 8-K reindex, managed-vector reconciliation all take the durable
+  // RAG_REINDEX lease before embedding, and this producer's storeDocument ingest (fresh
+  // fetches AND the free cached-ingest retries) must join that single-flight (Codex review,
+  // PR #1680). A busy lease is a benign deferred pass: the daily watermark is only written
+  // INSIDE the lease, so a later scheduler tick simply retries.
+  const guarded = await runWithOperationLease(
+    { group: OPERATION_LEASE_GROUPS.RAG_REINDEX, operation: "scheduled-earningscalls-transcripts" },
+    async () => runEarningsCallsPass(nowMs, deps, result)
+  );
+  if (!guarded.acquired) return { ...result, operationLease: guarded.busy };
+  return result;
+}
+
+/** The leased pass body. Mutates `result` in place; self-guarded (never throws). */
+async function runEarningsCallsPass(
+  nowMs: number,
+  deps: EarningsCallsRefreshDeps,
+  result: EarningsCallsRefreshResult
+): Promise<void> {
+  // Recheck after durable acquisition so a delayed process cannot repeat a pass another owner
+  // completed and watermarked in the meantime (same idiom as the FMP transcript producer).
+  if (!deps.force && !isEarningsCallsRefreshDue(nowMs)) return;
   const day = new Date(nowMs).toISOString().slice(0, 10);
   setInternalSetting(PASS_WATERMARK_KEY, day);
 
@@ -645,10 +713,17 @@ export async function refreshEarningsCallsTranscriptsIfDue(
       result.requests += 1;
       result.probed += 1;
       if (!probe.ok) {
-        // 404 = ticker unknown upstream; auth/rate-limit/transient — record the watermark so
-        // the failed probe is not repeated tomorrow-after-tomorrow within the TTL, then stop
-        // the pass on auth/rate-limit (more calls would waste budget on the same outcome).
-        recordEarningsCallsSymbolCheck({ symbol, checkedAt: new Date(nowMs).toISOString() });
+        // Watermark only the DEFINITIVE miss (404 = ticker unknown upstream): re-probing that
+        // within the TTL would spend budget on the same answer. A FAILED request — auth,
+        // rate-limit, or transient (incl. the documented pre-subscription RapidAPI 405,
+        // classified transient) — proves nothing about the symbol; watermarking it delayed the
+        // first usable ingest by the whole negative TTL, so failures stay retryable on the
+        // next pass (Codex review, PR #1680). Auth/rate-limit still stop the pass early: more
+        // calls would waste budget on the same outcome.
+        if (probe.kind === "not_found") {
+          recordEarningsCallsSymbolCheck({ symbol, checkedAt: new Date(nowMs).toISOString() });
+          continue;
+        }
         if (probe.kind === "auth" || probe.kind === "rate_limited") {
           result.errors.push(`probe:${symbol}:${probe.kind}`);
           break;
@@ -706,6 +781,18 @@ export async function refreshEarningsCallsTranscriptsIfDue(
         eventId: latest.eventId,
         remainingBudget: remainingEarningsCallsBudget(nowMs)
       });
+      // Negative-cache ONLY what the provider actually ANSWERED: a successful response with no
+      // usable text, or a definitive 404 (call id known, transcript not published). A FAILED
+      // request (auth/rate-limit/transient) proves nothing about the transcript — persisting a
+      // negative row for it suppressed the re-fetch for the whole negative TTL, so failures
+      // now leave no cache row and stay retryable (Codex review, PR #1680).
+      if (!body.ok && body.kind !== "not_found") {
+        if (body.kind === "auth" || body.kind === "rate_limited") {
+          result.errors.push(`transcript:${symbol}:${body.kind}`);
+          break;
+        }
+        continue;
+      }
       const content = body.ok ? parseEarningsCallsTranscript(body.payload) : undefined;
       upsertEarningsCallsTranscript({
         symbol,
@@ -720,13 +807,7 @@ export async function refreshEarningsCallsTranscriptsIfDue(
           periodBasis: latest.fiscalYear && latest.fiscalQuarter ? "fiscal" : "calendar-from-event-date"
         })
       });
-      if (!content) {
-        if (!body.ok && (body.kind === "auth" || body.kind === "rate_limited")) {
-          result.errors.push(`transcript:${symbol}:${body.kind}`);
-          break;
-        }
-        continue;
-      }
+      if (!content) continue;
       result.fetched += 1;
       const row = getEarningsCallsTranscript(symbol, period.year, period.quarter);
       if (row?.content) {
@@ -756,5 +837,4 @@ export async function refreshEarningsCallsTranscriptsIfDue(
   } catch {
     // Best-effort audit.
   }
-  return result;
 }

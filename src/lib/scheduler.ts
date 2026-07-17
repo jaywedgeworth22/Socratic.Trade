@@ -539,7 +539,10 @@ async function tick(): Promise<void> {
   // kill-switch EARNINGSCALLS_DISABLED=1). Holdings-first selection, durable 180/month
   // reserve-before-call budget under the plan's HARD 200/month — see
   // src/lib/earningscalls-transcripts.ts. Gated on the monthly LLM/RAG spend ceiling like the
-  // filing/FMP-transcript producers above (its ingest spends Voyage/Pinecone). Self-guarded.
+  // filing/FMP-transcript producers above (its ingest spends Voyage/Pinecone), and serialized
+  // with them via the shared durable RAG_REINDEX operation lease (acquired inside the producer,
+  // like refreshFilingBodies/refreshFmpTranscripts; a busy lease is a benign deferred pass —
+  // the daily watermark is untouched, so a later tick retries). Self-guarded.
   if (isEarningsCallsRefreshDue() && checkMonthlyLlmSpendCeiling().ok) {
     void refreshEarningsCallsTranscriptsIfDue().catch((err) =>
       console.error("[scheduler] earningscalls transcript refresh error:", err instanceof Error ? err.message : err)

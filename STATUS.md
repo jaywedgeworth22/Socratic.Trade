@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-17 — EarningsCalls: all 7 Codex review findings fixed (cap-reset pickup, MONET, branch `monet/earningscalls-transcripts`)
+
+Cap-reset pickup finishing PR #1680's review. All 7 unresolved Codex threads addressed +
+regression-tested (31/31 file tests): P1 provenance fix (EarningsCalls chunks no longer
+classify as FMP-derived — strategy runs no longer throw on retrieval without the FMP rights
+claim), failed requests/probes stay retryable (no negative-cache/watermark on failure), per-pass
+cap clamped to the provider-safe ceiling of 6 (32-day rolling window × 6 = 192 ≤ 200),
+unentitled FMP calendar now falls back to probes instead of deselecting every symbol, the pass
+runs under the durable RAG_REINDEX lease like sibling producers, and ingest completion requires
+`storeDocument`'s full receipt (partial writes stay retryable). Feature still lands DORMANT.
+Rollout: `docs/rollouts/2026-07-17-earningscalls-codex-triage-pickup.md`.
+
 ## 2026-07-16 — EarningsCalls.dev transcript source: free-plan budget design, dual transport (MONET)
 
 Owner-directed: earnings-call transcripts via the EarningsCalls.dev **free plan (HARD 200
