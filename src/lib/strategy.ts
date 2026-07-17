@@ -4750,6 +4750,14 @@ async function proposeTrades(input: {
                 if (proposalsKeyOccurrences > 1) {
                   throw new Error(`Bull reply contained ${proposalsKeyOccurrences} proposals blocks (ambiguous); refusing repair.`);
                 }
+                // ANY trailing balanced JSON value counts as ambiguous too (Codex P1, round 11):
+                // a corrective bare array (`... Correction: []`) carries no proposals key but
+                // still contradicts the first block. Quote-tolerant scan, since the whole point
+                // of this path is that the reply may be single-quoted.
+                const firstBlockEnd = firstQuoteTolerantBlockEnd(escapeNormalizedBullText);
+                if (firstBlockEnd !== -1 && /[[{]/.test(escapeNormalizedBullText.slice(firstBlockEnd + 1))) {
+                  throw new Error("Bull reply contained trailing JSON after the first block (ambiguous); refusing repair.");
+                }
                 // Strict parse failed — retry WITH local jsonrepair, then gate every recovered
                 // proposal through the schema-completeness filter: repair can close a proposal
                 // truncated mid-object, and such partials must not reach sizing where defaults
@@ -5204,6 +5212,36 @@ export const BULL_PROPOSAL_REQUIRED_KEYS = [
  * and the three human-judgment fields carry real values (non-empty rationale/tradeThesisTag,
  * finite confidenceScore) — anything less is a truncation artifact, not a trade idea.
  */
+/**
+ * End index of the first balanced {...}/[...] block, scanning BOTH quote styles (the strict
+ * extractor's scanner is deliberately double-quote-only). Used by the Bull ambiguity guard to
+ * detect a trailing corrective JSON value — e.g. `{'proposals':[...]} Correction: []` — which
+ * carries no `proposals:` key yet contradicts the first block (Codex P1, round 11).
+ */
+export function firstQuoteTolerantBlockEnd(text: string): number {
+  const start = text.search(/[[{]/);
+  if (start === -1) return -1;
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === "{" || ch === "[") depth += 1;
+    else if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 function isSchemaShapedStopPlan(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const o = value as Record<string, unknown>;

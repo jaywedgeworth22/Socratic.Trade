@@ -3,6 +3,7 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { evaluateTradeProposal, betaScaledStopPct } from "../src/lib/policy";
 import {
   BULL_PROPOSAL_REQUIRED_KEYS,
+  firstQuoteTolerantBlockEnd,
   enrichOpeningProposal,
   filterRepairedProposals,
   filterStopPlansByLiveBasis,
@@ -605,6 +606,22 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     // filterStopPlansByLiveBasis and never threaded here, so recordFillFromProposal later nulled the
     // stored justification on the scale-in fill's upsert.
     expect(p.stopPlan).toEqual({ style: "none", rationale: "high-conviction thesis, riding through the drawdown" });
+  });
+});
+
+describe("firstQuoteTolerantBlockEnd (Bull trailing-JSON ambiguity, Codex round 11)", () => {
+  it("finds the end of a single-quoted block whose strings contain braces, and exposes trailing JSON", () => {
+    const text = "{'proposals': [{'rationale': 'breaks the {wedge}'}]} Correction: []";
+    const end = firstQuoteTolerantBlockEnd(text);
+    expect(end).toBeGreaterThan(0);
+    expect(text.slice(end + 1)).toContain("[]"); // the guard treats this trailing JSON as ambiguous
+  });
+
+  it("reports no trailing JSON for a clean single block", () => {
+    const text = "{'proposals': []}";
+    const end = firstQuoteTolerantBlockEnd(text);
+    expect(end).toBe(text.length - 1);
+    expect(/[[{]/.test(text.slice(end + 1))).toBe(false);
   });
 });
 
