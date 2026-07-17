@@ -83,8 +83,11 @@ export class SecIngestWorker {
 
     if (checkpoint === "discovered") {
       heartbeat();
-      const content = await politeFetchText(task.payload.url as string);
-      await writeLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`, content);
+      let content = await readLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`);
+      if (!content) {
+        content = await politeFetchText(task.payload.url as string);
+        await writeLocalArtifact(task.cik, task.accession, sequence, `raw-${documentName}`, content);
+      }
 
       const ok = advanceSecIngestTask({
         taskId: task.id,

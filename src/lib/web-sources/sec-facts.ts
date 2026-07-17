@@ -204,3 +204,39 @@ export function formatCompanyFactsEvidenceCard(cik: string): string {
   }
   return lines.join("\n");
 }
+
+/**
+ * Format structured Form 4 insider transactions for a symbol into a clean narrative Evidence Card.
+ */
+export function formatInsiderTransactionsEvidenceCard(cik: string): string {
+  const db = getDb();
+  const paddedCik = padCik(cik);
+
+  const txs = db.prepare(`
+    SELECT insider_name, relationship, side, shares, price, period_of_report, is_10b5_1, accession
+    FROM sec_insider_transactions
+    WHERE cik = ?
+    ORDER BY period_of_report DESC, price DESC
+    LIMIT 30
+  `).all(paddedCik) as Array<{
+    insider_name: string;
+    relationship: string;
+    side: string;
+    shares: number;
+    price: number;
+    period_of_report: string;
+    is_10b5_1: number;
+    accession: string;
+  }>;
+
+  if (txs.length === 0) return "";
+
+  const lines = [`[SEC Insider Transactions (Form 4) for CIK ${paddedCik}]`];
+  for (const t of txs) {
+    lines.push(
+      `- ${t.period_of_report}: ${t.insider_name} (${t.relationship}) ${t.side.toUpperCase()} ${t.shares.toLocaleString()} shares @ $${t.price.toFixed(2)} (10b5-1: ${t.is_10b5_1 ? "Yes" : "No"}) [acc: ${t.accession}]`
+    );
+  }
+  return lines.join("\n");
+}
+
