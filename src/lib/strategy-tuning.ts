@@ -957,6 +957,9 @@ async function requestLlmTuning(
       const text = extractLlmText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
       // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.
+      // STRICT parse — no jsonrepair (PR #1696 posture): a truncated tuning payload repaired into
+      // valid JSON could carry partial weight suggestions into the auto-apply lane. Malformed
+      // output stays a failed tuning read.
       return { text, payload: JSON.parse(extractJsonPayload(text)) as LlmTuningPayload };
     }
   );

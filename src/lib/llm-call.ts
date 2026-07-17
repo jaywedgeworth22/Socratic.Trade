@@ -12,6 +12,7 @@
 import { withLlmRequestBounds, type LlmTransport } from "./llm-request";
 import type { LlmEndpoint } from "./llm-provider";
 import type { LlmReasoningEffort } from "./types";
+import { jsonrepair } from "jsonrepair";
 
 /** A JSON schema plus the name/description used to label it (OpenAI json_schema / Anthropic tool). */
 export interface LlmJsonSchema {
@@ -379,14 +380,51 @@ export function extractLlmText(payload: unknown): string | undefined {
  * stray bracket or multiple JSON-looking blocks. When no balanced block is found (e.g. a
  * truncated response), returns the trimmed/unfenced text unchanged so the caller's own
  * `JSON.parse` try/catch still governs the failure — never fabricates valid JSON.
+ *
+ * `repair` (default OFF) additionally runs local, deterministic jsonrepair when the
+ * extracted payload still isn't valid JSON. Opt-in ONLY, per call site, because repair can
+ * turn a TRUNCATED response into syntactically valid JSON — e.g. `{"verdict":"approve"`
+ * becomes a well-formed approval object. On safety-critical parse paths (Red Team verdicts,
+ * proposal revalidation, tuning payloads) that converts fail-closed "unavailable" handling
+ * into fail-open acceptance, which is exactly the defect class Codex flagged on PR #1696.
+ * Those sites MUST call this without `repair`; generative sites that opt in MUST re-validate
+ * schema-required fields on the parsed result (repair proves syntax, never completeness).
  */
-export function extractJsonPayload(text: string): string {
+export function extractJsonPayload(text: string, options: { repair?: boolean } = {}): string {
   const unfenced = text
     .trim()
     .replace(/^```(?:json5?|jsonc)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
-  return firstBalancedJson(unfenced) ?? unfenced;
+
+  const primary = firstBalancedJson(unfenced) ?? unfenced;
+
+  try {
+    JSON.parse(primary);
+    return primary;
+  } catch {
+    if (!options.repair) return primary; // caller's own JSON.parse governs the failure
+    // Repair the ORIGINAL unfenced text before the balanced slice: firstBalancedJson only
+    // understands double-quoted strings, so a single-quoted payload whose string values
+    // contain '}' gets sliced MID-STRING — repairing that fragment silently truncates content
+    // or drops trailing proposals (Codex P2, round 9). Full-text repair sees the whole payload;
+    // the slice remains only as a fallback for prose-wrapped responses where full-text repair
+    // cannot apply. Wrong-content beats no-content on this path: a full-text repair that
+    // yields a non-object degrades to zero proposals downstream, which is the safe direction.
+    try {
+      const repairedFull = jsonrepair(unfenced);
+      JSON.parse(repairedFull);
+      return repairedFull;
+    } catch {
+      // fall through to the balanced slice
+    }
+    try {
+      return jsonrepair(primary);
+    } catch {
+      // Unrepairable; let the caller's JSON.parse fail loudly
+      return primary;
+    }
+  }
 }
 
 /** First balanced `{…}`/`[…]` block starting at the first opener, or undefined if none/unbalanced. */

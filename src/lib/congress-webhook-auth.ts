@@ -15,14 +15,20 @@ export function verifyCongressWebhookSignature(req: Request, bodyText: string): 
   if (!expectedSecret) return false; // no secret configured → reject all writes
 
   // Try signature verification first (modern path)
-  const signatureHeader = req.headers.get("x-signature")?.trim() ?? "";
+  const rawSignatureHeader = req.headers.get("x-signature")?.trim() ?? "";
+  // congress.trade sends `sha256=<hex>` (see congress-trading-shared's
+  // signCongressWebhook); tolerate the optional prefix, case-insensitively,
+  // same as the shared package's verifier.
+  const signatureHeader = rawSignatureHeader.toLowerCase().startsWith("sha256=")
+    ? rawSignatureHeader.slice(7)
+    : rawSignatureHeader;
   if (signatureHeader) {
     try {
       const hmac = crypto.createHmac("sha256", expectedSecret);
       hmac.update(bodyText);
       const expectedSignature = hmac.digest("hex");
 
-      const provided = Buffer.from(signatureHeader);
+      const provided = Buffer.from(signatureHeader.toLowerCase());
       const expected = Buffer.from(expectedSignature);
 
       if (provided.length === expected.length && crypto.timingSafeEqual(provided, expected)) {
