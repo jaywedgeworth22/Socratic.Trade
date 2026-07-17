@@ -51,6 +51,7 @@ export interface DocumentChunk {
   chunk_id: string;
   title: string;
   text: string;
+  parent_text: string;
   /** SHA-256 hex (first 16 chars) of chunk text for re-embed dedup. */
   content_hash: string;
   context_header: string;
@@ -98,85 +99,13 @@ function tailOverlap(text: string, count: number): string {
   let i = words.length - 1;
   while (i >= 0) {
     const proposed = words.slice(i).join(" ");
-    if (countTokens(proposed, false) > count) {
-      break;
-    }
+    if (countTokens(proposed, false) >= count) return proposed;
     i--;
   }
-  return words.slice(Math.max(0, i + 1)).join(" ");
+  return text;
 }
 
-function splitLongProse(text: string, maxTokens: number, overlapTokens: number): string[] {
-  const words = String(text).trim().split(/\s+/).filter(Boolean);
-  const segments: string[] = [];
-  let currentWords: string[] = [];
-
-  for (const word of words) {
-    const proposed = [...currentWords, word].join(" ");
-    if (countTokens(proposed, false) > maxTokens && currentWords.length > 0) {
-      segments.push(currentWords.join(" "));
-      const overlapWordCount = Math.floor(currentWords.length * (overlapTokens / maxTokens));
-      currentWords = currentWords.slice(currentWords.length - overlapWordCount);
-    }
-    currentWords.push(word);
-  }
-  if (currentWords.length > 0) {
-    segments.push(currentWords.join(" "));
-  }
-  return segments;
-}
-
-function isHeading(line: string): boolean {
-  return /^(#{1,6}\s+.+|item\s+\d+[a-z]?[.\s-].+|risk factors|management'?s discussion|financial statements)$/i.test(
-    line.trim()
-  );
-}
-
-function headingText(line: string): string {
-  return line.replace(/^#{1,6}\s+/, "").trim();
-}
-
-function isTableLine(line: string): boolean {
-  return /^\s*\|.+\|\s*$/.test(line);
-}
-
-function blockDocument(text: string): Block[] {
-  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
-  const blocks: Block[] = [];
-  let paragraph: string[] = [];
-
-  const flushParagraph = () => {
-    const joined = paragraph.join(" ").trim();
-    if (joined) blocks.push({ type: "paragraph", text: joined });
-    paragraph = [];
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (isTableLine(line)) {
-      flushParagraph();
-      const table: string[] = [];
-      while (i < lines.length && isTableLine(lines[i] ?? "")) table.push(lines[i++] ?? "");
-      i--;
-      blocks.push({ type: "table", text: table.join("\n") });
-      continue;
-    }
-    if (!line.trim()) {
-      flushParagraph();
-      continue;
-    }
-    if (isHeading(line)) {
-      flushParagraph();
-      blocks.push({ type: "heading", text: headingText(line) });
-      continue;
-    }
-    paragraph.push(line.trim());
-  }
-  flushParagraph();
-  return blocks;
-}
-
-function makeHeader(args: {
+function makeHeader(meta: {
   ticker: string[];
   doc_type: string;
   section: string;
@@ -184,16 +113,131 @@ function makeHeader(args: {
   acceptance_datetime: string;
   title: string;
 }): string {
-  const { ticker, doc_type, section, source, acceptance_datetime, title } = args;
-  const entity = ticker.length ? ticker.join(",") : title;
-  return [
-    `Document: ${entity}${doc_type ? ` ${doc_type}` : ""}.`,
-    `Section: ${section || "General"}.`,
-    source ? `Source: ${source}.` : "",
-    acceptance_datetime ? `Accepted: ${acceptance_datetime}.` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const tStr = meta.ticker.length > 0 ? meta.ticker.join(",") : "N/A";
+  const dateStr = String(meta.acceptance_datetime).split("T")[0] || "N/A";
+  return `[Filing: ${meta.title} | Symbol: ${tStr} | Section: ${meta.section} | Date: ${dateStr} | Source: ${meta.source}]`;
+}
+
+function* splitLongProse(text: string, maxTokens: number, overlapTokens: number): Generator<string> {
+  const sentences = text.split(/(?<=[.?!])\s+/);
+  let current: string[] = [];
+  
+  for (const s of sentences) {
+    const clean = s.trim();
+    if (!clean) continue;
+
+    const currentText = current.join(" ");
+    const currentTokens = countTokens(currentText, false);
+    const sTokens = countTokens(clean, false);
+
+    if (currentTokens + sTokens <= maxTokens) {
+      current.push(clean);
+    } else {
+      if (current.length > 0) {
+        yield current.join(" ");
+      }
+      if (sTokens > maxTokens) {
+        // Hard-split extremely long sentences by word counts
+        const words = clean.split(/\s+/);
+        let wordChunk: string[] = [];
+        for (const w of words) {
+          wordChunk.push(w);
+          if (countTokens(wordChunk.join(" "), false) >= maxTokens) {
+            yield wordChunk.join(" ");
+            // Carry overlap of words
+            const overlapCount = Math.min(wordChunk.length - 1, Math.max(0, Math.floor(overlapTokens)));
+            wordChunk = overlapCount > 0 ? wordChunk.slice(-overlapCount) : [];
+          }
+        }
+        if (wordChunk.length > 0) {
+          current = [wordChunk.join(" ")];
+        } else {
+          current = [];
+        }
+      } else {
+        // Start next chunk carrying overlap
+        if (current.length > 0) {
+          const tail = tailOverlap(current.join(" "), overlapTokens);
+          current = [tail, clean];
+        } else {
+          current = [clean];
+        }
+      }
+    }
+  }
+
+  if (current.length > 0) {
+    yield current.join(" ");
+  }
+}
+
+function blockDocument(text: string): Block[] {
+  const lines = text.split("\n");
+  const blocks: Block[] = [];
+  let tablePending: string[] = [];
+  let prosePending: string[] = [];
+
+  const flushProse = () => {
+    const p = prosePending.join("\n").trim();
+    if (p) blocks.push({ type: "paragraph", text: p });
+    prosePending = [];
+  };
+
+  const flushTable = () => {
+    const t = tablePending.join("\n").trim();
+    if (t) blocks.push({ type: "table", text: t });
+    tablePending = [];
+  };
+
+  for (const line of lines) {
+    const clean = line.trim();
+    if (!clean) {
+      flushProse();
+      flushTable();
+      continue;
+    }
+
+    const isTableHeader = clean.startsWith("|") && clean.endsWith("|");
+    if (isTableHeader) {
+      flushProse();
+      tablePending.push(line);
+      continue;
+    }
+
+    if (tablePending.length > 0) {
+      if (clean.startsWith("|") || clean.includes("|")) {
+        tablePending.push(line);
+        continue;
+      } else {
+        flushTable();
+      }
+    }
+
+    let isHeading = false;
+    let headingText = clean;
+
+    const mdHeaderMatch = clean.match(/^#{1,6}\s+(.+)$/);
+    if (mdHeaderMatch) {
+      isHeading = true;
+      headingText = mdHeaderMatch[1].trim();
+    } else if (clean.length < 120 && (
+      /^(?:Item|Part|Note|Section)\s+\d+/i.test(clean) ||
+      /^[A-Z\s,.:()-]+$/.test(clean)
+    )) {
+      isHeading = true;
+    }
+
+    if (isHeading) {
+      flushProse();
+      blocks.push({ type: "heading", text: headingText });
+    } else {
+      prosePending.push(line);
+    }
+  }
+
+  flushProse();
+  flushTable();
+  return blocks;
 }
 
 /**
@@ -204,6 +248,7 @@ function makeHeader(args: {
 export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): DocumentChunk[] {
   if (!doc?.text || typeof doc.text !== "string") throw new Error("doc.text required");
   const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const childMaxTokens = Math.max(80, Math.floor(maxTokens / 3)); // target child size: ~120-130 tokens
   const overlapRatio = options.overlapRatio ?? DEFAULT_OVERLAP_RATIO;
 
   const doc_id = doc.doc_id || randomUUID();
@@ -212,46 +257,28 @@ export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): Docu
   const published_at = normalizeDate(doc.published_at, new Date().toISOString());
   const acceptance_datetime = normalizeDate(doc.acceptance_datetime, published_at);
   const doc_type = doc.doc_type || "note";
-  const source = doc.source || "user";
+  const source = doc.source || "sec-edgar";
   const url = doc.url || "";
-  const overlapTokens = Math.max(0, Math.floor(maxTokens * overlapRatio));
 
+  const parentBlocks: Array<{ text: string; section: string; isTable: boolean }> = [];
   let section = title;
   let pending: string[] = [];
-  const chunks: DocumentChunk[] = [];
 
-  const pushText = (text: string, opts: { isTable?: boolean } = {}) => {
+  const pushParentBlock = (text: string, isTable: boolean = false) => {
     const clean = String(text).trim();
     if (!clean) return;
-    const n = chunks.length + 1;
-    const context_header = makeHeader({ ticker, doc_type, section, source, acceptance_datetime, title });
-    chunks.push({
-      doc_id,
-      chunk_id: `${doc_id}#c${String(n).padStart(3, "0")}`,
-      title,
-      text: clean,
-      content_hash: hashContent(clean),
-      context_header,
-      ticker,
-      doc_type,
-      section,
-      published_at,
-      acceptance_datetime,
-      source,
-      url,
-      is_table: Boolean(opts.isTable),
-    });
+    parentBlocks.push({ text: clean, section, isTable });
   };
 
-  const flush = (opts: { carryOverlap?: boolean } = {}) => {
-    const carryOverlap = opts.carryOverlap ?? true;
+  const flushParent = (carryOverlap = true) => {
     const text = pending.join("\n\n").trim();
     if (!text) {
       pending = [];
       return;
     }
-    pushText(text, { isTable: false });
-    pending = carryOverlap && overlapTokens ? [tailOverlap(text, overlapTokens)] : [];
+    pushParentBlock(text, false);
+    const parentOverlapTokens = Math.max(0, Math.floor(maxTokens * overlapRatio));
+    pending = carryOverlap && parentOverlapTokens ? [tailOverlap(text, parentOverlapTokens)] : [];
   };
 
   if (doc.sections && doc.sections.length > 0) {
@@ -266,17 +293,18 @@ export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): Docu
 
         const isTable = cleanPart.startsWith("|") && cleanPart.endsWith("|");
         if (isTable) {
-          flush({ carryOverlap: false });
-          pushText(cleanPart, { isTable: true });
+          flushParent(false);
+          pushParentBlock(cleanPart, true);
           pending = [];
           continue;
         }
 
         const partTokens = countTokens(cleanPart, false);
         if (partTokens > maxTokens) {
-          flush();
-          for (const segment of splitLongProse(cleanPart, maxTokens, overlapTokens)) {
-            pushText(segment);
+          flushParent(true);
+          const parentOverlapTokens = Math.max(0, Math.floor(maxTokens * overlapRatio));
+          for (const segment of splitLongProse(cleanPart, maxTokens, parentOverlapTokens)) {
+            pushParentBlock(segment, false);
           }
           pending = [];
           continue;
@@ -284,37 +312,91 @@ export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): Docu
 
         const proposed = [...pending, cleanPart].join("\n\n");
         if (pending.length && countTokens(proposed, false) > maxTokens) {
-          flush();
+          flushParent(true);
         }
         pending.push(cleanPart);
       }
-      flush({ carryOverlap: false }); // Do not carry overlap across sections
+      flushParent(false); // Do not carry overlap across sections
     }
   } else {
     for (const block of blockDocument(doc.text)) {
       if (block.type === "heading") {
-        flush({ carryOverlap: false });
+        flushParent(false);
         section = block.text;
         continue;
       }
       if (block.type === "table") {
-        flush({ carryOverlap: false });
-        pushText(block.text, { isTable: true });
+        flushParent(false);
+        pushParentBlock(block.text, true);
         pending = [];
         continue;
       }
       if (countTokens(block.text, false) > maxTokens) {
-        flush();
-        for (const segment of splitLongProse(block.text, maxTokens, overlapTokens)) pushText(segment);
+        flushParent(true);
+        const parentOverlapTokens = Math.max(0, Math.floor(maxTokens * overlapRatio));
+        for (const segment of splitLongProse(block.text, maxTokens, parentOverlapTokens)) {
+          pushParentBlock(segment, false);
+        }
         pending = [];
         continue;
       }
 
       const proposed = [...pending, block.text].join("\n\n");
-      if (pending.length && countTokens(proposed, false) > maxTokens) flush();
+      if (pending.length && countTokens(proposed, false) > maxTokens) flushParent(true);
       pending.push(block.text);
     }
-    flush({ carryOverlap: false });
+    flushParent(false);
+  }
+
+  const chunks: DocumentChunk[] = [];
+  for (const parent of parentBlocks) {
+    if (parent.isTable || countTokens(parent.text, false) <= childMaxTokens) {
+      const n = chunks.length + 1;
+      section = parent.section;
+      const context_header = makeHeader({ ticker, doc_type, section, source, acceptance_datetime, title });
+      chunks.push({
+        doc_id,
+        chunk_id: `${doc_id}#c${String(n).padStart(3, "0")}`,
+        title,
+        text: parent.text,
+        parent_text: parent.text,
+        content_hash: hashContent(parent.text),
+        context_header,
+        ticker,
+        doc_type,
+        section,
+        published_at,
+        acceptance_datetime,
+        source,
+        url,
+        is_table: parent.isTable
+      });
+    } else {
+      const childOverlapTokens = Math.max(0, Math.floor(childMaxTokens * overlapRatio));
+      const childSegments = splitLongProse(parent.text, childMaxTokens, childOverlapTokens);
+      for (const segment of childSegments) {
+        const n = chunks.length + 1;
+        section = parent.section;
+        const context_header = makeHeader({ ticker, doc_type, section, source, acceptance_datetime, title });
+        chunks.push({
+          doc_id,
+          chunk_id: `${doc_id}#c${String(n).padStart(3, "0")}`,
+          title,
+          text: segment,
+          parent_text: parent.text,
+          content_hash: hashContent(segment),
+          context_header,
+          ticker,
+          doc_type,
+          section,
+          published_at,
+          acceptance_datetime,
+          source,
+          url,
+          is_table: false
+        });
+      }
+    }
   }
 
   return chunks;

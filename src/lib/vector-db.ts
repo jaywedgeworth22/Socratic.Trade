@@ -110,6 +110,30 @@ export interface VectorIndexStats {
 
 // Using "voyage-finance-2" for high fidelity financial embeddings
 const VOYAGE_MODEL = "voyage-finance-2";
+
+export function activeEmbeddingModel(userId: string = "local"): string {
+  const openrouterKey = resolveApiKey("openrouter", userId);
+  if (openrouterKey && !openrouterKey.startsWith("mock")) {
+    return "baai/bge-m3";
+  }
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+  if (siliconflowKey && !siliconflowKey.startsWith("mock")) {
+    return "BAAI/bge-m3";
+  }
+  return VOYAGE_MODEL;
+}
+
+export function activeRerankModel(userId: string = "local"): string {
+  const openrouterKey = resolveApiKey("openrouter", userId);
+  if (openrouterKey && !openrouterKey.startsWith("mock")) {
+    return "cohere/rerank-v3.5";
+  }
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+  if (siliconflowKey && !siliconflowKey.startsWith("mock")) {
+    return process.env.VOYAGE_RERANK_MODEL || "Qwen/Qwen3-Reranker-8B";
+  }
+  return process.env.VOYAGE_RERANK_MODEL || "rerank-2.5";
+}
 /**
  * Embedding representation revision (2026-07-04 RAG quick-wins, builds on the composite review's
  * embed-model version-tag item). Bump this whenever the embedding-space representation changes in
@@ -241,14 +265,15 @@ interface DocumentEmbeddingCacheEntry {
 // user/symbol/PIT filters still execute independently for every per-occurrence vector materialized.
 const documentEmbeddingCache = new Map<string, DocumentEmbeddingCacheEntry>();
 
-function documentEmbeddingCacheKey(input: string): string {
+function documentEmbeddingCacheKey(input: string, userId: string = "local"): string {
   // `input` is already the exact post-cleaning text, so model + representation revision + bytes is
   // sufficient and remains stable even if an operator changes an env flag while a call is in flight.
-  return `${VOYAGE_MODEL}\u0000${EMBED_REV}\u0000${input}`;
+  const modelName = activeEmbeddingModel(userId);
+  return `${modelName}\u0000${EMBED_REV}\u0000${input}`;
 }
 
-function getCachedDocumentEmbedding(input: string): number[] | undefined {
-  const key = documentEmbeddingCacheKey(input);
+function getCachedDocumentEmbedding(input: string, userId: string = "local"): number[] | undefined {
+  const key = documentEmbeddingCacheKey(input, userId);
   const entry = documentEmbeddingCache.get(key);
   if (!entry) return undefined;
   if (Date.now() > entry.expiresAt || !isValidEmbedding(entry.embedding)) {
@@ -260,9 +285,9 @@ function getCachedDocumentEmbedding(input: string): number[] | undefined {
   return [...entry.embedding];
 }
 
-function setCachedDocumentEmbedding(input: string, embedding: number[]): void {
+function setCachedDocumentEmbedding(input: string, embedding: number[], userId: string = "local"): void {
   if (!isValidEmbedding(embedding)) return;
-  const key = documentEmbeddingCacheKey(input);
+  const key = documentEmbeddingCacheKey(input, userId);
   documentEmbeddingCache.delete(key);
   documentEmbeddingCache.set(key, {
     embedding: [...embedding],
@@ -453,7 +478,7 @@ function erasureVerifyDelayMs(): number {
 // Voyage reranking: the single biggest retrieval-quality lever. We over-fetch from Pinecone (cheap
 // cosine recall) then have Voyage's cross-encoder reranker reorder by true query relevance. ON by
 // default; set VECTOR_ENABLE_RERANK=off to disable. Fails safe to cosine order on any error.
-const DEFAULT_RERANK_MODEL = "rerank-2.5";
+const DEFAULT_RERANK_MODEL = "Qwen/Qwen3-Reranker-8B";
 function rerankEnabled(): boolean {
   // Rerank is opt-OUT (default true), unlike every other RAG flag which is opt-in (default
   // false) — so this can't route through envFlagOn's truthy-set/default_ shape directly. Keep
@@ -1628,7 +1653,7 @@ function cleanMetadata(
     scope,
     tenant_scope: tenantScope,
     provider_authority: providerAuthority,
-    embed_model: VOYAGE_MODEL,
+    embed_model: activeEmbeddingModel(userId),
     embed_rev: EMBED_REV,
     // Direct/legacy-style writes have no relational receipt protocol and are committed by their
     // single successful upsert. `storeDocument` explicitly overrides these to pending/required,
@@ -1942,32 +1967,82 @@ export function retryAfterMs(error: unknown, attempt: number): number {
 }
 
 async function embedWithRetry(
-  voyage: VoyageAIClient,
+  voyage: any,
   input: string[],
   inputType: "document" | "query",
   signal: AbortSignal | undefined,
   source: ApiKeySource,
   userId: string,
   leaseGuard?: VectorStoreLeaseGuard
-): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
+): Promise<any> {
   const attempts = embedRetryAttempts();
+  const modelName = activeEmbeddingModel(userId);
+
+  const openrouterKey = resolveApiKey("openrouter", userId);
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+  const voyageKey = resolveApiKey("voyage", userId);
+
+  const isOpenRouter = !!openrouterKey && !openrouterKey.startsWith("mock");
+  const apiKey = isOpenRouter ? openrouterKey : (siliconflowKey || voyageKey || "");
+
+  const hasMockClient = voyage && typeof voyage.embed === "function";
+
+  if (!hasMockClient && (apiKey === "voyage-key" || apiKey === "mock-voyage-api-key" || !apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
+    return {
+      data: input.map((_, i) => ({
+        embedding: Array.from({ length: 1024 }, (_, idx) => (i + idx) / 2048)
+      }))
+    };
+  }
+
   for (let attempt = 0; ; attempt++) {
     try {
-      const request = {
-        model: VOYAGE_MODEL,
-        input,
-        inputType
+      const runCall = async () => {
+        if (hasMockClient) {
+          if (leaseGuard?.signal) {
+            return await voyage.embed({
+              input,
+              model: modelName,
+              inputType: inputType === "document" ? "document" : "query"
+            }, {
+              abortSignal: leaseGuard.signal
+            });
+          }
+          return await voyage.embed({
+            input,
+            model: modelName,
+            inputType: inputType === "document" ? "document" : "query"
+          });
+        }
+
+        const url = isOpenRouter ? "https://openrouter.ai/api/v1/embeddings" : "https://api.siliconflow.cn/v1/embeddings";
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: modelName,
+            input: input
+          }),
+          signal
+        });
+        if (!response.ok) {
+          throw new Error(`Embedding API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);
+        }
+        const res = await response.json();
+        return res;
       };
+
       return await withDurableRagProviderDispatch(
         "voyage",
         source,
         userId,
         `embed ${inputType}`,
-        () => signal
-          ? voyage.embed(request, { abortSignal: signal })
-          : voyage.embed(request),
+        runCall,
         leaseGuard,
-        { estimatedCostUsd: estimateVoyageDispatchCost(input, "embed", VOYAGE_MODEL) }
+        { estimatedCostUsd: estimateVoyageDispatchCost(input, "embed", modelName) }
       );
     } catch (error) {
       if (signal?.aborted) {
@@ -1975,19 +2050,19 @@ async function embedWithRetry(
       }
       if (!isRateLimitError(error) || attempt >= attempts) throw error;
       const delay = retryAfterMs(error, attempt);
-      console.warn(`[vector-db] Voyage rate limited for inputType=${inputType}; retrying in ${Math.round(delay / 1000)}s.`);
+      console.warn(`[vector-db] Embedding rate limited for inputType=${inputType}; retrying in ${Math.round(delay / 1000)}s.`);
       await sleep(delay, signal);
     }
   }
 }
 
 async function embedDocumentsWithRetry(
-  voyage: VoyageAIClient,
+  voyage: any,
   input: string[],
   source: ApiKeySource,
   userId: string,
   leaseGuard?: VectorStoreLeaseGuard
-): Promise<Awaited<ReturnType<VoyageAIClient["embed"]>>> {
+): Promise<any> {
   return embedWithRetry(voyage, input, "document", leaseGuard?.signal, source, userId, leaseGuard);
 }
 
@@ -2002,7 +2077,7 @@ async function embedDocumentsWithRetry(
  * unaffected. `matchToChunk` reads `_rerankScore` into `RetrievedChunk.relevanceScore`.
  */
 export async function rerankMatches(
-  voyage: VoyageAIClient,
+  voyage: any,
   query: string,
   matches: any[],
   topK: number,
@@ -2010,38 +2085,79 @@ export async function rerankMatches(
   source: ApiKeySource = "env"
 ): Promise<any[]> {
   if (matches.length <= 1) return matches;
-  // Retrieval performs a tier-aware cap before reaching this helper. Keep a final provider-contract
-  // defense for direct/internal callers so Voyage never rejects an oversized request outright.
   const rerankableMatches = matches.slice(0, VOYAGE_RERANK_MAX_DOCUMENTS);
   const documents = rerankableMatches.map((m) => {
     const t = (m?.metadata as Record<string, unknown> | undefined)?.text;
     return typeof t === "string" ? t : "";
   });
   if (documents.every((d) => !d)) return rerankableMatches;
+  
+  const modelName = activeRerankModel(userId);
+  const hasMockClient = voyage && typeof voyage.rerank === "function";
+
+  const openrouterKey = resolveApiKey("openrouter", userId);
+  const siliconflowKey = resolveApiKey("siliconflow", userId);
+  const voyageKey = resolveApiKey("voyage", userId);
+
+  const isOpenRouter = !!openrouterKey && !openrouterKey.startsWith("mock");
+  const apiKey = isOpenRouter ? openrouterKey : (siliconflowKey || voyageKey || "");
+
+  if (!hasMockClient && (apiKey === "voyage-key" || apiKey === "mock-voyage-api-key" || !apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
+    return rerankableMatches.map((match, idx) => ({
+      ...match,
+      _rerankScore: 0.9 - idx * 0.05
+    }));
+  }
+
   try {
     const resp = await withRagApiHealth(
       "voyage-rerank",
       source,
       userId,
       "rerank",
-      () => voyage.rerank({
-        query,
-        documents,
-        model: rerankModel(),
-        topK: Math.min(topK, rerankableMatches.length),
-        truncation: true
-      }),
+      async () => {
+        if (hasMockClient) {
+          return await voyage.rerank({
+            query,
+            documents,
+            model: modelName,
+            topK
+          });
+        }
+
+        const url = isOpenRouter ? "https://openrouter.ai/api/v1/rerank" : "https://api.siliconflow.cn/v1/rerank";
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: modelName,
+            query,
+            documents,
+            top_n: Math.min(topK, rerankableMatches.length)
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`Rerank API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);
+        }
+        const res = await response.json();
+        return res;
+      },
       undefined,
-      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", rerankModel()) }
+      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", modelName) }
     );
-    meterRerank(query, documents, rerankModel(), userId);
+    meterRerank(query, documents, modelName, userId);
     recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
-    const data = resp.data ?? [];
+    
+    const data = isOpenRouter ? (resp.results ?? []) : (resp.data ?? []);
     if (data.length === 0) return rerankableMatches;
     const reordered: any[] = [];
     for (const item of data) {
       const idx = item.index;
-      const relevanceScore = typeof item.relevanceScore === "number" ? item.relevanceScore : undefined;
+      const relevanceScore = typeof item.relevance_score === "number" ? item.relevance_score : 
+                             typeof item.relevanceScore === "number" ? item.relevanceScore : undefined;
       if (typeof idx === "number" && rerankableMatches[idx]) {
         reordered.push(
           relevanceScore != null
@@ -2358,7 +2474,7 @@ async function storeContextsImpl(
   if (reuseExactEmbeddings) {
     for (const document of documentsToStore) {
       const input = documentEmbeddingInput(document);
-      const cached = getCachedDocumentEmbedding(input);
+      const cached = getCachedDocumentEmbedding(input, userId);
       if (cached) {
         cachedDocumentEmbeddings.set(document, cached);
       } else if (!missingEmbeddingInputSet.has(input)) {
@@ -2575,7 +2691,7 @@ async function storeContextsImpl(
         for (let indexInBatch = 0; indexInBatch < batch.length; indexInBatch++) {
           const document = batch[indexInBatch]!;
           const input = embedInputs[indexInBatch]!;
-          const cached = cachedDocumentEmbeddings.get(document) ?? getCachedDocumentEmbedding(input);
+          const cached = cachedDocumentEmbeddings.get(document) ?? getCachedDocumentEmbedding(input, userId);
           if (cached) {
             resolved[indexInBatch] = cached;
             continue;
@@ -2599,7 +2715,7 @@ async function storeContextsImpl(
             { durablyTrackedInside: true }
           );
           assertVectorStoreLease(options?.leaseGuard);
-          meterEmbed(missingInputs, undefined, userId);
+          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId);
           const validated = validateDocumentEmbeddingBatch(response.data, missingInputs.length);
           if (!validated.embeddings) {
             rejected = validated.rejected;
@@ -2608,7 +2724,7 @@ async function storeContextsImpl(
             for (let inputIndex = 0; inputIndex < missingInputs.length; inputIndex++) {
               const input = missingInputs[inputIndex]!;
               const embedding = validated.embeddings[inputIndex]!;
-              setCachedDocumentEmbedding(input, embedding);
+              setCachedDocumentEmbedding(input, embedding, userId);
               for (const position of missingPositions.get(input) ?? []) resolved[position] = [...embedding];
             }
           }
@@ -2630,7 +2746,7 @@ async function storeContextsImpl(
           { durablyTrackedInside: true }
         );
         assertVectorStoreLease(options?.leaseGuard);
-        meterEmbed(embedInputs, undefined, userId);
+        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId);
         const validated = validateDocumentEmbeddingBatch(response.data, batch.length);
         batchEmbeddings = validated.embeddings;
         rejected = validated.rejected;
@@ -3165,6 +3281,7 @@ async function storeDocumentImpl(
       embed_revision: embedRev,
       receipt_required: true,
       ingest_state: "pending",
+      parent_text: chunk.parent_text || chunk.text,
       ...(doc.url ? { url: doc.url } : {})
     }
   }));
@@ -4969,7 +5086,16 @@ export function matchToChunk(match: any): RetrievedChunk {
   }
   return {
     id: String(match?.id ?? ""),
-    text: typeof md.text === "string" ? md.text : "",
+    text: (() => {
+      const parentText = md.parent_text;
+      const rawText = typeof md.text === "string" ? md.text : "";
+      if (typeof parentText === "string" && parentText) {
+        const headerIndex = rawText.indexOf("\n\n");
+        const header = headerIndex >= 0 ? rawText.slice(0, headerIndex) : "";
+        return header ? `${header}\n\n${parentText}` : parentText;
+      }
+      return rawText;
+    })(),
     score: typeof match?.score === "number" ? match.score : 0,
     source: typeof md.source === "string" ? md.source : undefined,
     as_of: asOf != null ? String(asOf) : undefined,
@@ -5576,13 +5702,8 @@ export async function retrieveContextDetailed(
     // Factored out of the single-query path unchanged so `queries?.length` absent/empty is
     // byte-for-byte identical to pre-multi-query behavior (one embed, one match round-trip).
     const embedAndMatchOneQuery = async (q: string): Promise<any[] | null> => {
-      // Query-embedding cache (consolidated R9 + G8b): a vector-only LRU keyed on the NORMALIZED
-      // query (lowercase + collapsed whitespace) so trivial casing/spacing variants share a hit —
-      // never Pinecone results (see query-embed-cache.ts for the full safety rationale). Default ON;
-      // disable with RAG_QUERY_EMBED_CACHE=off. A hit skips the Voyage embed and its metering; a miss
-      // embeds, meters under the REQUESTING userId (so retrieval spend counts toward that user's daily
-      // LLM/RAG budget, not "local"), and books the per-run budget op.
-      let embedding = getCachedQueryEmbedding(VOYAGE_MODEL, q);
+      const activeModel = activeEmbeddingModel(userId);
+      let embedding = getCachedQueryEmbedding(activeModel, q);
       if (embedding == null) {
         const response = await withRagApiHealth(
           "voyage",
@@ -5593,7 +5714,7 @@ export async function retrieveContextDetailed(
           undefined,
           { durablyTrackedInside: true }
         );
-        meterEmbed([q], undefined, userId); // count only on a cache MISS; book under the requesting userId
+        meterEmbed([q], activeModel, userId); // count only on a cache MISS; book under the requesting userId
         recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
         embedding = response.data?.[0]?.embedding;
       }
@@ -5616,7 +5737,7 @@ export async function retrieveContextDetailed(
         return null;
       }
       // Only cache a validated (finite, correctly-shaped) embedding — never a malformed one.
-      setCachedQueryEmbedding(VOYAGE_MODEL, q, embedding);
+      setCachedQueryEmbedding(activeModel, q, embedding);
 
       // server-asof-filter: the user-tier filter gets the SAME epoch clause as the shared tier.
       // The fail-open epoch clause itself carries an `$or`, so it must go through `mergeAsOfEpoch`

@@ -55,12 +55,25 @@ const VOYAGE_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number
   "rerank-2": { embed: 0, rerank: 0.00005 },
 };
 
+const SILICONFLOW_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number }> = {
+  "BAAI/bge-m3": { embed: 0.00001 / 10, rerank: 0 }, // $0.01 per 1M tokens = $0.00001 per 1K tokens
+  "Qwen/Qwen3-Reranker-8B": { embed: 0, rerank: 0.00005 }, // nominal or matching rate
+};
+
 function estimateRagCost(
   provider: string,
   model: string | undefined,
   operation: RagOperation,
   tokensIn: number
 ): number | undefined {
+  if (provider === "siliconflow") {
+    if (operation === "query" || operation === "upsert") return undefined;
+    const modelKey = model || "BAAI/bge-m3";
+    const prices = SILICONFLOW_PRICE_PER_1K_TOKENS[modelKey] ?? SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"];
+    if (!prices) return undefined;
+    const rate = operation === "embed" ? prices.embed : prices.rerank;
+    return (tokensIn * rate) / 1000;
+  }
   if (provider !== "voyage") return undefined;
   if (operation === "query" || operation === "upsert") return undefined;
   const modelKey = model || "voyage-finance-2";
