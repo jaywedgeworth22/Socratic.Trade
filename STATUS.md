@@ -1,5 +1,30 @@
 # Current Status
 
+## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, NOT MERGED — owner gates landing)
+
+Owner-directed incident response: `usage.jays.services` (API-usage-monitor) was OOM-down ~2 days;
+both Congress.Trade and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs
+aggregate) and ran up a 200GB Render bandwidth overage. This is the Socratic.Trade side (Congress.
+Trade handled separately). `src/lib/usage-monitor-push.ts` already had a capped retry-delay but it
+never fully stopped attempting, and the durable-replay lane (`usage-monitor-replay.ts`, its own
+fixed 60s interval) had no backoff of its own — during an outage that's a second, independent
+hammer. Added a real circuit breaker shared by both real network call sites (`postBatch` for the
+live queue, `sendUsageMonitorBatch` for replay): after `USAGE_MONITOR_BREAKER_THRESHOLD` (default
+3) consecutive failures it opens for an exponential window (`USAGE_MONITOR_BREAKER_BASE_MS`
+default 30s, capped at `USAGE_MONITOR_BREAKER_MAX_MS` default 15min) during which delivery is
+fully suppressed — no fetch call at all — then allows exactly one half-open probe. Also bounded
+the in-memory failure-retry buffer (`USAGE_MONITOR_QUEUE_MAX_EVENTS` default 500,
+`USAGE_MONITOR_QUEUE_TTL_MS` default 1h, TTL keyed off buffer-residency time not the event's
+business `occurredAt` — a real bug caught mid-implementation when historical/replayed timestamps
+were wrongly treated as stale on arrival). Dropped buffer entries are still safe: LLM/RAG/
+provider-dispatch events are independently redelivered from the durable DB ledgers via
+`usage-monitor-replay.ts`; only ephemeral broker-balance snapshots have no backstop, and losing a
+stale one is harmless. User-facing ledger call sites (`pushLlmUsage`/`pushRagUsage`/
+`pushBrokerBalance`/`recordProviderCall`) were already synchronous fire-and-forget and remain so —
+confirmed with an explicit non-blocking test. Gate: `tsc` clean, lint 0 errors, focused 24/24
+(7 new breaker/buffer tests), full 404 files/4,737 tests, production build all green. Not
+pushed/PR'd/merged — owner gates landing. Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md`.
+
 ## 2026-07-17 — Visual-tour findings fix wave (MONET, branch `monet/visual-tour-fixes`, 4 Sonnet lanes)
 
 Fixed the actionable findings from CLAUDE's 2026-07-17 visual tour via 4 parallel Sonnet

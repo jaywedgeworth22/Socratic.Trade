@@ -77,6 +77,122 @@ function flushDelayMs(): number {
   return numEnv("USAGE_MONITOR_FLUSH_MS", 2000);
 }
 
+// ── Circuit breaker (dead-receiver protection) ──────────────────────────────────
+//
+// The 2026-07 API-usage-monitor outage taught us that a plain capped-retry loop still POSTs on
+// every flush/replay tick forever, which is exactly the "hammer a dead endpoint" pattern that ran
+// up a 200GB Render bandwidth bill. The breaker below sits in front of every real network attempt
+// (postBatch + sendUsageMonitorBatch): after enough consecutive failures it fully suppresses
+// delivery for a backoff window (no fetch call at all, not even a fast-failing one) and only lets a
+// single "half-open" probe through once that window elapses, so a dead receiver is checked
+// occasionally instead of continuously. A success at any point fully resets it.
+
+/** Consecutive failures required before the circuit opens (suppresses delivery). */
+function breakerThreshold(): number {
+  return numEnv("USAGE_MONITOR_BREAKER_THRESHOLD", 3);
+}
+
+/** Initial open-circuit window once the breaker trips. */
+function breakerBaseMs(): number {
+  return numEnv("USAGE_MONITOR_BREAKER_BASE_MS", 30_000);
+}
+
+/** Cap on the open-circuit window — the longest we'll go between probes during a sustained outage. */
+function breakerMaxMs(): number {
+  return numEnv("USAGE_MONITOR_BREAKER_MAX_MS", 15 * 60_000);
+}
+
+/** Cap on total buffered (unsent) events across both queues; see trimBufferedEvents(). */
+function queueMaxEvents(): number {
+  return numEnv("USAGE_MONITOR_QUEUE_MAX_EVENTS", 500);
+}
+
+/** TTL for buffered events (by their occurredAt, not arrival time); see trimBufferedEvents(). */
+function queueTtlMs(): number {
+  return numEnv("USAGE_MONITOR_QUEUE_TTL_MS", 60 * 60_000);
+}
+
+interface BreakerState {
+  consecutiveFailures: number;
+  /** Epoch ms until which delivery is suppressed. 0 means the circuit is closed. */
+  openUntil: number;
+  /** True while a single half-open probe attempt is outstanding. */
+  probing: boolean;
+}
+
+/**
+ * Gate every real delivery attempt through the breaker. Returns false (no attempt allowed) while
+ * the circuit is open; returns true when closed, or for exactly one concurrent half-open probe once
+ * the open window has elapsed. Callers that receive `true` MUST report the outcome via
+ * breakerRecordResult so `probing` doesn't leak permanently true.
+ */
+function breakerAllowsAttempt(now: number): boolean {
+  const breaker = state.breaker;
+  if (breaker.openUntil === 0 || now >= breaker.openUntil) {
+    if (breaker.openUntil !== 0 && breaker.probing) return false; // another probe already in flight
+    if (breaker.openUntil !== 0) breaker.probing = true; // half-open: this is the one allowed probe
+    return true;
+  }
+  return false; // circuit open: suppress the attempt entirely, no network call
+}
+
+/** Record the outcome of a delivery attempt that breakerAllowsAttempt permitted. */
+function breakerRecordResult(ok: boolean, now: number): void {
+  const breaker = state.breaker;
+  breaker.probing = false;
+  if (ok) {
+    breaker.consecutiveFailures = 0;
+    breaker.openUntil = 0;
+    return;
+  }
+  breaker.consecutiveFailures += 1;
+  const threshold = breakerThreshold();
+  if (breaker.consecutiveFailures < threshold) return; // below trip threshold: keep the normal cadence
+  const exponent = Math.min(breaker.consecutiveFailures - threshold, 10);
+  const backoff = Math.min(breakerMaxMs(), breakerBaseMs() * 2 ** exponent);
+  breaker.openUntil = now + backoff;
+}
+
+/**
+ * True when an item has sat in the in-memory buffer longer than the TTL. Deliberately keyed off
+ * `receivedAt` (wall-clock time the item entered THIS process's buffer) rather than the event's
+ * business `occurredAt` — a replayed/backfilled event can legitimately carry an old `occurredAt`
+ * while having just arrived here, and that must not make it look stale on arrival.
+ */
+function isStaleBuffered(receivedAt: number, ttlMs: number, now: number): boolean {
+  return now - receivedAt > ttlMs;
+}
+
+/**
+ * Bound the in-memory failure buffer so a multi-day receiver outage can't grow ST's own memory
+ * without limit. This is safe to trim aggressively: llm/rag/provider-dispatch events dropped here
+ * are still recoverable — the durable DB-backed ledgers replay them independently via
+ * usage-monitor-replay.ts. Only ephemeral broker-balance snapshots have no such backstop, and losing
+ * a stale one is harmless (the next portfolio fetch pushes a fresh reading).
+ */
+function trimBufferedEvents(now: number): void {
+  const ttlMs = queueTtlMs();
+  if (ttlMs > 0) {
+    state.queue = state.queue.filter((q) => !isStaleBuffered(q.receivedAt, ttlMs, now));
+    state.pendingQueue = state.pendingQueue.filter((p) => !isStaleBuffered(p.receivedAt, ttlMs, now));
+  }
+  const maxEvents = queueMaxEvents();
+  if (maxEvents <= 0) return;
+  let overflow = state.pendingQueue.length + state.queue.length - maxEvents;
+  if (overflow <= 0) return;
+  // Prefer dropping already-failed retries over fresh, not-yet-attempted events.
+  if (overflow > 0 && state.queue.length > 0) {
+    const drop = Math.min(overflow, state.queue.length);
+    state.queue.splice(0, drop);
+    overflow -= drop;
+  }
+  if (overflow > 0 && state.pendingQueue.length > 0) {
+    const drop = Math.min(overflow, state.pendingQueue.length);
+    state.pendingQueue.splice(0, drop);
+    overflow -= drop;
+  }
+}
+
 
 // ── State (globalThis-pinned so Next.js HMR module duplication can't split it) ──
 
@@ -95,6 +211,14 @@ interface PendingUsageEvent {
   event: UsageMonitorEvent;
   kind: string;
   sourceId: string;
+  /** Wall-clock arrival time in this buffer; see isStaleBuffered(). */
+  receivedAt: number;
+}
+
+/** A fully resolved event retained for retry, paired with when it first entered the buffer. */
+interface QueuedUsageEvent {
+  event: UsageMonitorEvent;
+  receivedAt: number;
 }
 
 interface PushState {
@@ -102,12 +226,12 @@ interface PushState {
   /** New events awaiting edge-safe SHA-256 delivery identity resolution. */
   pendingQueue: PendingUsageEvent[];
   /** Fully resolved events retained verbatim across ambiguous delivery retries. */
-  queue: UsageMonitorEvent[];
+  queue: QueuedUsageEvent[];
   callVolume: Map<string, CallVolumeEntry>;
   flushTimer: ReturnType<typeof setTimeout> | null;
   /** Test seam: overrides global fetch when set. */
   fetchImpl: typeof fetch | null;
-  retryAttempt: number;
+  breaker: BreakerState;
 }
 
 const host = globalThis as unknown as { __usageMonitorPush?: PushState };
@@ -129,11 +253,11 @@ const state: PushState =
     callVolume: new Map(),
     flushTimer: null,
     fetchImpl: null,
-    retryAttempt: 0,
+    breaker: { consecutiveFailures: 0, openUntil: 0, probing: false },
   });
 state.version = STATE_VERSION;
 state.pendingQueue ??= [];
-state.retryAttempt ??= 0;
+state.breaker ??= { consecutiveFailures: 0, openUntil: 0, probing: false };
 
 if (
   staleState &&
@@ -474,7 +598,9 @@ function enqueuePending(
     event,
     kind,
     sourceId: sourceId?.trim() || randomDeliveryId(),
+    receivedAt: Date.now(),
   });
+  trimBufferedEvents(Date.now());
   scheduleFlush();
 }
 
@@ -497,6 +623,7 @@ function drainCallVolume(now: string): PendingUsageEvent[] {
       kind: "provider-call-volume",
       // HMR can preserve a pre-upgrade global map entry without windowId.
       sourceId: entry.windowId || randomDeliveryId(),
+      receivedAt: Date.now(),
       event: {
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
@@ -524,11 +651,14 @@ function drainCallVolume(now: string): PendingUsageEvent[] {
 
 async function resolvePendingEvents(
   pending: PendingUsageEvent[]
-): Promise<UsageMonitorEvent[]> {
+): Promise<QueuedUsageEvent[]> {
   return Promise.all(
-    pending.map(async ({ event, kind, sourceId }) => ({
-      ...event,
-      idempotencyKey: await telemetryIdempotencyKey(kind, sourceId),
+    pending.map(async ({ event, kind, sourceId, receivedAt }) => ({
+      event: {
+        ...event,
+        idempotencyKey: await telemetryIdempotencyKey(kind, sourceId),
+      },
+      receivedAt,
     }))
   );
 }
@@ -554,7 +684,7 @@ export async function flushUsageMonitor(): Promise<void> {
   const unresolved = state.pendingQueue
     .splice(0, state.pendingQueue.length)
     .concat(drainCallVolume(now));
-  let resolved: UsageMonitorEvent[];
+  let resolved: QueuedUsageEvent[];
   try {
     resolved = await resolvePendingEvents(unresolved);
   } catch {
@@ -562,6 +692,7 @@ export async function flushUsageMonitor(): Promise<void> {
     // unavailable, retain the original descriptors rather than sending events
     // without their stable delivery identity.
     state.pendingQueue.unshift(...unresolved);
+    trimBufferedEvents(Date.now());
     scheduleFlush();
     return;
   }
@@ -569,21 +700,21 @@ export async function flushUsageMonitor(): Promise<void> {
   if (pending.length === 0) return;
 
   for (let i = 0; i < pending.length; i += MAX_BATCH) {
-    const sent = await postBatch(pending.slice(i, i + MAX_BATCH));
+    const batch = pending.slice(i, i + MAX_BATCH);
+    const sent = await postBatch(batch.map((q) => q.event));
     if (!sent) {
       // Keep the exact event objects — including explicit key + occurredAt —
       // so an ambiguous accepted-then-disconnected response retries safely.
       state.queue.unshift(...pending.slice(i));
-      state.retryAttempt += 1;
-      const retryDelay = Math.min(
-        60_000,
-        flushDelayMs() * 2 ** Math.min(state.retryAttempt - 1, 5)
-      );
-      scheduleFlush(retryDelay);
+      trimBufferedEvents(Date.now());
+      // While the breaker is open, wait out its window instead of retrying on the short flush
+      // cadence — that's the suppression that stops a dead receiver from being hammered.
+      const now = Date.now();
+      const delay = state.breaker.openUntil > now ? state.breaker.openUntil - now : flushDelayMs();
+      scheduleFlush(delay);
       return;
     }
   }
-  state.retryAttempt = 0;
 }
 
 async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
@@ -591,6 +722,7 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   const token = usageMonitorToken();
   if (events.length === 0) return true;
   if (!baseUrl || !token) return false;
+  if (!breakerAllowsAttempt(Date.now())) return false; // circuit open: no network call
 
   const fetchImpl = state.fetchImpl ?? fetch;
   const start = Date.now();
@@ -602,6 +734,7 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
       ok: true,
       latencyMs: Date.now() - start,
     });
+    breakerRecordResult(true, Date.now());
     return true;
   } catch (err) {
     logApiHealth({
@@ -610,6 +743,7 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
       latencyMs: Date.now() - start,
       errorText: err instanceof Error ? err.message : String(err),
     });
+    breakerRecordResult(false, Date.now());
     return false;
   }
 }
@@ -637,6 +771,10 @@ export async function sendUsageMonitorBatch(
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
   if (!baseUrl || !token) return false;
+  // Shares the live-push breaker: the replay interval fires every 60s regardless, but while the
+  // circuit is open this returns false immediately with no fetch call, so replay's fixed cadence
+  // can't turn into a second continuous hammer on top of the live queue's own backoff.
+  if (!breakerAllowsAttempt(Date.now())) return false;
 
   const fetchImpl = state.fetchImpl ?? fetch;
   const controller = new AbortController();
@@ -650,8 +788,10 @@ export async function sendUsageMonitorBatch(
         fetchImpl(input, { ...init, signal: controller.signal }),
     });
     await client.send(events);
+    breakerRecordResult(true, Date.now());
     return true;
   } catch {
+    breakerRecordResult(false, Date.now());
     return false;
   } finally {
     clearTimeout(timer);
@@ -713,5 +853,16 @@ export function __resetUsageMonitorState(): void {
   state.queue.length = 0;
   state.callVolume.clear();
   state.fetchImpl = null;
-  state.retryAttempt = 0;
+  state.breaker = { consecutiveFailures: 0, openUntil: 0, probing: false };
+}
+
+/** Test seam: inspect breaker + buffered-queue state without reaching into globalThis. */
+export function __usageMonitorDebugState(): {
+  breaker: { consecutiveFailures: number; openUntil: number; probing: boolean };
+  queueDepth: number;
+} {
+  return {
+    breaker: { ...state.breaker },
+    queueDepth: state.pendingQueue.length + state.queue.length,
+  };
 }

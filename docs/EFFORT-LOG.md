@@ -1858,6 +1858,26 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][MONET] Usage Monitor push failsafe: circuit breaker + bounded buffer (branch
+  `monet/usage-push-failsafe`, worktree `~/apps/trading-monet-usage-push-failsafe`, claimed
+  2026-07-17, owner-directed) — IMPLEMENTATION COMPLETE / GATE GREEN / NOT MERGED (owner gates
+  landing).** Incident response: `usage.jays.services` was OOM-down ~2 days; both Congress.Trade
+  and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs aggregate),
+  running up a 200GB Render bandwidth overage. This row is the ST side (CT handled separately).
+  `src/lib/usage-monitor-push.ts` had a capped retry-delay but never fully stopped attempting, and
+  `usage-monitor-replay.ts`'s independent fixed 60s interval had no backoff of its own — a second,
+  separate hammer during an outage. Added a circuit breaker shared by both real network call sites
+  (`postBatch` for the live queue, `sendUsageMonitorBatch` for replay): opens after
+  `USAGE_MONITOR_BREAKER_THRESHOLD` (default 3) consecutive failures, suppresses delivery
+  entirely (no fetch call) for an exponential window (`USAGE_MONITOR_BREAKER_BASE_MS` 30s default,
+  capped `USAGE_MONITOR_BREAKER_MAX_MS` 15min), then allows one half-open probe. Bounded the
+  in-memory failure-retry buffer (`USAGE_MONITOR_QUEUE_MAX_EVENTS` 500 default,
+  `USAGE_MONITOR_QUEUE_TTL_MS` 1h default, TTL keyed off buffer-residency time, not the event's
+  own `occurredAt` — dropped entries are still safe since llm/rag/provider-dispatch events replay
+  from the durable DB ledgers regardless). User-facing ledger call sites remain synchronous
+  fire-and-forget (explicit non-blocking test added). Gate: `tsc` clean, lint 0 errors, focused
+  24/24 (7 new), full 404 files/4,737 tests, production build all green. Not pushed/PR'd/merged.
+  Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md`.
 - **[Socratic.Trade][MONET] Visual-tour findings fix wave (branch `monet/visual-tour-fixes`, claimed
   2026-07-17) — IN PROGRESS.** Owner-directed: fix the 13-finding visual-tour list (CLAUDE tour
   2026-07-17) via Sonnet subagent lanes: results paper-framing violation (P1), scan silent-fail +

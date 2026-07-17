@@ -105,6 +105,9 @@ afterEach(() => {
   delete process.env.USAGE_MONITOR_BASE_URL;
   delete process.env.USAGE_INGEST_TOKEN;
   delete process.env.USAGE_MONITOR_ENV;
+  delete process.env.USAGE_MONITOR_BREAKER_THRESHOLD;
+  delete process.env.USAGE_MONITOR_BREAKER_BASE_MS;
+  delete process.env.USAGE_MONITOR_BREAKER_MAX_MS;
   vi.restoreAllMocks();
 });
 
@@ -309,5 +312,33 @@ describe("usage monitor durable replay", () => {
     delete process.env.USAGE_INGEST_TOKEN;
     replay.startUsageMonitorReplay();
     expect(intervalSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares the live-push circuit breaker: a tripped breaker suppresses replay's own delivery attempts too", async () => {
+    process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
+    process.env.USAGE_MONITOR_BREAKER_BASE_MS = "60000";
+    process.env.USAGE_MONITOR_BREAKER_MAX_MS = "60000";
+    insertLlm({ id: "llm-breaker-shared", createdAt: "2026-07-10T16:00:00.000Z", costUsd: 0.1 });
+
+    // Trip the breaker via the live-push lane (a plain failed flush, not replay).
+    let liveAttempts = 0;
+    push.__setUsageMonitorFetch((async () => {
+      liveAttempts += 1;
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch);
+    push.pushLlmUsage({ sourceEventId: "trip-it", provider: "openai", userId: "local", keySource: "operator", totalTokens: 1 });
+    await push.flushUsageMonitor();
+    expect(liveAttempts).toBe(1);
+
+    // Now point at a fetch stub that would succeed if called — the open breaker must stop replay
+    // from ever reaching it, proving the two lanes share one breaker instead of hammering
+    // independently (replay's fixed 60s interval would otherwise keep probing on its own cadence).
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const result = await replay.runUsageMonitorReplay();
+    expect(result.llm.failed).toBe(true);
+    expect(captured).toHaveLength(0);
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toBeNull();
   });
 });
