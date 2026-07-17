@@ -4742,7 +4742,11 @@ async function proposeTrades(input: {
                 const escapeNormalizedBullText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
                   String.fromCharCode(Number.parseInt(hex, 16))
                 );
-                const proposalsKeyOccurrences = (escapeNormalizedBullText.match(/["']proposals["']\s*:/g) ?? []).length;
+                // Quotes OPTIONAL (Codex P1, round 10): jsonrepair accepts unquoted JSON5 keys,
+                // so a corrective `{proposals: []}` block must count too. The lookbehind stops
+                // word-suffix matches (e.g. "counterproposals:"); a prose mention still counting
+                // fails CLOSED to zero proposals, the accepted direction on this guard.
+                const proposalsKeyOccurrences = (escapeNormalizedBullText.match(/(?<![\w"'])["']?proposals["']?\s*:/g) ?? []).length;
                 if (proposalsKeyOccurrences > 1) {
                   throw new Error(`Bull reply contained ${proposalsKeyOccurrences} proposals blocks (ambiguous); refusing repair.`);
                 }
@@ -4753,7 +4757,11 @@ async function proposeTrades(input: {
                 // generative path is the ONLY repair opt-in; Red Team / revalidation / tuning
                 // parse strictly and stay fail-closed.
                 const parsed = JSON.parse(extractJsonPayload(text, { repair: true })) as { proposals?: unknown[] };
-                const { kept, dropped } = filterRepairedProposals(parsed.proposals ?? [], allowedSides);
+                const { kept, dropped } = filterRepairedProposals(
+                  parsed.proposals ?? [],
+                  allowedSides,
+                  proposalSymbols.length > 0 ? proposalSymbols : undefined
+                );
                 if (dropped > 0) {
                   console.warn(`[Bull] jsonrepair recovered the payload but ${dropped} proposal(s) were incomplete (truncation artifacts) and were dropped; keeping ${kept.length}.`);
                   audit("strategy_bull_repaired_partial_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
@@ -5228,7 +5236,13 @@ export function filterRepairedProposals(
   // off or the account lacks short capability, the strict path rejects short/cover at
   // `side: { enum: allowedSides }` — and the policy-level short gate is deliberately
   // owner-overrideable, so the repair path must enforce the same schema boundary.
-  allowedSides: readonly string[] = ["buy", "sell", "short", "cover"]
+  allowedSides: readonly string[] = ["buy", "sell", "short", "cover"],
+  // The RUN's symbol enum (Codex P1, round 10): the schema restricts symbols to the scan's
+  // candidates plus current holdings; a repaired `sell` on an UNHELD symbol bypasses both the
+  // openings candidate gate (buy/short only) and the policy holdings check, and Alpaca infers
+  // open-vs-close from `side: sell` — an unintended short. undefined mirrors the schema's
+  // bare-string fallback when the run has no candidates/holdings to enumerate.
+  allowedSymbols?: readonly string[]
 ): { kept: TradeProposal[]; dropped: number } {
   const kept: TradeProposal[] = [];
   let dropped = 0;
@@ -5245,6 +5259,7 @@ export function filterRepairedProposals(
       // throw and abort the entire run instead of taking the zero-proposal path. Type-check
       // the identity/enum fields the downstream pipeline dereferences unconditionally.
       typeof record.symbol === "string" && record.symbol.trim() !== "" &&
+      (allowedSymbols === undefined || allowedSymbols.includes(normalizeSymbol(record.symbol))) &&
       typeof record.side === "string" &&
       allowedSides.includes(record.side) &&
       typeof record.type === "string" &&

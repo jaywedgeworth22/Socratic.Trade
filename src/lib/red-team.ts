@@ -422,7 +422,10 @@ export async function debateProposal(
             const escapeNormalizedText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
               String.fromCharCode(Number.parseInt(hex, 16))
             );
-            const verdictKeyOccurrences = (escapeNormalizedText.match(/["']verdict["']\s*:/g) ?? []).length;
+            // Quotes OPTIONAL (same class as the Bull guard, Codex round 10): an unquoted JSON5
+            // `{verdict: 'reject'}` trailing block would otherwise evade the count while the
+            // first double-quoted approval parses cleanly.
+            const verdictKeyOccurrences = (escapeNormalizedText.match(/(?<![\w"'])["']?verdict["']?\s*:/g) ?? []).length;
             if (verdictKeyOccurrences > 1) {
               console.warn(`Red Team response contained ${verdictKeyOccurrences} verdict blocks; treating the review as ambiguous/unavailable.`);
               return {

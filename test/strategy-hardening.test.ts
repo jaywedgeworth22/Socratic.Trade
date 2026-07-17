@@ -661,6 +661,19 @@ describe("filterRepairedProposals (post-jsonrepair completeness gate, Codex P1 P
     expect(dropped).toBe(3);
   });
 
+  it("drops a repaired proposal for a symbol outside the run's schema enum (Codex round 10)", () => {
+    // A repaired sell on an UNHELD symbol would reach Alpaca as side:sell and open an
+    // unintended short — the openings candidate gate only checks buy/short.
+    const offEnum = { ...complete(), symbol: "ZZZQ", side: "sell" };
+    const restricted = filterRepairedProposals([offEnum, complete()], ["buy", "sell"], ["AAPL", "NVDA"]);
+    expect(restricted.kept).toHaveLength(1);
+    expect(restricted.kept[0]?.symbol).toBe("AAPL");
+    expect(restricted.dropped).toBe(1);
+    // No enum (schema bare-string fallback) keeps prior behavior.
+    const unrestricted = filterRepairedProposals([offEnum], ["buy", "sell"]);
+    expect(unrestricted.kept).toHaveLength(1);
+  });
+
   it("drops a repaired short when the run's schema is long-only (Codex round 8)", () => {
     const shortIdea = { ...complete(), side: "short" };
     const longOnly = filterRepairedProposals([shortIdea, complete()], ["buy", "sell"]);
