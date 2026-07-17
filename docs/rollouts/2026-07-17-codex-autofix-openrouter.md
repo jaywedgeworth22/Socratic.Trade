@@ -52,5 +52,23 @@ npm run build      # succeeds
 ## Follow-ups
 
 - Maintainer response on credential migration strategy
-- Thread `PRRT_kwDOS7mOVM6Rqh86` left unresolved pending maintainer answer
+- Thread `PRRT_kwDOS7mOVM6Rqh86` left unresolved pending maintainer answer — now RESOLVED as of subsequent manual fix
 - Auto-merge enabled via `gh pr merge 1703 --squash --auto`
+
+---
+
+## 2026-07-17 — Autofix round 2: triage remaining 1 thread
+
+**Summary:** Triaged the only remaining unresolved Codex thread — the P2 "Wire FMP toggles into provider execution" finding. Asked maintainer how to proceed since wiring settings to runtime providers is architecturally significant.
+
+### Thread handled
+
+- **P2 — Wire FMP toggles into provider execution** (thread `PRRT_kwDOS7mOVM6Rt6NY`): Posted PR comment #5001522334 asking whether to wire in this PR or stage separately, and what toggle-off behavior should be. Left unresolved pending maintainer reply.
+
+### Files touched
+
+- `STATUS.md` — updated current status entry
+
+### Outcome
+
+Auto-merge already enabled from prior round. No code changes this round — the one actionable thread was already resolved by a prior autofix or manual fix. The remaining P2 is an architectural question, not a clear bug.

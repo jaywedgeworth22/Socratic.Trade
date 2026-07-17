@@ -6,17 +6,16 @@ Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggre
 Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
 
 ## 2026-07-17 — Codex autofix: 4/5 review findings fixed on PR #1703 (antigravity/openrouter-universal-routing)
+## 2026-07-17 — Codex autofix round 2: 1 remaining thread triaged on PR #1703
 
-Addressed 4 of 5 open Codex review threads on PR #1703 (universal OpenRouter routing):
+Triage pass on remaining Codex review threads for PR #1703 (universal OpenRouter routing).
 
-1. **P1 — Strip `openrouter/` prefix (FIXED):** Added `model.replace(/^openrouter\//i, "")` in `resolveLlmEndpoint` so legacy saved models like `openrouter/google/gemini-2.5-flash` are sent as valid OpenRouter IDs.
-2. **P1 — GPT-5 reasoning after qualification (FIXED):** `isReasoningModel` now uses `lowerModel()` to strip the provider prefix before regex matching, so `openai/gpt-5.4-mini` correctly identifies as a reasoning model.
-3. **P2 — Routed model cost accounting (FIXED):** `priceForModel` strips the routing prefix (e.g. `openai/gpt-5.4-mini` → `gpt-5.4-mini`) before price-table lookup.
-4. **P2 — Whitespace company names (FIXED):** `upsertImportedRefs` now trims company names with `?.trim() || null` to prevent blank overwrites.
-5. **P1 — Credential migration (QUESTION ASKED):** Asked maintainer how to handle users with existing native provider keys but no OpenRouter key.
+Of 12 total Codex threads, 11 are already resolved (from prior autofix rounds + manual fixes).
+The sole remaining unresolved thread:
 
-All 4 fixed threads resolved. Verify trio: tsc clean, tests pass, build clean. Auto-merge enabled.
-Rollout: `docs/rollouts/2026-07-17-codex-autofix-openrouter.md`.
+- **P2 — Wire FMP toggles into provider execution (QUESTION ASKED):** The four FMP toggle flags (`fmpRealTimeDataEnabled`, `fmpMacroDataEnabled`, `fmpEventsDataEnabled`, `fmpFundamentalsDataEnabled`) are persisted in settings and defaults but not yet consumed by the FMP provider runtime code. Asked maintainer whether to wire them in this PR or leave as settings-first follow-up, and what behavior is expected when a toggle is off. Thread stays open pending answer.
+
+Auto-merge already enabled. No code changes this round.
 ## 2026-07-17 — jsonrepair healing: fail-closed boundaries (CLAUDE on PR #1696, cap-reset pickup)
 
 Fixed the four unresolved Codex threads on the stalled `agent/local-response-healing` lane:
