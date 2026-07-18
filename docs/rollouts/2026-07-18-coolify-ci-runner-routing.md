@@ -70,6 +70,13 @@ The stacked shallow-checkout follow-up initially shortened Security checkout too
 identified that this hides secrets added and removed in earlier commits, so Security is restored to
 `fetch-depth: 0`; only the lightweight classifier jobs remain shallow.
 
+Parallel direct pushes then changed the jobs to generic `[self-hosted, Linux, X64]` and added
+2-minute checkout timeouts. Their history was merged rather than force-overwritten, but the settings
+were corrected before commit: the generic label can admit `socratic-deploy` concurrently with
+memory-heavy CI, and clean successful checkouts were measured at 3m31s and 3m57s. The final tree
+keeps `[self-hosted, socratic-ci]`, no artificial checkout timeout, and full Gitleaks history. A
+#agent-sync freeze was posted for the parent branch while the final gate settles.
+
 During production follow-through, the Coolify application was found configured on
 `agent/ag-recovery-v48-migration` instead of `main`, with an empty deployment list. The application
 was patched back to `git_branch=main` with auto-deploy enabled. No manual deployment was triggered;

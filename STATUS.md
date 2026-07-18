@@ -59,6 +59,12 @@ or unhealthy CI runner can still be reported. That runner received the same boun
 cleanup. The pinned runner image already includes Node.js, GitHub CLI, and `jq`; the post-clean
 shared-package check exercised its direct `node` calls successfully.
 
+Parallel direct pushes changed the runner label to generic Linux and added 2-minute checkout
+timeouts while final checks were running. They were reconciled non-destructively, but those settings
+were not retained: generic Linux can consume the deploy runner concurrently, and successful measured
+checkouts took 3m31s-3m57s. All CI work remains on `socratic-ci`, with no artificial checkout timeout;
+Security retains full history. A coordination freeze is posted until this parent PR lands.
+
 Coolify's production application had drifted from branch `main` to
 `agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The
 application was restored to `git_branch=main` and auto-deploy was re-enabled through the API without
