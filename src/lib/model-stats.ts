@@ -151,6 +151,15 @@ export function medianMs(values: number[]): number | null {
   return sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid] + sorted[mid + 1]) / 2);
 }
 
+function cleanModelId(model: string | null | undefined): string {
+  if (!model) return "";
+  const name = model.trim();
+  if (name.includes("/")) {
+    return name.split("/").pop() || name;
+  }
+  return name;
+}
+
 function key(model: string, role: ModelRole): string {
   return `${role} ${model}`;
 }
@@ -179,15 +188,16 @@ export interface AggregateModelStatsInput {
  * UI can look up any dropdown option and always find a row.
  */
 export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleStats[] {
-  const modelSet = new Set<string>(input.models ?? []);
+  const modelSet = new Set<string>((input.models ?? []).map(cleanModelId));
 
   // Live cost per (model, role) from llm_usage rows.
   const cost = new Map<string, { calls: number; totalCostUsd: number }>();
   for (const row of input.usageRows) {
     const role = roleForUsageContext(row.context);
     if (!role || !row.model) continue;
-    modelSet.add(row.model);
-    const k = key(row.model, role);
+    const model = cleanModelId(row.model);
+    modelSet.add(model);
+    const k = key(model, role);
     const bucket = cost.get(k) ?? { calls: 0, totalCostUsd: 0 };
     bucket.calls += Number.isFinite(row.calls) ? row.calls : 0;
     bucket.totalCostUsd += Number.isFinite(row.costUsd) ? row.costUsd : 0;
@@ -201,9 +211,10 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
     const p = event.payload as { step?: unknown; model?: unknown; durationMs?: unknown; ok?: unknown } | null | undefined;
     if (!p || typeof p !== "object") continue;
     const role = roleForLatencyStep(typeof p.step === "string" ? p.step : undefined);
-    const model = typeof p.model === "string" && p.model ? p.model : undefined;
+    const modelRaw = typeof p.model === "string" && p.model ? p.model : undefined;
     const durationMs = typeof p.durationMs === "number" && Number.isFinite(p.durationMs) && p.durationMs > 0 ? p.durationMs : undefined;
-    if (!role || !model || durationMs === undefined || p.ok !== true) continue;
+    if (!role || !modelRaw || durationMs === undefined || p.ok !== true) continue;
+    const model = cleanModelId(modelRaw);
     modelSet.add(model);
     const k = key(model, role);
     const bucket = latency.get(k);
@@ -215,8 +226,9 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
   const benchmark = new Map<string, BenchmarkRoleSummary>();
   for (const summary of input.benchmarkSummaries) {
     if (!summary.model) continue;
-    modelSet.add(summary.model);
-    benchmark.set(key(summary.model, summary.role), summary);
+    const model = cleanModelId(summary.model);
+    modelSet.add(model);
+    benchmark.set(key(model, summary.role), { ...summary, model });
   }
 
   // Realized performance per entry model — GREEN (proposer) and RED (reviewer).
@@ -224,16 +236,18 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
   const reviewerLotsByModel = new Map<string, ClosedLotLike[]>();
   for (const lot of input.closedLots) {
     if (lot.entryModel) {
-      modelSet.add(lot.entryModel);
-      const bucket = proposerLotsByModel.get(lot.entryModel);
+      const entryModel = cleanModelId(lot.entryModel);
+      modelSet.add(entryModel);
+      const bucket = proposerLotsByModel.get(entryModel);
       if (bucket) bucket.push(lot);
-      else proposerLotsByModel.set(lot.entryModel, [lot]);
+      else proposerLotsByModel.set(entryModel, [lot]);
     }
     if (lot.reviewedByModel) {
-      modelSet.add(lot.reviewedByModel);
-      const bucket = reviewerLotsByModel.get(lot.reviewedByModel);
+      const reviewedByModel = cleanModelId(lot.reviewedByModel);
+      modelSet.add(reviewedByModel);
+      const bucket = reviewerLotsByModel.get(reviewedByModel);
       if (bucket) bucket.push(lot);
-      else reviewerLotsByModel.set(lot.reviewedByModel, [lot]);
+      else reviewerLotsByModel.set(reviewedByModel, [lot]);
     }
   }
 
@@ -243,8 +257,9 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
   const reviewerByModel = new Map<string, ReviewerPerf>();
   for (const row of input.reviewerPerfByModel ?? []) {
     if (!row.model || row.model === REVIEWER_UNATTRIBUTED_MODEL) continue;
-    modelSet.add(row.model);
-    reviewerByModel.set(row.model, {
+    const model = cleanModelId(row.model);
+    modelSet.add(model);
+    reviewerByModel.set(model, {
       maturedVetoes: row.maturedVetoes,
       vetoValueAddRate: row.vetoValueAddRate,
       survivorRiskHitRate: row.survivorRiskHitRate,
@@ -317,9 +332,10 @@ export function normalizeBenchmarkSummaries(raw: RawBenchmarkSummary[]): Benchma
   const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
   const out: BenchmarkRoleSummary[] = [];
   for (const s of raw) {
-    const model = typeof s.model === "string" ? s.model : undefined;
+    const modelRaw = typeof s.model === "string" ? s.model : undefined;
     const role = s.role === "green" || s.role === "red" ? (s.role as ModelRole) : undefined;
-    if (!model || !role) continue;
+    if (!modelRaw || !role) continue;
+    const model = cleanModelId(modelRaw);
     const benchmarkColdP50Ms = num(s.coldP50LatencyMs) ?? num(s.p50LatencyMs);
     const benchmarkCostUsd = num(s.avgEstCostUsd) ?? num(s.coldAvgCostUsd) ?? num(s.warmAvgCostUsd);
     if (benchmarkColdP50Ms === undefined && benchmarkCostUsd === undefined) continue;

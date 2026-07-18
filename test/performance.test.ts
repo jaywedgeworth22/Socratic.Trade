@@ -342,12 +342,12 @@ describe("getThesisScorecard", () => {
     const userId = `redteam-eff-${randomUUID()}`;
 
     // Veto 1 (model A): would have LOST money — the Bear added value.
-    audit("proposal_rejected_by_red_team", { runId: "run-rt-1", symbol: "AAPL", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "gpt-4.1-mini" }, userId);
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-1", symbol: "AAPL", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "openai/gpt-4.1-mini" }, userId);
     insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-1", symbol: "AAPL", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 100, horizonDays: 5, targetDate: "2026-06-06" });
     markSkippedCounterfactualMatured({ id: `${userId}:run-rt-1:AAPL:5`, userId, exitDate: "2026-06-06", exitPrice: 90, returnPct: -10 });
 
     // Veto 2 (model A): would have WON — a survivor-risk hit (the veto missed a winner).
-    audit("proposal_rejected_by_red_team", { runId: "run-rt-2", symbol: "MSFT", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "gpt-4.1-mini" }, userId);
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-2", symbol: "MSFT", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "openai/gpt-4.1-mini" }, userId);
     insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-2", symbol: "MSFT", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 200, horizonDays: 5, targetDate: "2026-06-06" });
     markSkippedCounterfactualMatured({ id: `${userId}:run-rt-2:MSFT:5`, userId, exitDate: "2026-06-06", exitPrice: 220, returnPct: 10 });
 
@@ -363,7 +363,7 @@ describe("getThesisScorecard", () => {
     expect(efficacy.survivorRiskHitRate).toBe(50); // 1 of 2 matured vetoes missed a winner
     expect(efficacy.avgReturnPct).toBe(0); // (-10 + 10) / 2
 
-    const modelA = efficacy.byModel.find((m) => m.model === "gpt-4.1-mini");
+    const modelA = efficacy.byModel.find((m) => m.model === "openai/gpt-4.1-mini");
     expect(modelA?.maturedVetoes).toBe(2);
     expect(modelA?.vetoValueAddRate).toBe(50);
     expect(modelA?.survivorRiskHitRate).toBe(50);
@@ -379,7 +379,7 @@ describe("getThesisScorecard", () => {
 
     // A vetoed SHORT whose price ROSE (raw returnPct positive) means the short thesis would have
     // LOST money — the veto added value. Side-adjusted returnPct should be negative.
-    audit("proposal_rejected_by_red_team", { runId: "run-rt-short", symbol: "TSLA", side: "short", thesisTag: "Breakdown", reason: "Squeeze risk.", model: "gpt-4.1-mini" }, userId);
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-short", symbol: "TSLA", side: "short", thesisTag: "Breakdown", reason: "Squeeze risk.", model: "openai/gpt-4.1-mini" }, userId);
     insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-short", symbol: "TSLA", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 100, horizonDays: 5, targetDate: "2026-06-06" });
     markSkippedCounterfactualMatured({ id: `${userId}:run-rt-short:TSLA:5`, userId, exitDate: "2026-06-06", exitPrice: 120, returnPct: 20 });
 
@@ -415,7 +415,7 @@ describe("getThesisScorecard", () => {
     const { audit } = await import("../src/lib/db");
     const userId = `redteam-eff-kind-${randomUUID()}`;
 
-    audit("proposal_rejected_by_red_team", { runId: "run-rt-old", symbol: "AAPL", side: "buy", reason: "Overbought.", model: "gpt-4.1-mini" }, userId);
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-old", symbol: "AAPL", side: "buy", reason: "Overbought.", model: "openai/gpt-4.1-mini" }, userId);
     // Ten newer audit rows of OTHER kinds — more than the auditLimit below. Under the old
     // all-kind scan (LIMIT applied before the kind filter), these would push the veto out
     // of the window entirely and the scorecard would report zero veto history.
@@ -433,8 +433,8 @@ describe("getThesisScorecard", () => {
 
     // A vetoed SELL (exit) is audited by the strategy but never gets a counterfactual row —
     // counting it in totalVetoes would permanently depress maturation coverage.
-    audit("proposal_rejected_by_red_team", { runId: "run-rt-exit", symbol: "AAPL", side: "sell", reason: "Premature exit.", model: "gpt-4.1-mini" }, userId);
-    audit("proposal_rejected_by_red_team", { runId: "run-rt-open", symbol: "MSFT", side: "buy", reason: "Overbought.", model: "gpt-4.1-mini" }, userId);
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-exit", symbol: "AAPL", side: "sell", reason: "Premature exit.", model: "openai/gpt-4.1-mini" }, userId);
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-open", symbol: "MSFT", side: "buy", reason: "Overbought.", model: "openai/gpt-4.1-mini" }, userId);
 
     const efficacy = getRedTeamEfficacy(userId);
     expect(efficacy.totalVetoes).toBe(1);

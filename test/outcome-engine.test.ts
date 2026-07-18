@@ -488,7 +488,7 @@ describe("callLessonLlm — empty-model guard (rotation sentinel / no-defaults)"
     // run-scoped rotation sentinel, which resolveLlmEndpoint maps to "" OUTSIDE a strategy run (rotation
     // resolves only inside runStrategyOnce). The guard must treat the blank model as unconfigured and
     // skip cleanly — never issue a request.
-    upsertUserApiKey(userId, "openai", "sk-test", "test");
+    upsertUserApiKey(userId, "openrouter", "sk-test", "test");
     setPolicy({ ...DEFAULT_POLICY, llmModel: "__rotate__" }, userId);
 
     const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));

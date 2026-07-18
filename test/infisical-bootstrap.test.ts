@@ -312,7 +312,7 @@ describe("Infisical bootstrap resolver", () => {
     writeFileSync(globalFile, [
       "INFISICAL_ST_CLIENT_ID=global-app-id",
       "INFISICAL_ST_CLIENT_SECRET=global-app-secret",
-      "OPENAI_API_KEY=must-not-be-loaded",
+      "OPENROUTER_API_KEY=must-not-be-loaded",
       "",
     ].join("\n"), { mode: 0o600 });
     const env = isolatedProcessEnv();
@@ -322,7 +322,7 @@ describe("Infisical bootstrap resolver", () => {
     expect(result.appAuthConfigured).toBe(true);
     expect(env.INFISICAL_CLIENT_ID).toBe("global-app-id");
     expect(env.INFISICAL_ST_CLIENT_ID).toBeUndefined();
-    expect(env.OPENAI_API_KEY).not.toBe("must-not-be-loaded");
+    expect(env.OPENROUTER_API_KEY).not.toBe("must-not-be-loaded");
   });
 
   it("ignores unrelated shell syntax and malformed assignments in the broad global file", () => {
@@ -708,7 +708,7 @@ process.exit(3);
 import { writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 const forbidden = [
-  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
   "GITHUB_TOKEN",
   "SLACK_BOT_TOKEN",
   "ALPACA_API_KEY",
@@ -754,7 +754,7 @@ process.exit(3);
         process.execPath,
         "-e",
         nextEnvironmentReloadProbe(root, {
-          provider: "process.env.OPENAI_API_KEY || ''",
+          provider: "process.env.OPENROUTER_API_KEY || ''",
           remoteValue: "process.env.REMOTE_VALUE || ''",
           roundTripValue: "process.env.ROUND_TRIP_VALUE || ''",
           crossApp: "process.env.INFISICAL_CT_CLIENT_SECRET || ''",
@@ -766,7 +766,7 @@ process.exit(3);
         env: isolatedProcessEnv({
           HOME: root,
           PATH: `${bin}:${process.env.PATH || ""}`,
-          OPENAI_API_KEY: "ambient-provider-key",
+          OPENROUTER_API_KEY: "ambient-provider-key",
           GITHUB_TOKEN: "ambient-github-token",
           SLACK_BOT_TOKEN: "ambient-slack-token",
           ALPACA_API_KEY: "ambient-broker-token",
@@ -883,7 +883,7 @@ appendFileSync(${JSON.stringify(ambientPreloadObservations)}, JSON.stringify({
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
-if (process.env.OPENAI_API_KEY || process.env.NODE_OPTIONS || process.env.INFISICAL_CLIENT_SECRET || process.env.INFIISICAL_ST_CLIENT_SECRET) {
+if (process.env.OPENROUTER_API_KEY || process.env.NODE_OPTIONS || process.env.INFISICAL_CLIENT_SECRET || process.env.INFIISICAL_ST_CLIENT_SECRET) {
   writeFileSync(${JSON.stringify(cliLeakMarker)}, "leaked");
 }
 if (args[0] === "--version") process.exit(0);
@@ -925,7 +925,7 @@ process.exit(3);
         env: isolatedProcessEnv({
           HOME: root,
           PATH: `${bin}:${process.env.PATH || ""}`,
-          OPENAI_API_KEY: "ambient-provider-must-not-reach-watch-cli",
+          OPENROUTER_API_KEY: "ambient-provider-must-not-reach-watch-cli",
           NODE_OPTIONS: `--require=${ambientPreload}`,
         }),
       }

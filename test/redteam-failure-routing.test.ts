@@ -100,6 +100,8 @@ describe("describeRedTeamFailureKind", () => {
 // for human review with the failureKind visible in its persisted reason, and the parity audit event
 // (strategy_red_team_unavailable) is emitted.
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -120,7 +122,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 const BULL_OPENING_PROPOSAL = {
@@ -142,13 +144,13 @@ const BULL_OPENING_PROPOSAL = {
 function makeUnavailableFetchStub(proposals: unknown[] = [BULL_OPENING_PROPOSAL]) {
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       const systemContent = JSON.stringify(body);
       if (systemContent.includes("Red Team Risk Agent")) {
         return new Response("Too Many Requests", { status: 429 });
       }
-      return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals }) }), {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals }) } }] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -182,7 +184,7 @@ function makeUnavailableFetchStub(proposals: unknown[] = [BULL_OPENING_PROPOSAL]
 
 async function seedTestAccountAndPolicy() {
   const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -197,10 +199,10 @@ async function seedTestAccountAndPolicy() {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
     // Required explicit Red model (no-defaults world) — the stub answers it with a 429 so the
     // review is unavailable with failureKind "rate_limited".
-    redTeamLlmModel: "gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide"
@@ -209,7 +211,7 @@ async function seedTestAccountAndPolicy() {
 
 describe("Red Team unavailable — opening routing + audit parity (decide authority)", () => {
   it("holds a high-conviction OPENING for human review with failureKind visible, and audits strategy_red_team_unavailable", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeUnavailableFetchStub());
 
     await seedTestAccountAndPolicy();
@@ -286,7 +288,7 @@ async function seedExistingAaplLongPosition() {
 
 describe("Red Team unavailable — exits are STRUCTURALLY EXEMPT (§3.5: never reviewed, never holdable)", () => {
   it("a de-risking SELL of an existing position proceeds to placement with NO review call, no verdict, no unavailable audit — even while the reviewer is down", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeUnavailableFetchStub([SELL_PROPOSAL]));
 
     await seedTestAccountAndPolicy();
@@ -315,7 +317,7 @@ describe("Red Team unavailable — exits are STRUCTURALLY EXEMPT (§3.5: never r
 
 describe("Red Team unavailable — propose authority surfaces the flag on the pending card", () => {
   it("appends a RED TEAM FAILED note to a propose-mode card so the approver sees the adversary never ran", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeUnavailableFetchStub());
 
     await seedTestAccountAndPolicy();
