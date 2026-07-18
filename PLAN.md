@@ -1,5 +1,10 @@
 # Active Implementation Plan
 
+> **2026-07-18 - CI shallow-checkout recovery (CODEX, branch `codex/ci-checkout-fast`).**
+> Stack a focused workflow fix on the Coolify CI routing PR: make classify jobs compare the
+> base/head endpoint trees after shallow fetches, disable tag/full-history fetches for security,
+> run YAML/diff checks, then open a stacked PR for the routing owner to merge.
+
 > **2026-07-18 - Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`).**
 > Route required PR checks and PR-visible helper workflows from GitHub-hosted `ubuntu-latest` to the
 > dedicated Coolify Hetzner CI lane (`[self-hosted, socratic-ci]`), recover the exited runner
