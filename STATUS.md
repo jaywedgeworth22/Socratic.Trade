@@ -1,5 +1,81 @@
 # Current Status
 
+## 2026-07-18 — CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739)
+
+Follow-up to the shallow-checkout recovery. Classifier jobs pin checkout to `github.sha` in addition
+to shallow, tag-free fetches, then explicitly fetch their base/head endpoint trees. Security retains
+full history so Gitleaks can detect secrets added and removed in earlier PR commits or history.
+Rollout: `docs/rollouts/2026-07-18-ci-event-sha-checkout.md`.
+
+## 2026-07-18 — CI shallow-checkout recovery (CODEX, PR #1741 integrated into PR #1739)
+
+Stacked follow-up to the Coolify CI routing PR. Required lightweight jobs were repeatedly
+spending several minutes in full-history `actions/checkout` on the single self-hosted runner,
+causing classify cancellation and fail-closed smoke results. Classification now fetches only the
+base/head endpoint commits and compares their trees. Security deliberately keeps full history for
+Gitleaks coverage. This preserves conservative docs-only behavior while keeping the cheap
+classifiers bounded. Rollout: `docs/rollouts/2026-07-18-ci-shallow-checkout.md`.
+
+## 2026-07-18 — Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`)
+
+GitHub-hosted `ubuntu-latest` jobs are failing before runner assignment on current open PRs
+(`runner_id=0`, no steps/log blob). Repo runners show Coolify Hetzner Linux runners, while the old
+`trading-live-mac` runner is offline. Both Socratic runner containers later exited and disappeared
+from GitHub; the Coolify `github-runner` service restart recovered them. This branch routes Actions
+jobs that still used `ubuntu-latest` onto the dedicated `[self-hosted, socratic-ci]` lane so PR work
+queues instead of consuming the deploy runner. It also disables Gitleaks' optional SARIF artifact
+upload because that action fails after a clean scan when the self-hosted workspace lives under
+`/_work` instead of `/root`. YAML parse and actionlint verification passed. Rollout:
+`docs/rollouts/2026-07-18-coolify-ci-runner-routing.md`.
+
+The rerun also exposed an independent workflow parse failure in `merge-shepherd.yml`: its local
+reusable-workflow path incorrectly included `@main`. The dispatcher now uses a fully qualified
+same-repository `@main` reference, so even dispatches against another ref execute the trusted
+default-branch implementation before inheriting write permissions and secrets.
+
+The first full Coolify verify reached TypeScript but Node 24 aborted at its default ~1 GiB heap
+ceiling; a 1536 MiB retry let TypeScript proceed but the Next build exhausted that heap. The
+dedicated `socratic-ci` container now has a 3 GiB hard cap and the heavy verify and Playwright jobs
+set `NODE_OPTIONS=--max-old-space-size=2560`; its low CPU shares/high OOM priority and single-job
+serialization still protect production. Vitest is already serialized by repo config.
+
+The resized runner completed Playwright's Next compilation but exceeded the fixed 240-second
+webServer startup timeout. CI now allows 600 seconds for that intentionally low-CPU runner; local
+Playwright keeps the existing 240-second timeout.
+
+Codex review identified that `pull_request_review` autofix events could otherwise admit fork PRs to
+the persistent runner with write credentials. The autofix job now refuses bot-triggered work unless
+the PR head repository exactly matches this repository; maintainer `workflow_dispatch` remains
+available.
+
+The same admission boundary now applies at job level to both CI/E2E classifier jobs and the
+shared-package pin check. Fork PRs are rejected before runner assignment or checkout, rather than
+after fork-controlled repository content has already entered the persistent workspace; non-PR
+push, schedule, merge-queue, and maintainer-dispatch events remain admitted.
+
+The runner image's `EPHEMERAL=1` registration was paired with Docker `restart: always`, which
+restarted the same container filesystem after each job instead of removing the container as the
+image's ephemeral-runner guidance requires. A canceled checkout therefore left an invalid
+`/_work/.../.git` (`ambiguous HEAD`) for every later registration. Coolify's Socratic CI service now
+wraps the image entrypoint with a bounded cleanup of only `/_work` before each registration. A fresh
+registration completed the shared-package checkout and check successfully.
+
+Failure/cron telemetry now runs on the separate `[self-hosted, socratic-deploy]` runner so a missing
+or unhealthy CI runner can still be reported. That runner received the same bounded `/_work`
+cleanup. The pinned runner image already includes Node.js, GitHub CLI, and `jq`; the post-clean
+shared-package check exercised its direct `node` calls successfully.
+
+Parallel direct pushes changed the runner label to generic Linux and added 2-minute checkout
+timeouts while final checks were running. They were reconciled non-destructively, but those settings
+were not retained: generic Linux can consume the deploy runner concurrently, and successful measured
+checkouts took 3m31s-3m57s. All CI work remains on `socratic-ci`, with no artificial checkout timeout;
+Security retains full history. A coordination freeze is posted until this parent PR lands.
+
+Coolify's production application had drifted from branch `main` to
+`agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The
+application was restored to `git_branch=main` and auto-deploy was re-enabled through the API without
+manually triggering a deploy. Production remained healthy at release `70a2a39d` while PR gates run.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
