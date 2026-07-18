@@ -88,13 +88,29 @@ function isBrokerVerificationRunFailed(title: string, payload: unknown): boolean
 }
 
 /**
+ * How long a claimed-but-unresolved option-alert reservation stays authoritative before it is treated
+ * as ABANDONED and reclaimable. A live delivery (`sendNotification`) completes in well under a second;
+ * this window only ever reclaims a reservation whose owner crashed between claiming and recording a
+ * `status='sent'` event (or reaching the finally-release). Kept comfortably longer than any real
+ * delivery so an in-flight send is never stolen (Codex review, PR #1738).
+ */
+const OPTION_ALERT_RESERVATION_TTL_MS = 10 * 60 * 1000;
+
+/**
  * Atomically claim the right to deliver a single option alert. Backed by a UNIQUE constraint on
  * (user_id, connected_account_id, symbol, alert_type): the INSERT OR IGNORE either inserts the row
  * (returns true — THIS caller owns delivery) or no-ops because a concurrent request already claimed
- * it (returns false — skip). better-sqlite3 is synchronous, so the insert-and-read-changes runs to
- * completion within one event-loop tick, making the claim race-free against concurrent dashboard
- * snapshot builds. Release the claim (`releaseOptionAlertReservation`) if the send does not actually
- * deliver, so a disabled/failed alert stays deliverable on a later cycle.
+ * it (returns false — skip). better-sqlite3 is synchronous, so the reclaim-insert-and-read-changes
+ * runs to completion within one event-loop tick, making the claim race-free against concurrent
+ * dashboard snapshot builds. Release the claim (`releaseOptionAlertReservation`) if the send does not
+ * actually deliver, so a disabled/failed alert stays deliverable on a later cycle.
+ *
+ * ABANDONED-reservation reclaim (Codex review, PR #1738): a process that dies AFTER the INSERT but
+ * BEFORE recording a `status='sent'` event (or the finally-release) would otherwise leave the row
+ * resting forever and permanently suppress this alert. The pre-insert DELETE reclaims any reservation
+ * older than the TTL. This can never double-send a genuinely-delivered alert: delivered alerts are
+ * deduped upstream by the permanent `status='sent'` check (the caller never even reaches this claim
+ * for one already sent), so a reclaim only ever frees an orphan that produced no delivery.
  */
 export function reserveOptionAlert(
   userId: string,
@@ -102,7 +118,13 @@ export function reserveOptionAlert(
   symbol: string,
   alertType: string
 ): boolean {
-  const info = getDb()
+  const db = getDb();
+  const cutoff = new Date(Date.now() - OPTION_ALERT_RESERVATION_TTL_MS).toISOString();
+  db.prepare(
+    `DELETE FROM option_alert_reservations
+     WHERE user_id = ? AND connected_account_id = ? AND symbol = ? AND alert_type = ? AND created_at < ?`
+  ).run(userId, connectedAccountId ?? "", symbol, alertType, cutoff);
+  const info = db
     .prepare(
       `INSERT OR IGNORE INTO option_alert_reservations (user_id, connected_account_id, symbol, alert_type, created_at)
        VALUES (?, ?, ?, ?, ?)`

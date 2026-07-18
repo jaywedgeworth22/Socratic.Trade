@@ -274,6 +274,26 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
     // The pre-fix bug: take-profit would have been 120, i.e. BELOW the 120.18 entry — an instant loss.
     expect(p.bracketTakeProfit!).toBeGreaterThan(p.limitPrice!);
   });
+  it("strips Tradier brackets when a pathological buffer makes the marketable-limit non-positive — conversion no-ops, order stays market (Codex PR #1738)", () => {
+    // marketableLimitBufferBps 10000 (buffer 1.0) makes a SHORT limit bid*(1-1.0)=0 → non-positive →
+    // marketableLimitPrice undefined → the conversion block leaves the order type: "market". Gating the
+    // strip on the ACTUAL converted price (not just the willBecomeMarketableLimit predicate) means the
+    // un-converted Tradier market order correctly has its OTOCO legs stripped rather than handed to a
+    // gateway that can't carry them.
+    const withBid: MarketScan = {
+      ...marketScan,
+      quotesBySymbol: { TSLA: { symbol: "TSLA", price: 100, bid: 100, score: 50, sources: { bid: "alpaca" } } }
+    };
+    const p = enrichOpeningProposal(
+      buy({ side: "short", dollarAmount: 1000, bracketStopLoss: 105, bracketTakeProfit: 80 }),
+      policy({ activeBroker: "tradier", shortSellingEnabled: true, marketableLimitEntries: true, permittedOrderTypes: ["market", "limit"], tuning: { marketableLimitBufferBps: 10000 }, riskRules: { shortStopLossPct: 5, takeProfitPct: 20 } }),
+      withBid
+    );
+    expect(p.type).toBe("market"); // conversion no-op'd (computed limit was non-positive)
+    expect(p.bracketStopLoss).toBeUndefined(); // legs stripped — Tradier can't bracket a market entry
+    expect(p.bracketTakeProfit).toBeUndefined();
+    expect(p.rationale).toContain("Tradier native entry brackets are not supported");
+  });
   it("still strips brackets for a Tradier market entry that will NOT convert (marketable-limit off)", () => {
     // Guardrail for the finding-2 fix: with the conversion disabled the entry STAYS a market order,
     // which Tradier can't bracket — the strip must still fire.

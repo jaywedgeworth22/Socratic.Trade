@@ -5745,14 +5745,16 @@ export function enrichOpeningProposal(
     next.dollarAmount > 0 &&
     (policy.permittedOrderTypes?.includes("limit") ?? true) &&
     Math.floor(next.dollarAmount / entryPrice) >= 1;
-  const isTradierMarket = policy.activeBroker === "tradier" && next.type === "market" && !willBecomeMarketableLimit;
   // The whole-share quantity and price the marketable-limit conversion below WILL use, computed up
   // front so the bracket legs anchor to the ACTUAL entry (the converted limit) rather than the
   // pre-conversion reference. A buy converts to ask+buffer, which can sit meaningfully ABOVE the
   // reference on a wide/stale spread; a take-profit priced off the lower reference could then land
   // at/below the real fill, rejecting the OTOCO or arming an instant-loss exit (Codex review, PR
   // #1738). This is the SINGLE source of truth: the conversion block below reuses these exact values,
-  // so the anchored brackets and the applied limit can never drift apart.
+  // so the anchored brackets and the applied limit can never drift apart. `marketableLimitPrice` is
+  // `undefined` when the conversion will NOT actually apply — including the pathological case where a
+  // stored buffer drives the computed limit non-positive (e.g. a legacy `marketableLimitBufferBps` of
+  // 10000 makes a short's `bid*(1-1.0)` = 0), which the policy route can persist on unrelated saves.
   const marketableLimitQty = willBecomeMarketableLimit && next.dollarAmount != null ? Math.floor(next.dollarAmount / entryPrice) : 0;
   const marketableLimitPrice: number | undefined = (() => {
     if (!willBecomeMarketableLimit || marketableLimitQty < 1) return undefined;
@@ -5766,6 +5768,12 @@ export function enrichOpeningProposal(
       : round2((realBid ?? refPrice) * (1 - buffer));
     return p > 0 ? p : undefined;
   })();
+  // A Tradier `market` entry is exempt from the market-bracket strip ONLY when the marketable-limit
+  // conversion will ACTUALLY apply — i.e. `marketableLimitPrice` is defined. Gating on the predicate
+  // alone (`willBecomeMarketableLimit`) wrongly exempted the non-positive-limit case above, so the
+  // order stayed `type: "market"` (the conversion block no-ops) yet its OTOCO legs were preserved and
+  // handed to a Tradier gateway that can't carry brackets on a market entry (Codex review, PR #1738).
+  const isTradierMarket = policy.activeBroker === "tradier" && next.type === "market" && marketableLimitPrice === undefined;
   // Anchor bracket legs to the converted limit when the conversion applies; otherwise the reference
   // price, unchanged from before (so the non-converting path keeps identical behavior).
   const bracketAnchorPrice = marketableLimitPrice ?? entryPrice;

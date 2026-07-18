@@ -150,3 +150,32 @@ genuine and are now fixed on the same branch.
 - `npm run build` — exit 0.
 - Both new/updated regressions verified against the fix; the P1 tests exercise both the cancel-while-
   halted and keep-while-halted branches, and the P2 tests lock the take-profit-above-limit invariant.
+
+## Round 3 — Codex review on b157e70 (3 findings, all real, fixed)
+
+- **P2 — reclaim abandoned option-alert reservations** (`src/lib/db-notifications.ts`): a process that
+  crashed between `reserveOptionAlert`'s INSERT and recording a `status='sent'` event (or the
+  finally-release) orphaned the reservation row, permanently suppressing that alert. `reserveOptionAlert`
+  now DELETEs any reservation older than a 10-min TTL before its INSERT OR IGNORE. Safe because the real
+  dedupe is the permanent `status='sent'` check upstream (the caller never reaches the claim for an
+  already-sent alert), so a reclaim can only free a genuine orphan, never double-send. Regression added
+  to `test/option-alert-dedupe.test.ts` (stale row reclaimed; fresh row not reclaimed; single-winner
+  guard intact).
+- **P2 — gate the Tradier bracket exemption on a REAL conversion** (`src/lib/strategy.ts`): a pathological
+  stored buffer (e.g. legacy `marketableLimitBufferBps=10000` → a short's `bid*(1-1.0)=0`) made
+  `willBecomeMarketableLimit` true while the computed limit was non-positive, so the conversion no-op'd
+  (order stayed `market`) yet `isTradierMarket` was false — preserving OTOCO legs on a raw Tradier market
+  entry the gateway can't carry. `isTradierMarket` now gates on the actual `marketableLimitPrice ===
+  undefined` (computed up front), so the un-converted order is correctly stripped. Regression: short +
+  buffer 10000 → stays market, legs stripped, "not supported" annotation present.
+- **P2 — preserve pending-cancel stops while halted** (`src/lib/broker-protective-stops.ts`): section 1's
+  `pending_cancel` retry could still cancel an open position's only (still-live) broker stop during a
+  halt, after which section 4 (blocked while halted) refuses the replacement — the same strand the
+  round-2 non-shrink mismatch guard prevents. Extended the existing `liveReplaceBlocked` skip to
+  `(liveReplaceBlocked || haltedProtectOnly)` for an open position whose plan still wants a stop
+  (`kindForSymbol !== null`); a plan-excluded teardown (`=== null`) still retries. Regression:
+  pending_cancel row not retried while halted (still-live stop kept), retried when active.
+
+### Round-3 verification
+- `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files / **4805 tests pass**;
+  `npm run build` exit 0. Each new regression exercises the exact failure the finding described.

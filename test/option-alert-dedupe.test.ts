@@ -71,6 +71,27 @@ describe("option-alert atomic reservation (finding 4)", () => {
     expect(reserveOptionAlert("local", "acct-1", "AAPL240101C00100000", "appearance")).toBe(true);
   });
 
+  it("reclaims an ABANDONED reservation older than the TTL (crash between claim and delivery) — Codex PR #1738", () => {
+    // A process that claimed the alert then died before recording status='sent' or releasing leaves an
+    // orphaned reservation with an OLD created_at. Without reclaim it would suppress this alert forever.
+    const staleTs = new Date(Date.now() - 11 * 60 * 1000).toISOString(); // older than the 10-min TTL
+    getDb()
+      .prepare(
+        `INSERT INTO option_alert_reservations (user_id, connected_account_id, symbol, alert_type, created_at)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run("local", "acct-stale", "NVDA240101C00100000", "appearance", staleTs);
+    // The stale claim is reclaimed — the new claim wins.
+    expect(reserveOptionAlert("local", "acct-stale", "NVDA240101C00100000", "appearance")).toBe(true);
+    // ...and the reclaimed claim is now fresh, so a concurrent second claim still loses (the
+    // single-winner guard is intact — reclaim didn't weaken it).
+    expect(reserveOptionAlert("local", "acct-stale", "NVDA240101C00100000", "appearance")).toBe(false);
+
+    // A FRESH reservation is NOT reclaimable — the TTL only frees genuinely abandoned claims.
+    expect(reserveOptionAlert("local", "acct-fresh", "NVDA240101C00100000", "appearance")).toBe(true);
+    expect(reserveOptionAlert("local", "acct-fresh", "NVDA240101C00100000", "appearance")).toBe(false);
+  });
+
   it("two CONCURRENT dispatches deliver the same appearance alert only ONCE", async () => {
     const sym = "TSLA240101C00100000";
     const options = [optionPos(sym)];

@@ -1304,5 +1304,38 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(broker.cancelled).toContain("prot-keep");
       expect(broker.placed.length).toBeGreaterThan(0);
     });
+
+    it("protectWhileHalted: does NOT retry a pending_cancel row for an OPEN position — the still-live stop keeps protecting (Codex PR #1738)", async () => {
+      // A `pending_cancel` row for an open position may track a still-live broker order (its cancel
+      // kept failing) left over from an earlier non-shrink replacement attempt. Section 1 would retry
+      // the cancel and succeed, removing the ONLY broker-held stop — and section 4 (blocked while
+      // halted) then refuses the replacement, stranding the position. The section-1 skip now also
+      // covers haltedProtectOnly, so the retry is deferred and the old stop keeps protecting.
+      connectTestAccount("SYN-HALT-PC", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 100, averageCost: 100, marketValue: 10000 }];
+      broker.quotes = { NVDA: { price: 100 } }; // no breach
+      broker.orders = [{ id: "prot-pc", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 }]; // still live
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-PC-NVDA", userId: "local", accountNumber: "SYN-HALT-PC",
+        symbol: "NVDA", brokerOrderId: "prot-pc", quantity: 100, stopPrice: 95, status: "pending_cancel",
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-PC"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-PC").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.cancelled).not.toContain("prot-pc"); // retry deferred while halted
+      const rows = listBrokerProtectiveStops("SYN-HALT-PC", "local");
+      expect(rows.some((r) => r.brokerOrderId === "prot-pc" && r.status === "pending_cancel")).toBe(true);
+
+      // Control: ACTIVE retries and cancels the pending_cancel row (proving the halt gate deferred it).
+      broker.cancelled = [];
+      const activePolicy = { ...haltedPolicy, systemState: "active" as const };
+      await runSyntheticStopMonitor("local", activePolicy, true);
+      expect(broker.cancelled).toContain("prot-pc");
+    });
   });
 });

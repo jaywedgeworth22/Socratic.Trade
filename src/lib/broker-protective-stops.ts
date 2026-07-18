@@ -525,7 +525,16 @@ export async function reconcileBrokerProtectiveStops(args: {
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
     if (row.status === "pending_cancel") {
       const rowSym = normalizeSymbol(row.symbol);
-      if (liveReplaceBlocked && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) continue;
+      // Skip the pending_cancel retry for a STILL-OPEN position that still wants a stop when a
+      // replacement can't be placed this tick — either the live-preflight escape hatch
+      // (`liveReplaceBlocked`) OR a halt (`haltedProtectOnly`). The row may track a still-live broker
+      // order (its cancel keeps failing); succeeding here would remove the position's only broker-held
+      // stop and then section 4 (blocked in both states) would refuse the replacement, stranding it —
+      // exactly what the section-3 non-shrink mismatch guard prevents. Keep it pending_cancel and
+      // retry on a later non-halted/allowed tick; the old stop keeps protecting until then. A symbol
+      // whose plan now excludes every lane (`kindForSymbol === null`) is a risk-reducing teardown and
+      // still retries (Codex review, PR #1738 extends the pre-existing liveReplaceBlocked guard).
+      if ((liveReplaceBlocked || haltedProtectOnly) && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) continue;
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);
