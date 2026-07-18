@@ -26,6 +26,11 @@ The resized runner completed Playwright's Next compilation but exceeded the fixe
 webServer startup timeout. CI now allows 600 seconds for that intentionally low-CPU runner; local
 Playwright keeps the existing 240-second timeout.
 
+Codex review identified that `pull_request_review` autofix events could otherwise admit fork PRs to
+the persistent runner with write credentials. The autofix job now refuses bot-triggered work unless
+the PR head repository exactly matches this repository; maintainer `workflow_dispatch` remains
+available.
+
 Coolify's production application had drifted from branch `main` to
 `agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The
 application was restored to `git_branch=main` and auto-deploy was re-enabled through the API without

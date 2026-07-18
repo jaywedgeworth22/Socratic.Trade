@@ -39,6 +39,11 @@ With memory fixed, Playwright's Next build compiled in 2.8 minutes but the serve
 when `CI` is set and remains 240 seconds locally. This accommodates the runner's intentionally low
 CPU share without weakening the smoke assertions or hiding a failed server start.
 
+Codex review then found that the `pull_request_review`-triggered autofix job could admit a fork PR to
+the persistent runner before checkout and before the write token/model secret were consumed. Its
+job-level condition now requires `github.event.pull_request.head.repo.full_name ==
+github.repository` for bot-triggered reviews. Maintainer `workflow_dispatch` remains available.
+
 During production follow-through, the Coolify application was found configured on
 `agent/ag-recovery-v48-migration` instead of `main`, with an empty deployment list. The application
 was patched back to `git_branch=main` with auto-deploy enabled. No manual deployment was triggered;
