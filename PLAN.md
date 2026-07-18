@@ -1,5 +1,15 @@
 # Active Implementation Plan
 
+## 2026-07-18 — Admin console shell parity (CODEX)
+
+- [x] Match the admin frame to the normal console chrome geometry and tokens.
+- [x] Keep logo/name and a functional profile popover visible on admin pages.
+- [x] Keep account scope, Start/Resume/STOP, and Run once controls absent from admin.
+- [x] Preserve admin tabs as the left rail and normalize all admin labels to title case.
+- [x] Rename the server panel to Server Stats without changing `/admin/server` or API routes.
+- [x] Run Node 24 lint, TypeScript, full Vitest, and production build gates.
+- [ ] Land through `scripts/land.sh`, then verify the auto-deployed production SHA and health.
+
 > **2026-07-17 - OpenRouter Model Stats Canonicalization (Antigravity, branch `antigravity/openrouter-universal-routing`).** Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts` to strip provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs. This ensures that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`), preventing stats split and lookup mismatch in the Model Stats drawer. Verified via vitest and compiler checks. Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
 ## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)
 

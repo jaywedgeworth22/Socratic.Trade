@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-18 — Admin console shell parity (CODEX, branch `codex/admin-console-shell`)
+
+Implemented the admin.socratictrade.com chrome refresh. Admin now uses the console geometry/tokens,
+keeps the Socratic Trade logo/name visible, shows a profile popover with theme/settings/sign-out
+actions, and keeps trading account scope plus Start/Run controls out of the admin surface. The
+admin-only tab rail remains the left navigation. Normalized admin labels to title case and renamed
+the server panel to **Server Stats** across nav, overview, page headings, metadata, and Settings.
+
+Verification on Node 24: `npm run lint` passed with 0 errors (582 existing warnings), `npx tsc --noEmit`
+passed, `npm test` passed (412 files / 4,794 tests), and `npm run build` passed. The branch is ready
+for `scripts/land.sh`; no production deploy or admin data/API behavior was changed.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

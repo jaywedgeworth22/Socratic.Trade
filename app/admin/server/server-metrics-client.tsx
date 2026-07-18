@@ -192,7 +192,7 @@ export function ServerMetricsClient() {
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold">Server & infrastructure</h1>
+            <h1 className="text-2xl font-bold">Server Stats</h1>
             {data?.isProd ? (
               <Chip tone={data.degraded ? "warn" : "accent"}>
                 {data.degraded ? "PRODUCTION - DEGRADED" : "PRODUCTION"}

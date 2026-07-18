@@ -3,9 +3,9 @@
 // Admin portal shell — same design system as the console (con-* tokens via
 // console.css + .console-root scope), same nav idiom (DesktopRail geometry),
 // but a distinct operator frame: no trading chrome, no snapshot fetch, and an
-// always-visible "← Console" return link as the FIRST control in the top bar.
+// always-visible console return link and profile control in the top bar.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -16,14 +16,18 @@ import {
   Server,
   FileText,
   ArrowLeft,
-  ShieldCheck,
+  Monitor,
+  Moon,
+  Sun,
+  UserRound,
   Menu,
   X
 } from "lucide-react";
 import "../console/console.css";
-import { useConsoleTheme } from "../console/lib/useConsoleTheme";
+import { useConsoleTheme, type ConsoleTheme } from "../console/lib/useConsoleTheme";
 import { useConsoleFont } from "../console/lib/useConsoleFont";
 import { useConsoleTextBoxFont } from "../console/lib/useConsoleTextBoxFont";
+import { HeaderLogo } from "../console/ui/header-logo";
 
 interface NavItem {
   href: string;
@@ -43,31 +47,31 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/connections",
-    label: "API connections",
+    label: "API Connections",
     desc: "Per-provider call health: last success/failure, call volume, and error patterns.",
     icon: Activity
   },
   {
     href: "/admin/llm-usage",
-    label: "LLM usage & cost",
+    label: "LLM Usage & Cost",
     desc: "Per-key, per-model, per-context LLM spend across all accounts.",
     icon: Brain
   },
   {
     href: "/admin/rag-coverage",
-    label: "RAG coverage",
+    label: "RAG Coverage",
     desc: "Vector index contents per ticker: chunk counts, freshness, and coverage gaps.",
     icon: Database
   },
   {
     href: "/admin/server",
-    label: "Server & infrastructure",
+    label: "Server Stats",
     desc: "Host node metrics and Coolify application resource statuses.",
     icon: Server
   },
   {
     href: "/admin/transcript",
-    label: "Chat transcript",
+    label: "Chat Transcript",
     desc: "Every chat turn, with the model that produced each assistant reply.",
     icon: FileText
   }
@@ -76,7 +80,7 @@ const NAV_ITEMS: NavItem[] = [
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { dataTheme } = useConsoleTheme();
+  const { theme, dataTheme, set: setTheme } = useConsoleTheme();
   const { dataConsoleFont } = useConsoleFont();
   const { dataTextBoxFont } = useConsoleTextBoxFont();
 
@@ -114,9 +118,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       data-textbox-font={dataTextBoxFont}
       suppressHydrationWarning /* same SSR-vs-localStorage pattern as the console shell */
     >
-      {/* ── Top bar ──────────────────────────────────────────────────────── */}
+      {/* ── Top bar: the normal console geometry, with admin-only actions ── */}
       <header className="sticky top-0 z-40 border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
-        <div className="mx-auto flex h-12 max-w-[1400px] items-center gap-2 px-4">
+        <div className="relative mx-auto flex h-12 w-full max-w-[1400px] items-center gap-2 px-4">
           <button
             type="button"
             onClick={() => setMobileMenuOpen((open) => !open)}
@@ -126,18 +130,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           >
             {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
-          {/* Return to the console — first control, always visible at every breakpoint. */}
-          <Link href="/console" className="con-btn con-btn-ghost con-btn-sm" title="Back to the trading console">
-            <ArrowLeft size={14} />
-            Console
+          <Link href="/console" className="flex shrink-0 items-center gap-2" title="Back to the trading console">
+            <HeaderLogo height={18} />
+            <span className="con-card-title">Socratic Trade</span>
+            <ArrowLeft size={14} className="text-[color:var(--con-muted)]" />
           </Link>
           <div className="flex min-w-0 items-center gap-2">
-            <ShieldCheck size={15} className="shrink-0 text-[color:var(--con-accent)]" />
             <span className="con-card-title">Admin</span>
-            <span className="truncate text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+            <span className="hidden truncate text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] sm:block">
               {activeItem?.label ?? "Overview"}
             </span>
           </div>
+          <div className="flex-1" />
+          <AdminProfileMenu theme={theme} setTheme={setTheme} />
         </div>
       </header>
 
@@ -152,7 +157,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             className="absolute inset-y-0 left-0 flex w-64 flex-col gap-1 border-r border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-3"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="con-card-title px-3 pb-1">Operator</div>
+            <div className="con-card-title px-3 pb-1">Admin</div>
             {navLinks(() => setMobileMenuOpen(false))}
           </div>
         </div>
@@ -164,11 +169,95 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           className="hidden w-52 shrink-0 flex-col gap-1 border-r border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-4 shadow-sm lg:flex mr-4"
           aria-label="Admin navigation"
         >
-          <div className="con-card-title px-3 pb-1">Operator</div>
+          <div className="con-card-title px-3 pb-1">Admin</div>
           {navLinks()}
         </aside>
         <main className="min-w-0 flex-1 px-4 pt-4 pb-8 lg:px-6">{children}</main>
       </div>
+    </div>
+  );
+}
+
+function AdminProfileMenu({ theme, setTheme }: { theme: ConsoleTheme; setTheme: (theme: ConsoleTheme) => void }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const close = () => {
+    setOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => (open ? close() : setOpen(true))}
+        title="Open profile and account settings"
+        aria-label="Profile and account settings"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
+      >
+        <UserRound size={15} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={close} aria-hidden />
+          <div className="con-menu-drop absolute right-0 top-[calc(100%+2px)] z-50 w-[min(92vw,340px)] rounded-card border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-4 shadow-xl">
+            <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
+              <div>
+                <div className="font-semibold">Profile</div>
+                <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                  Console preferences and account settings
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-control border border-[color:var(--con-line)] px-3 py-2">
+                <span className="text-[color:var(--con-muted)]">Theme</span>
+                <div className="flex items-center gap-1 rounded-control border border-[color:var(--con-line-strong)] bg-[color:var(--con-bg)] p-0.5">
+                  {(["light", "dark", "system"] as const).map((option) => {
+                    const active = theme === option;
+                    const Icon = option === "dark" ? Moon : option === "light" ? Sun : Monitor;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setTheme(option)}
+                        aria-label={`Set theme to ${option}`}
+                        className={`flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-[length:var(--con-fs-xs)] transition-colors ${
+                          active
+                            ? "border-[color:var(--con-line)] bg-[color:var(--con-surface)] font-medium text-[color:var(--con-fg)] shadow-sm"
+                            : "border-transparent text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)]"
+                        }`}
+                      >
+                        <Icon size={13} />
+                        {option[0].toUpperCase() + option.slice(1)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link href="/console/settings" className="con-btn con-btn-outline" onClick={close}>
+                  Profile & Settings
+                </Link>
+                <Link href="/logout" className="con-btn con-btn-outline" onClick={close}>
+                  Sign Out
+                </Link>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

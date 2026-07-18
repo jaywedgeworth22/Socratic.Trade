@@ -313,10 +313,10 @@ function AppearanceCard() {
 // ── Operator/admin links (links only — the pages themselves live at /admin) ──
 
 const ADMIN_LINKS: Array<{ href: string; label: string; desc: string }> = [
-  { href: "/admin/connections", label: "API connections health", desc: "Live status of every upstream data/broker connection the server uses." },
-  { href: "/admin/llm-usage", label: "LLM usage & cost", desc: "Token and dollar spend per model and per day, across all users." },
-  { href: "/admin/rag-coverage", label: "RAG coverage", desc: "What the retrieval index covers and where it is thin." },
-  { href: "/admin/transcript", label: "Chat transcript", desc: "Raw assistant transcript view for debugging conversations." }
+  { href: "/admin/connections", label: "API Connections", desc: "Live status of every upstream data/broker connection the server uses." },
+  { href: "/admin/llm-usage", label: "LLM Usage & Cost", desc: "Token and dollar spend per model and per day, across all users." },
+  { href: "/admin/rag-coverage", label: "RAG Coverage", desc: "What the retrieval index covers and where it is thin." },
+  { href: "/admin/transcript", label: "Chat Transcript", desc: "Raw assistant transcript view for debugging conversations." }
 ];
 
 function AdminLinksCard() {
