@@ -4,7 +4,7 @@
 > Route required PR checks and PR-visible helper workflows from GitHub-hosted `ubuntu-latest` to the
 > dedicated Coolify Hetzner CI lane (`[self-hosted, socratic-ci]`), recover the exited runner
 > containers through the Coolify service API, and make Gitleaks compatible with the `/_work`
-> self-hosted workspace. Bound the heavy Node jobs to a 1536 MiB heap inside the runner's 2 GiB
+> self-hosted workspace. Bound the heavy Node jobs to a 2560 MiB heap inside the runner's 3 GiB
 > container cap so TypeScript and the Playwright build can complete. This is an
 > infrastructure unblock for the six clean/auto-merge-armed PRs whose jobs currently fail before
 > runner assignment. Keep Coolify production configured on `main` with auto-deploy enabled. After

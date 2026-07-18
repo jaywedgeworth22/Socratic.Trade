@@ -17,8 +17,10 @@ reusable-workflow path incorrectly included `@main`. The reference now uses the 
 `workflow_dispatch` already runs from the default branch.
 
 The first full Coolify verify reached TypeScript but Node 24 aborted at its default ~1 GiB heap
-ceiling. The heavy verify and Playwright jobs now set `NODE_OPTIONS=--max-old-space-size=1536`,
-remaining below the runner container's 2 GiB hard cap; Vitest is already serialized by repo config.
+ceiling; a 1536 MiB retry let TypeScript proceed but the Next build exhausted that heap. The
+dedicated `socratic-ci` container now has a 3 GiB hard cap and the heavy verify and Playwright jobs
+set `NODE_OPTIONS=--max-old-space-size=2560`; its low CPU shares/high OOM priority and single-job
+serialization still protect production. Vitest is already serialized by repo config.
 
 Coolify's production application had drifted from branch `main` to
 `agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The

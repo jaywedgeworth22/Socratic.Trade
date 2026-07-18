@@ -28,9 +28,11 @@ resolved from the default branch for `workflow_dispatch`.
 
 The first full verify then reached `npx tsc --noEmit` and aborted at Node 24's default ~1 GiB heap
 limit (`FATAL ERROR: Ineffective mark-compacts near heap limit`) inside the 2 GiB runner container.
-The heavy verify and Playwright jobs now set `NODE_OPTIONS=--max-old-space-size=1536`. This raises
-the process heap enough for the repo while retaining the container hard cap and single-runner
-serialization; `vitest.config.ts` already fixes `maxWorkers: 1`.
+A 1536 MiB heap let TypeScript proceed, but Playwright's Next build then exhausted that ceiling. The
+dedicated `socratic-ci` container is now capped at 3072 MiB and heavy verify/Playwright jobs set
+`NODE_OPTIONS=--max-old-space-size=2560`. The runner retains `cpu_shares=256`, `cpus=2.5`, and
+`oom_score_adj=600`, plus single-runner serialization; `vitest.config.ts` already fixes
+`maxWorkers: 1`.
 
 During production follow-through, the Coolify application was found configured on
 `agent/ag-recovery-v48-migration` instead of `main`, with an empty deployment list. The application
