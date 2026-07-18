@@ -2062,6 +2062,23 @@ const MIGRATIONS: Migration[] = [
     version: 50,
     name: "sec_insider_transactions_transaction_code",
     up: (database) => {
+      // A legacy v47 database may have advanced past the migration without
+      // creating this table. Recover it before inspecting or altering columns.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT ''
+        );
+      `);
       // v47's CREATE TABLE now includes transaction_code for fresh databases; this backfills any
       // database that ran the original v47 before the column existed (PR #1669 review: insider
       // rows must preserve the SEC transaction code so P/S open-market trades are distinguishable

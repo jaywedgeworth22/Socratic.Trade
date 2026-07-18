@@ -204,21 +204,24 @@ export function remapOpenRouterTelemetry(provider: string, model: string | undef
 export function recordLlmUsage(entry: LlmUsageEntry): void {
   try {
     const canonical = remapOpenRouterTelemetry(entry.provider, entry.model);
-    entry.provider = canonical.provider;
-    entry.model = canonical.model;
+    // Keep the transport route in the ledger and telemetry. OpenRouter is
+    // the credential/key namespace that actually served the call; the
+    // canonical vendor model is only for pricing and model statistics.
+    const provider = entry.provider;
+    const model = entry.model;
     const usageId = crypto.randomUUID();
     const occurredAt = new Date().toISOString();
     const total =
       entry.promptTokens !== undefined || entry.completionTokens !== undefined ? (entry.promptTokens ?? 0) + (entry.completionTokens ?? 0) : undefined;
-    const cost = estimateLlmCostUsd(entry.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
+    const cost = estimateLlmCostUsd(canonical.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
     // Prompt-cache visibility (no schema change): when the provider served part of the prompt from
     // cache, write an audit row so cache hit rates + savings are observable per provider/model/context.
     if ((entry.cachedPromptTokens ?? 0) > 0 || (entry.cacheCreationTokens ?? 0) > 0) {
       audit(
         "llm_cache_usage",
         {
-          provider: entry.provider,
-          model: entry.model,
+          provider,
+          model,
           context: entry.context,
           promptTokens: entry.promptTokens,
           cachedPromptTokens: entry.cachedPromptTokens,
@@ -237,8 +240,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
       .run(
         usageId,
         entry.userId,
-        entry.provider,
-        entry.model ?? null,
+        provider,
+        model ?? null,
         entry.context ?? "unknown",
         entry.keySource,
         entry.keyRef ?? null,
@@ -253,8 +256,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
     pushLlmUsage({
       sourceEventId: usageId,
       occurredAt,
-      provider: entry.provider,
-      model: entry.model,
+      provider,
+      model,
       context: entry.context,
       userId: entry.userId,
       keySource: entry.keySource,

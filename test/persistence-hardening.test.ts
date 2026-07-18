@@ -49,6 +49,16 @@ describe("runMigrations — versioned schema migrations", () => {
     db.close();
   });
 
+  it("recovers a legacy v49 database missing SEC insider transactions before v50 alters it", async () => {
+    const { applyVersionedMigrations, getDb } = await import("../src/lib/db");
+    const db = getDb();
+    db.exec("DROP TABLE IF EXISTS sec_insider_transactions");
+    db.pragma("user_version = 49");
+
+    expect(() => applyVersionedMigrations(db)).not.toThrow();
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sec_insider_transactions'").get()).toBeTruthy();
+  });
+
   it("purges legacy product Test Accounts through the concrete v25 migration", async () => {
     const {
       applyVersionedMigrations,
