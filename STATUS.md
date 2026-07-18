@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-18 — OpenRouter post-merge Codex follow-ups (CLAUDE, branch `claude/openrouter-codex-followups`)
+
+#1703 (universal OpenRouter routing) MERGED to `main` with Codex threads still open (codex-autofix
+hit its 10-round/54-commit cap). This branch fixes the 3 live-in-production correctness findings:
+(1) P1 — Claude routed as `anthropic/*` through OpenRouter now uses OpenRouter's unified `reasoning`
+param instead of `reasoning_effort`+`temperature` (medium-effort Claude calls were rejected/no-thinking);
+(2) P2 — normalize an already-namespaced `xai/` Grok slug to `x-ai/` at resolve time; (3) P2 — keep
+billing/credits cooldowns on the OpenRouter credential lane (write + read) so an exhausted key doesn't
+retry other vendors on the same dead credential. Regression tests added; tsc clean, affected suites 39/39.
+Deferred to a focused follow-up: the 4th finding (rotation eligibility should gate on the OpenRouter
+credential). Rollout: `docs/rollouts/2026-07-18-openrouter-codex-followups.md`.
+
 ## 2026-07-17 — OpenRouter Model Stats Canonicalization: prefix-stripping in aggregateModelStats (Antigravity, branch `antigravity/openrouter-universal-routing`)
 
 Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts`. This strips provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs so that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`). This preserves historical benchmarks, avoids splitting stats by routing provider, and prevents live stats from displaying empty dashes (`—`) in the UI Model Stats drawer. Cleaned up Vitest test assertions in `test/model-stats.test.ts` to verify the canonicalization behavior. Full verification passed: lint 0 errors, tsc clean, tests pass.
