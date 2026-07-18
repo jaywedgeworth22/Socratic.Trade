@@ -129,7 +129,7 @@ describe("buildLlmRequestBody", () => {
       { model: "gpt-5.4-mini", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as TestBody;
     expect(body.model).toBe("gpt-5.4-mini");
-    expect(body.messages[0]).toEqual({ role: "system", content: "sys" });
+    expect(body.messages![0]).toEqual({ role: "system", content: "sys" });
     expect(body.response_format).toEqual({ type: "json_schema", json_schema: { name: "trade_proposals", strict: true, schema: SCHEMA.schema } });
     expect(body.max_completion_tokens).toBeGreaterThanOrEqual(1500);
     // No top-level Anthropic-only fields leak in.
@@ -150,7 +150,7 @@ describe("buildLlmRequestBody", () => {
       { provider: "openai", transport: "responses" },
       { model: "gpt-5.4-mini", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as TestBody;
-    expect(body.input[0]).toEqual({ role: "system", content: "sys" });
+    expect(body.input![0]).toEqual({ role: "system", content: "sys" });
     // strict:true — without it the Responses API treats the schema as advisory (Codex review, PR #301).
     expect(body.text).toEqual({ format: { type: "json_schema", name: "trade_proposals", strict: true, schema: SCHEMA.schema } });
   });
@@ -294,23 +294,23 @@ describe("buildLlmRequestBody", () => {
       { provider: "gemini", transport: "chat-completions" },
       { model: "gemini-3.5-flash", systemPrompt: "sys", userContent: "{}", schema: { name: "trade_proposals", schema: BULL_PROPOSAL_SCHEMA }, maxOutputTokens: 1500 }
     ) as TestBody;
-    const geminiSchema = gemini.response_format.json_schema.schema;
-    expect(gemini.response_format.type).toBe("json_schema");
-    expect(gemini.response_format.json_schema.strict).toBe(true);
+    const geminiSchema = gemini.response_format!.json_schema!.schema as TestSchema;
+    expect(gemini.response_format!.type).toBe("json_schema");
+    expect(gemini.response_format!.json_schema!.strict).toBe(true);
     // No leftover type-union arrays or anyOf-with-null anywhere in the translated schema.
     expect(JSON.stringify(geminiSchema)).not.toMatch(/"type":\["/);
     expect(JSON.stringify(geminiSchema)).not.toContain('"anyOf"');
-    const itemProps = geminiSchema.properties.proposals.items.properties;
+    const itemProps = geminiSchema.properties!.proposals.items!.properties!;
     for (const field of ["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"]) {
-      expect(itemProps[field]).toEqual({ type: "number", nullable: true });
+      expect(itemProps![field]).toEqual({ type: "number", nullable: true });
     }
     // autonomyOverride's anyOf-with-{type:"null"} branch collapses to the object branch + nullable:true.
-    expect(itemProps.autonomyOverride.type).toBe("object");
-    expect(itemProps.autonomyOverride.nullable).toBe(true);
-    expect(itemProps.autonomyOverride.properties.invalidation).toEqual({ type: "string", nullable: true });
-    expect(itemProps.autonomyOverride.properties.cashDeploymentPct).toEqual({ type: "number", nullable: true });
+    expect(itemProps!.autonomyOverride.type).toBe("object");
+    expect(itemProps!.autonomyOverride.nullable).toBe(true);
+    expect(itemProps!.autonomyOverride.properties!.invalidation).toEqual({ type: "string", nullable: true });
+    expect(itemProps!.autonomyOverride.properties!.cashDeploymentPct).toEqual({ type: "number", nullable: true });
     // A field with no nullable union (enum) survives untouched.
-    expect(itemProps.side).toEqual({ enum: ["buy", "sell"] });
+    expect(itemProps!.side).toEqual({ enum: ["buy", "sell"] });
 
     // OpenAI stays byte-identical strict json_schema — the exact same schema object, untransformed.
     const openai = buildLlmRequestBody(
@@ -350,10 +350,10 @@ describe("toGeminiJsonSchema", () => {
     expect((schema as TestSchema).nullable).toBe(true);
     expect((schema as TestSchema).anyOf).toBeUndefined();
     // Nested nullable fields inside the collapsed branch are translated too (recursion).
-    expect((schema as TestSchema).properties.invalidation).toEqual({ type: "string", nullable: true });
-    expect((schema as TestSchema).properties.cashDeploymentPct).toEqual({ type: "number", nullable: true });
+    expect((schema as TestSchema).properties!.invalidation).toEqual({ type: "string", nullable: true });
+    expect((schema as TestSchema).properties!.cashDeploymentPct).toEqual({ type: "number", nullable: true });
     // Non-nullable siblings pass through unchanged.
-    expect((schema as TestSchema).properties.requested).toEqual({ type: "boolean" });
+    expect((schema as TestSchema).properties!.requested).toEqual({ type: "boolean" });
     expect((schema as TestSchema).required).toEqual(["requested", "thesis", "preferenceConflicts", "invalidation", "cashDeploymentPct"]);
   });
 
@@ -436,7 +436,7 @@ describe("toGeminiJsonSchema", () => {
     const wire = JSON.stringify(schema);
     expect(wire).not.toContain('"maxItems"');
     expect(wire).not.toContain('"minItems"');
-    expect((schema as TestSchema).properties.proposals.description).toBe("Return at most 8 items.");
+    expect((schema as TestSchema).properties!.proposals.description).toBe("Return at most 8 items.");
     // The nullable rewrites still happen alongside the strip.
     expect(wire).not.toMatch(/"type":\["/);
     expect(wire).not.toContain('"anyOf"');
@@ -455,9 +455,9 @@ describe("toGeminiJsonSchema", () => {
         maxOutputTokens: 1500
       }
     ) as TestBody;
-    expect(body.response_format.type).toBe("json_schema");
-    expect(body.response_format.json_schema.strict).toBe(true);
-    expect(JSON.stringify(body.response_format.json_schema.schema)).not.toContain('"maxItems"');
+    expect(body.response_format!.type).toBe("json_schema");
+    expect(body.response_format!.json_schema!.strict).toBe(true);
+    expect(JSON.stringify(body.response_format!.json_schema!.schema)).not.toContain('"maxItems"');
     // Non-Gemini providers keep the bound untouched (the strip is a Gemini-dialect concern only).
     const openai = buildLlmRequestBody(
       { provider: "openai", transport: "chat-completions" },
@@ -469,7 +469,7 @@ describe("toGeminiJsonSchema", () => {
         maxOutputTokens: 1500
       }
     ) as TestBody;
-    expect(openai.response_format.json_schema.schema.properties.proposals.maxItems).toBe(8);
+    expect((openai.response_format!.json_schema!.schema as TestSchema).properties!.proposals.maxItems).toBe(8);
   });
 
   it("falls back to json_object and logs when the schema is unsupported for gemini", () => {

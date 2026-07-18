@@ -184,6 +184,8 @@ export function extractLlmUsage(responseJson: unknown): LlmTokenUsage {
  * identity for usage and benchmark persistence, so that historical stats aren't fragmented when
  * routing through OpenRouter.
  */
+export function remapOpenRouterTelemetry(provider: string, model: string): { provider: string; model: string };
+export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined };
 export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined } {
   if (provider === "openrouter" && model) {
     const slashIdx = model.indexOf("/");
