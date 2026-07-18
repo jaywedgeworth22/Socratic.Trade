@@ -286,3 +286,45 @@ a pending 100-share stop → recognized oversized vs the 40 uncovered → retrie
 ### Round-7 verification
 - `npx tsc --noEmit` clean (from the money-path worktree); `npm run lint` 0 errors; `npx vitest run`
   413 files / **4812 tests pass** (one timing flake re-ran green); `npm run build` exit 0.
+
+## Round 8 — reconcile + repair codex-autofix's 4425b1a (durable halted right-size retry)
+
+codex-autofix pushed commit `4425b1a` implementing the round-8 findings (durable `pending_replace`
+retry marker; mark `haltedRightsizeSymbols` only after a confirmed cancel; purge
+`option_alert_reservations` on account deletion). It did NOT compile and its central F1 marker was
+never read back. Repaired here:
+
+- **F2 tsc error (`src/lib/broker-protective-stops.ts` ~line 619, TS2304 `Cannot find name 'oversized'`)**:
+  4425b1a referenced `oversized` (block-scoped to the section-1 guard `if`) inside the later `try`,
+  where it is out of scope — the file did not typecheck, so the `verify` CI tsc step would have failed.
+  Fixed by hoisting intent into a `let markRightsizeOnCancel = false;` flag declared before the guard
+  block, set to `haltedProtectOnly` only on the halted+oversized+placeable fall-through, and used in the
+  try (`if (markRightsizeOnCancel) haltedRightsizeSymbols.add(rowSym);`). Preserves the intended
+  semantics: the durable retry marker is authorized ONLY after a live cancel actually runs for an
+  oversized stop while halted — never on the escape-hatch path or a non-halted cancel.
+- **F1 marker never read (`src/lib/db-api-keys.ts` `listBrokerProtectiveStops`)**: 4425b1a wrote a
+  durable `pending_replace` row on a halted right-size placement failure, but the reader still filtered
+  `status IN ('resting', 'pending_cancel')`, so section 1 never saw the marker, `haltedRightsizeSymbols`
+  stayed empty, and section 4 returned without retrying — the position could stay unprotected until the
+  account was unhalted. Fixed: added `'pending_replace'` to the status filter.
+- **Consumer safety for the newly-returned `pending_replace` rows**: a `pending_replace` row carries a
+  synthetic `pending-replace-*` brokerOrderId (no live broker order). The two consumer loops that run
+  BEFORE section 1's marker cleanup — `cancelBrokerProtectiveStop` (standalone) and the `kind === null`
+  disabled-teardown loop in `reconcileBrokerProtectiveStops` — would have called
+  `gateway.cancelEquityOrder` on the fake id (404 → re-persisted as a stuck `pending_cancel` that
+  retries forever). Guarded both to DROP a `pending_replace` marker outright instead of cancelling.
+  The later cancel-on-close / plan-teardown loops are already safe (section 1 hard-deletes every
+  `pending_replace` row before they run in the non-teardown path). The synthetic-stops
+  `brokerHeldOrderIdBySymbol` map is safe too: the fake id never equals a real order id, so the
+  quantity-blind exclusion stays a conservative no-op.
+
+Tests: restored the round-8 halted/F3 tests from stash on top of 4425b1a and added an F1 regression
+(`SYN-HALT-F1RETRY`): tick 1 right-sizes an oversized stop but the replacement placement THROWS →
+a `pending_replace` marker is persisted (qty 40); tick 2 (broker healthy) section 1 READS the marker,
+re-queues, and section 4 completes the right-sized replacement → resting, qty 40. Also kept the F3
+`option_alert_reservations` purge test (`OPTALERTDEL`).
+
+### Round-8 verification
+- `npx tsc --noEmit` clean (from the money-path worktree); `npm run lint` 0 errors;
+  `npx vitest run test/synthetic-stops.test.ts` 65 pass; account-delete + option-alert-dedupe pass;
+  full `npx vitest run` + `npm run build` pending (running).

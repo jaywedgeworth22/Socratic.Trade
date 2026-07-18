@@ -37,6 +37,21 @@ auto-merge (squash) armed.** BLOCKED on merge ONLY by an account-level GitHub Ac
 runner-provisioning outage (every open PR's `verify` fails at job startup, `runner_id:0`, 404 logs —
 needs the owner to raise the Actions spending limit / minutes; not code).
 
+**Round 8 (2026-07-18):** codex-autofix pushed `4425b1a` implementing the round-8 findings (durable
+`pending_replace` halted right-size retry marker; mark `haltedRightsizeSymbols` only after a confirmed
+cancel; purge `option_alert_reservations` on account deletion). It did NOT compile (TS2304 `oversized`
+out of scope in the section-1 `try`) and its F1 marker was never read back
+(`listBrokerProtectiveStops` still filtered `resting`/`pending_cancel` only → section 1 never re-queued
+→ section 4 never retried → position could stay unprotected until unhalted). Repaired: (a) hoisted the
+mark-intent into a `markRightsizeOnCancel` flag (fixes tsc; preserves "mark only after a live cancel");
+(b) added `pending_replace` to the `listBrokerProtectiveStops` status filter; (c) guarded the two
+consumer loops that run BEFORE section 1's marker cleanup (`cancelBrokerProtectiveStop` + the
+`kind===null` teardown) to DROP a `pending_replace` marker rather than cancel its synthetic
+`pending-replace-*` id (which would 404 → stuck `pending_cancel`). Added F1 regression
+`SYN-HALT-F1RETRY`. Gates: tsc clean, lint 0 errors, synthetic-stops 65 pass + account-delete +
+option-alert-dedupe pass; full suite + build re-running before push. Rollout note round-8 section
+appended.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

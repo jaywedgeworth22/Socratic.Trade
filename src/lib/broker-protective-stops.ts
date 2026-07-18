@@ -138,6 +138,14 @@ export async function cancelBrokerProtectiveStop(
   const sym = normalizeSymbol(symbol);
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
     if (normalizeSymbol(row.symbol) !== sym) continue;
+    // A 'pending_replace' row is a halted right-size retry MARKER, not a live broker order — its
+    // brokerOrderId is a synthetic `pending-replace-*` placeholder. There is nothing to cancel at
+    // the broker, so drop the marker outright (cancelling the fake id would 404 and then get
+    // re-persisted as a stuck pending_cancel that retries forever).
+    if (row.status === "pending_replace") {
+      deleteBrokerProtectiveStop(row.id, userId);
+      continue;
+    }
     try {
       await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
       deleteBrokerProtectiveStop(row.id, userId);
@@ -378,6 +386,13 @@ export async function reconcileBrokerProtectiveStops(args: {
   // not apply here. If no rows exist, this is a true no-op (the common disabled/default case).
   if (kind === null) {
     for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
+      // A 'pending_replace' row is a halted right-size retry MARKER (synthetic brokerOrderId), not a
+      // live order. The plan now wants NO stop, so drop the marker — there is nothing to cancel at
+      // the broker and no replacement is owed (cancelling the fake id would 404 -> stuck pending_cancel).
+      if (row.status === "pending_replace") {
+        deleteBrokerProtectiveStop(row.id, userId);
+        continue;
+      }
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);
@@ -577,6 +592,10 @@ export async function reconcileBrokerProtectiveStops(args: {
       // right-sizes the symbol the same tick (`haltedRightsizeSymbols`), so protection is kept, not
       // stranded. Section 3 only examines `status === "resting"` stops, so this pending_cancel path is
       // the ONLY place that can clear such an oversized order (Codex review, PR #1738).
+      // Set true only on the halted+oversized fall-through below (after the placeability guard),
+      // so the durable right-size retry marker is authorized ONLY when a live cancel is about to run
+      // for an oversized stop while halted — never on the escape-hatch path or a non-halted cancel.
+      let markRightsizeOnCancel = false;
       if ((liveReplaceBlocked || haltedProtectOnly) && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) {
         const rowPos = liveLongs.get(rowSym);
         const rowKind = kindForSymbol(rowSym);
@@ -609,6 +628,8 @@ export async function reconcileBrokerProtectiveStops(args: {
         // over-sell risk of an oversized stop is bounded, being unprotected is not. liveReplaceBlocked
         // (escape hatch) never touches the broker regardless (Codex review, PR #1738).
         if (liveReplaceBlocked || !oversized || !(rowPos && rowKind && replacementPlaceable(rowPos, rowSym, rowKind, row.brokerOrderId))) continue;
+        // Reached only when halted + oversized + a right-sized replacement is placeable this tick.
+        markRightsizeOnCancel = haltedProtectOnly;
       }
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
@@ -616,7 +637,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         // Mark only after the broker confirms the live cancel. A thrown cancel
         // or terminal no-fill recovery must not authorize new protection while
         // halted.
-        if (haltedProtectOnly && oversized) haltedRightsizeSymbols.add(rowSym);
+        if (markRightsizeOnCancel) haltedRightsizeSymbols.add(rowSym);
         out.cancelled++;
         out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {

@@ -43,6 +43,8 @@ const broker = vi.hoisted(() => ({
   // When set, placeEquityOrder records the placement (the broker ACCEPTED it) and then throws —
   // the "placement threw but the broker may have taken the order" money-path trap.
   placeError: null as Error | null,
+  // When set, cancelEquityOrder throws (the cancel call failed at the broker).
+  cancelError: null as Error | null,
   gatewayPolicies: [] as Array<{ connectedAccountId?: string; activeBroker?: string; accountNumber?: string }>
 }));
 
@@ -73,6 +75,7 @@ vi.mock("../src/lib/broker", () => ({
         return { orderId: `ord-${broker.placed.length}`, refId: order.refId, state: broker.placeState, raw: {} };
       },
       cancelEquityOrder: async (_accountNumber: string, orderId: string) => {
+        if (broker.cancelError) throw broker.cancelError;
         broker.cancelled.push(orderId);
         return { orderId, refId: "x", state: "cancel_requested", raw: {} };
       }
@@ -1271,6 +1274,54 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(rows[0].quantity).toBe(40);
     });
 
+    it("protectWhileHalted: a right-size whose replacement placement FAILS persists a pending_replace marker that the NEXT halted tick reads and retries (Codex PR #1738 F1)", async () => {
+      // The oversized right-size cancels the too-large stop, then the smaller replacement placement
+      // throws (broker hiccup). The position is now uncovered AND halted, so section 4 can't freely
+      // re-place. A durable `pending_replace` marker records the owed retry; on the next halted tick
+      // section 1 must READ that marker (listBrokerProtectiveStops has to return pending_replace rows),
+      // re-queue the symbol, and section 4 completes the replacement — otherwise the position stays
+      // unprotected until the account is unhalted.
+      connectTestAccount("SYN-HALT-F1RETRY", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }]; // shrank 100 -> 40
+      broker.quotes = { NVDA: { price: 100 } }; // no breach — isolate the reconcile path
+      broker.orders = [{ id: "prot-f1", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 }];
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-F1RETRY-NVDA", userId: "local", accountNumber: "SYN-HALT-F1RETRY",
+        symbol: "NVDA", brokerOrderId: "prot-f1", quantity: 100, stopPrice: 95, status: "resting",
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-F1RETRY"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-F1RETRY").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+
+      // Tick 1: right-size cancels the oversized stop, but the replacement placement THROWS.
+      broker.placeError = new Error("broker rejected placement");
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.cancelled).toContain("prot-f1"); // oversized stop cancelled
+      expect(broker.placed).toHaveLength(1); // replacement attempted (and threw)
+      const afterTick1 = listBrokerProtectiveStops("SYN-HALT-F1RETRY", "local");
+      expect(afterTick1).toHaveLength(1);
+      expect(afterTick1[0].status).toBe("pending_replace"); // durable retry marker persisted
+      expect(afterTick1[0].quantity).toBe(40); // sized to the current 40 shares
+
+      // Tick 2: broker healthy, the cancelled order is gone. Section 1 must SEE the pending_replace
+      // marker and re-queue; section 4 then completes the right-sized replacement.
+      broker.placeError = null;
+      broker.cancelled = [];
+      broker.placed = [];
+      broker.orders = []; // prot-f1 was cancelled last tick — no live order remains
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.placed).toHaveLength(1); // replacement finally placed
+      expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 40 });
+      const afterTick2 = listBrokerProtectiveStops("SYN-HALT-F1RETRY", "local");
+      expect(afterTick2).toHaveLength(1);
+      expect(afterTick2[0].status).toBe("resting"); // protection restored
+      expect(afterTick2[0].quantity).toBe(40);
+    });
+
     it("protectWhileHalted: does NOT cancel a correctly-sized stop with only a trail-% mismatch — protection-CHANGING replacements stay blocked while halted (Codex PR #1738)", async () => {
       // The counterpart to the oversized case: a full-size resting trailing stop whose only drift is a
       // trail-% change is a cancel-THEN-replace. While halted the replacement can't be placed, so
@@ -1544,6 +1595,36 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       const rows = listBrokerProtectiveStops("SYN-HALT-STACK", "local");
       expect(rows).toHaveLength(1);
       expect(rows[0].quantity).toBe(40);
+    });
+
+    it("protectWhileHalted: does NOT place a spurious replacement when the pending_cancel 'cancel' only recovers an already-dead order (Codex PR #1738)", async () => {
+      // The cancel call throws, but the order is found already terminal (canceled, no fill) — the catch
+      // path recovers by deleting the stale row. Because the right-size marker is only set AFTER a
+      // SUCCESSFUL cancel, no live order was reduced, so section 4 must NOT place a replacement (that
+      // would initiate NEW broker protection during the halt).
+      connectTestAccount("SYN-HALT-DEADRECOVER", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }]; // shrank -> oversized pending row
+      broker.quotes = { NVDA: { price: 100 } };
+      broker.orders = [{ id: "prot-dead", symbol: "NVDA", side: "sell", type: "stop_market", state: "canceled", quantity: 100 }]; // already terminal, no fill
+      broker.cancelError = new Error("order not found");
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-DEADRECOVER-NVDA", userId: "local", accountNumber: "SYN-HALT-DEADRECOVER",
+        symbol: "NVDA", brokerOrderId: "prot-dead", quantity: 100, stopPrice: 95, status: "pending_cancel",
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-DEADRECOVER"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-DEADRECOVER").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      try {
+        await runSyntheticStopMonitor("local", haltedPolicy, true);
+        expect(broker.placed).toHaveLength(0); // no spurious replacement — nothing live was reduced
+        expect(listBrokerProtectiveStops("SYN-HALT-DEADRECOVER", "local")).toHaveLength(0); // stale row recovered/deleted
+      } finally {
+        broker.cancelError = null;
+      }
     });
   });
 });
