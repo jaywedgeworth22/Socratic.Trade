@@ -241,6 +241,23 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] SEC ingest backfill wiring: manifest schema fix + seeder + gated
+  worker startup + admin route (branch `claude/sec-ingest-worker-wiring`, commit `f5e2a2ea`) —
+  LANDING 2026-07-18, lane 3 of a serial landing train.** Wires the dormant SEC backfill
+  end-to-end: universe-manifest generator now emits (and the committed 1,000-issuer artifact now
+  passes) the versioned `FrozenSecUniverseManifest` schema with a CI test on the committed file;
+  new idempotent dead-letter-disciplined manifest->jobs seeder (latest 10-K + 4 10-Qs per
+  issuer); `SecIngestWorker` starts from background-worker startup gated on
+  `SEC_INGEST_WORKER_ENABLED` (default OFF) with clean shutdown; `POST/GET /api/admin/sec-ingest`
+  seeds and reports receipts. No numbered migration (guarded ALTERs + CREATE-IF-NOT-EXISTS only —
+  verified no v53/v54 collision at merge). Adversarially verified SAFE — verifier advisories:
+  committed manifest carries sentinel exchange/market-cap placeholders (seeder ignores them);
+  seed the 1,000-issuer universe in windows (limit <= ~50/call) to stay inside the admin request
+  timeout and to ramp embed spend deliberately. **Landing-pass finding:** like lane 1, this
+  commit's file contents were already absorbed byte-identical into `origin/main@d9527cde`
+  (PR #1762) via a peer branch sharing the local object store — the merge is a functional no-op
+  for prod; this PR closes the loop (docs/effort-log) and records the absorption. Rollout:
+  `docs/rollouts/2026-07-18-sec-ingest-worker-wiring.md`.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**

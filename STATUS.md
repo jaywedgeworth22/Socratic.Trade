@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-18 — SEC ingest backfill wiring landing (CLAUDE, branch `claude/sec-ingest-worker-wiring`, lane 3 of a serial landing train)
+
+Wires the dormant SEC backfill: manifest schema fix (+CI test on the committed artifact),
+idempotent seeder, `SEC_INGEST_WORKER_ENABLED`-gated worker startup (default OFF), admin
+seed/receipts route. Adversarially verified SAFE (advisories: manifest sentinel fields are
+cosmetic; seed in windows of <= ~50 issuers per call). Landing-pass finding: contents were
+already absorbed byte-identical into main via PR #1762 (shared local object store) — this PR is
+a docs-closure no-op for prod. Rollout: `docs/rollouts/2026-07-18-sec-ingest-worker-wiring.md`.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
