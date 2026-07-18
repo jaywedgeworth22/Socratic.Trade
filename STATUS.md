@@ -12,6 +12,19 @@ account exhausted: 25.00/25.31)**; the Voyage key itself is valid. RAG ingestion
 backfill) is stalled until the owner tops up OpenRouter credits or adds a SiliconFlow key
 (same `BAAI/bge-m3` space). Details:
 `docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
+## 2026-07-18 — bge-m3 provider-aware RAG metering + health gate landing (CLAUDE, branch `claude/bge-m3-metering-gate`, lane 1 of a serial 4-lane landing train)
+
+Fixes two live prod bugs: RAG metering rows were being booked as `provider:"voyage"` (Voyage
+pricing) for OpenRouter/SiliconFlow bge-m3 calls, and `/api/health` hard-503'd on the dead
+Voyage lane while a non-Voyage provider was active. Adds an explicit `RAG_EMBED_PROVIDER` pin
+(default unset preserves existing key-presence routing). Adversarially verified SAFE.
+**Discovered mid-landing:** this commit's exact file contents were already present in
+`origin/main@d9527cde` (a different agent's PR, #1762, landed via a shared local object store
+before this PR opened) — production `/api/health` already showed this fix live
+(`release.sha==d9527cde`, `ok:true`) prior to this merge. This PR is therefore a functional
+no-op for prod; it lands the rollout note/effort-log history and picks up main's small
+additive deltas via merge. `LAND_ALLOW_STALE_OVERLAP=1` used after manual byte-diff review
+confirmed zero real conflict. Rollout: `docs/rollouts/2026-07-18-bge-m3-metering-gate.md`.
 ## 2026-07-18 — BGE-M3 reindexing branch: landing retry after test-gate abort (CLAUDE, branch `agent/ag-reindex-bge-m3`)
 
 First `land.sh` run aborted: 12 test failures across 6 files under fleet load 60-67 (84-min suite).

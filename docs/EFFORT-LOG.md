@@ -275,6 +275,26 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] bge-m3 provider-aware RAG metering + health-probe gate (branch
+  `claude/bge-m3-metering-gate`, commit `39ca9ad6`) — LANDING 2026-07-18, part of a serial
+  4-lane landing train.** Fixes two live prod bugs from the bge-m3 embedding flip: (1)
+  `meterEmbed`/`meterRerank`/`estimateVoyageDispatchCost` hardcoded `provider:"voyage"`, so
+  OpenRouter/SiliconFlow bge-m3 calls were metered at Voyage prices (~12x overstatement); (2)
+  `/api/health` hard-503'd on the dead Voyage lane even while a non-Voyage provider was
+  active. Adds explicit `RAG_EMBED_PROVIDER` pin (default unset = key-presence precedence
+  preserved byte-for-byte). Adversarially verified SAFE — verifier advisories: keep
+  `provider` optional/defaulted on the metering fns (a future call site that omits it
+  silently reverts to the old bug), and the ingest-budget filter now counts all providers
+  (correct, but can bind the daily ingest cap slightly earlier on the flip day). **Landing-pass
+  finding:** this exact commit's file contents were already absorbed into
+  `origin/main@d9527cde` (PR #1762) via a different agent's branch that shared this repo's
+  local object store (see the rollout note addendum) — production `/api/health` already
+  showed `release.sha==d9527cde, ok:true` before this PR merged, so landing this branch is a
+  functional no-op for prod; it closes the loop (rollout note + effort log) and picks up
+  main's small additive deltas (`vector-db.ts` `purgeManagedVectorsByIds`, `.env.example`
+  SEC-ingest/server-metrics docs) via merge. `LAND_ALLOW_STALE_OVERLAP=1` used after manual
+  byte-diff review of every overlapping file (zero real conflict). Rollout:
+  `docs/rollouts/2026-07-18-bge-m3-metering-gate.md`.
 - **[Socratic.Trade][AG] BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`) — COMPLETED 2026-07-18; deployed to production via auto-deploy-on-merge.** Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `all: true` or `symbols: ["*"]` which resolves all tickers in the database and cleans their local RAG chunk cache rows in batches of 50. Created `scripts/reindex-all.ts` command-line reindexing tool. Fixed pre-existing unit test failures in `securities-import.test.ts` and `token-budget-ceiling.test.ts` (race conditions resolved using fake timers). Installed missing `@opentelemetry` packages to resolve Next.js webpack production build loading issues. Fully verified with typechecks, 100% green tests, and production build.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
