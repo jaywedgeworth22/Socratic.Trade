@@ -55,3 +55,17 @@ npm test -- test/securities-import.test.ts
 ```
 
 Result: clean-install dry-run passed; focused securities import suite passed, 17/17 tests.
+
+## Round 3 review cleanup
+
+Resolved the OpenRouter proposal attribution card mismatch issue (Codex review comment):
+- Exported and integrated `normalizeModelId` in `app/console/components/approval-card.tsx` to strip routing and vendor prefixes before comparing `p.proposedByModel` against configured primary or fallbacks.
+- Added comprehensive unit tests in `test/approvals-triage-model.test.ts` to verify prefix stripping works under all standard scenarios.
+
+Additional verification:
+
+```bash
+npx vitest run test/approvals-triage-model.test.ts
+```
+
+Result: all 4 tests passed, including `normalizeModelId` tests.
