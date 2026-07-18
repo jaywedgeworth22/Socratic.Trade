@@ -23,7 +23,7 @@ jobs:
   gitleaks:
     # 2026-07-18: GitHub-hosted `ubuntu-latest` is not assigning runners for this repo
     # (runner_id=0/no step logs), so the required secret scan runs on the online Coolify CI runner.
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       pull-requests: read
@@ -49,6 +49,7 @@ jobs:
             esac
           fi
       - uses: actions/checkout@v4
+        timeout-minutes: 2
         with:
           fetch-depth: 1
           fetch-tags: false

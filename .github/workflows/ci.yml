@@ -68,7 +68,7 @@ jobs:
     # Cheap gate-shape job: (1) is this diff documentation-only? (2) which runner should
     # execute the suite? Only `pull_request` gets the docs fast path; only fresh
     # self-advertised availability on a same-repo pull_request/push event routes self.
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
     outputs:
@@ -76,6 +76,7 @@ jobs:
       route: ${{ steps.route.outputs.route }}
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 2
         if: github.event_name == 'pull_request'
         with:
           # Classify only needs the two endpoint trees. Full-history fetches can
@@ -249,6 +250,7 @@ jobs:
           esac
           echo "node: v$version"
       - uses: actions/checkout@v4
+        timeout-minutes: 2
       # NOTE: deliberately NO actions/setup-node here. The self-hosted Mac uses the Homebrew
       # Node 24 installation selected above; setup-node's npm cache post-action wedges on
       # this long-lived runner (see docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md).
@@ -285,7 +287,7 @@ jobs:
   verify-hosted:
     needs: [classify, verify-self]
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && (needs.classify.outputs.route != 'self' || needs.verify-self.result != 'success') }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       packages: read
@@ -315,6 +317,7 @@ jobs:
             esac
           fi
       - uses: actions/checkout@v4
+        timeout-minutes: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -361,7 +364,7 @@ jobs:
     # while classify/lane failures cannot silently skip a required check (skipped required
     # checks can fail open — Codex review, PR #370).
     if: ${{ !cancelled() }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
     steps:
