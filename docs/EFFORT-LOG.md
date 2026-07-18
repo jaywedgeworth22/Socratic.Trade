@@ -1898,6 +1898,26 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][MONET] Shared model-identity helper (branch `monet/model-identity-shared`,
+  2026-07-17) — LANDING.** Owner-directed follow-up (AG capped): one shared
+  `src/lib/model-identity.ts` replaces the duplicate `cleanModelId` (model-stats, AG/#1703) +
+  `canonicalModelId` (model-merge, #1716). Behavior-preserving — model-stats aliases AG's verified
+  logic, so the benchmark/perf rollup is byte-for-byte unchanged. tsc clean, 67 focused tests.
+  Full gate via land.sh. Closes the deferred consolidation follow-up. 2026-07-18 CODEX: merged
+  `origin/main`, verified the noreply author thread is stale, and fixed the remaining
+  case-insensitive aggregation review finding; focused `usage-model-merge` test green.
+- **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
+  `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-18, owner-directed) — IMPLEMENTATION
+  COMPLETE / gate running / PR pending.** (1) Inline rename of a connected account's cosmetic `label`
+  in Console → Broker connections (pencil→input→save); broker account number stays broker-sourced &
+  non-editable (keys trade history + `policy.accountNumber`). New `renameConnectedAccount` db fn +
+  label-only `PATCH /api/connected-accounts/[id]` (test proves a stray `accountNumber` in the body is
+  ignored) + client helper + UI + 5 tests. (2) Retired last unused old-dashboard-era code: deleted
+  `app/ui/price-chart.tsx` (dead), `app/ui/model-picker.tsx` (dead; types inlined into
+  `llm-model-catalog.ts`), `/old` redirect shim. Kept the in-use public renderer (primitives/theme/cn
+  → live marketing/legal pages + error boundary, "two renderers" decision) and `/strategy` SEO
+  redirect — in use, not legacy. Add-account flow unchanged (auto-fetch of Alpaca/Tradier number is a
+  flagged follow-up). Rollout: `docs/rollouts/2026-07-18-account-rename-and-legacy-retirement.md`.
 - **[Socratic.Trade][CLAUDE] OpenRouter post-merge Codex follow-ups (branch
   `claude/openrouter-codex-followups`, 2026-07-18) — IN PROGRESS.** #1703 (universal OpenRouter
   routing) merged with Codex threads open (autofix hit its 10-round cap). Fixes the 3 live-in-prod
