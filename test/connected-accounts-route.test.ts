@@ -177,3 +177,89 @@ describe("connected accounts route", () => {
     await expect(response.json()).resolves.toEqual({ accounts: [] });
   });
 });
+
+describe("connected account rename (cosmetic label only)", () => {
+  async function seedAccount(overrides: Record<string, unknown> = {}) {
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    upsertConnectedAccount({
+      id: "acct-1",
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA123456",
+      label: "Old Name",
+      apiKey: "PK_key",
+      apiSecret: "secret",
+      isActive: true,
+      ...overrides
+    });
+  }
+
+  it("renameConnectedAccount changes ONLY the label — account number and credentials untouched", async () => {
+    await seedAccount();
+    const { renameConnectedAccount, getActiveConnectedAccount } = await import("../src/lib/db");
+    expect(renameConnectedAccount("acct-1", "  Roth IRA — Alpaca  ")).toBe(true);
+    const account = getActiveConnectedAccount();
+    expect(account?.label).toBe("Roth IRA — Alpaca"); // trimmed
+    expect(account?.accountNumber).toBe("PA123456"); // broker identifier preserved
+    expect(account?.apiKey).toBe("PK_key"); // credentials preserved
+    expect(account?.apiSecret).toBe("secret");
+  });
+
+  it("renameConnectedAccount is user-scoped — another user's row is a no-op (false)", async () => {
+    await seedAccount();
+    const { renameConnectedAccount, getConnectedAccount } = await import("../src/lib/db");
+    expect(renameConnectedAccount("acct-1", "Hijacked", "someone-else")).toBe(false);
+    expect(getConnectedAccount("acct-1", "local")?.label).toBe("Old Name");
+  });
+
+  it("renameConnectedAccount rejects empty/whitespace and over-long names", async () => {
+    await seedAccount();
+    const { renameConnectedAccount } = await import("../src/lib/db");
+    expect(() => renameConnectedAccount("acct-1", "   ")).toThrow(/empty/i);
+    expect(() => renameConnectedAccount("acct-1", "x".repeat(121))).toThrow(/too long/i);
+  });
+
+  it("PATCH /api/connected-accounts/[id] renames via label and cannot touch the account number", async () => {
+    await seedAccount();
+    const { PATCH } = await import("../app/api/connected-accounts/[id]/route");
+    const { getActiveConnectedAccount } = await import("../src/lib/db");
+    const response = await PATCH(
+      new Request("http://localhost/api/connected-accounts/acct-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        // A malicious/confused client also sends accountNumber — it must be ignored.
+        body: JSON.stringify({ label: "Renamed", accountNumber: "HACKED" })
+      }),
+      { params: Promise.resolve({ id: "acct-1" }) }
+    );
+    expect(response.status).toBe(200);
+    const account = getActiveConnectedAccount();
+    expect(account?.label).toBe("Renamed");
+    expect(account?.accountNumber).toBe("PA123456"); // unchanged
+  });
+
+  it("PATCH rejects a non-string label (400) and an unknown id (404)", async () => {
+    await seedAccount();
+    const { PATCH } = await import("../app/api/connected-accounts/[id]/route");
+    const bad = await PATCH(
+      new Request("http://localhost/api/connected-accounts/acct-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: 42 })
+      }),
+      { params: Promise.resolve({ id: "acct-1" }) }
+    );
+    expect(bad.status).toBe(400);
+
+    const missing = await PATCH(
+      new Request("http://localhost/api/connected-accounts/nope", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: "Whatever" })
+      }),
+      { params: Promise.resolve({ id: "nope" }) }
+    );
+    expect(missing.status).toBe(404);
+  });
+});

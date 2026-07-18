@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
+
+Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
+connections (pencil → input → save) — cosmetic `label` only; the broker-sourced account number
+stays broker-fetched and untouched (it keys trade history + `policy.accountNumber`). New narrow
+`renameConnectedAccount` db fn + `PATCH /api/connected-accounts/[id]` (label-only, credential-safe;
+a test proves a stray `accountNumber` in the body is ignored) + inline UI + 5 tests. (2) Retired the
+last unused old-dashboard-era code: deleted `app/ui/price-chart.tsx` (dead), `app/ui/model-picker.tsx`
+(dead; types inlined into `llm-model-catalog.ts`), and the `/old` redirect shim. Kept the live public
+renderer (primitives/theme/cn power the in-use marketing/legal pages + error boundary, per the
+2026-07-16 "two renderers" decision) and the `/strategy` marketing SEO redirect — those are in use,
+not legacy. Add-account flow unchanged (still asks for Alpaca/Tradier account number; auto-fetch is a
+flagged follow-up). Rollout: `docs/rollouts/2026-07-18-account-rename-and-legacy-retirement.md`.
+
 ## 2026-07-17 — ATR Stop & short cover-buy fixes (ANTIGRAVITY, branch `agent/strategy-atr-and-short-fixes`, PR #1713, auto-merge enabled — waiting on CI)
 
 Responded to automated Codex review findings on PR #1705:
