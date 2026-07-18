@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-18 — CI event-SHA checkout pin (CODEX, branch `codex/ci-checkout-ref`)
+
+Follow-up to the shallow-checkout recovery. The self-hosted runner still traversed broad refs on
+the persistent workspace during `actions/checkout`; lightweight CI/security jobs now pin checkout
+to `github.sha` in addition to shallow, tag-free fetches. This keeps classify/security startup
+bounded to the event commit while classify explicitly fetches its base/head endpoint trees.
+Rollout: `docs/rollouts/2026-07-18-ci-event-sha-checkout.md`.
+
 ## 2026-07-18 — CI shallow-checkout recovery (CODEX, branch `codex/ci-checkout-fast`)
 
 Stacked follow-up to the Coolify CI routing PR. Required lightweight jobs were repeatedly

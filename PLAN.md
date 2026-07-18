@@ -1,5 +1,9 @@
 # Active Implementation Plan
 
+> **2026-07-18 - CI event-SHA checkout pin (CODEX, branch `codex/ci-checkout-ref`).**
+> Stack a follow-up on the routing branch to pin lightweight checkout actions to the event SHA,
+> validate YAML and diff integrity, then merge it into the routing branch and rerun its checks.
+
 > **2026-07-18 - CI shallow-checkout recovery (CODEX, branch `codex/ci-checkout-fast`).**
 > Stack a focused workflow fix on the Coolify CI routing PR: make classify jobs compare the
 > base/head endpoint trees after shallow fetches, disable tag/full-history fetches for security,

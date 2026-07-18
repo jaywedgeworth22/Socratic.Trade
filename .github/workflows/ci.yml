@@ -82,6 +82,7 @@ jobs:
           # monopolize the single self-hosted runner before this cheap gate runs.
           fetch-depth: 1
           fetch-tags: false
+          ref: ${{ github.sha }}
       - name: Determine whether the diff is documentation-only
         id: check
         shell: bash
