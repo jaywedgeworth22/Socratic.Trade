@@ -34,6 +34,11 @@ dedicated `socratic-ci` container is now capped at 3072 MiB and heavy verify/Pla
 `oom_score_adj=600`, plus single-runner serialization; `vitest.config.ts` already fixes
 `maxWorkers: 1`.
 
+With memory fixed, Playwright's Next build compiled in 2.8 minutes but the server did not reach
+`/api/health` before the existing 240-second `webServer.timeout`. The timeout is now 600 seconds
+when `CI` is set and remains 240 seconds locally. This accommodates the runner's intentionally low
+CPU share without weakening the smoke assertions or hiding a failed server start.
+
 During production follow-through, the Coolify application was found configured on
 `agent/ag-recovery-v48-migration` instead of `main`, with an empty deployment list. The application
 was patched back to `git_branch=main` with auto-deploy enabled. No manual deployment was triggered;
@@ -52,6 +57,7 @@ the running release stayed healthy at `70a2a39d` pending protected merges and we
 - `.github/workflows/_merge-shepherd-impl.yml`
 - `.github/workflows/merge-shepherd.yml`
 - `.github/actionlint.yaml`
+- `playwright.config.ts`
 - `STATUS.md`
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`

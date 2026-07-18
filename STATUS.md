@@ -22,6 +22,10 @@ dedicated `socratic-ci` container now has a 3 GiB hard cap and the heavy verify 
 set `NODE_OPTIONS=--max-old-space-size=2560`; its low CPU shares/high OOM priority and single-job
 serialization still protect production. Vitest is already serialized by repo config.
 
+The resized runner completed Playwright's Next compilation but exceeded the fixed 240-second
+webServer startup timeout. CI now allows 600 seconds for that intentionally low-CPU runner; local
+Playwright keeps the existing 240-second timeout.
+
 Coolify's production application had drifted from branch `main` to
 `agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The
 application was restored to `git_branch=main` and auto-deploy was re-enabled through the API without

@@ -9,6 +9,8 @@
 > infrastructure unblock for the six clean/auto-merge-armed PRs whose jobs currently fail before
 > runner assignment. Keep Coolify production configured on `main` with auto-deploy enabled. After
 > this lands, rerun checks on #1728/#1733/#1735/#1736/#1737/#1738 and let auto-merge/deploy proceed.
+> Playwright gets a CI-only 600-second server-start allowance because the runner's low CPU shares are
+> intentional; local timeout remains 240 seconds.
 
 > **2026-07-17 - OpenRouter Model Stats Canonicalization (Antigravity, branch `antigravity/openrouter-universal-routing`).** Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts` to strip provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs. This ensures that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`), preventing stats split and lookup mismatch in the Model Stats drawer. Verified via vitest and compiler checks. Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
 ## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)
