@@ -81,6 +81,12 @@ insufficient — `resolveActiveRagProvider` (`src/lib/vector-db.ts:154-164`) che
 OpenRouter key before SiliconFlow, so the exhausted OpenRouter key would still route embeds
 to OpenRouter. Also set `RAG_EMBED_PROVIDER=siliconflow` or remove/disable the OpenRouter
 key. Do NOT flip `RAG_EMBED_PROVIDER` back to `voyage` — the corpus is in bge-m3 space.
+**SiliconFlow is a RAG-EMBED-ONLY recovery:** it serves the `bge-m3` embed path, but
+production LLM calls still route through OpenRouter (`resolveLlmEndpoint`,
+`src/lib/llm-provider.ts`). So a SiliconFlow key restores RAG ingestion/embedding but leaves
+the LLM decision loop (strategy proposal/review, chat, post-mortems) still failing — the LLM
+paths require OpenRouter credits (or direct-provider keys). Topping up OpenRouter is the only
+single action that recovers BOTH.
 
 ## Mid-session collision note (ag-reindex landing)
 

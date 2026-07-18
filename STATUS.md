@@ -10,7 +10,11 @@ standing lane). Voyage RCA: `/api/health` is 200/ok — the red `voyage` depende
 prod's bge-m3-via-OpenRouter embed path failing with **402 Insufficient credits (OpenRouter
 account exhausted: 25.00/25.31)**; the Voyage key itself is valid. RAG ingestion (incl. SEC
 backfill) is stalled until the owner tops up OpenRouter credits or adds a SiliconFlow key
-(same `BAAI/bge-m3` space). Details:
+— but a SiliconFlow key is RAG-embed-only and also needs `RAG_EMBED_PROVIDER=siliconflow`
+(else `resolveActiveRagProvider` still routes to the exhausted OpenRouter key); the LLM
+decision loop stays down until OpenRouter credits return. **RESOLVED 2026-07-18 (MONET
+cap-handoff): OpenRouter topped up (75/25.31, ~$49.69 left), `voyage.ok=true`, prod LLM+RAG
+recovered — verified.** Details:
 `docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
 ## 2026-07-18 — bge-m3 provider-aware RAG metering + health gate landing (CLAUDE, branch `claude/bge-m3-metering-gate`, lane 1 of a serial 4-lane landing train)
 
