@@ -38,10 +38,17 @@ only the board-state + deploy-verification follow-up.
 
 ## Verification
 
-- `git log` confirms all commits on this branch carry the required noreply author
+```bash
+git log --format='%ae %ce' origin/main..HEAD
+curl -fsS https://socratictrade.com/api/health
+```
+
+- `git log --format='%ae %ce' origin/main..HEAD` confirmed every commit on the
+  branch used the required noreply author/committer
   (`12656028+jaywedgeworth22@users.noreply.github.com`).
-- Production health at deploy-verify time: `/api/health` ok (db, scheduler,
-  litestream all healthy); build post-dates `b0063a7`.
+- `curl -fsS https://socratictrade.com/api/health` was the production-health
+  command used at deploy-verify time (`db`, `scheduler`, and `litestream` all
+  healthy in the recorded release note); the build post-dates `b0063a7`.
 - Docs-only diff — the `verify` CI gate runs on the docs fast path.
 
 ## Follow-ups
