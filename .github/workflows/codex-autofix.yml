@@ -44,7 +44,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request_review' && github.event.review.user.login == 'chatgpt-codex-connector[bot]')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, socratic-ci]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

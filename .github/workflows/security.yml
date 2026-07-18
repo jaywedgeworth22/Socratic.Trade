@@ -21,14 +21,9 @@ concurrency:
 
 jobs:
   gitleaks:
-    # Moved off the self-hosted runner (2026-07-01): fast, generic, no
-    # production-box dependency, and was contributing to the runner queue
-    # bottleneck. Ephemeral hosted runners start clean, so the old
-    # "clean stale gitleaks installer temp files" step (needed on the
-    # persistent self-hosted box) no longer applies. Revert to
-    # `[self-hosted, trading-live]` if the account's Actions spending limit
-    # ever blocks this (Settings → Billing → Plans and usage → Spending limit).
-    runs-on: ubuntu-latest
+    # 2026-07-18: GitHub-hosted `ubuntu-latest` is not assigning runners for this repo
+    # (runner_id=0/no step logs), so the required secret scan runs on the online Coolify CI runner.
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
       pull-requests: read

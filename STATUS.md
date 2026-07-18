@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-18 — Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`)
+
+GitHub-hosted `ubuntu-latest` jobs are failing before runner assignment on current open PRs
+(`runner_id=0`, no steps/log blob). Repo runners show the Coolify Hetzner runners online:
+`socratic-ci` and `socratic-deploy`; the old `trading-live-mac` runner is offline. This branch routes
+all GitHub Actions jobs that still used `ubuntu-latest` onto `[self-hosted, socratic-ci]`
+so required checks (`verify`, `smoke`, `gitleaks`, `classify`, plus PR-visible helpers) can run on
+the available Coolify runner. YAML parse verification passed. Rollout:
+`docs/rollouts/2026-07-18-coolify-ci-runner-routing.md`.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
