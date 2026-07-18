@@ -1,5 +1,16 @@
 # Current Status
 
+## 2026-07-18 — Corpus-reembed hardening landing (CLAUDE, branch `claude/corpus-reembed-hardening`, PRIORITY lane of the serial landing train)
+
+Fixes 3 adversarially-proven MUST-FIXes in the corpus-reembed module already live on main/prod
+(PR #1764): the symbol-scoped-run purge-gate exploit (scoped runs now stateless;
+revision-namespaced watermarks; cumulative failed counts; mid-run model-drift abort;
+purged-receipt retirement), live-identity dedup, and insider Form-4 PIT lookahead
+(default-dropped + 2-business-day availability floor). Exploit test inverted into
+`test/corpus-reembed-adversarial.test.ts` to prove the fix. Fleet HOLD on symbol-scoped
+re-embeds/purge-legacy lifts once this deploy verifies. Rollout:
+`docs/rollouts/2026-07-18-corpus-reembed.md`.
+
 ## 2026-07-18 — BGE-M3 reindexing branch: landing retry after test-gate abort (CLAUDE, branch `agent/ag-reindex-bge-m3`)
 
 First `land.sh` run aborted: 12 test failures across 6 files under fleet load 60-67 (84-min suite).

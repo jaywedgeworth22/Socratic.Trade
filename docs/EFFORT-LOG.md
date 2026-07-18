@@ -275,6 +275,24 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] Corpus-reembed hardening — 3 adversarially-proven MUST-FIXes on the
+  absorbed code (branch `claude/corpus-reembed-hardening`, head `7390a057` = main `b4dd8a54` +
+  one commit) — LANDING 2026-07-18, PRIORITY lane of the serial landing train (fleet HOLD lifts
+  after its deploy verifies).** The corpus-reembed module that reached main/prod via PR #1764
+  carried three proven-exploitable defects, all fixed here: (1) **purge-gate exploit** — a
+  symbol-scoped run could stamp a completion receipt unlocking `purge-legacy` to delete the only
+  copy of un-re-embedded content; scoped runs are now stateless (no watermarks/counts/stamps),
+  watermarks+counts are namespaced by embedding-space revision (cross-revision discarded — a
+  future model flip can't instantly fake completion), failed counts are cumulative across resume
+  chains, runs abort on mid-run active-model drift, and purge retires purged commits' receipts
+  (no drift ghosts / reusedCommitted against deleted vectors); (2) **live-identity double-embed**
+  — dedup now keys on the live embedding identity; (3) **insider Form-4 PIT lookahead** —
+  insider-form4 dropped from the DEFAULT docType set (explicit opt-in) AND availability floored
+  at period_of_report + 2 business days. The original exploit script was inverted into
+  `test/corpus-reembed-adversarial.test.ts` proving purge REFUSES after a symbol-scoped run and
+  succeeds only after a full clean current-space run. 8/8 suites, 92/92 tests, tsc clean.
+  Operator guidance in the rollout note: full-corpus runs only, purge stays off until a full
+  clean run per docType. Rollout: `docs/rollouts/2026-07-18-corpus-reembed.md`.
 - **[Socratic.Trade][AG] BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`) — COMPLETED 2026-07-18; deployed to production via auto-deploy-on-merge.** Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `all: true` or `symbols: ["*"]` which resolves all tickers in the database and cleans their local RAG chunk cache rows in batches of 50. Created `scripts/reindex-all.ts` command-line reindexing tool. Fixed pre-existing unit test failures in `securities-import.test.ts` and `token-budget-ceiling.test.ts` (race conditions resolved using fake timers). Installed missing `@opentelemetry` packages to resolve Next.js webpack production build loading issues. Fully verified with typechecks, 100% green tests, and production build.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
