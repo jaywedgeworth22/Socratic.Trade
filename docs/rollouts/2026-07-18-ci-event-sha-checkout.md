@@ -24,9 +24,11 @@ explicit and bounds startup work before the required gates execute.
 
 ## Verification
 
-- `git diff --check` (pending before commit)
-- Ruby YAML parse for all changed workflow files (pending before commit)
+- `git diff --check`
+- `ruby -e 'require "yaml"; %w[.github/workflows/ci.yml .github/workflows/e2e.yml .github/workflows/security.yml].each { |f| YAML.load_file(f) }'`
+- `actionlint .github/workflows/ci.yml .github/workflows/e2e.yml .github/workflows/security.yml`
 
 ## Follow-ups
 
-Open as a stacked PR against the Coolify CI routing branch and rerun the required checks.
+PR #1742 merged into `codex/coolify-ci-runner-routing` as `b63fc78e`. Final gate, merge, and
+deployment verification follow parent PR #1739.

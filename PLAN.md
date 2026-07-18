@@ -1,13 +1,12 @@
 # Active Implementation Plan
 
-> **2026-07-18 - CI event-SHA checkout pin (CODEX, branch `codex/ci-checkout-ref`).**
-> Stack a follow-up on the routing branch to pin lightweight checkout actions to the event SHA,
-> validate YAML and diff integrity, then merge it into the routing branch and rerun its checks.
+> **2026-07-18 - CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739).**
+> Lightweight checkout actions now pin the event SHA. Diff/YAML/actionlint checks passed; final
+> gate and deployment follow the parent routing PR.
 
-> **2026-07-18 - CI shallow-checkout recovery (CODEX, branch `codex/ci-checkout-fast`).**
-> Stack a focused workflow fix on the Coolify CI routing PR: make classify jobs compare the
-> base/head endpoint trees after shallow fetches, disable tag/full-history fetches for security,
-> run YAML/diff checks, then open a stacked PR for the routing owner to merge.
+> **2026-07-18 - CI shallow-checkout recovery (CODEX, PR #1741 integrated into PR #1739).**
+> Classify jobs compare base/head endpoint trees after shallow fetches; security avoids tag/full-
+> history fetches. Diff/YAML/actionlint checks passed; final gate follows the parent routing PR.
 
 > **2026-07-18 - Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`).**
 > Route required PR checks and PR-visible helper workflows from GitHub-hosted `ubuntu-latest` to the

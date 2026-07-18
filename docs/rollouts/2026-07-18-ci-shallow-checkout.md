@@ -25,10 +25,11 @@ startup contention.
 
 ## Verification
 
-- `git diff --check` (pending before commit)
-- YAML reviewed in the changed workflow blocks (pending hosted check)
+- `git diff --check`
+- `ruby -e 'require "yaml"; %w[.github/workflows/ci.yml .github/workflows/e2e.yml .github/workflows/security.yml].each { |f| YAML.load_file(f) }'`
+- `actionlint .github/workflows/ci.yml .github/workflows/e2e.yml .github/workflows/security.yml`
 
 ## Follow-ups
 
-Open a stacked PR against `codex/coolify-ci-runner-routing`; once merged, rerun the routing PR's
-required checks and then resume the admin-console PR landing sequence.
+PR #1741 merged into `codex/coolify-ci-runner-routing` as `c5ae4984`. Final gate, merge, and
+deployment verification follow parent PR #1739.
