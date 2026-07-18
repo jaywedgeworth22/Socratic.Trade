@@ -2,15 +2,16 @@
 
 ## Summary
 
-Routed GitHub Actions jobs that still used GitHub-hosted `ubuntu-latest` onto the online Coolify
-Hetzner CI runner label set: `[self-hosted, socratic-ci]`.
+Routed GitHub Actions jobs that still used GitHub-hosted `ubuntu-latest` onto the Coolify Hetzner
+Linux runner pool: `[self-hosted, Linux, X64]`.
 
 ## Why
 
 Current open PR checks are failing before runner assignment: job metadata shows `runner_id=0`, no
-steps, and missing log blobs. The repo has two online Coolify runners (`socratic-ci`,
-`socratic-deploy`) and the old Mac runner (`trading-live-mac`) is offline. Required PR gates need to
-run on the available Coolify CI runner so auto-merge can proceed.
+steps, and missing log blobs. The repo has Coolify Linux runners and the old Mac runner
+(`trading-live-mac`) is offline. A narrower first pass targeted `[self-hosted, socratic-ci]`, but
+that runner flapped/disappeared during `actions/checkout`; required PR gates therefore target the
+broader Coolify Linux pool so GitHub can use any online Hetzner Linux runner.
 
 ## Files
 
@@ -43,6 +44,11 @@ coolify-hetzner-socratic    online  labels: self-hosted,Linux,X64,socratic-deplo
 coolify-hetzner-socratic-ci online  labels: self-hosted,Linux,X64,socratic-ci
 trading-live-mac            offline labels: self-hosted,macOS,trading-live,ARM64
 ```
+
+Follow-up observation after first PR run: `socratic-ci` re-registered repeatedly, then disappeared
+from the GitHub runner list while checkout jobs were still in progress. SSH from this Codex machine
+to the host is not configured (`Permission denied`), so the workflow-side mitigation is to use the
+stable Linux label pool rather than assuming that single label is always present.
 
 ## Follow-ups
 

@@ -29,7 +29,7 @@ jobs:
   classify:
     # Cheap gate-shape job: is this diff documentation-only? Only `pull_request` gets
     # the fast path — push/merge_group/schedule always run the full smoke suite.
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
     outputs:
@@ -92,7 +92,7 @@ jobs:
     if: ${{ !cancelled() }}
     # 2026-07-18: GitHub-hosted `ubuntu-latest` is not assigning runners for this repo
     # (runner_id=0/no step logs), so required smoke runs on the online Coolify Hetzner CI runner.
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       packages: read

@@ -65,7 +65,7 @@ jobs:
     # Gate the whole job so those no-op cases skip at ZERO runner minutes while the
     # two real signals (failure alerts, cron missed-check-in detection) are unchanged.
     if: ${{ github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.event == 'schedule' }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
         # Deliberately no `ref:` override: actions/checkout defaults workflow_run events to the

@@ -2,7 +2,7 @@
 
 > **2026-07-18 - Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`).**
 > Route required PR checks and PR-visible helper workflows from GitHub-hosted `ubuntu-latest` to the
-> online Coolify Hetzner runner label `[self-hosted, socratic-ci]`. This is an
+> online Coolify Hetzner Linux runner pool (`[self-hosted, Linux, X64]`). This is an
 > infrastructure unblock for the six clean/auto-merge-armed PRs whose jobs currently fail before
 > runner assignment. After this lands, rerun checks on #1728/#1733/#1735/#1736/#1737/#1738 and let
 > auto-merge/deploy proceed.
