@@ -215,7 +215,7 @@ describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
     // The model actually served was NOT downgraded — the persisted proposal carries the ORIGINAL model.
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplProposal = proposals.find((p) => p.proposal.symbol === "AAPL");
-    expect(aaplProposal?.proposal.proposedByModel).toBe("openai/gpt-4o");
+    expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4o");
 
     // The advisory line reached the Bull's userContent, next to drawdownAdvisory.
     expect(bullBody).toBeDefined();
@@ -276,7 +276,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     // The persisted proposal reflects the served (downgraded) model.
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplProposal = proposals.find((p) => p.proposal.symbol === "AAPL");
-    expect(aaplProposal?.proposal.proposedByModel).toBe("openai/gpt-4o-mini");
+    expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4o-mini");
 
     // The downgrade was NOT persisted — the saved policy still has the owner's original model.
     const savedPolicy = getPolicy("local");
@@ -402,6 +402,6 @@ describe("usage-budget Phase 2: evaluator failure fails open", () => {
     const fills = listFillEvents("TEST", undefined, 100, "local");
     expect(fills.find((f) => f.symbol === "AAPL")).toBeDefined();
     const proposals = listRecentProposals("TEST", 100, "local");
-    expect(proposals.find((p) => p.proposal.symbol === "AAPL")?.proposal.proposedByModel).toBe("openai/gpt-4o");
+    expect(proposals.find((p) => p.proposal.symbol === "AAPL")?.proposal.proposedByModel).toBe("gpt-4o");
   }, 90_000);
 });
