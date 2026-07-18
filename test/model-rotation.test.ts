@@ -20,7 +20,7 @@ beforeAll(() => {
 
 afterEach(() => vi.unstubAllEnvs());
 
-const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"];
 
 function noEnvKeys() {
   vi.stubEnv("LLM_OPERATOR_FALLBACK", "off");
@@ -142,8 +142,8 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     upsertUserApiKey(userId, "anthropic", "sk-test-anthropic", "test");
     const { pool, skipped } = eligibleRotationPool(userId);
     expect(pool.length).toBeGreaterThan(0);
-    for (const model of pool) expect(model).toMatch(/^(gpt-|claude-)/);
-    for (const model of skipped) expect(model).not.toMatch(/^(gpt-|claude-)/);
+    for (const model of pool) expect(model).toMatch(/^((gpt-|claude-)|openrouter\/)/);
+    for (const model of skipped) expect(model).not.toMatch(/^((gpt-|claude-)|openrouter\/)/);
     expect(skipped).toContain("gemini-3.5-flash");
     expect(skipped).toContain("deepseek-v4-pro");
   });
