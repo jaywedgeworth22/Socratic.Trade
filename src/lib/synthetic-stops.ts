@@ -387,23 +387,44 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     listBrokerProtectiveStops(accountNumber, userId).map((r) => [normalizeSymbol(r.symbol), r.brokerOrderId])
   );
 
-  // A "none", "fixed", or "atr" plan explicitly excludes the trailing lane for that symbol — purge
-  // any ACTIVE synthetic trailing registration regardless of the account-wide trailing config, so a
-  // plan set (or CHANGED, e.g. a scale-in add reconsidering protection from "trailing" to "fixed")
-  // AFTER a stop was already registered is actually honored, not just silently skipped by the
-  // registration guard below (which only ever prevents a FRESH registration, not an existing one —
-  // Codex review, PR #1371). A 'triggered' row is left alone — its protective exit may still be
-  // resting/executing at the broker. A RESET to "default" (an explicit `stopPlan: {style:
-  // "default"}` fill clears the row, so the symbol is simply absent from stopPlanBySymbol) is
-  // handled the same way when the account itself has no trailing % configured — otherwise the old
-  // row (armed under the plan's own fallback distance) would keep trailing at that stale distance
-  // even though the position was reset to an account default that wants no trailing lane at all
-  // (Codex review, PR #1371). When the account DOES have its own trailingStopPct > 0, leave the
-  // row alone — it already trails at a real, still-applicable account distance.
+  // A "none" plan is a real, owner-accepted no-stop choice — purge any ACTIVE row regardless of
+  // kind. A "fixed"/"atr" plan excludes the TRAILING lane specifically (its protection is the
+  // static-trigger 'fixed'-kind row registered below, item 7) — purge only a 'trailing'-kind row
+  // left over from a prior plan/config; a 'fixed'-kind row for the SAME plan stays (see the kind
+  // branch below). Purging happens (or CHANGED, e.g. a scale-in add reconsidering protection from
+  // "trailing" to "fixed") AFTER a stop was already registered is actually honored, not just
+  // silently skipped by the registration guard below (which only ever prevents a FRESH
+  // registration, not an existing one — Codex review, PR #1371). A 'triggered' row is left alone —
+  // its protective exit may still be resting/executing at the broker. A RESET to "default" (an
+  // explicit `stopPlan: {style: "default"}` fill clears the row, so the symbol is simply absent
+  // from stopPlanBySymbol) is handled the same way when the account itself has no trailing %
+  // configured — otherwise the old row (armed under the plan's own fallback distance) would keep
+  // trailing at that stale distance even though the position was reset to an account default that
+  // wants no trailing lane at all (Codex review, PR #1371). When the account DOES have its own
+  // trailingStopPct > 0, leave the row alone — it already trails at a real, still-applicable
+  // account distance.
   const accountTrailPctForReset = policy.riskRules?.trailingStopPct ?? 0;
   for (const stop of listSyntheticStops(accountNumber, userId)) {
     const plan = stopPlanBySymbol[normalizeSymbol(stop.symbol)];
-    const isPlanExcluded = plan === "none" || plan === "fixed" || plan === "atr";
+    if (plan === "none") {
+      deleteSyntheticStop(stop.id, userId);
+      audit("synthetic_stop_purged_by_plan", { symbol: stop.symbol, plan: "none", note: "per-position stop plan is 'none' — protection removed" }, userId, policy.connectedAccountId);
+      continue;
+    }
+    if ((stop.kind ?? "trailing") === "fixed") {
+      // A static-trigger row (item 7): purge only when the plan no longer wants THIS lane — a
+      // switch to "trailing"/"default" (handled by the trailing lane's own registration instead) or
+      // a reset with no live plan on record. Coverage that appears LATER (a broker-held stop placed
+      // after this row was registered) is deliberately left alone here — the fire loop's existing
+      // quantity-aware double-exit guard already no-ops a redundant fire, so continuously
+      // re-checking coverage at purge time would add complexity without a safety benefit.
+      if (plan !== "fixed" && plan !== "atr") {
+        deleteSyntheticStop(stop.id, userId);
+        audit("synthetic_stop_purged_by_plan", { symbol: stop.symbol, plan: plan ?? "default", kind: "fixed", note: `per-position stop plan is '${plan ?? "default"}' — fixed/ATR tick-level protection removed` }, userId, policy.connectedAccountId);
+      }
+      continue;
+    }
+    const isPlanExcluded = plan === "fixed" || plan === "atr";
     const isResetWithNoAccountTrail = (plan === undefined || plan === "default") && accountTrailPctForReset <= 0;
     if (isPlanExcluded || isResetWithNoAccountTrail) {
       deleteSyntheticStop(stop.id, userId);
@@ -417,7 +438,8 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // to STOP_PLAN_FALLBACK_STOP_PCT in that case). Longs trail from a high-watermark and exit with a
   // sell; shorts (only when short selling is enabled) trail from a low-watermark and exit with a
   // cover. A "none" plan never registers (purged above, and skipped below too); "fixed"/"atr"
-  // plans don't touch this lane (they pin generateProactiveRiskProposals' distance instead).
+  // plans don't touch THIS (ratcheting) lane — they get their own static-trigger registration pass
+  // right below instead (item 7), so both are covered rather than "fixed/atr don't get a row at all".
   if (policy.systemState !== "halted") {
     const trailPct = policy.riskRules?.trailingStopPct ?? 0;
     const anyTrailingPlan = positions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "trailing");
@@ -485,9 +507,77 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
           entryPrice: pos.averageCost,
           extremePrice: isShort ? Math.min(mark, pos.averageCost) : Math.max(mark, pos.averageCost),
           trailPercent: effectiveTrailPct,
-          status: "active"
+          status: "active",
+          kind: "trailing"
         });
       }
+    }
+  }
+
+  // Item 7 (Codex review): fixed/ATR stop plans previously had NO tick-level enforcement at all —
+  // their only protection was whatever entry bracket survived to the broker plus the hourly-cadence
+  // generateProactiveRiskProposals() check in strategy.ts. Between runs, a fractional,
+  // bracket-stripped, or unsupported-order-type position could cross its stop with nothing watching.
+  // Close that gap with a STATIC-TRIGGER row in the SAME table/machinery the trailing lane above
+  // already uses (claim/generation/refId dedup, coverage-aware fire, bad-tick handling) — the fire
+  // loop below reuses evaluateStop verbatim; the only difference is a 'fixed'-kind row's extreme is
+  // re-pinned to entryPrice every tick (never persists the ratchet), so the identical comparison
+  // yields a fixed distance from entry instead of a trail. Registered ONLY when the position isn't
+  // ALREADY covered by a live broker-held/other exit order — when native protection rests at the
+  // broker, that IS the continuous coverage and a duplicate tick-level row would be redundant (the
+  // proactive hourly check remains the run-cadence backstop either way, unchanged).
+  if (policy.systemState !== "halted") {
+    const existingFixed = new Set(
+      [...listSyntheticStops(accountNumber, userId), ...listSyntheticStops(accountNumber, userId, "triggered")]
+        .map((s) => s.symbol.toUpperCase())
+    );
+    const baseStopPct = policy.riskRules?.stopLossPct ?? 0;
+    const baseShortStopPct = policy.riskRules?.shortStopLossPct ?? 0;
+    for (const pos of positions) {
+      const sym = normalizeSymbol(pos.symbol);
+      if (Math.abs(pos.quantity) <= 0.000001 || existingFixed.has(sym)) continue;
+      const planStyle = stopPlanBySymbol[sym];
+      if (planStyle !== "fixed" && planStyle !== "atr") continue;
+      const isShort = pos.quantity < 0;
+      if (isShort && !policy.shortSellingEnabled) continue;
+      // Mirrors strategy.ts's generateProactiveRiskProposals `effectiveStopPct` fixed/atr precedence
+      // exactly: "fixed" uses the account's flat stop % (fallback when unset); "atr" would prefer a
+      // live ATR-derived % but this tick monitor has no historical bars to compute one, so it
+      // resolves to the SAME base-%/fallback the proactive layer itself falls back to whenever its
+      // own atrStopPctBySymbol precompute has no entry for the symbol — not a divergent
+      // approximation, the identical fallback branch. The hourly proactive run still applies the
+      // real ATR-derived distance when it has bars; this static row is the honest interim value for
+      // the interval between runs (docs/design/exit-strategy-intelligence.md Rec 2/3 phasing).
+      const base = isShort ? baseShortStopPct : baseStopPct;
+      const stopPct = base > 0 ? base : STOP_PLAN_FALLBACK_STOP_PCT;
+      // Same same-tick staleness guards the trailing registration pass above uses: a broker-held
+      // stop this SAME reconcile just placed/replaced can't appear in the pre-reconcile order list.
+      if (justPlacedBrokerStopSymbols.has(sym)) continue;
+      const coverage = liveExitOrderCoverage(registrationOrders, sym, isShort ? "short" : "long");
+      const justPlacedPartialQty = justPlacedPartialBrokerStopQty.get(sym) ?? 0;
+      const effectiveCoveredQty = coverage.coveredQty + justPlacedPartialQty;
+      if (coverage.unknownQty || effectiveCoveredQty >= Math.abs(pos.quantity) - QTY_EPSILON) continue;
+      upsertSyntheticStop({
+        id: `synstop-${userId}-${accountNumber}-${sym}`,
+        userId,
+        accountNumber,
+        symbol: sym,
+        side: isShort ? "short" : "long",
+        quantity: Math.abs(pos.quantity),
+        entryPrice: pos.averageCost,
+        extremePrice: pos.averageCost, // pinned — the fire loop below re-pins this every tick, never ratchets
+        trailPercent: stopPct,
+        status: "active",
+        kind: "fixed"
+      });
+      audit("synthetic_stop_registered_fixed", {
+        symbol: sym,
+        side: isShort ? "short" : "long",
+        plan: planStyle,
+        stopPct,
+        entryPrice: pos.averageCost,
+        note: "fixed/ATR plan given a static-trigger tick-level backstop — no live broker-held protection currently covers this position"
+      }, userId, policy.connectedAccountId);
     }
   }
 
@@ -538,12 +628,23 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     const prev = stop.lastPrice;
     const isOutOfBand = prev != null && prev > 0 && Math.abs(price - prev) / prev > BAD_TICK_PCT;
 
+    // Item 7: a 'fixed'-kind row (fixed/ATR static-trigger backstop) never lets its extreme ratchet.
+    // Re-pin extremePrice to entryPrice before every evaluateStop call below — since evaluateStop
+    // computes newExtreme = max/min(extremePrice, price), feeding entryPrice fresh each tick (never
+    // the persisted ratchet) makes the comparison self-referential (and thus never-triggered,
+    // matching a true fixed stop) whenever price has moved favorably past entry, and exactly
+    // entryPrice*(1±pct) whenever it hasn't — the SAME math as a trailing stop, just never allowed
+    // to remember a favorable excursion. The persistence step further down discards evaln.newExtreme
+    // for this kind and re-persists entryPrice so the pin can never leak into the next tick.
+    const stopKind = stop.kind ?? "trailing";
+    const evalBasis = stopKind === "fixed" ? { ...stop, extremePrice: stop.entryPrice } : stop;
+
     let evaln: StopEvaluation;
     let finalSuspectPrice = stop.suspectPrice;
     let finalSuspectCount = stop.suspectCount ?? 0;
 
     if (!isOutOfBand) {
-      evaln = evaluateStop(stop, price);
+      evaln = evaluateStop(evalBasis, price);
       finalSuspectPrice = undefined;
       finalSuspectCount = 0;
     } else {
@@ -555,30 +656,32 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       }
 
       if (!corroborated) {
-        evaln = evaluateStop(stop, price);
+        evaln = evaluateStop(evalBasis, price);
       } else {
         const agrees = finalSuspectPrice != null && Math.abs(price - finalSuspectPrice) / finalSuspectPrice <= 0.015;
         if (agrees) {
           finalSuspectCount++;
           if (finalSuspectCount >= 3) {
-            evaln = evaluateStop({ ...stop, lastPrice: undefined }, price);
+            evaln = evaluateStop({ ...evalBasis, lastPrice: undefined }, price);
             finalSuspectPrice = undefined;
             finalSuspectCount = 0;
           } else {
-            evaln = evaluateStop(stop, price);
+            evaln = evaluateStop(evalBasis, price);
           }
         } else {
           finalSuspectPrice = price;
           finalSuspectCount = 1;
-          evaln = evaluateStop(stop, price);
+          evaln = evaluateStop(evalBasis, price);
         }
       }
     }
 
-    // Persist the updated extreme + last good price (a bad tick keeps the previous lastPrice).
+    // Persist the updated extreme + last good price (a bad tick keeps the previous lastPrice). A
+    // 'fixed'-kind row NEVER persists the ratcheted newExtreme — always re-pinned to entryPrice, or
+    // a favorable excursion this tick would leak into the next tick's evalBasis and start trailing.
     upsertSyntheticStop({
       ...stop,
-      extremePrice: evaln.newExtreme,
+      extremePrice: stopKind === "fixed" ? stop.entryPrice : evaln.newExtreme,
       lastPrice: evaln.badTick ? stop.lastPrice : price,
       suspectPrice: finalSuspectPrice,
       suspectCount: finalSuspectCount
@@ -659,7 +762,9 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       limitPrice: routing.limitPrice,
       timeInForce: "gfd",
       marketHours: routing.marketHours,
-      rationale: "Synthetic trailing stop fired from the protective scheduler.",
+      rationale: stopKind === "fixed"
+        ? "Fixed/ATR stop fired from the protective scheduler's tick-level backstop (item 7)."
+        : "Synthetic trailing stop fired from the protective scheduler.",
       tradeThesisTag: "Synthetic Stop",
       entryMarketRegime: "Risk Exit"
     };
@@ -795,7 +900,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // Already 'triggered' via the claim; this just records the final lastPrice.
       upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price, suspectPrice: finalSuspectPrice, suspectCount: finalSuspectCount });
       result.exited++;
-      audit("synthetic_stop_triggered", { symbol: stop.symbol, side: stop.side, exitSide, price, triggerPrice: evaln.triggerPrice, quantity: qty, orderId: exec.orderId }, userId, policy.connectedAccountId);
+      audit("synthetic_stop_triggered", { symbol: stop.symbol, side: stop.side, exitSide, price, triggerPrice: evaln.triggerPrice, quantity: qty, orderId: exec.orderId, kind: stopKind }, userId, policy.connectedAccountId);
     } catch (err) {
       // Placement failed/uncertain — re-arm the stop so a later tick can retry rather than
       // leaving the position unprotected behind a stuck 'triggered' row. The revert deliberately

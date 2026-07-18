@@ -926,6 +926,14 @@ export interface SyntheticTrailingStop {
   updatedAt: string;
   suspectPrice?: number;
   suspectCount?: number;
+  /**
+   * 'trailing' (default, incl. legacy rows predating this column): extreme_price ratchets with the
+   * high/low-water mark — unchanged behavior. 'fixed': a static-trigger row backing a "fixed"/"atr"
+   * stop plan between strategy runs (item 7) — the monitor re-pins extreme_price to entry_price
+   * every tick instead of persisting the ratchet, so evaluateStop yields a fixed distance from entry
+   * rather than a trail. See synthetic-stops.ts's registration/purge/fire-loop handling.
+   */
+  kind?: "trailing" | "fixed";
 }
 
 function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
@@ -947,7 +955,8 @@ function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
     suspectPrice: r.suspect_price != null ? Number(r.suspect_price) : undefined,
-    suspectCount: r.suspect_count != null ? Number(r.suspect_count) : 0
+    suspectCount: r.suspect_count != null ? Number(r.suspect_count) : 0,
+    kind: r.kind === "fixed" ? "fixed" : "trailing"
   };
 }
 
@@ -972,8 +981,8 @@ export function upsertSyntheticStop(
       // routine upserts (auto-register, per-tick extreme/lastPrice persistence) must never reset the
       // exit-attempt ledger — generation moves only forward (advanceSyntheticStopGeneration) and the
       // possibly-live attempt id is recorded/cleared only by recordSyntheticStopAttempt / the advance.
-      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at, suspect_price, suspect_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at, suspect_price, suspect_count, kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
         side = excluded.side,
         quantity = excluded.quantity,
@@ -989,13 +998,14 @@ export function upsertSyntheticStop(
         last_price = excluded.last_price,
         updated_at = excluded.updated_at,
         suspect_price = excluded.suspect_price,
-        suspect_count = excluded.suspect_count`
+        suspect_count = excluded.suspect_count,
+        kind = excluded.kind`
     )
     .run(
       stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.side, stop.quantity,
       stop.entryPrice, stop.extremePrice, stop.trailPercent ?? null, stop.trailAmount ?? null,
       stop.status, stop.lastPrice ?? null, stop.fireGeneration ?? 0, stop.lastAttemptRefId ?? null,
-      stop.createdAt ?? now, now, stop.suspectPrice ?? null, stop.suspectCount ?? 0
+      stop.createdAt ?? now, now, stop.suspectPrice ?? null, stop.suspectCount ?? 0, stop.kind ?? "trailing"
     );
 }
 

@@ -1019,17 +1019,20 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(receipts).toHaveLength(1);
     });
 
-    it("a 'fixed'/'atr' plan does not touch this trailing lane at all (registration behaves as 'default')", async () => {
+    it("a 'fixed' plan does not touch the RATCHETING trailing lane (registration behaves as 'default' there), but gets its own static-trigger row (item 7)", async () => {
       broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
-      broker.quotes = { AAPL: { price: 90 } };
+      broker.quotes = { AAPL: { price: 90 } }; // fixed trigger @ base stopLossPct=8% below entry (100) → 92; 90 breaches
       connectTestAccount("SYN-PLAN-FIXED");
       recordStopPlan("SYN-PLAN-FIXED", "AAPL", "fixed", undefined, 100, "local");
       const noTrailPolicy = { ...policyFor("SYN-PLAN-FIXED"), riskRules: { ...policyFor("SYN-PLAN-FIXED").riskRules, trailingStopPct: 0 } };
       const result = await runSyntheticStopMonitor("local", noTrailPolicy, true);
-      // No account-wide trail and "fixed" doesn't grant one here — this lane stays inert for this symbol.
-      expect(result.exited).toBe(0);
-      expect(broker.placed).toHaveLength(0);
-      expect(listSyntheticStops("SYN-PLAN-FIXED", "local")).toHaveLength(0);
+      // No account-wide trail and "fixed" doesn't grant a RATCHETING row — but item 7 gives it a
+      // static-trigger row instead of leaving the position with zero tick-level protection, and the
+      // quote already breaches that fixed level this same tick.
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0].side).toBe("sell");
+      expect(broker.placed[0].quantity).toBe(10);
     });
 
     it("DROPS a stale 'none' plan whose recorded avgCost no longer matches the live lot (close+rebuy between strategy runs), so the new lot gets the account-wide trailing protection instead of being silently left unprotected (Codex review, PR #1371 — same live-basis filter as the strategy run)", async () => {
@@ -1047,6 +1050,108 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(broker.placed).toHaveLength(1);
       expect(broker.placed[0].side).toBe("sell");
       expect(broker.placed[0].quantity).toBe(10);
+    });
+  });
+
+  describe("item 7: fixed/ATR tick-cadence backstop (static-trigger rows)", () => {
+    it("an 'atr' plan gets the SAME static-trigger fallback as 'fixed' (no live ATR precompute available to this tick monitor)", async () => {
+      // A distinct symbol (not the file's usual AAPL) so the audit-receipt count below can't pick up
+      // registrations from other "fixed"/"atr" tests that also use AAPL against the shared test DB.
+      broker.positions = [{ symbol: "ATRX", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { ATRX: { price: 90 } }; // fixed trigger @ base stopLossPct=8% below entry (100) → 92; 90 breaches
+      connectTestAccount("SYN-PLAN-ATR");
+      recordStopPlan("SYN-PLAN-ATR", "ATRX", "atr", undefined, 100, "local");
+      const noTrailPolicy = { ...policyFor("SYN-PLAN-ATR"), riskRules: { ...policyFor("SYN-PLAN-ATR").riskRules, trailingStopPct: 0 } };
+      const result = await runSyntheticStopMonitor("local", noTrailPolicy, true);
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0].side).toBe("sell");
+      const receipts = auditPayloads("synthetic_stop_registered_fixed", "ATRX");
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0].plan).toBe("atr");
+    });
+
+    it("does NOT register a static-trigger row when a live broker-held stop already covers the position (no double-enforcement)", async () => {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 90 } }; // would breach the fixed 92 trigger IF registered
+      broker.orders = [{ id: "oco-stop-1", symbol: "AAPL", side: "sell", type: "stop", state: "new", quantity: 10 }];
+      connectTestAccount("SYN-PLAN-FIXED-COVERED");
+      recordStopPlan("SYN-PLAN-FIXED-COVERED", "AAPL", "fixed", undefined, 100, "local");
+      const noTrailPolicy = { ...policyFor("SYN-PLAN-FIXED-COVERED"), riskRules: { ...policyFor("SYN-PLAN-FIXED-COVERED").riskRules, trailingStopPct: 0 } };
+      const result = await runSyntheticStopMonitor("local", noTrailPolicy, true);
+      // The resting broker-held stop already covers the whole position — the synthetic monitor must
+      // not stack a second (redundant) protective row/exit on top of it.
+      expect(result.exited).toBe(0);
+      expect(broker.placed).toHaveLength(0);
+      expect(listSyntheticStops("SYN-PLAN-FIXED-COVERED", "local")).toHaveLength(0);
+    });
+
+    it("a static-trigger row does NOT ratchet: a favorable rise then a pullback that stays ABOVE the fixed level never fires — only a break below entryPrice*(1-stopPct) does", async () => {
+      // Deltas kept within the monitor's own >10% bad-tick filter (BAD_TICK_PCT) at every step —
+      // this test is about the fixed/no-ratchet distance, not the separate (already-tracked) bad-tick
+      // gap-deadlock behavior, so large single-tick jumps would conflate the two.
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      connectTestAccount("SYN-PLAN-FIXED-NORATCHET");
+      recordStopPlan("SYN-PLAN-FIXED-NORATCHET", "AAPL", "fixed", undefined, 100, "local");
+      const policy = { ...policyFor("SYN-PLAN-FIXED-NORATCHET"), riskRules: { ...policyFor("SYN-PLAN-FIXED-NORATCHET").riskRules, trailingStopPct: 0 } };
+
+      // Tick 1: registers at entry (100); price rallies 10% to 110 — a TRAILING stop would ratchet
+      // its extreme to 110 (8% trail trigger → 101.2); a FIXED stop must not.
+      broker.quotes = { AAPL: { price: 110 } };
+      let result = await runSyntheticStopMonitor("local", policy, true);
+      expect(result.exited).toBe(0);
+      let stops = listSyntheticStops("SYN-PLAN-FIXED-NORATCHET", "local");
+      expect(stops).toHaveLength(1);
+      expect(stops[0].kind).toBe("fixed");
+      expect(stops[0].extremePrice).toBe(100); // pinned at entry, NOT ratcheted to 110
+
+      // Tick 2: price gives back the rally to 100 (flat vs. entry) — ABOVE the fixed trigger (92) but
+      // BELOW where a ratcheted trailing extreme (110) would already have fired (101.2). Must NOT fire.
+      broker.quotes = { AAPL: { price: 100 } };
+      result = await runSyntheticStopMonitor("local", policy, true);
+      expect(result.exited).toBe(0);
+      stops = listSyntheticStops("SYN-PLAN-FIXED-NORATCHET", "local");
+      expect(stops[0].extremePrice).toBe(100); // still pinned
+
+      // Tick 3: price breaks the actual fixed level (92). Must fire now.
+      broker.quotes = { AAPL: { price: 90 } };
+      result = await runSyntheticStopMonitor("local", policy, true);
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0].side).toBe("sell");
+      expect(broker.placed[0].quantity).toBe(10);
+    });
+
+    it("a plan change AWAY from 'fixed'/'atr' purges the static-trigger row", async () => {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 100 } }; // flat — no breach, just exercising registration/purge
+      connectTestAccount("SYN-PLAN-FIXED-SWITCH");
+      recordStopPlan("SYN-PLAN-FIXED-SWITCH", "AAPL", "fixed", undefined, 100, "local");
+      const policy = { ...policyFor("SYN-PLAN-FIXED-SWITCH"), riskRules: { ...policyFor("SYN-PLAN-FIXED-SWITCH").riskRules, trailingStopPct: 0 } };
+      await runSyntheticStopMonitor("local", policy, true);
+      expect(listSyntheticStops("SYN-PLAN-FIXED-SWITCH", "local")).toHaveLength(1);
+
+      recordStopPlan("SYN-PLAN-FIXED-SWITCH", "AAPL", "none", "reconsidered — no stop wanted", 100, "local");
+      await runSyntheticStopMonitor("local", policy, true);
+      expect(listSyntheticStops("SYN-PLAN-FIXED-SWITCH", "local")).toHaveLength(0);
+      const receipts = auditPayloads("synthetic_stop_purged_by_plan", "AAPL");
+      expect(receipts.length).toBeGreaterThan(0);
+    });
+
+    it("does NOT register a NEW static-trigger row while halted (mirrors the trailing lane's halted registration skip)", async () => {
+      connectTestAccount("SYN-PLAN-FIXED-HALTED");
+      recordStopPlan("SYN-PLAN-FIXED-HALTED", "AAPL", "fixed", undefined, 100, "local");
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 90 } }; // would breach the fixed 92 trigger IF registered
+      const haltedPolicy = {
+        ...policyFor("SYN-PLAN-FIXED-HALTED"),
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-PLAN-FIXED-HALTED").riskRules, trailingStopPct: 0, protectWhileHalted: true }
+      };
+      const result = await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(result.evaluated).toBe(0);
+      expect(broker.placed).toHaveLength(0);
+      expect(listSyntheticStops("SYN-PLAN-FIXED-HALTED", "local")).toHaveLength(0);
     });
   });
 
