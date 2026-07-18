@@ -1,5 +1,35 @@
 # Active Implementation Plan
 
+> **2026-07-18 - PR #1760 review closeout (CODEX, branch `codex/pr1760-review-fixes`).** Resolve all
+> four actionable review threads in an isolated Codex lane: retain both shared-package HMAC and
+> documented bearer webhook authentication, keep proposal attribution in policy namespace and align
+> the missed usage-budget assertions, and delete unsafe review/worktree artifacts. PR #1760 raced to
+> auto-merge as `b2f22ccf`; all four threads are answered/resolved and corrective PR #1761 now carries
+> the fixes on top of that exact main. Local Node 24 gates are green (lint, TypeScript, 4,837 tests,
+> build). Finish self-hosted checks, merge #1761, and production-verify the exact auto-deployed SHA.
+
+> **2026-07-18 - Admin Server Stats reliability (CODEX, branch `codex/socratic-infra-panel-reliability`).** No roadmap scope change; infrastructure observability only. Final hardening adds bounded provider JSON and Coolify normalization, validated Hetzner metric envelopes with stale-series retention, strict client-envelope validation, and the coordinated `Server Stats` naming. Focused Node 24 tests are 19/19; the independent P2 warning-expansion finding is fixed and re-review is pending. Serialize the exact-tree full gate, then publish through PR/required checks/protected merge, Coolify auto-deploy, and exact production-SHA health verification. In-app Browser QA remains unavailable because the listed browser-control runtime was not callable; local SSR smoke returned HTTP 200 with `Server Stats` content.
+> **2026-07-18 - Admin smoke memory headroom (CODEX).** Lower the CI-only Playwright Node heap
+> ceiling from 2560 MiB to 2048 MiB after the admin PR's webServer exited 137 under the 3 GiB
+> runner cap; rerun required checks and verify merge/deploy.
+
+## 2026-07-18 — Admin console shell parity (CODEX)
+
+- [x] Match the admin frame to the normal console chrome geometry and tokens.
+- [x] Keep logo/name and a functional profile popover visible on admin pages.
+- [x] Keep account scope, Start/Resume/STOP, and Run once controls absent from admin.
+- [x] Preserve admin tabs as the left rail and normalize all admin labels to title case.
+- [x] Rename the server panel to Server Stats without changing `/admin/server` or API routes.
+- [x] Keep the mobile admin header within narrow viewports by hiding the full brand at small breakpoints.
+- [x] Prevent profile-menu logout prefetch from triggering the side-effectful `/logout` GET.
+- [x] Run Node 24 lint, TypeScript, full Vitest, and production build gates.
+- [ ] Land through `scripts/land.sh`, then verify the auto-deployed production SHA and health.
+> **2026-07-18 - PR #1735 proposed-model attribution P2 (CODEX, local-only branch `codex/pr1735-proposal-attribution`).**
+> Preserve the exact policy/OpenRouter identifier for `TradeProposal.proposedByModel`, separately
+> from canonicalized usage telemetry, so approval-card primary and fallback provenance remains
+> truthful. Focused primary/fallback strategy regressions, TypeScript, and scoped lint pass; keep
+> the resulting commit local and unpushed pending owner direction.
+
 > **2026-07-18 - PR #1735 review cleanup round 2 (CODEX on `agent/ag-recovery-v48-migration`).**
 > Address the fresh Codex comments by preserving company-name display casing in securities imports
 > and restoring the missing lockfile peer dependency entries. Focused import tests and clean-install

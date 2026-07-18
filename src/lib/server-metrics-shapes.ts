@@ -4,6 +4,7 @@ interface NormalizedHetznerServer {
   name?: string;
   status?: string;
   serverType?: string;
+  cpus?: number;
   location?: string;
   ip?: string;
 }
@@ -14,6 +15,9 @@ export interface NormalizedCoolifyResource {
   type: string;
   status: string;
 }
+
+const MAX_NORMALIZED_COOLIFY_RESOURCES = 500;
+const MAX_COOLIFY_RESOURCE_WARNINGS = 20;
 
 export function asRecord(value: unknown): UnknownRecord | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -51,9 +55,14 @@ export function normalizeHetznerServerResponse(payload: unknown): {
   }
 
   const serverTypeRaw = server.server_type;
-  const serverType = readText(serverTypeRaw) ?? readText(asRecord(serverTypeRaw)?.name);
+  const serverTypeRecord = asRecord(serverTypeRaw);
+  const serverType = readText(serverTypeRaw) ?? readText(serverTypeRecord?.name);
   if (serverTypeRaw !== undefined && !serverType) {
     warnings.push("Hetzner server_type.name was not a non-empty string.");
+  }
+  const cpus = readPositiveNumber(serverTypeRecord?.cores);
+  if (serverTypeRecord?.cores !== undefined && !cpus) {
+    warnings.push("Hetzner server_type.cores was not a positive number.");
   }
 
   const publicNet = asRecord(server.public_net);
@@ -72,6 +81,7 @@ export function normalizeHetznerServerResponse(payload: unknown): {
       name: readText(server.name),
       status: readText(server.status),
       serverType,
+      cpus,
       location,
       ip,
     },
@@ -92,7 +102,10 @@ export function normalizeCoolifyResources(payload: unknown): {
 
   const resources: NormalizedCoolifyResource[] = [];
   const warnings: string[] = [];
-  payload.forEach((value, index) => {
+  let malformedCount = 0;
+  const processedCount = Math.min(payload.length, MAX_NORMALIZED_COOLIFY_RESOURCES);
+  for (let index = 0; index < processedCount; index += 1) {
+    const value = payload[index];
     const resource = asRecord(value);
     const normalized = resource
       ? {
@@ -103,11 +116,24 @@ export function normalizeCoolifyResources(payload: unknown): {
         }
       : undefined;
     if (!normalized?.uuid || !normalized.name || !normalized.type || !normalized.status) {
-      warnings.push(`Coolify resource at index ${index} had malformed display fields and was omitted.`);
-      return;
+      malformedCount += 1;
+      if (warnings.length < MAX_COOLIFY_RESOURCE_WARNINGS) {
+        warnings.push(`Coolify resource at index ${index} had malformed display fields and was omitted.`);
+      }
+      continue;
     }
     resources.push(normalized as NormalizedCoolifyResource);
-  });
+  }
+
+  const summarizedMalformedCount = malformedCount - Math.min(malformedCount, MAX_COOLIFY_RESOURCE_WARNINGS);
+  if (summarizedMalformedCount > 0) {
+    warnings.push(`${summarizedMalformedCount} additional malformed Coolify resources were omitted.`);
+  }
+  if (payload.length > processedCount) {
+    warnings.push(
+      `Coolify returned ${payload.length} resources; only the first ${MAX_NORMALIZED_COOLIFY_RESOURCES} were processed.`,
+    );
+  }
 
   return { resources, warnings };
 }
