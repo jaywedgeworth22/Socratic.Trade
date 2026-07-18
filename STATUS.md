@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-18 — Ops/display truth batch landing (CLAUDE, branch `claude/ops-display-truth-batch`, lane 4 of a serial landing train)
+
+Codex review items 33/38/43/45/46: vendor-true model branding for OpenRouter-routed ids (+"via
+OpenRouter" transport tooltip), executed qty/notional on finished orders, matching
+dynamic-universe label keys, ADR placeholder strip, single-period Red-Team summaries,
+per-system RAG-coverage tile labels. Item 38 fixed outside the repo
+(`codex-coordination-audit.py` registry-first board resolution); item 33 skipped as duplicate
+of CODEX's in-flight infra-panel lane. Adversarially verified SAFE (advisories: redteam-routing
+30s test caps flake under load — pre-existing on main; console-models test expectations track
+the uncatalogued-id fallback). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
+`docs/rollouts/2026-07-18-ops-display-truth-batch.md`.
+
 ## 2026-07-18 — #1727 deployed + EFFORT-LOG board corrected (MONET, branch `monet/effort-log-1727-deploy-flip`)
 
 PR #1727 (editable connected-account name + legacy-app retirement) is merged (`b0063a7`) and

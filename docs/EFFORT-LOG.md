@@ -261,6 +261,24 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] Ops/display truth batch — Codex review items 33/38/43/45/46
+  (branch `claude/ops-display-truth-batch`, head `fd662758`) — LANDING 2026-07-18, lane 4 of a
+  serial landing train.** Truth-in-display fixes: OpenRouter-routed model ids now brand their
+  real vendor via the shared `canonicalModelId` (`src/lib/model-identity.ts`) with "via
+  OpenRouter" as a separate transport signal (item 45); orders page shows executed
+  qty/notional on finished orders, nothing on zero-fill (43, display slice); dynamic-universe
+  source labels keyed to the camelCase ids actually emitted + NYSE/FT Wilshire labels, unfilled
+  ADR `(Representing - )` placeholders stripped at the screener boundary (46a/b); Red-Team
+  unavailable summaries no longer double the period via `appendSentence` (46c); RAG-coverage
+  tiles name their source system (local ledger vs Pinecone vs app-recorded spend) (46d);
+  item 38's wrong-live-board-filename bug was traced OUTSIDE the repo to
+  `/Users/jay/apps/codex-coordination-audit.py` and fixed there; item 33 (server-metrics 502)
+  deliberately SKIPPED as duplicate of CODEX's in-flight `codex/socratic-infra-panel-reliability`
+  rewrite. Adversarially verified SAFE — verifier advisories: `redteam-failure-routing` 30s
+  per-test caps flake under shared-box load (verified pre-existing on clean main; candidate for
+  the approval-lock-style timeout raise), and `test/console-models.test.ts` expectations must be
+  updated if the curated catalog ever gains the currently-uncatalogued routed ids it asserts
+  bare-id fallback for. Rollout: `docs/rollouts/2026-07-18-ops-display-truth-batch.md`.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**
