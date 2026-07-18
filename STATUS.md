@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-18 — BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`)
+
+Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `{ all: true }` or `symbols: ["*"]` in the payload to resolve all tickers in the database and clear their RAG chunk caches. Created the `scripts/reindex-all.ts` CLI tool to enable command-line cache clearing and immediate ingestion under `baai/bge-m3` embedding model. Added unit testing suite `test/reindex-all.test.ts` to verify cache deletions. Fixed pre-existing failures in `test/securities-import.test.ts` (companyName casing) and `test/token-budget-ceiling.test.ts` (race conditions on debounced timers). Installed missing `@opentelemetry` helper packages (`@opentelemetry/core`, `@opentelemetry/sdk-trace-base`, `@opentelemetry/resources`) to resolve the Next.js production build compiler issues. Typecheck, tests, and production build all verify green. Next: Land changes using landing script.
+
 ## 2026-07-18 — PR #1735 verify cleanup (CODEX, branch `agent/ag-recovery-v48-migration`)
 
 Merged `origin/main` and fixed the hosted `verify` failures on PR #1735 by aligning the four missed

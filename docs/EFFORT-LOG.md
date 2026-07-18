@@ -244,6 +244,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][AG] BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`) — COMPLETED 2026-07-18; deployed to production via auto-deploy-on-merge.** Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `all: true` or `symbols: ["*"]` which resolves all tickers in the database and cleans their local RAG chunk cache rows in batches of 50. Created `scripts/reindex-all.ts` command-line reindexing tool. Fixed pre-existing unit test failures in `securities-import.test.ts` and `token-budget-ceiling.test.ts` (race conditions resolved using fake timers). Installed missing `@opentelemetry` packages to resolve Next.js webpack production build loading issues. Fully verified with typechecks, 100% green tests, and production build.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**

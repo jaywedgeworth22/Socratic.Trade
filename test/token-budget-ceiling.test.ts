@@ -34,10 +34,12 @@ beforeAll(() => {
 const ENV_KEYS = ["TRIGGER_ENGINE", "TRIGGER_MODE", "TRIGGER_LLM_DAILY_TOKEN_BUDGET", "TRIGGER_LLM_DAILY_COST_BUDGET_USD", "TRIGGER_GLOBAL_COOLDOWN_SEC", "TRIGGER_MAX_BATCH"];
 
 beforeEach(() => {
+  vi.useFakeTimers();
   runStrategyOnceMock.mockClear();
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const k of ENV_KEYS) delete process.env[k];
 });
 
@@ -124,6 +126,7 @@ describe("trigger entry (fire) wired to the budget ceiling (G8a — end to end)"
     const { submitMaterialEvent } = await import("../src/lib/triggers");
 
     submitMaterialEvent(userId, { type: "test", sourceId: "s1" });
+    await vi.runAllTimersAsync();
     await vi.waitFor(() => expect(runStrategyOnceMock).toHaveBeenCalledWith(userId));
   });
 
@@ -140,6 +143,7 @@ describe("trigger entry (fire) wired to the budget ceiling (G8a — end to end)"
     const { getDb } = await import("../src/lib/db");
 
     submitMaterialEvent(userId, { type: "test", sourceId: "s2" });
+    await vi.runAllTimersAsync();
     // The outer gate no longer suppresses — the run is entered so its non-LLM risk breakers +
     // reconciliation still run; runStrategyOnce (mocked here) internally skips only the LLM work.
     await vi.waitFor(() => expect(runStrategyOnceMock).toHaveBeenCalledWith(userId));
