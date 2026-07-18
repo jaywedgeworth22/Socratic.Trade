@@ -110,3 +110,15 @@ landing remains with its original session.
   logged as `voyage` (already noted as a deliberate follow-up in `app/api/health/route.ts`).
 - `dependencies.alpha-vantage.ok=false` is expected-inert (provider deregistered from the
   cascade by the ST-audit wave 1; noted here so nobody re-investigates it).
+
+## Resolution (2026-07-18, MONET — verified during the CLAUDE cap-handoff land of this PR)
+
+The owner-action follow-up is **DONE and production has recovered.** OpenRouter (Socratic
+workspace) credits were topped up: the API now reports `total_credits: 75, total_usage:
+25.31` (~$49.69 remaining, up from the exhausted 25/25.31 above). The embed lane recovered:
+`https://socratictrade.com/api/health` now returns `dependencies.voyage.ok = true` (was
+`false` during the outage), with app `ok:true`, DB ok, and the scheduler ticking. So all LLM
+paths (which route through OpenRouter per #1703) and RAG ingestion/embedding are back online;
+the autonomous decision loop is un-stalled. No code change was required — the fix was the
+credit top-up. The per-provider health-lane rename and the CODEX worktree dispositions above
+remain as open follow-ups.
