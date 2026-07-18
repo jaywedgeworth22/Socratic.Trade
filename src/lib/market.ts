@@ -908,7 +908,7 @@ function toMarketQuote(row: RawNasdaqRow, positions: EquityPosition[], provider:
   const netChange = number(row.netchange);
   const sector = text(row.sector);
   const industry = text(row.industry);
-  const companyName = text(row.name);
+  const companyName = sanitizeCompanyName(text(row.name));
   const position = positions.find((p) => normalizeSymbol(p.symbol) === symbol);
 
   return [
@@ -1415,4 +1415,15 @@ function positiveNumber(value: unknown): number | undefined {
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** Strips a trailing "(Representing ...)" ADR/depositary-receipt annotation from the Nasdaq
+ *  screener's raw company name ONLY when the placeholder never actually got filled in — e.g.
+ *  "Shell Plc ADR (Representing - )" — a screener data-quality artifact, not real information.
+ *  A genuinely populated annotation (e.g. "(Representing 2 Ordinary Shares)") is left alone; it's
+ *  real, not dirty. Falls back to the original name if stripping would leave nothing. */
+function sanitizeCompanyName(name: string | undefined): string | undefined {
+  if (!name) return name;
+  const cleaned = name.replace(/\s*\(Representing\s*[-–—]*\s*\)\s*$/i, "").trim();
+  return cleaned || name;
 }
