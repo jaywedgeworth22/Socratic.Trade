@@ -16,6 +16,12 @@
 - [x] Prevent profile-menu logout prefetch from triggering the side-effectful `/logout` GET.
 - [x] Run Node 24 lint, TypeScript, full Vitest, and production build gates.
 - [ ] Land through `scripts/land.sh`, then verify the auto-deployed production SHA and health.
+> **2026-07-18 - PR #1735 proposed-model attribution P2 (CODEX, local-only branch `codex/pr1735-proposal-attribution`).**
+> Preserve the exact policy/OpenRouter identifier for `TradeProposal.proposedByModel`, separately
+> from canonicalized usage telemetry, so approval-card primary and fallback provenance remains
+> truthful. Focused primary/fallback strategy regressions, TypeScript, and scoped lint pass; keep
+> the resulting commit local and unpushed pending owner direction.
+
 > **2026-07-18 - PR #1735 review cleanup round 2 (CODEX on `agent/ag-recovery-v48-migration`).**
 > Address the fresh Codex comments by preserving company-name display casing in securities imports
 > and restoring the missing lockfile peer dependency entries. Focused import tests and clean-install
