@@ -31,7 +31,22 @@ findings that are now live in production (merge auto-deploys):
    key cooled only the `openai` lane and immediately retried `google/…`, `anthropic/…`
    through the same dead credential.
 
+## Round 2 (Codex review of this PR)
+- **Visible-token starvation for Claude reasoning** (`src/lib/llm-request.ts`, follow-up to the P1
+  above): OpenRouter derives Anthropic's thinking budget as a **fraction** of `max_tokens`, so the
+  first cut's `reasoning: { effort }` reserved most of the cap for thinking at high/xhigh/max and
+  starved the visible JSON. Now sends an **explicit** `reasoning: { max_tokens: <headroom> }`
+  (clamped to Anthropic's 1024 min, cap widened) so the visible slice stays == the caller's requested
+  `maxOutputTokens`. Regression test asserts `max_completion_tokens - reasoning.max_tokens === requested`.
+
 ## Deferred
+- **Billing all-cooling planner behavior** (`src/lib/llm-provider-cooldown.ts`
+  `planLlmProviderAttempts`): when every lane is cooling due to a shared-credential BILLING cooldown,
+  the planner's documented "attempt anyway, least-recently-failed first" fallthrough still retries the
+  chain on the dead key. Distinguishing billing (→ skip/hold) from transient (→ attempt-anyway) is a
+  deliberate policy change to a money-path-adjacent invariant ("the cooldown never makes things
+  strictly worse"), so it's left for a maintainer decision. NOT a regression from this PR — billing
+  429s retried the chain before this change too (just on a vendor lane).
 - **4th finding — rotation eligibility** (`src/lib/model-rotation.ts`
   `eligibleRotationPool` should gate on the OpenRouter credential like endpoint
   resolution, not the per-model native family). Deferred to a focused follow-up: it needs
