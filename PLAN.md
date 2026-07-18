@@ -1,5 +1,9 @@
 # Active Implementation Plan
 
+> **2026-07-18 - Admin smoke memory headroom (CODEX).** Lower the CI-only Playwright Node heap
+> ceiling from 2560 MiB to 2048 MiB after the admin PR's webServer exited 137 under the 3 GiB
+> runner cap; rerun required checks and verify merge/deploy.
+
 ## 2026-07-18 — Admin console shell parity (CODEX)
 
 - [x] Match the admin frame to the normal console chrome geometry and tokens.

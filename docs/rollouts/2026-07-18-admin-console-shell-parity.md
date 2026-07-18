@@ -46,6 +46,10 @@ All commands ran in `/Users/jay/.codex/worktrees/socratic-admin-console-shell` w
 
 ## Follow-up
 
+- The first post-routing Playwright smoke run hit exit 137 while starting the local Next webServer.
+  The CI-only `NODE_OPTIONS` ceiling is now 2048 MiB to preserve runner headroom for Chromium and
+  build workers; rerun the smoke gate before merging.
+
 Run `scripts/land.sh` from the clean Codex branch. After merge, verify Coolify auto-deploy serves the
 exact merge SHA and `/api/health` is healthy. No production deploy or admin API/security behavior was
 changed in this branch. Full repository gates remain the existing PR baseline; this follow-up adds no

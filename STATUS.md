@@ -16,6 +16,10 @@ passed; the branch remains local pending the owner's landing workflow.
 Verification on Node 24: `npm run lint` passed with 0 errors (582 existing warnings), `npx tsc --noEmit`
 passed, `npm test` passed (412 files / 4,794 tests), and `npm run build` passed. The branch is ready
 for `scripts/land.sh`; no production deploy or admin data/API behavior was changed.
+
+The first post-routing Playwright smoke rerun reached the local Next webServer but was OOM-killed
+with exit 137 under the runner's 3 GiB cap. The CI-only Playwright heap ceiling is reduced to
+2048 MiB to leave room for Chromium and build-worker overhead; rerun smoke after this commit.
 ## 2026-07-18 — CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739)
 
 Follow-up to the shallow-checkout recovery. Classifier jobs pin checkout to `github.sha` in addition
