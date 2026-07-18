@@ -21,10 +21,13 @@ import os from "os";
 
 export const dynamic = "force-dynamic";
 
+const MAX_PROVIDER_RESPONSE_BYTES = 512 * 1024;
+
 interface RefreshResult {
   payload: ServerMetricsPayload;
   attemptedProviderReads: number;
   successfulProviderReads: number;
+  hetznerMetricsReadFailed: boolean;
 }
 
 export async function GET(request: Request) {
@@ -166,6 +169,32 @@ async function refreshRemoteMetrics(
     return withCacheAge(payload, refreshedAt);
   }
 
+  if (
+    previous
+    && previous.discardAt > refreshedAt
+    && result.hetznerMetricsReadFailed
+  ) {
+    const payload: ServerMetricsPayload = {
+      ...result.payload,
+      metrics: previous.payload.metrics,
+      asOf: previous.payload.asOf,
+      degraded: true,
+      stale: true,
+      error: "Hetzner metrics are unavailable; showing the last successful metric series.",
+      warnings: uniqueStrings([
+        ...(result.payload.warnings ?? []),
+        "The displayed infrastructure metrics are stale.",
+      ]),
+    };
+    serverMetricsRuntime.remoteCache = {
+      key: previous.key,
+      payload,
+      expiresAt: refreshedAt + SERVER_METRICS_FAILURE_RETRY_MS,
+      discardAt: previous.discardAt,
+    };
+    return withCacheAge(payload, refreshedAt);
+  }
+
   const ttl = result.attemptedProviderReads > 0 && result.successfulProviderReads === 0
     ? SERVER_METRICS_FAILURE_RETRY_MS
     : SERVER_METRICS_CACHE_TTL_MS;
@@ -193,6 +222,7 @@ async function loadRemoteMetrics(
   const providerErrors: string[] = [];
   let attemptedProviderReads = 0;
   let successfulProviderReads = 0;
+  let hetznerMetricsReadFailed = false;
 
   if (configuration.states.hetzner === "partial") {
     warnings.push("Hetzner configuration is incomplete; both API token and server ID are required.");
@@ -247,6 +277,15 @@ async function loadRemoteMetrics(
       fetchProviderJson("Hetzner server metadata", serverUrl, headers),
       fetchProviderJson("Hetzner metrics", metricsUrl, headers),
     ]);
+    if (
+      hetznerMetricsFetch.payload !== undefined
+      && !asRecord(asRecord(asRecord(hetznerMetricsFetch.payload)?.metrics)?.time_series)
+    ) {
+      hetznerMetricsFetch = {
+        error: "Hetzner metrics returned an invalid metrics envelope.",
+      };
+    }
+    hetznerMetricsReadFailed = hetznerMetricsFetch.payload === undefined;
     successfulProviderReads += Number(hetznerServerFetch.payload !== undefined);
     successfulProviderReads += Number(hetznerMetricsFetch.payload !== undefined);
   }
@@ -296,6 +335,7 @@ async function loadRemoteMetrics(
   return {
     attemptedProviderReads,
     successfulProviderReads,
+    hetznerMetricsReadFailed,
     payload: {
       isProd,
       usesLocalHost: false,
@@ -386,13 +426,43 @@ async function fetchProviderJson(
     });
     if (!response.ok) return { error: `${label} returned HTTP ${response.status}.` };
     try {
-      return { payload: await response.json() };
+      return { payload: await readBoundedJson(response, MAX_PROVIDER_RESPONSE_BYTES) };
     } catch {
-      return { error: `${label} returned invalid JSON.` };
+      return { error: `${label} returned invalid or oversized JSON.` };
     }
   } catch {
     return { error: `${label} was unavailable.` };
   }
+}
+
+async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) throw new Error("response_too_large");
+  if (!response.body) throw new Error("empty_response");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error("response_too_large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 function toFiniteMetricNumber(value: unknown): number | undefined {

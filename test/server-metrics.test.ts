@@ -4,7 +4,11 @@ import {
   SERVER_METRICS_CACHE_TTL_MS,
   resetServerMetricsCacheForTests,
 } from "../src/lib/server-metrics-runtime";
-import { displayProviderText } from "../app/admin/server/server-metrics-client";
+import {
+  displayProviderText,
+  markServerMetricsSnapshotStale,
+  parseServerMetricsEnvelope,
+} from "../app/admin/server/server-metrics-client";
 import {
   AUTHENTICATED_IDENTITY_SOURCE_HEADER,
   AUTHENTICATED_IDENTITY_SOURCES
@@ -22,11 +26,7 @@ function reqWithEmail(email?: string): Request {
 }
 
 function providerResponse(payload: unknown, status = 200) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(payload),
-  };
+  return Response.json(payload, { status });
 }
 
 describe("server-metrics provider shape normalization", () => {
@@ -86,6 +86,36 @@ describe("server-metrics provider shape normalization", () => {
     expect(normalized.warnings).toEqual([
       "Coolify resource at index 1 had malformed display fields and was omitted.",
     ]);
+  });
+
+  it("validates successful client envelopes and marks retained data stale on transport failure", () => {
+    const parsed = parseServerMetricsEnvelope({
+      isProd: true,
+      usesLocalHost: false,
+      degraded: false,
+      stale: false,
+      cacheAgeSeconds: 2,
+      hostInfo: { name: "prod-server" },
+      resources: [],
+      metrics: {
+        cpu: [{ timestamp: 1, value: 10 }],
+        diskRead: [],
+        diskWrite: [],
+        networkRx: [],
+        networkTx: [],
+      },
+      asOf: "2026-07-18T12:00:00.000Z",
+    });
+    expect(parsed).toMatchObject({ isProd: true, stale: false, cacheAgeSeconds: 2 });
+    expect(parseServerMetricsEnvelope({
+      ...parsed,
+      metrics: { ...parsed?.metrics, cpu: "not-an-array" },
+    })).toBeUndefined();
+    expect(markServerMetricsSnapshotStale(parsed ?? null, "network failed")).toMatchObject({
+      degraded: true,
+      stale: true,
+      error: "network failed",
+    });
   });
 });
 
@@ -284,6 +314,106 @@ describe("server-metrics API route", () => {
     ]));
   });
 
+  it("bounds provider response bodies while retaining valid sibling data", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_USER_EMAILS", "admin@example.com");
+    vi.stubEnv("HETZNER_API_TOKEN", "mock-hetzner-token");
+    vi.stubEnv("HETZNER_SERVER_ID", "12345");
+    vi.stubEnv("COOLIFY_API_TOKEN", "");
+    vi.stubEnv("COOLIFY_SERVER_UUID", "");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/metrics")) {
+        return Promise.resolve(new Response("{}", {
+          status: 200,
+          headers: { "Content-Length": String(600 * 1024), "Content-Type": "application/json" },
+        }));
+      }
+      return Promise.resolve(providerResponse({
+        server: { name: "verified-host", status: "running", server_type: { cores: 4 } },
+      }));
+    }));
+
+    const response = await GET(reqWithEmail("admin@example.com"));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.degraded).toBe(true);
+    expect(body.hostInfo.name).toBe("verified-host");
+    expect(body.warnings).toContain("Hetzner metrics returned invalid or oversized JSON.");
+  });
+
+  it.each([
+    ["missing time_series", { metrics: {} }],
+    ["non-object time_series", { metrics: { time_series: [] } }],
+  ])("rejects a Hetzner metrics envelope with %s", async (_description, malformedPayload) => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_USER_EMAILS", "admin@example.com");
+    vi.stubEnv("HETZNER_API_TOKEN", "mock-hetzner-token");
+    vi.stubEnv("HETZNER_SERVER_ID", "12345");
+    vi.stubEnv("COOLIFY_API_TOKEN", "");
+    vi.stubEnv("COOLIFY_SERVER_UUID", "");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve(providerResponse(
+      url.includes("/metrics")
+        ? malformedPayload
+        : { server: { name: "verified-host", status: "running", server_type: { cores: 4 } } },
+    ))));
+
+    const response = await GET(reqWithEmail("admin@example.com"));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.degraded).toBe(true);
+    expect(body.metrics).toEqual({
+      cpu: [],
+      diskRead: [],
+      diskWrite: [],
+      networkRx: [],
+      networkTx: [],
+    });
+    expect(body.warnings).toContain("Hetzner metrics returned an invalid metrics envelope.");
+  });
+
+  it("retains the last metric series when Hetzner returns a malformed metrics envelope", async () => {
+    vi.useFakeTimers();
+    const initialTime = new Date("2026-07-18T12:00:00.000Z");
+    vi.setSystemTime(initialTime);
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SERVER_METRICS_TARGET_ENVIRONMENT", "production");
+    vi.stubEnv("ADMIN_USER_EMAILS", "admin@example.com");
+    vi.stubEnv("HETZNER_API_TOKEN", "mock-hetzner-token");
+    vi.stubEnv("HETZNER_SERVER_ID", "12345");
+    vi.stubEnv("COOLIFY_API_TOKEN", "");
+    vi.stubEnv("COOLIFY_SERVER_UUID", "");
+
+    const mockFetch = vi.fn().mockImplementation((url: string) => Promise.resolve(providerResponse(
+      url.includes("/metrics")
+        ? { metrics: { time_series: { cpu: { values: [[1783652400, "40"]] } } } }
+        : { server: { name: "verified-host", status: "running", server_type: { cores: 4 } } },
+    )));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const initial = await GET(reqWithEmail("admin@example.com"));
+    const initialBody = await initial.json();
+    expect(initialBody.metrics.cpu).toEqual([{ timestamp: 1783652400, value: 10 }]);
+
+    vi.setSystemTime(new Date(initialTime.getTime() + SERVER_METRICS_CACHE_TTL_MS + 1));
+    mockFetch.mockImplementation((url: string) => Promise.resolve(providerResponse(
+      url.includes("/metrics")
+        ? { metrics: {} }
+        : { server: { name: "verified-host", status: "running", server_type: { cores: 4 } } },
+    )));
+
+    const stale = await GET(reqWithEmail("admin@example.com"));
+    const staleBody = await stale.json();
+    expect(stale.status).toBe(200);
+    expect(staleBody.degraded).toBe(true);
+    expect(staleBody.stale).toBe(true);
+    expect(staleBody.asOf).toBe(initialBody.asOf);
+    expect(staleBody.metrics.cpu).toEqual(initialBody.metrics.cpu);
+    expect(staleBody.warnings).toEqual(expect.arrayContaining([
+      "Hetzner metrics returned an invalid metrics envelope.",
+      "The displayed infrastructure metrics are stale.",
+    ]));
+  });
+
   it("does not misreport partial production configuration as the local host", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("SERVER_METRICS_TARGET_ENVIRONMENT", "production");
@@ -437,8 +567,24 @@ describe("server-metrics API route", () => {
     vi.stubEnv("COOLIFY_SERVER_UUID", "mock-coolify-uuid");
 
     const healthyFetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("/resources")) return Promise.resolve(providerResponse([]));
-      if (url.includes("/metrics")) return Promise.resolve(providerResponse({ metrics: { time_series: {} } }));
+      if (url.includes("/resources")) {
+        return Promise.resolve(providerResponse([
+          { uuid: "app-1", name: "socratic-trade-prod", type: "application", status: "running:healthy" },
+        ]));
+      }
+      if (url.includes("/metrics")) {
+        return Promise.resolve(providerResponse({
+          metrics: {
+            time_series: {
+              cpu: { values: [[1783652400, "40"]] },
+              "disk.0.bandwidth.read": { values: [[1783652400, "1024"]] },
+              "disk.0.bandwidth.write": { values: [[1783652400, "2048"]] },
+              "network.0.bandwidth.in": { values: [[1783652400, "4096"]] },
+              "network.0.bandwidth.out": { values: [[1783652400, "8192"]] },
+            },
+          },
+        }));
+      }
       if (url.includes("api.hetzner.cloud")) {
         return Promise.resolve(providerResponse({
           server: { name: "last-known-host", status: "running", server_type: { cores: 4 } },
@@ -460,6 +606,8 @@ describe("server-metrics API route", () => {
     expect(staleBody.degraded).toBe(true);
     expect(staleBody.asOf).toBe(initialBody.asOf);
     expect(staleBody.hostInfo.name).toBe("last-known-host");
+    expect(staleBody.resources).toEqual(initialBody.resources);
+    expect(staleBody.metrics).toEqual(initialBody.metrics);
     expect(staleBody.cacheAgeSeconds).toBeGreaterThanOrEqual(120);
     expect(staleBody.error).toContain("last successful snapshot");
 

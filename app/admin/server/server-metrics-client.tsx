@@ -46,6 +46,62 @@ interface ServerMetricsData {
   warnings?: unknown;
 }
 
+function parseMetricPoints(value: unknown): MetricPoint[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points: MetricPoint[] = [];
+  for (const item of value) {
+    const point = asRecord(item);
+    if (
+      typeof point?.timestamp !== "number"
+      || !Number.isFinite(point.timestamp)
+      || typeof point.value !== "number"
+      || !Number.isFinite(point.value)
+    ) return undefined;
+    points.push({ timestamp: point.timestamp, value: point.value });
+  }
+  return points;
+}
+
+export function parseServerMetricsEnvelope(value: unknown): ServerMetricsData | undefined {
+  const envelope = asRecord(value);
+  const hostInfo = asRecord(envelope?.hostInfo);
+  const rawMetrics = asRecord(envelope?.metrics);
+  if (
+    typeof envelope?.isProd !== "boolean"
+    || !hostInfo
+    || !Array.isArray(envelope.resources)
+    || !rawMetrics
+    || typeof envelope.asOf !== "string"
+    || !Number.isFinite(Date.parse(envelope.asOf))
+  ) return undefined;
+  const cpu = parseMetricPoints(rawMetrics.cpu);
+  const diskRead = parseMetricPoints(rawMetrics.diskRead);
+  const diskWrite = parseMetricPoints(rawMetrics.diskWrite);
+  const networkRx = parseMetricPoints(rawMetrics.networkRx);
+  const networkTx = parseMetricPoints(rawMetrics.networkTx);
+  if (!cpu || !diskRead || !diskWrite || !networkRx || !networkTx) return undefined;
+  return {
+    isProd: envelope.isProd,
+    usesLocalHost: envelope.usesLocalHost === true,
+    degraded: envelope.degraded === true,
+    stale: envelope.stale === true,
+    cacheAgeSeconds: readNonNegativeNumber(envelope.cacheAgeSeconds),
+    hostInfo,
+    resources: envelope.resources,
+    metrics: { cpu, diskRead, diskWrite, networkRx, networkTx },
+    asOf: envelope.asOf,
+    error: readText(envelope.error),
+    warnings: envelope.warnings,
+  };
+}
+
+export function markServerMetricsSnapshotStale(
+  previous: ServerMetricsData | null,
+  error: string,
+): ServerMetricsData | null {
+  return previous ? { ...previous, degraded: true, stale: true, error } : null;
+}
+
 // Helper formats
 function formatBytes(bytes: number, decimals = 1) {
   if (bytes <= 0) return "0 B";
@@ -93,27 +149,34 @@ export function ServerMetricsClient() {
   const fetchMetrics = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/server-metrics");
+      const json: unknown = await res.json().catch(() => undefined);
+      const envelope = parseServerMetricsEnvelope(json);
       if (res.ok) {
-        const json = await res.json();
-        setData(json);
-        setRequestError(null);
-      } else {
-        const json: unknown = await res.json().catch(() => undefined);
-        const envelope = asRecord(json);
-        const error = readText(envelope?.error) || "Failed to load metrics";
-        // Preserve verified partial data if a proxy or unexpected route error
-        // changes the status code; reject unrelated/malformed error JSON.
-        if (asRecord(envelope?.hostInfo) && asRecord(envelope?.metrics) && Array.isArray(envelope?.resources)) {
-          setData({ ...(envelope as unknown as ServerMetricsData), error });
+        if (envelope) {
+          setData(envelope);
           setRequestError(null);
         } else {
-          setData((prev) => prev ? { ...prev, error } : null);
+          const error = "The server metrics endpoint returned malformed data.";
+          setData((previous) => markServerMetricsSnapshotStale(previous, error));
+          setRequestError(error);
+        }
+      } else {
+        const error = readText(asRecord(json)?.error) || "Failed to load metrics";
+        // Preserve verified partial data if a proxy or unexpected route error
+        // changes the status code; reject unrelated/malformed error JSON.
+        if (envelope) {
+          setData({ ...envelope, error });
+          setRequestError(null);
+        } else {
+          setData((previous) => markServerMetricsSnapshotStale(previous, error));
           setRequestError(error);
         }
       }
     } catch (err) {
       console.error(err);
-      setRequestError("Unable to reach the server metrics endpoint.");
+      const error = "Unable to reach the server metrics endpoint.";
+      setData((previous) => markServerMetricsSnapshotStale(previous, error));
+      setRequestError(error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -199,7 +262,7 @@ export function ServerMetricsClient() {
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold">Server & infrastructure</h1>
+            <h1 className="text-2xl font-bold">Server Stats</h1>
             {usesLocalHost ? (
               <Chip tone="warn">LOCAL HOST</Chip>
             ) : (
