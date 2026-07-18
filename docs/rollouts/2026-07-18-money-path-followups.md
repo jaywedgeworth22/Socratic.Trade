@@ -371,3 +371,47 @@ ref-matched live order instead of duplicating).
 - `npx tsc --noEmit` clean; `npm run lint` 0 errors; synthetic-stops 68 + broker-protective-stops /
   broker-side / account-delete / option-alert 100 all pass (168 across the affected files); full
   `npx vitest run` + `npm run build` running.
+
+## Round 10 — 4 Codex findings from the round-9 ref-preservation (4e04bead)
+
+Round-9's F#3 (durable client-ref preservation + adopt-by-ref) made `pending_replace` markers able to
+carry a REAL client ref, not just a synthetic placeholder. Codex round-10 surfaced 4 P2 consequences,
+all genuine; fixed by consolidating marker/ref resolution into ONE owner (section 1) plus a
+loosening guard:
+
+- **F#1 (broker-protective-stops.ts:147, `cancelBrokerProtectiveStop`)** — the synthetic-exit cancel
+  path blindly dropped a `pending_replace` marker. If it held a real ref for an accepted-but-not-yet
+  -visible broker stop, dropping it lost the only handle → that stop could double-sell after the
+  synthetic exit. Fixed: the function now fetches the order list (only when a real-ref marker is
+  present) and reconciles — cancel the accepted order by its REAL id if live, drop if terminal, KEEP
+  the marker if not yet visible (so the reconcile loop cancels it once it appears).
+- **F#2 (broker-protective-stops.ts:585, section-1 delete)** — same hazard on the section-1 else-branch
+  delete. Fixed by making section 1 the single reconciler: for a real-ref marker it adopts-if-live
+  (records the real order id as a resting row), books-if-filled, drops-if-dead, and KEEPS-if-invisible.
+  Only synthetic placeholders take the old keep-if-halted / drop-if-moot path.
+- **F#4 (broker-protective-stops.ts:1144, section-4 adopt filter)** — the section-4 adopt matched only
+  LIVE orders (`!isDoneRestingState`), so a saved ref that showed up FILLED was ignored and the ref
+  retried, never booking the fill (missing from fill_events/P&L). Fixed: section 1 now books terminal
+  fills (`hadExecutedFill` → `bookBrokerHeldStopFill` + `filledRecoverySymbols`). The now-redundant
+  section-4 adopt block was removed; section 4 keeps only the ref-reuse (idempotency guard for the
+  not-yet-visible case).
+- **F#3 (broker-protective-stops.ts:1014, halted shrink bypass)** — a halted quantity shrink bypassed
+  the non-shrink block even when the replacement was also LOOSER (a widened `stopLossPct` would place
+  the right-sized fixed stop at a lower/looser trigger). Fixed with a per-symbol `haltedRightsizeFloor`
+  captured from the cancelled stop's own trigger; section 4 clamps a fixed halted replacement UP to it
+  (sell stop: tighter == higher), so a halted right-size is purely risk-reducing. Trailing is already
+  arm-gated (`canArmTrailingNow`) against loosening.
+
+Consolidation net effect: real-ref marker resolution lives ONLY in section 1 (and `cancelBrokerProtectiveStop`);
+section 4 no longer adopts (removing the incomplete filter) and only reuses the ref for idempotency.
+
+Regression tests added: `test/broker-protective-stops.test.ts` — `PS-REFCANCEL` (cancel the accepted
+order behind a real-ref marker, not the fake id), `PS-REFKEEP` (keep a real-ref marker whose order is
+not yet visible), `PS-FLOOR` (halted fixed right-size clamped to the tighter floor, not the looser
+widened price), `PS-REFFILL` (a filled real-ref order is booked + marker dropped).
+
+### Round-10 verification
+- `npx tsc --noEmit` clean; `npm run lint` 0 errors; synthetic-stops 68 + broker-protective-stops 64
+  + broker-side + account-delete + option-alert = 172 across the affected files pass; full
+  `npx vitest run` + `npm run build` running. Branch also carries `origin/main` merge 4e04bea, which
+  includes #1739 (CI routed to a self-hosted Coolify runner) — may lift the provisioning outage.

@@ -65,6 +65,27 @@ reusing the ref so broker idempotency guards the not-yet-visible case. Tests: `S
 `SYN-HALT-MARKCLOSE`, `SYN-HALT-ADOPT`. Gates: tsc clean, lint 0 errors, 168 tests across the affected
 files pass; full suite + build re-running before push. Rollout note round-8 section
 appended.
+
+**Round 10 (2026-07-18):** Codex raised 4 P2 findings, all consequences of round-9's F#3 (markers can
+now hold a REAL client ref). Fixed by consolidating marker/ref resolution into ONE owner (section 1)
+plus a loosening guard: (F#1) `cancelBrokerProtectiveStop` reconciles a real-ref marker (cancel the
+accepted order by its REAL id / drop-if-terminal / keep-if-invisible) instead of blindly dropping it
+(which would leave an accepted stop live to double-sell after a synthetic exit); (F#2) section 1 now
+reconciles real-ref markers up front — adopt-if-live / book-if-filled / drop-if-dead / keep-if-invisible
+— never losing the handle; (F#4) section 1 books terminal fills (the section-4 adopt filter ignored
+FILLED matches → missing from P&L); the redundant section-4 adopt block was removed, keeping only the
+ref-reuse idempotency guard; (F#3) a `haltedRightsizeFloor` clamps a halted fixed right-size UP to the
+cancelled stop's tighter trigger so a widened stopLossPct can't loosen protection mid-halt (trailing is
+already arm-gated). Branch also merged `origin/main` (4e04bea) carrying #1739 — CI routed to a
+self-hosted Coolify runner, which may lift the provisioning outage. Tests: `PS-REFCANCEL`, `PS-REFKEEP`,
+`PS-FLOOR`, `PS-REFFILL`. Gates: tsc clean, lint 0, 172 affected-file tests pass; full suite + build
+re-running before push.
+
+**Note on the finding tail:** rounds 8→9→10 on the halted right-size machinery have been
+self-compounding (each hardening layer spawns the next round's edge cases; round-10's 4 findings all
+stem from round-9's ref-preservation). The owner's offered "keep-oversized-while-halted" simplification
+(which would remove this entire finding class) remains available and un-taken — surfaced here for the
+owner's awareness; not switched unilaterally per their standing instruction.
 ## 2026-07-18 — CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739)
 
 Follow-up to the shallow-checkout recovery. Classifier jobs pin checkout to `github.sha` in addition

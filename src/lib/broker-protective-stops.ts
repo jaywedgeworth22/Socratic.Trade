@@ -136,14 +136,53 @@ export async function cancelBrokerProtectiveStop(
   connectedAccountId?: string
 ): Promise<void> {
   const sym = normalizeSymbol(symbol);
-  for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
-    if (normalizeSymbol(row.symbol) !== sym) continue;
-    // A 'pending_replace' row is a halted right-size retry MARKER, not a live broker order — its
-    // brokerOrderId is a synthetic `pending-replace-*` placeholder. There is nothing to cancel at
-    // the broker, so drop the marker outright (cancelling the fake id would 404 and then get
-    // re-persisted as a stuck pending_cancel that retries forever).
+  const rows = listBrokerProtectiveStops(accountNumber, userId).filter((r) => normalizeSymbol(r.symbol) === sym);
+  if (rows.length === 0) return;
+  // A `pending_replace` marker may carry the REAL client ref of an uncertain halted placement (the
+  // broker may have accepted it). Fetch the live order list once so such a marker can be reconciled
+  // rather than blindly dropped — dropping it would leave the accepted stop live and able to
+  // double-sell after this synthetic exit (Codex review, PR #1738). Best-effort: if the fetch fails we
+  // can't reconcile, so we KEEP any real-ref marker for the reconcile loop instead of losing it.
+  const hasRealRefMarker = rows.some((r) => r.status === "pending_replace" && !!r.brokerOrderId && !r.brokerOrderId.startsWith("pending-replace-"));
+  let liveOrders: EquityOrder[] = [];
+  let ordersListed = false;
+  if (hasRealRefMarker) {
+    try {
+      liveOrders = await gateway.getEquityOrders(accountNumber);
+      ordersListed = true;
+    } catch (err) {
+      audit("broker_protective_stop_cancel_error", { symbol: sym, error: errMsg(err), context: "orders_fetch_for_marker_reconcile" }, userId, connectedAccountId);
+    }
+  }
+  for (const row of rows) {
     if (row.status === "pending_replace") {
-      deleteBrokerProtectiveStop(row.id, userId);
+      const ref = row.brokerOrderId;
+      const isRealRef = !!ref && !ref.startsWith("pending-replace-");
+      if (!isRealRef) {
+        // Synthetic placeholder — no live broker order behind it; drop it (cancelling the fake id would
+        // 404 and re-persist a stuck pending_cancel).
+        deleteBrokerProtectiveStop(row.id, userId);
+        continue;
+      }
+      const matched = ordersListed ? liveOrders.find((o) => o.clientOrderId === ref) : undefined;
+      if (matched && matched.id && !isDoneRestingState(matched.state)) {
+        // The accepted order IS live — cancel it by its real id so it can't double-sell after this exit.
+        try {
+          await gateway.cancelEquityOrder(accountNumber, matched.id);
+          deleteBrokerProtectiveStop(row.id, userId);
+        } catch (err) {
+          audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: matched.id, error: errMsg(err) }, userId, connectedAccountId);
+          upsertBrokerProtectiveStop({ ...row, brokerOrderId: matched.id, status: "pending_cancel" });
+        }
+        continue;
+      }
+      if (matched && isDoneRestingState(matched.state)) {
+        // Already terminal — nothing to cancel; drop the marker.
+        deleteBrokerProtectiveStop(row.id, userId);
+        continue;
+      }
+      // Not visible (or the list fetch failed): KEEP the marker so the reconcile loop can catch and
+      // cancel the accepted order once it appears, rather than losing the only handle to it.
       continue;
     }
     try {
@@ -306,6 +345,12 @@ export async function reconcileBrokerProtectiveStops(args: {
   // only placement a halt allows (a risk-reducing correction of existing protection, never new
   // protection for an unprotected position). Codex review, PR #1738.
   const haltedRightsizeSymbols = new Set<string>();
+  // Per-symbol tighter-trigger FLOOR captured when a halted right-size cancels an existing stop: the
+  // same-tick replacement must not be LOOSER than the stop it replaced (a halt allows only
+  // risk-reducing corrections). Keyed by the cancelled stop's own trigger; section 4 clamps a fixed
+  // replacement up to it so a widened stopLossPct can't quietly loosen protection during the halt
+  // (Codex review, PR #1738). Trailing is already arm-gated (canArmTrailingNow) against loosening.
+  const haltedRightsizeFloor = new Map<string, number>();
 
   const kind = desiredBrokerStopKind(policy, executionMode);
   const source: FillSource = executionMode === "broker/live" ? "live" : "paper";
@@ -566,22 +611,66 @@ export async function reconcileBrokerProtectiveStops(args: {
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
     if (row.status === "pending_replace") {
       // A prior halted right-size cancel succeeded but its replacement placement failed/was rejected;
-      // this durable marker records the owed retry. KEEP it until section 4 actually places the
-      // replacement — deleting it here (before placement is proven) would lose the "this symbol owes a
+      // this durable marker records the owed retry.
+      const rowSym = normalizeSymbol(row.symbol);
+      const markerRef = row.brokerOrderId;
+      const markerHasRealRef = !!markerRef && !markerRef.startsWith("pending-replace-");
+      if (markerHasRealRef) {
+        // The marker carries the CLIENT REF of an uncertain placement (it threw AFTER the broker may
+        // have accepted it). Reconcile that ref against the fetched order list here — the single place
+        // that owns marker resolution — BEFORE any keep/drop decision, so an accepted broker stop is
+        // never orphaned (untracked, uncancellable) nor double-sold (Codex review, PR #1738).
+        const matched = orders.find((o) => o.clientOrderId === markerRef);
+        if (matched && matched.id && !isDoneRestingState(matched.state)) {
+          // The order IS live at the broker — adopt it (track by its real id) so it is managed like any
+          // resting stop. The upsert reuses the same row id, turning the marker into a resting row.
+          upsertBrokerProtectiveStop({
+            id: `protstop-${userId}-${accountNumber}-${rowSym}`,
+            userId,
+            accountNumber,
+            symbol: rowSym,
+            brokerOrderId: matched.id,
+            quantity: matched.quantity && matched.quantity > 0 ? matched.quantity : row.quantity,
+            stopPrice: matched.stopPrice && matched.stopPrice > 0 ? matched.stopPrice : row.stopPrice,
+            status: "resting",
+            kind: row.kind,
+            trailPercent: row.trailPercent,
+          });
+          audit("broker_protective_stop_adopted", { symbol: rowSym, brokerOrderId: matched.id, clientOrderId: markerRef, note: "adopted the accepted order from a prior uncertain halted placement (section 1)" }, userId, policy.connectedAccountId);
+          continue;
+        }
+        if (matched && isDoneRestingState(matched.state)) {
+          // The accepted order already terminated. Book any executed fill so it reaches P&L/learning,
+          // then drop the marker (nothing left to track).
+          if (hadExecutedFill(matched)) {
+            filledRecoverySymbols.add(rowSym);
+            out.filledRecoverySymbols.push(rowSym);
+            bookBrokerHeldStopFill(row, matched);
+          }
+          deleteBrokerProtectiveStop(row.id, userId);
+          continue;
+        }
+        // No order carrying this ref is visible this tick (accepted-but-not-yet-visible, or never
+        // accepted). KEEP the marker so a later tick can reconcile it — dropping it would lose the only
+        // handle to a possibly-live broker stop (double-sell/orphan risk). If still halted+live, also
+        // re-queue so section 4 reuses the ref (broker idempotency then rejects a duplicate placement).
+        if (haltedProtectOnly && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) haltedRightsizeSymbols.add(rowSym);
+        continue;
+      }
+      // Synthetic placeholder marker (no real order behind it). KEEP it until section 4 actually places
+      // the replacement — deleting it before placement is proven would lose the "this symbol owes a
       // right-size" signal whenever section 4 then SKIPS (order-list fetch failed, native trail can't
       // arm yet, sub-share qty), leaving the position unprotected until unhalted while halted synthetic
       // registration stays disabled (Codex review, PR #1738). Section 4 excludes pending_replace rows
       // from its `existing` guard so the kept marker still places; a successful placement upserts the
       // same row id to `resting`, a failed one re-persists the marker.
-      const rowSym = normalizeSymbol(row.symbol);
       if (haltedProtectOnly && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) {
         haltedRightsizeSymbols.add(rowSym);
         continue; // keep the marker — section 4 owns resolving it this tick
       }
-      // Not halted, or the position closed, or the plan now excludes every lane: the marker is moot.
-      // Drop it — no live broker order backs it (its brokerOrderId is a synthetic ref, nothing to
-      // cancel). When not halted, section 4 runs ungated and re-establishes protection via its normal
-      // place-if-missing path.
+      // Not halted, or the position closed, or the plan now excludes every lane: the placeholder marker
+      // is moot. Drop it — no live broker order backs it. When not halted, section 4 runs ungated and
+      // re-establishes protection via its normal place-if-missing path.
       deleteBrokerProtectiveStop(row.id, userId);
       continue;
     }
@@ -646,8 +735,12 @@ export async function reconcileBrokerProtectiveStops(args: {
         deleteBrokerProtectiveStop(row.id, userId);
         // Mark only after the broker confirms the live cancel. A thrown cancel
         // or terminal no-fill recovery must not authorize new protection while
-        // halted.
-        if (markRightsizeOnCancel) haltedRightsizeSymbols.add(rowSym);
+        // halted. Record the cancelled stop's trigger as the floor so the same-tick
+        // replacement can't be looser than what it replaced.
+        if (markRightsizeOnCancel) {
+          haltedRightsizeSymbols.add(rowSym);
+          if (row.stopPrice > 0) haltedRightsizeFloor.set(rowSym, row.stopPrice);
+        }
         out.cancelled++;
         out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {
@@ -1035,8 +1128,12 @@ export async function reconcileBrokerProtectiveStops(args: {
           out.cancelled++;
           out.cancelledOrderIds.push(existingStop.brokerOrderId);
           // Halted shrink cancel just removed the (oversized) only broker stop — let section 4 place
-          // the right-sized replacement this same tick so the position isn't left unprotected.
-          if (haltedProtectOnly && isQuantityShrink) haltedRightsizeSymbols.add(sym);
+          // the right-sized replacement this same tick so the position isn't left unprotected, and
+          // record the cancelled stop's trigger as the floor so the replacement can't be looser.
+          if (haltedProtectOnly && isQuantityShrink) {
+            haltedRightsizeSymbols.add(sym);
+            if (existingStop.stopPrice > 0) haltedRightsizeFloor.set(sym, existingStop.stopPrice);
+          }
         } catch (err) {
           audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err) }, userId, policy.connectedAccountId);
           upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
@@ -1133,41 +1230,13 @@ export async function reconcileBrokerProtectiveStops(args: {
     // fresh position read rather than risk sizing a replacement off a stale (pre-fill) quantity.
     if (filledRecoverySymbols.has(sym)) continue;
     if (!(pos.averageCost > 0)) continue;
-    // Adopt-or-dedupe (Codex review, PR #1738): if a prior uncertain placement for this symbol
-    // recorded the client ref it submitted and a live broker order now carries that ref, that earlier
-    // submission WAS accepted — record the real order id so it is tracked/cancellable rather than
-    // placing a duplicate. This runs BEFORE the coverage/qty skip below on purpose: that adopted order
-    // is exactly what would otherwise drive `desiredStopQuantity` to 0 and make section 4 skip while
-    // the real broker stop stayed untracked (orphaned on a later close).
+    // A prior uncertain placement's client ref (marker held it after a throw) is reconciled up front in
+    // section 1 now (adopt-if-live / book-if-filled / drop-if-dead / keep-if-invisible), so by here any
+    // live accepted order has already become a resting row (and `existing` skips its symbol). What
+    // remains for a still-invisible ref is to REUSE it as this placement's client id below, so the
+    // broker's client-order-id idempotency rejects a duplicate if that order was accepted but not yet
+    // visible (Codex review, PR #1738).
     const priorRef = haltedRetryRefFor(sym);
-    if (priorRef) {
-      const accepted = orders.find((o) => o.clientOrderId === priorRef && o.id && !isDoneRestingState(o.state));
-      if (accepted && accepted.id) {
-        const marker = haltedRetryMarkerBySymbol.get(sym);
-        const adoptQty = accepted.quantity && accepted.quantity > 0 ? accepted.quantity : (marker?.quantity ?? 0);
-        const adoptStop = accepted.stopPrice && accepted.stopPrice > 0 ? accepted.stopPrice : (marker?.stopPrice ?? 0);
-        upsertBrokerProtectiveStop({
-          id: `protstop-${userId}-${accountNumber}-${sym}`,
-          userId,
-          accountNumber,
-          symbol: sym,
-          brokerOrderId: accepted.id,
-          quantity: adoptQty,
-          stopPrice: adoptStop,
-          status: "resting",
-          kind: symKind,
-          trailPercent: symKind === "trailing" ? trailPct : undefined,
-        });
-        out.placed++;
-        if (adoptQty >= Math.abs(pos.quantity) - 0.000001) out.placedStopSymbols.push(sym);
-        else {
-          out.partiallyPlacedStopSymbols.push(sym);
-          out.partiallyPlacedStopQuantities[sym] = adoptQty;
-        }
-        audit("broker_protective_stop_adopted", { symbol: sym, kind: symKind, brokerOrderId: accepted.id, clientOrderId: priorRef, quantity: adoptQty, stopPrice: adoptStop, note: "adopted a live order from a prior uncertain halted right-size placement instead of duplicating it" }, userId, policy.connectedAccountId);
-        continue;
-      }
-    }
     // The uncovered remainder (coverage-aware — never stack exit quantity on top of a live bracket
     // leg / manual sell; the just-cancelled replacement's own order is pruned inside), floored to
     // whole shares on the native trailing lane. `null` means a real order-list fetch failed this
@@ -1189,7 +1258,16 @@ export async function reconcileBrokerProtectiveStops(args: {
       }, userId, policy.connectedAccountId);
       continue;
     }
-    const stopPrice = symKind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
+    let stopPrice = symKind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
+    // Halted right-size floor: a fixed replacement placed the same tick a tighter stop was cancelled
+    // must not be LOOSER than that stop (a halt allows only risk-reducing corrections). For a sell stop
+    // tighter == higher, so clamp UP to the floor. Trailing is already arm-gated against loosening
+    // (canArmTrailingNow), and native trailing carries no explicit trigger, so the clamp is fixed-only
+    // (Codex review, PR #1738).
+    if (symKind === "fixed" && haltedProtectOnly) {
+      const floor = haltedRightsizeFloor.get(sym);
+      if (floor && floor > stopPrice) stopPrice = floor;
+    }
     if (!(stopPrice > 0)) continue;
     // Never arm a broker trail that would be LOOSER than the app-defined one (Codex review, PR
     // #1331, three rounds — see canArmTrailingNow's doc comment for the native-vs-ratcheted logic).
