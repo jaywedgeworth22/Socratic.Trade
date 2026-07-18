@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetDbForTesting } from "../src/lib/db";
+import { resetTriggersForTesting } from "../src/lib/triggers";
 
 const runStrategyOnceMock = vi.fn().mockResolvedValue({
   runId: "test-run",
@@ -13,10 +15,8 @@ const runStrategyOnceMock = vi.fn().mockResolvedValue({
   summary: "test strategy run completed",
   proposals: []
 });
-vi.mock("../src/lib/strategy", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/lib/strategy")>();
+vi.mock("../src/lib/strategy", () => {
   return {
-    ...actual,
     runStrategyOnce: (...args: unknown[]) => runStrategyOnceMock(...args)
   };
 });
@@ -28,6 +28,8 @@ vi.mock("../src/lib/market-hours", () => ({
 }));
 
 beforeAll(() => {
+  resetDbForTesting();
+  vi.resetModules();
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-test-${randomUUID()}.db`)}`;
 });
 
@@ -38,6 +40,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetDbForTesting();
+  resetTriggersForTesting();
+  vi.resetModules();
+  vi.unstubAllEnvs();
   for (const k of ENV_KEYS) delete process.env[k];
 });
 

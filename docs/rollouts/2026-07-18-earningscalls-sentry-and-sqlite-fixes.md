@@ -16,8 +16,12 @@ This rollout resolves recurrent Sentry connection-failure noise from the dormant
 - [src/lib/db.ts](file:///Users/jay/apps/trading-antigravity/src/lib/db.ts) — Increased SQLite `busy_timeout` to 30000.
 - [src/lib/earningscalls-transcripts.ts](file:///Users/jay/apps/trading-antigravity/src/lib/earningscalls-transcripts.ts) — Added `keySource: "env"` and `401, 403` to `suppressHealthStatuses`.
 - [src/lib/llm-provider.ts](file:///Users/jay/apps/trading-antigravity/src/lib/llm-provider.ts) — Updated `llmModelFamily` to support namespace-prefixed model names case-insensitively.
+- [src/lib/triggers.ts](file:///Users/jay/apps/trading-antigravity/src/lib/triggers.ts) — Added `resetTriggersForTesting()` to clear trigger timeouts.
 - [test/model-rotation.test.ts](file:///Users/jay/apps/trading-antigravity/test/model-rotation.test.ts) — Robustly target specific expected kept/skipped models instead of using a brittle global regex loop.
 - [test/market-custom-symbol.test.ts](file:///Users/jay/apps/trading-antigravity/test/market-custom-symbol.test.ts) — Avoid database connection resets that leaked across tests.
+- [test/token-budget-ceiling.test.ts](file:///Users/jay/apps/trading-antigravity/test/token-budget-ceiling.test.ts) — Mocked `strategy` without `importOriginal` to prevent module registry deadlock and added resets.
+- [test/trigger-durability.test.ts](file:///Users/jay/apps/trading-antigravity/test/trigger-durability.test.ts) — Added `resetDbForTesting` and `resetTriggersForTesting` setups.
+- [test/web-sources-sec8k.test.ts](file:///Users/jay/apps/trading-antigravity/test/web-sources-sec8k.test.ts) — Replaced database resets with table truncation (`DELETE FROM`) of all tables.
 
 ## Additional Test Suite Fixes
 1. **Model Rotation Test and OpenRouter Universal Mappings**:
