@@ -107,7 +107,7 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     // actually generated it, not the configured primary (gpt-4.1-mini).
     expect(result.proposals.length).toBeGreaterThan(0);
     for (const p of result.proposals) {
-      expect(p.proposal.proposedByModel).toBe("gemini-2.5-flash");
+      expect(p.proposal.proposedByModel).toBe("google/gemini-2.5-flash");
     }
   }, 30_000);
 

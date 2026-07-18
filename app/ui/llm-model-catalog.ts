@@ -1,4 +1,29 @@
-import type { ModelGroup } from "./model-picker";
+// Model catalog shape. These types formerly lived in app/ui/model-picker.tsx; that custom
+// dropdown component was retired 2026-07-17 (zero importers — the console assistant uses its own
+// picker), so the still-used type surface moved here, the catalog's own home.
+export type PickerProviderId =
+  | "openai"
+  | "anthropic"
+  | "xai"
+  | "gemini"
+  | "mistral"
+  | "deepseek"
+  | "openrouter"
+  | "offline";
+
+export interface ModelOption {
+  value: string;
+  label: string;
+  tier: "" | "$" | "$$" | "$$$";
+  recommendedGreen?: boolean;
+  recommendedRed?: boolean;
+}
+
+export interface ModelGroup {
+  provider: PickerProviderId;
+  label: string;
+  options: ModelOption[];
+}
 
 export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
 

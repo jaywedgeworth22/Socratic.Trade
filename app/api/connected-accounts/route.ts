@@ -78,7 +78,11 @@ export async function POST(req: Request) {
         broker: "robinhood",
         environment: "live",
         accountNumber: agentic.accountNumber,
-        label: agentic.label || "Robinhood Agentic",
+        // Preserve a user-customized in-app name across re-sync/reconnect: the Settings rename
+        // control is the authority for the cosmetic label, so only take the broker label when
+        // FIRST creating the row (Codex review, PR #1727). Otherwise a routine Sync Robinhood or
+        // an OAuth return would silently revert a renamed account to "Robinhood Agentic".
+        label: existing?.label ?? (agentic.label || "Robinhood Agentic"),
         taxationType: taxationType ?? existing?.taxationType,
         // Persist live capabilities from the broker so the UI can display them
         // and policy can enforce them without a round-trip on each strategy run.

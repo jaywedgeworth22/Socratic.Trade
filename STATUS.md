@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
+
+Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
+connections (pencil → input → save) — cosmetic `label` only; the broker-sourced account number
+stays broker-fetched and untouched (it keys trade history + `policy.accountNumber`). New narrow
+`renameConnectedAccount` db fn + `PATCH /api/connected-accounts/[id]` (label-only, credential-safe;
+a test proves a stray `accountNumber` in the body is ignored) + inline UI + 5 tests. (2) Retired the
+last unused old-dashboard-era code: deleted `app/ui/price-chart.tsx` (dead), `app/ui/model-picker.tsx`
+(dead; types inlined into `llm-model-catalog.ts`), and the `/old` redirect shim. Kept the live public
+renderer (primitives/theme/cn power the in-use marketing/legal pages + error boundary, per the
+2026-07-16 "two renderers" decision) and the `/strategy` marketing SEO redirect — those are in use,
+not legacy. Add-account flow unchanged (still asks for Alpaca/Tradier account number; auto-fetch is a
+flagged follow-up). Rollout: `docs/rollouts/2026-07-18-account-rename-and-legacy-retirement.md`.
+
 ## 2026-07-17 — OpenRouter Model Stats Canonicalization: prefix-stripping in aggregateModelStats (Antigravity, branch `antigravity/openrouter-universal-routing`)
 
 Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts`. This strips provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs so that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`). This preserves historical benchmarks, avoids splitting stats by routing provider, and prevents live stats from displaying empty dashes (`—`) in the UI Model Stats drawer. Cleaned up Vitest test assertions in `test/model-stats.test.ts` to verify the canonicalization behavior. Full verification passed: lint 0 errors, tsc clean, tests pass.
@@ -16,6 +30,23 @@ The sole remaining unresolved thread:
 - **P2 — Wire FMP toggles into provider execution (QUESTION ASKED):** The four FMP toggle flags (`fmpRealTimeDataEnabled`, `fmpMacroDataEnabled`, `fmpEventsDataEnabled`, `fmpFundamentalsDataEnabled`) are persisted in settings and defaults but not yet consumed by the FMP provider runtime code. Asked maintainer whether to wire them in this PR or leave as settings-first follow-up, and what behavior is expected when a toggle is off. Thread stays open pending answer.
 
 Auto-merge already enabled. No code changes this round.
+## 2026-07-17 — PR #1669 Merged & Deployed: SEC/RAG Advanced RAG Backfill & SiliconFlow Integration (Antigravity/AG)
+
+Successfully resolved all 11 remaining Codex review thread issues on PR #1669, including:
+- Bounding the concurrent scout retrieval fan-out in `src/lib/strategy.ts` using batching size of 5.
+- Joining as-of FTS matches on symbol and source in `src/lib/rag/search-fusion.ts` to prevent cross-symbol text leakage.
+- Making failed FTS indexing retryable by moving FTS chunk indexing inside the `runWithActiveVectorCommitProof` database transaction in `src/lib/web-sources/sec-filings.ts`.
+- Accounting alternative embeddings to their actual provider (`openrouter` / `siliconflow` instead of hardcoded `voyage`) in `src/lib/vector-db.ts` to ensure correct metering and budget tracking.
+- Rechecking overlap text tokens in `src/lib/rag/chunk.ts` to prevent oversized chunks.
+- Expanding row spans in the Cheerio HTML table parser (`src/lib/web-sources/sec-parser.ts`) to prevent shifted column values in Markdown tables, and adding regression tests.
+- Sorting FTS BM25 ranking correctly via virtual table name reference in `src/lib/rag/search-fusion.ts`.
+- Resolving CIK expected symbols in `scripts/eval/rag-eval-harness.ts` first from `sec_filings`.
+- Excluding non-market Form 4 events by filtering for `'P'` and `'S'` codes in `src/lib/web-sources/sec-facts.ts`.
+- Preserving taxonomy namespace key identity (`us-gaap` / `ifrs-full`) in Company Facts deterministic hashing.
+
+Fully verified type safety, passed all 4,784 unit tests, and successfully ran the Next.js production build check. The PR has been squash-merged into `main` and auto-deployed to production via Coolify on `socratictrade.com`.
+Rollout note: `docs/rollouts/2026-07-17-pr1669-resolutions.md`.
+
 ## 2026-07-17 — Usage page canonical-model merge (MONET, branch `monet/usage-canonical-model-merge`)
 
 Owner-directed: preserve pre-OpenRouter usage stats + merge OpenRouter-routed calls with

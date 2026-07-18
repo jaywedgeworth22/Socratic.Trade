@@ -261,7 +261,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     // Served-model attribution stays failover-aware even when the fallback is the FIRST attempt.
     expect(second.proposals.length).toBeGreaterThan(0);
     for (const p of second.proposals) {
-      expect(p.proposal.proposedByModel).toBe("gemini-2.5-flash");
+      expect(p.proposal.proposedByModel).toBe("google/gemini-2.5-flash");
     }
   }, 60_000);
 });
