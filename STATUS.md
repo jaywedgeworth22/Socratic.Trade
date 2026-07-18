@@ -1,5 +1,23 @@
 # Current Status
 
+## 2026-07-18 — PR #1736 review cleanup (CODEX, branch `monet/model-identity-shared`)
+
+Merged `origin/main`, verified the author-identity review thread is stale because the current PR
+commit uses the required GitHub noreply email, and fixed the remaining review finding: model usage
+aggregation now remains case-insensitive while preserving the first display casing. Focused test:
+`npm test -- test/usage-model-merge.test.ts` (9/9 pass). Rollout updated:
+`docs/rollouts/2026-07-17-model-identity-shared-helper.md`.
+
+## 2026-07-17 — Shared model-identity helper (MONET, branch `monet/model-identity-shared`)
+
+Owner-directed follow-up (AG capped): consolidated the two duplicate model-ID canonicalizers now
+on main — `cleanModelId` (src/lib/model-stats.ts, AG/#1703) and `canonicalModelId`
+(app/admin/llm-usage/model-merge.ts, #1716) — into one shared `src/lib/model-identity.ts`.
+Behavior-preserving: the shared function is AG's verified logic verbatim; model-stats aliases it
+so the benchmark/perf rollup is byte-for-byte unchanged (model-stats + performance tests pass
+untouched). Closes the deferred follow-up from the usage-canonical-model-merge rollout. tsc clean,
+67 focused tests, full gate via land.sh. Rollout:
+`docs/rollouts/2026-07-17-model-identity-shared-helper.md`.
 ## 2026-07-18 — Money-path/reliability follow-ups from PR #1705 (CLAUDE, branch `claude/money-path-followups-1701`)
 
 Fixed 4 money-path/reliability findings that merged into `main` UNFIXED via PR #1705 (a 5th was
