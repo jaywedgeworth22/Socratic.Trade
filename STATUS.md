@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-18 — Decision/status display truth landing (CLAUDE, branch `claude/decision-status-truth-fix`, final lane of the serial landing train)
+
+Codex items 22/23/24/26/29: temporal Red-Team review labels, honest day-P&L gap state,
+per-provider freshness split, per-source scan-count decomposition, and extended-hours-aware
+"Paused · market closed" status. Adversarially verified; the extended-hours switcher must-fix
+(narrow policy projection omitted `runDuringExtendedHours` -> false "Paused" while running)
+applied + regression-tested; undefined now means "can't know", never a false Paused. Next:
+land.sh, PR, auto-merge, deploy-verify, then the train's final report. Rollout:
+`docs/rollouts/2026-07-18-decision-status-truth.md`.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

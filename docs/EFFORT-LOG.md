@@ -241,6 +241,23 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] Decision/status display truth — Codex items 22/23/24/26/29 (branch
+  `claude/decision-status-truth-fix`, head `4c34c2b1` = `3b8c8962` + adversarial follow-up) —
+  LANDING 2026-07-18, final lane of the serial landing train.** Display-truth batch, zero
+  trading-behavior change: Red-Team "held for human approval" labels become temporal/past-tense
+  once the proposal resolves ("Review unavailable; subsequently approved and executed" etc.,
+  item 22); day-P&L renders an explicit gap state instead of a fabricated number (23);
+  data-freshness display splits per-provider freshness from aggregate staleness (24); scan
+  counts decompose by source instead of one unattributed total (26); "Paused · market closed"
+  status truth for extended-hours accounts (29). Adversarially verified — the extended-hours
+  switcher MUST-FIX applied + regression-tested: the account-switcher's narrow policy projection
+  omitted `runDuringExtendedHours`, so an extended-hours account showed "Paused · market closed"
+  while genuinely RUNNING pre/post market; projection widened (field kept optional),
+  `deriveStateInfo` treats undefined as "can't know" (never a false Paused), pre+post regression
+  tests added; advisories fixed same commit (hero chip muted tone; market-hours holiday comment
+  corrected). tsc clean; 116/116 focused + 13/13 dashboard tests green; verifier confirmed zero
+  merge overlap vs the recent admin-shell/server-stats merges. Rollout:
+  `docs/rollouts/2026-07-18-decision-status-truth.md`.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**
