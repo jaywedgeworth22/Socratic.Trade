@@ -64,6 +64,19 @@ describe("aggregateUsageByModel", () => {
     expect(agg.providers.find((p) => p.provider === "anthropic")!.calls).toBe(600);
   });
 
+  it("merges rows case-insensitively while preserving the first display casing", () => {
+    const rows: UsageLike[] = [
+      row({ provider: "anthropic", model: "Claude-Sonnet-5", calls: 1, costUsd: 1 }),
+      row({ provider: "openrouter", model: "anthropic/claude-sonnet-5", calls: 2, costUsd: 2 })
+    ];
+
+    const [agg] = aggregateUsageByModel(rows);
+    expect(agg.canonicalId).toBe("Claude-Sonnet-5");
+    expect(agg.displayName).toBe("Claude-Sonnet-5");
+    expect(agg.calls).toBe(3);
+    expect(agg.providers.map((p) => p.provider)).toEqual(["openrouter", "anthropic"]);
+  });
+
   it("collapses multiple rows of the same (model, provider) — e.g. different contexts — into one slice", () => {
     const rows: UsageLike[] = [
       row({ provider: "openrouter", model: "openai/gpt-5.4-mini", calls: 3, costUsd: 0.3 }),

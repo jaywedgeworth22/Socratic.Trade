@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-18 — PR #1736 review cleanup (CODEX, branch `monet/model-identity-shared`)
+
+Merged `origin/main`, verified the author-identity review thread is stale because the current PR
+commit uses the required GitHub noreply email, and fixed the remaining review finding: model usage
+aggregation now remains case-insensitive while preserving the first display casing. Focused test:
+`npm test -- test/usage-model-merge.test.ts` (9/9 pass). Rollout updated:
+`docs/rollouts/2026-07-17-model-identity-shared-helper.md`.
+
 ## 2026-07-17 — Shared model-identity helper (MONET, branch `monet/model-identity-shared`)
 
 Owner-directed follow-up (AG capped): consolidated the two duplicate model-ID canonicalizers now

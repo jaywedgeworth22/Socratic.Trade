@@ -1874,7 +1874,9 @@ As of 2026-07-08 (assignment-rule update).
   `src/lib/model-identity.ts` replaces the duplicate `cleanModelId` (model-stats, AG/#1703) +
   `canonicalModelId` (model-merge, #1716). Behavior-preserving — model-stats aliases AG's verified
   logic, so the benchmark/perf rollup is byte-for-byte unchanged. tsc clean, 67 focused tests.
-  Full gate via land.sh. Closes the deferred consolidation follow-up.
+  Full gate via land.sh. Closes the deferred consolidation follow-up. 2026-07-18 CODEX: merged
+  `origin/main`, verified the noreply author thread is stale, and fixed the remaining
+  case-insensitive aggregation review finding; focused `usage-model-merge` test green.
 - **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
   `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-18, owner-directed) — IMPLEMENTATION
   COMPLETE / gate running / PR pending.** (1) Inline rename of a connected account's cosmetic `label`

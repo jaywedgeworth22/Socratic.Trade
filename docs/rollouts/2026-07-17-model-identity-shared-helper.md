@@ -44,3 +44,14 @@ New: `src/lib/model-identity.ts`. Modified: `src/lib/model-stats.ts`,
 `tsc --noEmit` clean; `model-stats` + `performance` + `usage-model-merge` = 67 tests pass
 (benchmark behavior unchanged — the model-stats copy is an alias to identical logic); full
 suite + `npm run build` via `scripts/land.sh`.
+
+## 2026-07-18 CODEX review cleanup
+
+- Merged latest `origin/main` into PR #1736 with no conflicts.
+- Verified the author-identity review thread is stale: the current PR commit author email is
+  `12656028+jaywedgeworth22@users.noreply.github.com`.
+- Restored case-insensitive aggregation by using a lowercase internal merge key while preserving
+  the first case-preserved canonical/display ID for the UI.
+- Added a regression test for case-only model rows.
+
+Verification: `npm test -- test/usage-model-merge.test.ts` (9/9 pass).

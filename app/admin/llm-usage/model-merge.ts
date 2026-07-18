@@ -66,7 +66,8 @@ export function aggregateUsageByModel(rows: UsageLike[]): ModelUsageAggregate[] 
 
   for (const row of rows) {
     const id = canonicalModelId(row.model);
-    let agg = byModel.get(id);
+    const mergeKey = id.toLowerCase();
+    let agg = byModel.get(mergeKey);
     if (!agg) {
       agg = {
         canonicalId: id,
@@ -78,8 +79,8 @@ export function aggregateUsageByModel(rows: UsageLike[]): ModelUsageAggregate[] 
         costUsd: 0,
         providers: []
       };
-      byModel.set(id, agg);
-      providerAcc.set(id, new Map());
+      byModel.set(mergeKey, agg);
+      providerAcc.set(mergeKey, new Map());
     }
     agg.calls += row.calls;
     agg.promptTokens += row.promptTokens;
@@ -87,7 +88,7 @@ export function aggregateUsageByModel(rows: UsageLike[]): ModelUsageAggregate[] 
     agg.totalTokens += row.totalTokens;
     agg.costUsd += row.costUsd;
 
-    const slices = providerAcc.get(id)!;
+    const slices = providerAcc.get(mergeKey)!;
     let slice = slices.get(row.provider);
     if (!slice) {
       slice = { provider: row.provider, calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 };
@@ -102,7 +103,7 @@ export function aggregateUsageByModel(rows: UsageLike[]): ModelUsageAggregate[] 
 
   const out = Array.from(byModel.values());
   for (const agg of out) {
-    agg.providers = Array.from(providerAcc.get(agg.canonicalId)!.values()).sort(
+    agg.providers = Array.from(providerAcc.get(agg.canonicalId.toLowerCase())!.values()).sort(
       (a, b) => b.costUsd - a.costUsd || b.calls - a.calls
     );
   }
