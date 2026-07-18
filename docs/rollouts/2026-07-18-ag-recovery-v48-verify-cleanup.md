@@ -115,7 +115,6 @@ fallback identity and OpenRouter primary identity respectively.
 
 Push the branch back to PR #1735 after both review fixes are in place, then reply and resolve the
 remaining review thread with the verification evidence.
-
 ## PR #1760 review closeout
 
 ### Summary
@@ -159,10 +158,23 @@ node ./node_modules/vitest/vitest.mjs run test/usage-budget-strategy-integration
 
 Result: 4 files passed, 36 tests passed.
 
+After merging the pre-#1760 `origin/main`, the required serialized Node 24 gate passed:
+
+```bash
+npm run lint
+bash scripts/land.sh --pr-title "fix: close PR 1760 review findings"
+```
+
+`land.sh` passed `npx tsc --noEmit`, 412 Vitest files / 4,837 tests, and `npm run build`,
+then pushed ready PR #1761. PR #1760 auto-merged as `b2f22ccf` during that gate, so the #1761
+branch was merged again with the exact new main. Conflicts in the webhook route, webhook tests,
+and this rollout note were resolved in favor of the reviewed fixes; the three unsafe artifacts
+introduced by the squash merge were deleted again.
+
 ### Follow-ups
 
-Merge current `origin/main`, run the serialized full gate, update the original PR through the
-protected branch workflow, resolve all four threads with exact evidence, merge, and verify the
-auto-deployed production SHA. Production's release/core was current before this change, but Voyage
-was a critical dependency failure and kept `/api/health` at HTTP 503; do not call production fully
-healthy until that probe recovers or is separately remediated.
+All four original threads have concrete replies and are resolved. Wait for #1761's self-hosted
+checks, merge it through the protected workflow, and verify the exact auto-deployed production SHA.
+Production's release/core was current before this change, but Voyage was a critical dependency
+failure and kept `/api/health` at HTTP 503; do not call production fully healthy until that probe
+recovers or is separately remediated.

@@ -8,10 +8,11 @@ with constant-time comparison. Proposal attribution remains in the exact configu
 namespace while the three remaining usage-budget assertions now match that contract. Removed the
 committed review JSON dumps and the unsafe one-off `update_prs.sh`, which force-removed other agents'
 worktrees and could continue after checkout failures. Node 24 focused verification passes 36/36
-tests across the webhook, usage-budget, failover, and money-path suites. The first focused run was
-invalid because `npm ci` compiled `better-sqlite3` under Node 26; rebuilding it under Node 24 fixed
-the ABI mismatch before the clean rerun. Current-main merge, full gates, PR update, thread
-resolution, merge, and exact production verification remain.
+tests across the webhook, usage-budget, failover, and money-path suites. The serialized gate also
+passes lint (0 errors), TypeScript, 412 Vitest files / 4,837 tests, and the production build. PR
+#1760 auto-merged as `b2f22ccf` while that gate ran; all four threads were then answered and
+resolved, and corrective PR #1761 carries the fixes. Its branch is merged with that exact new main;
+self-hosted checks, corrective merge, and exact production verification remain.
 ## 2026-07-18 — Remove tracked lint/verify artifacts from main (MONET, branch `monet/rm-tracked-lint-artifacts`)
 
 Repo-hygiene cleanup. PR #1735 accidentally merged ~9 MB of generated, machine-specific
