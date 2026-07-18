@@ -241,6 +241,20 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] Egress/SSRF guard + streaming body caps + module-scope Apple JWKS
+  (branch `claude/egress-ssrf-body-caps`, commit `77701bb7`) — LANDING 2026-07-18, lane 2 of a
+  serial landing train.** Codex app-review backlog items 11+13: new shared `egress-guard.ts`
+  (broker `baseUrl` HTTPS+allowlist at save time; webhook URLs DNS-resolved and
+  loopback/RFC1918/link-local/metadata/encoded-IP-blocked, re-validated before EVERY send with
+  `redirect:"manual"` to defeat DNS rebinding) and new `bounded-body.ts` streaming caps on the
+  congress/tradingview webhooks + Apple mobile auth (actual-byte mid-stream abort — a
+  missing/lying content-length no longer bypasses the cap), plus `createRemoteJWKSet` hoisted to
+  module scope so the JWKS cache survives across sign-ins. Adversarially verified SAFE —
+  verifier advisories: two secondary webhook save paths (`notifications` route, mobile-api
+  patch) still lack the save-time guard (send-time guard catches them unconditionally; UX-only
+  follow-up), and re-validate-then-fetch leaves a same-millisecond DNS-rebind sliver vs true
+  socket-level IP pinning (accepted per task spec). Rollout:
+  `docs/rollouts/2026-07-18-egress-ssrf-body-caps.md`.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**

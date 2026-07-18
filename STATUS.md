@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-18 — Egress/SSRF guard + body caps landing (CLAUDE, branch `claude/egress-ssrf-body-caps`, lane 2 of a serial landing train)
+
+Security hardening (Codex backlog 11+13): shared `src/lib/egress-guard.ts` (broker `baseUrl`
+HTTPS+allowlist; webhook URLs DNS-validated against loopback/private/metadata/encoded-IP forms,
+re-validated immediately before every send, redirects never followed) and
+`src/lib/bounded-body.ts` (streaming byte caps on congress/tradingview webhooks + Apple auth —
+actual-count mid-stream abort, not content-length trust), plus module-scope Apple JWKS so the
+`jose` cache is reused across sign-ins. Adversarially verified SAFE (advisories: save-time
+guard absent on two secondary webhook save paths — send-time guard is unconditional; and the
+same-millisecond DNS-rebind sliver accepted per task spec). Next: `scripts/land.sh`, PR,
+auto-merge, deploy-verify. Rollout: `docs/rollouts/2026-07-18-egress-ssrf-body-caps.md`.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
