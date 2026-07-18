@@ -13,6 +13,17 @@ before this PR opened) — production `/api/health` already showed this fix live
 no-op for prod; it lands the rollout note/effort-log history and picks up main's small
 additive deltas via merge. `LAND_ALLOW_STALE_OVERLAP=1` used after manual byte-diff review
 confirmed zero real conflict. Rollout: `docs/rollouts/2026-07-18-bge-m3-metering-gate.md`.
+## 2026-07-18 — BGE-M3 reindexing branch: landing retry after test-gate abort (CLAUDE, branch `agent/ag-reindex-bge-m3`)
+
+First `land.sh` run aborted: 12 test failures across 6 files under fleet load 60-67 (84-min suite).
+Triage: two real fixes — (1) `test/reindex-all.test.ts` now uses its own per-run temp
+`DATABASE_URL` (was bleeding SQLite state into `web-sources-sec8k` and others, commit `73929f83`);
+(2) dropped this branch's `'TESLA'` casing expectation in `test/securities-import.test.ts` in favor
+of main's post-#1735 preserve-case behavior (merge `339676a5`). Remainder were 30s-timeout
+load-flakes that pass on serial re-run. Branch subsequently synced to post-#1761 main (includes the
+bge-m3 metering/reembed/worker-wiring program `545da7c0`). Re-landing via `scripts/land.sh`.
+Details: `docs/rollouts/2026-07-18-bge-m3-reindexing.md` ("Landing retry" section).
+
 ## 2026-07-18 — BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`)
 
 Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `{ all: true }` or `symbols: ["*"]` in the payload to resolve all tickers in the database and clear their RAG chunk caches. Created the `scripts/reindex-all.ts` CLI tool to enable command-line cache clearing and immediate ingestion under `baai/bge-m3` embedding model. Added unit testing suite `test/reindex-all.test.ts` to verify cache deletions. Fixed pre-existing failures in `test/securities-import.test.ts` (companyName casing) and `test/token-budget-ceiling.test.ts` (race conditions on debounced timers). Installed missing `@opentelemetry` helper packages (`@opentelemetry/core`, `@opentelemetry/sdk-trace-base`, `@opentelemetry/resources`) to resolve the Next.js production build compiler issues. Typecheck, tests, and production build all verify green. Next: Land changes using landing script.
