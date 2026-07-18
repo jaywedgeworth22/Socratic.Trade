@@ -110,8 +110,8 @@ describe("LLM usage ledger", () => {
 
   it("records per-user usage and isolates operator-funded tenant spend", async () => {
     const { recordLlmUsage, getLlmUsageSummary } = await import("../src/lib/llm-usage");
-    recordLlmUsage({ userId: "local", provider: "openai", model: "gpt-4o-mini", context: "strategy", keySource: "user", promptTokens: 1000, completionTokens: 500 });
-    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "gpt-4o-mini", context: "chat", keySource: "operator", promptTokens: 2000, completionTokens: 1000 });
+    recordLlmUsage({ userId: "local", provider: "openai", model: "openai/gpt-4o-mini", context: "strategy", keySource: "user", promptTokens: 1000, completionTokens: 500 });
+    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "openai/gpt-4o-mini", context: "chat", keySource: "operator", promptTokens: 2000, completionTokens: 1000 });
 
     const all = getLlmUsageSummary();
     expect(all.length).toBe(2);
@@ -133,7 +133,7 @@ describe("LLM usage ledger", () => {
       choices: [{ message: { content: "ack" }, finish_reason: "stop" }],
       usage: { prompt_tokens: 120, completion_tokens: 30 }
     });
-    const llm = new OpenAILLM("sk-test", "gpt-4o-mini", transport, { userId: "u_tenant", keySource: "operator", context: "chat" });
+    const llm = new OpenAILLM("sk-test", "openai/gpt-4o-mini", transport, { userId: "u_tenant", keySource: "operator", context: "chat" });
     await llm.run({ system: "s", message: "hi", tools: [], executeTool: async () => ({}), history: [] });
 
     const rows = getLlmUsageSummary();
@@ -155,9 +155,9 @@ describe("LLM usage ledger", () => {
     expect(own.keyRef).not.toContain("tenant-own-key"); // fingerprint, not the secret
 
     // Two calls on the operator key + one on the tenant's own key → grouped per key.
-    recordLlmUsage({ userId: "u_other", provider: "openai", model: "gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
-    recordLlmUsage({ userId: "u_third", provider: "openai", model: "gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
-    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "gpt-4o-mini", keySource: "user", keyRef: own.keyRef, promptTokens: 50, completionTokens: 5 });
+    recordLlmUsage({ userId: "u_other", provider: "openai", model: "openai/gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
+    recordLlmUsage({ userId: "u_third", provider: "openai", model: "openai/gpt-4o-mini", keySource: "operator", keyRef: op.keyRef, promptTokens: 100, completionTokens: 10 });
+    recordLlmUsage({ userId: "u_tenant", provider: "openai", model: "openai/gpt-4o-mini", keySource: "user", keyRef: own.keyRef, promptTokens: 50, completionTokens: 5 });
 
     const byKey = getLlmUsageSummary();
     const opRows = byKey.filter((r) => r.keyRef === op.keyRef);

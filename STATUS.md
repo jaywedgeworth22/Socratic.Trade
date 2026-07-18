@@ -1,5 +1,21 @@
 # Current Status
 
+## 2026-07-17 — OpenRouter Model Stats Canonicalization: prefix-stripping in aggregateModelStats (Antigravity, branch `antigravity/openrouter-universal-routing`)
+
+Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts`. This strips provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs so that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`). This preserves historical benchmarks, avoids splitting stats by routing provider, and prevents live stats from displaying empty dashes (`—`) in the UI Model Stats drawer. Cleaned up Vitest test assertions in `test/model-stats.test.ts` to verify the canonicalization behavior. Full verification passed: lint 0 errors, tsc clean, tests pass.
+Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
+
+## 2026-07-17 — Codex autofix: 4/5 review findings fixed on PR #1703 (antigravity/openrouter-universal-routing)
+## 2026-07-17 — Codex autofix round 2: 1 remaining thread triaged on PR #1703
+
+Triage pass on remaining Codex review threads for PR #1703 (universal OpenRouter routing).
+
+Of 12 total Codex threads, 11 are already resolved (from prior autofix rounds + manual fixes).
+The sole remaining unresolved thread:
+
+- **P2 — Wire FMP toggles into provider execution (QUESTION ASKED):** The four FMP toggle flags (`fmpRealTimeDataEnabled`, `fmpMacroDataEnabled`, `fmpEventsDataEnabled`, `fmpFundamentalsDataEnabled`) are persisted in settings and defaults but not yet consumed by the FMP provider runtime code. Asked maintainer whether to wire them in this PR or leave as settings-first follow-up, and what behavior is expected when a toggle is off. Thread stays open pending answer.
+
+Auto-merge already enabled. No code changes this round.
 ## 2026-07-17 — PR #1669 Merged & Deployed: SEC/RAG Advanced RAG Backfill & SiliconFlow Integration (Antigravity/AG)
 
 Successfully resolved all 11 remaining Codex review thread issues on PR #1669, including:

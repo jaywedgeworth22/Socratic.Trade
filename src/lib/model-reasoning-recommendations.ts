@@ -105,7 +105,10 @@ export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecom
 };
 
 function lookup(model: string | undefined): ModelReasoningRecommendation | undefined {
-  const id = (model ?? "").trim();
+  let id = (model ?? "").trim();
+  if (id.includes("/")) {
+    id = id.split("/").pop()!;
+  }
   return id ? MODEL_REASONING_RECOMMENDATIONS[id] : undefined;
 }
 

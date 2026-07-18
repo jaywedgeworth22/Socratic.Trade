@@ -46,7 +46,7 @@ describe("reasoningControlForModels — rotation sentinel keeps the control visi
 
   it("models with no capability at all still yield no control (honest absence)", () => {
     expect(reasoningControlForModels(["mistral-small-2603"])).toBeNull();
-    expect(reasoningControlForModels(["gpt-4.1-mini", "mistral-small-2603"])).toBeNull();
+    expect(reasoningControlForModels(["openai/gpt-4.1-mini", "mistral-small-2603"])).toBeNull();
   });
 });
 
@@ -119,8 +119,8 @@ describe("seatReasoningPatch — per-seat renormalization bundled into model sav
   });
 
   it("the disallowed interactive gpt-5.5+high combo saves the run-time-honest medium instead", () => {
-    expect(seatReasoningPatch("llmReasoningEffort", "gpt-5.5", "high")).toEqual({ llmReasoningEffort: "medium" });
-    expect(seatReasoningPatch("redTeamReasoningEffort", "gpt-5.5", "high")).toEqual({ redTeamReasoningEffort: "medium" });
+    expect(seatReasoningPatch("llmReasoningEffort", "openai/gpt-5.5", "high")).toEqual({ llmReasoningEffort: "medium" });
+    expect(seatReasoningPatch("redTeamReasoningEffort", "openai/gpt-5.5", "high")).toEqual({ redTeamReasoningEffort: "medium" });
   });
 });
 

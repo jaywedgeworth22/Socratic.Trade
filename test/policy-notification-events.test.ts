@@ -50,7 +50,7 @@ describe("policy notification event settings", () => {
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          llmModel: "gpt-5.5",
+          llmModel: "openai/gpt-5.5",
           llmReasoningEffort: "high"
         })
       })
@@ -72,7 +72,7 @@ describe("policy notification event settings", () => {
         },
         body: JSON.stringify({
           llmModel: "gpt-5.4-mini",
-          redTeamLlmModel: "gpt-5.5",
+          redTeamLlmModel: "openai/gpt-5.5",
           llmReasoningEffort: "high"
         })
       })
@@ -90,7 +90,7 @@ describe("policy notification event settings", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           llmModel: "gpt-5.4-mini",
-          redTeamLlmModel: "gpt-5.5",
+          redTeamLlmModel: "openai/gpt-5.5",
           llmReasoningEffort: "medium",
           redTeamReasoningEffort: "high"
         })
@@ -107,7 +107,7 @@ describe("policy notification event settings", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           llmModel: "gpt-5.4-mini",
-          redTeamLlmModel: "gpt-5.5",
+          redTeamLlmModel: "openai/gpt-5.5",
           llmReasoningEffort: "high",
           redTeamReasoningEffort: "medium"
         })
@@ -139,7 +139,7 @@ describe("policy notification event settings", () => {
     // Run time already clamps this to medium, so unrelated policy writes must not
     // be rejected because of it (owner-reported bug: saving notification prefs and
     // enabling short selling both failed with the model error).
-    setPolicy({ ...getPolicy(DEFAULT_REQUEST_USER_ID), llmModel: "gpt-5.5", llmReasoningEffort: "high" }, DEFAULT_REQUEST_USER_ID);
+    setPolicy({ ...getPolicy(DEFAULT_REQUEST_USER_ID), llmModel: "openai/gpt-5.5", llmReasoningEffort: "high" }, DEFAULT_REQUEST_USER_ID);
 
     const notifyResponse = await PUT(
       new Request("http://localhost/api/policy", {
@@ -163,7 +163,7 @@ describe("policy notification event settings", () => {
     expect(shortResponse.status).toBe(200);
     expect(getPolicy(DEFAULT_REQUEST_USER_ID).shortSellingEnabled).toBe(true);
     // The stored model config is untouched by the unrelated saves.
-    expect(getPolicy(DEFAULT_REQUEST_USER_ID).llmModel).toBe("gpt-5.5");
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).llmModel).toBe("openai/gpt-5.5");
     expect(getPolicy(DEFAULT_REQUEST_USER_ID).llmReasoningEffort).toBe("high");
 
     // But a write that CHANGES the model/effort combo to the disallowed one is still rejected.
@@ -175,7 +175,7 @@ describe("policy notification event settings", () => {
       new Request("http://localhost/api/policy", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ llmModel: "gpt-5.4-mini", llmReasoningEffort: "high", redTeamLlmModel: "gpt-5.5" })
+        body: JSON.stringify({ llmModel: "gpt-5.4-mini", llmReasoningEffort: "high", redTeamLlmModel: "openai/gpt-5.5" })
       })
     );
     expect(stillRejected.status).toBe(400);

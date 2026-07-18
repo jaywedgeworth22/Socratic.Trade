@@ -12,12 +12,16 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
-  return { ...actual, storeContexts: mocks.storeContexts };
+  return { ...actual, managedVectorLedgerAuthority: vi.fn(), storeContexts: mocks.storeContexts };
 });
 
-vi.mock("../src/lib/strategy", () => ({
-  runStrategyOnce: (...args: unknown[]) => mocks.runStrategyOnce(...args)
-}));
+vi.mock("../src/lib/strategy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/strategy")>();
+  return {
+    ...actual,
+    runStrategyOnce: (...args: unknown[]) => mocks.runStrategyOnce(...args)
+  };
+});
 
 vi.mock("../src/lib/market-hours", () => ({
   isRunAllowedNow: () => true

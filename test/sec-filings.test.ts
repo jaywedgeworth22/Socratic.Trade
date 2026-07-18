@@ -61,7 +61,7 @@ vi.mock("../src/lib/web-sources/sec8k", () => ({
 
 vi.mock("../src/lib/data-providers", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/data-providers")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     getEnrichmentProvider: mocks.getEnrichmentProvider
   };
@@ -71,7 +71,7 @@ vi.mock("../src/lib/data-providers", async (importOriginal) => {
 // so hasIngestedAccession / insertIngestedAccession go through the real schema.
 vi.mock("../src/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/db")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     insertSecArtifact: mocks.insertSecArtifact,
     runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
@@ -80,7 +80,7 @@ vi.mock("../src/lib/db", async (importOriginal) => {
 
 vi.mock("../src/lib/db-vector-commits", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/db-vector-commits")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     runWithActiveVectorCommitProof: <T>(_proof: unknown, work: () => T) => work()
   };
@@ -92,6 +92,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
   return {
     ...actual,
+    managedVectorLedgerAuthority: vi.fn(),
     storeDocument: async (...args: Parameters<typeof actual.storeDocument>) => {
       const result = await mocks.storeDocument(...args);
       return result?.documentComplete === true
@@ -501,7 +502,7 @@ describe("refreshFilingBodies free-tier cap", () => {
       configured: true,
       enrich: vi.fn(async () => {
         deleteInternalSetting("operation_lease:rag-reindex");
-        return { AAPL: { companyName: "Apple Inc." } };
+        return { managedVectorLedgerAuthority: vi.fn(), AAPL: { companyName: "Apple Inc." } };
       })
     });
     const { refreshFilingBodies } = await import("../src/lib/web-sources/sec-filings");
@@ -855,7 +856,7 @@ describe("Blended Fundamentals Profile Card Ingest", () => {
       configured: true,
       enrich: vi.fn(async () => {
         lost = true;
-        return { AAPL: { companyName: "Apple Inc." } };
+        return { managedVectorLedgerAuthority: vi.fn(), AAPL: { companyName: "Apple Inc." } };
       })
     });
     const guard = {

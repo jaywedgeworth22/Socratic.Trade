@@ -48,10 +48,10 @@ function status(providers: Array<{ name: string; status: "ok" | "warning" | "exc
 
 describe("usage-budget: cheaperModel", () => {
   it("maps known models down a tier and returns undefined when none", () => {
-    expect(budget.cheaperModel("gpt-4o")).toBe("gpt-4o-mini");
-    expect(budget.cheaperModel("claude-opus-4-8")).toBe("claude-sonnet-4-6");
+    expect(budget.cheaperModel("openai/gpt-4o")).toBe("openai/gpt-4o-mini");
+    expect(budget.cheaperModel("anthropic/claude-opus-4-8")).toBe("anthropic/claude-sonnet-4-6");
     expect(budget.cheaperModel("claude-haiku-4-5-20251001")).toBeUndefined(); // already cheapest (prefix)
-    expect(budget.cheaperModel("gpt-4o-mini")).toBeUndefined();
+    expect(budget.cheaperModel("openai/gpt-4o-mini")).toBeUndefined();
     expect(budget.cheaperModel(undefined)).toBeUndefined();
   });
 });
@@ -71,19 +71,19 @@ describe("usage-budget: evaluateBudgetForRun", () => {
   it("downgrades the model when the LLM provider is over budget", async () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "gpt-4o", redTeamLlmModel: "gpt-4o" },
+      { llmModel: "openai/gpt-4o", redTeamLlmModel: "openai/gpt-4o" },
       { status: status([{ name: "openai", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(true);
-    expect(decision.llmModel).toBe("gpt-4o-mini");
-    expect(decision.redTeamLlmModel).toBe("gpt-4o-mini");
+    expect(decision.llmModel).toBe("openai/gpt-4o-mini");
+    expect(decision.redTeamLlmModel).toBe("openai/gpt-4o-mini");
   });
 
   it("skips the cycle when over budget and already on the cheapest tier", async () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "gpt-4o-mini" },
+      { llmModel: "openai/gpt-4o-mini" },
       { status: status([{ name: "openai", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(true);
@@ -93,7 +93,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
   it("still skips when green is cheapest even if the red model could be downgraded (F6)", async () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "gpt-4o-mini", redTeamLlmModel: "claude-opus-4-8" },
+      { llmModel: "openai/gpt-4o-mini", redTeamLlmModel: "anthropic/claude-opus-4-8" },
       { status: status([{ name: "openai", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(true);
@@ -116,7 +116,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
   it("does nothing when the LLM provider is under budget", async () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "gpt-4o" },
+      { llmModel: "openai/gpt-4o" },
       { status: status([{ name: "openai", status: "ok" }, { name: "alpaca", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(false);
@@ -127,7 +127,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     process.env.USAGE_BUDGET_ENFORCE = "off";
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "gpt-4o" },
+      { llmModel: "openai/gpt-4o" },
       { status: status([{ name: "openai", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(false);
@@ -137,7 +137,7 @@ describe("usage-budget: evaluateBudgetForRun", () => {
   it("is a no-op when budget status is unavailable (monitor down)", async () => {
     const decision = await budget.evaluateBudgetForRun(
       "local",
-      { llmModel: "gpt-4o" },
+      { llmModel: "openai/gpt-4o" },
       { status: null }
     );
     expect(decision.skip).toBe(false);

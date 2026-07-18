@@ -5,9 +5,13 @@ const followupMocks = vi.hoisted(() => ({
   maybeAutoTuneWeights: vi.fn()
 }));
 
-vi.mock("../src/lib/strategy", () => ({
-  runStrategyOnce: followupMocks.runStrategyOnce
-}));
+vi.mock("../src/lib/strategy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/strategy")>();
+  return {
+    ...actual,
+    runStrategyOnce: followupMocks.runStrategyOnce
+  };
+});
 
 vi.mock("../src/lib/auto-tune-scheduler", () => ({
   maybeAutoTuneWeights: followupMocks.maybeAutoTuneWeights
