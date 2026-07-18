@@ -784,9 +784,14 @@ export function renameConnectedAccount(id: string, label: string, userId: string
   const trimmed = label.trim();
   if (!trimmed) throw new Error("Account name cannot be empty.");
   if (trimmed.length > 120) throw new Error("Account name is too long (max 120 characters).");
+  // Update ONLY `label` — deliberately NOT `updated_at`. `getConnectedAccountByBroker` resolves
+  // which same-broker row backs shared data-source fetches (e.g. Tradier price history) with
+  // `ORDER BY is_active DESC, updated_at DESC`; bumping updated_at on a purely cosmetic rename
+  // would promote a renamed inactive row over the intended latest credential, silently swapping
+  // an old/sandbox token in for history fetches (Codex review, PR #1727).
   const result = getDb()
-    .prepare("UPDATE connected_accounts SET label = ?, updated_at = ? WHERE id = ? AND user_id = ?")
-    .run(trimmed, new Date().toISOString(), id, userId);
+    .prepare("UPDATE connected_accounts SET label = ? WHERE id = ? AND user_id = ?")
+    .run(trimmed, id, userId);
   return result.changes > 0;
 }
 

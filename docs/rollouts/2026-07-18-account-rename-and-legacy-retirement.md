@@ -106,6 +106,24 @@ Full gate on the final tree (Node 22, cloud session):
   UI is standard inline-edit; the authed `/console` is not reachable from this cloud session for a
   live screenshot (documented OAuth access gap) — verification is the test suite + build.
 
+## Codex review (round 1) — two rename-durability fixes
+
+Both P2 findings were real bugs in the new rename feature; fixed with regression tests:
+
+- **Rename must not perturb credential recency.** `renameConnectedAccount` originally bumped
+  `updated_at`, but `getConnectedAccountByBroker` resolves which same-broker row backs shared
+  data-source fetches (e.g. Tradier price history in `history.ts`) via
+  `ORDER BY is_active DESC, updated_at DESC`. A cosmetic rename of an inactive row could promote it
+  and swap an old/sandbox token into history fetches. Fix: the rename UPDATE now touches ONLY
+  `label`, never `updated_at`. Test: renaming the older of two Tradier rows leaves
+  `getConnectedAccountByBroker` returning the newer row, and the row's `updated_at` is unchanged.
+- **Rename must survive a Robinhood re-sync.** `POST /api/connected-accounts` (Sync Robinhood /
+  OAuth return) reused the existing row but passed `label: agentic.label || "Robinhood Agentic"`,
+  which the upsert's conflict path writes — silently reverting a renamed account. Fix: the
+  Robinhood branch now preserves `existing?.label` on re-sync, taking the broker label only when
+  first creating the row. Test: rename a synced Robinhood account, re-sync, assert the custom name
+  persists.
+
 ## Follow-ups
 
 - The add-account form still asks for a user-typed account number for Alpaca/Tradier (only
