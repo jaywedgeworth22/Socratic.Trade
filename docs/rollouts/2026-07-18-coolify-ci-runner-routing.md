@@ -44,6 +44,16 @@ the persistent runner before checkout and before the write token/model secret we
 job-level condition now requires `github.event.pull_request.head.repo.full_name ==
 github.repository` for bot-triggered reviews. Maintainer `workflow_dispatch` remains available.
 
+Repeated final-head checkouts then exposed a lifecycle mismatch rather than a GitHub cancellation:
+the runner image was configured with `EPHEMERAL=1`, but Coolify's Compose service used
+`restart: always`. The image's documented fully-ephemeral pattern requires removing the container
+after each job; Docker restart reused the same writable container layer, so a canceled checkout left
+`/_work/Socratic.Trade/Socratic.Trade/.git` with no valid `HEAD` for every later registration. The
+Socratic CI service now wraps `/entrypoint.sh` with a hardcoded, bounded cleanup of `/_work` before
+each registration, then execs the image's normal runner command. No host or persistent volume is
+mounted there. The first post-change registration completed checkout and the shared-package pin
+check successfully, then re-registered with a new runner ID.
+
 During production follow-through, the Coolify application was found configured on
 `agent/ag-recovery-v48-migration` instead of `main`, with an empty deployment list. The application
 was patched back to `git_branch=main` with auto-deploy enabled. No manual deployment was triggered;
@@ -107,6 +117,14 @@ actionlint .github/workflows/_merge-shepherd-impl.yml .github/workflows/ci.yml \
   .github/workflows/e2e.yml .github/workflows/effort-issues-sync.yml \
   .github/workflows/security.yml .github/workflows/sentry-ci-report.yml \
   .github/workflows/shared-package-pin-check.yml
+```
+
+Coolify runner lifecycle receipt:
+
+```text
+pre-fix checkout: ambiguous argument 'HEAD'; Unable to clean or reset the repository
+post-fix check-pin: checkout success; comparison success; job success (3m31s)
+next registration: socratic-ci runner id 88 -> 89
 ```
 
 Local verification limitation: `NODE_OPTIONS=--max-old-space-size=3072 npx tsc --noEmit` could not

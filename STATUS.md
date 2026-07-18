@@ -31,6 +31,13 @@ the persistent runner with write credentials. The autofix job now refuses bot-tr
 the PR head repository exactly matches this repository; maintainer `workflow_dispatch` remains
 available.
 
+The runner image's `EPHEMERAL=1` registration was paired with Docker `restart: always`, which
+restarted the same container filesystem after each job instead of removing the container as the
+image's ephemeral-runner guidance requires. A canceled checkout therefore left an invalid
+`/_work/.../.git` (`ambiguous HEAD`) for every later registration. Coolify's Socratic CI service now
+wraps the image entrypoint with a bounded cleanup of only `/_work` before each registration. A fresh
+registration completed the shared-package checkout and check successfully.
+
 Coolify's production application had drifted from branch `main` to
 `agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The
 application was restored to `git_branch=main` and auto-deploy was re-enabled through the API without
