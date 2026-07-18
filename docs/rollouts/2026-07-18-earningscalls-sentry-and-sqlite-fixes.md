@@ -28,7 +28,33 @@ This rollout resolves recurrent Sentry connection-failure noise from the dormant
 
 ## Verification Details
 - Built project under Node 24: `npx tsc --noEmit` and `npm run lint` are clean.
-- Unit tests run under Node 24:
-  - All 4,791 unit tests passing successfully.
+- Unit tests run under Node 24 (land.sh gate):
+  - All 4,794 unit tests passing successfully (412 test files).
   - Specifically verified `test/model-rotation.test.ts` and `test/market-custom-symbol.test.ts` passing green.
 
+## Additional Fix: `priceForModel` OpenRouter Prefix Bug (canonicalization cleanup)
+
+### Problem
+`priceForModel` in `src/lib/llm-usage.ts` only stripped a single slash from the model
+name, so the full 3-part OpenRouter form `openrouter/openai/gpt-4o` was reduced to
+`openai/gpt-4o` — still not a price-table hit — and fell back to the expensive
+`$15/M` default rate instead of the model's actual price.
+
+### Fix
+Added an explicit `replace(/^openrouter\//, "")` step before the single-vendor slash strip,
+mirroring `stripRoutingPrefix()` in `app/admin/llm-usage/model-merge.ts`. All three forms
+now resolve to the correct bare name:
+- `gpt-5.5` → `gpt-5.5` (unchanged)
+- `openai/gpt-5.5` → `gpt-5.5` (one slash strip)
+- `openrouter/openai/gpt-5.5` → `gpt-5.5` (openrouter strip + one slash strip)
+
+### Files Modified
+- `src/lib/llm-usage.ts` — `priceForModel()` prefix stripping fix
+- `test/llm-cache-usage.test.ts` — new regression test asserting all three forms produce identical cost
+
+### Follow-up: Shared Canonicalization Module (deferred)
+Monet identified a broader deferred cleanup: consolidating `stripRoutingPrefix` (client-side
+in `model-merge.ts`) and `priceForModel`'s inline strip (server-side in `llm-usage.ts`) into
+a single shared helper (`src/lib/model-id.ts` or similar) to prevent future drift. Tracked
+as a follow-up effort; intentionally kept separate from this PR to avoid touching AG's verified
+benchmark code on the critical path.
