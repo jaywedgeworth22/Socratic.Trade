@@ -1208,5 +1208,36 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       const stops = listSyntheticStops("SYN-HALTED-REG", "local");
       expect(stops).toHaveLength(0);
     });
+
+    it("protectWhileHalted: never PLACES/REPLACES a broker-held protective stop while halted", async () => {
+      // Money-path regression (PR #1701 finding 1): a halted+protectWhileHalted tick runs
+      // runSyntheticStopMonitor(..., running=true), and that `running` flag used to flow straight
+      // into reconcileBrokerProtectiveStops — so a halted account could still PLACE new/looser
+      // broker-held protective orders. Halted protection may only FIRE existing exits, never place
+      // or replace broker stops. Uses an Alpaca (paper) account so the broker trailing-stop lane
+      // is actually enabled (desiredBrokerStopKind === "trailing").
+      connectTestAccount("SYN-HALTED-BSTOP", "paper", "alpaca");
+      broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+      broker.quotes = { AAPL: { price: 100 } }; // no breach — isolate the placement path, not firing
+
+      const haltedPolicy = {
+        ...policyFor("SYN-HALTED-BSTOP"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALTED-BSTOP").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      // Halted: no broker-held protective stop may be placed, and no tracking row persisted.
+      expect(broker.placed).toHaveLength(0);
+      expect(listBrokerProtectiveStops("SYN-HALTED-BSTOP", "local")).toHaveLength(0);
+
+      // Control: the SAME account when ACTIVE does place a broker-held trailing stop — proving the
+      // lane is live and the halted suppression above is what blocked it (not a disabled lane).
+      broker.placed = [];
+      const activePolicy = { ...haltedPolicy, systemState: "active" as const };
+      await runSyntheticStopMonitor("local", activePolicy, true);
+      expect(broker.placed.length).toBeGreaterThan(0);
+      expect(listBrokerProtectiveStops("SYN-HALTED-BSTOP", "local").length).toBeGreaterThan(0);
+    });
   });
 });

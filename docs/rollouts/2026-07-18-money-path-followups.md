@@ -1,0 +1,115 @@
+# 2026-07-18 — Money-path / reliability follow-ups from PR #1705 (CLAUDE)
+
+Branch: `claude/money-path-followups-1701` (off `origin/main` @ `b0063a7`).
+
+## Summary
+
+Fixed 4 money-path / reliability findings that merged into `main` (rode in via PR #1705) still
+UNFIXED. A 5th finding was already resolved on current `main` by PR #1713 and is skipped. Each fix
+is minimal + carries a regression test that was verified to FAIL on the unfixed code and PASS with
+the fix.
+
+## Findings
+
+### 1. scheduler/synthetic-stops — halted account could PLACE broker protective stops (money-path)
+- **Still reproduced on main:** YES.
+- With `protectWhileHalted` enabled, `scheduler.ts` runs `runSyntheticStopMonitor(userId, policy,
+  true)` while `systemState === "halted"`. That `running=true` flowed straight into
+  `reconcileBrokerProtectiveStops`, whose placement/replacement sections (3 & 4, gated by `running`)
+  then PLACED/REPLACED broker-held stops — contrary to the rule that halted protection may only
+  FIRE existing synthetic/exit stops, never register/update looser broker stops.
+- **Fix** (`src/lib/synthetic-stops.ts`, ~L363): compute
+  `const mayReconcileBrokerStops = running && policy.systemState !== "halted";` and pass THAT as
+  `running` to `reconcileBrokerProtectiveStops`. The reconciler's `running` flag is exactly what
+  gates its placement/replacement sections; its risk-reducing cancel-on-close sweeps (sections 1 &
+  2) run regardless. So a halted+`protectWhileHalted` tick still fires resting synthetic exits (the
+  fire loop below still keys off the original `running`) and still cancels stops on closed positions,
+  but can no longer submit NEW/looser broker protective orders.
+- **Test:** `test/synthetic-stops.test.ts` — new "never PLACES/REPLACES a broker-held protective
+  stop while halted" (Alpaca paper so the broker trailing lane is live; asserts 0 placements while
+  halted, > 0 when the same account is active). Verified it fails pre-fix (placed 1 while halted).
+
+### 2. strategy — Tradier bracket stripped before marketable-limit conversion (money-path)
+- **Still reproduced on main:** YES.
+- In `enrichOpeningProposal`, a Tradier `market` opening entry with `marketableLimitEntries` on is
+  converted to a `limit` order a few lines later (a type Tradier's native OTOCO/OTO bracket DOES
+  support). But the Tradier market-entry bracket-strip ran EARLIER and permanently removed
+  `bracketStopLoss`/`bracketTakeProfit`, so the final order became a limit entry with NO native
+  bracket protection.
+- **Fix** (`src/lib/strategy.ts`, ~L5733): predict the conversion
+  (`willBecomeMarketableLimit`, mirroring the conversion gate incl. the whole-share qty check) and
+  exclude it from `isTradierMarket`. When the entry will convert, it is no longer treated as a
+  "Tradier market entry" for bracket purposes: the strip is skipped and the whole-share branch runs
+  to (re)compute the legs, which then survive to the converted limit order. A Tradier market entry
+  that will NOT convert still has its brackets stripped (Tradier can't bracket a bare market entry).
+- **Test:** `test/strategy-hardening.test.ts` — new "keeps native brackets for a Tradier market
+  entry the marketable-limit conversion turns into a limit" + guardrail "still strips … that will
+  NOT convert". Verified the first fails pre-fix (brackets undefined).
+
+### 3. strategy — active-protection live-exit semantics (money-path) — ALREADY FIXED, SKIPPED
+- **Still reproduced on main:** NO. PR #1713 (commit `530c867`, after #1705) already replaced the
+  narrow inline filter `o.side === exitSide && ["open","pending_new","accepted","partially_filled"]
+  .includes(o.state)` with the shared `isLiveExitOrder(o, positionSide)` helper, which recognizes
+  Robinhood `queued`/`confirmed`/`unconfirmed`, Tradier `pending`, and short-cover exits Alpaca
+  reports as side `buy` (via `isLiveOrderState`). `input.recentOrders` are raw `EquityOrder`s
+  carrying orderClass/stopPrice/side/state (enrichment confirmed present). No change needed.
+
+### 4. notifications — non-atomic option-alert reservation (concurrency)
+- **Still reproduced on main:** YES.
+- `checkAndDispatchOptionAlerts` read the "already sent" set (`sentAlerts`, from `notification_events`
+  status='sent') ONCE at the top, before any event row was inserted. Dashboard snapshots invoke it
+  concurrently, so two concurrent requests could both pass the in-memory check and both deliver the
+  same (account, symbol, alertType) alert.
+- **Fix:**
+  - `src/lib/db.ts` `migrate()`: new `option_alert_reservations` table with
+    `UNIQUE(user_id, connected_account_id, symbol, alert_type)`.
+  - `src/lib/db-notifications.ts`: `reserveOptionAlert(...)` = `INSERT OR IGNORE` returning
+    `changes === 1` (atomic single-winner claim; better-sqlite3 is synchronous so the
+    insert-and-read runs within one event-loop tick), and `releaseOptionAlertReservation(...)`.
+  - `src/lib/notifications.ts`: a `deliverAlert(symbol, alertType, input)` helper — skip if already
+    sent (historical fast path), else claim atomically; only the winner sends. Release the claim
+    when the send did NOT actually deliver (status != "sent" — disabled type or webhook failure), so
+    a disabled/failed alert stays deliverable on a later cycle (matches the historical status='sent'
+    -only dedupe). Reserve only for events that will actually be delivered.
+- **Test:** `test/option-alert-dedupe.test.ts` — a unit test of the claim primitive (first true,
+  second false, release re-opens) + "two CONCURRENT dispatches deliver the same appearance alert
+  only ONCE". Verified the concurrency case fails pre-fix (2 rows delivered).
+
+### 5. dashboard — option-fetch had no deadline (reliability)
+- **Still reproduced on main:** YES.
+- The best-effort `await gateway.getOptionPositions(accountNumber)` sat OUTSIDE the dashboard's
+  `withDeadline` safeguards. Its `try/catch` only handles a REJECTION, so a HUNG options/MCP
+  endpoint hung the whole snapshot forever — the catch never runs and the dashboard never renders.
+- **Fix** (`src/lib/dashboard.ts`, ~L424): wrap the leg in `withDeadline<OptionPosition[]>(…, 8000,
+  () => [], "gateway.getOptionPositions", timedOutSections)`, the same pattern the
+  portfolio/positions/orders leg uses. Returns `[]` on timeout/error.
+- **Test:** covered by the existing dashboard-snapshot suite compiling against the wrapped signature;
+  behavior is the standard `withDeadline` fallback already exercised for the sibling legs.
+
+## Files
+- `src/lib/synthetic-stops.ts`
+- `src/lib/strategy.ts`
+- `src/lib/notifications.ts`
+- `src/lib/db-notifications.ts`
+- `src/lib/db.ts` (new `option_alert_reservations` table)
+- `src/lib/dashboard.ts`
+- `test/synthetic-stops.test.ts`, `test/strategy-hardening.test.ts`, `test/option-alert-dedupe.test.ts` (new)
+- `STATUS.md`, `docs/EFFORT-LOG.md`, this rollout note.
+
+## Verification
+- `npx tsc --noEmit` — clean.
+- `npm test` — (result recorded below at commit time).
+- `npm run build` — (result recorded below).
+- `npm run lint` — (result recorded below).
+- Per-finding regression tests each verified to FAIL on the unfixed code and PASS with the fix
+  (findings 1, 2, 4). The one pre-existing unrelated local failure
+  `test/market-custom-symbol.test.ts` (`no such table: sec_insider_transactions`) is an env/DB-state
+  flake, ignored per task instructions.
+
+## Follow-ups / risks
+- Finding 1 keeps risk-reducing broker-stop CANCELS running while halted (deliberate) — only
+  placement/replacement is suppressed. If a future requirement wants ZERO broker interaction while
+  halted, that is a separate decision.
+- `option_alert_reservations` grows one row per delivered alert; it is small (bounded by distinct
+  (account, symbol, alertType) triples) and mirrors the permanent `status='sent'` dedupe. No pruning
+  added.

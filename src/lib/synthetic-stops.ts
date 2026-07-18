@@ -360,7 +360,15 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     } catch {
       // never let a bracket-teardown sweep failure block the rest of this monitor's tick
     }
-    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol, stopPlanBySymbol });
+    // Halted protection may only FIRE existing synthetic/exit stops (the fire loop below still runs
+    // under `running`), never PLACE or REPLACE broker-held stops. `reconcileBrokerProtectiveStops`'s
+    // `running` flag is precisely what gates its placement/replacement sections (3 & 4) — its
+    // risk-reducing cancel-on-close sweeps (sections 1 & 2) run regardless. So pass `running=false`
+    // while halted: a halted+protectWhileHalted tick can no longer submit NEW/looser broker
+    // protective orders, but still cancels stops on closed positions and fires resting synthetic
+    // exits. (Without this, a halted account would keep placing/replacing broker stops every tick.)
+    const mayReconcileBrokerStops = running && policy.systemState !== "halted";
+    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running: mayReconcileBrokerStops, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol, stopPlanBySymbol });
     if (reconciled.cancelledOrderIds.length > 0) {
       const cancelledIds = new Set(reconciled.cancelledOrderIds);
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));

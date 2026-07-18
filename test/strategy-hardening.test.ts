@@ -227,6 +227,34 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
     expect(p.bracketStopLoss).toBeUndefined();
     expect(p.bracketTakeProfit).toBeUndefined();
   });
+  it("keeps native brackets for a Tradier market entry the marketable-limit conversion turns into a limit (PR #1701 finding 2)", () => {
+    // A Tradier `market` entry that qualifies for marketable-limit conversion becomes a `limit`
+    // order a few lines later — a type Tradier's native OTOCO/OTO bracket DOES support. The strip
+    // must NOT fire for it, or the converted limit order ends up with no native broker-held
+    // protection. dollarAmount 1000 / price 100 = 10 whole shares (>= 1), so it converts.
+    const p = enrichOpeningProposal(
+      buy({ dollarAmount: 1000 }),
+      policy({ activeBroker: "tradier", marketableLimitEntries: true, permittedOrderTypes: ["market", "limit"], riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan
+    );
+    expect(p.type).toBe("limit"); // converted to a marketable limit
+    expect(p.bracketStopLoss).toBe(92); // native bracket legs survived the conversion
+    expect(p.bracketTakeProfit).toBe(120);
+    // The market-entry strip's "not supported" annotation must NOT have been applied.
+    expect(p.rationale).not.toContain("Tradier native entry brackets are not supported");
+  });
+  it("still strips brackets for a Tradier market entry that will NOT convert (marketable-limit off)", () => {
+    // Guardrail for the finding-2 fix: with the conversion disabled the entry STAYS a market order,
+    // which Tradier can't bracket — the strip must still fire.
+    const p = enrichOpeningProposal(
+      buy({ dollarAmount: 1000 }),
+      policy({ activeBroker: "tradier", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan
+    );
+    expect(p.type).toBe("market");
+    expect(p.bracketStopLoss).toBeUndefined();
+    expect(p.bracketTakeProfit).toBeUndefined();
+  });
   it("attaches no brackets when brokerBracketsEnabled is false", () => {
     const p = enrichOpeningProposal(buy(), policy({ activeBroker: "alpaca", brokerBracketsEnabled: false, riskRules: { stopLossPct: 8 } }), marketScan);
     expect(p.bracketStopLoss).toBeUndefined();

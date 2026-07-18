@@ -1,5 +1,32 @@
 # Current Status
 
+## 2026-07-18 — Money-path/reliability follow-ups from PR #1705 (CLAUDE, branch `claude/money-path-followups-1701`)
+
+Fixed 4 money-path/reliability findings that merged into `main` UNFIXED via PR #1705 (a 5th was
+already resolved by PR #1713 and is skipped). Each fix is minimal + carries a regression test
+verified to fail pre-fix.
+
+1. **Halted broker-stop placement** (`synthetic-stops.ts`): a halted+`protectWhileHalted` tick passed
+   `running=true` into `reconcileBrokerProtectiveStops`, letting a HALTED account PLACE/REPLACE new
+   broker-held protective stops. Now gated (`mayReconcileBrokerStops = running && systemState !==
+   "halted"`) so halted protection only FIRES existing exits + runs risk-reducing cancels, never
+   places/replaces.
+2. **Tradier bracket strip vs limit conversion** (`strategy.ts` `enrichOpeningProposal`): a Tradier
+   `market` entry that the marketable-limit conversion turns into a `limit` (a type Tradier's native
+   bracket supports) had its brackets stripped BEFORE the conversion → limit with no protection. The
+   strip now skips when the conversion will apply (`willBecomeMarketableLimit`).
+3. **Active-protection live-exit semantics** (`strategy.ts`): ALREADY FIXED on main by PR #1713
+   (`isLiveExitOrder`/`isLiveOrderState`). Skipped.
+4. **Atomic option-alert reservation** (`notifications.ts` + `db-notifications.ts` + `db.ts`):
+   concurrent dashboard snapshots could both deliver the same option alert. Added an atomic
+   `option_alert_reservations` UNIQUE-constraint claim (new table), released on non-delivery.
+5. **Dashboard option-fetch deadline** (`dashboard.ts`): best-effort `getOptionPositions` await sat
+   outside `withDeadline`; a hung options/MCP endpoint hung the whole snapshot. Now wrapped (8s →
+   `[]`).
+
+Gates: tsc clean; test/build/lint run before push. Rollout:
+`docs/rollouts/2026-07-18-money-path-followups.md`. Next: land via PR (parent opens it).
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

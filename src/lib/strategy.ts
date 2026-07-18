@@ -5730,7 +5730,22 @@ export function enrichOpeningProposal(
   // branch runs; the old else-if was unreachable for whole-share Tradier market orders because
   // the preceding whole-share condition always matched first, so the proposal carried brackets
   // that Tradier's gateway then silently ignored (Codex review, PR #1705).
-  const isTradierMarket = policy.activeBroker === "tradier" && next.type === "market";
+  //
+  // BUT: the marketable-limit conversion a few lines below turns a qualifying `market` entry into a
+  // `limit` order — a type Tradier's native bracket DOES support. If that conversion will apply, this
+  // is NOT a "Tradier market entry" for bracket purposes: the legs must survive to the converted limit
+  // order, and the whole-share branch below must run to (re)compute them. Predict the conversion here
+  // and exclude that case, or the entry ends up a limit order with no native broker-held protection
+  // (PR #1701 finding 2 — the strip ran before the conversion). The predicate mirrors the conversion
+  // gate below exactly (including the whole-share qty check).
+  const willBecomeMarketableLimit =
+    policy.marketableLimitEntries === true &&
+    next.type === "market" &&
+    next.dollarAmount != null &&
+    next.dollarAmount > 0 &&
+    (policy.permittedOrderTypes?.includes("limit") ?? true) &&
+    Math.floor(next.dollarAmount / entryPrice) >= 1;
+  const isTradierMarket = policy.activeBroker === "tradier" && next.type === "market" && !willBecomeMarketableLimit;
   if (bracketsEnabled && isTradierMarket && (next.bracketStopLoss != null || next.bracketTakeProfit != null)) {
     next = {
       ...next,

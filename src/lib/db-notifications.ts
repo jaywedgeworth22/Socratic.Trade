@@ -87,6 +87,46 @@ function isBrokerVerificationRunFailed(title: string, payload: unknown): boolean
   );
 }
 
+/**
+ * Atomically claim the right to deliver a single option alert. Backed by a UNIQUE constraint on
+ * (user_id, connected_account_id, symbol, alert_type): the INSERT OR IGNORE either inserts the row
+ * (returns true — THIS caller owns delivery) or no-ops because a concurrent request already claimed
+ * it (returns false — skip). better-sqlite3 is synchronous, so the insert-and-read-changes runs to
+ * completion within one event-loop tick, making the claim race-free against concurrent dashboard
+ * snapshot builds. Release the claim (`releaseOptionAlertReservation`) if the send does not actually
+ * deliver, so a disabled/failed alert stays deliverable on a later cycle.
+ */
+export function reserveOptionAlert(
+  userId: string,
+  connectedAccountId: string,
+  symbol: string,
+  alertType: string
+): boolean {
+  const info = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO option_alert_reservations (user_id, connected_account_id, symbol, alert_type, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(userId, connectedAccountId ?? "", symbol, alertType, new Date().toISOString());
+  return info.changes === 1;
+}
+
+/** Release a previously-claimed option-alert reservation so it can be delivered on a later cycle
+ *  (used when the send was skipped/failed rather than actually delivered). */
+export function releaseOptionAlertReservation(
+  userId: string,
+  connectedAccountId: string,
+  symbol: string,
+  alertType: string
+): void {
+  getDb()
+    .prepare(
+      `DELETE FROM option_alert_reservations
+       WHERE user_id = ? AND connected_account_id = ? AND symbol = ? AND alert_type = ?`
+    )
+    .run(userId, connectedAccountId ?? "", symbol, alertType);
+}
+
 function rowToEvent(row: RawNotificationEvent): NotificationEvent {
   return {
     id: row.id,
