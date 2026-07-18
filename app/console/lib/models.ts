@@ -9,11 +9,10 @@
  *  back) vendor-qualified as "anthropic/claude-sonnet-5", "x-ai/grok-4.3", "google/gemini-2.5-
  *  flash", etc. — see resolveLlmEndpoint in src/lib/llm-provider.ts for the exact prefixes.
  *  `bareModelId` strips that routing prefix before any provider/display lookup runs, reusing
- *  the SAME canonicalization already exported for the Usage page's OpenRouter/direct merge
- *  (app/admin/llm-usage/model-merge.ts, from the canonical model-identity work in #1716) rather
- *  than re-deriving the stripping logic here. */
+ *  the SHARED canonicalizer (src/lib/model-identity.ts, consolidated in #1736 from the
+ *  model-identity work in #1703/#1716) rather than re-deriving the stripping logic here. */
 
-import { displayModelName as bareModelId } from "../../admin/llm-usage/model-merge";
+import { canonicalModelId as bareModelId } from "@/lib/model-identity";
 
 export type ConsoleProviderId = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
 
