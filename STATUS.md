@@ -35,7 +35,9 @@ Auto-merge already enabled. No code changes this round.
 Resolved Sentry connection-failed alerts from the dormant `earningscalls` integration (RapidAPI subscription inactive in prod) and made database writes resilient to transient disk-load thrashing by:
 - Passing `keySource: "env"` and adding `401` and `403` to `suppressHealthStatuses` in `fetchWithRetry` options inside `earningsCallsGet` (`src/lib/earningscalls-transcripts.ts`).
 - Increasing SQLite's `busy_timeout` from 5s to 30s in `src/lib/db.ts` to allow transactions to survive disk IO wait during Docker builds on the Hetzner server.
-- Verifying the changes locally under Node 24 (type check clean, unit tests passing).
+- Fixing `test/market-custom-symbol.test.ts` database isolation by removing load-order conflicts from `resetDbForTesting()`.
+- Updating `src/lib/llm-provider.ts`'s `llmModelFamily` and `test/model-rotation.test.ts` to support namespace-qualified OpenRouter models in rotation credential checks, using robust explicit assertions instead of brittle global regex loops.
+- Verifying the changes locally under Node 24 (type check clean, lint clean, all 4,791 unit tests passing).
 
 ## 2026-07-17 — PR #1669 Merged & Deployed: SEC/RAG Advanced RAG Backfill & SiliconFlow Integration (Antigravity/AG)
 
