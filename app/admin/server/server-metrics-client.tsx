@@ -28,7 +28,10 @@ interface HostInfo {
 
 interface ServerMetricsData {
   isProd: boolean;
+  usesLocalHost?: boolean;
   degraded?: boolean;
+  stale?: boolean;
+  cacheAgeSeconds?: number;
   hostInfo: HostInfo;
   resources: unknown;
   metrics: {
@@ -41,6 +44,62 @@ interface ServerMetricsData {
   asOf: string;
   error?: string;
   warnings?: unknown;
+}
+
+function parseMetricPoints(value: unknown): MetricPoint[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points: MetricPoint[] = [];
+  for (const item of value) {
+    const point = asRecord(item);
+    if (
+      typeof point?.timestamp !== "number"
+      || !Number.isFinite(point.timestamp)
+      || typeof point.value !== "number"
+      || !Number.isFinite(point.value)
+    ) return undefined;
+    points.push({ timestamp: point.timestamp, value: point.value });
+  }
+  return points;
+}
+
+export function parseServerMetricsEnvelope(value: unknown): ServerMetricsData | undefined {
+  const envelope = asRecord(value);
+  const hostInfo = asRecord(envelope?.hostInfo);
+  const rawMetrics = asRecord(envelope?.metrics);
+  if (
+    typeof envelope?.isProd !== "boolean"
+    || !hostInfo
+    || !Array.isArray(envelope.resources)
+    || !rawMetrics
+    || typeof envelope.asOf !== "string"
+    || !Number.isFinite(Date.parse(envelope.asOf))
+  ) return undefined;
+  const cpu = parseMetricPoints(rawMetrics.cpu);
+  const diskRead = parseMetricPoints(rawMetrics.diskRead);
+  const diskWrite = parseMetricPoints(rawMetrics.diskWrite);
+  const networkRx = parseMetricPoints(rawMetrics.networkRx);
+  const networkTx = parseMetricPoints(rawMetrics.networkTx);
+  if (!cpu || !diskRead || !diskWrite || !networkRx || !networkTx) return undefined;
+  return {
+    isProd: envelope.isProd,
+    usesLocalHost: envelope.usesLocalHost === true,
+    degraded: envelope.degraded === true,
+    stale: envelope.stale === true,
+    cacheAgeSeconds: readNonNegativeNumber(envelope.cacheAgeSeconds),
+    hostInfo,
+    resources: envelope.resources,
+    metrics: { cpu, diskRead, diskWrite, networkRx, networkTx },
+    asOf: envelope.asOf,
+    error: readText(envelope.error),
+    warnings: envelope.warnings,
+  };
+}
+
+export function markServerMetricsSnapshotStale(
+  previous: ServerMetricsData | null,
+  error: string,
+): ServerMetricsData | null {
+  return previous ? { ...previous, degraded: true, stale: true, error } : null;
 }
 
 // Helper formats
@@ -90,27 +149,34 @@ export function ServerMetricsClient() {
   const fetchMetrics = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/server-metrics");
+      const json: unknown = await res.json().catch(() => undefined);
+      const envelope = parseServerMetricsEnvelope(json);
       if (res.ok) {
-        const json = await res.json();
-        setData(json);
-        setRequestError(null);
-      } else {
-        const json: unknown = await res.json().catch(() => undefined);
-        const envelope = asRecord(json);
-        const error = readText(envelope?.error) || "Failed to load metrics";
-        // The API preserves verified partial provider data in a degraded 502
-        // envelope. Keep that receipt; reject unrelated/malformed error JSON.
-        if (asRecord(envelope?.hostInfo) && asRecord(envelope?.metrics) && Array.isArray(envelope?.resources)) {
-          setData({ ...(envelope as unknown as ServerMetricsData), error });
+        if (envelope) {
+          setData(envelope);
           setRequestError(null);
         } else {
-          setData((prev) => prev ? { ...prev, error } : null);
+          const error = "The server metrics endpoint returned malformed data.";
+          setData((previous) => markServerMetricsSnapshotStale(previous, error));
+          setRequestError(error);
+        }
+      } else {
+        const error = readText(asRecord(json)?.error) || "Failed to load metrics";
+        // Preserve verified partial data if a proxy or unexpected route error
+        // changes the status code; reject unrelated/malformed error JSON.
+        if (envelope) {
+          setData({ ...envelope, error });
+          setRequestError(null);
+        } else {
+          setData((previous) => markServerMetricsSnapshotStale(previous, error));
           setRequestError(error);
         }
       }
     } catch (err) {
       console.error(err);
-      setRequestError("Unable to reach the server metrics endpoint.");
+      const error = "Unable to reach the server metrics endpoint.";
+      setData((previous) => markServerMetricsSnapshotStale(previous, error));
+      setRequestError(error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -151,11 +217,12 @@ export function ServerMetricsClient() {
       ? []
       : ["The server metrics warnings payload was malformed."];
   const warnings = [...providerWarnings, ...normalizedResources.warnings];
-  const hostName = displayProviderText(host?.name, data?.isProd ? "Unavailable" : "localhost", "host name");
+  const usesLocalHost = data?.usesLocalHost === true;
+  const hostName = displayProviderText(host?.name, usesLocalHost ? "localhost" : "Unavailable", "host name");
   const hostOs = displayProviderText(host?.os, "Unavailable", "operating system");
-  const hostIp = displayProviderText(host?.ip, data?.isProd ? "Unavailable" : "127.0.0.1", "server IP");
-  const hostLocation = displayProviderText(host?.location, data?.isProd ? "Unavailable" : "local", "server location");
-  const serverType = displayProviderText(host?.serverType, data?.isProd ? "Unavailable" : "local runtime", "server type");
+  const hostIp = displayProviderText(host?.ip, usesLocalHost ? "127.0.0.1" : "Unavailable", "server IP");
+  const hostLocation = displayProviderText(host?.location, usesLocalHost ? "local" : "Unavailable", "server location");
+  const serverType = displayProviderText(host?.serverType, usesLocalHost ? "local runtime" : "Unavailable", "server type");
   const cpuCores = typeof host?.cpus === "number" && Number.isFinite(host.cpus) && host.cpus > 0
     ? `${host.cpus} Cores`
     : "Unavailable";
@@ -168,6 +235,9 @@ export function ServerMetricsClient() {
   const loadAverage = Array.isArray(host?.loadAvg)
     ? readNonNegativeNumber(host.loadAvg[0])
     : undefined;
+  const asOf = data?.asOf ? new Date(data.asOf) : undefined;
+  const hasValidAsOf = asOf && Number.isFinite(asOf.getTime());
+  const formattedAsOf = hasValidAsOf ? asOf.toLocaleString() : "Unavailable";
 
   // CPU average of last 3 points
   const latestCpuValues = metrics?.cpu?.slice(-3).map(p => p.value) || [];
@@ -193,16 +263,25 @@ export function ServerMetricsClient() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold">Server Stats</h1>
-            {data?.isProd ? (
-              <Chip tone={data.degraded ? "warn" : "accent"}>
-                {data.degraded ? "PRODUCTION - DEGRADED" : "PRODUCTION"}
-              </Chip>
-            ) : (
+            {usesLocalHost ? (
               <Chip tone="warn">LOCAL HOST</Chip>
+            ) : (
+              <Chip tone={data?.degraded ? "warn" : "accent"}>
+                {data?.isProd
+                  ? data.degraded ? "PRODUCTION - DEGRADED" : "PRODUCTION"
+                  : data?.degraded ? "REMOTE - DEGRADED" : "REMOTE"}
+              </Chip>
             )}
+            {data?.stale && <Chip tone="warn">STALE SNAPSHOT</Chip>}
           </div>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             Host node metrics and Coolify application resource statuses.
+          </p>
+          <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+            As of {formattedAsOf}
+            {typeof data?.cacheAgeSeconds === "number" && data.cacheAgeSeconds > 0
+              ? ` (${Math.floor(data.cacheAgeSeconds)}s old)`
+              : ""}
           </p>
         </div>
         <div className="flex items-center gap-3 self-start max-sm:w-full">
