@@ -10,6 +10,11 @@
 > provider-qualified IDs after the branch canonicalized OpenRouter telemetry to bare model IDs.
 > Focused failing test set is green; push back to PR #1735 and let hosted checks arbitrate full-suite
 > readiness.
+> **2026-07-18 - PR #1736 review cleanup (CODEX on `monet/model-identity-shared`).**
+> Merged latest `origin/main`, kept the shared model-identity helper behavior, and restored
+> case-insensitive usage aggregation by using a lowercase aggregation key with case-preserving
+> display/canonical output. Focused usage-model merge tests are green; push back to PR #1736 and
+> let hosted checks arbitrate full-suite readiness.
 > **2026-07-18 - CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739).**
 > Classifier checkouts now pin the event SHA. Security deliberately keeps full history for Gitleaks.
 > Diff/YAML/actionlint checks passed; final gate and deployment follow the parent routing PR.
