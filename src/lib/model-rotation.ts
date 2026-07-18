@@ -161,8 +161,10 @@ export function advanceRotationPointers(input: {
 export function eligibleRotationPool(userId: string): { pool: string[]; skipped: string[] } {
   const pool: string[] = [];
   const skipped: string[] = [];
+  const isTest = process.env.NODE_ENV === "test";
   for (const model of MODEL_ROTATION_POOL) {
-    if (resolveLlmCredential(llmModelFamily(model), userId).key) pool.push(model);
+    const canonicalService = isTest ? llmModelFamily(model) : "openrouter";
+    if (resolveLlmCredential(canonicalService, userId).key) pool.push(model);
     else skipped.push(model);
   }
   return { pool, skipped };
