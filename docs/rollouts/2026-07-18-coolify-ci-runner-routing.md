@@ -104,6 +104,12 @@ actionlint .github/workflows/_merge-shepherd-impl.yml .github/workflows/ci.yml \
   .github/workflows/shared-package-pin-check.yml
 ```
 
+Local verification limitation: `NODE_OPTIONS=--max-old-space-size=3072 npx tsc --noEmit` could not
+run in this workflow-only worktree because project dependencies were not installed; `npx` reported
+`This is not the tsc command you are looking for`. The authoritative Coolify `verify-hosted` job on
+the immediately preceding head passed lint, TypeScript, the full unit suite, and the production
+build. The new head must repeat that hosted gate before merge.
+
 ## Follow-ups
 
 After this workflow-only PR lands, rerun checks on PRs #1728, #1733, #1735, #1736, #1737, and #1738.
