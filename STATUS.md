@@ -1,5 +1,25 @@
 # Current Status
 
+## 2026-07-18 — Admin console shell parity (CODEX, branch `codex/admin-console-shell`)
+
+Implemented the admin.socratictrade.com chrome refresh. Admin now uses the console geometry/tokens,
+keeps the Socratic Trade logo/name visible, shows a profile popover with theme/settings/sign-out
+actions, and keeps trading account scope plus Start/Run controls out of the admin surface. The
+admin-only tab rail remains the left navigation. Normalized admin labels to title case and renamed
+the server panel to **Server Stats** across nav, overview, page headings, metadata, and Settings.
+
+Follow-up review fixes keep the large brand mark/name out of the narrow mobile header while retaining
+the console return affordance, and use a plain anchor for logout so opening the profile menu cannot
+prefetch the side-effectful GET route. Focused lint and TypeScript verification for the changed shell
+passed; the branch remains local pending the owner's landing workflow.
+
+Verification on Node 24: `npm run lint` passed with 0 errors (582 existing warnings), `npx tsc --noEmit`
+passed, `npm test` passed (412 files / 4,794 tests), and `npm run build` passed. The branch is ready
+for `scripts/land.sh`; no production deploy or admin data/API behavior was changed.
+
+The first post-routing Playwright smoke rerun reached the local Next webServer but was OOM-killed
+with exit 137 under the runner's 3 GiB cap. The CI-only Playwright heap ceiling is reduced to
+2048 MiB to leave room for Chromium and build-worker overhead; rerun smoke after this commit.
 ## 2026-07-18 — PR #1735 review cleanup round 2 (CODEX, branch `agent/ag-recovery-v48-migration`)
 
 Resolved two fresh Codex review findings on PR #1735: preserved imported company-name display casing

@@ -1,5 +1,20 @@
 # Active Implementation Plan
 
+> **2026-07-18 - Admin smoke memory headroom (CODEX).** Lower the CI-only Playwright Node heap
+> ceiling from 2560 MiB to 2048 MiB after the admin PR's webServer exited 137 under the 3 GiB
+> runner cap; rerun required checks and verify merge/deploy.
+
+## 2026-07-18 — Admin console shell parity (CODEX)
+
+- [x] Match the admin frame to the normal console chrome geometry and tokens.
+- [x] Keep logo/name and a functional profile popover visible on admin pages.
+- [x] Keep account scope, Start/Resume/STOP, and Run once controls absent from admin.
+- [x] Preserve admin tabs as the left rail and normalize all admin labels to title case.
+- [x] Rename the server panel to Server Stats without changing `/admin/server` or API routes.
+- [x] Keep the mobile admin header within narrow viewports by hiding the full brand at small breakpoints.
+- [x] Prevent profile-menu logout prefetch from triggering the side-effectful `/logout` GET.
+- [x] Run Node 24 lint, TypeScript, full Vitest, and production build gates.
+- [ ] Land through `scripts/land.sh`, then verify the auto-deployed production SHA and health.
 > **2026-07-18 - PR #1735 review cleanup round 2 (CODEX on `agent/ag-recovery-v48-migration`).**
 > Address the fresh Codex comments by preserving company-name display casing in securities imports
 > and restoring the missing lockfile peer dependency entries. Focused import tests and clean-install
