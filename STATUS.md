@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-18 — Merged-worktree cleanup + Voyage `/api/health` RCA (CLAUDE, branch `claude/cleanup-merged-worktrees-bdbc08`)
+
+Docs-only receipt. Removed 5 verified-clean merged worktree checkouts (#1740 tmp, #1587,
+#1559, #1624, #1563 lanes; squash-merge ancestry verified via PR mergeCommit; branches
+retained), kept 3 (`codex/reconcile-pr1745` carries 7 unlanded commits with NO PR — CODEX
+disposition needed; `socratic-admin-console-shell` has 4 dirty docs files; `trading-ag-rag`
+standing lane). Voyage RCA: `/api/health` is 200/ok — the red `voyage` dependency lane is
+prod's bge-m3-via-OpenRouter embed path failing with **402 Insufficient credits (OpenRouter
+account exhausted: 25.00/25.31)**; the Voyage key itself is valid. RAG ingestion (incl. SEC
+backfill) is stalled until the owner tops up OpenRouter credits or adds a SiliconFlow key
+(same `BAAI/bge-m3` space). Details:
+`docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
+
 ## 2026-07-18 — BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`)
 
 Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `{ all: true }` or `symbols: ["*"]` in the payload to resolve all tickers in the database and clear their RAG chunk caches. Created the `scripts/reindex-all.ts` CLI tool to enable command-line cache clearing and immediate ingestion under `baai/bge-m3` embedding model. Added unit testing suite `test/reindex-all.test.ts` to verify cache deletions. Fixed pre-existing failures in `test/securities-import.test.ts` (companyName casing) and `test/token-budget-ceiling.test.ts` (race conditions on debounced timers). Installed missing `@opentelemetry` helper packages (`@opentelemetry/core`, `@opentelemetry/sdk-trace-base`, `@opentelemetry/resources`) to resolve the Next.js production build compiler issues. Typecheck, tests, and production build all verify green. Next: Land changes using landing script.
