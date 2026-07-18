@@ -1,5 +1,91 @@
 # Current Status
 
+## 2026-07-18 — Money-path/reliability follow-ups from PR #1705 (CLAUDE, branch `claude/money-path-followups-1701`)
+
+Fixed 4 money-path/reliability findings that merged into `main` UNFIXED via PR #1705 (a 5th was
+already resolved by PR #1713 and is skipped). Each fix is minimal + carries a regression test
+verified to fail pre-fix.
+
+1. **Halted broker-stop placement** (`synthetic-stops.ts`): a halted+`protectWhileHalted` tick passed
+   `running=true` into `reconcileBrokerProtectiveStops`, letting a HALTED account PLACE/REPLACE new
+   broker-held protective stops. Now gated so halted protection only FIRES existing exits + runs
+   risk-reducing cancels, never places/replaces. **Codex round-2 (PR #1738): the first cut passed
+   `running=false`, which ALSO killed the section-3 oversized-stop CANCEL (an out-of-band-shrunk
+   position could keep an over-selling stop resting). Re-fixed with a `haltedProtectOnly` flag that
+   blocks only placement + non-shrink replacement; the oversized/shrink cancel still runs.**
+2. **Tradier bracket strip vs limit conversion** (`strategy.ts` `enrichOpeningProposal`): a Tradier
+   `market` entry that the marketable-limit conversion turns into a `limit` (a type Tradier's native
+   bracket supports) had its brackets stripped BEFORE the conversion → limit with no protection. The
+   strip now skips when the conversion will apply (`willBecomeMarketableLimit`). **Codex round-2 (PR
+   #1738): the surviving legs were still priced off the pre-conversion `entryPrice`; a converted buy
+   limit above the reference could carry a take-profit at/below the fill. Now the converted limit is
+   computed once up front and the legs anchor to it (`bracketAnchorPrice`), reused by the conversion
+   block (single source of truth).**
+3. **Active-protection live-exit semantics** (`strategy.ts`): ALREADY FIXED on main by PR #1713
+   (`isLiveExitOrder`/`isLiveOrderState`). Skipped.
+4. **Atomic option-alert reservation** (`notifications.ts` + `db-notifications.ts` + `db.ts`):
+   concurrent dashboard snapshots could both deliver the same option alert. Added an atomic
+   `option_alert_reservations` UNIQUE-constraint claim (new table), released on non-delivery.
+5. **Dashboard option-fetch deadline** (`dashboard.ts`): best-effort `getOptionPositions` await sat
+   outside `withDeadline`; a hung options/MCP endpoint hung the whole snapshot. Now wrapped (8s →
+   `[]`).
+
+Gates (round 2): `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files /
+**4802 tests pass**; `npm run build` exit 0. Rollout:
+`docs/rollouts/2026-07-18-money-path-followups.md` (round-2 section appended). **PR #1738 open,
+auto-merge (squash) armed.** BLOCKED on merge ONLY by an account-level GitHub Actions
+runner-provisioning outage (every open PR's `verify` fails at job startup, `runner_id:0`, 404 logs —
+needs the owner to raise the Actions spending limit / minutes; not code).
+
+**Round 8 (2026-07-18):** codex-autofix pushed `4425b1a` implementing the round-8 findings (durable
+`pending_replace` halted right-size retry marker; mark `haltedRightsizeSymbols` only after a confirmed
+cancel; purge `option_alert_reservations` on account deletion). It did NOT compile (TS2304 `oversized`
+out of scope in the section-1 `try`) and its F1 marker was never read back
+(`listBrokerProtectiveStops` still filtered `resting`/`pending_cancel` only → section 1 never re-queued
+→ section 4 never retried → position could stay unprotected until unhalted). Repaired: (a) hoisted the
+mark-intent into a `markRightsizeOnCancel` flag (fixes tsc; preserves "mark only after a live cancel");
+(b) added `pending_replace` to the `listBrokerProtectiveStops` status filter; (c) guarded the two
+consumer loops that run BEFORE section 1's marker cleanup (`cancelBrokerProtectiveStop` + the
+`kind===null` teardown) to DROP a `pending_replace` marker rather than cancel its synthetic
+`pending-replace-*` id (which would 404 → stuck `pending_cancel`). Added F1 regression
+`SYN-HALT-F1RETRY`. Gates: tsc clean, lint 0 errors, synthetic-stops 65 pass + account-delete +
+option-alert-dedupe pass; `npm run build` exit 0.
+
+**Round 9 (2026-07-18):** Codex raised 3 P2 findings on the durable `pending_replace` retry marker
+(the mechanism made functional in round 8), all genuine, fixed together: (F#1) section 1 deleted the
+marker before section 4 proved it could place — a subsequent placement SKIP (order-list fetch fail /
+trail can't arm / sub-share) then lost the owed right-size, leaving the position unprotected until
+unhalted; now section 1 KEEPS the marker for halted+live+kind symbols and section 4's `existing` guard
+excludes `pending_replace` so the kept marker still places. (F#2) with markers now surviving, the
+cancel-on-close / plan-teardown loops could cancel a marker's synthetic `pending-replace-*` id (404 ->
+stuck pending_cancel) — added explicit `pending_replace` skip guards to both. (F#3) a placement that
+THREW after the broker accepted lost the submitted ref — now the marker preserves the client ref, and
+the next tick ADOPTS a ref-matched live order (tracked by its real id) instead of orphaning/duplicating,
+reusing the ref so broker idempotency guards the not-yet-visible case. Tests: `SYN-HALT-KEEPMARK`,
+`SYN-HALT-MARKCLOSE`, `SYN-HALT-ADOPT`. Gates: tsc clean, lint 0 errors, 168 tests across the affected
+files pass; full suite + build re-running before push. Rollout note round-8 section
+appended.
+
+**Round 10 (2026-07-18):** Codex raised 4 P2 findings, all consequences of round-9's F#3 (markers can
+now hold a REAL client ref). Fixed by consolidating marker/ref resolution into ONE owner (section 1)
+plus a loosening guard: (F#1) `cancelBrokerProtectiveStop` reconciles a real-ref marker (cancel the
+accepted order by its REAL id / drop-if-terminal / keep-if-invisible) instead of blindly dropping it
+(which would leave an accepted stop live to double-sell after a synthetic exit); (F#2) section 1 now
+reconciles real-ref markers up front — adopt-if-live / book-if-filled / drop-if-dead / keep-if-invisible
+— never losing the handle; (F#4) section 1 books terminal fills (the section-4 adopt filter ignored
+FILLED matches → missing from P&L); the redundant section-4 adopt block was removed, keeping only the
+ref-reuse idempotency guard; (F#3) a `haltedRightsizeFloor` clamps a halted fixed right-size UP to the
+cancelled stop's tighter trigger so a widened stopLossPct can't loosen protection mid-halt (trailing is
+already arm-gated). Branch also merged `origin/main` (4e04bea) carrying #1739 — CI routed to a
+self-hosted Coolify runner, which may lift the provisioning outage. Tests: `PS-REFCANCEL`, `PS-REFKEEP`,
+`PS-FLOOR`, `PS-REFFILL`. Gates: tsc clean, lint 0, 172 affected-file tests pass; full suite + build
+re-running before push.
+
+**Note on the finding tail:** rounds 8→9→10 on the halted right-size machinery have been
+self-compounding (each hardening layer spawns the next round's edge cases; round-10's 4 findings all
+stem from round-9's ref-preservation). The owner's offered "keep-oversized-while-halted" simplification
+(which would remove this entire finding class) remains available and un-taken — surfaced here for the
+owner's awareness; not switched unilaterally per their standing instruction.
 ## 2026-07-18 — CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739)
 
 Follow-up to the shallow-checkout recovery. Classifier jobs pin checkout to `github.sha` in addition
