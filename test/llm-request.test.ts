@@ -189,6 +189,17 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect(gemini.reasoning_effort).toBe("none");
     expect(gemini.max_completion_tokens).toBe(1500);
 
+    // Claude via OpenRouter (anthropic/... on chat-completions): OpenRouter's UNIFIED `reasoning`
+    // param, NOT reasoning_effort, and no temperature (Anthropic reasoning rejects it) (Codex P1 #1703).
+    const claude = withLlmRequestBounds({ model: "anthropic/claude-sonnet-5" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "anthropic/claude-sonnet-5",
+      reasoningEffort: "medium"
+    });
+    expect(claude.reasoning).toEqual({ effort: "medium" });
+    expect("reasoning_effort" in claude).toBe(false);
+    expect("temperature" in claude).toBe(false);
+
     const xai = withLlmRequestBounds({ model: "xai/grok-4.3" }, "chat-completions", {
       maxOutputTokens: 1500,
       model: "xai/grok-4.3",

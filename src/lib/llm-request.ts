@@ -666,6 +666,17 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
       if (capability.provider === "mistral" && normalizedEffort !== "none") {
         return { ...body, max_completion_tokens: maxCompletionTokens, reasoning_effort: normalizedEffort };
       }
+      if (capability.provider === "anthropic") {
+        // Claude is routed as `anthropic/...` through OpenRouter on the chat-completions transport
+        // (universal OpenRouter routing). OpenRouter maps its UNIFIED `reasoning` parameter to
+        // Anthropic's extended thinking — `reasoning_effort` is OpenAI-only, and Anthropic reasoning
+        // models reject a custom `temperature`. So send `reasoning` (never reasoning_effort), and omit
+        // temperature unless thinking is off (Codex P1, PR #1703).
+        if (normalizedEffort === "none") {
+          return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning: { enabled: false } };
+        }
+        return { ...body, max_completion_tokens: maxCompletionTokens, reasoning: { effort: normalizedEffort } };
+      }
       return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning_effort: normalizedEffort };
     }
     // resolveLlmWireOutputCap (== bounds.maxOutputTokens on this non-reasoning path) keeps every
