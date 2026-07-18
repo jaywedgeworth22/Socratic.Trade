@@ -3,8 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Controllable Robinhood gateway stub for the sync/reconnect tests below. The connect route
+// imports `getRobinhoodGateway` from @/lib/robinhood; tests that need it set `rhAccounts`.
+const rhStub = vi.hoisted(() => ({ accounts: [] as Array<Record<string, unknown>> }));
+vi.mock("@/lib/robinhood", () => ({
+  getRobinhoodGateway: () => ({ getAccounts: async () => rhStub.accounts })
+}));
+
 beforeEach(() => {
   vi.resetModules();
+  rhStub.accounts = [];
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-connected-route-${randomUUID()}.db`)}`;
 });
 
@@ -175,5 +183,139 @@ describe("connected accounts route", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ accounts: [] });
+  });
+});
+
+describe("connected account rename (cosmetic label only)", () => {
+  async function seedAccount(overrides: Record<string, unknown> = {}) {
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    upsertConnectedAccount({
+      id: "acct-1",
+      userId: "local",
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PA123456",
+      label: "Old Name",
+      apiKey: "PK_key",
+      apiSecret: "secret",
+      isActive: true,
+      ...overrides
+    });
+  }
+
+  it("renameConnectedAccount changes ONLY the label — account number and credentials untouched", async () => {
+    await seedAccount();
+    const { renameConnectedAccount, getActiveConnectedAccount } = await import("../src/lib/db");
+    expect(renameConnectedAccount("acct-1", "  Roth IRA — Alpaca  ")).toBe(true);
+    const account = getActiveConnectedAccount();
+    expect(account?.label).toBe("Roth IRA — Alpaca"); // trimmed
+    expect(account?.accountNumber).toBe("PA123456"); // broker identifier preserved
+    expect(account?.apiKey).toBe("PK_key"); // credentials preserved
+    expect(account?.apiSecret).toBe("secret");
+  });
+
+  it("renameConnectedAccount is user-scoped — another user's row is a no-op (false)", async () => {
+    await seedAccount();
+    const { renameConnectedAccount, getConnectedAccount } = await import("../src/lib/db");
+    expect(renameConnectedAccount("acct-1", "Hijacked", "someone-else")).toBe(false);
+    expect(getConnectedAccount("acct-1", "local")?.label).toBe("Old Name");
+  });
+
+  it("renameConnectedAccount rejects empty/whitespace and over-long names", async () => {
+    await seedAccount();
+    const { renameConnectedAccount } = await import("../src/lib/db");
+    expect(() => renameConnectedAccount("acct-1", "   ")).toThrow(/empty/i);
+    expect(() => renameConnectedAccount("acct-1", "x".repeat(121))).toThrow(/too long/i);
+  });
+
+  it("PATCH /api/connected-accounts/[id] renames via label and cannot touch the account number", async () => {
+    await seedAccount();
+    const { PATCH } = await import("../app/api/connected-accounts/[id]/route");
+    const { getActiveConnectedAccount } = await import("../src/lib/db");
+    const response = await PATCH(
+      new Request("http://localhost/api/connected-accounts/acct-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        // A malicious/confused client also sends accountNumber — it must be ignored.
+        body: JSON.stringify({ label: "Renamed", accountNumber: "HACKED" })
+      }),
+      { params: Promise.resolve({ id: "acct-1" }) }
+    );
+    expect(response.status).toBe(200);
+    const account = getActiveConnectedAccount();
+    expect(account?.label).toBe("Renamed");
+    expect(account?.accountNumber).toBe("PA123456"); // unchanged
+  });
+
+  it("PATCH rejects a non-string label (400) and an unknown id (404)", async () => {
+    await seedAccount();
+    const { PATCH } = await import("../app/api/connected-accounts/[id]/route");
+    const bad = await PATCH(
+      new Request("http://localhost/api/connected-accounts/acct-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: 42 })
+      }),
+      { params: Promise.resolve({ id: "acct-1" }) }
+    );
+    expect(bad.status).toBe(400);
+
+    const missing = await PATCH(
+      new Request("http://localhost/api/connected-accounts/nope", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: "Whatever" })
+      }),
+      { params: Promise.resolve({ id: "nope" }) }
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  it("rename does NOT bump updated_at — same-broker credential recency is preserved", async () => {
+    const { upsertConnectedAccount, renameConnectedAccount, getConnectedAccountByBroker, getDb } =
+      await import("../src/lib/db");
+    // Two inactive Tradier connections (e.g. Tradier is only a data source). getConnectedAccountByBroker
+    // orders by is_active DESC, updated_at DESC — the NEWER row (B) backs shared history fetches.
+    upsertConnectedAccount({ id: "tr-a", userId: "local", broker: "tradier", environment: "paper", accountNumber: "AAA", label: "A", apiKey: "tok-a", isActive: false });
+    upsertConnectedAccount({ id: "tr-b", userId: "local", broker: "tradier", environment: "paper", accountNumber: "BBB", label: "B", apiKey: "tok-b", isActive: false });
+    getDb().prepare("UPDATE connected_accounts SET updated_at = ? WHERE id = ?").run("2020-01-01T00:00:00.000Z", "tr-a");
+    getDb().prepare("UPDATE connected_accounts SET updated_at = ? WHERE id = ?").run("2020-06-01T00:00:00.000Z", "tr-b");
+    expect(getConnectedAccountByBroker("tradier")?.id).toBe("tr-b");
+
+    // Renaming the OLDER row must not promote it. Under the pre-fix code (which bumped updated_at)
+    // this would flip the resolved credential to tr-a.
+    expect(renameConnectedAccount("tr-a", "A renamed")).toBe(true);
+    expect(getConnectedAccountByBroker("tradier")?.id).toBe("tr-b"); // still B — credential unchanged
+    const rowA = getDb().prepare("SELECT label, updated_at FROM connected_accounts WHERE id = ?").get("tr-a") as { label: string; updated_at: string };
+    expect(rowA.label).toBe("A renamed");
+    expect(rowA.updated_at).toBe("2020-01-01T00:00:00.000Z"); // untouched
+  });
+
+  it("a user-renamed Robinhood label survives a re-sync / reconnect", async () => {
+    rhStub.accounts = [{ accountNumber: "RH-123", label: "Robinhood Agentic", agenticAllowed: true }];
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const { listConnectedAccounts, renameConnectedAccount } = await import("../src/lib/db");
+
+    // First sync creates the row with the broker default label.
+    const first = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ broker: "robinhood" })
+    }));
+    expect(first.status).toBe(200);
+    const row = listConnectedAccounts().find((a) => a.broker === "robinhood");
+    expect(row?.label).toBe("Robinhood Agentic");
+
+    // Owner renames it in Settings.
+    expect(renameConnectedAccount(row!.id, "My RH")).toBe(true);
+
+    // A routine re-sync (Sync Robinhood / OAuth return) must NOT revert the custom name.
+    const resync = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ broker: "robinhood" })
+    }));
+    expect(resync.status).toBe(200);
+    expect(listConnectedAccounts().find((a) => a.broker === "robinhood")?.label).toBe("My RH");
   });
 });

@@ -1,11 +1,11 @@
 "use client";
 
-/** AI-vendor logo + model badge for the console, ported from the ProviderLogo
- *  inside app/ui/model-picker.tsx. Renders /model-logos/<provider>.svg on a
- *  small neutral (white) tile so dark/transparent marks stay visible in light
- *  AND dark themes; falls back to a colored-initial chip when the SVG is
- *  missing. Available assets: openai, anthropic, xai, gemini, mistral,
- *  deepseek (public/model-logos/). */
+/** AI-vendor logo + model badge for the console (originally ported from the
+ *  ProviderLogo in the now-retired app/ui/model-picker.tsx). Renders
+ *  /model-logos/<provider>.svg on a small neutral (white) tile so
+ *  dark/transparent marks stay visible in light AND dark themes; falls back to
+ *  a colored-initial chip when the SVG is missing. Available assets: openai,
+ *  anthropic, xai, gemini, mistral, deepseek (public/model-logos/). */
 
 import { useEffect, useState } from "react";
 import { cx } from "../lib/format";

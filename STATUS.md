@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
+
+Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
+connections (pencil → input → save) — cosmetic `label` only; the broker-sourced account number
+stays broker-fetched and untouched (it keys trade history + `policy.accountNumber`). New narrow
+`renameConnectedAccount` db fn + `PATCH /api/connected-accounts/[id]` (label-only, credential-safe;
+a test proves a stray `accountNumber` in the body is ignored) + inline UI + 5 tests. (2) Retired the
+last unused old-dashboard-era code: deleted `app/ui/price-chart.tsx` (dead), `app/ui/model-picker.tsx`
+(dead; types inlined into `llm-model-catalog.ts`), and the `/old` redirect shim. Kept the live public
+renderer (primitives/theme/cn power the in-use marketing/legal pages + error boundary, per the
+2026-07-16 "two renderers" decision) and the `/strategy` marketing SEO redirect — those are in use,
+not legacy. Add-account flow unchanged (still asks for Alpaca/Tradier account number; auto-fetch is a
+flagged follow-up). Rollout: `docs/rollouts/2026-07-18-account-rename-and-legacy-retirement.md`.
+
 ## 2026-07-17 — OpenRouter Model Stats Canonicalization: prefix-stripping in aggregateModelStats (Antigravity, branch `antigravity/openrouter-universal-routing`)
 
 Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts`. This strips provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs so that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`). This preserves historical benchmarks, avoids splitting stats by routing provider, and prevents live stats from displaying empty dashes (`—`) in the UI Model Stats drawer. Cleaned up Vitest test assertions in `test/model-stats.test.ts` to verify the canonicalization behavior. Full verification passed: lint 0 errors, tsc clean, tests pass.
