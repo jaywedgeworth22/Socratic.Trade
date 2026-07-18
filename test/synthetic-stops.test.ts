@@ -1322,6 +1322,116 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(afterTick2[0].quantity).toBe(40);
     });
 
+    it("protectWhileHalted: a pending_replace marker SURVIVES a tick that SKIPS placement (order-list fetch failed) — not lost before the retry is placed (Codex PR #1738)", async () => {
+      // Finding #1: section 1 must NOT delete the durable retry marker before section 4 proves it can
+      // place. If the retry tick skips (here: order-list fetch fails -> qty unknown), deleting the
+      // marker would forget the owed right-size and leave the position unprotected until unhalted.
+      connectTestAccount("SYN-HALT-KEEPMARK", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }];
+      broker.quotes = { NVDA: { price: 100 } };
+      broker.orders = [];
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-KEEPMARK-NVDA", userId: "local", accountNumber: "SYN-HALT-KEEPMARK",
+        symbol: "NVDA", brokerOrderId: "pending-replace-1-NVDA", quantity: 40, stopPrice: 95,
+        status: "pending_replace", kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-KEEPMARK"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-KEEPMARK").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+
+      // Tick 1: order list unreadable -> section 4 skips placement (coverage unknown). Marker KEPT.
+      broker.ordersError = new Error("order list unreadable this tick");
+      try {
+        await runSyntheticStopMonitor("local", haltedPolicy, true);
+        expect(broker.placed).toHaveLength(0); // skipped, not placed
+        const afterSkip = listBrokerProtectiveStops("SYN-HALT-KEEPMARK", "local");
+        expect(afterSkip).toHaveLength(1);
+        expect(afterSkip[0].status).toBe("pending_replace"); // marker preserved across the skip
+      } finally {
+        broker.ordersError = null;
+      }
+
+      // Tick 2: order list readable, no live order -> the preserved marker completes the placement.
+      broker.placed = [];
+      broker.orders = [];
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.placed).toHaveLength(1);
+      const afterPlace = listBrokerProtectiveStops("SYN-HALT-KEEPMARK", "local");
+      expect(afterPlace).toHaveLength(1);
+      expect(afterPlace[0].status).toBe("resting");
+    });
+
+    it("protectWhileHalted: a pending_replace marker for a CLOSED position is dropped WITHOUT a broker cancel of its synthetic ref (Codex PR #1738)", async () => {
+      // Finding #2: cancel-only paths must never call cancelEquityOrder on a marker's synthetic
+      // `pending-replace-*` id (404 -> stuck pending_cancel). When the position closed, section 1 drops
+      // the marker outright — no broker call — and no cancel-on-close path touches it.
+      connectTestAccount("SYN-HALT-MARKCLOSE", "paper", "alpaca");
+      broker.positions = []; // position closed out-of-band
+      broker.quotes = {};
+      broker.orders = [];
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-MARKCLOSE-NVDA", userId: "local", accountNumber: "SYN-HALT-MARKCLOSE",
+        symbol: "NVDA", brokerOrderId: "pending-replace-9-NVDA", quantity: 40, stopPrice: 95,
+        status: "pending_replace", kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-MARKCLOSE"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-MARKCLOSE").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.cancelled).not.toContain("pending-replace-9-NVDA"); // never cancelled the fake id
+      expect(broker.placed).toHaveLength(0);
+      expect(listBrokerProtectiveStops("SYN-HALT-MARKCLOSE", "local")).toHaveLength(0); // marker dropped
+    });
+
+    it("protectWhileHalted: a retry ADOPTS a now-visible order carrying the prior submitted ref instead of duplicating it (Codex PR #1738)", async () => {
+      // Finding #3: when the right-size placement THREW after the broker accepted it, the marker stores
+      // the submitted client ref. On the next tick, a live order carrying that ref is adopted (tracked
+      // by its real id) rather than re-placed as a duplicate.
+      connectTestAccount("SYN-HALT-ADOPT", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }]; // shrank 100 -> 40
+      broker.quotes = { NVDA: { price: 100 } };
+      broker.orders = [{ id: "prot-adopt", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 }];
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-ADOPT-NVDA", userId: "local", accountNumber: "SYN-HALT-ADOPT",
+        symbol: "NVDA", brokerOrderId: "prot-adopt", quantity: 100, stopPrice: 95, status: "resting",
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-ADOPT"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-ADOPT").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+
+      // Tick 1: the oversized stop is cancelled, the right-sized replacement placement THROWS (but the
+      // broker actually accepted it). The marker records the submitted client ref.
+      broker.placeError = new Error("reply lost after broker accepted");
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      const afterThrow = listBrokerProtectiveStops("SYN-HALT-ADOPT", "local");
+      expect(afterThrow).toHaveLength(1);
+      expect(afterThrow[0].status).toBe("pending_replace");
+      const submittedRef = afterThrow[0].brokerOrderId;
+      expect(submittedRef).not.toMatch(/^pending-replace-/); // a REAL client ref was preserved
+
+      // Tick 2: the broker's order list now shows the accepted order carrying that ref. Adopt it.
+      broker.placeError = null;
+      broker.placed = [];
+      broker.cancelled = [];
+      broker.orders = [{ id: "adopted-real", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 40, clientOrderId: submittedRef }];
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.placed).toHaveLength(0); // adopted, NOT duplicated
+      const afterAdopt = listBrokerProtectiveStops("SYN-HALT-ADOPT", "local");
+      expect(afterAdopt).toHaveLength(1);
+      expect(afterAdopt[0].status).toBe("resting");
+      expect(afterAdopt[0].brokerOrderId).toBe("adopted-real"); // now tracked by its real broker id
+    });
+
     it("protectWhileHalted: does NOT cancel a correctly-sized stop with only a trail-% mismatch — protection-CHANGING replacements stay blocked while halted (Codex PR #1738)", async () => {
       // The counterpart to the oversized case: a full-size resting trailing stop whose only drift is a
       // trail-% change is a cancel-THEN-replace. While halted the replacement can't be placed, so

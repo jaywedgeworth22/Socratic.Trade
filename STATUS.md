@@ -49,7 +49,21 @@ consumer loops that run BEFORE section 1's marker cleanup (`cancelBrokerProtecti
 `kind===null` teardown) to DROP a `pending_replace` marker rather than cancel its synthetic
 `pending-replace-*` id (which would 404 → stuck `pending_cancel`). Added F1 regression
 `SYN-HALT-F1RETRY`. Gates: tsc clean, lint 0 errors, synthetic-stops 65 pass + account-delete +
-option-alert-dedupe pass; `npm run build` exit 0. Rollout note round-8 section
+option-alert-dedupe pass; `npm run build` exit 0.
+
+**Round 9 (2026-07-18):** Codex raised 3 P2 findings on the durable `pending_replace` retry marker
+(the mechanism made functional in round 8), all genuine, fixed together: (F#1) section 1 deleted the
+marker before section 4 proved it could place — a subsequent placement SKIP (order-list fetch fail /
+trail can't arm / sub-share) then lost the owed right-size, leaving the position unprotected until
+unhalted; now section 1 KEEPS the marker for halted+live+kind symbols and section 4's `existing` guard
+excludes `pending_replace` so the kept marker still places. (F#2) with markers now surviving, the
+cancel-on-close / plan-teardown loops could cancel a marker's synthetic `pending-replace-*` id (404 ->
+stuck pending_cancel) — added explicit `pending_replace` skip guards to both. (F#3) a placement that
+THREW after the broker accepted lost the submitted ref — now the marker preserves the client ref, and
+the next tick ADOPTS a ref-matched live order (tracked by its real id) instead of orphaning/duplicating,
+reusing the ref so broker idempotency guards the not-yet-visible case. Tests: `SYN-HALT-KEEPMARK`,
+`SYN-HALT-MARKCLOSE`, `SYN-HALT-ADOPT`. Gates: tsc clean, lint 0 errors, 168 tests across the affected
+files pass; full suite + build re-running before push. Rollout note round-8 section
 appended.
 
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)

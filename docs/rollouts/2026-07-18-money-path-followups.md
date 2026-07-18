@@ -328,3 +328,46 @@ re-queues, and section 4 completes the right-sized replacement → resting, qty 
 - `npx tsc --noEmit` clean (from the money-path worktree); `npm run lint` 0 errors;
   `npx vitest run test/synthetic-stops.test.ts` 65 pass; account-delete + option-alert-dedupe pass;
   `npm run build` exit 0. Full 4800-test suite not awaited (localized change: every test file touching the changed reconcile / `listBrokerProtectiveStops` paths — synthetic-stops 65, broker-protective-stops + broker-side 91, account-delete + option-alert — passes).
+
+## Round 9 — 3 Codex findings on the durable halted right-size retry marker (ccd19b1)
+
+Codex round-9 raised three P2 findings on the `pending_replace` retry marker (the mechanism made
+functional in round 8). All three are about the marker's lifecycle and are genuine; fixed together on
+this branch:
+
+- **F#1 — marker deleted before placement proven** (`broker-protective-stops.ts` section 1): the
+  section-1 handler deleted the `pending_replace` marker up front, then re-queued the symbol. If
+  section 4 then SKIPPED placement (order-list fetch failed -> qty unknown, native trail can't arm yet,
+  sub-share qty), it does not call `persistHaltedRightSizeRetry` on those `continue` paths, so the
+  marker was gone and the next halted tick forgot the owed right-size -> position unprotected until
+  unhalted (synthetic registration is disabled while halted). Fix: section 1 now KEEPS the marker for a
+  halted+live+kind symbol (re-queues, does not delete); it deletes only when the marker is moot (not
+  halted, position closed, or plan now excludes every lane). Section 4's `existing` guard was changed to
+  EXCLUDE `pending_replace` rows, so a kept marker still places; a successful placement upserts the same
+  row id to `resting`, a skip leaves the marker for the next tick.
+- **F#2 — cancel-only paths could cancel a marker's synthetic id** (`broker-protective-stops.ts`
+  sections 2 / 2b): now that markers can survive section 1 (F#1 fix), the cancel-on-close and
+  plan-excluded teardown loops could receive a `pending_replace` row and call `cancelEquityOrder` on its
+  synthetic `pending-replace-*` id (404 -> re-persisted as a stuck `pending_cancel`). Added explicit
+  `if (row.status === "pending_replace") continue;` guards to both loops (section 1 already drops markers
+  for closed/plan-excluded symbols, so a survivor is always a live retry section 4 will place — these
+  guards make each section locally correct regardless).
+- **F#3 — uncertain placement lost its broker ref** (`broker-protective-stops.ts` section 4): when
+  `placeEquityOrder` threw AFTER the broker accepted the order, the marker recorded only a fake id and
+  discarded the submitted `refId`, so a later tick could orphan the untracked live order (coverage drives
+  qty to 0 -> skip) or submit a duplicate. Fix: the throw path now persists the submitted client ref on
+  the marker; before re-placing, section 4 ADOPTS any now-visible live order whose `clientOrderId`
+  matches that ref (records the real order id, tracked/cancellable) instead of duplicating, and reuses
+  the ref on retry so the broker's client-order-id idempotency guards the not-yet-visible case. The
+  reject/no-id paths deliberately do NOT preserve the ref (those orders are definitively not resting, and
+  reusing a rejected client-order-id could get the retry itself rejected).
+
+Regression tests added in `test/synthetic-stops.test.ts`: `SYN-HALT-KEEPMARK` (marker survives a
+placement-skip tick, then completes), `SYN-HALT-MARKCLOSE` (closed-position marker dropped with NO
+broker cancel of its synthetic id), `SYN-HALT-ADOPT` (throw-after-accept -> next tick adopts the
+ref-matched live order instead of duplicating).
+
+### Round-9 verification
+- `npx tsc --noEmit` clean; `npm run lint` 0 errors; synthetic-stops 68 + broker-protective-stops /
+  broker-side / account-delete / option-alert 100 all pass (168 across the affected files); full
+  `npx vitest run` + `npm run build` running.
