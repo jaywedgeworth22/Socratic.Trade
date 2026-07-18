@@ -34,7 +34,7 @@ const broker = vi.hoisted(() => ({
   quotes: {} as Record<string, { price?: number; bid?: number; ask?: number }>,
   placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number; trailPercent?: number }>,
   cancelled: [] as string[],
-  orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string; quantity?: number; filledQuantity?: number; clientOrderId?: string }>,
+  orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string; quantity?: number; filledQuantity?: number; clientOrderId?: string; stopPrice?: number }>,
   // Broker state returned by placeEquityOrder. "accepted" = the order RESTS (e.g. a market order
   // placed after hours); "filled" = synchronous fill (the Test broker's behavior).
   placeState: "accepted",
@@ -1512,6 +1512,38 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(broker.placed).toHaveLength(0);
       const rows = listBrokerProtectiveStops("SYN-HALT-PCBF", "local");
       expect(rows.some((r) => r.brokerOrderId === "prot-pcbf" && r.status === "pending_cancel")).toBe(true);
+    });
+
+    it("protectWhileHalted: a pending_cancel stop OVERSIZED vs the UNCOVERED remainder (stacked on another exit) is right-sized even if the position didn't shrink (Codex PR #1738)", async () => {
+      // Position is still 100 shares, but another live sell already covers 60, so a pending 100-share
+      // stop is oversized relative to the 40 UNCOVERED shares and would over-sell if both fire. The
+      // oversized test compares to desiredStopQuantity (uncovered), not the whole position, so the
+      // stacked stop is retried + right-sized to 40.
+      connectTestAccount("SYN-HALT-STACK", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 100, averageCost: 100, marketValue: 10000 }]; // NOT shrunk
+      broker.quotes = { NVDA: { price: 100 } };
+      broker.orders = [
+        { id: "prot-stack", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 },
+        { id: "other-sell", symbol: "NVDA", side: "sell", type: "limit", state: "open", quantity: 60 } // covers 60 of 100
+      ];
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-STACK-NVDA", userId: "local", accountNumber: "SYN-HALT-STACK",
+        symbol: "NVDA", brokerOrderId: "prot-stack", quantity: 100, stopPrice: 95, status: "pending_cancel",
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-STACK"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-STACK").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.cancelled).toContain("prot-stack"); // stacked (oversized-vs-uncovered) stop removed
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 40 }); // right-sized to the 40 uncovered shares
+      const rows = listBrokerProtectiveStops("SYN-HALT-STACK", "local");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].quantity).toBe(40);
     });
   });
 });

@@ -569,7 +569,14 @@ export async function reconcileBrokerProtectiveStops(args: {
       if ((liveReplaceBlocked || haltedProtectOnly) && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) {
         const rowPos = liveLongs.get(rowSym);
         const rowKind = kindForSymbol(rowSym);
-        const oversized = !!rowPos && row.quantity > Math.abs(rowPos.quantity) + 0.000001;
+        // "Oversized" is judged against the UNCOVERED remainder (`desiredStopQuantity`), NOT the whole
+        // position — another live exit order (a bracket leg, a manual sell) may already cover part of
+        // the position, so a pending stop can STACK on top of it and over-sell even when the position
+        // itself never shrank (Codex review, PR #1738). `null` uncovered (order-list fetch failed) ->
+        // not treated as oversized (can't size a replacement anyway; `replacementPlaceable` also fails),
+        // so the still-live stop is kept and the resize deferred to a coverage-known tick.
+        const uncoveredForRow = rowPos && rowKind ? desiredStopQuantity(rowPos, rowSym, rowKind, row.brokerOrderId) : null;
+        const oversized = uncoveredForRow != null && row.quantity > uncoveredForRow + 0.000001;
         // Backfill this symbol's tracked extreme from the row's OWN recorded terms BEFORE the
         // placeability check below — the section-3 backfill loop runs LATER, so without this
         // `replacementPlaceable` -> `canArmTrailingNow` would see `trackedExtreme=0` and wrongly deem a

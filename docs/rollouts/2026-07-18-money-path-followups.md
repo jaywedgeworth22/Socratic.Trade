@@ -263,3 +263,26 @@ mark → kept (backfill makes `canArmTrailingNow` refuse the reseed).
 ### Round-6 verification
 - `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files / **4811 tests pass**;
   `npm run build` exit 0.
+
+## Round 7 — Codex review on d6fa11a (1 P1 finding + a tsc fix)
+
+- **P1 — pending_cancel oversize judged against the whole position, not the UNCOVERED remainder**
+  (`src/lib/broker-protective-stops.ts` section 1): the halted oversized-pending_cancel check compared
+  `row.quantity` to `Math.abs(pos.quantity)`, so a pending stop that STACKS on another live exit order
+  (e.g. position still 100, another sell covers 60, pending stop 100) wasn't recognized as oversized
+  relative to the 40 uncovered shares — the retry was skipped, section 3 ignores pending_cancel rows,
+  and section 4 is blocked by the row, so the stacked stop could stay live through the halt and
+  over-sell if both fire. Fixed: judge oversize against `desiredStopQuantity(...)` (the uncovered
+  remainder), the same test the resting-drift path uses. `null` (fetch failed) → not oversized → keep.
+- **tsc fix**: d6fa11a's round-6 test (`SYN-HALT-PCBF`) added a broker-order literal with `stopPrice`,
+  which wasn't in the test's `broker.orders` element type — a latent `tsc` error (vitest doesn't
+  typecheck, so it passed tests but would fail the CI `verify` tsc step). Added `stopPrice?: number` to
+  the mock's `orders` type. (Root cause of the miss: an earlier `npx tsc` was run from the wrong
+  worktree after a shell-CWD reset; now always run from the money-path worktree.)
+
+Test added in `test/synthetic-stops.test.ts`: position unchanged at 100 with another sell covering 60 +
+a pending 100-share stop → recognized oversized vs the 40 uncovered → retried + right-sized to 40.
+
+### Round-7 verification
+- `npx tsc --noEmit` clean (from the money-path worktree); `npm run lint` 0 errors; `npx vitest run`
+  413 files / **4812 tests pass** (one timing flake re-ran green); `npm run build` exit 0.
