@@ -1,5 +1,16 @@
 # Current Status
 
+## 2026-07-18 — Stop-placement intent + atomic recovered fills landing (CLAUDE, branch `claude/stop-intent-idempotency`, lane 6/final of a serial landing train)
+
+Codex findings 5/6 (money path): durable pre-network placement-intent rows (v53) make a lost
+broker reply reconcile-and-adopt instead of double-placing a full-size stop; all recovered
+stop-fill delete+book pairs are one transaction, with a v54 partial UNIQUE index +
+idempotent-replay handling for proposal-less protective-stop fills. Adversarially verified; the
+filled-order fill-loss must-fix (visible-but-terminal WITH fills) applied + regression-tested;
+8 suites / 250 tests green on the merged tree (contains main `b4dd8a54`, #1738 both-mechanisms
+merge). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
+`docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
+
 ## 2026-07-18 — BGE-M3 reindexing branch: landing retry after test-gate abort (CLAUDE, branch `agent/ag-reindex-bge-m3`)
 
 First `land.sh` run aborted: 12 test failures across 6 files under fleet load 60-67 (84-min suite).
