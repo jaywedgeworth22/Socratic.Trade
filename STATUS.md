@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-18 — PR #1735 review cleanup round 2 (CODEX, branch `agent/ag-recovery-v48-migration`)
+
+Resolved two fresh Codex review findings on PR #1735: preserved imported company-name display casing
+in `db-securities-import.ts` instead of uppercasing names through ticker-oriented `clean()`, and
+regenerated `package-lock.json` so clean installs include the peer dependency tree required by
+`@langfuse/otel` and webpack. Verification: `npm ci --dry-run --ignore-scripts` passes, and
+`npm test -- test/securities-import.test.ts` passes after a normal fresh `npm ci`.
+Rollout: `docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+
 ## 2026-07-18 — PR #1735 verify cleanup (CODEX, branch `agent/ag-recovery-v48-migration`)
 
 Merged `origin/main` and fixed the hosted `verify` failures on PR #1735 by aligning the four missed

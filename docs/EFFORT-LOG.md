@@ -1873,9 +1873,12 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **[Socratic.Trade][CODEX] PR #1735 verify cleanup (branch `agent/ag-recovery-v48-migration`,
-  2026-07-18) — LANDING.** Merged `origin/main` and aligned the missed OpenRouter attribution
-  assertions with the branch's bare-model telemetry behavior. Focused failing test set green; pushing
-  back to PR #1735 for hosted verify.
+  2026-07-18) — LANDING / REVIEW ROUND 2 FIXED LOCALLY.** Merged `origin/main` and aligned the
+  missed OpenRouter attribution assertions with the branch's bare-model telemetry behavior. Fresh
+  Codex comments fixed by preserving imported company-name display casing and regenerating
+  `package-lock.json` so clean installs include the missing peer dependency tree. Verification:
+  `npm ci --dry-run --ignore-scripts` passes; `npm test -- test/securities-import.test.ts` passes
+  after a normal fresh `npm ci`. Pushing back to PR #1735 for hosted verify.
 - **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
   `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-18, owner-directed) — IMPLEMENTATION
   COMPLETE / gate running / PR pending.** (1) Inline rename of a connected account's cosmetic `label`

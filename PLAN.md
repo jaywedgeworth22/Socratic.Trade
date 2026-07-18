@@ -1,5 +1,10 @@
 # Active Implementation Plan
 
+> **2026-07-18 - PR #1735 review cleanup round 2 (CODEX on `agent/ag-recovery-v48-migration`).**
+> Address the fresh Codex comments by preserving company-name display casing in securities imports
+> and restoring the missing lockfile peer dependency entries. Focused import tests and clean-install
+> dry-run are green; push back to PR #1735, resolve the threads, and let hosted checks arbitrate.
+
 > **2026-07-18 - PR #1735 verify cleanup (CODEX on `agent/ag-recovery-v48-migration`).**
 > Merged latest `origin/main` and fixed the missed attribution assertions that were still expecting
 > provider-qualified IDs after the branch canonicalized OpenRouter telemetry to bare model IDs.

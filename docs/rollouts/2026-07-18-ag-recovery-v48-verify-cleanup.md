@@ -34,3 +34,24 @@ Result: 4 files passed, 34 tests passed.
 ## Follow-ups
 
 Let PR #1735 hosted `verify` rerun on the pushed branch and use the full gate as the merge arbiter.
+
+## Round 2 review cleanup
+
+Resolved two fresh Codex review comments on PR #1735:
+
+- Preserved `companyName` display casing in `src/lib/db-securities-import.ts`; ticker normalization
+  remains uppercase, but imported names such as `Tesla` no longer pass through the ticker-oriented
+  shared `clean()` helper.
+- Regenerated `package-lock.json` with `npm install --package-lock-only --ignore-scripts --no-audit
+  --no-fund`, restoring the peer dependency entries needed by `@langfuse/otel` and webpack so clean
+  installs no longer re-resolve/fail on missing lock entries.
+
+Additional verification:
+
+```bash
+npm ci --dry-run --ignore-scripts
+npm ci --no-audit --no-fund
+npm test -- test/securities-import.test.ts
+```
+
+Result: clean-install dry-run passed; focused securities import suite passed, 17/17 tests.
