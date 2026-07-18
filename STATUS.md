@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-18 — Fixed/ATR stop backstop + Alpaca tif normalization landing (CLAUDE, branch `claude/stop-coverage-alpaca-tif`, lane 5 of a serial landing train)
+
+Codex audit items 7+10 (money path): fixed/atr stop plans join the tick-cadence synthetic-stop
+monitor as static-trigger rows when no live broker exit covers them; Alpaca GTC is normalized
+to day for fractional/notional orders (with audit receipt) instead of guaranteed broker 422s.
+Adversarially verified; one must-fix (short stop-tier resolution skipped `stopLossPct`) fixed +
+regression-tested. Includes the merge-time strategy.ts rationale-string truth update. Next:
+land.sh, PR, auto-merge, deploy-verify. Rollout:
+`docs/rollouts/2026-07-18-stop-coverage-alpaca-tif.md`.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

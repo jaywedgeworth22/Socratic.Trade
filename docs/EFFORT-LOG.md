@@ -241,6 +241,25 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] Fixed/ATR synthetic-stop backstop + Alpaca fractional-GTC tif
+  normalization — Codex audit items 7+10 (branch `claude/stop-coverage-alpaca-tif`, head
+  `bbc3cb75` = `003dd33e` + adversarial must-fix) — LANDING 2026-07-18, lane 5 of a serial
+  landing train.** Item 7: fixed/atr stop plans now register a static-trigger row on the
+  tick-cadence synthetic-stop monitor whenever no live broker exit order covers the position
+  (quantity-aware coverage check; reuses the trailing lane's CAS/dedup/partial-fire/bad-tick
+  machinery verbatim; `extremePrice` re-pinned to entry each tick so the same math yields a
+  fixed distance) — previously such positions could cross their stop unwatched for a full
+  strategy-run interval. Item 10: new `resolveAlpacaTimeInForce()` normalizes GTC->day for
+  fractional/notional Alpaca orders at all three placement paths with an
+  `alpaca_tif_normalized_to_day` audit receipt (Alpaca 422s GTC fractional orders). Adversarially
+  verified with one MUST-FIX found, fixed, and regression-tested: the short-position distance
+  resolution skipped the `stopLossPct` middle tier (armed 8% when the owner configured 15%) —
+  now the identical three-tier chain as `generateProactiveRiskProposals`. Verifier advisories:
+  atr rows use the flat-%/no-bars fallback until roadmap Rec 3 persists resolved distances at
+  fill; fixed-row quantity refreshes on registration (fires size from live position, drift
+  bounded). Merge-time truth edit performed: main strategy.ts's "(and fixed/atr plans have no
+  synthetic-stop monitor fallback)" rationale string updated — it becomes false with this lane.
+  Rollout: `docs/rollouts/2026-07-18-stop-coverage-alpaca-tif.md`.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**
