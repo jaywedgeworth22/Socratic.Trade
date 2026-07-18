@@ -42,6 +42,12 @@ As of 2026-07-08 (assignment-rule update).
 
 ---
 
+## In Progress
+
+- **[Socratic.Trade][CODEX] PR #1735 proposed-model attribution display contract (branch `codex/pr1735-proposal-attribution`, worktree `/Users/jay/.codex/worktrees/socratic-pr1735-proposal-attribution`, 2026-07-18) — LOCAL VERIFIED / UNPUSHED.** `TradeProposal.proposedByModel` now preserves the exact configured primary/fallback identifier while telemetry remains canonical for usage statistics. Regression coverage passes for `openrouter/openai/...` primary and `openrouter/google/...` fallback identity; TypeScript and scoped lint pass. Commit is intentionally local-only pending owner direction.
+
+---
+
 ## Deployed
 - **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
   `monet/vigilant-fermi-220244`, cloud session, owner-directed) — DEPLOYED TO PRODUCTION 2026-07-18

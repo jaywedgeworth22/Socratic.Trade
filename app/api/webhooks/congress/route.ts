@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { audit } from "@/lib/db";
 import { applyCongressEvent, applyCongressEvents, type CongressEvent } from "@/lib/congress-trade-events";
-import { verifyCongressWebhookSignature } from "@/lib/congress-webhook-auth";
+import { verifyCongressWebhookSignature } from "@jaywedgeworth22/congress-trading-shared";
 import { logApiHealth } from "@/lib/db-health";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +37,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "invalid body" }, { status: 400 });
   }
 
-  if (!verifyCongressWebhookSignature(req, text)) {
+  const signatureHeader = req.headers.get("x-signature") ?? "";
+  const isValid = await verifyCongressWebhookSignature(text, signatureHeader, expectedSecret);
+
+  if (!isValid) {
     audit("congress_webhook_rejected", { reason: "signature" });
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
