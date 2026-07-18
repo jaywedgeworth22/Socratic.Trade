@@ -29,6 +29,13 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+# ad-hoc lint/debug capture files agents keep accidentally committing
+error.log
+lint-output.txt
+lint-results.*
+lint_results.*
+eslint-report.json
+eslint_test_results.json
 scratch/
 .git_diff.txt
 did.bin

@@ -18,6 +18,16 @@ import { pushRagUsage } from "./usage-monitor-push";
 
 export type RagOperation = "embed" | "rerank" | "query" | "upsert";
 
+/**
+ * The embed/rerank provider dimension (PR bge-m3-metering-gate, 2026-07-18). Distinct from the
+ * broader `RagUsageEntry.provider` (which also carries "pinecone" for query/upsert rows) — this
+ * narrower union is what `activeEmbeddingProvider`/`activeRerankProvider` in vector-db.ts select
+ * between, and what `meterEmbed`/`meterRerank`/`estimateVoyageDispatchCost` need to price
+ * correctly. Defaults to "voyage" everywhere it's optional so omitting it reproduces today's
+ * behavior exactly.
+ */
+export type RagEmbedRerankProvider = "voyage" | "openrouter" | "siliconflow";
+
 export interface RagUsageEntry {
   userId?: string;
   operation: RagOperation;
@@ -60,14 +70,51 @@ const SILICONFLOW_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: n
   "Qwen/Qwen3-Reranker-8B": { embed: 0, rerank: 0.00005 }, // nominal or matching rate
 };
 
+// OpenRouter (as of 2026-07-18; verify before relying on this for real billing reconciliation):
+//   - baai/bge-m3 embed: confirmed $0.01 per 1M input tokens on openrouter.ai/baai/bge-m3/pricing
+//     = $0.00001 per 1K tokens. Token-denominated, so it fits the existing tokensIn*rate model
+//     exactly (same shape as the Voyage/SiliconFlow tables above).
+const OPENROUTER_EMBED_PRICE_PER_1K_TOKENS: Record<string, number> = {
+  "baai/bge-m3": 0.00001
+};
+//   - cohere/rerank-v3.5 rerank: OpenRouter prices this at $0.001 PER SEARCH
+//     (openrouter.ai/cohere/rerank-v3.5), not per token — one "search" is one query plus up to 100
+//     documents, and any document over 500 tokens is auto-chunked into additional searches. Our
+//     ledger only carries an aggregate tokensIn/batchCount per call (see RagUsageEntry), not
+//     per-document token counts, so the 500-token auto-chunking is NOT modeled here — this can
+//     undercount cost for unusually long documents. What IS modeled: batchCount (document count)
+//     divided into groups of 100, each priced as one search. Good enough for the local $/day
+//     dispatch fuse (maxEstimatedCostUsdPer24h) and dashboard visibility; NOT a billing-
+//     reconciliation-grade number — reconcile against the OpenRouter dashboard periodically.
+const OPENROUTER_RERANK_PRICE_PER_SEARCH: Record<string, number> = {
+  "cohere/rerank-v3.5": 0.001
+};
+const OPENROUTER_DOCUMENTS_PER_SEARCH = 100;
+
 function estimateRagCost(
   provider: string,
   model: string | undefined,
   operation: RagOperation,
-  tokensIn: number
+  tokensIn: number,
+  batchCount?: number
 ): number | undefined {
+  if (operation === "query" || operation === "upsert") return undefined;
+  if (provider === "openrouter") {
+    if (operation === "embed") {
+      const modelKey = (model || "baai/bge-m3").toLowerCase();
+      const rate =
+        OPENROUTER_EMBED_PRICE_PER_1K_TOKENS[modelKey] ?? OPENROUTER_EMBED_PRICE_PER_1K_TOKENS["baai/bge-m3"];
+      return (tokensIn * rate) / 1000;
+    }
+    // rerank: priced per search, not per token — see the price-table comment above.
+    const modelKey = (model || "cohere/rerank-v3.5").toLowerCase();
+    const perSearch =
+      OPENROUTER_RERANK_PRICE_PER_SEARCH[modelKey] ?? OPENROUTER_RERANK_PRICE_PER_SEARCH["cohere/rerank-v3.5"];
+    const documents = Math.max(1, batchCount ?? 1);
+    const searches = Math.max(1, Math.ceil(documents / OPENROUTER_DOCUMENTS_PER_SEARCH));
+    return searches * perSearch;
+  }
   if (provider === "siliconflow") {
-    if (operation === "query" || operation === "upsert") return undefined;
     const modelKey = model || "BAAI/bge-m3";
     const prices = SILICONFLOW_PRICE_PER_1K_TOKENS[modelKey] ?? SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"];
     if (!prices) return undefined;
@@ -75,7 +122,6 @@ function estimateRagCost(
     return (tokensIn * rate) / 1000;
   }
   if (provider !== "voyage") return undefined;
-  if (operation === "query" || operation === "upsert") return undefined;
   const modelKey = model || "voyage-finance-2";
   const prices =
     VOYAGE_PRICE_PER_1K_TOKENS[modelKey] ?? VOYAGE_PRICE_PER_1K_TOKENS["voyage-finance-2"];
@@ -91,13 +137,23 @@ function approxTokens(texts: string[]): number {
   return texts.reduce((sum, t) => sum + Math.max(1, Math.ceil(Buffer.byteLength(t, "utf8") / 4)), 0);
 }
 
-/** Pre-dispatch cost reservation using the same estimator later written to `rag_usage`. */
+/**
+ * Pre-dispatch cost reservation using the same estimator later written to `rag_usage`. Named for
+ * its original Voyage-only origin; `provider` (default "voyage", preserving prior behavior for any
+ * caller that omits it) now selects the correct price table so an OpenRouter/SiliconFlow dispatch
+ * reserves its OWN cost estimate instead of a Voyage one.
+ */
 export function estimateVoyageDispatchCost(
   texts: string[],
   operation: "embed" | "rerank",
-  model?: string
+  model?: string,
+  provider: RagEmbedRerankProvider = "voyage"
 ): number {
-  return estimateRagCost("voyage", model, operation, approxTokens(texts)) ?? 0;
+  // For rerank, `texts` is `[query, ...documents]` (see call sites in vector-db.ts) — the document
+  // count (texts.length - 1) is what OpenRouter's per-search rerank pricing needs; embed cost is
+  // purely token-based and ignores this.
+  const batchCount = operation === "rerank" ? Math.max(0, texts.length - 1) : texts.length;
+  return estimateRagCost(provider, model, operation, approxTokens(texts), batchCount) ?? 0;
 }
 
 // ── Record ───────────────────────────────────────────────────────────────────
@@ -112,7 +168,7 @@ export function recordRagUsage(entry: RagUsageEntry): void {
     const tokensIn = entry.tokensIn ?? 0;
     const tokensOut = entry.tokensOut ?? 0;
     const batchCount = entry.batchCount ?? 1;
-    const cost = estimateRagCost(provider, entry.model, entry.operation, tokensIn);
+    const cost = estimateRagCost(provider, entry.model, entry.operation, tokensIn, batchCount);
 
     getDb()
       .prepare(
@@ -150,33 +206,57 @@ export function recordRagUsage(entry: RagUsageEntry): void {
 }
 
 /**
- * Convenience: record a Voyage embed call. Pass `userId` for per-user retrieval spend so the daily
+ * Convenience: record an embed call. Pass `userId` for per-user retrieval spend so the daily
  * LLM/RAG budget (`checkLlmDailyBudget`, which filters `rag_usage` by userId) actually sees it —
  * omitting it books the spend under the default "local" user and a non-local user's ceiling never trips.
+ * `provider` (default "voyage", preserving prior behavior for any caller that omits it) must match
+ * whichever provider actually served the embed call — see `activeEmbeddingProvider` in
+ * vector-db.ts — so the ledger row's price and the `rag_usage.provider` column both reflect reality
+ * instead of always crediting Voyage.
  */
-export function meterEmbed(texts: string[], model?: string, userId?: string): void {
+export function meterEmbed(
+  texts: string[],
+  model?: string,
+  userId?: string,
+  provider: RagEmbedRerankProvider = "voyage"
+): void {
   const tokens = approxTokens(texts);
   recordRagUsage({
     userId,
     operation: "embed",
-    provider: "voyage",
-    model: model || "voyage-finance-2",
+    provider,
+    model:
+      model ||
+      (provider === "openrouter" ? "baai/bge-m3" : provider === "siliconflow" ? "BAAI/bge-m3" : "voyage-finance-2"),
     tokensIn: tokens,
     batchCount: texts.length
   });
 }
 
 /**
- * Convenience: record a Voyage rerank call. Pass `userId` so retrieval rerank spend counts toward that
- * user's daily budget (see `meterEmbed`).
+ * Convenience: record a rerank call. Pass `userId` so retrieval rerank spend counts toward that
+ * user's daily budget (see `meterEmbed`). `provider` (default "voyage") must match the active
+ * rerank provider — see `activeRerankProvider` in vector-db.ts.
  */
-export function meterRerank(query: string, documents: string[], model?: string, userId?: string): void {
+export function meterRerank(
+  query: string,
+  documents: string[],
+  model?: string,
+  userId?: string,
+  provider: RagEmbedRerankProvider = "voyage"
+): void {
   const tokens = approxTokens([query, ...documents]);
   recordRagUsage({
     userId,
     operation: "rerank",
-    provider: "voyage",
-    model: model || "rerank-2.5",
+    provider,
+    model:
+      model ||
+      (provider === "openrouter"
+        ? "cohere/rerank-v3.5"
+        : provider === "siliconflow"
+          ? "Qwen/Qwen3-Reranker-8B"
+          : "rerank-2.5"),
     tokensIn: tokens,
     batchCount: documents.length
   });

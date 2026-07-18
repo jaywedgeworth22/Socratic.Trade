@@ -3,6 +3,7 @@ import {
   advanceSecIngestTask,
   failSecIngestTask,
   heartbeatSecIngestTask,
+  reconcileSecIngestJob,
   SecIngestTask
 } from "../db-rag-ingest";
 import { politeFetchText } from "../web-sources/http";
@@ -73,6 +74,12 @@ export class SecIngestWorker {
           });
         }
       }
+
+      // Nothing else flips a job from 'running' to a terminal status once its tasks finish — the
+      // seeder seals intake up front but does not itself watch for completion. Reconcile here (cheap,
+      // idempotent no-op unless intake is sealed and every task has reached a terminal status) so a
+      // job whose tasks all completed/dead-lettered doesn't sit at 'running' forever.
+      reconcileSecIngestJob(job.id);
     }
   }
 
@@ -394,4 +401,58 @@ export class SecIngestWorker {
       return;
     }
   }
+}
+
+// ── Process-level singleton wiring ──────────────────────────────────────────
+// Mirrors the self-gated singleton pattern used by startCongressStream (congress-stream.ts) and the
+// shutdown-hook registration pattern used by durable-state.ts: opt-in via env, idempotent start,
+// globalThis-pinned so Next.js HMR / a test runner's module re-evaluation cannot spawn a second
+// interval or register duplicate signal handlers on the one real process.
+
+function flagOn(value: string | undefined): boolean {
+  return ["1", "true", "on", "yes"].includes(String(value ?? "").trim().toLowerCase());
+}
+
+/** Opt-in gate (default OFF). The durable checkpoint state machine and DB primitives
+ *  (db-rag-ingest.ts) are production-ready, but nothing seeds jobs automatically — jobs only exist
+ *  after an explicit POST /api/admin/sec-ingest {action:"seed"} call. See
+ *  docs/rollouts/2026-07-18-sec-ingest-worker-wiring.md. */
+export function secIngestWorkerEnabled(): boolean {
+  return flagOn(process.env.SEC_INGEST_WORKER_ENABLED);
+}
+
+type SecIngestWorkerHost = typeof globalThis & {
+  __secIngestWorkerInstance?: SecIngestWorker;
+  __secIngestWorkerShutdownHooksRegistered?: boolean;
+};
+const host = globalThis as SecIngestWorkerHost;
+
+function registerSecIngestShutdownHooksOnce(): void {
+  if (host.__secIngestWorkerShutdownHooksRegistered) return;
+  host.__secIngestWorkerShutdownHooksRegistered = true;
+  const shutdown = () => {
+    void stopSecIngestWorker();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
+}
+
+/** Idempotent: start the SEC ingest worker once, only when SEC_INGEST_WORKER_ENABLED. Called
+ *  unconditionally from background-worker-startup.ts, matching how startStreams() calls each
+ *  individually-gated stream starter. */
+export function startSecIngestWorker(): void {
+  if (!secIngestWorkerEnabled()) return;
+  if (host.__secIngestWorkerInstance) return;
+  const worker = new SecIngestWorker();
+  host.__secIngestWorkerInstance = worker;
+  registerSecIngestShutdownHooksOnce();
+  void worker.start();
+}
+
+/** Stop the worker (tests / graceful shutdown). No-op if never started. */
+export async function stopSecIngestWorker(): Promise<void> {
+  const worker = host.__secIngestWorkerInstance;
+  if (!worker) return;
+  host.__secIngestWorkerInstance = undefined;
+  await worker.stop();
 }
