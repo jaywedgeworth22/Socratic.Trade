@@ -1,5 +1,21 @@
 # Current Status
 
+## 2026-07-18 — Merged-worktree cleanup + Voyage `/api/health` RCA (CLAUDE, branch `claude/cleanup-merged-worktrees-bdbc08`)
+
+Docs-only receipt. Removed 5 verified-clean merged worktree checkouts (#1740 tmp, #1587,
+#1559, #1624, #1563 lanes; squash-merge ancestry verified via PR mergeCommit; branches
+retained), kept 3 (`codex/reconcile-pr1745` carries 7 unlanded commits with NO PR — CODEX
+disposition needed; `socratic-admin-console-shell` has 4 dirty docs files; `trading-ag-rag`
+standing lane). Voyage RCA: `/api/health` is 200/ok — the red `voyage` dependency lane is
+prod's bge-m3-via-OpenRouter embed path failing with **402 Insufficient credits (OpenRouter
+account exhausted: 25.00/25.31)**; the Voyage key itself is valid. RAG ingestion (incl. SEC
+backfill) is stalled until the owner tops up OpenRouter credits or adds a SiliconFlow key
+— but a SiliconFlow key is RAG-embed-only and also needs `RAG_EMBED_PROVIDER=siliconflow`
+(else `resolveActiveRagProvider` still routes to the exhausted OpenRouter key); the LLM
+decision loop stays down until OpenRouter credits return. **RESOLVED 2026-07-18 (MONET
+cap-handoff): OpenRouter topped up (75/25.31, ~$49.69 left), `voyage.ok=true`, prod LLM+RAG
+recovered — verified.** Details:
+`docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
 ## 2026-07-18 — bge-m3 provider-aware RAG metering + health gate landing (CLAUDE, branch `claude/bge-m3-metering-gate`, lane 1 of a serial 4-lane landing train)
 
 Fixes two live prod bugs: RAG metering rows were being booked as `provider:"voyage"` (Voyage
