@@ -285,6 +285,10 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      # The Coolify CI container is capped at 2 GiB; Node 24 otherwise defaults to a
+      # ~1 GiB heap and TypeScript aborts before reporting diagnostics.
+      NODE_OPTIONS: --max-old-space-size=1536
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'

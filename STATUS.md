@@ -16,6 +16,15 @@ The rerun also exposed an independent workflow parse failure in `merge-shepherd.
 reusable-workflow path incorrectly included `@main`. The reference now uses the valid local form;
 `workflow_dispatch` already runs from the default branch.
 
+The first full Coolify verify reached TypeScript but Node 24 aborted at its default ~1 GiB heap
+ceiling. The heavy verify and Playwright jobs now set `NODE_OPTIONS=--max-old-space-size=1536`,
+remaining below the runner container's 2 GiB hard cap; Vitest is already serialized by repo config.
+
+Coolify's production application had drifted from branch `main` to
+`agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The
+application was restored to `git_branch=main` and auto-deploy was re-enabled through the API without
+manually triggering a deploy. Production remained healthy at release `70a2a39d` while PR gates run.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

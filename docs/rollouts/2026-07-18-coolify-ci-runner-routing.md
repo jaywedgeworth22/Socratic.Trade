@@ -26,6 +26,17 @@ local reusable-workflow reference used the invalid form `./path.yml@main`; local
 carry an `@ref`. The caller now uses `./.github/workflows/_merge-shepherd-impl.yml`, which is already
 resolved from the default branch for `workflow_dispatch`.
 
+The first full verify then reached `npx tsc --noEmit` and aborted at Node 24's default ~1 GiB heap
+limit (`FATAL ERROR: Ineffective mark-compacts near heap limit`) inside the 2 GiB runner container.
+The heavy verify and Playwright jobs now set `NODE_OPTIONS=--max-old-space-size=1536`. This raises
+the process heap enough for the repo while retaining the container hard cap and single-runner
+serialization; `vitest.config.ts` already fixes `maxWorkers: 1`.
+
+During production follow-through, the Coolify application was found configured on
+`agent/ag-recovery-v48-migration` instead of `main`, with an empty deployment list. The application
+was patched back to `git_branch=main` with auto-deploy enabled. No manual deployment was triggered;
+the running release stayed healthy at `70a2a39d` pending protected merges and webhook-driven deploy.
+
 ## Files
 
 - `.github/workflows/ci.yml`
@@ -64,6 +75,13 @@ from the GitHub runner list while checkout jobs were still in progress. The Cool
 both Socratic containers as `exited`; `POST /api/v1/services/uhz1yhxevabvbf9eblxo4t8z/restart`
 returned `Service restarting request queued`, and both runners re-registered online. Production
 health remained `ok` with DB `ok`, scheduler current, and Litestream `replicating`.
+
+Production configuration verification:
+
+```text
+socratic-trade-prod status=running:healthy git_branch=main
+release=70a2a39d db=ok scheduler=current litestream=replicating
+```
 
 Additional verification:
 

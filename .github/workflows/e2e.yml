@@ -96,6 +96,10 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      # Keep Node below the Coolify runner's 2 GiB hard cap while giving the
+      # Playwright webServer build enough heap to complete.
+      NODE_OPTIONS: --max-old-space-size=1536
     steps:
       - name: Fail closed if classify did not succeed
         if: needs.classify.result != 'success'
