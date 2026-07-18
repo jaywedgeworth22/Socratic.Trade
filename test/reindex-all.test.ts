@@ -1,7 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { getDb } from "../src/lib/db";
-import { activeEmbeddingModel } from "../src/lib/vector-db";
 import { normalizeSymbol } from "../src/lib/money";
+
+// Per repo convention every test file points DATABASE_URL at its own temp SQLite DB.
+// Without this the suite would open the default file:./data/app.db and the DELETE FROM
+// statements below would wipe the worktree's real dev database.
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-reindex-all-${randomUUID()}.db`)}`;
+});
 
 describe("Reindex All Filings and API routing", () => {
   beforeEach(() => {
