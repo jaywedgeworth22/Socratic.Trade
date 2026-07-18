@@ -144,7 +144,7 @@ const BULL_OPENING_PROPOSAL = {
 function makeUnavailableFetchStub(proposals: unknown[] = [BULL_OPENING_PROPOSAL]) {
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       const systemContent = JSON.stringify(body);
       if (systemContent.includes("Red Team Risk Agent")) {

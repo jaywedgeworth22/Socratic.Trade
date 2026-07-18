@@ -38,7 +38,7 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.provider).toBe("openrouter");
     expect(endpoint.url).toBe(getExpectedUrl());
     expect(endpoint.transport).toBe("chat-completions");
-    expect(endpoint.model).toBe("xai/grok-build-0.1");
+    expect(endpoint.model).toBe("x-ai/grok-build-0.1");
   });
 
   it("routes gpt-5.4-mini to OpenRouter with openai/ prefix", () => {

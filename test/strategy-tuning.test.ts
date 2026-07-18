@@ -167,7 +167,7 @@ describe("proposeStrategyTuning", () => {
     await proposeStrategyTuning(userWithRedTeam);
     await proposeStrategyTuning(userWithGreenOnly);
 
-    expect(requestedModels).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
+    expect(requestedModels).toEqual(["openai/gpt-4.1", "openai/gpt-4.1-mini"]);
   });
 
   it("skips the rotation sentinel and reviews with the concrete Green model (no local-rules degradation)", async () => {
@@ -224,7 +224,7 @@ describe("proposeStrategyTuning", () => {
     const proposal = await proposeStrategyTuning(userId);
     // The reviewer used the concrete Green model, NOT the "__rotate__" sentinel — and did NOT degrade
     // to local rules (which would mean generatedBy "local_rules" and model-tracking ignored).
-    expect(requestedModels).toEqual(["gpt-5.5"]);
+    expect(requestedModels).toEqual(["openai/gpt-5.5"]);
     expect(proposal.generatedBy).toBe("llm");
   });
 

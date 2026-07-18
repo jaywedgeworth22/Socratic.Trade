@@ -96,8 +96,8 @@ describe("strict marketScan.topCandidates opening boundary", () => {
     process.env.OPENROUTER_API_KEY = "test-openai-key";
     let bullRequest: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
-      const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      const href = typeof url === "string" || url instanceof URL ? url.toString() : (url as Request).url;
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
         expect(JSON.stringify(body)).not.toContain("Red Team Risk Agent");
         bullRequest = body;

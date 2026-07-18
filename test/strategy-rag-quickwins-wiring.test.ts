@@ -65,7 +65,7 @@ describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,

@@ -79,7 +79,7 @@ function makeFetchStub() {
   const bullProposals = [COLLAPSED_PROPOSAL("AAPL"), COLLAPSED_PROPOSAL("MSFT")];
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? String(init.body) : "{}";
       if (body.includes("Red Team Risk Agent") || body.includes("red_team_verdict")) {
         return new Response(

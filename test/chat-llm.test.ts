@@ -362,7 +362,7 @@ describe("chatProviderForModel — model name → provider", () => {
 describe("llmForModel — multi-provider routing", () => {
   // Every LLM provider key; the helper below presents exactly one (or none) so we can prove the
   // model routes to its own provider and never silently borrows a different provider's key.
-  const KEYS = ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"] as const;
+  const KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"] as const;
 
   beforeAll(() => {
     process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/chat-llm-model-routing-${Date.now()}.db`;
@@ -399,7 +399,7 @@ describe("llmForModel — multi-provider routing", () => {
   });
 
   it("routes gpt-*/grok-*/gemini-*/mistral-* to OpenAILLM with that provider's key", () => {
-    withOnlyKey("OPENROUTER_API_KEY", () => expect(llmForModel("gpt-5.4-mini", "u_openai")).toBeInstanceOf(OpenAILLM));
+    withOnlyKey("OPENAI_API_KEY", () => expect(llmForModel("gpt-5.4-mini", "u_openai")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("XAI_API_KEY", () => expect(llmForModel("xai/grok-4.3", "u_xai")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("GEMINI_API_KEY", () => expect(llmForModel("gemini-2.5-flash", "u_gemini")).toBeInstanceOf(OpenAILLM));
     withOnlyKey("MISTRAL_API_KEY", () => expect(llmForModel("mistral-medium-3-5", "u_mistral")).toBeInstanceOf(OpenAILLM));
@@ -407,7 +407,7 @@ describe("llmForModel — multi-provider routing", () => {
   });
 
   it("does NOT borrow another provider's key — a non-OpenAI model with only an OpenAI key is MockLLM", () => {
-    withOnlyKey("OPENROUTER_API_KEY", () => {
+    withOnlyKey("OPENAI_API_KEY", () => {
       expect(llmForModel("gemini-2.5-flash", "u_gem2")).toBeInstanceOf(MockLLM);
       expect(llmForModel("mistral-large-2512", "u_mis2")).toBeInstanceOf(MockLLM);
       expect(llmForModel("claude-sonnet-4-6", "u_ant2")).toBeInstanceOf(MockLLM);

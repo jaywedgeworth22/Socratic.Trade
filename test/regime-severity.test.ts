@@ -337,7 +337,7 @@ describe("strategy.ts regime-severity wiring", () => {
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = JSON.parse(String(init?.body ?? "{}"));
         openAiBodies.push(body);
         if (isRedTeamRequest(body)) {
@@ -374,7 +374,7 @@ describe("strategy.ts regime-severity wiring", () => {
     let strategyCallCount = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         strategyCallCount += 1;
         const body = JSON.parse(String(init?.body ?? "{}"));
         openAiBodies.push(body);
@@ -432,7 +432,7 @@ describe("strategy.ts regime-severity wiring", () => {
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = JSON.parse(String(init?.body ?? "{}"));
         openAiBodies.push(body);
         if (isRedTeamRequest(body)) {

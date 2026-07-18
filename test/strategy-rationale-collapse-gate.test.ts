@@ -81,7 +81,7 @@ async function runCollapse(gateOn: boolean) {
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
     const href = String(url);
     // Both the Bull and the surviving-Bear response return the two identical-rationale buys.
-    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       return new Response(JSON.stringify(bullBearProposals()), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (href.includes("nasdaq.com")) return nasdaqRows();

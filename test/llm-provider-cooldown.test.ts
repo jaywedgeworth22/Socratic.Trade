@@ -201,7 +201,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     let openaiCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("openrouter.ai") || href.includes("openrouter.ai")) {
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
         const body = init?.body ? JSON.parse(String(init.body)) : {};
         const isGemini = body.model?.includes("gemini") || body.model?.includes("google");
         if (!isGemini) {

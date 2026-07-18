@@ -154,7 +154,7 @@ function nasdaqResponse(): Response {
 function stubFetch(openAiBodies: OpenAiBody[]): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
       if (JSON.stringify(body).includes("Red Team Risk Agent")) {

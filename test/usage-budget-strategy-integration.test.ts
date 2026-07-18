@@ -107,7 +107,7 @@ function makeFetchStub(opts: {
         headers: { "content-type": "application/json" }
       });
     }
-    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       opts.onOpenAiBody?.(body);
       const systemContent = JSON.stringify(body);
@@ -269,9 +269,9 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     expect(payload.after?.llmModel).toBe("openai/gpt-4o-mini");
 
     // The model actually used for the Bull call was the downgraded one.
-    expect(bullModelUsed).toBe("gpt-4o-mini");
+    expect(bullModelUsed).toBe("openai/gpt-4o-mini");
     // Finding 6: the Bear (Red Team) request also carried the downgraded model.
-    expect(redTeamModelUsed).toBe("gpt-4o-mini");
+    expect(redTeamModelUsed).toBe("openai/gpt-4o-mini");
 
     // The persisted proposal reflects the served (downgraded) model.
     const proposals = listRecentProposals("TEST", 100, "local");

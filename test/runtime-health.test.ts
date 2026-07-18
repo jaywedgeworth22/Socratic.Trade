@@ -30,15 +30,20 @@ function useShortSocketPath(root: string): string {
   return p;
 }
 
-async function safeListen(server: Server, socketPath: string): Promise<boolean> {
-  server.listen(socketPath);
-  try {
-    await once(server, "listening");
-    return true;
-  } catch (e: any) {
-    if (e.code === "EPERM") return false;
-    throw e;
-  }
+async function safeListen(server: ReturnType<typeof createServer>, socketPath: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    server.once("listening", () => resolve(true));
+    server.once("error", (e: any) => {
+      if (e.code === "EPERM") resolve(false);
+      else reject(e);
+    });
+    try {
+      server.listen(socketPath);
+    } catch (e: any) {
+      if (e.code === "EPERM") resolve(false);
+      else reject(e);
+    }
+  });
 }
 
 afterEach(async () => {

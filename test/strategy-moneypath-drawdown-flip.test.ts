@@ -42,7 +42,7 @@ afterEach(() => {
 function zeroProposalFetchStub() {
   return async (url: string | URL | Request) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
         status: 200,
         headers: { "content-type": "application/json" }

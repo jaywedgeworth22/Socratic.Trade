@@ -75,7 +75,7 @@ describe("Bull truncation is not a silent no-op (Chat A item 5)", () => {
     let openAiCalls = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openAiCalls += 1;
         if (openAiCalls === 1) {
           // Truncated Bull: finish_reason "length" with cut-off, unparseable JSON content.

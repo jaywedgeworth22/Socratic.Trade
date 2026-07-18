@@ -390,9 +390,10 @@ describe("debateProposal LLM request bounds", () => {
 
 describe("debateProposal — Claude Red Team (via OpenRouter)", () => {
   it("routes a claude-* redTeamLlmModel via OpenRouter chat completions", async () => {
-    const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { setPolicy, setStrategyPrompt, upsertUserApiKey } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
 
+    upsertUserApiKey("local", "openrouter", "sk-ant-test", "test");
     process.env.OPENROUTER_API_KEY = "sk-ant-test";
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_CLAUDE", llmModel: "gpt-5.4-mini", redTeamLlmModel: "anthropic/claude-opus-4-8" });
     setStrategyPrompt("BASE STRATEGY");

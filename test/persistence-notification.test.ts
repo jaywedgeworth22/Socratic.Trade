@@ -281,7 +281,7 @@ describe("persistence and notifications", () => {
     process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         throw new Error("The operation was aborted due to timeout");
       }
       if (href.includes("nasdaq.com")) {
@@ -380,7 +380,7 @@ describe("persistence and notifications", () => {
     process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -464,7 +464,7 @@ describe("persistence and notifications", () => {
     const openAiBodies: any[] = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
         return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,

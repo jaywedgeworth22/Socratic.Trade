@@ -99,7 +99,7 @@ function makeFetchStub(opts: {
   const proposals = opts.bullProposals ?? [BULL_PROPOSAL];
   return async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       opts.onOpenAiBody?.(body);
       // The Red Team review (debateProposal) system prompt contains "Red Team Risk Agent";

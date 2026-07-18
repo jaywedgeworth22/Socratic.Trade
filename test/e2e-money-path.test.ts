@@ -107,7 +107,7 @@ function redTeamOk(): Response {
 function stubFetchE2E(): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = String(init?.body ?? "");
       const isRedTeam = body.includes("Red Team Risk Agent") || body.includes("rigorously critique");
       const isBear = body.includes("Bear Agent") || body.includes("bear_proposals");

@@ -115,7 +115,7 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
       const href = String(url);
-      if ((href.includes("openrouter.ai") || href.includes("openrouter.ai"))) return new Response("rate limited", { status: 429 });
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) return new Response("rate limited", { status: 429 });
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
