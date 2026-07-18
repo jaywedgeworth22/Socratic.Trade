@@ -213,3 +213,30 @@ non-oversized pending_cancel and non-shrink trail-% cases still KEEP the stop (u
 ### Round-4 verification
 - `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files / **4806 tests pass**;
   `npm run build` exit 0.
+
+## Round 5 — Codex review on fcececa (2 findings, both real; completes the halted invariant)
+
+Both findings show that the round-4 right-size CANCELS the oversized stop but section 4 can't always
+PLACE the replacement, leaving a gap while halted: (a) a native trailing replacement after a
+rally-then-pullback is refused by `canArmTrailingNow` (mark below tracked extreme); (b) the `qty===null`
+path (order-list fetch failed) cancels but can't size a replacement. Resolved by strengthening the
+invariant to **cancel iff replaceable**: while halted, an oversized-stop cancel proceeds ONLY when a
+right-sized replacement can actually be placed this tick; otherwise the existing (oversized) stop is
+KEPT (a bounded over-sell risk beats leaving the position unprotected — no synthetic fallback registers
+while halted).
+
+- New `replacementPlaceable(pos, sym, kind, excludeOrderId)` helper: false when uncovered qty is null
+  (fetch failed) or a trailing trigger can't arm; true when qty<=0 (covered elsewhere) or fixed or the
+  trailing trigger arms.
+- Section 1 (oversized pending_cancel): retries the cancel only if `replacementPlaceable`.
+- Section 3 shrink: the trailing arm-gate now also applies while halted, so a halted trailing shrink
+  that can't arm keeps the stop.
+- Section 3 `qty===null`: the oversized cancel is skipped while halted (`&& !haltedProtectOnly`).
+
+Tests added in `test/synthetic-stops.test.ts`: oversized stop KEPT when the trailing replacement can't
+arm (mark below tracked extreme); oversized stop KEPT when the order-list fetch failed. The round-4
+placeable cases (canArm true) still cancel + right-size.
+
+### Round-5 verification
+- `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files / **4808 tests pass**;
+  `npm run build` exit 0.

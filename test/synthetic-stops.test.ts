@@ -1370,5 +1370,65 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].quantity).toBe(40);
     });
+
+    it("protectWhileHalted: KEEPS an oversized stop when the right-sized trailing replacement can't arm (mark below tracked extreme) — cancel only if replaceable (Codex PR #1738)", async () => {
+      // Rally-then-pullback: the resting stop's high stopPrice implies a tracked extreme (126.32) well
+      // ABOVE the current mark (100), so canArmTrailingNow refuses a native trailing replacement. While
+      // halted there is no synthetic fallback, so cancelling the oversized stop would strand the
+      // position — keep it instead (a bounded over-sell risk beats no protection).
+      connectTestAccount("SYN-HALT-NOARM", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }]; // shrank 100 -> 40, mark 100
+      broker.quotes = { NVDA: { price: 100 } };
+      broker.orders = [{ id: "prot-noarm", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 }];
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-NOARM-NVDA", userId: "local", accountNumber: "SYN-HALT-NOARM",
+        symbol: "NVDA", brokerOrderId: "prot-noarm", quantity: 100, stopPrice: 120, status: "resting", // implies extreme 126.32 > mark
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-NOARM"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-NOARM").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.cancelled).toHaveLength(0); // kept — the replacement couldn't arm, so no strand
+      expect(broker.placed).toHaveLength(0);
+      const rows = listBrokerProtectiveStops("SYN-HALT-NOARM", "local");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].quantity).toBe(100); // the (oversized) stop still rests
+    });
+
+    it("protectWhileHalted: KEEPS an oversized stop when the broker order-list fetch failed (coverage unknown) — no right-size computable (Codex PR #1738)", async () => {
+      // ordersError -> getEquityOrders throws -> ordersListed=false -> desiredStopQuantity returns null
+      // (coverage unknown). While halted, no replacement can be sized and no synthetic fallback
+      // registers, so cancelling would strand the position — keep the oversized stop.
+      connectTestAccount("SYN-HALT-NOFETCH", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }]; // shrank 100 -> 40
+      broker.quotes = { NVDA: { price: 100 } };
+      broker.orders = [];
+      broker.ordersError = new Error("order list unreadable this tick");
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-NOFETCH-NVDA", userId: "local", accountNumber: "SYN-HALT-NOFETCH",
+        symbol: "NVDA", brokerOrderId: "prot-nofetch", quantity: 100, stopPrice: 95, status: "resting",
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-NOFETCH"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-NOFETCH").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      try {
+        await runSyntheticStopMonitor("local", haltedPolicy, true);
+        expect(broker.cancelled).toHaveLength(0); // kept — coverage unknown, can't right-size
+        expect(broker.placed).toHaveLength(0);
+        const rows = listBrokerProtectiveStops("SYN-HALT-NOFETCH", "local");
+        expect(rows).toHaveLength(1);
+        expect(rows[0].quantity).toBe(100);
+      } finally {
+        broker.ordersError = null;
+      }
+    });
   });
 });
