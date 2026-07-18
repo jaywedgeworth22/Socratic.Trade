@@ -1,6 +1,6 @@
-import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent } from "./db";
+import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent, getDb } from "./db";
 import { notify, type NotifyDispatchDeps } from "./notify";
-import type { NotificationEvent, NotificationEventType, NotifyChannelId, NotifyChannelResult, TradingPolicy } from "./types";
+import type { NotificationEvent, NotificationEventType, NotifyChannelId, NotifyChannelResult, TradingPolicy, OptionPosition } from "./types";
 
 type Fetcher = typeof fetch;
 type NotifyDispatcher = typeof notify;
@@ -11,6 +11,7 @@ type SendNotificationOptions = {
   fetcher?: Fetcher;
   timeoutMs?: number;
   userId?: string;
+  connectedAccountId?: string;
   /** Override the compact bridge body while keeping delivery inside the enabled-event gate. */
   directBody?: string;
   /** Injectable dispatcher/deps keep failure and caller-routing tests offline. */
@@ -133,13 +134,14 @@ export async function sendNotification(
   assertNotificationActive(options);
   const userId = options.userId ?? "local";
   const policy = options.policy ?? getPolicy(userId);
+  const connectedAccountId = options.connectedAccountId ?? policy.connectedAccountId;
   assertNotificationActive(options);
   const settings = policy.notificationSettings;
   const webhookUrl = settings.webhookUrl?.trim();
 
   if (!settings.enabledEvents.includes(input.type)) {
     assertNotificationActive(options);
-    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, policy.connectedAccountId);
+    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, connectedAccountId);
   }
 
   const results: NotifyChannelResult[] = [];
@@ -158,7 +160,7 @@ export async function sendNotification(
     results.push(...directResults);
   } catch (error) {
     assertNotificationActive(options);
-    bridgeErrors.push(recordBridgeError(input.type, userId, "direct", error, policy.connectedAccountId));
+    bridgeErrors.push(recordBridgeError(input.type, userId, "direct", error, connectedAccountId));
   }
 
   if (options.additionalDelivery) {
@@ -169,7 +171,7 @@ export async function sendNotification(
       results.push(...additionalResults);
     } catch (error) {
       assertNotificationActive(options);
-      bridgeErrors.push(recordBridgeError(input.type, userId, "additional", error, policy.connectedAccountId));
+      bridgeErrors.push(recordBridgeError(input.type, userId, "additional", error, connectedAccountId));
     }
   }
 
@@ -195,14 +197,14 @@ export async function sendNotification(
         ...(legacyWebhookResult.error ? { error: legacyWebhookResult.error, attempts: 1 } : {})
       },
       userId,
-      policy.connectedAccountId
+      connectedAccountId
     );
   }
 
   assertNotificationActive(options);
   const outcome = deriveDeliveryOutcome(results, bridgeErrors);
   assertNotificationActive(options);
-  const event = record(input, outcome.status, webhookUrl, outcome.reason, userId, policy.connectedAccountId);
+  const event = record(input, outcome.status, webhookUrl, outcome.reason, userId, connectedAccountId);
   assertNotificationActive(options);
   audit(
     "notification.delivery",
@@ -214,7 +216,7 @@ export async function sendNotification(
       bridgeErrors
     },
     userId,
-    policy.connectedAccountId
+    connectedAccountId
   );
   return event;
 }
@@ -667,5 +669,140 @@ function maskWebhookUrl(value: string): string {
     return url.toString();
   } catch {
     return value;
+  }
+}
+
+export async function checkAndDispatchOptionAlerts(
+  userId: string,
+  connectedAccountId: string,
+  accountNumber: string,
+  options: OptionPosition[],
+  gateway: any
+): Promise<void> {
+  const db = getDb();
+  // Only successfully-delivered events are tracked as sent; skipped or failed
+  // events must not prevent future delivery when the user enables the alert type.
+  const recentAlerts = db.prepare(
+    `SELECT payload FROM notification_events
+     WHERE user_id = ? AND type = 'option_alert' AND status = 'sent'
+       AND COALESCE(connected_account_id, '') = ?`
+  ).all(userId, connectedAccountId) as Array<{ payload: string }>;
+
+  const sentAlerts = new Set<string>();
+  for (const row of recentAlerts) {
+    try {
+      const payload = JSON.parse(row.payload);
+      if (payload.symbol && payload.alertType) {
+        sentAlerts.add(`${payload.symbol}:${payload.alertType}`);
+      }
+    } catch {}
+  }
+
+  const optionsExpiringSoon = options.filter((p) => {
+    if (!p.expirationDate) return false;
+    const days = Math.ceil((new Date(p.expirationDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+    return days >= 0 && days <= 3;
+  });
+
+  const underlyingPrices: Record<string, number> = {};
+  if (optionsExpiringSoon.length > 0) {
+    const underlyings = Array.from(new Set(optionsExpiringSoon.map((p) => p.underlyingSymbol)));
+    try {
+      const quotes = await gateway.getEquityQuotes(accountNumber, underlyings);
+      for (const sym of underlyings) {
+        if (quotes[sym]?.price) {
+          underlyingPrices[sym] = quotes[sym].price;
+        }
+      }
+    } catch (err) {
+      console.warn("[OptionAlerts] failed to fetch underlying quotes:", err);
+    }
+  }
+
+  for (const p of options) {
+    const symbol = p.symbol;
+    const qty = p.quantity;
+    
+    // 1. Assignment / first appearance alert
+    const appKey = `${symbol}:appearance`;
+    if (!sentAlerts.has(appKey)) {
+      const detail = `New option position detected: ${qty > 0 ? "Long" : "Short"} ${Math.abs(qty)} contracts of ${symbol} at average cost $${p.averageCost}.`;
+      await sendNotification({
+        type: "option_alert",
+        title: `New Option: ${qty > 0 ? "Bought" : "Sold"} ${Math.abs(qty)}x ${symbol}`,
+        payload: {
+          symbol,
+          underlyingSymbol: p.underlyingSymbol,
+          expirationDate: p.expirationDate,
+          optionType: p.optionType,
+          strikePrice: p.strikePrice,
+          quantity: qty,
+          averageCost: p.averageCost,
+          marketValue: p.marketValue,
+          alertType: "appearance",
+          detail
+        }
+      }, { userId, connectedAccountId });
+    }
+
+    // 2. Expiry alert (<= 3 days)
+    if (p.expirationDate) {
+      const days = Math.ceil((new Date(p.expirationDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+      if (days >= 0 && days <= 3) {
+        const expKey = `${symbol}:expiry`;
+        if (!sentAlerts.has(expKey)) {
+          const detail = `Option position ${symbol} expires in ${days} days (on ${p.expirationDate}).`;
+          await sendNotification({
+            type: "option_alert",
+            title: `Option Expiring: ${symbol} (${days}d remaining)`,
+            payload: {
+              symbol,
+              underlyingSymbol: p.underlyingSymbol,
+              expirationDate: p.expirationDate,
+              optionType: p.optionType,
+              strikePrice: p.strikePrice,
+              quantity: qty,
+              averageCost: p.averageCost,
+              marketValue: p.marketValue,
+              alertType: "expiry",
+              daysRemaining: days,
+              detail
+            }
+          }, { userId, connectedAccountId });
+        }
+
+        // 3. ITM-at-expiry status alert
+        const underlyingPrice = underlyingPrices[p.underlyingSymbol];
+        if (underlyingPrice !== undefined) {
+          const isItm = p.optionType === "call" 
+            ? underlyingPrice > p.strikePrice 
+            : underlyingPrice < p.strikePrice;
+          
+          if (isItm) {
+            const itmKey = `${symbol}:itm`;
+            if (!sentAlerts.has(itmKey)) {
+              const detail = `Option ${symbol} is In-the-Money at expiry. Underlying price is $${underlyingPrice}, strike is $${p.strikePrice}.`;
+              await sendNotification({
+                type: "option_alert",
+                title: `Option ITM at Expiry: ${symbol}`,
+                payload: {
+                  symbol,
+                  underlyingSymbol: p.underlyingSymbol,
+                  expirationDate: p.expirationDate,
+                  optionType: p.optionType,
+                  strikePrice: p.strikePrice,
+                  quantity: qty,
+                  averageCost: p.averageCost,
+                  marketValue: p.marketValue,
+                  alertType: "itm",
+                  underlyingPrice,
+                  detail
+                }
+              }, { userId, connectedAccountId });
+            }
+          }
+        }
+      }
+    }
   }
 }

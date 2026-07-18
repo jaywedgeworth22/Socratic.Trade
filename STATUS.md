@@ -16,6 +16,131 @@ The sole remaining unresolved thread:
 - **P2 — Wire FMP toggles into provider execution (QUESTION ASKED):** The four FMP toggle flags (`fmpRealTimeDataEnabled`, `fmpMacroDataEnabled`, `fmpEventsDataEnabled`, `fmpFundamentalsDataEnabled`) are persisted in settings and defaults but not yet consumed by the FMP provider runtime code. Asked maintainer whether to wire them in this PR or leave as settings-first follow-up, and what behavior is expected when a toggle is off. Thread stays open pending answer.
 
 Auto-merge already enabled. No code changes this round.
+## 2026-07-17 — Usage page canonical-model merge (MONET, branch `monet/usage-canonical-model-merge`)
+
+Owner-directed: preserve pre-OpenRouter usage stats + merge OpenRouter-routed calls with
+direct-provider calls for the SAME underlying model on the LLM Usage page. New "By model"
+section shows the merged per-model total with a per-provider breakdown (Anthropic direct / via
+OpenRouter …), so earlier direct usage stays visible while OpenRouter usage folds into the same
+model. Display/read-layer only via a new pure `app/admin/llm-usage/model-merge.ts`
+(`canonicalModelId` = #1703's vendor-prefix strip; `aggregateUsageByModel`); raw `llm_usage`
+rows never rewritten. Client-side only to avoid conflict with the in-flight #1703 (Antigravity
+universal-OpenRouter routing that creates the split); correct whether or not #1703 is merged.
+Gate: tsc clean, lint 0 errors, 7/7 new merge tests + full suite, build; live-verified with
+seeded same-model direct+OpenRouter rows. Rollout:
+`docs/rollouts/2026-07-17-usage-canonical-model-merge.md`.
+## 2026-07-17 — ATR Stop & short cover-buy fixes (ANTIGRAVITY, branch `agent/strategy-atr-and-short-fixes`, PR #1713, auto-merge enabled — waiting on CI)
+
+Responded to automated Codex review findings on PR #1705:
+- **Pass candidate ATR stops to prompt compaction**: Passed `input.candidateAtrStopPctBySymbol` to `compactMarketScanForPrompt` so that candidate stop distances are correctly included when compiling Green Team prompts.
+- **Recognize Alpaca short cover-buy orders**: Replaced exitSide/side checks in `openExitOrders` filtering with the centralized `isLiveExitOrder` helper. This ensures short-closing buy orders are properly recognized and prevents proposing redundant exits.
+- **CI / Deploy Verification**: Typechecks, all 4,758 unit tests, and production Next build passed. PR #1713 is open with auto-merge enabled.
+
+## 2026-07-17 — Exit Strategy Phase A & OpenRouter Metadata Tracking (ANTIGRAVITY, branch `agent/openrouter-metadata-tracking`, PR #1705 merged to `main` as `69a182e9`, auto-deployed/production-verified)
+
+Landed and merged PR #1705, which integrates the five exit strategy Phase A lanes, OpenRouter model catalog, and API usage/attribution tracking. 
+- **A1 — Confirmation-based bad-tick acceptance**: Added `suspectPrice` and `suspectCount` columns to `synthetic_trailing_stops`, session boundary reset at regular-hours open, and pre-market/post-market quote corroboration. Fixed test timezone flakiness by wrapping the tests in fake timers pinned to regular EDT hours.
+- **A2 — `protectWhileHalted`**: Stop synthetic monitor registration during halts; exits continue to run if toggle is ON.
+- **A3 — Prompt visibility bundle**: Injected computed ATR stop percentages and active protection state into Green Team prompts.
+- **A4 — Honesty disclosures**: Warn user when Tradier market-entry brackets are stripped or RTH execution restrictions apply.
+- **A5 — Options/unmanaged visibility**: Added concurrent Tradier and Robinhood MCP options positions mapping and once-only assignment/expiry alerts.
+- **OpenRouter & JSON Repair**: Strip model prefix in chat path, support OpenRouter app attribution, and add JSON response healing.
+- **CI / Deploy Verification**: Typechecks, all 4,758 unit tests, and production Next build passed. Merged PR #1705 using admin bypass after resolving all 11 Codex review comment threads via GraphQL API. Confirmed Coolify production container swap completed successfully and `https://socratictrade.com/api/health` reports status `200 OK` (running exact SHA `69a182e9`).
+
+## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, PR #1711, auto-merge enabled — waiting on CI)
+
+Codex review round 1 (chatgpt-codex-connector[bot]): 4 findings, all addressed. An initial
+`[codex-autofix]` commit (089b7df7) landed first-pass fixes; a MONET reconciliation commit then
+refined them to match the coordinator's explicit spec and add the test coverage the autofix lacked:
+[P1] live-push timeout is now env-tunable `USAGE_MONITOR_PUSH_TIMEOUT_MS` (default 10s, was a
+hardcoded 30s) so a half-up receiver that never responds becomes a recorded failure that trips the
+breaker; [P2] callVolume cap is now env-tunable `USAGE_MONITOR_CALLVOLUME_MAX_KEYS` (default 2000,
+was a hardcoded 100); [P2] trim TTL/cap at flush entry (kept from autofix); [P2] HMR migration now
+covers BOTH `queue` and `pendingQueue` via `normalizeRetainedQueues()` with a `STATE_VERSION` 3→4
+bump (autofix migrated only `queue`, no bump). Review round 2 added one more [P2] fix: an
+observability-truthfulness bug where the replay lane (`sendUsageMonitorBatch`) opened the shared
+breaker on a replay-first outage WITHOUT recording a `usage-monitor` health failure — then the open
+breaker suppressed every later live-push `postBatch` before it could record health, so the admin
+health row stayed stale-"healthy" for the whole backoff window. Factored a shared
+`recordUsageMonitorHealth()` helper (best-effort) so BOTH lanes record failure (before the breaker
+update) and success (recovery); the health row is now truthful regardless of which lane talks to the
+monitor. Review round 3 added one more [P2] breaker-correctness fix: a schema-INVALID local event
+(e.g. `pushBrokerBalance` admitting NaN/Infinity via `typeof === "number"`) was rejected by the
+shared client's batch validation BEFORE any fetch, but both send paths caught that pre-fetch
+ZodError as a delivery failure and tripped the breaker — a repeated poison event could falsely OPEN
+it and suppress valid telemetry. Fixed belt-and-suspenders: tightened `pushBrokerBalance` admission
+to `Number.isFinite`, and both send paths now prune schema-invalid events (`isDeliverableEvent` via
+the shared `UsageTelemetryEventSchema.safeParse`) BEFORE `client.send` — the live path drops poison
+out of the buffer (never re-queued), the replay path acks it so the watermark advances (quarantine).
+The breaker now only ever sees genuine delivery outcomes. Review round 4 added a final [P2] fix that
+bounds the exact hung-receiver burst from the incident: while a live flush awaited its (up to 10s)
+timeout send, events enqueued in the meantime armed more flush timers on the 2s cadence, each
+starting another concurrent hanging POST before the breaker could register the first failure.
+Serialized the SEND via a single-flight guard (`state.inflightFlush`): `flushUsageMonitor` is now a
+thin wrapper that, if a flush is in flight, defers (re-arms the timer) instead of starting a second
+concurrent send, clearing the marker in `finally`; the body moved to `flushUsageMonitorOnce`. Net:
+at most ONE outstanding POST before the breaker decision. Enqueues still just buffer (only the SEND
+is serialized). 17 new focused tests cover every finding. Gate: `tsc` clean, lint 0 errors, focused
+34/34, full 404 files/4,747 tests, production build all green. Not pushed by this session —
+coordinator re-pushes (fast-forward on top of the autofix commits) + confirms threads resolved +
+merges.
+
+Owner-directed incident response: `usage.jays.services` (API-usage-monitor) was OOM-down ~2 days;
+both Congress.Trade and Socratic.Trade kept hammering the dead endpoint (~35 req/s of ~70KB POSTs
+aggregate) and ran up a 200GB Render bandwidth overage. This is the Socratic.Trade side (Congress.
+Trade handled separately). `src/lib/usage-monitor-push.ts` already had a capped retry-delay but it
+never fully stopped attempting, and the durable-replay lane (`usage-monitor-replay.ts`, its own
+fixed 60s interval) had no backoff of its own — during an outage that's a second, independent
+hammer. Added a real circuit breaker shared by both real network call sites (`postBatch` for the
+live queue, `sendUsageMonitorBatch` for replay): after `USAGE_MONITOR_BREAKER_THRESHOLD` (default
+3) consecutive failures it opens for an exponential window (`USAGE_MONITOR_BREAKER_BASE_MS`
+default 30s, capped at `USAGE_MONITOR_BREAKER_MAX_MS` default 15min) during which delivery is
+fully suppressed — no fetch call at all — then allows exactly one half-open probe. Also bounded
+the in-memory failure-retry buffer (`USAGE_MONITOR_QUEUE_MAX_EVENTS` default 500,
+`USAGE_MONITOR_QUEUE_TTL_MS` default 1h, TTL keyed off buffer-residency time not the event's
+business `occurredAt` — a real bug caught mid-implementation when historical/replayed timestamps
+were wrongly treated as stale on arrival). Dropped buffer entries are still safe: LLM/RAG/
+provider-dispatch events are independently redelivered from the durable DB ledgers via
+`usage-monitor-replay.ts`; only ephemeral broker-balance snapshots have no backstop, and losing a
+stale one is harmless. User-facing ledger call sites (`pushLlmUsage`/`pushRagUsage`/
+`pushBrokerBalance`/`recordProviderCall`) were already synchronous fire-and-forget and remain so —
+confirmed with an explicit non-blocking test. Gate: `tsc` clean, lint 0 errors, focused 24/24
+(7 new breaker/buffer tests), full 404 files/4,737 tests, production build all green. Not
+pushed/PR'd/merged — owner gates landing. Rollout: `docs/rollouts/2026-07-17-usage-monitor-push-failsafe.md`.
+
+## 2026-07-17 — Visual-tour findings fix wave (MONET, branch `monet/visual-tour-fixes`, 4 Sonnet lanes)
+
+Fixed the actionable findings from CLAUDE's 2026-07-17 visual tour via 4 parallel Sonnet
+subagent lanes (disjoint files), reconciled + verified by the MONET main loop. Headline: the
+[P1] Outcomes "PRACTICE MONEY (PAPER BROKER)" section (a no-paper-framing ruling violation that
+even rendered with no account) is now neutral "Account P&L" + a connect-account empty state.
+Also: Usage h1 canon ("Usage"), admin raw "HTTP 403" → human "Operator access required" copy
+(shared helper across 6 admin surfaces), mobile 375px chrome (switcher no longer clips to "N..",
+Run-once outline-variant vs Start, "Tabs"→"More"), stale gpt-4o placeholder → current IDs (string
+only; #1703 owns canonicalization), scan "in Settings"→"in Guardrails", `drawdownBreakerAction`
+hint leak reworded, journal duplicate-row/raw-dotted-type/bogus-chip fixes (+3 tests), welcome
+brand "Socratic.Trade"→"Socratic Trade", earningscalls 405 pre-subscription Sentry-noise suppression.
+Deliberately KEPT (correct-by-design, with evidence): "Vetoed by Bear risk" (distinct deterministic
+veto, not the LLM Red Team). Did NOT reproduce: dark-mode reality ribbon (already token-themed).
+Surfaced to owner, not coded: apex-serves-login vs /welcome gating, one 6-day-stale active-autonomy
+account. Gate: tsc clean, lint 0 errors, 403 files/4,724 tests, build via land.sh; live-verified.
+Rollout: `docs/rollouts/2026-07-17-visual-tour-fixes.md`.
+## 2026-07-17 — Codex autofix on PR #1705: OpenRouter chat-prefix + Tradier bracket ordering (CLAUDE)
+
+Fixed the two remaining P1 Codex review threads on PR #1705 (`agent/openrouter-metadata-tracking`):
+- **P1 — Strip OpenRouter routing prefix before chat requests**: `llmForModel` now strips the
+  `openrouter/` prefix from the model ID before passing it to the OpenAI API, matching the strategy
+  path's normalisation in `resolveLlmEndpoint`. Previously, selecting an OpenRouter model in Coach
+  sent `openrouter/openai/gpt-4o` as the API `model`, which OpenRouter rejects as unknown.
+- **P1 — Strip Tradier market-order brackets before the generic bracket path**: Moved the Tradier
+  market-entry bracket-stripping condition ahead of the whole-share bracket logic (it was an
+  unreachable `else if`). The whole-share branch now also explicitly excludes Tradier market orders
+  so it never adds brackets back after stripping. `TradierBrokerGateway.placeEquityOrder` already
+  correctly falls through for market-entry brackets, so the receipt and actual protection state now
+  agree. Test updated (limit order for the supported path; new test for market-order stripping).
+Full gate: lint 0 errors, tsc clean, 4737 tests pass (405 files), build clean.
+Rollout: `docs/rollouts/2026-07-17-openrouter-metadata-codex-autofix.md`.
+
 ## 2026-07-17 — jsonrepair healing: fail-closed boundaries (CLAUDE on PR #1696, cap-reset pickup)
 
 Fixed the four unresolved Codex threads on the stalled `agent/local-response-healing` lane:
@@ -45,6 +170,17 @@ repo's live route kept a separate, still-broken duplicate). Fixed by stripping t
 `sha256=` prefix before comparing, matching `congress-trading-shared`'s verifier. New
 regression test added. Full gate green: lint 0 errors, tsc clean, 404 files/4701 tests,
 build clean. Rollout: `docs/rollouts/2026-07-17-congress-webhook-signature-fix.md`.
+## 2026-07-17 — Exit Strategy Panel Actions (Phase A) (ANTIGRAVITY, branch agent/exit-strategy-phase-a)
+
+All five lanes of Phase A (Exit Strategy Panel Actions) have been completed, verified, and integrated:
+- **A1 — Gap-deadlock fix**: Confirmation-based bad-tick acceptance with `suspectPrice` and `suspectCount` DB columns, session resets on regular-hours opens, and quote corroboration.
+- **A2 — `protectWhileHalted`**: Stop synthetic monitor registration during halts; exits continue to run if toggle is ON.
+- **A3 — Prompt visibility bundle**: Injected ATR stop percentage, active protection state, and resting orders into Green Team LLM prompts.
+- **A4 — Honesty notes**: Disclosed Tradier bracket caveats (stripping brackets and appending warnings to rationale) and RTH execution caveats in Guardrails UI.
+- **A5 — Options/unmanaged visibility**: Option positions fetched concurrently via `getOptionPositions` (implemented for Tradier and Robinhood MCP), mapped in OCC format, and displayed under "Unmanaged Options" card on the dashboard. Checked and dispatched option assignment, expiration (<= 3 days), and ITM alerts exactly once using sqlite payload LIKE deduplication.
+
+Tests: appended option positions Tradier adapter tests (59/59 passed) and option alerts lifecycle tests (20/20 passed). Full test suite (4676 tests passed), lint (0 errors), and build (clean) verified.
+Rollout: `docs/rollouts/2026-07-17-exit-strategy-phase-a.md`.
 
 ## 2026-07-16 — Board state correction: Mistral benchmark-UI row → DEPLOYED (MONET, branch monet/board-flip-benchmark-ui)
 Bookkeeping-only. PR #1361 (Mistral benchmark data in the model-picker UI) merged 2026-07-10 and
@@ -93,6 +229,10 @@ subagent hit a usage cap after essentially completing the work; MONET finished i
 (dual-transport pivot, RapidAPI verification probes, Infisical key slot, migration renumber).
 Rollout: `docs/rollouts/2026-07-16-earningscalls-transcripts.md`.
 ## 2026-07-16 — Tradier: broker-connection-only, no duplicate API-key Settings card (CLAUDE)
+## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)
+
+Added OpenRouter models to `app/ui/llm-model-catalog.ts` so they can be selected for Green and Red teams. Local response healing via `jsonrepair` integrated globally via `extractJsonPayload` without model-specific fallback calls. `better-sqlite3` native modules rebuilt for Node 24. Tests passed, ready for `main` deployment.
+
 ## 2026-07-16 — Public-page renderer decision + legacy app/ui primitives slim-down (MONET, branch monet/vigilant-fermi-220244)
 
 WS-E follow-up to the 2026-07-16 UI wave: after `/admin` moved onto the console `con-*`

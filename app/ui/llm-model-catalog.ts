@@ -124,6 +124,20 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
       { value: "deepseek-v4-flash", label: "deepseek-v4-flash - fast DeepSeek V4", tier: "$" },
       { value: "deepseek-v4-pro", label: "deepseek-v4-pro - stronger DeepSeek V4", tier: "$$" }
     ]
+  },
+  {
+    provider: "openrouter",
+    label: "OpenRouter",
+    options: [
+      { value: "openrouter/openai/gpt-4o", label: "OpenRouter GPT-4o", tier: "$$$" },
+      { value: "openrouter/openai/gpt-4o-mini", label: "OpenRouter GPT-4o-mini", tier: "$" },
+      { value: "openrouter/anthropic/claude-3.5-sonnet", label: "OpenRouter Claude 3.5 Sonnet", tier: "$$$" },
+      { value: "openrouter/anthropic/claude-3-5-haiku", label: "OpenRouter Claude 3.5 Haiku", tier: "$" },
+      { value: "openrouter/google/gemini-2.5-pro", label: "OpenRouter Gemini 2.5 Pro", tier: "$$$" },
+      { value: "openrouter/google/gemini-2.5-flash", label: "OpenRouter Gemini 2.5 Flash", tier: "$" },
+      { value: "openrouter/meta-llama/llama-3.3-70b-instruct", label: "OpenRouter Llama 3.3 70B", tier: "$$" },
+      { value: "openrouter/deepseek/deepseek-r1", label: "OpenRouter DeepSeek R1", tier: "$$$" }
+    ]
   }
 ];
 

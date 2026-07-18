@@ -216,7 +216,7 @@ function MarketScanTab({
             )}
             <Empty>
               No market scan yet. Run one now with the button below, or it appears automatically after the next strategy
-              run. If your universe is empty, add symbols or choose a base index in Settings first.
+              run. If your universe is empty, add symbols or choose a base index in Guardrails first.
             </Empty>
             <div className="flex justify-center pb-2">
               <Btn variant="primary" onClick={onRefresh} title="Run a fresh market scan now. Read-only: it never places trades.">
@@ -357,7 +357,7 @@ function MarketScanTab({
         {scan.topCandidates.length === 0 ? (
           <Empty>
             The scan ran but returned no candidates — the universe may be empty or no provider returned quotes. Add
-            symbols or choose a base index in Settings, then refresh.
+            symbols or choose a base index in Guardrails, then refresh.
           </Empty>
         ) : (
           <ScanTable scan={scan} />

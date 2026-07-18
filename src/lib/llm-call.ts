@@ -57,6 +57,8 @@ export interface LlmRequestSpec {
    * rather than a strict schema — this preserves that behavior while letting Claude enforce a tool.
    */
   openAiJsonObject?: boolean;
+  userId?: string;
+  metadata?: Record<string, string>;
 }
 
 /** Auth + content headers for the endpoint's provider (Anthropic uses x-api-key, others Bearer). */
@@ -68,6 +70,14 @@ export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key">):
       "anthropic-version": "2023-06-01",
       // Honour cache_control blocks on the system prompt (prompt caching). (Chat A item 3.)
       "anthropic-beta": "prompt-caching-2024-07-31"
+    };
+  }
+  if (endpoint.provider === "openrouter") {
+    return {
+      "content-type": "application/json",
+      authorization: `Bearer ${endpoint.key ?? ""}`,
+      "HTTP-Referer": "https://socratictrade.com",
+      "X-Title": "Socratic.Trade"
     };
   }
   return {
@@ -82,12 +92,64 @@ export function buildLlmRequestBody(
   spec: LlmRequestSpec
 ): Record<string, unknown> {
   const { transport } = endpoint;
-  const { systemPrompt, userContent, schema, openAiJsonObject } = spec;
+  const { systemPrompt, userContent, schema, openAiJsonObject, userId, metadata } = spec;
   const bounds = {
     maxOutputTokens: spec.maxOutputTokens,
     model: spec.model,
     reasoningEffort: spec.reasoningEffort,
     temperature: spec.temperature
+  };
+
+  // Build the OpenRouter-specific metadata tag if applicable.
+  const inferredContext = () => {
+    const sys = (systemPrompt || "").toLowerCase();
+    const schemaName = schema?.name || "";
+    if (schemaName === "trade_proposals" || sys.includes("green team") || sys.includes("proposer")) {
+      return "green-team";
+    }
+    if (schemaName === "red_team_verdict" || sys.includes("red team") || sys.includes("reviewer") || sys.includes("adversary")) {
+      return "red-team";
+    }
+    if (schemaName === "tuned_parameters" || sys.includes("tuner") || sys.includes("tuning") || sys.includes("autotuning")) {
+      return "tuning";
+    }
+    if (sys.includes("salience") || sys.includes("memory") || sys.includes("importance")) {
+      return "memory-salience";
+    }
+    if (sys.includes("multi-query") || sys.includes("rag") || sys.includes("retrieval")) {
+      return "rag";
+    }
+    if (sys.includes("framework review") || sys.includes("framework_review")) {
+      return "framework-review";
+    }
+    if (sys.includes("post-mortem") || sys.includes("post_mortem")) {
+      return "post-mortem";
+    }
+    if (sys.includes("revalidation") || sys.includes("proposal-revalidation")) {
+      return "revalidation";
+    }
+    return "assistant-chat";
+  };
+
+  const openRouterMetadata = endpoint.provider === "openrouter" ? {
+    context: metadata?.context || inferredContext(),
+    ...metadata
+  } : undefined;
+
+  const injectCommonFields = (base: Record<string, unknown>) => {
+    if (userId) {
+      if (endpoint.provider === "openrouter" || endpoint.provider === "openai" || endpoint.provider === "deepseek" || endpoint.provider === "gemini") {
+        base.user = userId;
+      } else if (endpoint.provider === "anthropic") {
+        base.metadata = { ...(base.metadata as Record<string, unknown> || {}), user_id: userId };
+      }
+    }
+    if (openRouterMetadata) {
+      base.metadata = {
+        ...(base.metadata as Record<string, unknown> || {}),
+        ...openRouterMetadata
+      };
+    }
   };
 
   if (transport === "anthropic-messages") {
@@ -113,6 +175,7 @@ export function buildLlmRequestBody(
       ];
       base.tool_choice = { type: "tool", name: schema.name };
     }
+    injectCommonFields(base);
     return withLlmRequestBounds(base, transport, bounds);
   }
 
@@ -125,6 +188,7 @@ export function buildLlmRequestBody(
     const base: Record<string, unknown> = { model: spec.model, messages };
     const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject, spec.model);
     if (responseFormat) base.response_format = responseFormat;
+    injectCommonFields(base);
     return withLlmRequestBounds(base, transport, bounds);
   }
 
@@ -132,6 +196,7 @@ export function buildLlmRequestBody(
   const base: Record<string, unknown> = { model: spec.model, input: messages };
   const textFormat = openAiResponsesTextFormat(schema, openAiJsonObject);
   if (textFormat) base.text = { format: textFormat };
+  injectCommonFields(base);
   return withLlmRequestBounds(base, transport, bounds);
 }
 
