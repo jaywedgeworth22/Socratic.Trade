@@ -31,6 +31,7 @@ import {
   normalizeMarketScanOutlierReserve
 } from "@/lib/scan-settings";
 import { ALL_LLM_REASONING_EFFORTS, isDisallowedInteractiveStrategyReasoningConfig, resolveReviewerReasoningEffort } from "@/lib/llm-request";
+import { validateWebhookUrl } from "@/lib/egress-guard";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import type { IndexUniverse, NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
@@ -175,7 +176,11 @@ export async function PUT(request: Request) {
     // THIS request actually sets/changes it — otherwise a stored out-of-range value would 400 EVERY
     // unrelated save. A stale stored value is already safe at run time (validatedMarketableLimitBufferBps
     // defaults/clamps it); only a write that changes the field must pass the bound.
-    enforceMarketableLimitBufferRule: policy.tuning?.marketableLimitBufferBps !== current.tuning?.marketableLimitBufferBps
+    enforceMarketableLimitBufferRule: policy.tuning?.marketableLimitBufferBps !== current.tuning?.marketableLimitBufferBps,
+    // Same MERGED-policy scoping as above: only re-run the (network) egress check when THIS
+    // request actually sets/changes webhookUrl — a DNS blip on an already-saved, working
+    // webhook must not block every unrelated policy save (notification prefs, caps, ...).
+    enforceWebhookUrlRule: policy.notificationSettings.webhookUrl !== current.notificationSettings.webhookUrl
   });
   if (validationError) return new NextResponse(validationError, { status: 400 });
   // Validation above is intentionally side-effect free. Apply the policy and optional prompt in one
@@ -208,6 +213,7 @@ async function validatePolicy(
     enforceKeyedGreenModelRule?: boolean;
     enforceKeyedRedModelRule?: boolean;
     enforceMarketableLimitBufferRule?: boolean;
+    enforceWebhookUrlRule?: boolean;
   } = {}
 ): Promise<string | undefined> {
   // Invalid legacy watchlist / ignore-list symbols are sanitized out in the PUT handler above, so stale
@@ -374,12 +380,13 @@ async function validatePolicy(
     if (gateOnRationaleCollapse !== undefined && typeof gateOnRationaleCollapse !== "boolean") return "tuning.gateOnRationaleCollapse must be a boolean.";
     if (skipNegativeExpectancyEdgePct !== undefined && (!Number.isFinite(skipNegativeExpectancyEdgePct) || skipNegativeExpectancyEdgePct < -100 || skipNegativeExpectancyEdgePct > 100)) return "tuning.skipNegativeExpectancyEdgePct must be between -100 and 100.";
   }
-  if (policy.notificationSettings.webhookUrl?.trim()) {
-    try {
-      new URL(policy.notificationSettings.webhookUrl);
-    } catch {
-      return "webhookUrl must be a valid URL.";
-    }
+  if (policy.notificationSettings.webhookUrl?.trim() && (options.enforceWebhookUrlRule ?? true)) {
+    // Full SSRF egress check (protocol + DNS + private/loopback/link-local/metadata address
+    // rejection) — see src/lib/egress-guard.ts. Re-run again immediately before every send in
+    // src/lib/notifications.ts, so this save-time check is a fast-fail UX nicety, not the sole
+    // line of defense.
+    const check = await validateWebhookUrl(policy.notificationSettings.webhookUrl.trim());
+    if (!check.ok) return check.error ?? "webhookUrl is not allowed.";
   }
   if (policy.systemState === "active" && !policy.accountNumber) return "Select an account before enabling autonomy.";
   if (policy.systemState === "active" && policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) return "Select at least one base index or additional watchlist symbol before enabling autonomy.";

@@ -1,5 +1,6 @@
 import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent, getDb } from "./db";
 import { notify, type NotifyDispatchDeps } from "./notify";
+import { validateWebhookUrl, type HostResolver } from "./egress-guard";
 import type { NotificationEvent, NotificationEventType, NotifyChannelId, NotifyChannelResult, TradingPolicy, OptionPosition } from "./types";
 
 type Fetcher = typeof fetch;
@@ -23,6 +24,9 @@ type SendNotificationOptions = {
   assertActive?: () => void;
   /** Cancellation signal paired with assertActive for in-flight delivery and retry waits. */
   signal?: AbortSignal;
+  /** Injectable DNS resolver for the legacy webhook's egress guard (SSRF hardening — see
+   *  src/lib/egress-guard.ts). Defaults to real DNS; tests inject a stub. */
+  resolveWebhookHost?: HostResolver;
 };
 
 function assertNotificationActive(options: SendNotificationOptions): void {
@@ -182,7 +186,8 @@ export async function sendNotification(
       webhookUrl,
       options.fetcher ?? fetch,
       options.timeoutMs ?? 5000,
-      options.signal
+      options.signal,
+      options.resolveWebhookHost
     );
     assertNotificationActive(options);
     results.push(legacyWebhookResult);
@@ -226,8 +231,14 @@ async function sendLegacyWebhook(
   webhookUrl: string,
   fetcher: Fetcher,
   timeoutMs: number,
-  callerSignal?: AbortSignal
+  callerSignal?: AbortSignal,
+  resolveHost?: HostResolver
 ): Promise<NotifyChannelResult> {
+  // Re-validate on every send (not just when the URL was saved) — see src/lib/egress-guard.ts.
+  const check = await validateWebhookUrl(webhookUrl, { resolveHost });
+  if (!check.ok) {
+    return { channel: "webhook", ok: false, error: check.error ?? "webhook URL is not allowed." };
+  }
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -244,6 +255,8 @@ async function sendLegacyWebhook(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payloadBody),
+      // Never transparently follow a redirect to an unvalidated target.
+      redirect: "manual",
       signal: combineNotificationSignals(callerSignal, controller.signal)
     });
     if (!response.ok) {

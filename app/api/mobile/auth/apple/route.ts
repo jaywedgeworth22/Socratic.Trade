@@ -2,18 +2,36 @@ import { NextResponse } from "next/server";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { isEmailAllowed } from "../../../../../src/lib/auth/identity";
 import { encodeSessionToken } from "../../../../../src/lib/auth/session-token";
+import { APPLE_AUTH_MAX_BYTES, PayloadTooLargeError, readJsonWithLimit } from "../../../../../src/lib/bounded-body";
+
+// Module-scope, not per-request: createRemoteJWKSet builds a caching key-fetcher (jose caches
+// the fetched JWKS response and its own in-flight fetch across calls to the SAME resolver
+// instance). Re-creating it inside the request handler threw that cache away every request,
+// so every sign-in re-fetched https://appleid.apple.com/auth/keys instead of reusing it.
+const APPLE_JWKS = createRemoteJWKSet(new URL("https://appleid.apple.com/auth/keys"));
 
 export async function POST(request: Request) {
   try {
-    const { identityToken, name } = await request.json();
+    let identityToken: unknown;
+    let name: unknown;
+    try {
+      ({ identityToken, name } = await readJsonWithLimit<{ identityToken?: unknown; name?: unknown }>(
+        request,
+        APPLE_AUTH_MAX_BYTES
+      ));
+    } catch (err) {
+      if (err instanceof PayloadTooLargeError) {
+        return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+      }
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
 
     if (!identityToken || typeof identityToken !== "string") {
       return NextResponse.json({ error: "Missing or invalid identityToken" }, { status: 400 });
     }
 
     // 1. Verify the Apple identity token
-    const JWKS = createRemoteJWKSet(new URL("https://appleid.apple.com/auth/keys"));
-    const { payload } = await jwtVerify(identityToken, JWKS, {
+    const { payload } = await jwtVerify(identityToken, APPLE_JWKS, {
       issuer: "https://appleid.apple.com",
       // We accept the iOS App Bundle ID. You must set APPLE_CLIENT_ID or we use the known app id.
       audience: process.env.APPLE_CLIENT_ID || "com.jays.SocraticTrade"
@@ -42,7 +60,7 @@ export async function POST(request: Request) {
     const sessionJwt = await encodeSessionToken({
       // Explicit provider-login time is preserved across rolling JWT refreshes. Request identity
       // uses it to select a post-deletion account generation without freeing older mobile tokens.
-      token: { email, name: name ?? payload.email, loginAt: Date.now() },
+      token: { email, name: (typeof name === "string" ? name : undefined) ?? payload.email, loginAt: Date.now() },
       secret: authSecret,
       salt
     });

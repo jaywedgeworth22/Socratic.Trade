@@ -636,7 +636,12 @@ describe("persistence and notifications", () => {
           ...DEFAULT_POLICY,
           notificationSettings: { webhookUrl: "https://example.test/webhook?token=secret", enabledEvents: ["fill"] }
         },
-        fetcher: async () => new Response(null, { status: 204 })
+        fetcher: async () => new Response(null, { status: 204 }),
+        // Legacy webhook path re-validates its target with a real DNS lookup on every send
+        // (SSRF/rebinding hardening — src/lib/egress-guard.ts). "example.test" is an
+        // IANA-reserved, never-resolving host used deliberately; stub the resolver so this
+        // test stays hermetic.
+        resolveWebhookHost: async () => ["8.8.8.8"]
       }
     );
 
