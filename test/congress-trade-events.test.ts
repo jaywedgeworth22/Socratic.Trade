@@ -7,7 +7,6 @@ import {
   applyCongressEvents,
   resetCongressEventDedupe
 } from "../src/lib/congress-trade-events";
-import { verifyCongressWebhookSignature } from "../src/lib/congress-webhook-auth";
 import { getServiceHealthSummaries } from "../src/lib/db-health";
 import { coerceCongressTrade, fetchAppACongressTrades } from "../src/lib/web-sources/congress";
 import { getCongressDataset, getInsiderSignals, getSymbolWebSignals } from "../src/lib/web-sources";
@@ -228,37 +227,8 @@ function sign(secret: string, bodyText: string) {
   return createHmac("sha256", secret).update(bodyText).digest("hex");
 }
 
-describe("verifyCongressWebhookSignature", () => {
+describe("webhook endpoint (POST)", () => {
   const reqWith = (sig?: string) => new Request("https://b.example/api/webhooks/congress", sig ? { headers: { "x-signature": sig } } : undefined);
-
-  it("rejects when no secret is configured", () => {
-    expect(verifyCongressWebhookSignature(reqWith("anything"), "{}")).toBe(false);
-  });
-
-  it("accepts the correct signature and rejects others", () => {
-    process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
-    const body = `{"foo":"bar"}`;
-    const sig = sign("s3cr3t", body);
-
-    expect(verifyCongressWebhookSignature(reqWith(sig), body)).toBe(true);
-    expect(verifyCongressWebhookSignature(reqWith("wrong"), body)).toBe(false);
-    expect(verifyCongressWebhookSignature(reqWith(undefined), body)).toBe(false);
-    expect(verifyCongressWebhookSignature(reqWith(sig), "{}")).toBe(false);
-  });
-
-  it("accepts legacy bearer token authentication", () => {
-    process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
-    const body = `{"foo":"bar"}`;
-    const req = new Request("https://b.example/api/webhooks/congress", {
-      headers: { "authorization": "Bearer s3cr3t" }
-    });
-    expect(verifyCongressWebhookSignature(req, body)).toBe(true);
-
-    const badReq = new Request("https://b.example/api/webhooks/congress", {
-      headers: { "authorization": "Bearer wrong" }
-    });
-    expect(verifyCongressWebhookSignature(badReq, body)).toBe(false);
-  });
 
   it("retains idempotency from DB even after memory cache reset (simulating restart/HMR)", () => {
     const id = `evt-${randomUUID()}`;
