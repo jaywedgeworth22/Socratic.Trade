@@ -1,5 +1,22 @@
 # Current Status
 
+## 2026-07-17 — PR #1669 Merged & Deployed: SEC/RAG Advanced RAG Backfill & SiliconFlow Integration (Antigravity/AG)
+
+Successfully resolved all 11 remaining Codex review thread issues on PR #1669, including:
+- Bounding the concurrent scout retrieval fan-out in `src/lib/strategy.ts` using batching size of 5.
+- Joining as-of FTS matches on symbol and source in `src/lib/rag/search-fusion.ts` to prevent cross-symbol text leakage.
+- Making failed FTS indexing retryable by moving FTS chunk indexing inside the `runWithActiveVectorCommitProof` database transaction in `src/lib/web-sources/sec-filings.ts`.
+- Accounting alternative embeddings to their actual provider (`openrouter` / `siliconflow` instead of hardcoded `voyage`) in `src/lib/vector-db.ts` to ensure correct metering and budget tracking.
+- Rechecking overlap text tokens in `src/lib/rag/chunk.ts` to prevent oversized chunks.
+- Expanding row spans in the Cheerio HTML table parser (`src/lib/web-sources/sec-parser.ts`) to prevent shifted column values in Markdown tables, and adding regression tests.
+- Sorting FTS BM25 ranking correctly via virtual table name reference in `src/lib/rag/search-fusion.ts`.
+- Resolving CIK expected symbols in `scripts/eval/rag-eval-harness.ts` first from `sec_filings`.
+- Excluding non-market Form 4 events by filtering for `'P'` and `'S'` codes in `src/lib/web-sources/sec-facts.ts`.
+- Preserving taxonomy namespace key identity (`us-gaap` / `ifrs-full`) in Company Facts deterministic hashing.
+
+Fully verified type safety, passed all 4,784 unit tests, and successfully ran the Next.js production build check. The PR has been squash-merged into `main` and auto-deployed to production via Coolify on `socratictrade.com`.
+Rollout note: `docs/rollouts/2026-07-17-pr1669-resolutions.md`.
+
 ## 2026-07-17 — Usage page canonical-model merge (MONET, branch `monet/usage-canonical-model-merge`)
 
 Owner-directed: preserve pre-OpenRouter usage stats + merge OpenRouter-routed calls with
