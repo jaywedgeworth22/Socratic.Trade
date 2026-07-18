@@ -49,7 +49,7 @@ consumer loops that run BEFORE section 1's marker cleanup (`cancelBrokerProtecti
 `kind===null` teardown) to DROP a `pending_replace` marker rather than cancel its synthetic
 `pending-replace-*` id (which would 404 → stuck `pending_cancel`). Added F1 regression
 `SYN-HALT-F1RETRY`. Gates: tsc clean, lint 0 errors, synthetic-stops 65 pass + account-delete +
-option-alert-dedupe pass; full suite + build re-running before push. Rollout note round-8 section
+option-alert-dedupe pass; `npm run build` exit 0. Rollout note round-8 section
 appended.
 
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)

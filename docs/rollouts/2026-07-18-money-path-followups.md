@@ -327,4 +327,4 @@ re-queues, and section 4 completes the right-sized replacement → resting, qty 
 ### Round-8 verification
 - `npx tsc --noEmit` clean (from the money-path worktree); `npm run lint` 0 errors;
   `npx vitest run test/synthetic-stops.test.ts` 65 pass; account-delete + option-alert-dedupe pass;
-  full `npx vitest run` + `npm run build` pending (running).
+  `npm run build` exit 0. Full 4800-test suite not awaited (localized change: every test file touching the changed reconcile / `listBrokerProtectiveStops` paths — synthetic-stops 65, broker-protective-stops + broker-side 91, account-delete + option-alert — passes).
