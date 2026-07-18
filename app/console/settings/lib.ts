@@ -114,6 +114,15 @@ export function disconnectAccount(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/connected-accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+/** PATCH /api/connected-accounts/[id] {label} — rename an account's cosmetic display
+ *  name only. The broker-sourced account number and credentials are untouched. */
+export function renameAccount(id: string, label: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/connected-accounts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ label })
+  });
+}
+
 // ── API keys ─────────────────────────────────────────────────────────────────
 
 /** One catalog entry from GET /api/keys. The key VALUE is never returned by
