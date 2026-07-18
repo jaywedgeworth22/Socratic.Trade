@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-18 — iOS client fixes landed (CLAUDE, branch `claude/ios-client-fixes`)
+
+Typed live-approval confirmation, SSE frame parsing + reload coalescing, and 401/403-only logout in `ios/SocraticTrade/` (Codex findings 30-32). Swift-only, no web-app surface. Rollout: `docs/rollouts/2026-07-18-ios-client-fixes.md`. CAVEAT: verified by parse + macOS-SDK typecheck only (no Xcode/simulator available) — owner should run one manual Xcode build before relying on it. Next action: owner Xcode build.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

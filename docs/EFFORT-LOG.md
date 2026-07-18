@@ -241,6 +241,8 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] iOS client fixes — typed live-approval confirmation, SSE frame parsing + reload coalescing, 401/403-only logout (Codex findings 30-32; branch `claude/ios-client-fixes`) — COMPLETED 2026-07-18.** Swift-only changes to `ios/SocraticTrade/` (no web-app surface). Rollout: `docs/rollouts/2026-07-18-ios-client-fixes.md`. CAVEAT: Swift verification was by parse + macOS-SDK typecheck only — no Xcode/simulator build was possible in the landing environment, so the owner should run one manual Xcode build before relying on the iOS client.
+
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**
