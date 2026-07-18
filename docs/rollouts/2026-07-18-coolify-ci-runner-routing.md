@@ -142,6 +142,15 @@ actionlint .github/workflows/_merge-shepherd-impl.yml .github/workflows/ci.yml \
   .github/workflows/shared-package-pin-check.yml
 ```
 
+Final review hardening:
+
+- CI and E2E classifiers reject fork pull requests at job admission, before a persistent
+  self-hosted runner is assigned or repository content is checked out.
+- The token-bearing shared-package pin check applies the same job-level fork boundary.
+- The manual merge-shepherd wrapper calls this repository's reusable implementation pinned to
+  `main`, so dispatching the wrapper against another ref cannot substitute an unreviewed workflow
+  before write permissions and secrets are inherited.
+
 Coolify runner lifecycle receipt:
 
 ```text

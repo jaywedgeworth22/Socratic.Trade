@@ -68,6 +68,9 @@ jobs:
     # Cheap gate-shape job: (1) is this diff documentation-only? (2) which runner should
     # execute the suite? Only `pull_request` gets the docs fast path; only fresh
     # self-advertised availability on a same-repo pull_request/push event routes self.
+    # Reject fork PRs at admission so fork-controlled repository content never reaches
+    # the persistent self-hosted workspace, including through actions/checkout.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read

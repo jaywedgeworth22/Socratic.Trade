@@ -29,6 +29,9 @@ jobs:
   classify:
     # Cheap gate-shape job: is this diff documentation-only? Only `pull_request` gets
     # the fast path — push/merge_group/schedule always run the full smoke suite.
+    # Reject fork PRs before fork-controlled repository content reaches the persistent
+    # self-hosted workspace.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read

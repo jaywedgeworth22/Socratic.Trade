@@ -29,8 +29,9 @@ upload because that action fails after a clean scan when the self-hosted workspa
 `docs/rollouts/2026-07-18-coolify-ci-runner-routing.md`.
 
 The rerun also exposed an independent workflow parse failure in `merge-shepherd.yml`: its local
-reusable-workflow path incorrectly included `@main`. The reference now uses the valid local form;
-`workflow_dispatch` already runs from the default branch.
+reusable-workflow path incorrectly included `@main`. The dispatcher now uses a fully qualified
+same-repository `@main` reference, so even dispatches against another ref execute the trusted
+default-branch implementation before inheriting write permissions and secrets.
 
 The first full Coolify verify reached TypeScript but Node 24 aborted at its default ~1 GiB heap
 ceiling; a 1536 MiB retry let TypeScript proceed but the Next build exhausted that heap. The
@@ -46,6 +47,11 @@ Codex review identified that `pull_request_review` autofix events could otherwis
 the persistent runner with write credentials. The autofix job now refuses bot-triggered work unless
 the PR head repository exactly matches this repository; maintainer `workflow_dispatch` remains
 available.
+
+The same admission boundary now applies at job level to both CI/E2E classifier jobs and the
+shared-package pin check. Fork PRs are rejected before runner assignment or checkout, rather than
+after fork-controlled repository content has already entered the persistent workspace; non-PR
+push, schedule, merge-queue, and maintainer-dispatch events remain admitted.
 
 The runner image's `EPHEMERAL=1` registration was paired with Docker `restart: always`, which
 restarted the same container filesystem after each job instead of removing the container as the
