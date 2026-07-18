@@ -43,6 +43,25 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## Deployed
+- **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
+  `monet/vigilant-fermi-220244`, cloud session, owner-directed) — DEPLOYED TO PRODUCTION 2026-07-18
+  (merged to `main` as `b0063a7`, PR #1727).** Deploy confirmed after the fleet-wide auto-deploy stall
+  recovered: prod redeployed ~13:32Z from a main state that already included this merge (`b0063a7`
+  landed ~01:45Z, ~12h earlier), so #1727 is live; `/api/health` db ok, scheduler ticking, litestream
+  replicating. Chronology note: the 13:32Z build PRE-dates #1737's 14:14Z merge, so it does NOT include
+  #1737 or later work — those deploy on a subsequent build; this row asserts only that #1727 is live.
+  NB: the reported release sha `e3ea2e3d` is a Coolify build-sha, not a main commit — a reporting quirk
+  from the new Coolify CI runner (#1739), not a main-mismatch. (1) Inline rename of a connected
+  account's cosmetic `label` in Console → Broker connections (pencil→input→save); broker account number
+  stays broker-sourced & non-editable (keys trade history + `policy.accountNumber`). New
+  `renameConnectedAccount` db fn + label-only `PATCH /api/connected-accounts/[id]` (test proves a stray
+  `accountNumber` in the body is ignored) + client helper + UI + 5 tests. (2) Retired last unused
+  old-dashboard-era code: deleted `app/ui/price-chart.tsx` (dead), `app/ui/model-picker.tsx` (dead;
+  types inlined into `llm-model-catalog.ts`), `/old` redirect shim. Kept the in-use public renderer
+  (primitives/theme/cn → live marketing/legal pages + error boundary, "two renderers" decision) and
+  `/strategy` SEO redirect — in use, not legacy. Add-account flow unchanged (auto-fetch of
+  Alpaca/Tradier number is a flagged follow-up). Rollout:
+  `docs/rollouts/2026-07-18-account-rename-and-legacy-retirement.md`.
 - **SEC/RAG Advanced RAG Backfill Improvements (RAG-B08, RAG-B09, RAG-B10, RAG-B13, RAG-B14) (Antigravity/AG, branch `agent/ag-rag-backfill-p3`) — COMPLETED 2026-07-17.** Optimized the SEC filings discovery pipeline to check stashed SQLite filings first, dynamically skip online discovery if enough stashed filings satisfy the run's cap, and globally sort the queue breadth-first (Grouped by ticker: newest 10-K, then newest 10-Q). Implemented dynamic raw-artifact local caching in the queue worker to bypass duplicate network fetches. Added a two-stage RAG query (scouting all candidates with `limit = 1` and deep-scanning finalists + holdings with `limit = 8`), grouping narrative chunks and structured facts/Form-4 transactions cards into prompt-injected symbol dossiers. Expanded the admin coverage dashboard at `/api/admin/rag-coverage` to query the entire database directly and report model, parser, and date ranges. Fully verified with typechecks, 100% green tests (51/51), and successful Next.js production build.
 - **SEC/RAG P0 historical discovery + raw archive + aggregate SEC limiter / Phase 2 (Antigravity/AG) — COMPLETED 2026-07-16.** Implemented dynamic token-bucket rate limiter for `.sec.gov` requests (4 req/sec default with dynamic 429 Retry-After backoff), raw-artifact HTML/JSON caching layer, and historical submissions JSON shard discovery in `sec-filings.ts`. Merged as PR #1665. Rollout note: `docs/rollouts/2026-07-15-rag-backfill-p2.md`.
 - **[Socratic.Trade][AG] Fix candidate ATR stops and Alpaca short cover-buy recognition (PR #1713, merged as `530c867e`) — DEPLOYED / PRODUCTION VERIFIED 2026-07-18.** Responded to automated Codex review findings on PR #1705 by: (1) passing `input.candidateAtrStopPctBySymbol` into `compactMarketScanForPrompt` so candidate stop distances are correctly formatted in prompt compaction, and (2) replacing the exitSide/side checks in `openExitOrders` filtering with the centralized `isLiveExitOrder` helper to properly recognize Alpaca cover buy orders for short positions. Verified all type checks, lint checks, and tests green. Squash-merged to `main` and auto-deployed to production.
@@ -1878,25 +1897,6 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
-  `monet/vigilant-fermi-220244`, cloud session, 2026-07-18, owner-directed) — COMPLETED (merged to
-  `main` as `b0063a7`, PR #1727) + DEPLOYED TO PRODUCTION.** (Deploy confirmed 2026-07-18 after the
-  fleet-wide auto-deploy stall recovered: prod redeployed ~13:32Z from a main state that already
-  included this merge (`b0063a7` landed ~01:45Z, ~12h earlier), so #1727 is live; `/api/health` db
-  ok, scheduler ticking, litestream replicating. Chronology note: the 13:32Z build PRE-dates #1737's
-  14:14Z merge, so it does NOT include #1737 or later work — those deploy on a subsequent build; this
-  row asserts only that #1727 is live. NB: the reported release sha `e3ea2e3d` is a Coolify build-sha,
-  not a main commit — a reporting quirk from the new Coolify CI runner (#1739), not a main-mismatch.
-  Board-mover: this row can move to the Deployed section.) (1) Inline rename of a connected account's cosmetic `label`
-  in Console → Broker connections (pencil→input→save); broker account number stays broker-sourced &
-  non-editable (keys trade history + `policy.accountNumber`). New `renameConnectedAccount` db fn +
-  label-only `PATCH /api/connected-accounts/[id]` (test proves a stray `accountNumber` in the body is
-  ignored) + client helper + UI + 5 tests. (2) Retired last unused old-dashboard-era code: deleted
-  `app/ui/price-chart.tsx` (dead), `app/ui/model-picker.tsx` (dead; types inlined into
-  `llm-model-catalog.ts`), `/old` redirect shim. Kept the in-use public renderer (primitives/theme/cn
-  → live marketing/legal pages + error boundary, "two renderers" decision) and `/strategy` SEO
-  redirect — in use, not legacy. Add-account flow unchanged (auto-fetch of Alpaca/Tradier number is a
-  flagged follow-up). Rollout: `docs/rollouts/2026-07-18-account-rename-and-legacy-retirement.md`.
 - **[Socratic.Trade][MONET] Usage page canonical-model merge (branch `monet/usage-canonical-model-merge`,
   claimed 2026-07-17) — IN PROGRESS.** Owner-directed: preserve pre-OpenRouter usage stats + merge
   OpenRouter-routed calls with direct-provider calls for the SAME underlying model on the Usage page.
