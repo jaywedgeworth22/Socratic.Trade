@@ -15,10 +15,8 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   return { ...actual, managedVectorLedgerAuthority: vi.fn(), storeContexts: mocks.storeContexts };
 });
 
-vi.mock("../src/lib/strategy", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/lib/strategy")>();
+vi.mock("../src/lib/strategy", () => {
   return {
-    ...actual,
     runStrategyOnce: (...args: unknown[]) => mocks.runStrategyOnce(...args)
   };
 });
@@ -27,7 +25,10 @@ vi.mock("../src/lib/market-hours", () => ({
   isRunAllowedNow: () => true
 }));
 
+import { resetDbForTesting } from "../src/lib/db";
+
 beforeAll(() => {
+  resetDbForTesting();
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-sec8k-${randomUUID()}.db`)}`;
 });
 beforeEach(async () => {
@@ -42,14 +43,14 @@ beforeEach(async () => {
     attempted: contexts.length,
     indexed: contexts.length
   }));
-  const { deleteInternalSetting } = await import("../src/lib/db");
-  for (const k of [
-    "webSource:sec8k:dataset",
-    "webSource:sec8k:lastAttempt",
-    "webSource:sec:cikMap",
-    "webSource:sec8k:summaryBacklog",
-    "webSource:sec8k:fullBodyBacklog"
-  ]) deleteInternalSetting(k);
+  const { getDb } = await import("../src/lib/db");
+  const db = getDb();
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
+  for (const { name } of tables) {
+    try {
+      db.prepare(`DELETE FROM "${name.replace(/"/g, '""')}"`).run();
+    } catch {}
+  }
   delete process.env.WEB_SOURCE_SEC8K;
   delete process.env.WEB_SOURCE_SEC8K_FULL_BODY;
   delete process.env.TRIGGER_ENGINE;
