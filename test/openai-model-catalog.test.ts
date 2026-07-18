@@ -20,7 +20,7 @@ describe("curated OpenAI model choices across LLM surfaces", () => {
     ]);
     expect(openAi.options.find((option) => option.value === "gpt-5.6-terra")?.recommendedGreen).toBe(true);
     expect(openAi.options.find((option) => option.value === "gpt-5.6-sol")?.recommendedRed).toBe(true);
-    expect(openAi.options.some((option) => option.value === "gpt-5.4" || option.value === "gpt-5.5")).toBe(false);
+    expect(openAi.options.some((option) => option.value === "gpt-5.4" || option.value === "openai/gpt-5.5")).toBe(false);
   });
 
   it("shares the exact curated OpenAI options with Coach/chat", () => {

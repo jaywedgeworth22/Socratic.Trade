@@ -17,7 +17,7 @@ describe("providerLabel / providerFromText", () => {
 
   it("detects the provider from raw error text (host/family hints)", () => {
     expect(providerFromText("openai 401: Incorrect API key provided")).toBe("OpenAI");
-    expect(providerFromText("gemini 400: generativelanguage.googleapis.com error")).toBe("Google (Gemini)");
+    expect(providerFromText("gemini 400: openrouter.ai error")).toBe("Google (Gemini)");
     expect(providerFromText("mistral 401: unauthorized")).toBe("Mistral");
     expect(providerFromText("xai 403: x.ai forbidden")).toBe("xAI (Grok)");
     expect(providerFromText("anthropic 401")).toBe("Anthropic (Claude)");
@@ -121,7 +121,7 @@ describe("humanizeLlmError", () => {
   it("adds step/model context for transport timeouts", () => {
     const msg = humanizeLlmTransportError(new Error("The operation was aborted due to timeout"), {
       provider: "openai",
-      model: "gpt-5.5",
+      model: "openai/gpt-5.5",
       stepLabel: "Green Team proposal",
       timeoutMs: 60_000
     });

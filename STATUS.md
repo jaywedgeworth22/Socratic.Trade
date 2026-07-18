@@ -1,5 +1,51 @@
 # Current Status
 
+## 2026-07-17 — OpenRouter Model Stats Canonicalization: prefix-stripping in aggregateModelStats (Antigravity, branch `antigravity/openrouter-universal-routing`)
+
+Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts`. This strips provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs so that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`). This preserves historical benchmarks, avoids splitting stats by routing provider, and prevents live stats from displaying empty dashes (`—`) in the UI Model Stats drawer. Cleaned up Vitest test assertions in `test/model-stats.test.ts` to verify the canonicalization behavior. Full verification passed: lint 0 errors, tsc clean, tests pass.
+Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
+
+## 2026-07-17 — Codex autofix: 4/5 review findings fixed on PR #1703 (antigravity/openrouter-universal-routing)
+## 2026-07-17 — Codex autofix round 2: 1 remaining thread triaged on PR #1703
+
+Triage pass on remaining Codex review threads for PR #1703 (universal OpenRouter routing).
+
+Of 12 total Codex threads, 11 are already resolved (from prior autofix rounds + manual fixes).
+The sole remaining unresolved thread:
+
+- **P2 — Wire FMP toggles into provider execution (QUESTION ASKED):** The four FMP toggle flags (`fmpRealTimeDataEnabled`, `fmpMacroDataEnabled`, `fmpEventsDataEnabled`, `fmpFundamentalsDataEnabled`) are persisted in settings and defaults but not yet consumed by the FMP provider runtime code. Asked maintainer whether to wire them in this PR or leave as settings-first follow-up, and what behavior is expected when a toggle is off. Thread stays open pending answer.
+
+Auto-merge already enabled. No code changes this round.
+## 2026-07-17 — PR #1669 Merged & Deployed: SEC/RAG Advanced RAG Backfill & SiliconFlow Integration (Antigravity/AG)
+
+Successfully resolved all 11 remaining Codex review thread issues on PR #1669, including:
+- Bounding the concurrent scout retrieval fan-out in `src/lib/strategy.ts` using batching size of 5.
+- Joining as-of FTS matches on symbol and source in `src/lib/rag/search-fusion.ts` to prevent cross-symbol text leakage.
+- Making failed FTS indexing retryable by moving FTS chunk indexing inside the `runWithActiveVectorCommitProof` database transaction in `src/lib/web-sources/sec-filings.ts`.
+- Accounting alternative embeddings to their actual provider (`openrouter` / `siliconflow` instead of hardcoded `voyage`) in `src/lib/vector-db.ts` to ensure correct metering and budget tracking.
+- Rechecking overlap text tokens in `src/lib/rag/chunk.ts` to prevent oversized chunks.
+- Expanding row spans in the Cheerio HTML table parser (`src/lib/web-sources/sec-parser.ts`) to prevent shifted column values in Markdown tables, and adding regression tests.
+- Sorting FTS BM25 ranking correctly via virtual table name reference in `src/lib/rag/search-fusion.ts`.
+- Resolving CIK expected symbols in `scripts/eval/rag-eval-harness.ts` first from `sec_filings`.
+- Excluding non-market Form 4 events by filtering for `'P'` and `'S'` codes in `src/lib/web-sources/sec-facts.ts`.
+- Preserving taxonomy namespace key identity (`us-gaap` / `ifrs-full`) in Company Facts deterministic hashing.
+
+Fully verified type safety, passed all 4,784 unit tests, and successfully ran the Next.js production build check. The PR has been squash-merged into `main` and auto-deployed to production via Coolify on `socratictrade.com`.
+Rollout note: `docs/rollouts/2026-07-17-pr1669-resolutions.md`.
+
+## 2026-07-17 — Usage page canonical-model merge (MONET, branch `monet/usage-canonical-model-merge`)
+
+Owner-directed: preserve pre-OpenRouter usage stats + merge OpenRouter-routed calls with
+direct-provider calls for the SAME underlying model on the LLM Usage page. New "By model"
+section shows the merged per-model total with a per-provider breakdown (Anthropic direct / via
+OpenRouter …), so earlier direct usage stays visible while OpenRouter usage folds into the same
+model. Display/read-layer only via a new pure `app/admin/llm-usage/model-merge.ts`
+(`canonicalModelId` = #1703's vendor-prefix strip; `aggregateUsageByModel`); raw `llm_usage`
+rows never rewritten. Client-side only to avoid conflict with the in-flight #1703 (Antigravity
+universal-OpenRouter routing that creates the split); correct whether or not #1703 is merged.
+Gate: tsc clean, lint 0 errors, 7/7 new merge tests + full suite, build; live-verified with
+seeded same-model direct+OpenRouter rows. Rollout:
+`docs/rollouts/2026-07-17-usage-canonical-model-merge.md`.
 ## 2026-07-18 — Mobile bottom tab bar wasted-space fix (CLAUDE, branch `claude/mobile-view-spacing-oetyav`, PR pending)
 
 Owner reported wasted vertical space on mobile between the console's fixed bottom tab bar
@@ -32,6 +78,62 @@ Landed and merged PR #1705, which integrates the five exit strategy Phase A lane
 - **OpenRouter & JSON Repair**: Strip model prefix in chat path, support OpenRouter app attribution, and add JSON response healing.
 - **CI / Deploy Verification**: Typechecks, all 4,758 unit tests, and production Next build passed. Merged PR #1705 using admin bypass after resolving all 11 Codex review comment threads via GraphQL API. Confirmed Coolify production container swap completed successfully and `https://socratictrade.com/api/health` reports status `200 OK` (running exact SHA `69a182e9`).
 
+## 2026-07-17 — Advanced RAG Backfill Improvements (Antigravity/AG, branch `agent/ag-rag-backfill-p3`)
+Implemented all requested Advanced RAG Backfill features (RAG-B08, RAG-B09, RAG-B10, RAG-B13, RAG-B14). Optimized the SEC discovery pipeline to dynamically query stashed filings from the local SQLite database and skip online SEC submissions checks when enough discovered filings exist to satisfy the run's cap. Added a staggered cap on active CIK fetching (max 20 online fetches per scheduled tick) and globally sorted the queue breadth-first (Grouped by ticker: newest 10-K, then newest 10-Q). Wired structured Company Facts Cards and newly written Insider Transactions Cards into prompt-injected Markdown dossiers per symbol. Implemented two-stage RAG query (Scout Stage retrieves `limit = 1` for all scan candidates dynamically; Deep Stage retrieves `limit = 8` for finalists and held positions). Expanded the admin coverage report at `/api/admin/rag-coverage` to query the entire database directly and report active embedding model, parser versions, and exact date boundaries. Fully verified type safety, unit tests (51/51 passing), and Next.js production build.
+## 2026-07-17 — PR #1669 pickup round 2: ALL remaining 21 Codex threads fixed (CLAUDE-sub, branch `agent/ag-rag-backfill-p3`)
+Coordinator-directed continuation of the cap-reset pickup below: the remaining 21 unresolved Codex threads (2 P1s + 19 P2s) are all fixed — none deferred/declined. P1s (`vector-db.ts`): embed/rerank calls now route by the ACTIVE provider (the presence-only `voyage.embed` check made the OpenRouter/SiliconFlow HTTP branch unreachable), and embedding spaces are isolated additively — model-aware embed-revision tags in managed vector ids (Voyage keeps bare `v1`; BGE gets `v1-baai-bge-m3`, so no id collisions/overwrites) plus an `embed_model` query filter applied only when a non-Voyage model is active (no purge/rewrite/migration of the existing corpus). P2 clusters: worker pipeline (serialized ticks, raw-artifact write verification, acceptance-timestamp pass-through, 20s lease heartbeat during embed, FTS moved after the vector commit), production FTS wiring in `ingestFiling`, per-occurrence FTS dedupe in `db-learning.ts`, fusion bm25-ASC ordering + provider-correct MMR embeddings, sec-facts (numeric XML booleans, doc-level `aff10b5One` fallback, direct-text `periodOfReport`, all reporting owners recorded, `transaction_code` column preserved via edited v47 DDL + guarded v50 backfill migration, IFRS `ifrs-full` taxonomy for 20-F/40-F, operational failures now propagate to the worker retry path), eval harness (evaluated-rows denominator + `skipped` count, ESM-safe entrypoint guard), and chunker overlap re-check (parent blocks never exceed the token cap). +9 regression tests incl. new `test/embedding-space-isolation.test.ts`; `test/persistence-hardening.test.ts` schema pins bumped 49→50 for the new migration. Gates: tsc clean, 408 files / 4,690 tests green, build OK, lint 0 errors. After thread resolution the PR should be down to zero unresolved threads — armed auto-merge then waits only on green `verify`.
+
+## 2026-07-17 — PR #1669 Codex-thread pickup: form-aware Item titles, standalone headings, valid td-only tables (CLAUDE-sub, cap-reset pickup, branch `agent/ag-rag-backfill-p3`)
+Owner-directed pickup of the stalled Antigravity lane to close 6 unresolved Codex review threads on PR #1669. Fixes in `src/lib/web-sources/sec-parser.ts`: (A) Item-title canonicalization is now form-aware — `parseFilingHtml(html, { formType })` applies the 10-K Item-code → title map ONLY when the caller proves a 10-K; 10-Q/unknown forms keep the raw parsed title (Item 1 on a 10-Q stays "Financial Statements"); callers in `sec-filings.ts` (`filingRef.docType`) and `sec-ingest-worker.ts` (`task.payload.docType`) now pass it. (C) Bounded set of standalone SEC section headings ("Risk Factors", "Management's Discussion...", "Financial Statements", "Legal Proceedings", market-risk, controls) recognized without an "Item" prefix via full-text anchored patterns + the existing structural heading guards; they get form-agnostic slug codes (RISK-FACTORS, MDA, ...). (D) td-only tables now emit valid GFM: synthesized empty-cell header row before the delimiter in every split — never a bare `| --- |` first line, and no data-row-promoted-to-header. (B) The unversioned `hasIngestedAccession` skip is documented in-code as the deliberate low-risk choice (v1-ingested filings keep v1 chunks; only new filings get v2) — no migrations/ledger clears. 3 new regression tests + 1 updated in `test/sec-parser.test.ts`. Gates: tsc clean, 407 files / 4,679 tests green, lint 0 errors, production build OK. NOTE: Codex posted ~20 additional unresolved threads on this PR between 00:24–03:16 UTC 2026-07-17 (worker/sec-facts/vector-db/embedding-provider findings, incl. 2 P1s) — those are OUTSIDE this pickup's scope and still block the armed auto-merge; see rollout note.
+
+## 2026-07-16 — OpenRouter SiliconFlow Embedding and Reranking Integration (Antigravity/AG, branch `agent/ag-rag-backfill-p3`)
+Routed Voyage embedding and reranking calls through SiliconFlow via OpenRouter, utilizing custom model mappings (`baai/bge-m3` for embedding, `cohere/rerank-v3.5` for reranking) with custom HTTP JSON parsing. Hardened `embedWithRetry` catch blocks, wrapped mock client checks in `rerankMatches` inside the primary `try-catch` blocks, restored context headers for parent context mapping, and fixed markdown heading parsing in `chunk.ts`. Fully verified type safety, Next.js build, and 4,676/4,676 passing tests.
+
+## 2026-07-16 — SEC/RAG Backfill: Phase 4-7 — Search Fusion and Evaluation (Antigravity/AG, branch `agent/ag-rag-backfill-p4-p7`)
+Implements FTS5 lexical virtual table `document_chunks_fts` (migration v49), RRF (Reciprocal Rank Fusion) and MMR (Maximal Marginal Relevance) cosine/Jaccard similarity diversity filtering in `src/lib/rag/search-fusion.ts` to fuse lexical and dense vector search results. Created retrieval evaluation harness (`scripts/eval/rag-eval-harness.ts`) to query `sec_eval_golden_set` and calculate metrics (Recall@10, Recall@50, nDCG). Verified via new test suites in `test/search-fusion.test.ts` and `test/rag-eval-harness.test.ts` (100% green), clean ESLint/tsc, and successful Next.js production build check.
+
+## 2026-07-16 — SEC/RAG Backfill: Phase 3 — HTML Parsing and Chunker (Antigravity/AG, branch `agent/ag-rag-backfill-p3`)
+Implements cheerio-based HTML parser (`parseFilingHtml` in `src/lib/web-sources/sec-parser.ts`) to strip script/style/hidden tags, normalize Item/Part section headers, and reconstruct clean pipe-delimited Markdown tables (grouping/splitting large tables to fit token caps). Updated chunker in `src/lib/rag/chunk.ts` to be section-aware (resetting overlap across sections) and use token-aware estimation. Integrated this parser in `ingestFiling` inside `src/lib/web-sources/sec-filings.ts` to ingest bodies with parser revision `sec-edgar-filing-v2`. Verified via newly added unit test suite in `test/sec-parser.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check.
+
+### Codex autofix — P2 review findings (2026-07-16)
+Addressed 14 of 16 Codex P2 findings on sec-parser.ts (last 4 in Round 3):
+
+**Round 1 (commit `b1701243`):**
+1. **Anchor heading detection**: Anchored `isHeadingBlock` regex to `^` so cross-references ("See Part II, Item 1A...") are not classified as section headings.
+2. **Preserve line breaks in table cells**: Replace `<br>` with space before extracting cell text, preventing `Revenue<br>2026` from becoming `Revenue2026`.
+3. **Treat nested tables as block children**: Added `table` to the block-children check so a container wrapping only a table recurses into it rather than emitting the container's flattened text.
+4. **Prune hidden ix descendants**: Remove `ix:hidden`/`ix:header` content entirely instead of unwrapping, preventing non-rendered metadata from entering chunk text.
+5. **Restrict row cells to current table level**: Use `children("td, th")` instead of `find("td, th")` to avoid pulling cells from nested tables into the outer row.
+
+**Round 2 (commit `92fbd644`):**
+6. **Restrict table rows to current table level**: Filter `find("tr")` to only rows whose closest `<table>` parent is the current node, preventing nested tables from emitting duplicate/malformed rows.
+7. **Avoid classifying wrapper containers as headings**: Only treat block tags as headings when they have no block children, preventing wrapper divs/sections containing both heading text and content from being consumed as a heading with lost child content.
+8. **Preserve mixed text around child blocks**: Emit text node siblings when recursing through containers, so prose adjacent to nested tables (e.g. "Note: <table>...</table> See below.") is preserved.
+9. **Normalize table colspan**: Repeat cell text for each spanned column when `colspan > 1`, preventing misaligned Markdown columns.
+10. **Only repeat real table headers when splitting**: Track whether the first row contains `<th>` elements before treating it as a repeatable header across split chunks, preventing data rows from being mislabeled as column headings.
+
+**Round 3 (commit to follow):**
+11. **Preserve nested table content before stripping outer cells**: Process nested tables via `collectBlocks` before `.remove()` so their content is not lost from the corpus.
+12. **Preserve BR separators in prose blocks**: Replace `<br>` with space in leaf block text extraction, preventing `Revenue<br>2026` from becoming `Revenue2026` outside tables too.
+13. **Detect item headings encoded as layout tables**: Check small single-cell tables for heading-like text before table Markdown conversion, so section metadata is not lost.
+14. **Recognize headings in non-block EDGAR wrappers**: Added `HEADING_WRAPPER_TAGS` set (`center`, `font`, `span`, `b`, etc.) so EDGAR formatting wrappers with Item/Part text are classified as headings.
+
+### Codex autofix — Round 3 (2026-07-16)
+Addressed 8 remaining Codex P1/P2 findings across 5 files (search-fusion.ts, rag-eval-harness.ts, sec-facts.ts, db-learning.ts, sec-ingest-worker.ts):
+
+1. **Rank FTS matches before applying RRF** (P2): Added `ORDER BY bm25(...)` to FTS5 query so lexical relevance is the basis for RRF scoring rather than insertion order.
+2. **Return as many fused results as requested** (P2): Changed MMR candidate pool from `min(15, candidates)` to `min(max(limit, 15), candidates)` so callers requesting >15 results actually get them.
+3. **Do not evaluate unknown CIKs as AAPL** (P2): Skip CIKs with no matching task row instead of silently benchmarking AAPL.
+4. **Classify untitled officers as officers** (P2): Check the `isOfficer` flag from Form 4 XML before defaulting to "Ten Percent Owner".
+5. **Read Form 4 10b5-1 indicator directly** (P2): Parse `rule10b51Transaction` field instead of proxying via `equitySwapInvolved`.
+6. **Deduplicate FTS rows before inserting** (P2): Delete old `content_hash` row before inserting into FTS5 virtual table (INSERT OR REPLACE is a no-op on FTS5 rowid).
+7. **Namespace worker artifacts by task document** (P1): Use `task.sequence` instead of hardcoded `1` in all local artifact paths, so multi-document accessions don't collide.
+8. **Supply section fields for XML tasks** (P2): Changed `{title, text}` to `{itemCode, itemTitle, text}` so Form 4 chunks don't get `undefined. undefined` context headers.
+
+2 remaining P2 findings deferred for owner decision (form-specific Item 1 titles; parser-versioned accession skip).
+
+## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
+Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
 ## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, PR #1711, auto-merge enabled — waiting on CI)
 
 Codex review round 1 (chatgpt-codex-connector[bot]): 4 findings, all addressed. An initial

@@ -91,7 +91,7 @@ describe("usage-monitor-push", () => {
     push.pushLlmUsage({
       sourceEventId: "llm-row-123",
       provider: "anthropic",
-      model: "claude-opus-4-8",
+      model: "anthropic/claude-opus-4-8",
       context: "strategy",
       userId: "local",
       keySource: "operator",
@@ -121,7 +121,7 @@ describe("usage-monitor-push", () => {
     expect(e.requests).toBe(1);
     expect(e.idempotencyKey).toBe(expectedTelemetryKey("llm", "llm-row-123"));
     expect(typeof e.occurredAt).toBe("string");
-    expect((e.metadata as Record<string, unknown>).model).toBe("claude-opus-4-8");
+    expect((e.metadata as Record<string, unknown>).model).toBe("anthropic/claude-opus-4-8");
   });
 
   it("pushes a RAG event and aggregates market-data call-volume in one flush", async () => {
@@ -196,7 +196,7 @@ describe("usage-monitor-push", () => {
       return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
     }) as unknown as typeof fetch);
     expect(() =>
-      recordLlmUsage({ provider: "openai", model: "gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
+      recordLlmUsage({ provider: "openai", model: "openai/gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
     ).not.toThrow();
     await expect(push.flushUsageMonitor()).resolves.toBeUndefined();
     expect(attempts).toHaveLength(1);
@@ -217,7 +217,7 @@ describe("usage-monitor-push", () => {
     push.__setUsageMonitorFetch(makeFetchStub(captured));
     recordLlmUsage({
       provider: "openai",
-      model: "gpt-4o-mini",
+      model: "openai/gpt-4o-mini",
       context: "telemetry-id-test",
       userId: "local",
       keySource: "operator",

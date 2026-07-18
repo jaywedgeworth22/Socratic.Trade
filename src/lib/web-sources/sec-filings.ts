@@ -20,7 +20,9 @@ import {
   hasIngestedAccession,
   insertIngestedAccession,
   runWithActiveVectorCommitProof,
-  setInternalSetting
+  setInternalSetting,
+  getDb,
+  insertSecFiling
 } from "../db";
 import {
   assertOperationLeaseOwnership,
@@ -32,6 +34,7 @@ import {
 } from "../operation-lease";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { loadCikMap } from "./sec8k";
+import { parseFilingHtml } from "./sec-parser";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -42,7 +45,7 @@ function getLocalArtifactPath(cik: string, accession: string, sequence: number, 
   return path.join(dataDir, "sec-artifacts", paddedCik, accession, `${sequence}-${cleanDocName}`);
 }
 
-async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
+export async function readLocalArtifact(cik: string, accession: string, sequence: number, documentName: string): Promise<string | null> {
   const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
   try {
     if (fs.existsSync(filePath)) {
@@ -54,7 +57,7 @@ async function readLocalArtifact(cik: string, accession: string, sequence: numbe
   return null;
 }
 
-async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
+export async function writeLocalArtifact(cik: string, accession: string, sequence: number, documentName: string, content: string): Promise<void> {
   const filePath = getLocalArtifactPath(cik, accession, sequence, documentName);
   try {
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
@@ -410,6 +413,15 @@ export async function ingestFiling(
   leaseGuard?: SecFilingLeaseGuard
 ): Promise<IngestResult> {
   assertSecFilingLease(leaseGuard);
+  // Parser-revision note (deliberate, low-risk choice — PR #1669): this accession
+  // ledger is intentionally NOT versioned by parser revision. Filings ingested under
+  // the v1 parser keep their v1 (flattened) chunks; only filings not yet in the ledger
+  // get the v2 (Cheerio, section-aware) treatment tagged `sec-edgar-filing-v2` below.
+  // Re-embedding the existing corpus was considered and rejected: the embed-budget and
+  // Pinecone-write cost of a full backfill outweighs the retrieval gain on old filings.
+  // If a corpus-wide re-parse is ever wanted, do it as an explicit one-time invalidation
+  // (clear ingested_accessions rows for the affected docTypes), not by weakening this
+  // sole-gate skip.
   if (hasIngestedAccession(filingRef.accession, filingRef.docType)) {
     return { skipped: true, chunks: 0 };
   }
@@ -443,7 +455,9 @@ export async function ingestFiling(
     return { skipped: false, chunks: 0, error: `fetch failed: ${error}` };
   }
 
-  const text = extractFilingText(html);
+  // Pass the form type so Item-title canonicalization is form-aware (the 10-K
+  // Item-1 -> "Business" mapping must not be applied to 10-Q filings).
+  const { text, sections } = parseFilingHtml(html, { formType: filingRef.docType });
   if (text.length < 100) {
     return { skipped: false, chunks: 0, error: "extracted text too short (possible XBRL viewer redirect)" };
   }
@@ -465,7 +479,7 @@ export async function ingestFiling(
       type: "html",
       byteCount,
       rawUri: filingRef.url,
-      parserVersion: "v1"
+      parserVersion: "v2"
     });
     assertSecFilingLease(leaseGuard);
   } catch (err) {
@@ -479,6 +493,7 @@ export async function ingestFiling(
   assertSecFilingLease(leaseGuard);
   const document = {
       text,
+      sections,
       doc_id: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
       ticker,
       title: `${ticker} ${filingRef.docType} (${filingRef.filedAt})`,
@@ -489,7 +504,7 @@ export async function ingestFiling(
       url: filingRef.url
     };
   const result = await storeDocument(document, userId, {
-    parserRevision: "sec-edgar-filing-v1",
+    parserRevision: "sec-edgar-filing-v2",
     ...(leaseGuard ? { leaseGuard } : {})
   });
   assertSecFilingLease(leaseGuard);
@@ -525,10 +540,22 @@ export async function ingestFiling(
     return { skipped: true, chunks: result.indexed, error: "document-commit-proof-missing" };
   }
 
-  // Persist de-dup record only after successful embedding so a partial failure doesn't
-  // permanently block re-ingest of the same filing.
   try {
+    const { chunkDocument } = await import("../rag/chunk");
+    const { insertDocumentChunkFts } = await import("../db");
     runWithActiveVectorCommitProof(result.managedCommitProof, () => {
+      // Mirror the committed chunks into the local FTS table so hybrid/lexical retrieval covers the
+      // PRODUCTION filing-body path. Must run inside the transaction so FTS failures rollback
+      // and allow the filing ingestion to be retried on subsequent ticks.
+      for (const chunk of chunkDocument(document, {})) {
+        insertDocumentChunkFts(
+          chunk.content_hash,
+          chunk.ticker[0] ?? ticker,
+          "sec-edgar",
+          filingRef.accession,
+          chunk.text
+        );
+      }
       insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted);
       audit("sec_filing_ingest", {
         ticker,
@@ -539,8 +566,8 @@ export async function ingestFiling(
         attempted: result.attempted
       });
     });
-  } catch {
-    return { skipped: true, chunks: result.indexed, error: "document-commit-proof-lost" };
+  } catch (err) {
+    return { skipped: true, chunks: result.indexed, error: err instanceof Error ? err.message : "document-commit-proof-lost" };
   }
 
   return { skipped: false, chunks: result.attempted };
@@ -667,12 +694,50 @@ async function refreshFilingBodiesUnlocked(
     tickerToCik[ticker] = cik;
   }
 
-  // Collect (ticker, FilingRef) pairs that need ingesting, newest-first.
-  // We do this in a rate-limited loop to avoid EDGAR bursting.
+  // Collect (ticker, FilingRef) pairs that need ingesting.
   const pending: Array<{ ticker: string; ref: FilingRef }> = [];
 
-  await runRateLimited(symbols, CIK_POLITE_DELAY_MS, async (symbol) => {
-    throwIfOperationLeaseCancelled(operationLeaseSignal);
+  // 1. Gather previously stashed "discovered" filings from SQLite first
+  try {
+    const db = getDb();
+    const localPendingRows = db.prepare(`
+      SELECT accession, cik, ticker, form, filed_at, accepted_at
+      FROM sec_filings
+      WHERE status = 'discovered' AND ticker IN (${symbols.map(() => "?").join(",")})
+    `).all(...symbols) as Array<{ accession: string; cik: string; ticker: string; form: string; filed_at: string; accepted_at: string }>;
+
+    for (const row of localPendingRows) {
+      if (!hasIngestedAccession(row.accession, row.form)) {
+        const artRow = db.prepare("SELECT document_name, raw_uri FROM sec_artifacts WHERE accession = ? LIMIT 1").get(row.accession) as { document_name: string; raw_uri: string } | undefined;
+        const primaryDoc = artRow?.document_name || "";
+        const noSlashAcc = accessionNoDashes(row.accession);
+        const url = artRow?.raw_uri || (primaryDoc
+          ? `${SEC_BASE}/Archives/edgar/data/${padCik(row.cik)}/${noSlashAcc}/${primaryDoc}`
+          : `${SEC_BASE}/cgi-bin/browse-edgar?action=getcompany&CIK=${padCik(row.cik)}&type=${row.form}&dateb=&owner=include&count=40`);
+
+        pending.push({
+          ticker: row.ticker,
+          ref: {
+            accession: row.accession,
+            docType: row.form as "10-K" | "10-Q",
+            filedAt: row.filed_at,
+            acceptanceDateTime: row.accepted_at,
+            primaryDoc,
+            url
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[sec-filings] failed to query stashed discovered filings:", err);
+  }
+
+  // 2. Dynamic online discovery: only scan tickers if we haven't hit the cap yet
+  let onlineFetches = 0;
+  const MAX_ONLINE_DISCOVERY_PER_RUN = 20;
+
+  for (const symbol of symbols) {
+    if (pending.length >= cap || onlineFetches >= MAX_ONLINE_DISCOVERY_PER_RUN) break;
 
     // Ingest fundamentals card first (uses local cache or provider API cascade).
     try {
@@ -681,23 +746,25 @@ async function refreshFilingBodiesUnlocked(
         result.errors.push(`ingestFundamentalsCard(${symbol}): ${fundResult.error}`);
       }
     } catch (err) {
-      // ingestFundamentalsCard performs provider work before submissions discovery. If the lease
-      // was lost during that await, stop here rather than issuing the next EDGAR request.
       assertSecFilingLease(leaseGuard);
       const msg = err instanceof Error ? err.message : String(err);
       result.errors.push(`ingestFundamentalsCard(${symbol}) threw: ${msg}`);
     }
 
     const cik = tickerToCik[symbol];
-    if (!cik) return; // symbol not in CIK map — skip silently
+    if (!cik) continue;
+
     try {
       assertSecFilingLease(leaseGuard);
+      onlineFetches++;
       const filings = await fetchRecentFilings(cik, ["10-K", "10-Q"], 10);
       assertSecFilingLease(leaseGuard);
-      const { insertSecFiling, getSecFiling } = await import("../db");
+
+      const db = getDb();
       for (const ref of filings) {
         try {
-          if (!getSecFiling(ref.accession)) {
+          const existing = db.prepare("SELECT accession FROM sec_filings WHERE accession = ?").get(ref.accession);
+          if (!existing) {
             insertSecFiling({
               accession: ref.accession,
               cik,
@@ -714,7 +781,9 @@ async function refreshFilingBodiesUnlocked(
         }
 
         if (!hasIngestedAccession(ref.accession, ref.docType)) {
-          pending.push({ ticker: symbol, ref });
+          if (!pending.some((p) => p.ref.accession === ref.accession)) {
+            pending.push({ ticker: symbol, ref });
+          }
         }
       }
     } catch (err) {
@@ -722,7 +791,14 @@ async function refreshFilingBodiesUnlocked(
       const msg = err instanceof Error ? err.message : String(err);
       result.errors.push(`fetchRecentFilings(${symbol}): ${msg}`);
     }
-  });
+
+    // Polite delay between CIK fetches
+    await sleep(CIK_POLITE_DELAY_MS);
+  }
+
+  // 3. Sort pending breadth-first globally so newest annual reports are ingested first
+  const sortedPending = sortBreadthFirst(pending);
+  pending.splice(0, pending.length, ...sortedPending);
 
   // Process pending filings sequentially (EDGAR + Voyage both require polite pacing).
   let processed = 0;
@@ -903,3 +979,64 @@ export async function ingestFundamentalsCard(
     return { skipped: false, error };
   }
 }
+
+function sortBreadthFirst(
+  filings: Array<{ ticker: string; ref: FilingRef }>
+): Array<{ ticker: string; ref: FilingRef }> {
+  // Group by ticker
+  const byTicker: Record<string, { k: FilingRef[]; q: FilingRef[] }> = {};
+  for (const item of filings) {
+    if (!byTicker[item.ticker]) {
+      byTicker[item.ticker] = { k: [], q: [] };
+    }
+    if (item.ref.docType === "10-K") {
+      byTicker[item.ticker].k.push(item.ref);
+    } else {
+      byTicker[item.ticker].q.push(item.ref);
+    }
+  }
+
+  // Sort each ticker's filings descending by date
+  for (const ticker of Object.keys(byTicker)) {
+    byTicker[ticker].k.sort((a, b) => b.filedAt.localeCompare(a.filedAt));
+    byTicker[ticker].q.sort((a, b) => b.filedAt.localeCompare(a.filedAt));
+  }
+
+  const priorityLevels: Array<Array<{ ticker: string; ref: FilingRef }>> = Array.from({ length: 6 }, () => []);
+
+  for (const [ticker, lists] of Object.entries(byTicker)) {
+    // Level 0: newest 10-K
+    if (lists.k.length > 0) {
+      priorityLevels[0].push({ ticker, ref: lists.k[0] });
+    }
+    // Level 1: newest 10-Q
+    if (lists.q.length > 0) {
+      priorityLevels[1].push({ ticker, ref: lists.q[0] });
+    }
+    // Level 2: second newest 10-Q
+    if (lists.q.length > 1) {
+      priorityLevels[2].push({ ticker, ref: lists.q[1] });
+    }
+    // Level 3: third newest 10-Q
+    if (lists.q.length > 2) {
+      priorityLevels[3].push({ ticker, ref: lists.q[2] });
+    }
+    // Level 4: remaining 10-Ks
+    for (let i = 1; i < lists.k.length; i++) {
+      priorityLevels[4].push({ ticker, ref: lists.k[i] });
+    }
+    // Level 5: remaining 10-Qs
+    for (let i = 3; i < lists.q.length; i++) {
+      priorityLevels[5].push({ ticker, ref: lists.q[i] });
+    }
+  }
+
+  // For each level, sort by filedAt DESC so the newest overall are first
+  for (const level of priorityLevels) {
+    level.sort((a, b) => b.ref.filedAt.localeCompare(a.ref.filedAt));
+  }
+
+  // Flatten
+  return priorityLevels.flat();
+}
+

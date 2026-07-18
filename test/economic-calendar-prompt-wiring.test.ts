@@ -74,7 +74,7 @@ function bullPromptBody(openAiBodies: Array<{ input?: Array<{ role: string; cont
 function stubOpenAiAndNasdaq(openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }>): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = JSON.parse(String(init?.body ?? "{}"));
       openAiBodies.push(body);
       if (isRedTeamRequest(body)) {
@@ -95,15 +95,15 @@ function stubOpenAiAndNasdaq(openAiBodies: Array<{ input?: Array<{ role: string;
 
 async function seed(): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Econ Calendar Test", isActive: true });
   setActiveConnectedAccount(accountId);
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    llmModel: "gpt-4.1-mini",
-    redTeamLlmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide"
@@ -119,12 +119,12 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 describe("strategy.ts upcomingEconomicEvents prompt wiring (handoff 3.5)", () => {
   it("cache has forward events: userContent carries a compact upcomingEconomicEvents block next to currentMarketRegime", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     stubOpenAiAndNasdaq(openAiBodies);
     await seed();
@@ -153,7 +153,7 @@ describe("strategy.ts upcomingEconomicEvents prompt wiring (handoff 3.5)", () =>
   }, 75_000);
 
   it("no calendar data: the upcomingEconomicEvents block is ENTIRELY absent — no empty scaffold", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     stubOpenAiAndNasdaq(openAiBodies);
     await seed();

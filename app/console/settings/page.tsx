@@ -128,6 +128,7 @@ export default function SettingsPage() {
           <LearningReviewCard />
         </div>
         <ScanShapeCard />
+        <FmpFeaturesCard />
         {/* requireTypedConfirmation is a USER-level policy field
             (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
             phrase ceremony is an owner preference, not a per-account guardrail,
@@ -524,6 +525,77 @@ function YouCard() {
             via {user.loginProvider}
           </span>
         )}
+      </div>
+    </Card>
+  );
+}
+
+// ── All accounts: FMP Features ───────────────────────────────────────────────
+
+function FmpFeaturesCard() {
+  const { snapshot, refresh } = useConsoleData();
+  const autoSave = useAutoSave();
+  if (!snapshot) return null;
+
+  const policy = snapshot.policy;
+
+  return (
+    <Card title="Financial Modeling Prep (FMP) Features" action={<SaveStatus status={autoSave.status} />}>
+      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        Toggle which FMP data modules are active. These settings are user-level and apply across all your accounts. Defaults to ON.
+      </p>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Real-Time & Index Data</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Real-time quotes, ETF holdings, sector weightings, and index market data.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpRealTimeDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpRealTimeDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Real-Time Data"
+          />
+        </div>
+        
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Macro & Commodities</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">BTC/ETH, VIX, Treasury Yields, GDP, CPI, Crude Oil, and Gold data.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpMacroDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpMacroDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Macro Data"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Events & News</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Earnings calendars, economic calendars, and FMP market news.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpEventsDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpEventsDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Events Data"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 rounded-control px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]">
+          <div>
+            <div className="text-[length:var(--con-fs-sm)] font-semibold">Deep Fundamentals</div>
+            <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">Advanced Market Metrics (DCF, Piotroski, Altman Z-Scores) and Analyst Ratings.</p>
+          </div>
+          <Toggle
+            checked={policy.fmpFundamentalsDataEnabled !== false}
+            onChange={(next) => autoSave.save(() => savePolicy({ fmpFundamentalsDataEnabled: next }).then(() => refresh()))}
+            disabled={autoSave.saving}
+            label="Fundamentals Data"
+          />
+        </div>
       </div>
     </Card>
   );

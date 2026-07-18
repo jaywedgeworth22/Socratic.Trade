@@ -20,11 +20,14 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 const FRESH_CHUNK_AS_OF = new Date().toISOString();
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -127,12 +130,12 @@ type OpenAiBody = {
 function stubFetch(openAiBodies: OpenAiBody[]): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
       const body = JSON.parse(String(init?.body ?? "{}")) as OpenAiBody;
       openAiBodies.push(body);
       // The single Red Team review (chat-completions body: `messages`) returns an approve verdict;
       // the Bull (responses body: `input`) returns the single proposal.
-      const isRedTeamReview = Array.isArray(body.messages);
+      const isRedTeamReview = body.messages?.some((m: any) => String(m.content).includes("Red Team Risk Agent"));
       if (isRedTeamReview) {
         return new Response(
           JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdict: "approve", reason: "Evidence checks out." }) } }] }),
@@ -151,7 +154,7 @@ function stubFetch(openAiBodies: OpenAiBody[]): void {
 
 async function setupBrokerPaperDecide(): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, setUserSetting } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({
     id: accountId,
@@ -170,10 +173,10 @@ async function setupBrokerPaperDecide(): Promise<void> {
     systemState: "active",
     activeBroker: "alpaca",
     accountNumber: "TEST",
-    llmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
     // Single-adversary consolidation: the Red model is REQUIRED (no fallback to Green) and every
     // risk-adding opening is reviewed — the stub answers it with an approve verdict.
-    redTeamLlmModel: "gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
@@ -235,7 +238,7 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
   });
 
   it("(b/c/e/f) reflection out of SYSTEM + fenced in userContent; injection + age receipts audited and on the decision case; flow unaffected", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     const openAiBodies: OpenAiBody[] = [];
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();

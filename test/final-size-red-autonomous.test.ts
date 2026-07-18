@@ -35,6 +35,8 @@ vi.mock("../src/lib/rationale-diversity", () => ({
 }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -139,7 +141,8 @@ beforeEach(() => {
 
 function stubGreenProposals(proposals: Array<{ symbol: string; dollarAmount: number }>): void {
   vi.stubGlobal("fetch", async (url: string | URL | Request) => {
-    if (String(url).includes("api.openai.com")) {
+    const href = String(url);
+    if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
       return new Response(
         JSON.stringify({
           output_text: JSON.stringify({
@@ -183,7 +186,7 @@ async function configureAutonomousAccount(
     label: "Autonomous final-size account",
     isActive: true
   });
-  upsertUserApiKey(userId, "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey(userId, "openrouter", "test-openai-key", "test fixture");
   setPolicy(
     {
       ...DEFAULT_POLICY,
@@ -192,7 +195,7 @@ async function configureAutonomousAccount(
       activeBroker: "robinhood",
       systemState: "active",
       strategyAuthority: "decide",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       redTeamLlmModel: "gpt-5.6-terra",
       includedIndices: [],
       additionalSymbols: marketState.symbols,

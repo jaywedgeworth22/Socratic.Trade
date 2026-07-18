@@ -395,7 +395,7 @@ describe("skip unchanged sets", () => {
     expect(calls).toBe(2);
 
     // Same set, different reviewer model: the newly chosen model must actually run.
-    setPolicy({ ...getPolicy(userId), learningReviewModel: "gpt-5.5" }, userId);
+    setPolicy({ ...getPolicy(userId), learningReviewModel: "openai/gpt-5.5" }, userId);
     const day3 = await runDailyLearningReview(userId, { now: NOW + 2 * 86_400_000, llm });
     expect(day3.reason).not.toBe("unchanged");
     expect(calls).toBe(3);
@@ -519,7 +519,7 @@ describe("user-level scoping", () => {
     const userId = `lr-scope-${randomUUID().slice(0, 8)}`;
     // Set the review config while account A1 is the scope.
     setPolicy(
-      { ...getPolicy(userId, "A1"), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" },
+      { ...getPolicy(userId, "A1"), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "openai/gpt-5.5" },
       userId,
       "A1"
     );
@@ -527,7 +527,7 @@ describe("user-level scoping", () => {
     const underA2 = getPolicy(userId, "A2");
     expect(underA2.learningReviewEnabled).toBe(true);
     expect(underA2.learningReviewMode).toBe("annotate");
-    expect(underA2.learningReviewModel).toBe("gpt-5.5");
+    expect(underA2.learningReviewModel).toBe("openai/gpt-5.5");
   });
 });
 
@@ -545,7 +545,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     // (setPolicy syncs it via pickAccountFields + mergePolicy), so it is the hazardous base.
     createStrategyProfile({ name: "Base", active: true }, userId);
     seedAccount(userId, acct);
-    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewModel: "gpt-5.5" }, userId);
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewModel: "openai/gpt-5.5" }, userId);
     expect(getPolicy(userId).learningReviewEnabled).toBe(true);
 
     // Remove the only account: getPolicy(userId) falls back to the profile base — the user-level
@@ -553,7 +553,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     deleteConnectedAccount(acct, userId);
     const policy = getPolicy(userId);
     expect(policy.learningReviewEnabled).toBe(true);
-    expect(policy.learningReviewModel).toBe("gpt-5.5");
+    expect(policy.learningReviewModel).toBe("openai/gpt-5.5");
   });
 
   it("activating or editing a profile does not clobber the user-level review config", () => {
@@ -562,7 +562,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     seedAccount(userId, acct);
     createStrategyProfile({ name: "P1", active: true }, userId);
     const p2 = createStrategyProfile({ name: "P2", active: false }, userId);
-    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" }, userId);
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "openai/gpt-5.5" }, userId);
 
     // Activating another profile writes the full profile policy to user_settings.policy —
     // the stored user-level fields must be preserved through that write.
@@ -570,13 +570,13 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const afterActivate = getPolicy(userId);
     expect(afterActivate.learningReviewEnabled).toBe(true);
     expect(afterActivate.learningReviewMode).toBe("annotate");
-    expect(afterActivate.learningReviewModel).toBe("gpt-5.5");
+    expect(afterActivate.learningReviewModel).toBe("openai/gpt-5.5");
 
     // Same for editing the ACTIVE profile.
     updateStrategyProfile(p2.id, { policy: { maxOrderNotional: 1234 } }, userId);
     const afterUpdate = getPolicy(userId);
     expect(afterUpdate.learningReviewEnabled).toBe(true);
-    expect(afterUpdate.learningReviewModel).toBe("gpt-5.5");
+    expect(afterUpdate.learningReviewModel).toBe("openai/gpt-5.5");
     expect(afterUpdate.maxOrderNotional).toBe(1234);
   });
 
@@ -586,7 +586,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     seedAccount(userId, acct);
     // Simulate a pre-#1278 deploy: the enabled review lives ONLY in the account row's policy
     // blob (the #1116 account-scoped layout); user_settings.policy never carried the keys.
-    const legacyPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" };
+    const legacyPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "openai/gpt-5.5" };
     getDb()
       .prepare(
         `INSERT INTO account_strategy_state
@@ -601,7 +601,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const policy = getPolicy(userId);
     expect(policy.learningReviewEnabled).toBe(true);
     expect(policy.learningReviewMode).toBe("annotate");
-    expect(policy.learningReviewModel).toBe("gpt-5.5");
+    expect(policy.learningReviewModel).toBe("openai/gpt-5.5");
     // Idempotent: the seed persisted, later reads agree.
     expect(getPolicy(userId).learningReviewEnabled).toBe(true);
   });
@@ -611,7 +611,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const acct = `acct-${randomUUID().slice(0, 8)}`;
     seedAccount(userId, acct);
     // Pre-cutover, the real ENABLED review lives account-scoped (#1116)…
-    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" };
+    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "openai/gpt-5.5" };
     getDb()
       .prepare(
         `INSERT INTO account_strategy_state
@@ -628,7 +628,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const policy = getPolicy(userId);
     expect(policy.learningReviewEnabled).toBe(true);
     expect(policy.learningReviewMode).toBe("annotate");
-    expect(policy.learningReviewModel).toBe("gpt-5.5");
+    expect(policy.learningReviewModel).toBe("openai/gpt-5.5");
     // One-time + idempotent: later reads agree (the seed persisted onto the same blob).
     expect(getPolicy(userId).learningReviewEnabled).toBe(true);
   });
@@ -638,7 +638,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     const acct = `acct-${randomUUID().slice(0, 8)}`;
     seedAccount(userId, acct);
     // A stale account_strategy_state row still carries an ENABLED review…
-    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewModel: "gpt-5.5" };
+    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewModel: "openai/gpt-5.5" };
     getDb()
       .prepare(
         `INSERT INTO account_strategy_state
@@ -653,7 +653,7 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     setUserSetting(userId, "policy", {
       learningReviewEnabled: false,
       learningReviewMode: "decide",
-      learningReviewModel: "gpt-5.5",
+      learningReviewModel: "openai/gpt-5.5",
       notificationSettings: DEFAULT_POLICY.notificationSettings
     });
 

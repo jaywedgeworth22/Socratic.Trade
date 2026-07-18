@@ -11,6 +11,8 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 // LLM_PROVIDER_COOLDOWN_DISABLED=1 restores exact pre-cooldown behavior.
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -194,22 +196,26 @@ function geminiOk(): Response {
 
 describe("cross-run cooldown wired into the Bull failover chain", () => {
   it("run 1: primary 429 fails over and cools the lane; run 2: skips straight to the fallback without touching the primary", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-openai-key");
     vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
     let openaiCalls = 0;
-    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
-        openaiCalls += 1;
-        return new Response("rate limited", { status: 429 });
+      if (href.includes("openrouter.ai") || href.includes("api.openai.com")) {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        const isGemini = body.model?.includes("gemini") || body.model?.includes("google");
+        if (!isGemini) {
+          openaiCalls += 1;
+          return new Response("rate limited", { status: 429 });
+        }
+        return geminiOk();
       }
-      if (href.includes("generativelanguage.googleapis.com")) return geminiOk();
       if (href.includes("nasdaq.com")) return nasdaqRow();
       return new Response("not found", { status: 404 });
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "fixture");
     upsertUserApiKey("local", "gemini", "test-gemini-key", "fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Cooldown Test", isActive: true });
@@ -217,7 +223,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",
@@ -255,7 +261,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     // Served-model attribution stays failover-aware even when the fallback is the FIRST attempt.
     expect(second.proposals.length).toBeGreaterThan(0);
     for (const p of second.proposals) {
-      expect(p.proposal.proposedByModel).toBe("gemini-2.5-flash");
+      expect(p.proposal.proposedByModel).toBe("google/gemini-2.5-flash");
     }
   }, 60_000);
 });
