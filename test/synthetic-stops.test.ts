@@ -1240,16 +1240,16 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(listBrokerProtectiveStops("SYN-HALTED-BSTOP", "local").length).toBeGreaterThan(0);
     });
 
-    it("protectWhileHalted: STILL cancels an OVERSIZED broker stop (position shrank out-of-band) — risk-reducing cancels run while halted (Codex PR #1738)", async () => {
+    it("protectWhileHalted: RIGHT-SIZES an oversized broker stop (cancel + place smaller replacement) so it can't over-sell NOR strand the position (Codex PR #1738)", async () => {
       // A halted+protectWhileHalted account whose position was partially reduced out-of-band leaves a
       // resting broker stop sized for the PRE-shrink quantity; if it fires it over-sells / opens a
-      // short. The earlier fix passed running=false while halted, which ALSO suppressed this section-3
-      // risk-reducing cancel. haltedProtectOnly now blocks only placement/replacement, so the oversized
-      // stop is cancelled (the always-on synthetic monitor covers the real 40 shares until a
-      // non-halted tick can size a proper replacement).
+      // short. While halted the reconciler cancels the oversized stop AND places a correctly-sized
+      // replacement the SAME tick (a risk-reducing right-size — the smaller half). Leaving no
+      // replacement would strand the position: a broker-covered position has no synthetic row and the
+      // monitor won't register one while halted.
       connectTestAccount("SYN-HALT-OVER", "paper", "alpaca");
       broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }]; // shrank 100 -> 40
-      broker.quotes = { NVDA: { price: 100 } }; // no breach — isolate the cancel path, not firing
+      broker.quotes = { NVDA: { price: 100 } }; // no breach — isolate the reconcile path, not firing
       broker.orders = [{ id: "prot-over", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 }];
       upsertBrokerProtectiveStop({
         id: "protstop-local-SYN-HALT-OVER-NVDA", userId: "local", accountNumber: "SYN-HALT-OVER",
@@ -1264,8 +1264,11 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       };
       await runSyntheticStopMonitor("local", haltedPolicy, true);
       expect(broker.cancelled).toContain("prot-over"); // the oversized stop WAS cancelled while halted
-      expect(broker.placed).toHaveLength(0); // ...but NO replacement placed — placement stays blocked
-      expect(listBrokerProtectiveStops("SYN-HALT-OVER", "local")).toHaveLength(0); // row torn down
+      expect(broker.placed).toHaveLength(1); // ...and a right-sized replacement WAS placed the same tick
+      expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 40 }); // sized to the CURRENT 40 shares
+      const rows = listBrokerProtectiveStops("SYN-HALT-OVER", "local");
+      expect(rows).toHaveLength(1); // still protected — the right-sized stop
+      expect(rows[0].quantity).toBe(40);
     });
 
     it("protectWhileHalted: does NOT cancel a correctly-sized stop with only a trail-% mismatch — protection-CHANGING replacements stay blocked while halted (Codex PR #1738)", async () => {
@@ -1336,6 +1339,36 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       const activePolicy = { ...haltedPolicy, systemState: "active" as const };
       await runSyntheticStopMonitor("local", activePolicy, true);
       expect(broker.cancelled).toContain("prot-pc");
+    });
+
+    it("protectWhileHalted: DOES retry an OVERSIZED pending_cancel row and right-sizes it — an over-selling order can't linger through a halt (Codex PR #1738)", async () => {
+      // Counterpart to the kept-pending_cancel case: when the pending_cancel row's quantity EXCEEDS the
+      // current position (out-of-band partial exit), it would over-sell/short if it fires — and section
+      // 3 only examines resting stops, so this section-1 retry is the ONLY path that can clear it. The
+      // halt guard makes an exception for the oversized row: it retries the cancel and section 4 places
+      // a right-sized replacement the same tick.
+      connectTestAccount("SYN-HALT-PCO", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }]; // shrank 100 -> 40
+      broker.quotes = { NVDA: { price: 100 } }; // no breach
+      broker.orders = [{ id: "prot-pco", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 }]; // still live, oversized
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-PCO-NVDA", userId: "local", accountNumber: "SYN-HALT-PCO",
+        symbol: "NVDA", brokerOrderId: "prot-pco", quantity: 100, stopPrice: 95, status: "pending_cancel",
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-PCO"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-PCO").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.cancelled).toContain("prot-pco"); // oversized pending row cancelled despite the halt
+      expect(broker.placed).toHaveLength(1); // right-sized replacement placed
+      expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 40 });
+      const rows = listBrokerProtectiveStops("SYN-HALT-PCO", "local");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].quantity).toBe(40);
     });
   });
 });

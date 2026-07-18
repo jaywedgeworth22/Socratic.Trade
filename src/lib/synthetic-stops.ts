@@ -360,14 +360,13 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     } catch {
       // never let a bracket-teardown sweep failure block the rest of this monitor's tick
     }
-    // Halted protection may only FIRE existing synthetic/exit stops (the fire loop below still runs
-    // under `running`) and CANCEL risk (closed-position sweeps, plan-excluded teardown, and an
-    // oversized/shrunk stop that could over-sell) — never PLACE a new broker stop or do a
-    // protection-CHANGING replacement. `haltedProtectOnly` gates exactly those in
-    // `reconcileBrokerProtectiveStops` (section 4 + the section-3 non-shrink mismatch replace), while
-    // its risk-reducing cancels — including the section-3 oversized-stop cancel that the earlier
-    // `running=false` approach wrongly suppressed (Codex review, PR #1738) — still run. Pass the real
-    // `running` so those cancels aren't short-circuited by the `if (!running) return` gate.
+    // Halted protection may FIRE existing synthetic/exit stops (the fire loop below still runs under
+    // `running`), CANCEL risk (closed-position sweeps, plan-excluded teardown, oversized stops that
+    // could over-sell), and RIGHT-SIZE an oversized stop (cancel + place the smaller replacement) —
+    // but never INITIATE new/looser protection (place for an unprotected position, or a non-shrink
+    // cancel-then-replace). `haltedProtectOnly` enforces exactly that split in
+    // `reconcileBrokerProtectiveStops`. Pass the real `running` so its risk-reducing cancels aren't
+    // short-circuited by the `if (!running) return` gate (Codex review, PR #1738).
     const haltedProtectOnly = running && policy.systemState === "halted";
     const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, haltedProtectOnly, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol, stopPlanBySymbol });
     if (reconciled.cancelledOrderIds.length > 0) {

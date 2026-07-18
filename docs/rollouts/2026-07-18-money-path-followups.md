@@ -179,3 +179,37 @@ genuine and are now fixed on the same branch.
 ### Round-3 verification
 - `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files / **4805 tests pass**;
   `npm run build` exit 0. Each new regression exercises the exact failure the finding described.
+
+## Round 4 — Codex review on 22462fd (2 findings, both real; resolved with a design change)
+
+Both findings share one root cause: while halted, the synthetic monitor FIRES existing stops but does
+NOT register new ones (`synthetic-stops.ts:430`), so cancelling a broker stop during a halt can leave a
+broker-covered position (which has no synthetic row) with NO protection — while KEEPING an oversized
+stop risks an over-sell. Neither pure option is safe; only "cancel + keep protection" is. Owner was
+asked to choose the halted-mode policy and (via rejecting the prompt under the standing "finish it"
+directive) left it to the implementer. Chosen policy: **a halt blocks INITIATING new/looser protection,
+but ALLOWS a risk-reducing RIGHT-SIZE of an oversized existing stop** (cancel + place the smaller
+replacement the same tick). This keeps broker-held protection for ALL stop plans (incl. fixed/atr, which
+have no synthetic fallback) and stays entirely within `broker-protective-stops.ts` — no change to the
+high-blast-radius synthetic-registration path.
+
+- **P2 — oversized pending_cancel retry while halted** (section 1): the round-3 skip deferred ALL
+  open-position pending_cancel retries while halted, but an OVERSIZED pending_cancel row (quantity >
+  current position) would over-sell if it fires, and section 3 only examines `resting` stops — so this
+  is the only path that can clear it. Added an exception: a halted OVERSIZED pending_cancel retries the
+  cancel and marks the symbol for right-sizing.
+- **P2 — halted shrink cancel could strand the position** (section 3): the round-2 shrink cancel removed
+  the only broker stop and returned before section 4 could replace it (and the synthetic monitor won't
+  register while halted), leaving no protection. Now the shrink cancel marks the symbol
+  (`haltedRightsizeSymbols`) and section 4 places the right-sized replacement the same tick.
+- Section 4 while halted now places ONLY for `haltedRightsizeSymbols` (right-size replacements), never
+  for an unprotected position (new protection). `liveReplaceBlocked` (ALLOW_LIVE_TRADING escape hatch)
+  is unaffected — it still never touches the broker.
+
+Tests updated/added in `test/synthetic-stops.test.ts`: oversized RESTING stop → cancel + right-sized
+40-share replacement (was: cancel + no placement); oversized PENDING_CANCEL → retry + right-size; the
+non-oversized pending_cancel and non-shrink trail-% cases still KEEP the stop (unchanged).
+
+### Round-4 verification
+- `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files / **4806 tests pass**;
+  `npm run build` exit 0.
