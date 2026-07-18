@@ -384,30 +384,41 @@ describe("deriveDayPnl — stale-baseline gap detection (item 23)", () => {
 
 describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
   it("shows 'Running' when configured active and the market is open (regular session)", () => {
-    const info = deriveStateInfo({ systemState: "active", strategyAuthority: "propose" }, etDate("2026-06-10", 10, 0));
+    const info = deriveStateInfo(
+      { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false },
+      etDate("2026-06-10", 10, 0)
+    );
     expect(info.label).toBe("Running · Ask-first");
     expect(info.marketOpen).toBe(true);
     expect(info.tone).toBe("pos");
   });
 
   it("shows a paused/market-closed state when configured active but the market is closed (weekend)", () => {
-    const info = deriveStateInfo({ systemState: "active", strategyAuthority: "propose" }, etDate("2026-06-13", 12, 0)); // Saturday
+    const info = deriveStateInfo(
+      { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false },
+      etDate("2026-06-13", 12, 0) // Saturday
+    );
     expect(info.label).toBe("Paused · market closed");
     expect(info.marketOpen).toBe(false);
     expect(info.tone).toBe("muted");
     expect(info.state).toBe("active"); // underlying run-state is unchanged — display-only fix
   });
 
-  it("treats pre-market as open when the account permits extended-hours runs", () => {
-    const info = deriveStateInfo(
-      { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: true },
-      etDate("2026-06-10", 8, 0) // 8am ET pre-market
-    );
-    expect(info.marketOpen).toBe(true);
-    expect(info.label).toBe("Running · Ask-first");
+  it("REGRESSION (switcher rows): an extended-hours account shows Running during pre/post sessions, never 'Paused · market closed'", () => {
+    // The account-switcher passes exactly this projection shape (connectedAccountPolicies in
+    // src/lib/dashboard.ts: systemState + strategyAuthority + runDuringExtendedHours). With the
+    // regular session closed but the extended window open, the account genuinely runs.
+    for (const at of [etDate("2026-06-10", 8, 0), etDate("2026-06-10", 18, 0)]) { // pre + post
+      const info = deriveStateInfo(
+        { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: true },
+        at
+      );
+      expect(info.marketOpen).toBe(true);
+      expect(info.label).toBe("Running · Ask-first");
+    }
   });
 
-  it("treats pre-market as closed when extended-hours runs are NOT permitted", () => {
+  it("treats pre-market as closed when extended-hours runs are explicitly NOT permitted", () => {
     const info = deriveStateInfo(
       { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false },
       etDate("2026-06-10", 8, 0)
@@ -416,10 +427,14 @@ describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
     expect(info.label).toBe("Paused · market closed");
   });
 
-  it("defaults runDuringExtendedHours to false when the caller only has a narrower policy Pick", () => {
-    // e.g. the account-switcher row's Pick<TradingPolicy, "systemState" | "strategyAuthority">
+  it("undefined runDuringExtendedHours means 'can't know' — no paused/running split (undefined ≠ false)", () => {
+    // An older payload (or a projection missing the field) can't answer whether this account's
+    // market window is open. Mislabeling an extended-hours account as paused would be a lie —
+    // keep the plain Running claim and set no marketOpen at all.
     const info = deriveStateInfo({ systemState: "active", strategyAuthority: "decide" }, etDate("2026-06-10", 8, 0));
-    expect(info.marketOpen).toBe(false);
+    expect(info.marketOpen).toBeUndefined();
+    expect(info.label).toBe("Running · Autopilot");
+    expect(info.tone).toBe("warn");
   });
 
   it("does not touch close_only / liquidating / halted — those states are unaffected by market hours", () => {

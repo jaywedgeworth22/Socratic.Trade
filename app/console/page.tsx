@@ -89,7 +89,7 @@ export default function ConsoleHomePage() {
             status={primaryDecision?.status ?? primaryTrace?.status}
           />
           <div className="mt-4 flex flex-wrap gap-2">
-            <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : "pos"} title={state.detail}>
+            <Chip tone={state.tone === "warn" ? "warn" : state.tone === "neg" ? "neg" : state.tone === "muted" ? "muted" : "pos"} title={state.detail}>
               {state.label}
             </Chip>
             <Chip tone={reality.tone} title={reality.clarification}>

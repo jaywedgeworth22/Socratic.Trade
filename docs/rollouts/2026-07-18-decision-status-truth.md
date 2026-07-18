@@ -61,9 +61,10 @@ Five Codex-audit product-truth findings, one commit:
   - Header `StateChip` (`app/console/components/chrome.tsx`): stops pulsing the Autopilot
     dot while paused; label/detail flow through automatically.
   - Approvals header chip (`app/console/approvals/page.tsx`): maps muted tone.
-  - Account-switcher rows (chrome.tsx `renderRow`): flow through automatically. Caveat:
-    the per-account policy Pick there lacks `runDuringExtendedHours`, so those rows treat
-    extended hours as off (conservative; documented in a code comment).
+  - Account-switcher rows (chrome.tsx `renderRow`): flow through automatically. (First
+    commit shipped these rows extended-hours-blind — fixed by the adversarial-verification
+    follow-up commit below: the `connectedAccountPolicies` projection now carries
+    `runDuringExtendedHours`.)
   New pure helpers in `src/lib/market-hours.ts`: `isTradingDay`,
   `previousTradingDayStart`, `nextTradingDayStart`, `nextMarketOpenHint` (bounded walks,
   reuse `getMarketHolidays`). `nextMarketOpenHint` is deliberately coarse (tooltip-grade;
@@ -189,9 +190,40 @@ shared machine; the required `verify` CI gate runs the full trio on the PR).
    latest bar timestamp per lane), that's a separate observation, not derivable from the
    tier probe; and if the admin connections page grows a tier panel, key it off
    `ProviderTierEntry.signal`. Decision gating unchanged in this pass by design.
-3. **Account-switcher extended-hours fidelity (item 29).** `connectedAccountPolicies` in
-   the dashboard snapshot carries only `systemState`/`strategyAuthority`; adding
-   `runDuringExtendedHours` would make the per-account paused/running chips
-   extended-hours-accurate. Cosmetic, conservative today.
+3. ~~Account-switcher extended-hours fidelity (item 29).~~ RESOLVED same day by the
+   adversarial-verification follow-up commit (see below) — the projection now carries
+   `runDuringExtendedHours` and `deriveStateInfo` treats a missing value as "can't know"
+   (no paused/running split) instead of defaulting to false.
 4. **`nextMarketOpenHint` midnight-to-4am ET gap.** During 00:00–04:00 ET on a trading
    day it names the following day instead of "today". Tooltip-grade; documented in code.
+
+## Adversarial-verification fixes (follow-up commit, same day)
+
+The lane's adversarial verification of the first commit (3b8c8962) returned one MUST-FIX
+and two advisories, all fixed in a follow-up commit on this branch:
+
+- **MUST-FIX (item 29):** account-switcher rows receive the narrow
+  `connectedAccountPolicies` projection (built in `src/lib/dashboard.ts` from
+  `peekPolicy`), which carried only `systemState`/`strategyAuthority` — so
+  `runDuringExtendedHours` defaulted to false and an extended-hours account showed
+  "Paused · market closed" during pre/post sessions while genuinely RUNNING. Fixes:
+  (a) the projection now includes `runDuringExtendedHours` (peekPolicy already returns
+  the full policy); (b) the `DashboardSnapshot` type widens the Pick with the field kept
+  OPTIONAL; (c) `deriveStateInfo` now treats `undefined` as "can't know" and skips the
+  paused/running split entirely (undefined ≠ false) — an older payload keeps the plain
+  "Running" claim rather than gaining a false "Paused" one. Regression tests: extended-
+  hours account at pre AND post sessions ⇒ "Running · Ask-first" with `marketOpen: true`;
+  undefined extended-hours at pre-market ⇒ no split, `marketOpen` undefined.
+- **Advisory 1 (item 29):** the console-home hero state chip hadn't been taught the muted
+  tone — "Paused · market closed" rendered green there. Aligned with the run-cadence and
+  approvals chips.
+- **Advisory 2:** the trading-day helper comment in `src/lib/market-hours.ts` claimed US
+  market holidays are "fixed calendar dates" — false as prose (nth-weekday rules, Good
+  Friday computus, observation shifts). Comment corrected to say the holiday set is
+  RESOLVED per year to concrete Y-M-D strings, which is what makes calendar-day
+  comparison valid; code unchanged.
+
+Additional files touched by the follow-up commit: `src/lib/dashboard.ts`,
+`app/dashboard-types.ts`, `app/console/lib/derive.ts`, `app/console/page.tsx` (hero chip
+tone), `src/lib/market-hours.ts` (comment only), `test/console-live-data-derive.test.ts`,
+this note.

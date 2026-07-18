@@ -94,8 +94,9 @@ export interface StateInfo {
   detail: string;
   tone: "pos" | "warn" | "neg" | "muted";
   /** Only meaningful when state === "active" — whether the market (per current session + the
-   *  account's extended-hours policy) is open right now. undefined for every other state: those
-   *  don't run on a market clock, so "open/closed" isn't a question that applies to them. A
+   *  account's extended-hours policy) is open right now. undefined for every other state (those
+   *  don't run on a market clock) AND for active policies whose `runDuringExtendedHours` wasn't
+   *  in the payload — without it the answer isn't knowable, so no paused/running split is made. A
    *  configured-running account with the market closed is still `state: "active"` (nothing about
    *  the underlying run-state changed) — only the label/detail/tone reflect the pause, so this is
    *  purely a display fix, never a behavior change. */
@@ -110,19 +111,20 @@ export function deriveStateInfo(
   const authority = policy.strategyAuthority === "decide" ? "Autopilot" : "Ask-first";
   switch (policy.systemState) {
     case "active": {
-      // Callers scoped to a Pick<...> narrower than the full policy (e.g. the account-switcher
-      // row, which only has systemState/strategyAuthority) fall back to `false` here — meaning
-      // their market-open check ignores that account's extended-hours setting. That's a minor
-      // conservative gap on a secondary surface, not a regression: before this change every
-      // caller always claimed "Running" regardless of the market, so this is strictly more honest.
-      const marketOpen = isRunAllowedNow(policy.runDuringExtendedHours ?? false, now);
-      if (!marketOpen) {
+      // undefined ≠ false: a payload that doesn't carry runDuringExtendedHours (older snapshot
+      // shapes, or a projection that forgot the field) cannot answer "is this account's market
+      // window open?" — an extended-hours account would be mislabeled "Paused · market closed"
+      // while genuinely running a pre/post session. In that case skip the split entirely and
+      // keep the plain "Running" claim. Only a real boolean opts into the market-aware display.
+      const marketOpen =
+        policy.runDuringExtendedHours === undefined ? undefined : isRunAllowedNow(policy.runDuringExtendedHours, now);
+      if (marketOpen === false) {
         return {
           state: "active",
           label: "Paused · market closed",
           detail:
             `Scheduled runs pause while the market is closed and resume automatically once it reopens ` +
-            `(next open ${nextMarketOpenHint(now, policy.runDuringExtendedHours ?? false)}). ` +
+            `(next open ${nextMarketOpenHint(now, policy.runDuringExtendedHours === true)}). ` +
             (policy.strategyAuthority === "decide"
               ? "Autonomous placement is paused too — nothing places itself outside market hours."
               : "Every trade still waits for your approval once runs resume."),
@@ -138,7 +140,7 @@ export function deriveStateInfo(
             ? "The strategy runs on schedule and may place orders itself, inside your guardrails."
             : "The strategy runs on schedule. Every trade waits for your approval.",
         tone: policy.strategyAuthority === "decide" ? "warn" : "pos",
-        marketOpen: true
+        ...(marketOpen === undefined ? {} : { marketOpen: true })
       };
     }
     case "close_only":

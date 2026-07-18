@@ -52,8 +52,12 @@ export function isRunAllowedNow(runDuringExtendedHours: boolean, now = new Date(
 // ── Trading-day calendar helpers ────────────────────────────────────────────
 // These compare by the caller's LOCAL calendar day (not America/New_York wall-clock) — same
 // convention already used by deriveDayPnl's "today" boundary (app/console/lib/derive.ts). US
-// market holidays are fixed calendar dates, so keying by local Y-M-D is timezone-safe for that
-// part; only intraday open/close *times* need the ET conversion above.
+// market holidays are NOT fixed dates (nth-weekday rules, Good Friday's computus, weekend
+// observation shifts) — but getMarketHolidays resolves each year's set to concrete Y-M-D
+// strings, so once resolved they compare as plain calendar days. A local calendar day can
+// differ from the ET date near midnight for timezones far from ET; that's an accepted
+// coarseness for these DISPLAY helpers (baseline-staleness flag, next-open hint) — anything
+// needing exact session boundaries must use the ET session classifier above instead.
 
 function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
