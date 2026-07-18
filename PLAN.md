@@ -1,5 +1,11 @@
 # Active Implementation Plan
 
+> **2026-07-18 - PR #1735 verify cleanup (CODEX on `agent/ag-recovery-v48-migration`).**
+> Merged latest `origin/main` and fixed the missed attribution assertions that were still expecting
+> provider-qualified IDs after the branch canonicalized OpenRouter telemetry to bare model IDs.
+> Focused failing test set is green; push back to PR #1735 and let hosted checks arbitrate full-suite
+> readiness.
+
 > **2026-07-17 - OpenRouter Model Stats Canonicalization (Antigravity, branch `antigravity/openrouter-universal-routing`).** Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts` to strip provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs. This ensures that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`), preventing stats split and lookup mismatch in the Model Stats drawer. Verified via vitest and compiler checks. Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
 ## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)
 

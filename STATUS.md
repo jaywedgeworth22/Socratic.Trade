@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-18 — PR #1735 verify cleanup (CODEX, branch `agent/ag-recovery-v48-migration`)
+
+Merged `origin/main` and fixed the hosted `verify` failures on PR #1735 by aligning the four missed
+OpenRouter attribution assertions with the branch's canonical bare-model telemetry behavior. Focused
+test command passed: `npm test -- test/llm-provider-cooldown.test.ts test/strategy-llm-failover.test.ts
+test/persistence-notification.test.ts test/strategy-money-path-f-g.test.ts` (34/34 pass). Rollout:
+`docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

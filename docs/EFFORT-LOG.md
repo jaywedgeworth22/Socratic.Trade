@@ -1872,6 +1872,10 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][CODEX] PR #1735 verify cleanup (branch `agent/ag-recovery-v48-migration`,
+  2026-07-18) — LANDING.** Merged `origin/main` and aligned the missed OpenRouter attribution
+  assertions with the branch's bare-model telemetry behavior. Focused failing test set green; pushing
+  back to PR #1735 for hosted verify.
 - **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
   `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-18, owner-directed) — IMPLEMENTATION
   COMPLETE / gate running / PR pending.** (1) Inline rename of a connected account's cosmetic `label`
