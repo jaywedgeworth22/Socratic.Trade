@@ -1879,8 +1879,13 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
-  `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-18, owner-directed) — IMPLEMENTATION
-  COMPLETE / gate running / PR pending.** (1) Inline rename of a connected account's cosmetic `label`
+  `monet/vigilant-fermi-220244`, cloud session, 2026-07-18, owner-directed) — COMPLETED (merged to
+  `main` as `b0063a7`, PR #1727) + DEPLOYED TO PRODUCTION.** (Deploy confirmed 2026-07-18 after the
+  fleet-wide auto-deploy stall recovered: prod redeployed ~13:32Z from post-`b0063a7` main — well
+  after this merge (~01:45Z) and #1737 — so the current-main build includes it; `/api/health` db ok,
+  scheduler ticking, litestream replicating. NB: the reported release sha `e3ea2e3d` is a Coolify
+  build-sha, not a main commit — a reporting quirk from the new Coolify CI runner (#1739), not a
+  main-mismatch. Board-mover: this row can move to the Deployed section.) (1) Inline rename of a connected account's cosmetic `label`
   in Console → Broker connections (pencil→input→save); broker account number stays broker-sourced &
   non-editable (keys trade history + `policy.accountNumber`). New `renameConnectedAccount` db fn +
   label-only `PATCH /api/connected-accounts/[id]` (test proves a stray `accountNumber` in the body is
