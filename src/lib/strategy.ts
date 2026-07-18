@@ -124,7 +124,7 @@ import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
 import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, remapOpenRouterTelemetry } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import {
@@ -4787,8 +4787,7 @@ async function proposeTrades(input: {
   // Which endpoint actually served the run (starts as the primary; updated on failover). Transport
   // and keySource are tracked too so the served step/audit trail reports the FALLBACK's transport
   // (e.g. anthropic-messages vs the primary's responses), not the primary's — accurate money-path tracing.
-  let bullServedProvider = provider;
-  let bullServedModel = model;
+  let { provider: bullServedProvider, model: bullServedModel } = remapOpenRouterTelemetry(provider, model);
   let bullServedTransport = transport;
   let bullServedKeySource = llmKeySource;
   let bullFailoverNote: string | undefined;
@@ -4796,8 +4795,8 @@ async function proposeTrades(input: {
   const bullStepBase = {
     step: "bull" as const,
     label: "Green Team proposal",
-    provider,
-    model,
+    provider: bullServedProvider,
+    model: bullServedModel,
     transport,
     keySource: llmKeySource
   };
@@ -4829,7 +4828,7 @@ async function proposeTrades(input: {
     bullResult = await withLlmGeneration(
       {
         name: "trading.strategy.bull",
-        model,
+        model: bullServedModel,
         userId: input.userId,
         connectedAccountId: input.policy.connectedAccountId,
         input: summarizeOpenAiRequest(body),
@@ -4899,9 +4898,10 @@ async function proposeTrades(input: {
             // Served-by-fallback detection compares the ATTEMPT to the configured primary (not
             // `i > 0`): cooldown planning can drop the primary from the chain entirely, making a
             // fallback the first attempt.
-            if (attempt.model !== model || attempt.provider !== provider) {
-              bullServedProvider = attempt.provider;
-              bullServedModel = attempt.model;
+            const { provider: servedCanonicalProvider, model: servedCanonicalModel } = remapOpenRouterTelemetry(attempt.provider, attempt.model);
+            if (servedCanonicalModel !== remapOpenRouterTelemetry(provider, model).model || servedCanonicalProvider !== remapOpenRouterTelemetry(provider, model).provider) {
+              bullServedProvider = servedCanonicalProvider;
+              bullServedModel = servedCanonicalModel;
               bullServedTransport = attempt.transport;
               bullServedKeySource = attempt.keySource;
               bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${plannedBullAttempts.length}).`;
