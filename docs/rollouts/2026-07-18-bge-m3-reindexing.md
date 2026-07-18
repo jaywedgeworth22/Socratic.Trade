@@ -29,3 +29,28 @@ Switching from Voyage to BGE-M3 requires clearing existing RAG SQLite caches and
 
 ## Follow-ups
 None. Feature is fully complete and ready to land.
+
+## Landing retry (2026-07-18, CLAUDE lane — appended)
+
+The first `scripts/land.sh` run ABORTED at the test gate: 12 failures across 6 files
+(`redteam-failure-routing`, `securities-import`, `strategy-held-position-retrieval-scope`,
+`strategy-money-path-f-g`, `web-sources-sec8k`, plus a `reindex-all` isolation issue), executed
+under fleet load average 60-67 (suite wall time 84 min). Triage outcome:
+
+- **Real fix 1 — test DB isolation** (`73929f83`): `test/reindex-all.test.ts` shared a
+  `DATABASE_URL` with other suites, bleeding SQLite state across test files (explains the
+  `web-sources-sec8k` "queue full for user <other-test's-uuid>" cross-contamination). Now uses its
+  own per-run temp DB per the repo's `tmpdir()` convention.
+- **Real fix 2 — casing expectation dropped** (via merge `339676a5`): this branch had aligned
+  `test/securities-import.test.ts` to the old `clean()` uppercasing bug (`'TESLA'`). PR #1735
+  landed the preserve-case fix (`normDisplayText`, expectation `'Tesla'`) on `main`; the merge
+  takes main's side wholesale for both the module and the test.
+- **Remainder classified load-flakes**: 30s-timeout failures in `redteam-failure-routing` /
+  `strategy-held-position-retrieval-scope` / `strategy-money-path-f-g` did not reproduce on serial
+  re-runs off-peak (verification commands below).
+- Subsequent merges brought the branch to post-#1761 `main` (includes the bge-m3
+  metering/reembed/worker-wiring program, `545da7c0`), so this lands on top of the completed
+  embedding-flip infrastructure rather than ahead of it.
+
+Verification for the retry: serial `npx vitest run <file> --no-file-parallelism` per previously
+failing file, then the full `scripts/land.sh` gate (lint -> tsc -> test -> build) before push/PR.

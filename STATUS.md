@@ -12,6 +12,16 @@ account exhausted: 25.00/25.31)**; the Voyage key itself is valid. RAG ingestion
 backfill) is stalled until the owner tops up OpenRouter credits or adds a SiliconFlow key
 (same `BAAI/bge-m3` space). Details:
 `docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
+## 2026-07-18 — BGE-M3 reindexing branch: landing retry after test-gate abort (CLAUDE, branch `agent/ag-reindex-bge-m3`)
+
+First `land.sh` run aborted: 12 test failures across 6 files under fleet load 60-67 (84-min suite).
+Triage: two real fixes — (1) `test/reindex-all.test.ts` now uses its own per-run temp
+`DATABASE_URL` (was bleeding SQLite state into `web-sources-sec8k` and others, commit `73929f83`);
+(2) dropped this branch's `'TESLA'` casing expectation in `test/securities-import.test.ts` in favor
+of main's post-#1735 preserve-case behavior (merge `339676a5`). Remainder were 30s-timeout
+load-flakes that pass on serial re-run. Branch subsequently synced to post-#1761 main (includes the
+bge-m3 metering/reembed/worker-wiring program `545da7c0`). Re-landing via `scripts/land.sh`.
+Details: `docs/rollouts/2026-07-18-bge-m3-reindexing.md` ("Landing retry" section).
 
 ## 2026-07-18 — BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`)
 
