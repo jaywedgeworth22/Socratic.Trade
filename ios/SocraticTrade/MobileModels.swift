@@ -49,6 +49,11 @@ struct PolicySummary: Decodable {
     let maxDailyNotional: Double?
     let maxDailyPctOfNav: Double?
     let maxDailyOrders: Int?
+    // Owner-adjustable preference (see app/console/settings/page.tsx). Server always includes this
+    // key today (app/api/mobile/snapshot/route.ts sends `!== false`), but decode it as optional and
+    // default to "on" if it's ever missing, matching the server/PWA's own `!== false` semantics
+    // (app/mobile/mobile-pwa-client.tsx `willPromptTyped`) rather than crashing the whole decode.
+    let requireTypedConfirmation: Bool?
 }
 
 struct PortfolioSummary: Decodable {
@@ -78,6 +83,43 @@ struct Proposal: Decodable {
     let side: String
     let type: String
     let rationale: String?
+}
+
+/// Mirrors `liveApprovalText` in src/lib/strategy.ts (also used by app/mobile/mobile-pwa-client.tsx
+/// and app/console/approvals/page.tsx): the exact phrase the server requires typed back before it
+/// will approve a live-brokerage order.
+func liveApprovalConfirmationText(forSymbol symbol: String) -> String {
+    "APPROVE LIVE \(symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())"
+}
+
+/// Mirrors the `liveConfirmation` object the server requires in the `proposal.approve` command
+/// payload for a broker/live order. Server side: src/lib/mobile-api.ts `normalizeCommandPayload`
+/// ("proposal.approve" case) forwards this through to src/lib/strategy.ts
+/// `assertLiveApprovalConfirmation`, which checks proposalId/accountNumber/executionMode/typedText/
+/// estimatedNotional all match the reviewed proposal. Parity source (client shape):
+/// app/mobile/mobile-pwa-client.tsx `submitCommand("proposal.approve", { liveConfirmation: ... })`.
+struct LiveApprovalConfirmation {
+    let proposalId: String
+    let accountNumber: String?
+    let estimatedNotional: Double?
+    let typedText: String
+
+    /// Built for `JSONSerialization`, not `Encodable`: `accountNumber` is omitted entirely when nil
+    /// (mirroring the PWA, where `JSON.stringify` drops an `undefined` field) rather than being
+    /// boxed as an `Optional<String>.none` inside `[String: Any]`, which `JSONSerialization` cannot
+    /// serialize. `estimatedNotional` mirrors the PWA's explicit `?? null` instead.
+    var jsonObject: [String: Any] {
+        var object: [String: Any] = [
+            "proposalId": proposalId,
+            "executionMode": "broker/live",
+            "estimatedNotional": estimatedNotional ?? NSNull(),
+            "typedText": typedText
+        ]
+        if let accountNumber {
+            object["accountNumber"] = accountNumber
+        }
+        return object
+    }
 }
 
 struct WatchlistItem: Decodable, Identifiable {
