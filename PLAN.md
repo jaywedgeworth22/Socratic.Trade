@@ -15,6 +15,21 @@
 - [x] Prevent profile-menu logout prefetch from triggering the side-effectful `/logout` GET.
 - [x] Run Node 24 lint, TypeScript, full Vitest, and production build gates.
 - [ ] Land through `scripts/land.sh`, then verify the auto-deployed production SHA and health.
+> **2026-07-18 - PR #1735 review cleanup round 2 (CODEX on `agent/ag-recovery-v48-migration`).**
+> Address the fresh Codex comments by preserving company-name display casing in securities imports
+> and restoring the missing lockfile peer dependency entries. Focused import tests and clean-install
+> dry-run are green; push back to PR #1735, resolve the threads, and let hosted checks arbitrate.
+
+> **2026-07-18 - PR #1735 verify cleanup (CODEX on `agent/ag-recovery-v48-migration`).**
+> Merged latest `origin/main` and fixed the missed attribution assertions that were still expecting
+> provider-qualified IDs after the branch canonicalized OpenRouter telemetry to bare model IDs.
+> Focused failing test set is green; push back to PR #1735 and let hosted checks arbitrate full-suite
+> readiness.
+> **2026-07-18 - PR #1736 review cleanup (CODEX on `monet/model-identity-shared`).**
+> Merged latest `origin/main`, kept the shared model-identity helper behavior, and restored
+> case-insensitive usage aggregation by using a lowercase aggregation key with case-preserving
+> display/canonical output. Focused usage-model merge tests are green; push back to PR #1736 and
+> let hosted checks arbitrate full-suite readiness.
 > **2026-07-18 - CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739).**
 > Classifier checkouts now pin the event SHA. Security deliberately keeps full history for Gitleaks.
 > Diff/YAML/actionlint checks passed; final gate and deployment follow the parent routing PR.

@@ -20,6 +20,50 @@ for `scripts/land.sh`; no production deploy or admin data/API behavior was chang
 The first post-routing Playwright smoke rerun reached the local Next webServer but was OOM-killed
 with exit 137 under the runner's 3 GiB cap. The CI-only Playwright heap ceiling is reduced to
 2048 MiB to leave room for Chromium and build-worker overhead; rerun smoke after this commit.
+## 2026-07-18 — PR #1735 review cleanup round 2 (CODEX, branch `agent/ag-recovery-v48-migration`)
+
+Resolved two fresh Codex review findings on PR #1735: preserved imported company-name display casing
+in `db-securities-import.ts` instead of uppercasing names through ticker-oriented `clean()`, and
+regenerated `package-lock.json` so clean installs include the peer dependency tree required by
+`@langfuse/otel` and webpack. Verification: `npm ci --dry-run --ignore-scripts` passes, and
+`npm test -- test/securities-import.test.ts` passes after a normal fresh `npm ci`.
+Rollout: `docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+
+## 2026-07-18 — PR #1735 verify cleanup (CODEX, branch `agent/ag-recovery-v48-migration`)
+
+Merged `origin/main` and fixed the hosted `verify` failures on PR #1735 by aligning the four missed
+OpenRouter attribution assertions with the branch's canonical bare-model telemetry behavior. Focused
+test command passed: `npm test -- test/llm-provider-cooldown.test.ts test/strategy-llm-failover.test.ts
+test/persistence-notification.test.ts test/strategy-money-path-f-g.test.ts` (34/34 pass). Rollout:
+`docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+## 2026-07-18 — #1727 deployed + EFFORT-LOG board corrected (MONET, branch `monet/effort-log-1727-deploy-flip`)
+
+PR #1727 (editable connected-account name + legacy-app retirement) is merged (`b0063a7`) and
+**live in production** — confirmed after the fleet-wide auto-deploy stall recovered (prod redeployed
+~13:32Z from post-`b0063a7` main; `/api/health` db/scheduler/litestream ok). PR #1745 is the docs-only
+board-hygiene follow-up: moved the #1727 row from `## In Progress` to `## Deployed`, dropped the stale
+"Board-mover" note, and corrected a chronology overstatement (the 13:32Z build PRE-dates #1737's 14:14Z
+merge, so it asserts only that #1727 — not #1737 — is live). No code/plan change. Rollout note:
+`docs/rollouts/2026-07-18-effort-log-1727-deploy-flip.md`.
+
+## 2026-07-18 — PR #1736 review cleanup (CODEX, branch `monet/model-identity-shared`)
+
+Merged `origin/main`, verified the author-identity review thread is stale because the current PR
+commit uses the required GitHub noreply email, and fixed the remaining review finding: model usage
+aggregation now remains case-insensitive while preserving the first display casing. Focused test:
+`npm test -- test/usage-model-merge.test.ts` (9/9 pass). Rollout updated:
+`docs/rollouts/2026-07-17-model-identity-shared-helper.md`.
+
+## 2026-07-17 — Shared model-identity helper (MONET, branch `monet/model-identity-shared`)
+
+Owner-directed follow-up (AG capped): consolidated the two duplicate model-ID canonicalizers now
+on main — `cleanModelId` (src/lib/model-stats.ts, AG/#1703) and `canonicalModelId`
+(app/admin/llm-usage/model-merge.ts, #1716) — into one shared `src/lib/model-identity.ts`.
+Behavior-preserving: the shared function is AG's verified logic verbatim; model-stats aliases it
+so the benchmark/perf rollup is byte-for-byte unchanged (model-stats + performance tests pass
+untouched). Closes the deferred follow-up from the usage-canonical-model-merge rollout. tsc clean,
+67 focused tests, full gate via land.sh. Rollout:
+`docs/rollouts/2026-07-17-model-identity-shared-helper.md`.
 ## 2026-07-18 — Money-path/reliability follow-ups from PR #1705 (CLAUDE, branch `claude/money-path-followups-1701`)
 
 Fixed 4 money-path/reliability findings that merged into `main` UNFIXED via PR #1705 (a 5th was
