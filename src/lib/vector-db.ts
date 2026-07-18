@@ -12,7 +12,7 @@ import { fuseHybrid, rrfFuse } from "./rag/hybrid";
 import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
-import { estimateVoyageDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled } from "./rag-metering";
+import { estimateVoyageDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled, type RagEmbedRerankProvider } from "./rag-metering";
 import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPersistEnabled, recordCandidatePoolFull, type CandidateDisposition } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
@@ -112,15 +112,72 @@ export interface VectorIndexStats {
 // Using "voyage-finance-2" for high fidelity financial embeddings
 const VOYAGE_MODEL = "voyage-finance-2";
 
-export function activeEmbeddingModel(userId: string = "local"): string {
+/**
+ * Explicit embed/rerank provider gate (bge-m3-metering-gate, 2026-07-18). Unset (the default):
+ * behavior is byte-for-byte identical to before this env existed — `resolveActiveRagProvider`
+ * falls through to key-presence precedence (OpenRouter, then SiliconFlow, then Voyage), exactly as
+ * `activeEmbeddingModel`/`activeRerankModel` always did. Set: pins BOTH embed and rerank provider
+ * selection to this value regardless of which keys happen to also be present, so an operator can
+ * deliberately choose bge-m3 (or force Voyage even if an OpenRouter key exists for OTHER features)
+ * without depending on key presence as an implicit routing signal.
+ *
+ * A pinned-but-keyless provider throws LOUDLY at the point of use (activeEmbeddingProvider /
+ * activeRerankProvider — which every embed/rerank call site resolves through) rather than silently
+ * falling back to a different provider: silently switching would write vectors into (or read
+ * vectors from) the WRONG embedding space — cosine scores are meaningless across models even at
+ * equal dimensionality (see embeddingSpaceRevisionForModel below) — so a misconfigured pin must be
+ * an obvious, loud failure the operator fixes, not a silent cross-space mixup.
+ */
+function pinnedEmbedProvider(): RagEmbedRerankProvider | undefined {
+  const raw = process.env.RAG_EMBED_PROVIDER?.trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw === "voyage" || raw === "openrouter" || raw === "siliconflow") return raw;
+  throw new Error(
+    `Invalid RAG_EMBED_PROVIDER "${raw}" — must be one of "voyage", "openrouter", "siliconflow", or unset.`
+  );
+}
+
+function assertPinnedProviderKeyConfigured(provider: RagEmbedRerankProvider, userId: string): void {
+  if (provider === "voyage") return; // Voyage has always been the fail-open default; nothing to assert.
+  const key = resolveApiKey(provider, userId);
+  if (key && !key.startsWith("mock")) return;
+  const envVar = provider === "openrouter" ? "OPENROUTER_API_KEY" : "SILICONFLOW_API_KEY";
+  throw new Error(
+    `RAG_EMBED_PROVIDER is pinned to "${provider}" but no ${provider} API key is configured for user ` +
+    `"${userId}". Set ${envVar} (or a per-user key), or unset RAG_EMBED_PROVIDER to fall back to ` +
+    `key-presence precedence.`
+  );
+}
+
+/** Single source of truth for BOTH activeEmbeddingProvider and activeRerankProvider — see
+ *  `pinnedEmbedProvider` for why one env pins both. */
+function resolveActiveRagProvider(userId: string): RagEmbedRerankProvider {
+  const pinned = pinnedEmbedProvider();
+  if (pinned) {
+    assertPinnedProviderKeyConfigured(pinned, userId);
+    return pinned;
+  }
   const openrouterKey = resolveApiKey("openrouter", userId);
-  if (openrouterKey && !openrouterKey.startsWith("mock")) {
-    return "baai/bge-m3";
-  }
+  if (openrouterKey && !openrouterKey.startsWith("mock")) return "openrouter";
   const siliconflowKey = resolveApiKey("siliconflow", userId);
-  if (siliconflowKey && !siliconflowKey.startsWith("mock")) {
-    return "BAAI/bge-m3";
-  }
+  if (siliconflowKey && !siliconflowKey.startsWith("mock")) return "siliconflow";
+  return "voyage";
+}
+
+/** Active embedding PROVIDER — see `activeEmbeddingModel` for the corresponding model id. */
+export function activeEmbeddingProvider(userId: string = "local"): RagEmbedRerankProvider {
+  return resolveActiveRagProvider(userId);
+}
+
+/** Active rerank PROVIDER — see `activeRerankModel` for the corresponding model id. */
+export function activeRerankProvider(userId: string = "local"): RagEmbedRerankProvider {
+  return resolveActiveRagProvider(userId);
+}
+
+export function activeEmbeddingModel(userId: string = "local"): string {
+  const provider = activeEmbeddingProvider(userId);
+  if (provider === "openrouter") return "baai/bge-m3";
+  if (provider === "siliconflow") return "BAAI/bge-m3";
   return VOYAGE_MODEL;
 }
 
@@ -169,12 +226,11 @@ function buildEmbedSpaceFilter(userId: string): Record<string, unknown> {
 }
 
 export function activeRerankModel(userId: string = "local"): string {
-  const openrouterKey = resolveApiKey("openrouter", userId);
-  if (openrouterKey && !openrouterKey.startsWith("mock")) {
+  const provider = activeRerankProvider(userId);
+  if (provider === "openrouter") {
     return "cohere/rerank-v3.5";
   }
-  const siliconflowKey = resolveApiKey("siliconflow", userId);
-  if (siliconflowKey && !siliconflowKey.startsWith("mock")) {
+  if (provider === "siliconflow") {
     return process.env.VOYAGE_RERANK_MODEL || "Qwen/Qwen3-Reranker-8B";
   }
   return process.env.VOYAGE_RERANK_MODEL || "rerank-2.5";
@@ -432,8 +488,14 @@ function remainingIngestTexts(userId: string, requested: number): { allowed: num
   if (!ingestBudgetEnabled()) return { allowed: requested, used: 0, limit };
   try {
     const sinceIso = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    // Count embed texts across ANY embed provider, not just "voyage" — this budget caps embedding
+    // VOLUME regardless of which provider serves it. It used to hardcode "voyage" only because
+    // meterEmbed itself used to hardcode provider: "voyage" on every row (the very bug this PR
+    // fixes); now that rows carry the true provider (openrouter/siliconflow/voyage), a "voyage"-only
+    // filter would silently stop counting real usage the instant a non-Voyage provider goes active
+    // (e.g. prod's OPENROUTER_API_KEY), making RAG_INGEST_MAX_TEXTS_PER_DAY effectively unenforced.
     const used = getRagUsageSummary({ sinceIso })
-      .filter((row) => row.userId === userId && row.provider === "voyage" && row.operation === "embed")
+      .filter((row) => row.userId === userId && row.operation === "embed")
       .reduce((sum, row) => sum + row.batchCount, 0);
     return { allowed: Math.max(0, Math.min(requested, limit - used)), used, limit };
   } catch {
@@ -2021,15 +2083,22 @@ async function embedWithRetry(
   leaseGuard?: VectorStoreLeaseGuard
 ): Promise<any> {
   const attempts = embedRetryAttempts();
+  // `activeEmbeddingProvider` is the single source of truth for provider selection (honors
+  // RAG_EMBED_PROVIDER when pinned; throws loudly if pinned to a provider with no configured key).
+  // Deriving isOpenRouter/isSiliconFlow from it — rather than re-checking key presence locally, as
+  // this used to — keeps the pin authoritative over DISPATCH ROUTING too, not just the model name:
+  // a presence-only recheck here would let a pin to siliconflow still fire the OpenRouter HTTP
+  // branch (with a SiliconFlow model id!) whenever an OpenRouter key also happens to be configured.
+  const provider = activeEmbeddingProvider(userId);
   const modelName = activeEmbeddingModel(userId);
 
   const openrouterKey = resolveApiKey("openrouter", userId);
   const siliconflowKey = resolveApiKey("siliconflow", userId);
   const voyageKey = resolveApiKey("voyage", userId);
 
-  const isOpenRouter = !!openrouterKey && !openrouterKey.startsWith("mock");
-  const isSiliconFlow = !isOpenRouter && !!siliconflowKey && !siliconflowKey.startsWith("mock");
-  const apiKey = isOpenRouter ? openrouterKey : (siliconflowKey || voyageKey || "");
+  const isOpenRouter = provider === "openrouter";
+  const isSiliconFlow = provider === "siliconflow";
+  const apiKey = isOpenRouter ? (openrouterKey || "") : isSiliconFlow ? (siliconflowKey || "") : (voyageKey || "");
 
   // Route by the ACTIVE embedding provider, not by the mere presence of a client with an `embed`
   // method: `getClients` supplies a real VoyageAIClient whenever a Voyage key exists, so a
@@ -2087,15 +2156,14 @@ async function embedWithRetry(
         return res;
       };
 
-      const providerName = isOpenRouter ? "openrouter" : isSiliconFlow ? "siliconflow" : "voyage";
       return await withDurableRagProviderDispatch(
-        providerName,
+        provider,
         source,
         userId,
         `embed ${inputType}`,
         runCall,
         leaseGuard,
-        { estimatedCostUsd: estimateVoyageDispatchCost(input, "embed", modelName) }
+        { estimatedCostUsd: estimateVoyageDispatchCost(input, "embed", modelName, provider) }
       );
     } catch (error) {
       if (signal?.aborted) {
@@ -2145,15 +2213,19 @@ export async function rerankMatches(
   });
   if (documents.every((d) => !d)) return rerankableMatches;
   
+  // Same source-of-truth rule as embedWithRetry: derive routing from activeRerankProvider (honors
+  // a RAG_EMBED_PROVIDER pin, throws loudly if pinned-but-keyless) rather than re-checking key
+  // presence locally, so the pin controls dispatch routing too, not just the model name.
+  const provider = activeRerankProvider(userId);
   const modelName = activeRerankModel(userId);
 
   const openrouterKey = resolveApiKey("openrouter", userId);
   const siliconflowKey = resolveApiKey("siliconflow", userId);
   const voyageKey = resolveApiKey("voyage", userId);
 
-  const isOpenRouter = !!openrouterKey && !openrouterKey.startsWith("mock");
-  const isSiliconFlow = !isOpenRouter && !!siliconflowKey && !siliconflowKey.startsWith("mock");
-  const apiKey = isOpenRouter ? openrouterKey : (siliconflowKey || voyageKey || "");
+  const isOpenRouter = provider === "openrouter";
+  const isSiliconFlow = provider === "siliconflow";
+  const apiKey = isOpenRouter ? (openrouterKey || "") : isSiliconFlow ? (siliconflowKey || "") : (voyageKey || "");
 
   // Same provider-routing rule as embedWithRetry (PR #1669 P1): the injected Voyage client is
   // used only when Voyage is the active rerank provider — a presence-only `voyage.rerank` check
@@ -2205,9 +2277,9 @@ export async function rerankMatches(
         return res;
       },
       undefined,
-      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", modelName) }
+      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", modelName, provider) }
     );
-    meterRerank(query, documents, modelName, userId);
+    meterRerank(query, documents, modelName, userId, provider);
     recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
     
     const data = isOpenRouter ? (resp.results ?? []) : (resp.data ?? []);
@@ -2581,7 +2653,9 @@ async function storeContextsImpl(
     audit("vector_ingest_budget", budgetPayload, userId);
     await settleRagSideEffect(alertUsageLimitHit({
       userId,
-      provider: "Voyage",
+      // Was hardcoded "Voyage" — now that the ingest budget counts embeds from ANY provider (see
+      // remainingIngestTexts above), the alert must say which provider actually hit the cap.
+      provider: activeEmbeddingProvider(userId),
       operation: "embed-budget",
       limitName: "RAG ingest text daily cap",
       status: budget.allowed === 0 ? "exceeded" : "warning",
@@ -2597,7 +2671,7 @@ async function storeContextsImpl(
       signal: options?.leaseGuard?.signal
     }), options?.leaseGuard);
     await settleRagSideEffect(captureRagSentryMessage("warning", "RAG ingest text budget reached", {
-      provider: "voyage",
+      provider: activeEmbeddingProvider(userId),
       operation: "embed-budget",
       source: userId === "local" ? "operator" : "user",
       requested: requestedEmbeddingTexts,
@@ -2774,7 +2848,7 @@ async function storeContextsImpl(
             { durablyTrackedInside: true }
           );
           assertVectorStoreLease(options?.leaseGuard);
-          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId);
+          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId));
           const validated = validateDocumentEmbeddingBatch(response.data, missingInputs.length);
           if (!validated.embeddings) {
             rejected = validated.rejected;
@@ -2805,7 +2879,7 @@ async function storeContextsImpl(
           { durablyTrackedInside: true }
         );
         assertVectorStoreLease(options?.leaseGuard);
-        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId);
+        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId));
         const validated = validateDocumentEmbeddingBatch(response.data, batch.length);
         batchEmbeddings = validated.embeddings;
         rejected = validated.rejected;
@@ -2912,8 +2986,8 @@ async function storeContextsImpl(
     if (rejectedInvalidEmbeddings > 0) {
       assertVectorStoreLease(options?.leaseGuard);
       audit("vector_embedding_integrity", { rejected: rejectedInvalidEmbeddings, attempted: validDocuments.length }, userId);
-      await captureRagSentryMessage("warning", "Voyage document embedding integrity rejection", {
-        provider: "voyage",
+      await captureRagSentryMessage("warning", "RAG document embedding integrity rejection", {
+        provider: activeEmbeddingProvider(userId),
         operation: "embed documents",
         source: voyageSource,
         attempted: validDocuments.length,
@@ -5799,7 +5873,7 @@ export async function retrieveContextDetailed(
           undefined,
           { durablyTrackedInside: true }
         );
-        meterEmbed([q], activeModel, userId); // count only on a cache MISS; book under the requesting userId
+        meterEmbed([q], activeModel, userId, activeEmbeddingProvider(userId)); // count only on a cache MISS; book under the requesting userId
         recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
         embedding = response.data?.[0]?.embedding;
       }
@@ -5811,8 +5885,8 @@ export async function retrieveContextDetailed(
           const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
           audit("vector_embedding_integrity", { rejected: 1, context: "query" }, userId);
           console.warn(`[vector-db] Rejected malformed query embedding (dim=${dim}).`);
-          void captureRagSentryMessage("warning", "Voyage query embedding integrity rejection", {
-            provider: "voyage",
+          void captureRagSentryMessage("warning", "RAG query embedding integrity rejection", {
+            provider: activeEmbeddingProvider(userId),
             operation: "embed query",
             source: voyageSource,
             rejected: 1,
