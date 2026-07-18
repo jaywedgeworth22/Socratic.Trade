@@ -520,3 +520,14 @@ export function admitRun(userId: string, batch: MaterialEvent[]): { ok: boolean;
 function distinctTypes(batch: MaterialEvent[]): string[] {
   return Array.from(new Set(batch.map((e) => e.type)));
 }
+
+export function resetTriggersForTesting(): void {
+  for (const [userId, runtime] of runtimes.entries()) {
+    if (runtime.timer) {
+      clearTimeout(runtime.timer);
+      runtime.timer = null;
+    }
+  }
+  runtimes.clear();
+  firesInFlight.clear();
+}

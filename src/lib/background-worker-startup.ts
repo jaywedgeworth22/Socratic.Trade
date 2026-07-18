@@ -14,6 +14,7 @@ export interface BackgroundWorkerStarters {
   startScheduler(): void;
   startUsageMonitorReplay(): void;
   startStreams(): void;
+  startSecIngestWorker(): void;
 }
 
 export interface BackgroundWorkerStartupOptions {
@@ -60,15 +61,16 @@ export function resolveBackgroundWorkerDecision(
 }
 
 async function loadDefaultStarters(): Promise<BackgroundWorkerStarters> {
-  const [{ startScheduler }, { startUsageMonitorReplay }, { startStreams }] = await Promise.all([
+  const [{ startScheduler }, { startUsageMonitorReplay }, { startStreams }, { startSecIngestWorker }] = await Promise.all([
     import("./scheduler"),
     import("./usage-monitor-replay"),
     import("./streams"),
+    import("./rag/sec-ingest-worker"),
   ]);
-  return { startScheduler, startUsageMonitorReplay, startStreams };
+  return { startScheduler, startUsageMonitorReplay, startStreams, startSecIngestWorker };
 }
 
-/** Resolve, report, and start the three process-level background worker families exactly once. */
+/** Resolve, report, and start the four process-level background worker families exactly once. */
 export async function startServerBackgroundWorkers(
   options: BackgroundWorkerStartupOptions = {}
 ): Promise<BackgroundWorkerDecision> {
@@ -88,5 +90,6 @@ export async function startServerBackgroundWorkers(
   starters.startScheduler();
   starters.startUsageMonitorReplay();
   starters.startStreams();
+  starters.startSecIngestWorker(); // opt-in (SEC_INGEST_WORKER_ENABLED); self-gated, no-ops otherwise
   return decision;
 }

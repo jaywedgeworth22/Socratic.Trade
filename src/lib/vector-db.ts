@@ -4318,6 +4318,48 @@ export function managedVectorReceiptEvidence(options: {
     }));
 }
 
+export interface PurgeManagedVectorsByIdsResult {
+  deleted: number;
+  ids: string[];
+}
+
+/**
+ * Delete an exact, caller-provided set of managed-namespace vector ids. This generalizes the same
+ * exact-id delete pattern `purgePrivateVectorRecordsForUser`'s local `purgeExactIds` closure uses
+ * (chunked `deleteMany({ids})` calls against the managed namespace), for callers that derive their
+ * own target id list from LOCAL receipts (e.g. corpus-reembed's legacy-embedding-space purge)
+ * rather than a private-account inventory scan. Deliberately takes only exact ids — never a
+ * metadata filter — so a purge can never remove more than the caller already proved it owns.
+ */
+export async function purgeManagedVectorsByIds(
+  ids: string[],
+  options: { userId?: string; leaseGuard?: VectorStoreLeaseGuard } = {}
+): Promise<PurgeManagedVectorsByIdsResult> {
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) return { deleted: 0, ids: [] };
+  const userId = options.userId ?? "local";
+  assertVectorStoreLease(options.leaseGuard);
+  const { pc, pineconeSource } = await getPineconeClient(userId, options.leaseGuard);
+  if (!pc) throw new Error("Pinecone key not configured for managed vector purge.");
+  const index = vectorDataIndex(pc, "managed", undefined, userId);
+  const batchSize = 100;
+  let deleted = 0;
+  for (const idBatch of chunks(uniqueIds, batchSize)) {
+    assertVectorStoreLease(options.leaseGuard);
+    await withRagApiHealth(
+      "pinecone",
+      pineconeSource,
+      userId,
+      "corpus-reembed legacy-space purge",
+      () => index.deleteMany({ ids: idBatch }),
+      options.leaseGuard
+    );
+    assertVectorStoreLease(options.leaseGuard);
+    deleted += idBatch.length;
+  }
+  return { deleted, ids: uniqueIds };
+}
+
 /**
  * Provider-first account erasure for private RAG data. The exact prepared-request id is required so
  * only this operation can cross the provider-dispatch fence. Local receipts/API keys are untouched

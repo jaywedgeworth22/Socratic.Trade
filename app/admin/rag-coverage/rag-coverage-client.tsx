@@ -270,7 +270,7 @@ export function RagCoverageClient() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">RAG coverage</h1>
+        <h1 className="text-xl font-semibold">RAG Coverage</h1>
         <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
           What&apos;s in the vector index per ticker — chunk counts, freshness, and coverage gaps.
         </p>
