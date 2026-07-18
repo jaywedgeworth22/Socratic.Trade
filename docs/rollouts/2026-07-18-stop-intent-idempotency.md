@@ -124,11 +124,58 @@ Read `gh pr diff 1738` in full before editing; it MERGED into `main` (`4e3694a5`
     changed path is side-agnostic and behaves identically for all four.
 - Full suite/build NOT run (explicit task instruction).
 
+## Round 2 — manual merge of origin/main + adversarial MUST-FIX (2026-07-18, same day)
+
+The adversarial verifier confirmed the lane (v54 partial-index risk ruled out; all transaction
+sites atomic; complementary to merged #1738) with one demonstrated MUST-FIX, and origin/main
+(`b4dd8a54`, includes #1735's v52 and #1738's section-1 marker-lane rework) required a manual
+merge. Both done on this branch:
+
+### Merge resolution (git could not auto-merge; resolved per the verifier's map)
+- `db.ts` migration-array tail: main's **v52** (`sec_rag_tables_recovery`) kept first, then this
+  branch's **v53/v54** — numbering confirmed correct, no renumber. Stale "v51 latest" comment
+  updated.
+- `broker-protective-stops.ts` section 4: **both mechanisms kept** — the placement-intent lane
+  (this branch) and the halted `pending_replace` marker lane (#1738). The intent check stays
+  BEFORE coverage/qty computation; main's `const priorRef = haltedRetryRefFor(sym)` kept; the
+  client id composes as `refId = priorRef ?? fresh` and `upsertBrokerStopPlacementIntent` stores
+  that possibly-reused ref (both lanes reconcile against the same id). Reject/no-id paths run BOTH
+  `deleteBrokerStopPlacementIntent` AND `persistHaltedRightSizeRetry` (no ref — a rejected
+  client-order-id must not be reused); the catch path audits, persists the marker WITH the ref,
+  and leaves the intent row for next-tick reconciliation.
+
+### MUST-FIX — intent order visible-but-TERMINAL with fills (demonstrated fill-loss + over-sell)
+The intent lane handled adopt-if-LIVE and confirmed-dead-by-ABSENCE but not the third outcome:
+the accepted order is visible in the fetched list and already terminal WITH executed quantity
+(accepted after the crash, filled before the next tick — exactly when stops fill). Pre-fix it fell
+into the confirm-dead lane: the fill was never booked and section 4 immediately re-placed a
+full-size stop sized off the stale pre-fill snapshot. Fixed by mirroring the section-1 marker
+lane's book-if-filled pattern: a new `deleteIntentAndBookStopFill` transaction (delete intent +
+book the fill with the `brokerHeldProtectiveStop` marker, keyed by the REAL broker order id, in
+one transaction) plus `filledRecoverySymbols` deferral so placement waits for a fresh position
+read. Only a terminal order with ZERO executed quantity is confirmed dead and places fresh.
+
+### 9th transaction site
+Main's section-1 marker lane book-if-filled (its `bookBrokerHeldStopFill(row, matched)` +
+`deleteBrokerProtectiveStop`) was the one remaining non-atomic delete/book pair after the merge —
+now routed through `deleteAndBookBrokerStopFill` like the other 8.
+
+### Round-2 verification
+- `npx tsc --noEmit` — exit 0 on the merged tree.
+- Same 8-suite vitest command — **8 files / 250 tests pass, 0 fail** (count grew from 227: main's
+  new tests + 2 folded adversarial regressions).
+- The verifier's adversarial test was folded into `test/broker-protective-stops.test.ts` as
+  "Item 5+6: intent reconciliation when the accepted order already FILLED before the next tick"
+  (both original assertions, original order: no stale-sized replacement this tick AND the fill
+  booked exactly once) plus a companion "visible-but-terminal with ZERO executed quantity is
+  confirmed dead" case. Both pass individually and in the full suite.
+
 ## Follow-ups / risks
 
-- **Land-time merge with #1738's rewrite of broker-protective-stops.ts is manual** (see the PR
-  #1738 section above for the semantic merge guidance).
-- Migration numbers v53/v54 depend on PR #1735 landing as v52 — re-verify at merge time.
+- ~~Land-time merge with #1738's rewrite~~ — DONE in round 2 (see above); the branch now contains
+  origin/main `b4dd8a54`.
+- ~~Migration numbers v53/v54 depend on PR #1735 landing as v52~~ — RESOLVED: #1735's v52 is on
+  main and merged into this branch; v53/v54 confirmed.
 - `bookBrokerHeldStopFill` books `side: "sell"` unconditionally; the reconciler is long-only today
   (liveLongs filter), so buy/short/cover never reach it — the new index/handler are side-agnostic
   (verified by test) if shorts are ever added.

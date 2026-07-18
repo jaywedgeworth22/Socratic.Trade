@@ -10,7 +10,7 @@ import {
   desiredBrokerStopKind,
   reconcileBrokerProtectiveStops
 } from "../src/lib/broker-protective-stops";
-import { getDb, listBrokerProtectiveStops, listFillEvents } from "../src/lib/db";
+import { getDb, listBrokerProtectiveStops, listFillEvents, upsertBrokerProtectiveStop } from "../src/lib/db";
 import type { BrokerGateway, EquityOrder, EquityPosition, TradingPolicy } from "../src/lib/types";
 
 beforeAll(() => {
@@ -19,10 +19,11 @@ beforeAll(() => {
 
 interface PlacedOrder { symbol: string; side: string; type: string; quantity?: number; stopPrice?: number; trailPercent?: number; timeInForce: string }
 
-function fakeGateway(): BrokerGateway & { placed: PlacedOrder[]; cancelled: string[]; nextOrderId: string; placeState: string; failCancel: boolean } {
+function fakeGateway(): BrokerGateway & { placed: PlacedOrder[]; cancelled: string[]; orders: EquityOrder[]; nextOrderId: string; placeState: string; failCancel: boolean } {
   const g = {
     placed: [] as PlacedOrder[],
     cancelled: [] as string[],
+    orders: [] as EquityOrder[], // returned by getEquityOrders (marker-ref reconciliation reads this)
     nextOrderId: "ord-1",
     placeState: "submitted", // set to "rejected" to simulate a non-throwing synchronous broker decline
     failCancel: false, // flip to simulate a broker cancel that fails (drives the pending_cancel retry)
@@ -34,9 +35,12 @@ function fakeGateway(): BrokerGateway & { placed: PlacedOrder[]; cancelled: stri
       if (g.failCancel) throw new Error("simulated broker cancel failure");
       g.cancelled.push(orderId);
       return { orderId, refId: "x", state: "cancel_requested", raw: {} };
+    },
+    async getEquityOrders() {
+      return g.orders;
     }
   };
-  return g as unknown as BrokerGateway & { placed: PlacedOrder[]; cancelled: string[]; nextOrderId: string; placeState: string; failCancel: boolean };
+  return g as unknown as BrokerGateway & { placed: PlacedOrder[]; cancelled: string[]; orders: EquityOrder[]; nextOrderId: string; placeState: string; failCancel: boolean };
 }
 
 function rhPolicy(account: string, over: Partial<TradingPolicy> = {}): TradingPolicy {
@@ -316,6 +320,87 @@ describe("reconcileBrokerProtectiveStops", () => {
     gw.nextOrderId = "ord-2";
     const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-6"), accountNumber: "PS-6", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
     expect(r.placed).toBe(1);
+  });
+
+  // Codex review, PR #1738 (round 10, F#1): a pending_replace marker can now carry the REAL client ref
+  // of an uncertain halted placement (the broker may have accepted it). cancelBrokerProtectiveStop must
+  // reconcile that ref — cancel the accepted order by its real id — not blindly drop the marker (which
+  // would leave the accepted stop live to double-sell after a synthetic exit).
+  it("cancelBrokerProtectiveStop cancels the accepted order behind a real-ref pending_replace marker", async () => {
+    upsertBrokerProtectiveStop({
+      id: "protstop-local-PS-REFCANCEL-AAPL", userId: "local", accountNumber: "PS-REFCANCEL",
+      symbol: "AAPL", brokerOrderId: "cli-ref-1", quantity: 40, stopPrice: 92, status: "pending_replace",
+      kind: "fixed"
+    });
+    // The broker's order list now shows the accepted order carrying that client ref.
+    gw.orders = [{ id: "real-accepted", symbol: "AAPL", side: "sell", type: "stop_market", state: "queued", quantity: 40, clientOrderId: "cli-ref-1" } as EquityOrder];
+    await cancelBrokerProtectiveStop("local", "PS-REFCANCEL", "AAPL", gw);
+    expect(gw.cancelled).toContain("real-accepted"); // cancelled the REAL order id, not the fake ref
+    expect(listBrokerProtectiveStops("PS-REFCANCEL", "local")).toHaveLength(0); // marker cleared
+  });
+
+  it("cancelBrokerProtectiveStop KEEPS a real-ref marker whose accepted order is not yet visible", async () => {
+    upsertBrokerProtectiveStop({
+      id: "protstop-local-PS-REFKEEP-AAPL", userId: "local", accountNumber: "PS-REFKEEP",
+      symbol: "AAPL", brokerOrderId: "cli-ref-2", quantity: 40, stopPrice: 92, status: "pending_replace",
+      kind: "fixed"
+    });
+    gw.orders = []; // the accepted order is not (yet) visible in the list
+    await cancelBrokerProtectiveStop("local", "PS-REFKEEP", "AAPL", gw);
+    expect(gw.cancelled).toHaveLength(0); // never cancels the synthetic ref
+    // Marker kept so the reconcile loop can cancel the accepted order once it appears (don't lose the handle).
+    const rows = listBrokerProtectiveStops("PS-REFKEEP", "local");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("pending_replace");
+  });
+
+  // Codex review, PR #1738 (round 10, F#3): a halted quantity-shrink right-size must not LOOSEN the
+  // trigger. If stopLossPct was widened, section 4 would place the right-sized replacement at the lower
+  // (looser) current-policy price; the floor clamp keeps it at least as tight as the cancelled stop.
+  it("halted fixed right-size clamps the replacement to the cancelled stop's tighter trigger (no loosening)", async () => {
+    // Existing oversized resting fixed stop: 100 shares @ 92 (from stopLossPct 8, entry 100).
+    upsertBrokerProtectiveStop({
+      id: "protstop-local-PS-FLOOR-AAPL", userId: "local", accountNumber: "PS-FLOOR",
+      symbol: "AAPL", brokerOrderId: "old-fixed", quantity: 100, stopPrice: 92, status: "resting",
+      kind: "fixed"
+    });
+    // Position shrank to 40; policy stopLossPct widened to 15 → naive replacement price would be 85 (looser).
+    const haltedWidened = rhPolicy("PS-FLOOR", {
+      systemState: "halted",
+      riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 15, protectWhileHalted: true }
+    });
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: haltedWidened, accountNumber: "PS-FLOOR", gateway: gw,
+      positions: [longPos("AAPL", 40, 100)], executionMode: "broker/live", running: true,
+      haltedProtectOnly: true
+    });
+    expect(gw.cancelled).toContain("old-fixed"); // oversized stop cancelled
+    expect(r.placed).toBe(1);
+    expect(gw.placed).toHaveLength(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 40 });
+    expect(gw.placed[0].stopPrice).toBe(92); // clamped to the tighter floor, NOT the looser 85
+  });
+
+  // Codex review, PR #1738 (round 10, F#4): when a real-ref marker's accepted order shows up already
+  // FILLED/terminal, section 1 must BOOK the fill (so it reaches fill_events / P&L / learning) and drop
+  // the marker — not ignore the terminal order and retry the ref forever.
+  it("books the fill when a real-ref marker's accepted order is already filled, then drops the marker", async () => {
+    upsertBrokerProtectiveStop({
+      id: "protstop-local-PS-REFFILL-AAPL", userId: "local", accountNumber: "PS-REFFILL",
+      symbol: "AAPL", brokerOrderId: "cli-ref-3", quantity: 40, stopPrice: 92, status: "pending_replace",
+      kind: "fixed"
+    });
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("PS-REFFILL"), accountNumber: "PS-REFFILL", gateway: gw,
+      positions: [longPos("AAPL", 40, 100)], executionMode: "broker/live", running: true,
+      orders: [{ id: "real-filled", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled", quantity: 40, filledQuantity: 40, averagePrice: 91.5, clientOrderId: "cli-ref-3" } as EquityOrder]
+    });
+    // The stop's exit was booked to fill_events (P&L/learning see it) ...
+    const fills = listFillEvents("PS-REFFILL", "live", 10, "local");
+    expect(fills.some((f) => f.symbol === "AAPL" && f.status === "filled")).toBe(true);
+    // ... and the marker is gone (not retried).
+    expect(listBrokerProtectiveStops("PS-REFFILL", "local").some((x) => x.status === "pending_replace")).toBe(false);
+    expect(r.filledRecoverySymbols).toContain("AAPL");
   });
 });
 
@@ -1207,6 +1292,101 @@ describe("reconcileBrokerProtectiveStops — round-9 (Codex review, PR #1331)", 
     });
     expect(replay.id).toBe(firstFills[0].id); // idempotent no-op, returns the already-booked fill
     expect(listFillEvents("ITEM6-REPLAY", "live")).toHaveLength(1); // still exactly once, not twice
+  });
+
+  it("Item 5+6: intent reconciliation when the accepted order already FILLED before the next tick — books the fill, defers re-placement (2026-07-18 adversarial finding)", async () => {
+    // Gap under attack: the intent lane handled adopt-if-LIVE and confirmed-dead-by-ABSENCE, but not
+    // the third outcome — the accepted order is VISIBLE in the fetched list but already TERMINAL
+    // with executed quantity (the stop was accepted after the crash and FILLED before the next tick;
+    // entirely plausible for a stop placed into a falling market, which is exactly when stops fill).
+    // Pre-fix: the intent fell into the confirm-dead lane, NO fill was booked, and section 4
+    // immediately placed a fresh full-size stop sized off the stale pre-fill position snapshot
+    // (fill lost + possible over-sell short).
+    let capturedRefId: string | undefined;
+    let throwOnPlace = true;
+    (gw as unknown as { placeEquityOrder: (order: Record<string, unknown>) => Promise<unknown> }).placeEquityOrder = async (order: Record<string, unknown>) => {
+      capturedRefId = order.refId as string;
+      if (throwOnPlace) throw new Error("simulated network timeout after broker accept");
+      gw.placed.push({ symbol: order.symbol as string, side: order.side as string, type: order.type as string, quantity: order.quantity as number, stopPrice: order.stopPrice as number, timeInForce: order.timeInForce as string });
+      return { orderId: gw.nextOrderId, refId: order.refId, state: gw.placeState, raw: {} };
+    };
+
+    const account = "ADV-INTENT-FILLED";
+    const args = {
+      userId: "local", policy: rhPolicy(account), accountNumber: account, gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live" as const, running: true
+    };
+
+    // Tick 1: placement throws after the broker (invisibly) accepted — durable intent persists.
+    const r1 = await reconcileBrokerProtectiveStops(args);
+    expect(r1.placed).toBe(0);
+    const { getBrokerStopPlacementIntent } = await import("../src/lib/db");
+    const intent = getBrokerStopPlacementIntent(account, "AAPL", "local");
+    expect(intent).toBeTruthy();
+    expect(intent!.clientOrderId).toBe(capturedRefId);
+
+    // Between ticks: the accepted stop (10 sh @ trigger 92) FILLED — the position is really 0 now,
+    // but this tick's `positions` snapshot (fetched before orders, per synthetic-stops.ts ordering)
+    // still shows the pre-fill 10 shares. The freshly fetched order list shows the terminal order
+    // carrying the intent's client ref (Alpaca getEquityOrders pages status:"all", so terminal
+    // orders ARE visible).
+    throwOnPlace = false;
+    const filledAcceptedOrder: EquityOrder = {
+      id: "ord-real-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled",
+      clientOrderId: intent!.clientOrderId, quantity: 10, filledQuantity: 10, averagePrice: 92,
+      createdAt: new Date().toISOString()
+    };
+    const r2 = await reconcileBrokerProtectiveStops({ ...args, orders: [filledAcceptedOrder] });
+
+    // Intent must be resolved either way.
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeUndefined();
+
+    // (b) The same tick must NOT place a fresh full-size stop sized off the stale 10-share
+    // snapshot: those shares were just sold by the recovered fill. Defers via filledRecoverySymbols
+    // for exactly this reason.
+    expect(gw.placed).toHaveLength(0);
+    expect(r2.filledRecoverySymbols).toEqual(["AAPL"]);
+    expect(listBrokerProtectiveStops(account, "local")).toHaveLength(0);
+
+    // (a) The executed 10-share sell MUST reach fill_events — this is real money that moved.
+    const fills = listFillEvents(account, "live");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 10, price: 92, status: "filled" });
+  });
+
+  it("Item 5+6: a visible-but-terminal intent order with ZERO executed quantity is confirmed dead — places fresh, books nothing", async () => {
+    let throwOnPlace = true;
+    (gw as unknown as { placeEquityOrder: (order: Record<string, unknown>) => Promise<unknown> }).placeEquityOrder = async (order: Record<string, unknown>) => {
+      if (throwOnPlace) throw new Error("simulated network timeout after broker accept");
+      gw.placed.push({ symbol: order.symbol as string, side: order.side as string, type: order.type as string, quantity: order.quantity as number, stopPrice: order.stopPrice as number, timeInForce: order.timeInForce as string });
+      return { orderId: gw.nextOrderId, refId: order.refId, state: gw.placeState, raw: {} };
+    };
+    const account = "ADV-INTENT-DEADZERO";
+    const args = {
+      userId: "local", policy: rhPolicy(account), accountNumber: account, gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live" as const, running: true
+    };
+    await reconcileBrokerProtectiveStops(args); // tick 1: throws, leaves an intent
+    const { getBrokerStopPlacementIntent } = await import("../src/lib/db");
+    const intent = getBrokerStopPlacementIntent(account, "AAPL", "local");
+    expect(intent).toBeTruthy();
+
+    // Tick 2: the order IS visible but terminal with nothing executed (broker canceled it outright,
+    // e.g. risk-check kill) — genuinely dead, position untouched. Fresh placement must proceed and
+    // no phantom fill may be booked.
+    throwOnPlace = false;
+    gw.nextOrderId = "ord-fresh-2";
+    const canceledZeroFill: EquityOrder = {
+      id: "ord-dead-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "canceled",
+      clientOrderId: intent!.clientOrderId, quantity: 10, createdAt: new Date().toISOString()
+    };
+    const r2 = await reconcileBrokerProtectiveStops({ ...args, orders: [canceledZeroFill] });
+    expect(r2.placed).toBe(1);
+    expect(r2.filledRecoverySymbols).toEqual([]);
+    expect(gw.placed).toHaveLength(1); // the fresh placement
+    expect(listFillEvents(account, "live")).toHaveLength(0); // nothing executed, nothing booked
+    expect(listBrokerProtectiveStops(account, "local")[0]).toMatchObject({ brokerOrderId: "ord-fresh-2", status: "resting" });
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeUndefined();
   });
 });
 
