@@ -88,7 +88,7 @@ describe("upsertImportedRefs / getImportedRef", () => {
     upsertImportedRefs([{ ticker: "tsla", companyName: "Tesla", sector: "Auto", marketCap: 1e12 }]);
     upsertImportedRefs([{ ticker: "TSLA", industry: "EV" }]); // omits companyName/sector
     const ref = getImportedRef("TSLA");
-    expect(ref?.companyName).toBe("TESLA");
+    expect(ref?.companyName).toBe("Tesla");
     expect(ref?.sector).toBe("Auto");
     expect(ref?.industry).toBe("EV");
     expect(ref?.marketCap).toBe(1e12);

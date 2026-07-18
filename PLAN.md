@@ -1,10 +1,48 @@
 # Active Implementation Plan
 
+> **2026-07-18 - PR #1735 review cleanup round 2 (CODEX on `agent/ag-recovery-v48-migration`).**
+> Address the fresh Codex comments by preserving company-name display casing in securities imports
+> and restoring the missing lockfile peer dependency entries. Focused import tests and clean-install
+> dry-run are green; push back to PR #1735, resolve the threads, and let hosted checks arbitrate.
+
 > **2026-07-18 - PR #1735 verify cleanup (CODEX on `agent/ag-recovery-v48-migration`).**
 > Merged latest `origin/main` and fixed the missed attribution assertions that were still expecting
 > provider-qualified IDs after the branch canonicalized OpenRouter telemetry to bare model IDs.
 > Focused failing test set is green; push back to PR #1735 and let hosted checks arbitrate full-suite
 > readiness.
+> **2026-07-18 - PR #1736 review cleanup (CODEX on `monet/model-identity-shared`).**
+> Merged latest `origin/main`, kept the shared model-identity helper behavior, and restored
+> case-insensitive usage aggregation by using a lowercase aggregation key with case-preserving
+> display/canonical output. Focused usage-model merge tests are green; push back to PR #1736 and
+> let hosted checks arbitrate full-suite readiness.
+> **2026-07-18 - CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739).**
+> Classifier checkouts now pin the event SHA. Security deliberately keeps full history for Gitleaks.
+> Diff/YAML/actionlint checks passed; final gate and deployment follow the parent routing PR.
+
+> **2026-07-18 - CI shallow-checkout recovery (CODEX, PR #1741 integrated into PR #1739).**
+> Classify jobs compare base/head endpoint trees after shallow fetches. Security deliberately keeps
+> full history for Gitleaks. Diff/YAML/actionlint checks passed; final gate follows the parent PR.
+
+> **2026-07-18 - Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`).**
+> Route required PR checks and PR-visible helper workflows from GitHub-hosted `ubuntu-latest` to the
+> dedicated Coolify Hetzner CI lane (`[self-hosted, socratic-ci]`), recover the exited runner
+> containers through the Coolify service API, and make Gitleaks compatible with the `/_work`
+> self-hosted workspace. Bound the heavy Node jobs to a 2560 MiB heap inside the runner's 3 GiB
+> container cap so TypeScript and the Playwright build can complete. This is an
+> infrastructure unblock for the six clean/auto-merge-armed PRs whose jobs currently fail before
+> runner assignment. Keep Coolify production configured on `main` with auto-deploy enabled. After
+> this lands, rerun checks on #1728/#1733/#1735/#1736/#1737/#1738 and let auto-merge/deploy proceed.
+> Playwright gets a CI-only 600-second server-start allowance because the runner's low CPU shares are
+> intentional; local timeout remains 240 seconds. Gate bot-triggered Codex autofix jobs to same-repo
+> PR heads before a persistent runner, checkout, write token, or model secret is admitted. Compensate
+> for Coolify's same-container `restart: always` lifecycle by clearing only the ephemeral `/_work`
+> directory before each `EPHEMERAL=1` runner registration. Keep failure telemetry independent of
+> the observed CI runner by routing its short failure/schedule-only job to `socratic-deploy`. Keep
+> all other work on the dedicated CI label; reject generic-Linux routing and checkout timeouts below
+> the measured 3m31s-3m57s clean checkout duration. Reject fork PRs at job admission before CI/E2E
+> classifiers or the token-bearing package-pin check reach the persistent runner. Pin the manually
+> dispatched merge-shepherd implementation to this repository's trusted `main` workflow before it
+> inherits write permissions and secrets.
 
 > **2026-07-17 - OpenRouter Model Stats Canonicalization (Antigravity, branch `antigravity/openrouter-universal-routing`).** Implemented server-side model-id canonicalization (`cleanModelId`) inside `aggregateModelStats` and `normalizeBenchmarkSummaries` in `src/lib/model-stats.ts` to strip provider prefixes (like `openai/`, `google/`, etc.) from qualified OpenRouter model IDs. This ensures that usage, latency, closed trades, and benchmark summaries are aggregated and mapped back to their bare catalog model base names (e.g., `gpt-5.6-terra`, `gemini-3.5-flash`), preventing stats split and lookup mismatch in the Model Stats drawer. Verified via vitest and compiler checks. Rollout: `docs/rollouts/2026-07-17-openrouter-model-stats-canonicalization.md`.
 ## 2026-07-16 — OpenRouter Catalog Integration & JSON Repair (ANTIGRAVITY)

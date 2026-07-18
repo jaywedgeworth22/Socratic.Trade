@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetDbForTesting } from "../src/lib/db";
+import { resetTriggersForTesting } from "../src/lib/triggers";
 
 const runStrategyOnceMock = vi.fn().mockResolvedValue({
   runId: "test-run",
@@ -13,10 +15,8 @@ const runStrategyOnceMock = vi.fn().mockResolvedValue({
   summary: "test strategy run completed",
   proposals: []
 });
-vi.mock("../src/lib/strategy", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/lib/strategy")>();
+vi.mock("../src/lib/strategy", () => {
   return {
-    ...actual,
     runStrategyOnce: (...args: unknown[]) => runStrategyOnceMock(...args)
   };
 });
@@ -28,18 +28,22 @@ vi.mock("../src/lib/market-hours", () => ({
 }));
 
 beforeAll(() => {
+  resetDbForTesting();
+  vi.resetModules();
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-test-${randomUUID()}.db`)}`;
 });
 
 const ENV_KEYS = ["TRIGGER_ENGINE", "TRIGGER_MODE", "TRIGGER_LLM_DAILY_TOKEN_BUDGET", "TRIGGER_LLM_DAILY_COST_BUDGET_USD", "TRIGGER_GLOBAL_COOLDOWN_SEC", "TRIGGER_MAX_BATCH"];
 
 beforeEach(() => {
-  vi.useFakeTimers();
   runStrategyOnceMock.mockClear();
 });
 
 afterEach(() => {
-  vi.useRealTimers();
+  resetDbForTesting();
+  resetTriggersForTesting();
+  vi.resetModules();
+  vi.unstubAllEnvs();
   for (const k of ENV_KEYS) delete process.env[k];
 });
 
@@ -126,7 +130,6 @@ describe("trigger entry (fire) wired to the budget ceiling (G8a — end to end)"
     const { submitMaterialEvent } = await import("../src/lib/triggers");
 
     submitMaterialEvent(userId, { type: "test", sourceId: "s1" });
-    await vi.runAllTimersAsync();
     await vi.waitFor(() => expect(runStrategyOnceMock).toHaveBeenCalledWith(userId));
   });
 
@@ -143,7 +146,6 @@ describe("trigger entry (fire) wired to the budget ceiling (G8a — end to end)"
     const { getDb } = await import("../src/lib/db");
 
     submitMaterialEvent(userId, { type: "test", sourceId: "s2" });
-    await vi.runAllTimersAsync();
     // The outer gate no longer suppresses — the run is entered so its non-LLM risk breakers +
     // reconciliation still run; runStrategyOnce (mocked here) internally skips only the LLM work.
     await vi.waitFor(() => expect(runStrategyOnceMock).toHaveBeenCalledWith(userId));

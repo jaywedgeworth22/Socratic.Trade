@@ -34,3 +34,38 @@ Result: 4 files passed, 34 tests passed.
 ## Follow-ups
 
 Let PR #1735 hosted `verify` rerun on the pushed branch and use the full gate as the merge arbiter.
+
+## Round 2 review cleanup
+
+Resolved two fresh Codex review comments on PR #1735:
+
+- Preserved `companyName` display casing in `src/lib/db-securities-import.ts`; ticker normalization
+  remains uppercase, but imported names such as `Tesla` no longer pass through the ticker-oriented
+  shared `clean()` helper.
+- Regenerated `package-lock.json` with `npm install --package-lock-only --ignore-scripts --no-audit
+  --no-fund`, restoring the peer dependency entries needed by `@langfuse/otel` and webpack so clean
+  installs no longer re-resolve/fail on missing lock entries.
+
+Additional verification:
+
+```bash
+npm ci --dry-run --ignore-scripts
+npm ci --no-audit --no-fund
+npm test -- test/securities-import.test.ts
+```
+
+Result: clean-install dry-run passed; focused securities import suite passed, 17/17 tests.
+
+## Round 3 review cleanup
+
+Resolved the OpenRouter proposal attribution card mismatch issue (Codex review comment):
+- Exported and integrated `normalizeModelId` in `app/console/components/approval-card.tsx` to strip routing and vendor prefixes before comparing `p.proposedByModel` against configured primary or fallbacks.
+- Added comprehensive unit tests in `test/approvals-triage-model.test.ts` to verify prefix stripping works under all standard scenarios.
+
+Additional verification:
+
+```bash
+npx vitest run test/approvals-triage-model.test.ts
+```
+
+Result: all 4 tests passed, including `normalizeModelId` tests.
