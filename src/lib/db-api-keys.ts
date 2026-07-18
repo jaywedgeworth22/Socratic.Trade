@@ -124,6 +124,7 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   massive_secret_access_key: "MASSIVE_SECRET_ACCESS_KEY",
   pinecone: "PINECONE_API_KEY",
   voyage: "VOYAGE_API_KEY",
+  siliconflow: "SILICONFLOW_API_KEY",
   alpaca_paper_api_key: "ALPACA_PAPER_API_KEY",
   alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY",
   apify: "APIFY_API_TOKEN",
@@ -169,6 +170,7 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   massive_api_key: "massive",
   pinecone_api_key: "pinecone",
   voyage_api_key: "voyage",
+  siliconflow_api_key: "siliconflow",
   alpaca_paper_api_key: "alpaca_paper_api_key",
   alpaca_paper_secret_key: "alpaca_paper_secret_key",
   apify_api_token: "apify",
@@ -309,6 +311,7 @@ const API_KEY_TIER: Record<string, CredTier> = {
   apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
   pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
   voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
+  siliconflow: "shared-operator-infra", // alternative embeds/reranker provider for the shared corpus
   sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
   tiingo: "shared-operator-infra",
   intrinio: "shared-operator-infra",

@@ -103,7 +103,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   };
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.clearAllMocks();
   mocks.hasIngestTextBudget.mockImplementation(() => true);
   mocks.insertSecArtifact.mockImplementation(() => undefined);
@@ -120,6 +120,18 @@ afterEach(() => {
     ))
   }));
   delete process.env.VECTOR_EMBED_BATCH_DELAY_MS;
+
+  try {
+    const { getDb } = await import("../src/lib/db");
+    const db = getDb();
+    db.prepare("DELETE FROM sec_filings").run();
+    db.prepare("DELETE FROM sec_artifacts").run();
+    db.prepare("DELETE FROM ingested_accessions").run();
+    db.prepare("DELETE FROM settings WHERE key LIKE 'operation_lease:%'").run();
+    db.prepare("DELETE FROM settings WHERE key LIKE 'webSource:%'").run();
+  } catch (err) {
+    // Ignore database clean-up errors before DB is initialized
+  }
 });
 
 // ── 1. Pure parser tests ──────────────────────────────────────────────────────
@@ -320,7 +332,7 @@ describe("ingestFiling", () => {
         acceptance_datetime: ref.acceptanceDateTime
       }),
       "local",
-      { parserRevision: "sec-edgar-filing-v1" }
+      { parserRevision: "sec-edgar-filing-v2" }
     );
   });
 
@@ -359,7 +371,7 @@ describe("ingestFiling", () => {
     expect(mocks.storeDocument).toHaveBeenCalledWith(
       expect.objectContaining({ source: "sec-edgar", doc_id: `AAPL:${ref.accession}:${ref.docType}` }),
       "local",
-      { leaseGuard: guard, parserRevision: "sec-edgar-filing-v1" }
+      { leaseGuard: guard, parserRevision: "sec-edgar-filing-v2" }
     );
   });
 
