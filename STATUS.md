@@ -4,10 +4,12 @@
 
 GitHub-hosted `ubuntu-latest` jobs are failing before runner assignment on current open PRs
 (`runner_id=0`, no steps/log blob). Repo runners show Coolify Hetzner Linux runners, while the old
-`trading-live-mac` runner is offline; the narrower `socratic-ci` runner later flapped/disappeared
-during checkout, so this branch routes GitHub Actions jobs that still used `ubuntu-latest` onto the
-Coolify Linux pool (`[self-hosted, Linux, X64]`) instead of a single brittle runner label. YAML parse
-and actionlint verification passed. Rollout:
+`trading-live-mac` runner is offline. Both Socratic runner containers later exited and disappeared
+from GitHub; the Coolify `github-runner` service restart recovered them. This branch routes Actions
+jobs that still used `ubuntu-latest` onto the dedicated `[self-hosted, socratic-ci]` lane so PR work
+queues instead of consuming the deploy runner. It also disables Gitleaks' optional SARIF artifact
+upload because that action fails after a clean scan when the self-hosted workspace lives under
+`/_work` instead of `/root`. YAML parse and actionlint verification passed. Rollout:
 `docs/rollouts/2026-07-18-coolify-ci-runner-routing.md`.
 
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)

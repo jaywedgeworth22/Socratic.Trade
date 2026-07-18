@@ -58,7 +58,7 @@ env:
 
 jobs:
   check-pin:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, socratic-ci]
     steps:
       - uses: actions/checkout@v4
 

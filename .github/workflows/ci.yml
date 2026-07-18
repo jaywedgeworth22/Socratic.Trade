@@ -68,7 +68,7 @@ jobs:
     # Cheap gate-shape job: (1) is this diff documentation-only? (2) which runner should
     # execute the suite? Only `pull_request` gets the docs fast path; only fresh
     # self-advertised availability on a same-repo pull_request/push event routes self.
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
     outputs:
@@ -275,13 +275,13 @@ jobs:
           path: .next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
 
-  # Coolify Linux lane: the deterministic Linux baseline. This keeps the historic job id
+  # Coolify CI lane: the deterministic Linux baseline. This keeps the historic job id
   # `verify-hosted` for branch-protection/status continuity, but it now runs on the online
   # Coolify Hetzner runner because GitHub-hosted `ubuntu-latest` is not assigning jobs here.
   verify-hosted:
     needs: [classify, verify-self]
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && (needs.classify.outputs.route != 'self' || needs.verify-self.result != 'success') }}
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
       packages: read
@@ -353,7 +353,7 @@ jobs:
     # while classify/lane failures cannot silently skip a required check (skipped required
     # checks can fail open — Codex review, PR #370).
     if: ${{ !cancelled() }}
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
     steps:
@@ -371,7 +371,7 @@ jobs:
           note "### verify gate"
           note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, route: ${ROUTE:-n/a})"
           note "- verify-self (macOS, production Mac): ${SELF_RESULT}"
-          note "- verify-hosted (Coolify Linux self-hosted): ${HOSTED_RESULT}"
+          note "- verify-hosted (Coolify socratic-ci): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             note "- RESULT: FAIL — classify did not succeed; the gate never fails open."
@@ -383,9 +383,9 @@ jobs:
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then
             if [ "$SELF_RESULT" = "failure" ]; then
-              note "- RESULT: PASS — produced by Coolify Linux self-hosted (ARBITER: self-hosted Mac lane failed, Linux lane passed)."
+              note "- RESULT: PASS — produced by Coolify socratic-ci (ARBITER: self-hosted Mac lane failed, Linux lane passed)."
             else
-              note "- RESULT: PASS — produced by Coolify Linux self-hosted."
+              note "- RESULT: PASS — produced by Coolify socratic-ci."
             fi
             exit 0
           fi
