@@ -30,7 +30,9 @@ export default defineConfig({
         command: webServerCommand,
         url: healthURL,
         reuseExistingServer: !process.env.CI,
-        timeout: 240_000,
+        // The Coolify CI runner deliberately has low CPU shares so production wins
+        // contention; its full Next build can exceed four minutes without being stuck.
+        timeout: process.env.CI ? 600_000 : 240_000,
         env: {
           CF_ACCESS_TRUST_EMAIL_HEADER: "1",
           PRIMARY_USER_EMAIL: authEmail
