@@ -549,6 +549,17 @@ export async function reconcileBrokerProtectiveStops(args: {
   //    blocking its retry here just leaves a plan-contradicting stop resting indefinitely while live
   //    placement happens to be disabled (Codex review, PR #1371).
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
+    if (row.status === "pending_replace") {
+      // A halted right-size cancel succeeded, but its replacement was rejected
+      // or failed. Remove the durable marker now and let section 4 retry it;
+      // while halted this is the only path allowed to place that replacement.
+      const rowSym = normalizeSymbol(row.symbol);
+      deleteBrokerProtectiveStop(row.id, userId);
+      if (haltedProtectOnly && liveLongs.has(rowSym) && kindForSymbol(rowSym) !== null) {
+        haltedRightsizeSymbols.add(rowSym);
+      }
+      continue;
+    }
     if (row.status === "pending_cancel") {
       const rowSym = normalizeSymbol(row.symbol);
       // Skip the pending_cancel retry for a STILL-OPEN position that still wants a stop when a
@@ -598,13 +609,14 @@ export async function reconcileBrokerProtectiveStops(args: {
         // over-sell risk of an oversized stop is bounded, being unprotected is not. liveReplaceBlocked
         // (escape hatch) never touches the broker regardless (Codex review, PR #1738).
         if (liveReplaceBlocked || !oversized || !(rowPos && rowKind && replacementPlaceable(rowPos, rowSym, rowKind, row.brokerOrderId))) continue;
-        // Fall through to retry the cancel, and mark the symbol so section 4 places the right-sized
-        // replacement this same tick.
-        haltedRightsizeSymbols.add(rowSym);
       }
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);
+        // Mark only after the broker confirms the live cancel. A thrown cancel
+        // or terminal no-fill recovery must not authorize new protection while
+        // halted.
+        if (haltedProtectOnly && oversized) haltedRightsizeSymbols.add(rowSym);
         out.cancelled++;
         out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {
@@ -1011,6 +1023,36 @@ export async function reconcileBrokerProtectiveStops(args: {
   const currentStops = listBrokerProtectiveStops(accountNumber, userId);
   const existing = new Set(currentStops.map((r) => normalizeSymbol(r.symbol)));
 
+  const persistHaltedRightSizeRetry = (
+    sym: string,
+    pos: EquityPosition,
+    kind: "fixed" | "trailing",
+    qty: number,
+    stopPrice: number,
+  ): void => {
+    if (!haltedProtectOnly || !haltedRightsizeSymbols.has(sym)) return;
+    upsertBrokerProtectiveStop({
+      id: `protstop-${userId}-${accountNumber}-${sym}`,
+      userId,
+      accountNumber,
+      symbol: sym,
+      brokerOrderId: `pending-replace-${Date.now()}-${sym}`,
+      quantity: qty,
+      stopPrice,
+      status: "pending_replace",
+      kind,
+      trailPercent: kind === "trailing" ? trailPct : undefined,
+    });
+    audit("broker_protective_stop_retry_queued", {
+      symbol: sym,
+      kind,
+      quantity: qty,
+      stopPrice,
+      positionQuantity: Math.abs(pos.quantity),
+      note: "halted right-size replacement will retry on the next tick",
+    }, userId, policy.connectedAccountId);
+  };
+
   for (const [sym, pos] of liveLongs) {
     if (existing.has(sym)) continue;
     // While halted, place ONLY for a symbol whose oversized stop was just cancelled for right-sizing.
@@ -1091,11 +1133,13 @@ export async function reconcileBrokerProtectiveStops(args: {
         // don't advertise the symbol via placedStopSymbols (that would suppress this tick's
         // synthetic registration for protection that doesn't exist).
         audit("broker_protective_stop_error", { symbol: sym, stopPrice, orderId: exec.orderId, error: `broker declined the protective stop (state: ${exec.state})` }, userId, policy.connectedAccountId);
+        persistHaltedRightSizeRetry(sym, pos, symKind, qty, stopPrice);
         continue;
       }
       if (!exec.orderId) {
         // No broker order id means we couldn't later cancel it — don't record an untrackable stop.
         audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: "broker returned no order id" }, userId, policy.connectedAccountId);
+        persistHaltedRightSizeRetry(sym, pos, symKind, qty, stopPrice);
         continue;
       }
       upsertBrokerProtectiveStop({
@@ -1121,6 +1165,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       audit("broker_protective_stop_placed", { symbol: sym, kind: symKind, stopPrice, trailPercent: symKind === "trailing" ? trailPct : undefined, quantity: qty, positionQuantity: Math.abs(pos.quantity), brokerOrderId: exec.orderId }, userId, policy.connectedAccountId);
     } catch (err) {
       audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId, policy.connectedAccountId);
+      persistHaltedRightSizeRetry(sym, pos, symKind, qty, stopPrice);
     }
   }
   return out;

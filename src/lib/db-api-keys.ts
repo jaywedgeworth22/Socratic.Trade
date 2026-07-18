@@ -869,7 +869,8 @@ export function purgeConnectedAccount(id: string, userId: string = "local"): boo
       "counterfactual_learning_watermarks",
       "learning_mutations",
       "audit_events",
-      "notification_events"
+      "notification_events",
+      "option_alert_reservations"
     ]) {
       database.prepare(`DELETE FROM ${table} WHERE connected_account_id = ? AND user_id = ?`).run(id, userId);
     }
