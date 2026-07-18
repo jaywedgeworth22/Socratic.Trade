@@ -435,9 +435,10 @@ async function earningsCallsGet(path: string, nowMs: number): Promise<EarningsCa
         retries: 0,
         service: "earningscalls",
         apiKey,
-        // See PRE_SUBSCRIPTION_STATUS above: don't let the known pre-subscription 405 feed
+        keySource: "env",
+        // See PRE_SUBSCRIPTION_STATUS above: don't let the known pre-subscription 405, 401, or 403 feed
         // api_health_log and trip the automatic Sentry connection-failed alert.
-        suppressHealthStatuses: [PRE_SUBSCRIPTION_STATUS]
+        suppressHealthStatuses: [PRE_SUBSCRIPTION_STATUS, 401, 403]
       }
     );
   } catch (error) {

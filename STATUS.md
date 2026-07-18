@@ -30,6 +30,13 @@ The sole remaining unresolved thread:
 - **P2 — Wire FMP toggles into provider execution (QUESTION ASKED):** The four FMP toggle flags (`fmpRealTimeDataEnabled`, `fmpMacroDataEnabled`, `fmpEventsDataEnabled`, `fmpFundamentalsDataEnabled`) are persisted in settings and defaults but not yet consumed by the FMP provider runtime code. Asked maintainer whether to wire them in this PR or leave as settings-first follow-up, and what behavior is expected when a toggle is off. Thread stays open pending answer.
 
 Auto-merge already enabled. No code changes this round.
+## 2026-07-18 — earningscalls Sentry alert suppression & SQLite busy_timeout (Antigravity/AG)
+
+Resolved Sentry connection-failed alerts from the dormant `earningscalls` integration (RapidAPI subscription inactive in prod) and made database writes resilient to transient disk-load thrashing by:
+- Passing `keySource: "env"` and adding `401` and `403` to `suppressHealthStatuses` in `fetchWithRetry` options inside `earningsCallsGet` (`src/lib/earningscalls-transcripts.ts`).
+- Increasing SQLite's `busy_timeout` from 5s to 30s in `src/lib/db.ts` to allow transactions to survive disk IO wait during Docker builds on the Hetzner server.
+- Verifying the changes locally under Node 24 (type check clean, unit tests passing).
+
 ## 2026-07-17 — PR #1669 Merged & Deployed: SEC/RAG Advanced RAG Backfill & SiliconFlow Integration (Antigravity/AG)
 
 Successfully resolved all 11 remaining Codex review thread issues on PR #1669, including:
