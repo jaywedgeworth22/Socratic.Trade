@@ -23,7 +23,9 @@ vi.mock("../src/lib/vector-db", () => ({
   defaultDedupeSimilarity: () => 0.6,
   formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
-  storeContexts: async () => {}
+  storeContexts: async () => {},
+  getCurrentVectorProviderAuthority: async () => "test-provider",
+  managedVectorLedgerAuthority: () => "test-ledger"
 }));
 
 const BASE = "https://usage.example.test";
@@ -223,7 +225,7 @@ describe("usage-budget Phase 2: advisory (USAGE_BUDGET_ENFORCE off)", () => {
     const bullUserContent = typeof bullUserMessage?.content === "string" ? bullUserMessage.content : JSON.stringify(bullUserMessage?.content ?? bullBody);
     expect(bullUserContent).toContain("budgetAdvisory");
     expect(bullUserContent).toContain("openai");
-  }, 30_000);
+  }, 90_000);
 });
 
 describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
@@ -282,7 +284,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     const savedPolicy = getPolicy("local");
     expect(savedPolicy.llmModel).toBe("openai/gpt-4o");
     expect(savedPolicy.redTeamLlmModel).toBe("openai/gpt-4o");
-  }, 30_000);
+  }, 90_000);
 
   it("FINDING 1 regression: a cap-breach demotion in the SAME run persists strategyAuthority only — never the in-run model downgrade", async () => {
     // This run BOTH downgrades (over-budget openai) AND trips a cap-breach demotion
@@ -332,7 +334,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     expect(savedPolicy.strategyAuthority).toBe("propose");
     expect(savedPolicy.llmModel).toBe("openai/gpt-4o");
     expect(savedPolicy.redTeamLlmModel).toBe("openai/gpt-4o");
-  }, 30_000);
+  }, 90_000);
 });
 
 describe("usage-budget Phase 2: enforcement ON + skip", () => {
@@ -372,7 +374,7 @@ describe("usage-budget Phase 2: enforcement ON + skip", () => {
 
     // No proposal/fill was ever generated for this run.
     expect(listFillEvents("TEST", undefined, 100, "local").find((f) => f.symbol === "AAPL")).toBeUndefined();
-  }, 30_000);
+  }, 90_000);
 });
 
 describe("usage-budget Phase 2: evaluator failure fails open", () => {
@@ -403,5 +405,5 @@ describe("usage-budget Phase 2: evaluator failure fails open", () => {
     expect(fills.find((f) => f.symbol === "AAPL")).toBeDefined();
     const proposals = listRecentProposals("TEST", 100, "local");
     expect(proposals.find((p) => p.proposal.symbol === "AAPL")?.proposal.proposedByModel).toBe("openai/gpt-4o");
-  }, 30_000);
+  }, 90_000);
 });

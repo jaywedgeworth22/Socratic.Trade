@@ -946,60 +946,95 @@ export async function runStrategyOnce(
         // held name outside the top-3 by score still needs a filings-RAG pass so sell/hold/trim
         // decisions on it are informed. Held symbols are unioned in, never substituted for the
         // top-N, and the top-N ordering/membership is untouched.
-        const topSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 3).map(c => c.symbol), ...heldSymbols]);
-        const contexts = await Promise.all(
-          topSymbols.map(async (sym) => {
-            const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
-            let variants: string[] = [];
-            if (wantMultiQuery) {
-              const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
-              const breakdown = candidate?.factorBreakdown;
-              let dominantFactor: string | undefined;
-              if (breakdown) {
-                let best = -Infinity;
-                for (const [key, value] of Object.entries(breakdown)) {
-                  if (key === "weightedTotal" || typeof value !== "number") continue;
-                  if (value > best) {
-                    best = value;
-                    dominantFactor = key;
+        // CIK map lookup for structured facts mapping
+        const tickerToCik: Record<string, string> = {};
+        try {
+          const { loadCikMap } = await import("./web-sources/sec8k");
+          const cikMap = await loadCikMap(Date.now());
+          if (cikMap) {
+            for (const [cik, tick] of Object.entries(cikMap)) {
+              if (tick) tickerToCik[tick.toUpperCase()] = cik.padStart(10, "0");
+            }
+          }
+        } catch (err) {
+          console.warn("[Strategy] failed to load CIK map for RAG dossiers:", err);
+        }
+
+        const scoutSymbols = marketScan ? marketScan.topCandidates.map((c) => c.symbol) : [];
+        const deepSymbols = uniqueSymbols([...(marketScan?.topCandidates.slice(0, 3).map((c) => c.symbol) || []), ...heldSymbols]);
+        const allSymbols = uniqueSymbols([...scoutSymbols, ...deepSymbols]);
+
+        const contexts: Array<{ sym: string; query: string; chunks: any[]; factsCard: string; insiderCard: string }> = [];
+        const batchSize = 5;
+        for (let i = 0; i < allSymbols.length; i += batchSize) {
+          const chunk = allSymbols.slice(i, i + batchSize);
+          const chunkResults = await Promise.all(
+            chunk.map(async (sym) => {
+              const isDeep = deepSymbols.includes(sym);
+              const limit = isDeep ? 8 : 1;
+              const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+              let variants: string[] = [];
+
+              if (wantMultiQuery && isDeep) {
+                const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
+                const breakdown = candidate?.factorBreakdown;
+                let dominantFactor: string | undefined;
+                if (breakdown) {
+                  let best = -Infinity;
+                  for (const [key, value] of Object.entries(breakdown)) {
+                    if (key === "weightedTotal" || typeof value !== "number") continue;
+                    if (value > best) {
+                      best = value;
+                      dominantFactor = key;
+                    }
                   }
                 }
+                variants = deriveQueryVariants({
+                  symbol: sym,
+                  sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
+                  dominantFactor,
+                  evidenceBulletins: candidate?.evidenceBulletins
+                });
+                if (wantHyde && variants.length > 0) {
+                  const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
+                  variants = [...variants, ...hydePassages];
+                }
               }
-              variants = deriveQueryVariants({
-                symbol: sym,
-                sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
-                dominantFactor,
-                evidenceBulletins: candidate?.evidenceBulletins
+
+              const chunks = await retrieveContextDetailed(query, sym, limit, userId, {
+                docType: requestedFilingsDocTypes,
+                asOf: runAsOf,
+                minScore: defaultMinScore(),
+                minRelevanceScore: defaultRelevanceFloor(),
+                dedupeSimilarity: defaultDedupeSimilarity(),
+                connectedAccountId: policy.connectedAccountId,
+                runId,
+                ...(variants.length > 0 ? { queries: variants } : {}),
+                onStatus: (status) => {
+                  ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
+                }
               });
-              if (wantHyde && variants.length > 0) {
-                // generateHydePassages self-gates on isOverLlmBudget(userId, connectedAccountId) —
-                // 2026-07-05 review fix — mirroring retrieveContextDetailed's own budget gate below.
-                const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
-                variants = [...variants, ...hydePassages];
+
+              // Retrieve structured facts & Form 4 transactions (RAG-B10)
+              const { formatCompanyFactsEvidenceCard, formatInsiderTransactionsEvidenceCard } = await import("./web-sources/sec-facts");
+              let factsCard = "";
+              let insiderCard = "";
+              try {
+                const cik = tickerToCik[sym.toUpperCase()];
+                if (cik) {
+                  factsCard = formatCompanyFactsEvidenceCard(cik);
+                  insiderCard = formatInsiderTransactionsEvidenceCard(cik);
+                }
+              } catch (err) {
+                console.warn(`[Strategy] failed to fetch structured facts for ${sym}:`, err);
               }
-            }
-            const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
-              docType: requestedFilingsDocTypes,
-              asOf: runAsOf,
-              minScore: defaultMinScore(),
-              // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
-              // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
-              // them, so neither ever ran). dedupeSimilarity is ON by default for this
-              // socratic-decision retrieval path per the composite review's guidance.
-              minRelevanceScore: defaultRelevanceFloor(),
-              dedupeSimilarity: defaultDedupeSimilarity(),
-              connectedAccountId: policy.connectedAccountId,
-              runId,
-              ...(variants.length > 0 ? { queries: variants } : {}),
-              // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): advisory only,
-              // never affects `chunks` — see RetrievalStatus in vector-db.ts.
-              onStatus: (status) => {
-                ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
-              }
-            });
-            return { sym, query, chunks };
-          })
-        );
+
+              return { sym, query, chunks, factsCard, insiderCard };
+            })
+          );
+          contexts.push(...chunkResults);
+        }
+
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
         fmpDerivedProvenance.splice(
@@ -1024,18 +1059,35 @@ export async function runStrategyOnce(
               relevanceScore: chunk.relevanceScore ?? chunk.score,
               relevanceFloor
             });
-            // corpus-coverage-receipt: track which requested doc types actually produced a chunk
-            // THIS run, regardless of symbol — coverage is corpus-wide, not per-symbol.
             if (chunk.doc_type) retrievedFilingsDocTypes.add(chunk.doc_type.toLowerCase());
           }
         }
-        if (validContexts.length > 0) {
-          // 2026-07-04 RAG quick-wins: prefix each chunk with a compact provenance header
-          // (doc_type/section/symbol/date/relevance) so the model can weight a fresh 8-K over a
-          // stale 10-K and reference which chunk it drew from — see formatChunkWithProvenance.
+
+        if (validContexts.length > 0 || contexts.some((c) => c.factsCard || c.insiderCard)) {
           ragContext = contexts
-            .flatMap((context) => context.chunks.map((chunk) => formatChunkWithProvenance(chunk, context.sym)))
-            .join("\n\n");
+            .map((context) => {
+              const formattedChunks = context.chunks
+                .map((chunk) => formatChunkWithProvenance(chunk, context.sym))
+                .join("\n\n");
+
+              const parts = [`### RAG Dossier for ${context.sym}`];
+              if (context.factsCard) {
+                parts.push(context.factsCard);
+              }
+              if (context.insiderCard) {
+                parts.push(context.insiderCard);
+              }
+              if (formattedChunks) {
+                parts.push(formattedChunks);
+              }
+
+              if (parts.length > 1) {
+                return parts.join("\n\n");
+              }
+              return "";
+            })
+            .filter(Boolean)
+            .join("\n\n---\n\n");
         }
       } catch (e) {
         if (e instanceof StrategyLockOwnershipLostError) throw e;
