@@ -11,7 +11,8 @@ export const OPERATION_LEASE_GROUPS = {
   RAG_REINDEX: "rag-reindex",
   CONGRESS_SHARE: "congress-share",
   CONGRESS_WEB_SOURCE: "web-source:congress",
-  SEC8K_WEB_SOURCE: "web-source:sec8k"
+  SEC8K_WEB_SOURCE: "web-source:sec8k",
+  SEC_INGEST_SEED: "sec-ingest-seed"
 } as const;
 
 export type OperationLeaseGroup = typeof OPERATION_LEASE_GROUPS[keyof typeof OPERATION_LEASE_GROUPS];
