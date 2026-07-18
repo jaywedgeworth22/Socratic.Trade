@@ -52,6 +52,7 @@ jobs:
         with:
           fetch-depth: 1
           fetch-tags: false
+          ref: ${{ github.sha }}
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
