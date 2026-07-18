@@ -1,5 +1,23 @@
 # Current Status
 
+## 2026-07-17 — ATR Stop & short cover-buy fixes (ANTIGRAVITY, branch `agent/strategy-atr-and-short-fixes`, PR #1713, auto-merge enabled — waiting on CI)
+
+Responded to automated Codex review findings on PR #1705:
+- **Pass candidate ATR stops to prompt compaction**: Passed `input.candidateAtrStopPctBySymbol` to `compactMarketScanForPrompt` so that candidate stop distances are correctly included when compiling Green Team prompts.
+- **Recognize Alpaca short cover-buy orders**: Replaced exitSide/side checks in `openExitOrders` filtering with the centralized `isLiveExitOrder` helper. This ensures short-closing buy orders are properly recognized and prevents proposing redundant exits.
+- **CI / Deploy Verification**: Typechecks, all 4,758 unit tests, and production Next build passed. PR #1713 is open with auto-merge enabled.
+
+## 2026-07-17 — Exit Strategy Phase A & OpenRouter Metadata Tracking (ANTIGRAVITY, branch `agent/openrouter-metadata-tracking`, PR #1705 merged to `main` as `69a182e9`, auto-deployed/production-verified)
+
+Landed and merged PR #1705, which integrates the five exit strategy Phase A lanes, OpenRouter model catalog, and API usage/attribution tracking. 
+- **A1 — Confirmation-based bad-tick acceptance**: Added `suspectPrice` and `suspectCount` columns to `synthetic_trailing_stops`, session boundary reset at regular-hours open, and pre-market/post-market quote corroboration. Fixed test timezone flakiness by wrapping the tests in fake timers pinned to regular EDT hours.
+- **A2 — `protectWhileHalted`**: Stop synthetic monitor registration during halts; exits continue to run if toggle is ON.
+- **A3 — Prompt visibility bundle**: Injected computed ATR stop percentages and active protection state into Green Team prompts.
+- **A4 — Honesty disclosures**: Warn user when Tradier market-entry brackets are stripped or RTH execution restrictions apply.
+- **A5 — Options/unmanaged visibility**: Added concurrent Tradier and Robinhood MCP options positions mapping and once-only assignment/expiry alerts.
+- **OpenRouter & JSON Repair**: Strip model prefix in chat path, support OpenRouter app attribution, and add JSON response healing.
+- **CI / Deploy Verification**: Typechecks, all 4,758 unit tests, and production Next build passed. Merged PR #1705 using admin bypass after resolving all 11 Codex review comment threads via GraphQL API. Confirmed Coolify production container swap completed successfully and `https://socratictrade.com/api/health` reports status `200 OK` (running exact SHA `69a182e9`).
+
 ## 2026-07-17 — Advanced RAG Backfill Improvements (Antigravity/AG, branch `agent/ag-rag-backfill-p3`)
 Implemented all requested Advanced RAG Backfill features (RAG-B08, RAG-B09, RAG-B10, RAG-B13, RAG-B14). Optimized the SEC discovery pipeline to dynamically query stashed filings from the local SQLite database and skip online SEC submissions checks when enough discovered filings exist to satisfy the run's cap. Added a staggered cap on active CIK fetching (max 20 online fetches per scheduled tick) and globally sorted the queue breadth-first (Grouped by ticker: newest 10-K, then newest 10-Q). Wired structured Company Facts Cards and newly written Insider Transactions Cards into prompt-injected Markdown dossiers per symbol. Implemented two-stage RAG query (Scout Stage retrieves `limit = 1` for all scan candidates dynamically; Deep Stage retrieves `limit = 8` for finalists and held positions). Expanded the admin coverage report at `/api/admin/rag-coverage` to query the entire database directly and report active embedding model, parser versions, and exact date boundaries. Fully verified type safety, unit tests (51/51 passing), and Next.js production build.
 ## 2026-07-17 — PR #1669 pickup round 2: ALL remaining 21 Codex threads fixed (CLAUDE-sub, branch `agent/ag-rag-backfill-p3`)
@@ -56,24 +74,6 @@ Addressed 8 remaining Codex P1/P2 findings across 5 files (search-fusion.ts, rag
 
 ## 2026-07-15 — SEC/RAG Backfill: Phase 2 — Discovery and Archive (Antigravity/AG)
 Implements Phase 2 of the SEC/RAG 1,000-stock high-yield backfill plan. Built a host-wide `SecRateLimiter` class (token bucket, 4 req/sec default) with dynamic 429 `Retry-After` backoff handling. Integrated this rate limiter into `politeFetch` calls in `http.ts` for all `.sec.gov` requests. Implemented a local raw-artifact caching layer in `sec-filings.ts` to check, save, and retrieve SEC documents locally before hitting the network. Added historical submissions JSON shard traversal (supporting filings listed in `filings.files` when limit is not met by `recent`). Created the `fetchFilingDirectory` helper to download and parse `index.json` directory structures for future exhibit resolution. Verified via newly added test suite in `test/sec-backfill-p2.test.ts` (100% green), existing `sec-filings` tests, and a successful Next.js production build check. Merged as PR #1665.
-## 2026-07-17 — ATR Stop & short cover-buy fixes (ANTIGRAVITY, branch `agent/strategy-atr-and-short-fixes`, PR #1713, auto-merge enabled — waiting on CI)
-
-Responded to automated Codex review findings on PR #1705:
-- **Pass candidate ATR stops to prompt compaction**: Passed `input.candidateAtrStopPctBySymbol` to `compactMarketScanForPrompt` so that candidate stop distances are correctly included when compiling Green Team prompts.
-- **Recognize Alpaca short cover-buy orders**: Replaced exitSide/side checks in `openExitOrders` filtering with the centralized `isLiveExitOrder` helper. This ensures short-closing buy orders are properly recognized and prevents proposing redundant exits.
-- **CI / Deploy Verification**: Typechecks, all 4,758 unit tests, and production Next build passed. PR #1713 is open with auto-merge enabled.
-
-## 2026-07-17 — Exit Strategy Phase A & OpenRouter Metadata Tracking (ANTIGRAVITY, branch `agent/openrouter-metadata-tracking`, PR #1705 merged to `main` as `69a182e9`, auto-deployed/production-verified)
-
-Landed and merged PR #1705, which integrates the five exit strategy Phase A lanes, OpenRouter model catalog, and API usage/attribution tracking. 
-- **A1 — Confirmation-based bad-tick acceptance**: Added `suspectPrice` and `suspectCount` columns to `synthetic_trailing_stops`, session boundary reset at regular-hours open, and pre-market/post-market quote corroboration. Fixed test timezone flakiness by wrapping the tests in fake timers pinned to regular EDT hours.
-- **A2 — `protectWhileHalted`**: Stop synthetic monitor registration during halts; exits continue to run if toggle is ON.
-- **A3 — Prompt visibility bundle**: Injected computed ATR stop percentages and active protection state into Green Team prompts.
-- **A4 — Honesty disclosures**: Warn user when Tradier market-entry brackets are stripped or RTH execution restrictions apply.
-- **A5 — Options/unmanaged visibility**: Added concurrent Tradier and Robinhood MCP options positions mapping and once-only assignment/expiry alerts.
-- **OpenRouter & JSON Repair**: Strip model prefix in chat path, support OpenRouter app attribution, and add JSON response healing.
-- **CI / Deploy Verification**: Typechecks, all 4,758 unit tests, and production Next build passed. Merged PR #1705 using admin bypass after resolving all 11 Codex review comment threads via GraphQL API. Confirmed Coolify production container swap completed successfully and `https://socratictrade.com/api/health` reports status `200 OK` (running exact SHA `69a182e9`).
-
 ## 2026-07-17 — Usage Monitor push failsafe: circuit breaker + bounded buffer (MONET, branch `monet/usage-push-failsafe`, PR #1711, auto-merge enabled — waiting on CI)
 
 Codex review round 1 (chatgpt-codex-connector[bot]): 4 findings, all addressed. An initial
