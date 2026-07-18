@@ -34,7 +34,7 @@ export interface ProviderSlice {
 }
 
 export interface ModelUsageAggregate {
-  /** Merge key: the bare model id, lowercased (e.g. "claude-sonnet-5"). */
+  /** Merge key: the bare model id (e.g. "claude-sonnet-5"); "" for a null/blank model. */
   canonicalId: string;
   /** Human display of the model (bare id, original casing). */
   displayName: string;
@@ -47,26 +47,13 @@ export interface ModelUsageAggregate {
   providers: ProviderSlice[];
 }
 
-/** Strip the vendor-routing prefix so an OpenRouter-routed model id collapses onto the bare id
- *  the same model is recorded under when called directly. Mirrors the price-table normalization
- *  in llm-usage.ts (drop a leading `openrouter/`, then drop the first `vendor/` segment). */
-function stripRoutingPrefix(model: string): string {
-  const m = model.replace(/^openrouter\//i, "");
-  const slash = m.indexOf("/");
-  return slash === -1 ? m : m.slice(slash + 1);
-}
-
-/** Canonical merge key for a model — bare id, lowercased. Null/blank → "unknown". */
-export function canonicalModelId(model: string | null | undefined): string {
-  if (!model || !model.trim()) return "unknown";
-  return stripRoutingPrefix(model.trim().toLowerCase()) || "unknown";
-}
-
-/** Human-facing model name — the bare id with original casing preserved. Null/blank → "unknown". */
-export function displayModelName(model: string | null | undefined): string {
-  if (!model || !model.trim()) return "unknown";
-  return stripRoutingPrefix(model.trim()) || "unknown";
-}
+// Canonical model identity is shared with src/lib/model-stats.ts (the benchmark/perf rollup) —
+// one definition, so the cost page here and the Model Stats drawer collapse route-qualified IDs
+// the same way. Re-exported for this module's existing consumers. `displayModelName` is the same
+// bare-name derivation, named for readability at display sites.
+import { canonicalModelId } from "@/lib/model-identity";
+export { canonicalModelId };
+export const displayModelName = canonicalModelId;
 
 /** Merge usage rows by canonical model. Each aggregate sums calls/tokens/cost across every
  *  provider that served the model, and keeps a per-provider breakdown (sorted by cost desc).

@@ -1868,6 +1868,12 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[Socratic.Trade][MONET] Shared model-identity helper (branch `monet/model-identity-shared`,
+  2026-07-17) — LANDING.** Owner-directed follow-up (AG capped): one shared
+  `src/lib/model-identity.ts` replaces the duplicate `cleanModelId` (model-stats, AG/#1703) +
+  `canonicalModelId` (model-merge, #1716). Behavior-preserving — model-stats aliases AG's verified
+  logic, so the benchmark/perf rollup is byte-for-byte unchanged. tsc clean, 67 focused tests.
+  Full gate via land.sh. Closes the deferred consolidation follow-up.
 - **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
   `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-18, owner-directed) — IMPLEMENTATION
   COMPLETE / gate running / PR pending.** (1) Inline rename of a connected account's cosmetic `label`
