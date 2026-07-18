@@ -1,5 +1,14 @@
 # Current Status
 
+## 2026-07-18 — CI shallow-checkout recovery (CODEX, branch `codex/ci-checkout-fast`)
+
+Stacked follow-up to the Coolify CI routing PR. Required lightweight jobs were repeatedly
+spending several minutes in full-history `actions/checkout` on the single self-hosted runner,
+causing classify cancellation and fail-closed smoke results. Classification now fetches only the
+base/head endpoint commits and compares their trees; security scanning uses a shallow, tag-free
+checkout. This preserves conservative docs-only behavior while preventing the cheap gates from
+monopolizing the runner. Rollout: `docs/rollouts/2026-07-18-ci-shallow-checkout.md`.
+
 ## 2026-07-18 — Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`)
 
 GitHub-hosted `ubuntu-latest` jobs are failing before runner assignment on current open PRs
