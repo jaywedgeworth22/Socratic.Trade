@@ -3689,3 +3689,5 @@ brackets; effort S/M/L.
 | 2026-07-16 | Migration | Migrate LLM model catalog to OpenRouter exclusively, add GPT-5.6 Pro variants, and implement server-side model-stats canonicalization | In Progress | Antigravity (branch antigravity/openrouter-universal-routing) |
 | 2026-07-16 | Migration | Migrate LLM model catalog to OpenRouter exclusively, add GPT-5.6 Pro variants | Completed | Antigravity |
 - **2026-07-18 BGE-M3 reindex branch landing retry (CLAUDE).** `agent/ag-reindex-bge-m3` first land aborted at the test gate (12 failures / 6 files, fleet load 60-67). Real fixes: reindex-all test DB isolation (`73929f83`) + securities-import casing expectation superseded by #1735's preserve-case fix (merge `339676a5`); rest were serial-rerun-clean load flakes. Synced to post-#1761 main; re-landing via land.sh. State: **In Progress (landing)**.
+
+- **Repo Hygiene (AG, S) — COMPLETED 2026-07-18.** Merged PR #1754 (deleted tracked lint artifacts) and deployed Socratic.Trade to production on Coolify.
