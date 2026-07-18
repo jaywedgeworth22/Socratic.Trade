@@ -123,6 +123,27 @@ module graph exceed 60s under load; both suites pass fully with the raised timeo
 timeouts were slow before this change (no code-path regression; not modified by this branch).
 `npm run build` deliberately not run (task brief: no full build).
 
+## Adversarial-verification follow-up (second commit on this branch)
+
+The lane's adversarial verifier found one MUST-FIX in `003dd33e` (everything else confirmed safe):
+the item-7 registration pass resolved a SHORT position's fixed/atr distance as
+`shortStopLossPct > 0 ? shortStopLossPct : 8%`, skipping the `stopLossPct` middle tier the
+proactive layer uses (`generateProactiveRiskProposals`: `shortStopLossPct > 0 ? shortStopLossPct :
+stopLossPct`, with 8% only when BOTH are unset). Proven consequence: `stopLossPct=15`,
+`shortStopLossPct` unset, short position — the backstop armed at 8% and fired a real cover at a
+distance the owner never configured. Fixed to the identical three-tier chain
+(`src/lib/synthetic-stops.ts`, one shared resolution line — the atr no-bars fallback resolves
+through the same expression, so both plan styles are covered). Two regression tests folded into
+`test/synthetic-stops.test.ts`'s item-7 block (15%-not-8% no-fire scenario; both-unset ⇒ 8% fires);
+the verifier's standalone template (`test/adversarial-short-fixed-fallback.test.ts`) was absorbed
+and deleted per its own "not for commit" header.
+
+**Note for the landing operator:** main's `strategy.ts` Tradier market-entry bracket-strip
+rationale string — "(and fixed/atr plans have no synthetic-stop monitor fallback)" (line ~5739 on
+this branch's base, ~5804 on current main; inside `enrichOpeningProposal`, PR #1738's hunk
+territory, deliberately untouched here) — becomes FALSE once this branch lands: fixed/atr plans DO
+get a synthetic-monitor backstop now. Update that string during the merge.
+
 ## Follow-ups / risks
 
 - The atr-plan tick row uses the flat-%/fallback distance (no bars at tick cadence). Honest and

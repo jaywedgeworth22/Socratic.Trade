@@ -548,7 +548,12 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // approximation, the identical fallback branch. The hourly proactive run still applies the
       // real ATR-derived distance when it has bars; this static row is the honest interim value for
       // the interval between runs (docs/design/exit-strategy-intelligence.md Rec 2/3 phasing).
-      const base = isShort ? baseShortStopPct : baseStopPct;
+      // SHORT chain is three-tier, matching the proactive layer verbatim (adversarial review of
+      // 003dd33e): `shortStopLossPct > 0 ? shortStopLossPct : stopLossPct`, and 8% ONLY when both
+      // are unset. Skipping the stopLossPct middle tier armed a short's backstop at 8% when the
+      // owner had configured 15 — a tighter distance than any layer the owner set, firing a real
+      // cover the configuration says should not happen.
+      const base = isShort ? (baseShortStopPct > 0 ? baseShortStopPct : baseStopPct) : baseStopPct;
       const stopPct = base > 0 ? base : STOP_PLAN_FALLBACK_STOP_PCT;
       // Same same-tick staleness guards the trailing registration pass above uses: a broker-held
       // stop this SAME reconcile just placed/replaced can't appear in the pre-reconcile order list.

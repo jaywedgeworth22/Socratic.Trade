@@ -1138,6 +1138,51 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(receipts.length).toBeGreaterThan(0);
     });
 
+    it("SHORT fixed plan mirrors the proactive layer's three-tier fallback: shortStopLossPct unset + stopLossPct=15 arms at 15% (NOT the 8% fallback) — a +10% adverse move does not fire (adversarial review of 003dd33e)", async () => {
+      // Concrete divergence the adversarial verifier proved: with stopLossPct=15 and
+      // shortStopLossPct unset, strategy.ts's generateProactiveRiskProposals resolves a short's
+      // stop as shortStopLossPct > 0 ? shortStopLossPct : stopLossPct (= 15), with 8% only when
+      // BOTH are unset. A two-tier `shortStopLossPct || 8` here armed the backstop at 8% and fired
+      // a real cover at a distance the owner never configured.
+      broker.positions = [{ symbol: "NVDA", quantity: -10, averageCost: 100, marketValue: -1100 }]; // mark 110 = +10% adverse
+      broker.quotes = { NVDA: { price: 110 } };
+      connectTestAccount("SYN-SHORT-FB");
+      recordStopPlan("SYN-SHORT-FB", "NVDA", "fixed", undefined, 100, "local", new Date().toISOString(), "short");
+      const policy = {
+        ...policyFor("SYN-SHORT-FB"),
+        riskRules: { ...policyFor("SYN-SHORT-FB").riskRules, trailingStopPct: 0, stopLossPct: 15, shortStopLossPct: 0 }
+      };
+      const result = await runSyntheticStopMonitor("local", policy, true);
+      const stops = [...listSyntheticStops("SYN-SHORT-FB", "local"), ...listSyntheticStops("SYN-SHORT-FB", "local", "triggered")];
+      expect(stops).toHaveLength(1);
+      expect(stops[0].kind).toBe("fixed");
+      expect(stops[0].side).toBe("short");
+      // Distance must equal the proactive layer's resolution (15), not the 8% plan fallback...
+      expect(stops[0].trailPercent).toBe(15);
+      // ...so a +10% adverse move (trigger is 115) must NOT fire a cover.
+      expect(result.exited).toBe(0);
+      expect(broker.placed).toHaveLength(0);
+    });
+
+    it("SHORT fixed plan with BOTH stop %'s unset falls back to the 8% plan distance and fires on a +10% adverse move", async () => {
+      broker.positions = [{ symbol: "NVDA", quantity: -10, averageCost: 100, marketValue: -1100 }]; // mark 110 = +10% adverse
+      broker.quotes = { NVDA: { price: 110 } };
+      connectTestAccount("SYN-SHORT-FB-UNSET");
+      recordStopPlan("SYN-SHORT-FB-UNSET", "NVDA", "fixed", undefined, 100, "local", new Date().toISOString(), "short");
+      const policy = {
+        ...policyFor("SYN-SHORT-FB-UNSET"),
+        riskRules: { ...policyFor("SYN-SHORT-FB-UNSET").riskRules, trailingStopPct: 0, stopLossPct: 0, shortStopLossPct: 0 }
+      };
+      const result = await runSyntheticStopMonitor("local", policy, true);
+      // Both unset → STOP_PLAN_FALLBACK_STOP_PCT (8) → trigger 108; 110 breaches → cover fires.
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0].side).toBe("cover");
+      expect(broker.placed[0].quantity).toBe(10);
+      const stops = listSyntheticStops("SYN-SHORT-FB-UNSET", "local", "triggered");
+      expect(stops[0].trailPercent).toBe(8);
+    });
+
     it("does NOT register a NEW static-trigger row while halted (mirrors the trailing lane's halted registration skip)", async () => {
       connectTestAccount("SYN-PLAN-FIXED-HALTED");
       recordStopPlan("SYN-PLAN-FIXED-HALTED", "AAPL", "fixed", undefined, 100, "local");
