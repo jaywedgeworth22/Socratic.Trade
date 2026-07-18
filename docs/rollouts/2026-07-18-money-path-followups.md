@@ -113,3 +113,40 @@ the fix.
 - `option_alert_reservations` grows one row per delivered alert; it is small (bounded by distinct
   (account, symbol, alertType) triples) and mirrors the permanent `status='sent'` dedupe. No pruning
   added.
+
+## Round 2 — Codex review on PR #1738 (2 findings, both real, fixed)
+
+Codex reviewed the pushed PR and raised two money-path findings on the round-1 fixes. Both were
+genuine and are now fixed on the same branch.
+
+- **P1 — halted mode wrongly suppressed the oversized-stop CANCEL** (`src/lib/synthetic-stops.ts`,
+  `src/lib/broker-protective-stops.ts`): round 1 passed `running=false` into
+  `reconcileBrokerProtectiveStops` while halted. That short-circuits at the `if (!running) return`
+  gate BEFORE section 3 — which includes the risk-reducing cancel of a resting stop whose quantity
+  now exceeds the (out-of-band-reduced) position. So a halted+`protectWhileHalted` account could keep
+  an oversized broker stop resting that over-sells / opens a short if it fires. Fix: pass the real
+  `running` plus a new `haltedProtectOnly` flag that suppresses ONLY section 4 (placement) and the
+  section-3 non-shrink mismatch cancel-then-replace, while the oversized/quantity-SHRINK cancel still
+  runs (the synthetic monitor covers the real position until a non-halted tick resizes). Regression:
+  two new cases in `test/synthetic-stops.test.ts` (oversized → cancelled while halted; trail-% drift →
+  kept while halted, with an active-mode control).
+- **P2 — bracket legs not repriced after marketable-limit conversion** (`src/lib/strategy.ts`): the
+  Tradier/Alpaca bracket legs were derived from the pre-conversion `entryPrice`, but the
+  marketable-limit conversion re-prices the entry to `ask+buffer` (or `bid-buffer` for a short), which
+  can sit meaningfully above/below the reference on a wide spread. A take-profit priced off the raw
+  reference could then land at/below the actual fill, rejecting the OTOCO or arming an instant-loss
+  exit. Fix: compute the converted limit ONCE up front (`marketableLimitPrice`/`marketableLimitQty`),
+  anchor the bracket legs (both the policy defaults and the LLM-leg validity checks) to it via
+  `bracketAnchorPrice`, and have the conversion block reuse those exact values — single source of
+  truth, so legs and the entry limit can never drift apart. The non-converting path is unchanged
+  (anchor falls back to `entryPrice`). Regression: the existing finding-2 test now asserts the
+  repriced legs (92.14/120.18 off the 100.15 limit) plus a new wide-ask case (real ask 120 → limit
+  120.18, take 144.22, stop 110.57; take-profit strictly above the entry limit).
+
+### Round-2 verification
+- `npx tsc --noEmit` — clean.
+- `npm run lint` — 0 errors (582 grandfathered warnings only).
+- `npx vitest run` — 413 files / **4802 tests pass, 0 fail** (no flake this run).
+- `npm run build` — exit 0.
+- Both new/updated regressions verified against the fix; the P1 tests exercise both the cancel-while-
+  halted and keep-while-halted branches, and the P2 tests lock the take-profit-above-limit invariant.

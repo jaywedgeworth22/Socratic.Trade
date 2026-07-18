@@ -8,13 +8,19 @@ verified to fail pre-fix.
 
 1. **Halted broker-stop placement** (`synthetic-stops.ts`): a halted+`protectWhileHalted` tick passed
    `running=true` into `reconcileBrokerProtectiveStops`, letting a HALTED account PLACE/REPLACE new
-   broker-held protective stops. Now gated (`mayReconcileBrokerStops = running && systemState !==
-   "halted"`) so halted protection only FIRES existing exits + runs risk-reducing cancels, never
-   places/replaces.
+   broker-held protective stops. Now gated so halted protection only FIRES existing exits + runs
+   risk-reducing cancels, never places/replaces. **Codex round-2 (PR #1738): the first cut passed
+   `running=false`, which ALSO killed the section-3 oversized-stop CANCEL (an out-of-band-shrunk
+   position could keep an over-selling stop resting). Re-fixed with a `haltedProtectOnly` flag that
+   blocks only placement + non-shrink replacement; the oversized/shrink cancel still runs.**
 2. **Tradier bracket strip vs limit conversion** (`strategy.ts` `enrichOpeningProposal`): a Tradier
    `market` entry that the marketable-limit conversion turns into a `limit` (a type Tradier's native
    bracket supports) had its brackets stripped BEFORE the conversion → limit with no protection. The
-   strip now skips when the conversion will apply (`willBecomeMarketableLimit`).
+   strip now skips when the conversion will apply (`willBecomeMarketableLimit`). **Codex round-2 (PR
+   #1738): the surviving legs were still priced off the pre-conversion `entryPrice`; a converted buy
+   limit above the reference could carry a take-profit at/below the fill. Now the converted limit is
+   computed once up front and the legs anchor to it (`bracketAnchorPrice`), reused by the conversion
+   block (single source of truth).**
 3. **Active-protection live-exit semantics** (`strategy.ts`): ALREADY FIXED on main by PR #1713
    (`isLiveExitOrder`/`isLiveOrderState`). Skipped.
 4. **Atomic option-alert reservation** (`notifications.ts` + `db-notifications.ts` + `db.ts`):
@@ -24,8 +30,12 @@ verified to fail pre-fix.
    outside `withDeadline`; a hung options/MCP endpoint hung the whole snapshot. Now wrapped (8s →
    `[]`).
 
-Gates: tsc clean; test/build/lint run before push. Rollout:
-`docs/rollouts/2026-07-18-money-path-followups.md`. Next: land via PR (parent opens it).
+Gates (round 2): `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files /
+**4802 tests pass**; `npm run build` exit 0. Rollout:
+`docs/rollouts/2026-07-18-money-path-followups.md` (round-2 section appended). **PR #1738 open,
+auto-merge (squash) armed.** BLOCKED on merge ONLY by an account-level GitHub Actions
+runner-provisioning outage (every open PR's `verify` fails at job startup, `runner_id:0`, 404 logs —
+needs the owner to raise the Actions spending limit / minutes; not code).
 
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 

@@ -238,10 +238,41 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
       marketScan
     );
     expect(p.type).toBe("limit"); // converted to a marketable limit
-    expect(p.bracketStopLoss).toBe(92); // native bracket legs survived the conversion
-    expect(p.bracketTakeProfit).toBe(120);
+    // The bracket legs anchor to the CONVERTED limit price, not the pre-conversion reference (Codex
+    // review, PR #1738): no real ask on this quote, so the buy limit is refPrice*(1+15bps)=100.15,
+    // and the legs price off that (100.15*0.92=92.14 stop, 100.15*1.2=120.18 take) — NOT 92/120 off
+    // the raw 100 reference. The take-profit must stay strictly above the entry limit or the OTOCO
+    // would be rejected / exit at a loss.
+    expect(p.limitPrice).toBe(100.15);
+    expect(p.bracketStopLoss).toBe(92.14); // native bracket legs survived AND repriced to the limit
+    expect(p.bracketTakeProfit).toBe(120.18);
+    expect(p.bracketTakeProfit!).toBeGreaterThan(p.limitPrice!);
+    expect(p.bracketStopLoss!).toBeLessThan(p.limitPrice!);
     // The market-entry strip's "not supported" annotation must NOT have been applied.
     expect(p.rationale).not.toContain("Tradier native entry brackets are not supported");
+  });
+  it("reprices bracket legs to a marketable-limit that lands ABOVE the reference via a real ask (Codex PR #1738)", () => {
+    // The finding's exact shape: a wide/stale spread pushes the converted buy limit well above the
+    // reference. A take-profit priced off the raw reference could then sit AT/BELOW the fill. With the
+    // fix, both legs anchor to the actual limit so the take-profit is always a real profit target.
+    // ref/entry 100, real ask 120 -> buy limit 120*(1+15bps)=120.18; 20% take -> 120.18*1.2=144.22.
+    const withWideAsk: MarketScan = {
+      ...marketScan,
+      quotesBySymbol: {
+        TSLA: { symbol: "TSLA", price: 100, ask: 120, score: 50, sources: { ask: "alpaca" } }
+      }
+    };
+    const p = enrichOpeningProposal(
+      buy({ dollarAmount: 1000 }),
+      policy({ activeBroker: "tradier", marketableLimitEntries: true, permittedOrderTypes: ["market", "limit"], riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      withWideAsk
+    );
+    expect(p.type).toBe("limit");
+    expect(p.limitPrice).toBe(120.18);
+    expect(p.bracketTakeProfit).toBe(144.22); // off the limit, not 120 off the reference
+    expect(p.bracketStopLoss).toBe(110.57); // 120.18*0.92
+    // The pre-fix bug: take-profit would have been 120, i.e. BELOW the 120.18 entry — an instant loss.
+    expect(p.bracketTakeProfit!).toBeGreaterThan(p.limitPrice!);
   });
   it("still strips brackets for a Tradier market entry that will NOT convert (marketable-limit off)", () => {
     // Guardrail for the finding-2 fix: with the conversion disabled the entry STAYS a market order,

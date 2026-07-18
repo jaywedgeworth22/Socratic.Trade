@@ -361,14 +361,15 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // never let a bracket-teardown sweep failure block the rest of this monitor's tick
     }
     // Halted protection may only FIRE existing synthetic/exit stops (the fire loop below still runs
-    // under `running`), never PLACE or REPLACE broker-held stops. `reconcileBrokerProtectiveStops`'s
-    // `running` flag is precisely what gates its placement/replacement sections (3 & 4) — its
-    // risk-reducing cancel-on-close sweeps (sections 1 & 2) run regardless. So pass `running=false`
-    // while halted: a halted+protectWhileHalted tick can no longer submit NEW/looser broker
-    // protective orders, but still cancels stops on closed positions and fires resting synthetic
-    // exits. (Without this, a halted account would keep placing/replacing broker stops every tick.)
-    const mayReconcileBrokerStops = running && policy.systemState !== "halted";
-    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running: mayReconcileBrokerStops, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol, stopPlanBySymbol });
+    // under `running`) and CANCEL risk (closed-position sweeps, plan-excluded teardown, and an
+    // oversized/shrunk stop that could over-sell) — never PLACE a new broker stop or do a
+    // protection-CHANGING replacement. `haltedProtectOnly` gates exactly those in
+    // `reconcileBrokerProtectiveStops` (section 4 + the section-3 non-shrink mismatch replace), while
+    // its risk-reducing cancels — including the section-3 oversized-stop cancel that the earlier
+    // `running=false` approach wrongly suppressed (Codex review, PR #1738) — still run. Pass the real
+    // `running` so those cancels aren't short-circuited by the `if (!running) return` gate.
+    const haltedProtectOnly = running && policy.systemState === "halted";
+    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, haltedProtectOnly, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol, stopPlanBySymbol });
     if (reconciled.cancelledOrderIds.length > 0) {
       const cancelledIds = new Set(reconciled.cancelledOrderIds);
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));

@@ -273,8 +273,21 @@ export async function reconcileBrokerProtectiveStops(args: {
    * → the account's own precedence for that symbol, unchanged from before this param existed.
    */
   stopPlanBySymbol?: Record<string, StopPlanStyle>;
+  /**
+   * Protect-while-halted mode: the account is Stopped but still protecting open positions
+   * (`policy.systemState === "halted"` with the monitor's fire loop running). A halt must not submit
+   * NEW or protection-CHANGING broker orders, so this suppresses section 4 (place-if-missing) and the
+   * section-3 mismatch cancel-THEN-replace (kind/price/trail/ratchet/quantity-GROWTH drift — cancelling
+   * those while we can't re-place would strand the position with no stop). It deliberately does NOT
+   * suppress the section-3 risk-REDUCING cancels — an oversized stop whose quantity exceeds the current
+   * position (partial exit out-of-band) is cancelled anyway, because leaving it resting can over-sell/
+   * open a short if it fires, and the always-on synthetic monitor still covers the real position. Pass
+   * `running: true` alongside this (the halt gates placement, not the whole reconcile) — sections 1/2/2b
+   * (pure cancels) already run regardless of `running`. Defaults to false (Codex review, PR #1738).
+   */
+  haltedProtectOnly?: boolean;
 }): Promise<ReconcileResult> {
-  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true, extremePriceBySymbol = {}, stopPlanBySymbol = {} } = args;
+  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true, extremePriceBySymbol = {}, stopPlanBySymbol = {}, haltedProtectOnly = false } = args;
   const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [], partiallyPlacedStopQuantities: {}, filledRecoverySymbols: [] };
 
   const kind = desiredBrokerStopKind(policy, executionMode);
@@ -846,6 +859,19 @@ export async function reconcileBrokerProtectiveStops(args: {
         mismatchNote = undefined;
       }
 
+      // While halted (protect-only), a mismatch that would cancel-THEN-replace must be kept — we
+      // can't place the replacement this tick, so cancelling would strand the position with no stop.
+      // A pure quantity SHRINK is the exception: the row is oversized relative to the current
+      // position and could over-sell/short if it fires, so that risk-reducing cancel still runs
+      // (the synthetic monitor covers the real position until a non-halted tick resizes it). Codex
+      // review, PR #1738.
+      if (mismatchNote && haltedProtectOnly && !isQuantityShrink) {
+        audit("broker_protective_stop_skipped", {
+          symbol: sym, kind: symKind, note: `mismatch (${mismatchNote}) detected but system is halted — keeping the existing stop rather than cancelling into a replacement that can't be placed while halted`
+        }, userId, policy.connectedAccountId);
+        mismatchNote = undefined;
+      }
+
       if (mismatchNote && !liveReplaceBlocked) {
         audit("broker_protective_stop_mismatch", {
           symbol: sym,
@@ -869,6 +895,12 @@ export async function reconcileBrokerProtectiveStops(args: {
       }
     }
   }
+
+  // While halted (protect-only) we never PLACE a new broker-held stop — that is a fresh order the
+  // halt forbids; the always-on synthetic monitor is the position's protection until the halt lifts.
+  // Sections 1/2/2b (cancels) and the section-3 risk-reducing shrink cancel already ran above. Codex
+  // review, PR #1738.
+  if (haltedProtectOnly) return out;
 
   // 4. Place-if-missing for each open long without a stop row. A pending_cancel row BLOCKS
   // placement for its symbol: its broker order may still be live (the cancel keeps failing), and

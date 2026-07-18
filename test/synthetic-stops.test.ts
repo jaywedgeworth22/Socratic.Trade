@@ -1239,5 +1239,70 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(broker.placed.length).toBeGreaterThan(0);
       expect(listBrokerProtectiveStops("SYN-HALTED-BSTOP", "local").length).toBeGreaterThan(0);
     });
+
+    it("protectWhileHalted: STILL cancels an OVERSIZED broker stop (position shrank out-of-band) — risk-reducing cancels run while halted (Codex PR #1738)", async () => {
+      // A halted+protectWhileHalted account whose position was partially reduced out-of-band leaves a
+      // resting broker stop sized for the PRE-shrink quantity; if it fires it over-sells / opens a
+      // short. The earlier fix passed running=false while halted, which ALSO suppressed this section-3
+      // risk-reducing cancel. haltedProtectOnly now blocks only placement/replacement, so the oversized
+      // stop is cancelled (the always-on synthetic monitor covers the real 40 shares until a
+      // non-halted tick can size a proper replacement).
+      connectTestAccount("SYN-HALT-OVER", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 40, averageCost: 100, marketValue: 4000 }]; // shrank 100 -> 40
+      broker.quotes = { NVDA: { price: 100 } }; // no breach — isolate the cancel path, not firing
+      broker.orders = [{ id: "prot-over", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 }];
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-OVER-NVDA", userId: "local", accountNumber: "SYN-HALT-OVER",
+        symbol: "NVDA", brokerOrderId: "prot-over", quantity: 100, stopPrice: 95, status: "resting",
+        kind: "trailing", trailPercent: 5
+      });
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-OVER"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-OVER").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.cancelled).toContain("prot-over"); // the oversized stop WAS cancelled while halted
+      expect(broker.placed).toHaveLength(0); // ...but NO replacement placed — placement stays blocked
+      expect(listBrokerProtectiveStops("SYN-HALT-OVER", "local")).toHaveLength(0); // row torn down
+    });
+
+    it("protectWhileHalted: does NOT cancel a correctly-sized stop with only a trail-% mismatch — protection-CHANGING replacements stay blocked while halted (Codex PR #1738)", async () => {
+      // The counterpart to the oversized case: a full-size resting trailing stop whose only drift is a
+      // trail-% change is a cancel-THEN-replace. While halted the replacement can't be placed, so
+      // cancelling would strand the position with no stop — keep the existing one. (An oversized SHRINK
+      // is the sole exception, tested above.)
+      connectTestAccount("SYN-HALT-KEEP", "paper", "alpaca");
+      broker.positions = [{ symbol: "NVDA", quantity: 100, averageCost: 100, marketValue: 13000 }]; // mark 130 (rallied)
+      broker.quotes = { NVDA: { price: 130 } }; // above the trail — no breach, and full coverage suppresses synthetic
+      broker.orders = [{ id: "prot-keep", symbol: "NVDA", side: "sell", type: "stop_market", state: "queued", quantity: 100 }];
+      upsertBrokerProtectiveStop({
+        id: "protstop-local-SYN-HALT-KEEP-NVDA", userId: "local", accountNumber: "SYN-HALT-KEEP",
+        symbol: "NVDA", brokerOrderId: "prot-keep", quantity: 100, stopPrice: 95, status: "resting",
+        kind: "trailing", trailPercent: 5
+      });
+      // policy trail is 6% while the resting stop is 5% -> a "trail %" mismatch (a cancel/replace),
+      // NOT a quantity shrink.
+      const haltedPolicy = {
+        ...policyFor("SYN-HALT-KEEP"),
+        activeBroker: "alpaca" as const,
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALT-KEEP").riskRules, trailingStopPct: 6, protectWhileHalted: true }
+      };
+      await runSyntheticStopMonitor("local", haltedPolicy, true);
+      expect(broker.cancelled).toHaveLength(0); // kept — never cancelled into a replacement we can't place
+      expect(broker.placed).toHaveLength(0);
+      expect(listBrokerProtectiveStops("SYN-HALT-KEEP", "local")).toHaveLength(1); // still resting
+
+      // Control: the SAME trail-% mismatch when ACTIVE cancels-and-replaces — proving the halt gate is
+      // what kept it, not an inert lane.
+      broker.cancelled = [];
+      broker.placed = [];
+      const activePolicy = { ...haltedPolicy, systemState: "active" as const };
+      await runSyntheticStopMonitor("local", activePolicy, true);
+      expect(broker.cancelled).toContain("prot-keep");
+      expect(broker.placed.length).toBeGreaterThan(0);
+    });
   });
 });
