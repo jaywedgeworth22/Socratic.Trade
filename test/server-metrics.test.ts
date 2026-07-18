@@ -88,6 +88,18 @@ describe("server-metrics provider shape normalization", () => {
     ]);
   });
 
+  it("bounds Coolify normalization work and warning expansion", () => {
+    const normalized = normalizeCoolifyResources(new Array(100_000).fill(null));
+
+    expect(normalized.resources).toEqual([]);
+    expect(normalized.warnings).toHaveLength(22);
+    expect(normalized.warnings.at(-2)).toBe("480 additional malformed Coolify resources were omitted.");
+    expect(normalized.warnings.at(-1)).toBe(
+      "Coolify returned 100000 resources; only the first 500 were processed.",
+    );
+    expect(JSON.stringify(normalized).length).toBeLessThan(4_096);
+  });
+
   it("validates successful client envelopes and marks retained data stale on transport failure", () => {
     const parsed = parseServerMetricsEnvelope({
       isProd: true,

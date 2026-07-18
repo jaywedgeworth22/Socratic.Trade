@@ -16,7 +16,7 @@ Bounded repair of `/admin/server` and `/api/admin/server-metrics`. No Cloudflare
 
 ## Verification
 
-- `vitest run test/server-metrics.test.ts`: 18 tests passed under Node 24.
+- `npm test -- --run test/server-metrics.test.ts`: 19 tests passed after current-main reconciliation and the bounded-warning review fix.
 - Independent adversarial review: no P0-P2; its P3 full-snapshot regression request is covered.
 - `npm test`: final serialized exact-tree rerun pending. An earlier pre-hardening 412-file / 4,800-test run passed; a later concurrent run was interrupted after unrelated timeout flakes while multiple agents were violating the shared full-gate serialization rule.
 - `tsc --noEmit`: passed.

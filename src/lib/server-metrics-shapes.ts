@@ -16,6 +16,9 @@ export interface NormalizedCoolifyResource {
   status: string;
 }
 
+const MAX_NORMALIZED_COOLIFY_RESOURCES = 500;
+const MAX_COOLIFY_RESOURCE_WARNINGS = 20;
+
 export function asRecord(value: unknown): UnknownRecord | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as UnknownRecord
@@ -99,7 +102,10 @@ export function normalizeCoolifyResources(payload: unknown): {
 
   const resources: NormalizedCoolifyResource[] = [];
   const warnings: string[] = [];
-  payload.forEach((value, index) => {
+  let malformedCount = 0;
+  const processedCount = Math.min(payload.length, MAX_NORMALIZED_COOLIFY_RESOURCES);
+  for (let index = 0; index < processedCount; index += 1) {
+    const value = payload[index];
     const resource = asRecord(value);
     const normalized = resource
       ? {
@@ -110,11 +116,24 @@ export function normalizeCoolifyResources(payload: unknown): {
         }
       : undefined;
     if (!normalized?.uuid || !normalized.name || !normalized.type || !normalized.status) {
-      warnings.push(`Coolify resource at index ${index} had malformed display fields and was omitted.`);
-      return;
+      malformedCount += 1;
+      if (warnings.length < MAX_COOLIFY_RESOURCE_WARNINGS) {
+        warnings.push(`Coolify resource at index ${index} had malformed display fields and was omitted.`);
+      }
+      continue;
     }
     resources.push(normalized as NormalizedCoolifyResource);
-  });
+  }
+
+  const summarizedMalformedCount = malformedCount - Math.min(malformedCount, MAX_COOLIFY_RESOURCE_WARNINGS);
+  if (summarizedMalformedCount > 0) {
+    warnings.push(`${summarizedMalformedCount} additional malformed Coolify resources were omitted.`);
+  }
+  if (payload.length > processedCount) {
+    warnings.push(
+      `Coolify returned ${payload.length} resources; only the first ${MAX_NORMALIZED_COOLIFY_RESOURCES} were processed.`,
+    );
+  }
 
   return { resources, warnings };
 }
