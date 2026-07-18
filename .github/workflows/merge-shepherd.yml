@@ -36,7 +36,9 @@ concurrency:
 
 jobs:
   call-shepherd:
-    uses: ./.github/workflows/_merge-shepherd-impl.yml@main
+    # workflow_dispatch is available from the default branch; a local reusable workflow
+    # reference must not include an @ref suffix.
+    uses: ./.github/workflows/_merge-shepherd-impl.yml
     with:
       dry_run: ${{ inputs.dry_run }}
     secrets: inherit

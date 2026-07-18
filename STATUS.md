@@ -12,6 +12,10 @@ upload because that action fails after a clean scan when the self-hosted workspa
 `/_work` instead of `/root`. YAML parse and actionlint verification passed. Rollout:
 `docs/rollouts/2026-07-18-coolify-ci-runner-routing.md`.
 
+The rerun also exposed an independent workflow parse failure in `merge-shepherd.yml`: its local
+reusable-workflow path incorrectly included `@main`. The reference now uses the valid local form;
+`workflow_dispatch` already runs from the default branch.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

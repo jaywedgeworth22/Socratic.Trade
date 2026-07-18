@@ -21,6 +21,11 @@ SARIF artifact: the action used `/root` as its artifact root while the result li
 `GITLEAKS_ENABLE_UPLOAD_ARTIFACT=false` keeps the required scan and avoids that incompatible optional
 upload.
 
+The branch push also exposed a pre-job workflow validation failure in `merge-shepherd.yml`. Its
+local reusable-workflow reference used the invalid form `./path.yml@main`; local references cannot
+carry an `@ref`. The caller now uses `./.github/workflows/_merge-shepherd-impl.yml`, which is already
+resolved from the default branch for `workflow_dispatch`.
+
 ## Files
 
 - `.github/workflows/ci.yml`
@@ -32,6 +37,7 @@ upload.
 - `.github/workflows/cleanup-caches.yml`
 - `.github/workflows/effort-issues-sync.yml`
 - `.github/workflows/_merge-shepherd-impl.yml`
+- `.github/workflows/merge-shepherd.yml`
 - `.github/actionlint.yaml`
 - `STATUS.md`
 - `PLAN.md`
@@ -65,6 +71,7 @@ Additional verification:
 git diff --check
 ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.load_file(f) }'
 actionlint .github/workflows/_merge-shepherd-impl.yml .github/workflows/ci.yml \
+  .github/workflows/merge-shepherd.yml \
   .github/workflows/cleanup-caches.yml .github/workflows/codex-autofix.yml \
   .github/workflows/e2e.yml .github/workflows/effort-issues-sync.yml \
   .github/workflows/security.yml .github/workflows/sentry-ci-report.yml \
