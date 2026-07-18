@@ -66,12 +66,21 @@ Worktree registrations: 103 → 98.
   operator key succeeded during this session. This was never a Voyage credential or
   entitlement failure.
 - Impact: all RAG ingestion/embedding (including the SEC 10→1,000 backfill program) is
-  stalled on the 402s. Trading liveness is unaffected (`tradingLiveness.degraded: 0`).
+  stalled on the 402s, and all LLM paths (strategy proposal/review, chat/RAG
+  query-deconstruction, post-mortems, etc.) are also down — `resolveLlmEndpoint` routes
+  every model through OpenRouter in production (`src/lib/llm-provider.ts:43`). Trading
+  liveness (broker order placement via the lifecycle schedulers) is technically unaffected
+  (`tradingLiveness.degraded: 0`), but the decision loop that drives autonomous trading is
+  stalled without working LLMs.
 
 **Owner action required (cannot be done by an agent):** top up OpenRouter credits at the
 OpenRouter settings/credits page — or add a SiliconFlow key (SiliconFlow serves the same
 `BAAI/bge-m3` model, keeping the vector space compatible; `vector-db.ts` already supports
-it). Do NOT flip `RAG_EMBED_PROVIDER` back to `voyage` — the corpus is in bge-m3 space.
+it). **If going the SiliconFlow route:** adding `SILICONFLOW_API_KEY` alone is
+insufficient — `resolveActiveRagProvider` (`src/lib/vector-db.ts:154-164`) checks for an
+OpenRouter key before SiliconFlow, so the exhausted OpenRouter key would still route embeds
+to OpenRouter. Also set `RAG_EMBED_PROVIDER=siliconflow` or remove/disable the OpenRouter
+key. Do NOT flip `RAG_EMBED_PROVIDER` back to `voyage` — the corpus is in bge-m3 space.
 
 ## Mid-session collision note (ag-reindex landing)
 
