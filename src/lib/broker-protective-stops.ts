@@ -570,6 +570,21 @@ export async function reconcileBrokerProtectiveStops(args: {
         const rowPos = liveLongs.get(rowSym);
         const rowKind = kindForSymbol(rowSym);
         const oversized = !!rowPos && row.quantity > Math.abs(rowPos.quantity) + 0.000001;
+        // Backfill this symbol's tracked extreme from the row's OWN recorded terms BEFORE the
+        // placeability check below — the section-3 backfill loop runs LATER, so without this
+        // `replacementPlaceable` -> `canArmTrailingNow` would see `trackedExtreme=0` and wrongly deem a
+        // native trail armable from the depressed mark (looser than the broker's ratcheted peak),
+        // cancelling the ratcheted stop into a looser replacement during a halt (Codex review, PR #1738).
+        // Idempotent (guarded per-symbol); section 3's loop then leaves it as-is.
+        if (rowKind === "trailing" && row.trailPercent && row.trailPercent > 0 && !extremePriceBySymbol[rowSym]) {
+          let e = row.stopPrice / (1 - row.trailPercent / 100);
+          const lo = orders.find((o) => o.id === row.brokerOrderId);
+          if (lo && typeof lo.stopPrice === "number" && lo.stopPrice > 0) {
+            const oe = lo.stopPrice / (1 - row.trailPercent / 100);
+            if (Number.isFinite(oe) && oe > 0) e = Math.max(e, oe);
+          }
+          if (Number.isFinite(e) && e > 0) extremePriceBySymbol[rowSym] = e;
+        }
         // Halted + oversized: retry the cancel ONLY if a right-sized replacement can actually be placed
         // this tick (else cancelling would strand the position — no synthetic fallback registers while
         // halted). Not placeable (fetch failed / trailing can't arm) -> keep the still-live stop; the
@@ -909,14 +924,20 @@ export async function reconcileBrokerProtectiveStops(args: {
       // exposure), so this case bypasses the arm-gate and cancels below regardless; section 4's own
       // canArmTrailingNow gate still decides, independently, whether a resize replacement can be
       // placed this same tick (Codex review, PR #1331).
-      const isQuantityShrink = mismatchNote === "quantity drift" && qty < existingStop.quantity;
+      // "Oversized" is judged by the actual quantities, NOT the mismatch LABEL: when the row also needs
+      // a kind change, `mismatchNote` is "stop kind …" (set first in the chain above) even though the
+      // row is also over-sized, so keying off the label would miss it and keep an over-selling stop
+      // resting (Codex review, PR #1738). Any `qty < existingStop.quantity` is risk-reducing to cancel.
+      const isQuantityShrink = qty < existingStop.quantity;
       // A trailing mismatch is arm-gated: don't cancel into a replacement section 4 would refuse
       // (mark below entry/tracked extreme). A pure quantity SHRINK normally BYPASSES this gate because
       // cancelling the oversized stop is risk-reducing and the always-on synthetic monitor covers the
       // gap — BUT that fallback does NOT register while halted, so a halted trailing shrink must ALSO
-      // respect the arm-gate: if the right-sized replacement can't arm this tick, keep the oversized
-      // stop rather than strand the position (Codex review, PR #1738).
-      if (mismatchNote && symKind === "trailing" && (!isQuantityShrink || haltedProtectOnly) && !canArmTrailingNow(pos, sym, newStopPrice)) {
+      // respect the arm-gate WHEN a replacement is actually needed (`qty > 0`): if it can't arm this
+      // tick, keep the oversized stop rather than strand the position. When `qty <= 0` another live exit
+      // order already covers the position, so no replacement is needed and cancelling the redundant
+      // (stacking) oversized stop is strictly safe — don't arm-gate that (Codex review, PR #1738).
+      if (mismatchNote && symKind === "trailing" && (!isQuantityShrink || (haltedProtectOnly && qty > 0)) && !canArmTrailingNow(pos, sym, newStopPrice)) {
         audit("broker_protective_stop_skipped", {
           symbol: sym, kind: symKind, note: `mismatch (${mismatchNote}) detected but the replacement would be refused this tick${haltedProtectOnly ? " (halted — no synthetic fallback)" : ""} — keeping the existing stop rather than cancelling into no protection`
         }, userId, policy.connectedAccountId);

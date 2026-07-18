@@ -240,3 +240,26 @@ placeable cases (canArm true) still cancel + right-size.
 ### Round-5 verification
 - `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files / **4808 tests pass**;
   `npm run build` exit 0.
+
+## Round 6 — Codex review on bc6ebce (3 findings, all real; hardens the halted right-size)
+
+- **P2 — kind-drift + shrink treated as non-shrink** (`isQuantityShrink`): the predicate keyed off the
+  mismatch LABEL (`"quantity drift"`), but a row that also needs a kind change is labeled `"stop kind …"`
+  even when oversized — so the halted guard kept an over-selling stop. Fixed: judge the shrink by
+  quantities (`qty < existingStop.quantity`), independent of the label.
+- **P2 — extreme backfill ordering for pending_cancel**: section 1's `replacementPlaceable` runs before
+  the section-3 extreme backfill, so `canArmTrailingNow` saw `trackedExtreme=0` and could reseed a
+  native trail from the depressed mark (looser) during a halt. Fixed: inline-backfill the tracked
+  extreme from the row (and live order) before the section-1 placeability check.
+- **P2 — fully-covered (qty<=0) shrink blocked by the halted arm-gate**: when another live exit order
+  already covers the position, no replacement is needed, but the halted arm-gate could keep the
+  redundant (stacking) oversized stop resting → both could fire (over-sell). Fixed: gate the halted
+  arm-block on `qty > 0`, so a `qty<=0` shrink cancel is never blocked.
+
+Tests added in `test/synthetic-stops.test.ts`: kind-drift+shrink → cancel + right-size; qty<=0
+covered-elsewhere → cancel + no placement; oversized pending_cancel with a ratcheted extreme above the
+mark → kept (backfill makes `canArmTrailingNow` refuse the reseed).
+
+### Round-6 verification
+- `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files / **4811 tests pass**;
+  `npm run build` exit 0.
