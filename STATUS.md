@@ -38,6 +38,11 @@ image's ephemeral-runner guidance requires. A canceled checkout therefore left a
 wraps the image entrypoint with a bounded cleanup of only `/_work` before each registration. A fresh
 registration completed the shared-package checkout and check successfully.
 
+Failure/cron telemetry now runs on the separate `[self-hosted, socratic-deploy]` runner so a missing
+or unhealthy CI runner can still be reported. That runner received the same bounded `/_work`
+cleanup. The pinned runner image already includes Node.js, GitHub CLI, and `jq`; the post-clean
+shared-package check exercised its direct `node` calls successfully.
+
 Coolify's production application had drifted from branch `main` to
 `agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The
 application was restored to `git_branch=main` and auto-deploy was re-enabled through the API without

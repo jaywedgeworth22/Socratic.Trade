@@ -54,6 +54,18 @@ each registration, then execs the image's normal runner command. No host or pers
 mounted there. The first post-change registration completed checkout and the shared-package pin
 check successfully, then re-registered with a new runner ID.
 
+CI observability was initially routed to the same CI label as the workflows it observes. That would
+strand a Sentry failure event whenever `socratic-ci` itself disappeared. The reporter now uses the
+separate `[self-hosted, socratic-deploy]` runner; it runs only for failures or schedule completions,
+so the deploy lane remains idle during normal successful PR traffic. The deploy runner received the
+same bounded `/_work` cleanup before each ephemeral registration.
+
+Two related review assumptions did not reproduce. The pinned
+`myoung34/github-runner:2.335.1-ubuntu-noble` image installs `nodejs`, GitHub CLI, and `jq` in its
+base image. The first clean shared-package run completed its direct `node` parsing successfully;
+the merge shepherd therefore retains its existing `gh`/`jq` implementation without redundant
+per-job package installation.
+
 During production follow-through, the Coolify application was found configured on
 `agent/ag-recovery-v48-migration` instead of `main`, with an empty deployment list. The application
 was patched back to `git_branch=main` with auto-deploy enabled. No manual deployment was triggered;
@@ -125,6 +137,7 @@ Coolify runner lifecycle receipt:
 pre-fix checkout: ambiguous argument 'HEAD'; Unable to clean or reset the repository
 post-fix check-pin: checkout success; comparison success; job success (3m31s)
 next registration: socratic-ci runner id 88 -> 89
+runner image toolchain: nodejs, github-cli, and jq installed by upstream image build
 ```
 
 Local verification limitation: `NODE_OPTIONS=--max-old-space-size=3072 npx tsc --noEmit` could not
