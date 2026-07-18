@@ -58,7 +58,10 @@ env:
 
 jobs:
   check-pin:
-    runs-on: ubuntu-latest
+    # This job receives a private-repo token. Reject fork PRs before checkout or
+    # runner assignment; push/schedule/manual events remain admitted.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, socratic-ci]
     steps:
       - uses: actions/checkout@v4
 
