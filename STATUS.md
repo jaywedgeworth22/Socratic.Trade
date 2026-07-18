@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-18 — PR #1760 review closeout (CODEX, branch `codex/pr1760-review-fixes`)
+
+Addressed all four actionable review findings without editing the AG-owned worktree. The Congress
+webhook route keeps the shared-package HMAC verifier and restores the documented bearer fallback
+with constant-time comparison. Proposal attribution remains in the exact configured policy
+namespace while the three remaining usage-budget assertions now match that contract. Removed the
+committed review JSON dumps and the unsafe one-off `update_prs.sh`, which force-removed other agents'
+worktrees and could continue after checkout failures. Node 24 focused verification passes 36/36
+tests across the webhook, usage-budget, failover, and money-path suites. The first focused run was
+invalid because `npm ci` compiled `better-sqlite3` under Node 26; rebuilding it under Node 24 fixed
+the ABI mismatch before the clean rerun. Current-main merge, full gates, PR update, thread
+resolution, merge, and exact production verification remain.
+
 ## 2026-07-18 — Bounded server/infrastructure panel reliability (CODEX, branch `codex/socratic-infra-panel-reliability`)
 
 Implemented the owner-bounded admin panel repair without changing provider infrastructure. The server-metrics endpoint queries fully configured Hetzner and Coolify integrations independently, returns HTTP 200 degraded receipts while retaining valid partial data, never labels partial or missing production configuration as the local host, parses current Hetzner `bandwidth.in` / `bandwidth.out` series, and normalizes aggregate CPU by a verified core count (otherwise CPU remains unavailable). A one-entry module cache provides a 120-second TTL and single-flight refresh, retries failures after 30 seconds, and retains a last-known snapshot for at most 10 minutes. Provider JSON is bounded to 512 KiB; Coolify normalization processes at most 500 resources and caps detailed warnings; malformed Hetzner metrics envelopes are rejected before success accounting and cannot replace a good cached series. The remote target is labeled `PRODUCTION` only with explicit `SERVER_METRICS_TARGET_ENVIRONMENT=production`; `NODE_ENV` controls local-runtime fallback only. The `Server Stats` client validates successful envelopes and marks retained data stale after malformed or failed refreshes while leaving absent values unavailable. Focused server-metrics tests (19/19), TypeScript, scoped ESLint, local SSR smoke, and `git diff --check` pass; the independent P2 warning-expansion finding is fixed and re-review is pending. A final serialized Node 24 full gate is pending before publication because concurrent full gates caused unrelated timeout/network failures. No push, PR, merge, deploy, secret mutation, or provider mutation has been performed yet. Rollout: `docs/rollouts/2026-07-18-admin-server-panel-reliability.md`.

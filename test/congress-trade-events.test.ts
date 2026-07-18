@@ -228,8 +228,6 @@ function sign(secret: string, bodyText: string) {
 }
 
 describe("webhook endpoint (POST)", () => {
-  const reqWith = (sig?: string) => new Request("https://b.example/api/webhooks/congress", sig ? { headers: { "x-signature": sig } } : undefined);
-
   it("retains idempotency from DB even after memory cache reset (simulating restart/HMR)", () => {
     const id = `evt-${randomUUID()}`;
     const ev = { type: "ref.upsert", id, data: {} };
@@ -254,6 +252,62 @@ describe("webhook endpoint (POST)", () => {
     });
     const resOversized = await postCongressWebhook(reqOversized);
     expect(resOversized.status).toBe(413);
+  });
+
+  it("accepts shared-package HMAC signatures with supported prefix forms", async () => {
+    process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
+    // An authenticated but invalid event returns 400; an auth failure returns 401. Using an
+    // invalid event keeps this auth-only regression from writing a successful provider-health row.
+    const body = `{"foo":"bar"}`;
+    const signature = sign("s3cr3t", body);
+
+    for (const signatureHeader of [signature, `sha256=${signature}`, `SHA256=${signature}`]) {
+      const response = await postCongressWebhook(
+        new Request("https://b.example/api/webhooks/congress", {
+          method: "POST",
+          headers: { "x-signature": signatureHeader, "content-type": "application/json" },
+          body,
+        })
+      );
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("retains constant-time legacy bearer authentication and rejects a bad token", async () => {
+    process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
+    const body = `{"foo":"bar"}`;
+
+    const accepted = await postCongressWebhook(
+      new Request("https://b.example/api/webhooks/congress", {
+        method: "POST",
+        headers: { authorization: "Bearer s3cr3t", "content-type": "application/json" },
+        body,
+      })
+    );
+    expect(accepted.status).toBe(400);
+
+    const rejected = await postCongressWebhook(
+      new Request("https://b.example/api/webhooks/congress", {
+        method: "POST",
+        headers: { authorization: "Bearer wrong", "content-type": "application/json" },
+        body,
+      })
+    );
+    expect(rejected.status).toBe(401);
+  });
+
+  it("rejects a mismatched shared-package HMAC signature", async () => {
+    process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
+    const body = JSON.stringify({ type: "ref.upsert", id: `evt-${randomUUID()}`, data: {} });
+    const signature = sign("different-secret", body);
+    const response = await postCongressWebhook(
+      new Request("https://b.example/api/webhooks/congress", {
+        method: "POST",
+        headers: { "x-signature": `sha256=${signature}`, "content-type": "application/json" },
+        body,
+      })
+    );
+    expect(response.status).toBe(401);
   });
 
   it("records webhook health from the ingest result, not just successful authentication", async () => {

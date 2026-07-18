@@ -1,5 +1,12 @@
 # Active Implementation Plan
 
+> **2026-07-18 - PR #1760 review closeout (CODEX, branch `codex/pr1760-review-fixes`).** Resolve all
+> four actionable review threads in an isolated Codex lane: retain both shared-package HMAC and
+> documented bearer webhook authentication, keep proposal attribution in policy namespace and align
+> the missed usage-budget assertions, delete unsafe review/worktree artifacts, merge current main,
+> run serialized Node 24 gates, land through the original PR, resolve threads, and production-verify
+> the exact auto-deployed SHA. Focused verification is green (36/36).
+
 > **2026-07-18 - Admin Server Stats reliability (CODEX, branch `codex/socratic-infra-panel-reliability`).** No roadmap scope change; infrastructure observability only. Final hardening adds bounded provider JSON and Coolify normalization, validated Hetzner metric envelopes with stale-series retention, strict client-envelope validation, and the coordinated `Server Stats` naming. Focused Node 24 tests are 19/19; the independent P2 warning-expansion finding is fixed and re-review is pending. Serialize the exact-tree full gate, then publish through PR/required checks/protected merge, Coolify auto-deploy, and exact production-SHA health verification. In-app Browser QA remains unavailable because the listed browser-control runtime was not callable; local SSR smoke returned HTTP 200 with `Server Stats` content.
 > **2026-07-18 - Admin smoke memory headroom (CODEX).** Lower the CI-only Playwright Node heap
 > ceiling from 2560 MiB to 2048 MiB after the admin PR's webServer exited 137 under the 3 GiB

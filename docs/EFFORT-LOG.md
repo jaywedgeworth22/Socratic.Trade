@@ -44,6 +44,8 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
+- **[Socratic.Trade][CODEX] PR #1760 review/comment/conflict closeout (branch `codex/pr1760-review-fixes`, worktree `/Users/jay/.codex/worktrees/socratic-pr-queue-closeout-20260718`, 2026-07-18) — IN PROGRESS / FOCUSED GREEN.** All four actionable Codex findings are fixed without editing the AG worktree: shared HMAC plus constant-time bearer compatibility, policy-namespace proposal attribution with remaining usage-budget expectations aligned, and removal of unsafe one-off worktree/review artifacts. Node 24 focused suites pass 36/36. Merge current main, run serialized full gates, land through self-hosted Actions, resolve threads, merge, and verify exact production SHA.
+
 - **[Socratic.Trade][CODEX] PR #1735 proposed-model attribution display contract (branch `codex/pr1735-proposal-attribution`, worktree `/Users/jay/.codex/worktrees/socratic-pr1735-proposal-attribution`, 2026-07-18) — LOCAL VERIFIED / UNPUSHED.** `TradeProposal.proposedByModel` now preserves the exact configured primary/fallback identifier while telemetry remains canonical for usage statistics. Regression coverage passes for `openrouter/openai/...` primary and `openrouter/google/...` fallback identity; TypeScript and scoped lint pass. Commit is intentionally local-only pending owner direction.
 
 ---

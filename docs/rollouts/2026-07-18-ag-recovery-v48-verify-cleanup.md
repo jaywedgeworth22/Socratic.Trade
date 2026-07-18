@@ -115,3 +115,54 @@ fallback identity and OpenRouter primary identity respectively.
 
 Push the branch back to PR #1735 after both review fixes are in place, then reply and resolve the
 remaining review thread with the verification evidence.
+
+## PR #1760 review closeout
+
+### Summary
+
+Resolved the four actionable review threads created when the post-#1735 shared-webhook migration
+opened as PR #1760.
+
+### Why
+
+- The shared HMAC verifier does not consume `Authorization: Bearer`, but that remains part of the
+  documented/legacy receiver contract.
+- Proposal attribution deliberately preserves exact configured policy IDs; three usage-budget
+  assertions still expected the older canonical bare IDs.
+- `update_prs.sh` and the two review JSON dumps were turn-local operator artifacts. The script could
+  force-delete another agent's dirty worktree and continue merge/push operations after a failed
+  checkout, so none of these files belongs in the product repository.
+
+### Files
+
+- `app/api/webhooks/congress/route.ts`
+- `test/congress-trade-events.test.ts`
+- `test/usage-budget-strategy-integration.test.ts`
+- `update_prs.sh` (removed)
+- `all_threads.json` (removed)
+- `threads.json` (removed)
+- `STATUS.md`
+- `PLAN.md`
+- `docs/EFFORT-LOG.md`
+- `docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`
+
+### Verification
+
+The first Node 24 run was invalid because `npm ci` had compiled `better-sqlite3` under Node 26
+(`NODE_MODULE_VERSION 147` instead of Node 24's 137). Rebuilt the native module with Node 24, then
+ran:
+
+```bash
+node ./node_modules/vitest/vitest.mjs run test/congress-trade-events.test.ts
+node ./node_modules/vitest/vitest.mjs run test/usage-budget-strategy-integration.test.ts test/strategy-llm-failover.test.ts test/strategy-money-path-f-g.test.ts
+```
+
+Result: 4 files passed, 36 tests passed.
+
+### Follow-ups
+
+Merge current `origin/main`, run the serialized full gate, update the original PR through the
+protected branch workflow, resolve all four threads with exact evidence, merge, and verify the
+auto-deployed production SHA. Production's release/core was current before this change, but Voyage
+was a critical dependency failure and kept `/api/health` at HTTP 503; do not call production fully
+healthy until that probe recovers or is separately remediated.
