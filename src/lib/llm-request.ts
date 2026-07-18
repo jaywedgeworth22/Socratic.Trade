@@ -675,7 +675,15 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
         if (normalizedEffort === "none") {
           return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning: { enabled: false } };
         }
-        return { ...body, max_completion_tokens: maxCompletionTokens, reasoning: { effort: normalizedEffort } };
+        // OpenRouter derives Anthropic's thinking budget as a FRACTION of max_tokens, so a bare
+        // `reasoning: { effort }` at high/xhigh/max would reserve most of the cap for thinking and
+        // starve the visible JSON (truncated/empty proposals — Codex P2). Pin an EXPLICIT thinking
+        // budget = the reasoning headroom already baked into maxCompletionTokens, so the VISIBLE
+        // budget stays == the caller's requested bounds.maxOutputTokens. Anthropic requires
+        // budget >= 1024 and max_tokens > budget, so clamp the budget and widen the cap to match.
+        const thinkingBudget = Math.max(1024, maxCompletionTokens - bounds.maxOutputTokens);
+        const maxTokens = Math.max(maxCompletionTokens, bounds.maxOutputTokens + thinkingBudget);
+        return { ...body, max_completion_tokens: maxTokens, reasoning: { max_tokens: thinkingBudget } };
       }
       return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning_effort: normalizedEffort };
     }
