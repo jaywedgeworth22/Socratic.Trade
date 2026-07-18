@@ -775,10 +775,11 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
 
 /**
  * Rename a connected account's user-facing display label. Deliberately narrow: it touches ONLY
- * `label` (+ `updated_at`), never the broker identifier (`account_number`), credentials, or any
- * other field — so a cosmetic rename can never re-run connect-time validation or disturb the
- * broker-sourced account number that per-account trade history and `policy.accountNumber` key
- * off of. User-scoped; returns false if no row matched (unknown id, or another user's row).
+ * `label` — not the broker identifier (`account_number`), not credentials, and NOT `updated_at`
+ * (see the ordering note below), so a cosmetic rename can never re-run connect-time validation,
+ * disturb the broker-sourced account number that per-account trade history and
+ * `policy.accountNumber` key off of, or reorder credential resolution. User-scoped; returns false
+ * if no row matched (unknown id, or another user's row).
  */
 export function renameConnectedAccount(id: string, label: string, userId: string = "local"): boolean {
   const trimmed = label.trim();
