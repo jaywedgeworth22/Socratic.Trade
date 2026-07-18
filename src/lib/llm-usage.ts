@@ -179,9 +179,31 @@ export function extractLlmUsage(responseJson: unknown): LlmTokenUsage {
   };
 }
 
+/**
+ * Strips the routing prefix (e.g. "openai/") from OpenRouter models to yield the canonical model
+ * identity for usage and benchmark persistence, so that historical stats aren't fragmented when
+ * routing through OpenRouter.
+ */
+export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined } {
+  if (provider === "openrouter" && model) {
+    const slashIdx = model.indexOf("/");
+    if (slashIdx !== -1) {
+      let p = model.slice(0, slashIdx);
+      if (p === "google") p = "gemini";
+      if (p === "mistralai") p = "mistral";
+      if (p === "x-ai") p = "xai";
+      return { provider: p, model: model.slice(slashIdx + 1) };
+    }
+  }
+  return { provider, model };
+}
+
 /** Record one LLM call against a user. Never throws — usage accounting must not break an LLM run. */
 export function recordLlmUsage(entry: LlmUsageEntry): void {
   try {
+    const canonical = remapOpenRouterTelemetry(entry.provider, entry.model);
+    entry.provider = canonical.provider;
+    entry.model = canonical.model;
     const usageId = crypto.randomUUID();
     const occurredAt = new Date().toISOString();
     const total =
