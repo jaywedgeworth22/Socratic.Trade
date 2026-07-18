@@ -480,7 +480,10 @@ export function isEarningsCallsRefreshDue(nowMs: number = Date.now()): boolean {
 
 // ── Downstream ingest (the #1586 storeDocument boundary) ───────────────────────
 
-function accessionFor(row: { symbol: string; fiscalYear: number; fiscalQuarter: number }): string {
+/** Exported so corpus-reembed can compute the identical documentKey/accession identity when
+ *  re-pushing already-cached transcripts into a new embedding space, without duplicating the
+ *  format string. */
+export function accessionFor(row: { symbol: string; fiscalYear: number; fiscalQuarter: number }): string {
   return `earningscalls:${normalizeSymbol(row.symbol)}:${row.fiscalYear}Q${row.fiscalQuarter}`;
 }
 
