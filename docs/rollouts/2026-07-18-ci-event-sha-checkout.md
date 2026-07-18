@@ -2,15 +2,16 @@
 
 ## Summary
 
-Pinned the lightweight CI classifier and security checkout actions to `github.sha`, retaining
-shallow and tag-free fetches. The classifier continues to fetch the base/head endpoint commits
-explicitly for its changed-file comparison.
+Pinned the lightweight CI classifier checkout actions to `github.sha`, retaining shallow and
+tag-free fetches. The classifier continues to fetch the base/head endpoint commits explicitly for
+its changed-file comparison. Security retains full history for Gitleaks.
 
 ## Why
 
-The first shallow-checkout recovery reduced object count but the persistent self-hosted workspace
-still traversed broad refs during checkout. Pinning the event SHA makes the checkout target
-explicit and bounds startup work before the required gates execute.
+The first shallow-checkout recovery reduced object count but classifier checkout still traversed
+broad refs. Pinning the event SHA makes the target explicit and bounds classifier startup. The
+security checkout was restored to full history after review because Gitleaks must scan secrets that
+were added and removed in earlier commits.
 
 ## Files
 

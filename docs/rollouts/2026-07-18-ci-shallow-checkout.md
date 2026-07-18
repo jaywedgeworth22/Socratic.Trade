@@ -2,16 +2,17 @@
 
 ## Summary
 
-Changed the lightweight CI classification and security workflows to avoid full-history/tag fetches
-on the single Coolify self-hosted runner. Classification fetches the base/head endpoint commits
-and compares their trees directly; security uses a shallow, tag-free checkout.
+Changed the lightweight CI classification workflows to avoid full-history/tag fetches on the single
+Coolify self-hosted runner. Classification fetches the base/head endpoint commits and compares their
+trees directly. Security retains full history so Gitleaks can scan secrets across commits.
 
 ## Why
 
 PR #1739's routing fix moved required checks onto the Coolify CI runner, but repeated full-history
 checkout attempts consumed several minutes and caused classify jobs to be cancelled before the
 dependent smoke job could run. The application checks were healthy; the failure was workflow
-startup contention.
+startup contention. Gitleaks is the exception: review correctly required full history so a secret
+added and removed in an earlier PR commit remains detectable.
 
 ## Files
 

@@ -50,9 +50,9 @@ jobs:
           fi
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-          fetch-tags: false
-          ref: ${{ github.sha }}
+          # Gitleaks must see full history: a secret added and removed in an
+          # earlier PR commit must remain scannable, as must scheduled history.
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,10 +2,9 @@
 
 ## 2026-07-18 — CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739)
 
-Follow-up to the shallow-checkout recovery. The self-hosted runner still traversed broad refs on
-the persistent workspace during `actions/checkout`; lightweight CI/security jobs now pin checkout
-to `github.sha` in addition to shallow, tag-free fetches. This keeps classify/security startup
-bounded to the event commit while classify explicitly fetches its base/head endpoint trees.
+Follow-up to the shallow-checkout recovery. Classifier jobs pin checkout to `github.sha` in addition
+to shallow, tag-free fetches, then explicitly fetch their base/head endpoint trees. Security retains
+full history so Gitleaks can detect secrets added and removed in earlier PR commits or history.
 Rollout: `docs/rollouts/2026-07-18-ci-event-sha-checkout.md`.
 
 ## 2026-07-18 — CI shallow-checkout recovery (CODEX, PR #1741 integrated into PR #1739)
@@ -13,9 +12,9 @@ Rollout: `docs/rollouts/2026-07-18-ci-event-sha-checkout.md`.
 Stacked follow-up to the Coolify CI routing PR. Required lightweight jobs were repeatedly
 spending several minutes in full-history `actions/checkout` on the single self-hosted runner,
 causing classify cancellation and fail-closed smoke results. Classification now fetches only the
-base/head endpoint commits and compares their trees; security scanning uses a shallow, tag-free
-checkout. This preserves conservative docs-only behavior while preventing the cheap gates from
-monopolizing the runner. Rollout: `docs/rollouts/2026-07-18-ci-shallow-checkout.md`.
+base/head endpoint commits and compares their trees. Security deliberately keeps full history for
+Gitleaks coverage. This preserves conservative docs-only behavior while keeping the cheap
+classifiers bounded. Rollout: `docs/rollouts/2026-07-18-ci-shallow-checkout.md`.
 
 ## 2026-07-18 — Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`)
 

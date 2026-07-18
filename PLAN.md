@@ -1,12 +1,12 @@
 # Active Implementation Plan
 
 > **2026-07-18 - CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739).**
-> Lightweight checkout actions now pin the event SHA. Diff/YAML/actionlint checks passed; final
-> gate and deployment follow the parent routing PR.
+> Classifier checkouts now pin the event SHA. Security deliberately keeps full history for Gitleaks.
+> Diff/YAML/actionlint checks passed; final gate and deployment follow the parent routing PR.
 
 > **2026-07-18 - CI shallow-checkout recovery (CODEX, PR #1741 integrated into PR #1739).**
-> Classify jobs compare base/head endpoint trees after shallow fetches; security avoids tag/full-
-> history fetches. Diff/YAML/actionlint checks passed; final gate follows the parent routing PR.
+> Classify jobs compare base/head endpoint trees after shallow fetches. Security deliberately keeps
+> full history for Gitleaks. Diff/YAML/actionlint checks passed; final gate follows the parent PR.
 
 > **2026-07-18 - Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`).**
 > Route required PR checks and PR-visible helper workflows from GitHub-hosted `ubuntu-latest` to the

@@ -66,6 +66,10 @@ base image. The first clean shared-package run completed its direct `node` parsi
 the merge shepherd therefore retains its existing `gh`/`jq` implementation without redundant
 per-job package installation.
 
+The stacked shallow-checkout follow-up initially shortened Security checkout too. Review correctly
+identified that this hides secrets added and removed in earlier commits, so Security is restored to
+`fetch-depth: 0`; only the lightweight classifier jobs remain shallow.
+
 During production follow-through, the Coolify application was found configured on
 `agent/ag-recovery-v48-migration` instead of `main`, with an empty deployment list. The application
 was patched back to `git_branch=main` with auto-deploy enabled. No manual deployment was triggered;
