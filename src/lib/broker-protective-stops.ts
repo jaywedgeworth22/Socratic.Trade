@@ -50,10 +50,14 @@ import {
   insertFillEvent,
   listBrokerProtectiveStops,
   upsertBrokerProtectiveStop,
+  getDb,
   type BrokerProtectiveStop,
   listPendingBracketTeardowns,
   removePendingBracketTeardown,
-  bumpPendingBracketTeardownAttempts
+  bumpPendingBracketTeardownAttempts,
+  getBrokerStopPlacementIntent,
+  upsertBrokerStopPlacementIntent,
+  deleteBrokerStopPlacementIntent
 } from "./db";
 import { isRejectedOrCanceledState, liveExitOrderCoverage } from "./broker-side";
 import { normalizeSymbol } from "./money";
@@ -325,6 +329,17 @@ export async function reconcileBrokerProtectiveStops(args: {
       raw: { brokerHeldProtectiveStop: true, kind: row.kind }
     });
   };
+  // Every recovery path below used to delete the tracking row THEN book the fill as two separate
+  // statements — a crash (process killed, machine reboot) between them left the row gone with the
+  // fill never booked, silently losing it forever (nothing remains to signal a retry is owed). Wrap
+  // both writes in one transaction so they always land together or not at all; a re-run after a crash
+  // before this fix finds the row exactly as it was and can safely retry (Item 6, 2026-07-18).
+  // insertFillEvent's own broker-held-stop-recovery unique index additionally makes a genuine double-invocation of
+  // this same pair (same row, same order) an idempotent no-op rather than a duplicate fill.
+  const deleteAndBookBrokerStopFill = getDb().transaction((row: BrokerProtectiveStop, order: EquityOrder): void => {
+    deleteBrokerProtectiveStop(row.id, userId);
+    bookBrokerHeldStopFill(row, order);
+  });
   // A terminal order can still carry a positive filledQuantity even when its OVERALL state is
   // "canceled"/"expired"/"rejected", not literally "filled" — a stop that partially executes and
   // then dies (e.g. a canceled remainder) DID move some shares. Book on EITHER signal: the literal
@@ -358,21 +373,22 @@ export async function reconcileBrokerProtectiveStops(args: {
     for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
-        deleteBrokerProtectiveStop(row.id, userId);
-        out.cancelled++;
-        out.cancelledOrderIds.push(row.brokerOrderId);
         // A successful cancel doesn't mean nothing filled first — a GTC stop can partially execute
         // before the cancel reaches the broker, and the broker still accepts the cancel for the
         // remainder. The caller's pre-reconcile order snapshot (`orders`) can still show that
-        // partial fill; book it before the row disappears, or the executed shares never reach
-        // fill_events/P&L/learning, and the caller isn't told the position may be stale (Codex
+        // partial fill; book it ATOMICALLY with deleting this row's tracking (a crash between the two
+        // must not silently drop an executed fill — Item 6, 2026-07-18), or the executed shares never
+        // reach fill_events/P&L/learning, and the caller isn't told the position may be stale (Codex
         // review, PR #1331, round 10).
         const preCancelOrder = orders.find((o) => o.id === row.brokerOrderId);
         if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
-          const s = normalizeSymbol(row.symbol);
-          out.filledRecoverySymbols.push(s);
-          bookBrokerHeldStopFill(row, preCancelOrder);
+          deleteAndBookBrokerStopFill(row, preCancelOrder);
+          out.filledRecoverySymbols.push(normalizeSymbol(row.symbol));
+        } else {
+          deleteBrokerProtectiveStop(row.id, userId);
         }
+        out.cancelled++;
+        out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {
         // The cancel failed — but that doesn't necessarily mean the order is still resting
         // broker-side. Mirror section 1's recovery: if the caller's freshly fetched order list shows
@@ -383,17 +399,17 @@ export async function reconcileBrokerProtectiveStops(args: {
         // fill_events/P&L/learning at all (Codex review, PR #1331).
         const found = orders.find((o) => o.id === row.brokerOrderId);
         if (found && isDoneRestingState(found.state)) {
-          deleteBrokerProtectiveStop(row.id, userId);
           if (hadExecutedFill(found)) {
             // Signal this recovery to the caller the same way section 1/3 do: `positions` was
             // captured before `orders` this tick, so a fill discovered only here can still leave
             // the caller holding a stale (pre-fill) position snapshot for the rest of THIS tick —
             // it must skip synthetic registration/fire for the symbol, same as a live-lane fill
             // recovery (Codex review, PR #1331, round 10 — this branch previously booked the fill
-            // but never told the caller).
-            const s = normalizeSymbol(row.symbol);
-            out.filledRecoverySymbols.push(s);
-            bookBrokerHeldStopFill(row, found);
+            // but never told the caller). Atomic with the delete (Item 6, 2026-07-18).
+            deleteAndBookBrokerStopFill(row, found);
+            out.filledRecoverySymbols.push(normalizeSymbol(row.symbol));
+          } else {
+            deleteBrokerProtectiveStop(row.id, userId);
           }
           audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "disabled_teardown" }, userId, policy.connectedAccountId);
         } else {
@@ -533,16 +549,17 @@ export async function reconcileBrokerProtectiveStops(args: {
         // module doc and the section-4 "never orphan a possibly-still-live stop" guard).
         const found = orders.find((o) => o.id === row.brokerOrderId);
         if (found && isDoneRestingState(found.state)) {
-          deleteBrokerProtectiveStop(row.id, userId);
           // A partial fill DID move shares even when the order's overall terminal state is
-          // canceled/expired/rejected (not literally "filled") — book it, and defer section 4's
-          // replacement sizing to the next call the same way a full fill does (Codex review, PR
-          // #1331).
+          // canceled/expired/rejected (not literally "filled") — book it ATOMICALLY with deleting
+          // this row (Item 6, 2026-07-18), and defer section 4's replacement sizing to the next call
+          // the same way a full fill does (Codex review, PR #1331).
           if (hadExecutedFill(found)) {
+            deleteAndBookBrokerStopFill(row, found);
             const s = normalizeSymbol(row.symbol);
             filledRecoverySymbols.add(s);
             out.filledRecoverySymbols.push(s);
-            bookBrokerHeldStopFill(row, found);
+          } else {
+            deleteBrokerProtectiveStop(row.id, userId);
           }
           audit(
             "broker_protective_stop_cancel_recovered",
@@ -590,28 +607,31 @@ export async function reconcileBrokerProtectiveStops(args: {
     if (kindForSymbol(sym) !== null) continue;
     try {
       await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
-      deleteBrokerProtectiveStop(row.id, userId);
-      out.cancelled++;
-      out.cancelledOrderIds.push(row.brokerOrderId);
       // A successful cancel doesn't mean nothing filled first — mirror every other cancel path in
       // this reconciler: check the caller's pre-reconcile order snapshot for an executed fill before
-      // this row disappears (Codex review, PR #1371).
+      // this row disappears, ATOMICALLY with the delete (Codex review, PR #1371; atomicity Item 6,
+      // 2026-07-18).
       const preCancelOrder = orders.find((o) => o.id === row.brokerOrderId);
       if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
+        deleteAndBookBrokerStopFill(row, preCancelOrder);
         filledRecoverySymbols.add(sym);
         out.filledRecoverySymbols.push(sym);
-        bookBrokerHeldStopFill(row, preCancelOrder);
+      } else {
+        deleteBrokerProtectiveStop(row.id, userId);
       }
+      out.cancelled++;
+      out.cancelledOrderIds.push(row.brokerOrderId);
     } catch (err) {
       // The cancel failed — check whether the broker already terminated the order (most likely it
       // FILLED before our cancel reached the broker), same recovery as every other cancel path here.
       const found = orders.find((o) => o.id === row.brokerOrderId);
       if (found && isDoneRestingState(found.state)) {
-        deleteBrokerProtectiveStop(row.id, userId);
         if (hadExecutedFill(found)) {
+          deleteAndBookBrokerStopFill(row, found);
           filledRecoverySymbols.add(sym);
           out.filledRecoverySymbols.push(sym);
-          bookBrokerHeldStopFill(row, found);
+        } else {
+          deleteBrokerProtectiveStop(row.id, userId);
         }
         audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "plan_excluded_teardown" }, userId, policy.connectedAccountId);
       } else {
@@ -697,19 +717,21 @@ export async function reconcileBrokerProtectiveStops(args: {
       if (existingStop && existingStop.status === "resting") {
         try {
           await gateway.cancelEquityOrder(accountNumber, existingStop.brokerOrderId);
-          deleteBrokerProtectiveStop(existingStop.id, userId);
-          out.cancelled++;
-          out.cancelledOrderIds.push(existingStop.brokerOrderId);
           // A successful cancel doesn't mean nothing filled first — mirror the account-wide disabled
           // teardown's handling: check the caller's pre-reconcile order snapshot for an executed fill
-          // before this row disappears, or the executed shares never reach fill_events/P&L/learning,
-          // and the caller isn't told the position snapshot may be stale (Codex review, PR #1371).
+          // before this row disappears, ATOMICALLY with the delete (Codex review, PR #1371; atomicity
+          // Item 6, 2026-07-18), or the executed shares never reach fill_events/P&L/learning, and the
+          // caller isn't told the position snapshot may be stale.
           const preCancelOrder = orders.find((o) => o.id === existingStop.brokerOrderId);
           if (preCancelOrder && hadExecutedFill(preCancelOrder)) {
+            deleteAndBookBrokerStopFill(existingStop, preCancelOrder);
             filledRecoverySymbols.add(sym);
             out.filledRecoverySymbols.push(sym);
-            bookBrokerHeldStopFill(existingStop, preCancelOrder);
+          } else {
+            deleteBrokerProtectiveStop(existingStop.id, userId);
           }
+          out.cancelled++;
+          out.cancelledOrderIds.push(existingStop.brokerOrderId);
           audit("broker_protective_stop_mismatch", { symbol: sym, note: "per-position stop plan excludes this account's enabled broker-held lane(s)", kind: null }, userId, policy.connectedAccountId);
         } catch (err) {
           // The cancel failed — check whether the broker already terminated the order (most likely
@@ -717,11 +739,12 @@ export async function reconcileBrokerProtectiveStops(args: {
           // in this reconciler (Codex review, PR #1371).
           const found = orders.find((o) => o.id === existingStop.brokerOrderId);
           if (found && isDoneRestingState(found.state)) {
-            deleteBrokerProtectiveStop(existingStop.id, userId);
             if (hadExecutedFill(found)) {
+              deleteAndBookBrokerStopFill(existingStop, found);
               filledRecoverySymbols.add(sym);
               out.filledRecoverySymbols.push(sym);
-              bookBrokerHeldStopFill(existingStop, found);
+            } else {
+              deleteBrokerProtectiveStop(existingStop.id, userId);
             }
             audit("broker_protective_stop_cancel_recovered", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "per_symbol_plan_teardown" }, userId, policy.connectedAccountId);
           } else {
@@ -745,13 +768,15 @@ export async function reconcileBrokerProtectiveStops(args: {
       // checks below unchanged.
       const trackedOrder = orders.find((o) => o.id === existingStop.brokerOrderId);
       if (trackedOrder && isDoneRestingState(trackedOrder.state)) {
-        deleteBrokerProtectiveStop(existingStop.id, userId);
         // A partial fill DID move shares even when the tracked order's overall terminal state is
-        // canceled/expired/rejected, not literally "filled" (Codex review, PR #1331).
+        // canceled/expired/rejected, not literally "filled" (Codex review, PR #1331). Atomic with the
+        // delete (Item 6, 2026-07-18).
         if (hadExecutedFill(trackedOrder)) {
+          deleteAndBookBrokerStopFill(existingStop, trackedOrder);
           filledRecoverySymbols.add(sym);
           out.filledRecoverySymbols.push(sym);
-          bookBrokerHeldStopFill(existingStop, trackedOrder);
+        } else {
+          deleteBrokerProtectiveStop(existingStop.id, userId);
         }
         audit(
           "broker_protective_stop_recovered",
@@ -892,6 +917,64 @@ export async function reconcileBrokerProtectiveStops(args: {
     // fresh position read rather than risk sizing a replacement off a stale (pre-fill) quantity.
     if (filledRecoverySymbols.has(sym)) continue;
     if (!(pos.averageCost > 0)) continue;
+    // ITEM 5 (2026-07-18): a prior tick may have persisted a durable placement intent for this
+    // symbol and then crashed/thrown before learning the broker's response — reconcile it against
+    // the caller's freshly fetched order list BEFORE computing coverage/qty or submitting anything
+    // new this tick (a live order this reconciler doesn't yet track would otherwise be miscounted as
+    // "other" coverage below and short-circuit the qty check before ever reaching this adoption
+    // logic). A live order carrying the intent's client_order_id means the earlier submission WAS
+    // accepted; adopt it instead of risking a duplicate. Clear the intent only on POSITIVE evidence
+    // (a real fetch, `ordersListed`, showing no match) — an unavailable order list stays ambiguous,
+    // so this symbol is skipped entirely rather than guessed at (the same evidentiary standard the
+    // rest of this reconciler already applies to coverage).
+    const priorIntent = getBrokerStopPlacementIntent(accountNumber, sym, userId);
+    if (priorIntent) {
+      const acceptedOrder = orders.find((o) => o.clientOrderId === priorIntent.clientOrderId);
+      if (acceptedOrder && acceptedOrder.id && !isDoneRestingState(acceptedOrder.state)) {
+        const adoptQty = acceptedOrder.quantity && acceptedOrder.quantity > 0 ? acceptedOrder.quantity : priorIntent.quantity;
+        const adoptStop = acceptedOrder.stopPrice && acceptedOrder.stopPrice > 0 ? acceptedOrder.stopPrice : priorIntent.stopPrice;
+        upsertBrokerProtectiveStop({
+          id: `protstop-${userId}-${accountNumber}-${sym}`,
+          userId,
+          accountNumber,
+          symbol: sym,
+          brokerOrderId: acceptedOrder.id,
+          quantity: adoptQty,
+          stopPrice: adoptStop,
+          status: "resting",
+          kind: priorIntent.kind,
+          trailPercent: priorIntent.kind === "trailing" ? priorIntent.trailPercent : undefined
+        });
+        deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
+        out.placed++;
+        if (adoptQty >= Math.abs(pos.quantity) - 0.000001) out.placedStopSymbols.push(sym);
+        else {
+          out.partiallyPlacedStopSymbols.push(sym);
+          out.partiallyPlacedStopQuantities[sym] = adoptQty;
+        }
+        audit("broker_protective_stop_adopted", {
+          symbol: sym, kind: priorIntent.kind, brokerOrderId: acceptedOrder.id, clientOrderId: priorIntent.clientOrderId,
+          quantity: adoptQty, stopPrice: adoptStop,
+          note: "adopted a live order from a prior placement whose broker reply was lost, instead of risking a duplicate"
+        }, userId, policy.connectedAccountId);
+        continue;
+      }
+      if (ordersListed) {
+        // A real fetch succeeded and shows no live order for this client_order_id — the earlier
+        // submission is confirmed dead (rejected, never reached the broker, or already terminal).
+        // Clear it; the placement below runs fresh with a new id.
+        deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
+      } else {
+        // Order list unavailable this tick — genuinely unknown whether the earlier request landed.
+        // Skip this symbol entirely rather than guess: a fresh placement here could double up on an
+        // order that WAS accepted but simply isn't visible this tick.
+        audit("broker_protective_stop_skipped", {
+          symbol: sym, kind: priorIntent.kind,
+          note: "a prior placement's outcome is still unresolved and the order list is unavailable this tick — waiting rather than risking a duplicate"
+        }, userId, policy.connectedAccountId);
+        continue;
+      }
+    }
     // The uncovered remainder (coverage-aware — never stack exit quantity on top of a live bracket
     // leg / manual sell; the just-cancelled replacement's own order is pruned inside), floored to
     // whole shares on the native trailing lane. `null` means a real order-list fetch failed this
@@ -932,6 +1015,17 @@ export async function reconcileBrokerProtectiveStops(args: {
       continue;
     }
     const refId = `protstop-${userId}-${accountNumber}-${sym}-${Date.now()}`;
+    // Persist a durable pre-network intent BEFORE calling the broker: if the broker accepts the
+    // order but the reply is lost (crash/timeout), this row is the only evidence a request was ever
+    // sent, and the check above reconciles it on a later tick instead of guessing. Deleted on every
+    // definite outcome below (rejected/no-id/success); left in place only when the placement call
+    // itself throws (Item 5, 2026-07-18 — this call previously had no persisted state before the
+    // network call at all, so an accepted request whose reply was lost could be retried into a
+    // duplicate full-size stop).
+    upsertBrokerStopPlacementIntent({
+      userId, accountNumber, symbol: sym, clientOrderId: refId, quantity: qty, stopPrice, kind: symKind,
+      trailPercent: symKind === "trailing" ? trailPct : undefined
+    });
     try {
       const exec = await gateway.placeEquityOrder({
         accountNumber,
@@ -956,11 +1050,13 @@ export async function reconcileBrokerProtectiveStops(args: {
         // don't advertise the symbol via placedStopSymbols (that would suppress this tick's
         // synthetic registration for protection that doesn't exist).
         audit("broker_protective_stop_error", { symbol: sym, stopPrice, orderId: exec.orderId, error: `broker declined the protective stop (state: ${exec.state})` }, userId, policy.connectedAccountId);
+        deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
         continue;
       }
       if (!exec.orderId) {
         // No broker order id means we couldn't later cancel it — don't record an untrackable stop.
         audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: "broker returned no order id" }, userId, policy.connectedAccountId);
+        deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
         continue;
       }
       upsertBrokerProtectiveStop({
@@ -977,6 +1073,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         kind: symKind,
         trailPercent: symKind === "trailing" ? trailPct : undefined
       });
+      deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
       out.placed++;
       if (qty >= Math.abs(pos.quantity) - 0.000001) out.placedStopSymbols.push(sym);
       else {
@@ -985,6 +1082,9 @@ export async function reconcileBrokerProtectiveStops(args: {
       }
       audit("broker_protective_stop_placed", { symbol: sym, kind: symKind, stopPrice, trailPercent: symKind === "trailing" ? trailPct : undefined, quantity: qty, positionQuantity: Math.abs(pos.quantity), brokerOrderId: exec.orderId }, userId, policy.connectedAccountId);
     } catch (err) {
+      // Uncertain — the broker may have accepted the order before the reply was lost. Deliberately
+      // leave the intent row in place (persisted above, before the call); the check at the top of
+      // this symbol's next tick reconciles it via clientOrderId instead of guessing.
       audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId, policy.connectedAccountId);
     }
   }

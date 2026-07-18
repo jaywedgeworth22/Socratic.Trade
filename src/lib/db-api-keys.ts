@@ -1828,3 +1828,64 @@ export function listOpenBracketOrders(accountNumber: string, symbol: string, use
     .all(userId, accountNumber, symbol) as Array<{ id: string; account_number: string; symbol: string; order_id: string; created_at: string }>;
   return rows.map((r) => ({ id: r.id, accountNumber: r.account_number, symbol: r.symbol, orderId: r.order_id, createdAt: r.created_at }));
 }
+
+// ── Durable pre-network intent for broker protective-stop placement ───────────
+// (the broker_stop_placement_intents migration, src/lib/db.ts). One row per (user, account, symbol)
+// — see that migration's comment
+// for the crash/duplicate-placement rationale. Written BEFORE the broker call in
+// reconcileBrokerProtectiveStops, deleted on every definite outcome; a call that throws leaves the
+// row so the next tick can adopt the order it already placed instead of duplicating it.
+
+export interface BrokerStopPlacementIntent {
+  userId: string;
+  accountNumber: string;
+  symbol: string;
+  clientOrderId: string;
+  quantity: number;
+  stopPrice: number;
+  kind: "fixed" | "trailing";
+  trailPercent?: number;
+  createdAt: string;
+}
+
+export function upsertBrokerStopPlacementIntent(intent: Omit<BrokerStopPlacementIntent, "createdAt">): void {
+  getDb()
+    .prepare(
+      `INSERT INTO broker_stop_placement_intents
+         (user_id, account_number, symbol, client_order_id, quantity, stop_price, kind, trail_percent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
+         client_order_id = excluded.client_order_id,
+         quantity = excluded.quantity,
+         stop_price = excluded.stop_price,
+         kind = excluded.kind,
+         trail_percent = excluded.trail_percent,
+         created_at = excluded.created_at`
+    )
+    .run(
+      intent.userId, intent.accountNumber, intent.symbol, intent.clientOrderId,
+      intent.quantity, intent.stopPrice, intent.kind, intent.trailPercent ?? null, new Date().toISOString()
+    );
+}
+
+export function getBrokerStopPlacementIntent(accountNumber: string, symbol: string, userId: string = "local"): BrokerStopPlacementIntent | undefined {
+  const row = getDb()
+    .prepare("SELECT * FROM broker_stop_placement_intents WHERE user_id = ? AND account_number = ? AND symbol = ?")
+    .get(userId, accountNumber, symbol) as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  return {
+    userId: String(row.user_id),
+    accountNumber: String(row.account_number),
+    symbol: String(row.symbol),
+    clientOrderId: String(row.client_order_id),
+    quantity: Number(row.quantity),
+    stopPrice: Number(row.stop_price),
+    kind: row.kind === "trailing" ? "trailing" : "fixed",
+    trailPercent: row.trail_percent == null ? undefined : Number(row.trail_percent),
+    createdAt: String(row.created_at)
+  };
+}
+
+export function deleteBrokerStopPlacementIntent(accountNumber: string, symbol: string, userId: string = "local"): void {
+  getDb().prepare("DELETE FROM broker_stop_placement_intents WHERE user_id = ? AND account_number = ? AND symbol = ?").run(userId, accountNumber, symbol);
+}
