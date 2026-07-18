@@ -3,16 +3,24 @@ import { describe, expect, it } from "vitest";
 import type { DashboardSnapshot } from "../app/dashboard-types";
 import type { EquityCurvePoint, EquityPosition, Portfolio, TradingPolicy } from "../src/lib/types";
 import {
+  deriveDayPnl,
   deriveMarkToMarket,
   deriveProtection,
   deriveRiskUtilization,
   deriveSpend,
+  deriveStateInfo,
   estimatedClosingPnl,
   isClosingOrder,
   positionMarkPrice,
   selectEquityWindow
 } from "../app/console/lib/derive";
-import type { EquityOrder } from "../src/lib/types";
+import type { EquityOrder, PerformanceSummary } from "../src/lib/types";
+
+// June is EDT (UTC-4) — mirrors the etDate() helper in test/market-hours.test.ts.
+function etDate(isoDate: string, etHour: number, etMinute = 0): Date {
+  const utcHour = etHour + 4;
+  return new Date(`${isoDate}T${String(utcHour).padStart(2, "0")}:${String(etMinute).padStart(2, "0")}:00Z`);
+}
 
 function snapshotWith(input: {
   positions?: EquityPosition[];
@@ -337,5 +345,88 @@ describe("positionMarkPrice — the position's own implied price (marketValue / 
   it("is null for a flat or missing position", () => {
     expect(positionMarkPrice({ quantity: 0, marketValue: 0 })).toBeNull();
     expect(positionMarkPrice(undefined)).toBeNull();
+  });
+});
+
+describe("deriveDayPnl — stale-baseline gap detection (item 23)", () => {
+  const performanceWith = (points: Array<{ timestamp: string; equity: number }>): PerformanceSummary =>
+    ({ paperEquityCurve: points, liveEquityCurve: points }) as unknown as PerformanceSummary;
+
+  it("is not stale when the baseline is the immediately preceding trading day", () => {
+    const now = new Date("2026-06-11T14:00:00Z"); // Thursday
+    const performance = performanceWith([{ timestamp: "2026-06-10T20:00:00Z", equity: 10_000 }]); // Wed close
+    const result = deriveDayPnl(performance, "broker/paper", 10_500, now);
+    expect(result?.isStaleBaseline).toBe(false);
+    expect(result?.pnl).toBe(500);
+  });
+
+  it("is not stale across a normal weekend gap (Friday baseline read on Monday)", () => {
+    const now = new Date("2026-06-15T14:00:00Z"); // Monday
+    const performance = performanceWith([{ timestamp: "2026-06-12T20:00:00Z", equity: 10_000 }]); // Fri close
+    const result = deriveDayPnl(performance, "broker/paper", 10_500, now);
+    expect(result?.isStaleBaseline).toBe(false);
+  });
+
+  it("IS stale when the baseline predates the prior trading session by a real gap (the Jul-7-on-Jul-17 production bug)", () => {
+    const now = new Date("2026-06-17T14:00:00Z"); // Wednesday; previous session is Tue Jun 16
+    const performance = performanceWith([{ timestamp: "2026-06-05T20:00:00Z", equity: 10_000 }]); // 12 days earlier
+    const result = deriveDayPnl(performance, "broker/paper", 10_500, now);
+    expect(result?.isStaleBaseline).toBe(true);
+    // The number is still computed honestly — the UI decides whether to caveat/suppress it.
+    expect(result?.pnl).toBe(500);
+  });
+
+  it("stays null (never invents a comparison) with no prior-day snapshot at all", () => {
+    const now = new Date("2026-06-11T14:00:00Z");
+    expect(deriveDayPnl(performanceWith([]), "broker/paper", 10_500, now)).toBeNull();
+  });
+});
+
+describe("deriveStateInfo — market-aware run-state display (item 29)", () => {
+  it("shows 'Running' when configured active and the market is open (regular session)", () => {
+    const info = deriveStateInfo({ systemState: "active", strategyAuthority: "propose" }, etDate("2026-06-10", 10, 0));
+    expect(info.label).toBe("Running · Ask-first");
+    expect(info.marketOpen).toBe(true);
+    expect(info.tone).toBe("pos");
+  });
+
+  it("shows a paused/market-closed state when configured active but the market is closed (weekend)", () => {
+    const info = deriveStateInfo({ systemState: "active", strategyAuthority: "propose" }, etDate("2026-06-13", 12, 0)); // Saturday
+    expect(info.label).toBe("Paused · market closed");
+    expect(info.marketOpen).toBe(false);
+    expect(info.tone).toBe("muted");
+    expect(info.state).toBe("active"); // underlying run-state is unchanged — display-only fix
+  });
+
+  it("treats pre-market as open when the account permits extended-hours runs", () => {
+    const info = deriveStateInfo(
+      { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: true },
+      etDate("2026-06-10", 8, 0) // 8am ET pre-market
+    );
+    expect(info.marketOpen).toBe(true);
+    expect(info.label).toBe("Running · Ask-first");
+  });
+
+  it("treats pre-market as closed when extended-hours runs are NOT permitted", () => {
+    const info = deriveStateInfo(
+      { systemState: "active", strategyAuthority: "propose", runDuringExtendedHours: false },
+      etDate("2026-06-10", 8, 0)
+    );
+    expect(info.marketOpen).toBe(false);
+    expect(info.label).toBe("Paused · market closed");
+  });
+
+  it("defaults runDuringExtendedHours to false when the caller only has a narrower policy Pick", () => {
+    // e.g. the account-switcher row's Pick<TradingPolicy, "systemState" | "strategyAuthority">
+    const info = deriveStateInfo({ systemState: "active", strategyAuthority: "decide" }, etDate("2026-06-10", 8, 0));
+    expect(info.marketOpen).toBe(false);
+  });
+
+  it("does not touch close_only / liquidating / halted — those states are unaffected by market hours", () => {
+    const closedMarket = etDate("2026-06-13", 12, 0); // Saturday
+    expect(deriveStateInfo({ systemState: "close_only", strategyAuthority: "propose" }, closedMarket).label).toBe("Exit-only");
+    expect(deriveStateInfo({ systemState: "liquidating", strategyAuthority: "propose" }, closedMarket).label).toBe("Winding down");
+    expect(deriveStateInfo({ systemState: "halted", strategyAuthority: "propose" }, closedMarket).label).toBe("Stopped");
+    expect(deriveStateInfo({ systemState: "close_only", strategyAuthority: "propose" }, closedMarket).marketOpen).toBeUndefined();
   });
 });
