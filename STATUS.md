@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-18 — #1727 deployed + EFFORT-LOG board corrected (MONET, branch `monet/effort-log-1727-deploy-flip`)
+
+PR #1727 (editable connected-account name + legacy-app retirement) is merged (`b0063a7`) and
+**live in production** — confirmed after the fleet-wide auto-deploy stall recovered (prod redeployed
+~13:32Z from post-`b0063a7` main; `/api/health` db/scheduler/litestream ok). PR #1745 is the docs-only
+board-hygiene follow-up: moved the #1727 row from `## In Progress` to `## Deployed`, dropped the stale
+"Board-mover" note, and corrected a chronology overstatement (the 13:32Z build PRE-dates #1737's 14:14Z
+merge, so it asserts only that #1727 — not #1737 — is live). No code/plan change. Rollout note:
+`docs/rollouts/2026-07-18-effort-log-1727-deploy-flip.md`.
+
 ## 2026-07-18 — Money-path/reliability follow-ups from PR #1705 (CLAUDE, branch `claude/money-path-followups-1701`)
 
 Fixed 4 money-path/reliability findings that merged into `main` UNFIXED via PR #1705 (a 5th was
