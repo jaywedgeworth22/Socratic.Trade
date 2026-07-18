@@ -12,6 +12,7 @@
 import { withLlmRequestBounds, type LlmTransport } from "./llm-request";
 import type { LlmEndpoint } from "./llm-provider";
 import type { LlmReasoningEffort } from "./types";
+import { jsonrepair } from "jsonrepair";
 
 /** A JSON schema plus the name/description used to label it (OpenAI json_schema / Anthropic tool). */
 export interface LlmJsonSchema {
@@ -56,6 +57,8 @@ export interface LlmRequestSpec {
    * rather than a strict schema — this preserves that behavior while letting Claude enforce a tool.
    */
   openAiJsonObject?: boolean;
+  userId?: string;
+  metadata?: Record<string, string>;
 }
 
 /** Auth + content headers for the endpoint's provider (Anthropic uses x-api-key, others Bearer). */
@@ -67,6 +70,14 @@ export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key">):
       "anthropic-version": "2023-06-01",
       // Honour cache_control blocks on the system prompt (prompt caching). (Chat A item 3.)
       "anthropic-beta": "prompt-caching-2024-07-31"
+    };
+  }
+  if (endpoint.provider === "openrouter") {
+    return {
+      "content-type": "application/json",
+      authorization: `Bearer ${endpoint.key ?? ""}`,
+      "HTTP-Referer": "https://socratictrade.com",
+      "X-Title": "Socratic.Trade"
     };
   }
   return {
@@ -81,12 +92,64 @@ export function buildLlmRequestBody(
   spec: LlmRequestSpec
 ): Record<string, unknown> {
   const { transport } = endpoint;
-  const { systemPrompt, userContent, schema, openAiJsonObject } = spec;
+  const { systemPrompt, userContent, schema, openAiJsonObject, userId, metadata } = spec;
   const bounds = {
     maxOutputTokens: spec.maxOutputTokens,
     model: spec.model,
     reasoningEffort: spec.reasoningEffort,
     temperature: spec.temperature
+  };
+
+  // Build the OpenRouter-specific metadata tag if applicable.
+  const inferredContext = () => {
+    const sys = (systemPrompt || "").toLowerCase();
+    const schemaName = schema?.name || "";
+    if (schemaName === "trade_proposals" || sys.includes("green team") || sys.includes("proposer")) {
+      return "green-team";
+    }
+    if (schemaName === "red_team_verdict" || sys.includes("red team") || sys.includes("reviewer") || sys.includes("adversary")) {
+      return "red-team";
+    }
+    if (schemaName === "tuned_parameters" || sys.includes("tuner") || sys.includes("tuning") || sys.includes("autotuning")) {
+      return "tuning";
+    }
+    if (sys.includes("salience") || sys.includes("memory") || sys.includes("importance")) {
+      return "memory-salience";
+    }
+    if (sys.includes("multi-query") || sys.includes("rag") || sys.includes("retrieval")) {
+      return "rag";
+    }
+    if (sys.includes("framework review") || sys.includes("framework_review")) {
+      return "framework-review";
+    }
+    if (sys.includes("post-mortem") || sys.includes("post_mortem")) {
+      return "post-mortem";
+    }
+    if (sys.includes("revalidation") || sys.includes("proposal-revalidation")) {
+      return "revalidation";
+    }
+    return "assistant-chat";
+  };
+
+  const openRouterMetadata = endpoint.provider === "openrouter" ? {
+    context: metadata?.context || inferredContext(),
+    ...metadata
+  } : undefined;
+
+  const injectCommonFields = (base: Record<string, unknown>) => {
+    if (userId) {
+      if (endpoint.provider === "openrouter" || endpoint.provider === "openai" || endpoint.provider === "deepseek" || endpoint.provider === "gemini") {
+        base.user = userId;
+      } else if (endpoint.provider === "anthropic") {
+        base.metadata = { ...(base.metadata as Record<string, unknown> || {}), user_id: userId };
+      }
+    }
+    if (openRouterMetadata) {
+      base.metadata = {
+        ...(base.metadata as Record<string, unknown> || {}),
+        ...openRouterMetadata
+      };
+    }
   };
 
   if (transport === "anthropic-messages") {
@@ -112,6 +175,7 @@ export function buildLlmRequestBody(
       ];
       base.tool_choice = { type: "tool", name: schema.name };
     }
+    injectCommonFields(base);
     return withLlmRequestBounds(base, transport, bounds);
   }
 
@@ -122,8 +186,9 @@ export function buildLlmRequestBody(
 
   if (transport === "chat-completions") {
     const base: Record<string, unknown> = { model: spec.model, messages };
-    const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject);
+    const responseFormat = openAiChatResponseFormat(endpoint.provider, schema, openAiJsonObject, spec.model);
     if (responseFormat) base.response_format = responseFormat;
+    injectCommonFields(base);
     return withLlmRequestBounds(base, transport, bounds);
   }
 
@@ -131,6 +196,7 @@ export function buildLlmRequestBody(
   const base: Record<string, unknown> = { model: spec.model, input: messages };
   const textFormat = openAiResponsesTextFormat(schema, openAiJsonObject);
   if (textFormat) base.text = { format: textFormat };
+  injectCommonFields(base);
   return withLlmRequestBounds(base, transport, bounds);
 }
 
@@ -247,15 +313,15 @@ export function toGeminiJsonSchema(node: unknown): { schema: unknown; unsupporte
 function openAiChatResponseFormat(
   provider: LlmEndpoint["provider"],
   schema: LlmJsonSchema | undefined,
-  openAiJsonObject: boolean | undefined
+  openAiJsonObject: boolean | undefined,
+  model?: string
 ): Record<string, unknown> | undefined {
-  if (schema && !openAiJsonObject && provider === "gemini") {
+  const isGemini = provider === "gemini" || (model && /^google\//i.test(model));
+  const isDeepSeek = provider === "deepseek" || (model && /^deepseek\//i.test(model));
+
+  if (schema && !openAiJsonObject && isGemini) {
     const { schema: geminiSchema, unsupported } = toGeminiJsonSchema(schema.schema);
     if (unsupported) {
-      // Something in this schema (a type-union or anyOf with more than one non-null alternative) has
-      // no Gemini-dialect equivalent this transform can produce — fall back to a bare JSON object the
-      // same way the DeepSeek branch below does, rather than forwarding a schema Gemini will likely
-      // reject anyway. Logged so an unexpected new schema shape doesn't silently degrade output quality.
       console.warn(
         `[llm-call] Gemini schema "${schema.name}" has a construct toGeminiJsonSchema can't translate ` +
           "(type-union or anyOf with 2+ non-null branches) — falling back to json_object."
@@ -264,10 +330,9 @@ function openAiChatResponseFormat(
     }
     return { type: "json_schema", json_schema: { name: schema.name, strict: true, schema: geminiSchema } };
   }
-  if (schema && !openAiJsonObject && provider !== "deepseek") {
+  if (schema && !openAiJsonObject && !isDeepSeek) {
     return { type: "json_schema", json_schema: { name: schema.name, strict: true, schema: schema.schema } };
   }
-  // DeepSeek rejects strict json_schema; everything else here wants a bare JSON object.
   if (schema || openAiJsonObject) return { type: "json_object" };
   return undefined;
 }
@@ -380,14 +445,51 @@ export function extractLlmText(payload: unknown): string | undefined {
  * stray bracket or multiple JSON-looking blocks. When no balanced block is found (e.g. a
  * truncated response), returns the trimmed/unfenced text unchanged so the caller's own
  * `JSON.parse` try/catch still governs the failure — never fabricates valid JSON.
+ *
+ * `repair` (default OFF) additionally runs local, deterministic jsonrepair when the
+ * extracted payload still isn't valid JSON. Opt-in ONLY, per call site, because repair can
+ * turn a TRUNCATED response into syntactically valid JSON — e.g. `{"verdict":"approve"`
+ * becomes a well-formed approval object. On safety-critical parse paths (Red Team verdicts,
+ * proposal revalidation, tuning payloads) that converts fail-closed "unavailable" handling
+ * into fail-open acceptance, which is exactly the defect class Codex flagged on PR #1696.
+ * Those sites MUST call this without `repair`; generative sites that opt in MUST re-validate
+ * schema-required fields on the parsed result (repair proves syntax, never completeness).
  */
-export function extractJsonPayload(text: string): string {
+export function extractJsonPayload(text: string, options: { repair?: boolean } = {}): string {
   const unfenced = text
     .trim()
     .replace(/^```(?:json5?|jsonc)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
-  return firstBalancedJson(unfenced) ?? unfenced;
+
+  const primary = firstBalancedJson(unfenced) ?? unfenced;
+
+  try {
+    JSON.parse(primary);
+    return primary;
+  } catch {
+    if (!options.repair) return primary; // caller's own JSON.parse governs the failure
+    // Repair the ORIGINAL unfenced text before the balanced slice: firstBalancedJson only
+    // understands double-quoted strings, so a single-quoted payload whose string values
+    // contain '}' gets sliced MID-STRING — repairing that fragment silently truncates content
+    // or drops trailing proposals (Codex P2, round 9). Full-text repair sees the whole payload;
+    // the slice remains only as a fallback for prose-wrapped responses where full-text repair
+    // cannot apply. Wrong-content beats no-content on this path: a full-text repair that
+    // yields a non-object degrades to zero proposals downstream, which is the safe direction.
+    try {
+      const repairedFull = jsonrepair(unfenced);
+      JSON.parse(repairedFull);
+      return repairedFull;
+    } catch {
+      // fall through to the balanced slice
+    }
+    try {
+      return jsonrepair(primary);
+    } catch {
+      // Unrepairable; let the caller's JSON.parse fail loudly
+      return primary;
+    }
+  }
 }
 
 /** First balanced `{…}`/`[…]` block starting at the first opener, or undefined if none/unbalanced. */

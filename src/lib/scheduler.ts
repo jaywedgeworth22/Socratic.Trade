@@ -698,11 +698,12 @@ async function tick(): Promise<void> {
         const protectiveState =
           policy.systemState === "active" ||
           policy.systemState === "close_only" ||
-          policy.systemState === "liquidating";
+          policy.systemState === "liquidating" ||
+          (policy.systemState === "halted" && policy.riskRules?.protectWhileHalted === true);
 
         // R2: synthetic trailing-stop monitor — runs every tick in states where risk-reducing exits
         // are allowed. `close_only` and `liquidating` must not disable the very protection that can
-        // reduce exposure after a breaker trips. `halted` remains the only no-order state.
+        // reduce exposure after a breaker trips. `halted` remains the only no-order state unless protectWhileHalted is active.
         if (protectiveState && !stopMonitorInFlight.has(key)) {
           stopMonitorInFlight.add(key);
           void runSyntheticStopMonitor(userId, policy, true)

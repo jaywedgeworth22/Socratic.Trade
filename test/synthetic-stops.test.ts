@@ -20,6 +20,8 @@ import type { BrokerGateway, ConnectedAccount, EquityOrder, TradingPolicy } from
 import { reconcilePendingFills } from "../src/lib/strategy-execution";
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -1045,6 +1047,166 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
       expect(broker.placed).toHaveLength(1);
       expect(broker.placed[0].side).toBe("sell");
       expect(broker.placed[0].quantity).toBe(10);
+    });
+  });
+
+  describe("Exit Strategy Phase A: confirmation-based bad-tick acceptance & halted protection", () => {
+    it("bad tick confirmation: N=3 consecutive out-of-band prints accept the new level and trigger", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-15T10:00:00-04:00")); // 10:00 AM EDT = regular hours
+      try {
+        connectTestAccount("SYN-CONFIRM");
+        upsertSyntheticStop({
+          id: "stop-confirm", userId: "local", accountNumber: "SYN-CONFIRM", symbol: "AAPL",
+          side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
+          lastPrice: 100
+        });
+        broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+
+        // Tick 1: Out-of-band print (85, -15% off 100). Should NOT trigger, should set suspect state.
+        broker.quotes = { AAPL: { price: 85 } };
+        let res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
+        expect(res.exited).toBe(0);
+        let stops = listSyntheticStops("SYN-CONFIRM", "local");
+        expect(stops[0].suspectPrice).toBe(85);
+        expect(stops[0].suspectCount).toBe(1);
+        expect(stops[0].lastPrice).toBe(100);
+
+        // Tick 2: Second out-of-band print (84.5) agreeing with 85 (diff ~0.6% <= 1.5%). Should NOT trigger.
+        broker.quotes = { AAPL: { price: 84.5 } };
+        res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
+        expect(res.exited).toBe(0);
+        stops = listSyntheticStops("SYN-CONFIRM", "local");
+        expect(stops[0].suspectPrice).toBe(85);
+        expect(stops[0].suspectCount).toBe(2);
+        expect(stops[0].lastPrice).toBe(100);
+
+        // Tick 3: Third out-of-band print (85.2) agreeing with 85. Should trigger!
+        broker.quotes = { AAPL: { price: 85.2 } };
+        res = await runSyntheticStopMonitor("local", policyFor("SYN-CONFIRM"), true);
+        expect(res.exited).toBe(1);
+        stops = listSyntheticStops("SYN-CONFIRM", "local", "triggered");
+        expect(stops[0].status).toBe("triggered");
+        expect(stops[0].suspectPrice).toBeUndefined();
+        expect(stops[0].suspectCount).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("bad tick non-confirmation: non-agreeing out-of-band prints reset suspect count", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-15T10:00:00-04:00")); // 10:00 AM EDT = regular hours
+      try {
+        connectTestAccount("SYN-RESET");
+        upsertSyntheticStop({
+          id: "stop-reset", userId: "local", accountNumber: "SYN-RESET", symbol: "AAPL",
+          side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
+          lastPrice: 100
+        });
+        broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+
+        // Tick 1: Out-of-band print (85). suspectPrice=85, suspectCount=1.
+        broker.quotes = { AAPL: { price: 85 } };
+        await runSyntheticStopMonitor("local", policyFor("SYN-RESET"), true);
+
+        // Tick 2: Out-of-band print (80) not agreeing with 85 (diff > 1.5%). suspectPrice=80, suspectCount=1.
+        broker.quotes = { AAPL: { price: 80 } };
+        await runSyntheticStopMonitor("local", policyFor("SYN-RESET"), true);
+        const stops = listSyntheticStops("SYN-RESET", "local");
+        expect(stops[0].suspectPrice).toBe(80);
+        expect(stops[0].suspectCount).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("extended-hours corroboration: requires real bid/ask quote", async () => {
+      connectTestAccount("SYN-EXT");
+      upsertSyntheticStop({
+        id: "stop-ext", userId: "local", accountNumber: "SYN-EXT", symbol: "AAPL",
+        side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
+        lastPrice: 100
+      });
+      broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+
+      const extPolicy = { ...policyFor("SYN-EXT"), allowExtendedHoursSyntheticStops: true };
+      // pre-market hours: 06:00 AM
+      const preMarketTime = new Date("2026-07-17T06:00:00-04:00");
+
+      // Tick 1: Out-of-band print (85) with synthetic spread. Should NOT increment suspect count.
+      broker.quotes = { AAPL: { price: 85, syntheticSpread: true, syntheticBid: true, syntheticAsk: true } as any };
+      await runSyntheticStopMonitor("local", extPolicy, true, preMarketTime);
+      let stops = listSyntheticStops("SYN-EXT", "local");
+      expect(stops[0].suspectCount).toBe(0);
+
+      // Tick 2: Out-of-band print (85) with real bid/ask. Should increment.
+      broker.quotes = { AAPL: { price: 85, bid: 84.8, ask: 85.2, syntheticSpread: false, syntheticBid: false, syntheticAsk: false } as any };
+      await runSyntheticStopMonitor("local", extPolicy, true, preMarketTime);
+      stops = listSyntheticStops("SYN-EXT", "local");
+      expect(stops[0].suspectPrice).toBe(85);
+      expect(stops[0].suspectCount).toBe(1);
+    });
+
+    it("session boundary reset at regular open", async () => {
+      connectTestAccount("SYN-BOUNDARY");
+      upsertSyntheticStop({
+        id: "stop-boundary", userId: "local", accountNumber: "SYN-BOUNDARY", symbol: "AAPL",
+        side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
+        lastPrice: 100, suspectPrice: 85, suspectCount: 2
+      });
+      // pre-market time: 06:00 AM. updatedAt is set to this time.
+      const preMarketTime = new Date("2026-07-17T06:00:00-04:00");
+      getDb().prepare("UPDATE synthetic_trailing_stops SET updated_at = ? WHERE id = ?").run(preMarketTime.toISOString(), "stop-boundary");
+
+      broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+      broker.quotes = { AAPL: { price: 100 } }; // normal price
+
+      // Run during regular hours: 10:00 AM. Should reset suspect state.
+      const regularTime = new Date("2026-07-17T10:00:00-04:00");
+      await runSyntheticStopMonitor("local", policyFor("SYN-BOUNDARY"), true, regularTime);
+      const stops = listSyntheticStops("SYN-BOUNDARY", "local");
+      expect(stops[0].suspectPrice).toBeUndefined();
+      expect(stops[0].suspectCount).toBe(0);
+    });
+
+    it("protectWhileHalted: monitor fires exits in halted when toggle is ON, but never registers new stops", async () => {
+      connectTestAccount("SYN-HALTED-ON");
+      
+      // Part 1: Exits should fire if stop already exists and breaches
+      upsertSyntheticStop({
+        id: "stop-halted-on", userId: "local", accountNumber: "SYN-HALTED-ON", symbol: "AAPL",
+        side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active",
+        lastPrice: 100
+      });
+      broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+      broker.quotes = { AAPL: { price: 90 } }; // breaches 95 trigger
+
+      const policyOn = {
+        ...policyFor("SYN-HALTED-ON"),
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALTED-ON").riskRules, protectWhileHalted: true }
+      };
+      
+      const res = await runSyntheticStopMonitor("local", policyOn, true);
+      expect(res.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+
+      // Part 2: Never registers new stops under halted mode even if trailingStopPct is set
+      connectTestAccount("SYN-HALTED-REG");
+      broker.positions = [{ symbol: "AAPL", quantity: 100, averageCost: 100, marketValue: 10000 }];
+      broker.quotes = { AAPL: { price: 100 } };
+      
+      const policyReg = {
+        ...policyFor("SYN-HALTED-REG"),
+        systemState: "halted" as const,
+        riskRules: { ...policyFor("SYN-HALTED-REG").riskRules, trailingStopPct: 5, protectWhileHalted: true }
+      };
+
+      const resReg = await runSyntheticStopMonitor("local", policyReg, true);
+      expect(resReg.evaluated).toBe(0); // AAPL stop shouldn't be registered, so evaluated is 0
+      const stops = listSyntheticStops("SYN-HALTED-REG", "local");
+      expect(stops).toHaveLength(0);
     });
   });
 });

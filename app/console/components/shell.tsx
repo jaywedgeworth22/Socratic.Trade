@@ -271,8 +271,10 @@ function ChromeBar({
           The desktop spacer is hidden below sm so the scope absorbs the room. */}
       {/* relative: the UserMenu dropdown anchors to this row (right edge of the
           bar), not to its small button — anchoring to the 44px button pushed the
-          panel off the left edge of phone viewports. */}
-      <div className="relative mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
+          panel off the left edge of phone viewports. gap-1.5/px-3 on phones (vs
+          gap-2/px-4 from sm up) claws back a few px so the account scope's mobile
+          min-width (chrome.tsx ScopeSelector) has room without overflowing. */}
+      <div className="relative mx-auto flex max-w-[1400px] items-center gap-1.5 px-3 py-2 sm:gap-2 sm:px-4">
         <BrandReveal />
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
@@ -300,9 +302,11 @@ function ChromeBar({
         {/* Phones get an icon-only Run once: the home hero's call-to-action was
             unreachable on mobile without scrolling to the very bottom. Icon-only
             keeps the owner-tuned phone-bar priorities (scope gets the slack,
-            nothing squeezes STOP). */}
+            nothing squeezes STOP). size="sm" trims its footprint to help the
+            scope selector's mobile min-width fit; the outline styling (chrome.tsx)
+            keeps it from reading as a second "Start" sitting right next to it. */}
         <div className="sm:hidden">
-          <RunOnceButton snapshot={snapshot} iconOnly />
+          <RunOnceButton snapshot={snapshot} size="sm" iconOnly />
         </div>
         <RunStateButton snapshot={snapshot} />
       </div>

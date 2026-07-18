@@ -338,7 +338,7 @@ function FallbackModelSelect({
       <TextInput
         id={id}
         value={value}
-        placeholder="e.g. gpt-4o, claude-3-5-sonnet-20240620"
+        placeholder="e.g. gpt-5.4-mini, claude-sonnet-5"
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setOpen(true)}
         onBlur={() => {

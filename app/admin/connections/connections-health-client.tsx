@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Card, Chip, Dot, Segmented } from "../../console/ui/primitives";
 import { cx } from "../../console/lib/format";
+import { describeProbeNetworkError, describeProbeStatus, type ProbeErrorDescription } from "../lib/probe-error";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -251,21 +252,24 @@ function ServiceDetail({
 export function ConnectionsHealthClient() {
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ProbeErrorDescription | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const fetch_ = useCallback(() => {
-    fetch("/api/admin/connections-health")
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((d: HealthData) => {
-        setData(d);
-        setError(null);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+  const fetch_ = useCallback(async () => {
+    try {
+      const r = await fetch("/api/admin/connections-health");
+      if (!r.ok) {
+        setError(describeProbeStatus(r.status));
+        return;
+      }
+      const d: HealthData = await r.json();
+      setData(d);
+      setError(null);
+    } catch {
+      setError(describeProbeNetworkError());
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -298,8 +302,11 @@ export function ConnectionsHealthClient() {
       )}
 
       {error && (
-        <div className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]">
-          {error}
+        <div
+          className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-neg)]"
+          title={error.rawLabel}
+        >
+          {error.message}
         </div>
       )}
 

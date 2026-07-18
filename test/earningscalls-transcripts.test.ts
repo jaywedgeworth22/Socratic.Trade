@@ -30,6 +30,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/vector-db")>();
   return {
     ...actual,
+    managedVectorLedgerAuthority: vi.fn(),
     storeDocument: (...args: Parameters<typeof actual.storeDocument>) =>
       storeDocumentStub.impl ? storeDocumentStub.impl(...args) : actual.storeDocument(...args)
   };
@@ -37,7 +38,7 @@ vi.mock("../src/lib/vector-db", async (importOriginal) => {
 
 vi.mock("../src/lib/fmp-common", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/fmp-common")>();
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     ...actual,
     requestFmp: (...args: Parameters<typeof actual.requestFmp>) =>
       requestFmpStub.impl ? requestFmpStub.impl(...args) : actual.requestFmp(...args)
@@ -94,7 +95,7 @@ const NOW = Date.UTC(2026, 6, 16, 12); // 2026-07-16T12:00Z, matches fixture eve
 
 function latestCallPayload(overrides: Record<string, unknown> = {}): unknown {
   // Researched shape expectation: `data`-enveloped call metadata.
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     data: {
       earnings_call_id: 48291,
       company_ticker: "AAPL",
@@ -110,11 +111,11 @@ function latestCallPayload(overrides: Record<string, unknown> = {}): unknown {
 const LONG_TEXT = "Operator remarks and prepared statements. ".repeat(20);
 
 function transcriptPayload(): unknown {
-  return { data: { earnings_call_id: 48291, full_text: LONG_TEXT } };
+  return { managedVectorLedgerAuthority: vi.fn(), data: { earnings_call_id: 48291, full_text: LONG_TEXT } };
 }
 
 function speakerPayload(): unknown {
-  return {
+  return { managedVectorLedgerAuthority: vi.fn(),
     data: {
       earnings_call_id: 48291,
       speakers: [
@@ -505,7 +506,7 @@ describe("codex review fixes (PR #1680)", () => {
     let fail = true;
     const http = makeHttp(
       (path) => {
-        if (path.startsWith("/transcripts/")) return { ok: true, payload: transcriptPayload() };
+        if (path.startsWith("/transcripts/")) return { managedVectorLedgerAuthority: vi.fn(), ok: true, payload: transcriptPayload() };
         return fail
           ? { ok: false, kind: "transient" }
           : { ok: true, payload: latestCallPayload({ company_ticker: "TRNS1" }) };
@@ -563,6 +564,27 @@ describe("codex review fixes (PR #1680)", () => {
     expect(getEarningsCallsTranscript("RL1", 2026, 3)).toBeUndefined();
     expect(r2.errors).toContain("transcript:RL1:rate_limited");
     expect(log2.some((entry) => entry.path === "/companies/ticker/RL2/latest")).toBe(false); // break
+  });
+
+  it("the pre-subscription 405 (not_subscribed) stops the pass after ONE probe — no per-symbol budget burn", async () => {
+    // Regression (PR #1708, Codex round 1 P1): suppressing the pre-subscription 405 from the
+    // health/circuit-breaker path removed the backpressure that used to cap the quota burn. A 405
+    // is a CHANNEL-WIDE terminal state, so the pass must break on the first one — otherwise every
+    // symbol in the queue dispatches a known-failing, unrefunded call, exhausting the monthly
+    // budget before the subscription is ever enabled. Mirrors auth/rate_limited pass-stop.
+    const { refreshEarningsCallsTranscriptsIfDue } = await lib();
+    process.env.EARNINGSCALLS_API_KEY = "test-key";
+    const log: HttpLogEntry[] = [];
+    const http = makeHttp(() => ({ ok: false, kind: "not_subscribed" }), log);
+    const r = await refreshEarningsCallsTranscriptsIfDue(
+      NOW,
+      passDeps({ http, heldSymbols: () => ["NS1", "NS2", "NS3"] })
+    );
+    // Exactly one probe dispatched, then break — not one-per-symbol.
+    expect(r.probed).toBe(1);
+    expect(log.filter((e) => e.path.endsWith("/latest"))).toHaveLength(1);
+    expect(log.some((e) => e.path === "/companies/ticker/NS2/latest")).toBe(false);
+    expect(r.errors).toContain("probe:NS1:not_subscribed");
   });
 
   it("a definitive 404 transcript body (call known, transcript unpublished) IS negative-cached", async () => {

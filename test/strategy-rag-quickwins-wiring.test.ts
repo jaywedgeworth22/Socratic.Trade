@@ -12,11 +12,14 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 const mocks = vi.hoisted(() => ({ retrieveContextDetailed: vi.fn() }));
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],
@@ -58,13 +61,13 @@ describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
       { id: "c1", text: "Apple faces supply-chain risk.", score: 0.9, source: "sec", as_of: "2026-02-01", doc_type: "10-k", section: "risk-factors" }
     ]);
 
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
-        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -74,14 +77,14 @@ describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
     });
 
     const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "RAG Wiring Test", isActive: true });
     setActiveConnectedAccount(accountId);
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide"

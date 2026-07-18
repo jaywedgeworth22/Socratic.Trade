@@ -308,7 +308,7 @@ function TabsSheet({
         <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5 relative">
           <div className="absolute top-2 left-1/2 -translate-x-1/2 w-9 h-1.5 rounded-full bg-[color:var(--con-line-strong)] opacity-60"></div>
           <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold mt-2">
-            Tabs
+            More
           </h2>
           <button
             type="button"
@@ -421,8 +421,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
     <>
       <nav
         ref={navRef}
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        className="con-tabbar fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)]/85 backdrop-blur-xl supports-[backdrop-filter]:bg-[color:var(--con-surface)]/70 lg:hidden"
         aria-label="Console navigation"
       >
         <div className="flex">
@@ -463,7 +462,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
             type="button"
             className="con-tab-item"
             data-active={tabsButtonActive || tabsOpen}
-            title={tabsOpen ? "Close tabs menu" : "Choose which screens show up here, or jump to any screen"}
+            title={tabsOpen ? "Close more menu" : "Choose which screens show up here, or jump to any screen"}
             style={tabsButtonActive || tabsOpen ? { fontWeight: 800 } : undefined}
             onClick={() => setTabsOpen(!tabsOpen)}
           >
@@ -473,7 +472,10 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
             >
               <LayoutGrid size={19} />
             </span>
-            Tabs
+            {/* Was "Tabs" — unclear for the standard mobile overflow-menu pattern this
+                is (the grid of every destination, with pin/unpin to customize the bar
+                above). "More" is the conventional label for this affordance. */}
+            More
           </button>
         </div>
       </nav>

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   purgePrivateVectorRecordsForUser: vi.fn(async () => ({ ids: [], contentHashes: [], deleted: 0 }))
 }));
 

@@ -25,7 +25,7 @@ export const ESSENTIALS: FieldDef[] = [
   { path: "maxDailyNotional", label: "Max spend per day", kind: "money", optional: true, looserWhen: "up", hint: "Opening orders only — protective exits never consume this cap." },
   { path: "maxDailyPctOfNav", label: "Max spend per day (% of portfolio)", kind: "pct", optional: true, looserWhen: "up", hint: "Opening orders only. This account-relative mode rises and falls with current portfolio value." },
   { path: "maxDailyOrders", label: "Max opening orders per day", kind: "int", looserWhen: "up" },
-  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: `Advisory circuit breaker: if the account loses this much in a day, it logs a receipt and tells the agent — which decides how to react (default: advisory, no auto-halt). Set drawdownBreakerAction to close_only/halt for hard enforcement. Blank = off. ${ADVISORY_NOTE}` },
+  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: `Advisory circuit breaker: if the account loses this much in a day, it logs a receipt and tells the agent — which decides how to react (default: advisory, no auto-halt). Hard enforcement (auto-close positions or a full trading halt on breach) is a separate account-level setting. Blank = off. ${ADVISORY_NOTE}` },
   { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: `Advisory circuit breaker on the fall from the account's high-water mark. On breach it logs a receipt and surfaces the drawdown to the agent, which decides (default: advisory, no auto-halt). ${ADVISORY_NOTE}` },
   { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
   { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on", hint: "Allows the system to run scheduled or event-triggered strategy scans during extended hours (pre-market and after-hours)." },
@@ -90,7 +90,8 @@ export const PROTECTIVE_STOPS: FieldDef[] = [
   { path: "brokerBracketsEnabled", label: "Broker-held brackets", kind: "bool", hint: `Stop/take-profit legs rest at the broker (where supported) so protection survives app downtime. Turning this OFF is looser. ${ADVISORY_NOTE}`, looserWhen: "off" },
   { path: "brokerTrailingStops", label: "Broker-held trailing stops", kind: "bool", looserWhen: "off", hint: `With a trailing % set: on Alpaca REST, a native trailing_stop order (the broker moves the trigger itself, even while the app is down); an Alpaca MCP-endpoint account instead gets the SAME app-ratcheted resting stop as Robinhood (MCP has no native trailing parameter, so the trigger only moves on the app's own tick cadence, not continuously); on live Robinhood a resting stop the app ratchets upward each cycle (needs Robinhood resting stops ON). Turning this OFF keeps trailing app-managed only. ${ADVISORY_NOTE}` },
   { path: "robinhoodBrokerStops", label: "Robinhood resting stops", kind: "bool", looserWhen: "off", hint: "Opt-in true broker-side stop for live Robinhood positions (Robinhood cannot hold OCO brackets). Also the gate for broker-held trailing on Robinhood." },
-  { path: "allowExtendedHoursSyntheticStops", label: "App stops in extended hours", kind: "bool", looserWhen: "on" }
+  { path: "allowExtendedHoursSyntheticStops", label: "App stops in extended hours", kind: "bool", looserWhen: "on" },
+  { path: "riskRules.protectWhileHalted", label: "Protect while halted", kind: "bool", looserWhen: "off", hint: "Allows synthetic stops to continue monitoring and executing protective exits even while trading is halted." }
 ];
 
 export const PANIC_BRAKE: FieldDef[] = [

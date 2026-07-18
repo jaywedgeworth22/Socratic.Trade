@@ -19,6 +19,8 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { EquityOrder, ExecutedOrder, MarketQuote, MarketScan, ReviewedOrder } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => [],

@@ -323,18 +323,26 @@ const CHEAPER_MODEL: Record<string, string> = {
 /** A cheaper model in the same family, or undefined if none is known. */
 export function cheaperModel(model: string | null | undefined): string | undefined {
   if (!model) return undefined;
-  const key = model.toLowerCase();
-  if (CHEAPER_MODEL[key]) return CHEAPER_MODEL[key];
-  // Prefix fallback for DATED/versioned suffixes only (e.g. "claude-opus-4-8-20251101" → the
-  // "claude-opus-4-8" tier). Requires the remainder to be a "-<digit>..." date/version — never a
-  // variant suffix like "-mini"/"-nano" (those must be exact keys, else they'd wrongly map to their
-  // own base tier's downgrade, i.e. to themselves).
-  const prefix = Object.keys(CHEAPER_MODEL).find((k) => {
-    if (!key.startsWith(k)) return false;
-    const rest = key.slice(k.length);
-    return rest === "" || /^-\d/.test(rest);
-  });
-  return prefix ? CHEAPER_MODEL[prefix] : undefined;
+  const parts = model.toLowerCase().split("/");
+  const prefix = parts.length > 1 ? parts.slice(0, -1).join("/") + "/" : "";
+  const key = parts[parts.length - 1];
+
+  let cheaper: string | undefined;
+  if (CHEAPER_MODEL[key]) {
+    cheaper = CHEAPER_MODEL[key];
+  } else {
+    // Prefix fallback for DATED/versioned suffixes only (e.g. "claude-opus-4-8-20251101" → the
+    // "claude-opus-4-8" tier). Requires the remainder to be a "-<digit>..." date/version — never a
+    // variant suffix like "-mini"/"-nano" (those must be exact keys, else they'd wrongly map to their
+    // own base tier's downgrade, i.e. to themselves).
+    const matchedKey = Object.keys(CHEAPER_MODEL).find((k) => {
+      if (!key.startsWith(k)) return false;
+      const rest = key.slice(k.length);
+      return rest === "" || /^-\d/.test(rest);
+    });
+    if (matchedKey) cheaper = CHEAPER_MODEL[matchedKey];
+  }
+  return cheaper ? prefix + cheaper : undefined;
 }
 
 export interface BudgetRunDecision {

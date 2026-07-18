@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 // G5 regression: the drawdown kill-switch WIRING inside runStrategyOnce.
@@ -35,14 +36,14 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 function zeroProposalFetchStub() {
   return async (url: string | URL | Request) => {
     const href = String(url);
-    if (href.includes("api.openai.com")) {
-      return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+    if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -64,13 +65,13 @@ function zeroProposalFetchStub() {
 
 describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
   it("is ADVISORY by default: on a breach it audits a receipt and does NOT change systemState", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", zeroProposalFetchStub());
 
     const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey, getPolicy, listAudit } = await import("../src/lib/db");
     const { recordAndEvaluateDrawdownBreaker } = await import("../src/lib/risk-breaker");
 
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Test Account", isActive: true });
     setActiveConnectedAccount(accountId);
@@ -91,7 +92,7 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",
@@ -119,13 +120,13 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
   }, 75_000);
 
   it("honors the overridable drawdownBreakerAction: 'close_only' (softer — only blocks new entries)", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", zeroProposalFetchStub());
 
     const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey, getPolicy, listAudit } = await import("../src/lib/db");
     const { recordAndEvaluateDrawdownBreaker } = await import("../src/lib/risk-breaker");
 
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Test Account", isActive: true });
     setActiveConnectedAccount(accountId);
@@ -136,7 +137,7 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",
@@ -154,13 +155,13 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
   }, 75_000);
 
   it("does NOT flip when no drawdown limit is configured (default-safe)", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", zeroProposalFetchStub());
 
     const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey, getPolicy, listAudit } = await import("../src/lib/db");
     const { recordAndEvaluateDrawdownBreaker } = await import("../src/lib/risk-breaker");
 
-    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
     const accountId = randomUUID();
     upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Test Account", isActive: true });
     setActiveConnectedAccount(accountId);
@@ -171,7 +172,7 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      llmModel: "gpt-4.1-mini",
+      llmModel: "openai/gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",

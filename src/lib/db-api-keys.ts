@@ -124,6 +124,7 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   massive_secret_access_key: "MASSIVE_SECRET_ACCESS_KEY",
   pinecone: "PINECONE_API_KEY",
   voyage: "VOYAGE_API_KEY",
+  siliconflow: "SILICONFLOW_API_KEY",
   alpaca_paper_api_key: "ALPACA_PAPER_API_KEY",
   alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY",
   apify: "APIFY_API_TOKEN",
@@ -169,6 +170,7 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   massive_api_key: "massive",
   pinecone_api_key: "pinecone",
   voyage_api_key: "voyage",
+  siliconflow_api_key: "siliconflow",
   alpaca_paper_api_key: "alpaca_paper_api_key",
   alpaca_paper_secret_key: "alpaca_paper_secret_key",
   apify_api_token: "apify",
@@ -309,6 +311,7 @@ const API_KEY_TIER: Record<string, CredTier> = {
   apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
   pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
   voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
+  siliconflow: "shared-operator-infra", // alternative embeds/reranker provider for the shared corpus
   sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
   tiingo: "shared-operator-infra",
   intrinio: "shared-operator-infra",
@@ -549,13 +552,47 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
+
+    if (process.env.NODE_ENV === "test") {
+      if (canonical === "openrouter") {
+        const services: LlmProviderService[] = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"];
+        for (const svc of services) {
+          const fallbackKey = getUserApiKey(userId, svc);
+          if (fallbackKey?.apiKey) {
+            return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
+          }
+        }
+      } else {
+        const fallbackKey = getUserApiKey(userId, "openrouter");
+        if (fallbackKey?.apiKey) {
+          return { key: fallbackKey.apiKey, source: "user", keyRef: keyFingerprint(fallbackKey.apiKey) };
+        }
+      }
+    }
   }
   // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
   // per-user store at boot, so `local` resolves "user" above; this serves users without their own
   // key. No `local` special case — when the failover is off, everyone (incl. `local`) needs a key.
   if (!llmOperatorFallbackEnabled()) return { source: "none" };
   const envVar = apiKeyEnvVarForService(canonical);
-  const envKey = envVar ? process.env[envVar] : undefined;
+  let envKey = envVar ? process.env[envVar] : undefined;
+
+  if (process.env.NODE_ENV === "test" && !envKey) {
+    if (canonical === "openrouter") {
+      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+      for (const f of fallbacks) {
+        if (process.env[f]) {
+          envKey = process.env[f];
+          break;
+        }
+      }
+    } else {
+      if (process.env.OPENROUTER_API_KEY) {
+        envKey = process.env.OPENROUTER_API_KEY;
+      }
+    }
+  }
+
   return envKey ? { key: envKey, source: "operator", keyRef: keyFingerprint(envKey) } : { source: "none" };
 }
 
@@ -773,6 +810,29 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
   })();
 }
 
+/**
+ * Rename a connected account's user-facing display label. Deliberately narrow: it touches ONLY
+ * `label` — not the broker identifier (`account_number`), not credentials, and NOT `updated_at`
+ * (see the ordering note below), so a cosmetic rename can never re-run connect-time validation,
+ * disturb the broker-sourced account number that per-account trade history and
+ * `policy.accountNumber` key off of, or reorder credential resolution. User-scoped; returns false
+ * if no row matched (unknown id, or another user's row).
+ */
+export function renameConnectedAccount(id: string, label: string, userId: string = "local"): boolean {
+  const trimmed = label.trim();
+  if (!trimmed) throw new Error("Account name cannot be empty.");
+  if (trimmed.length > 120) throw new Error("Account name is too long (max 120 characters).");
+  // Update ONLY `label` — deliberately NOT `updated_at`. `getConnectedAccountByBroker` resolves
+  // which same-broker row backs shared data-source fetches (e.g. Tradier price history) with
+  // `ORDER BY is_active DESC, updated_at DESC`; bumping updated_at on a purely cosmetic rename
+  // would promote a renamed inactive row over the intended latest credential, silently swapping
+  // an old/sandbox token in for history fetches (Codex review, PR #1727).
+  const result = getDb()
+    .prepare("UPDATE connected_accounts SET label = ? WHERE id = ? AND user_id = ?")
+    .run(trimmed, id, userId);
+  return result.changes > 0;
+}
+
 export function setActiveConnectedAccount(id: string, userId: string = "local"): void {
   const db = getDb();
   db.transaction(() => {
@@ -864,6 +924,8 @@ export interface SyntheticTrailingStop {
   lastAttemptRefId?: string;
   createdAt: string;
   updatedAt: string;
+  suspectPrice?: number;
+  suspectCount?: number;
 }
 
 function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
@@ -883,7 +945,9 @@ function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
     fireGeneration: r.fire_generation != null ? Number(r.fire_generation) : 0,
     lastAttemptRefId: r.last_attempt_ref_id != null ? String(r.last_attempt_ref_id) : undefined,
     createdAt: String(r.created_at),
-    updatedAt: String(r.updated_at)
+    updatedAt: String(r.updated_at),
+    suspectPrice: r.suspect_price != null ? Number(r.suspect_price) : undefined,
+    suspectCount: r.suspect_count != null ? Number(r.suspect_count) : 0
   };
 }
 
@@ -908,8 +972,8 @@ export function upsertSyntheticStop(
       // routine upserts (auto-register, per-tick extreme/lastPrice persistence) must never reset the
       // exit-attempt ledger — generation moves only forward (advanceSyntheticStopGeneration) and the
       // possibly-live attempt id is recorded/cleared only by recordSyntheticStopAttempt / the advance.
-      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at, suspect_price, suspect_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
         side = excluded.side,
         quantity = excluded.quantity,
@@ -923,13 +987,15 @@ export function upsertSyntheticStop(
           ELSE excluded.status
         END,
         last_price = excluded.last_price,
-        updated_at = excluded.updated_at`
+        updated_at = excluded.updated_at,
+        suspect_price = excluded.suspect_price,
+        suspect_count = excluded.suspect_count`
     )
     .run(
       stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.side, stop.quantity,
       stop.entryPrice, stop.extremePrice, stop.trailPercent ?? null, stop.trailAmount ?? null,
       stop.status, stop.lastPrice ?? null, stop.fireGeneration ?? 0, stop.lastAttemptRefId ?? null,
-      stop.createdAt ?? now, now
+      stop.createdAt ?? now, now, stop.suspectPrice ?? null, stop.suspectCount ?? 0
     );
 }
 

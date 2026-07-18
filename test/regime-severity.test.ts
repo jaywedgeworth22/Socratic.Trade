@@ -308,20 +308,20 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 async function seed(options: { regimeSeverityScoring?: boolean } = {}) {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
   const accountId = randomUUID();
   upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Regime Severity Test", isActive: true });
   setActiveConnectedAccount(accountId);
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    llmModel: "gpt-4.1-mini",
-    redTeamLlmModel: "gpt-4.1-mini",
+    llmModel: "openai/gpt-4.1-mini",
+    redTeamLlmModel: "openai/gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
@@ -333,11 +333,11 @@ async function seed(options: { regimeSeverityScoring?: boolean } = {}) {
 
 describe("strategy.ts regime-severity wiring", () => {
   it("policy.tuning.regimeSeverityScoring default OFF: no regimeSeverity in userContent, no entryRegimeSeverity stamp (byte-identical default)", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = JSON.parse(String(init?.body ?? "{}"));
         openAiBodies.push(body);
         if (isRedTeamRequest(body)) {
@@ -369,12 +369,12 @@ describe("strategy.ts regime-severity wiring", () => {
   }, 75_000);
 
   it("policy.tuning.regimeSeverityScoring ON: includes a compact regimeSeverity block in userContent next to currentMarketRegime, and stamps entryRegimeSeverity on the persisted proposal", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     let strategyCallCount = 0;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         strategyCallCount += 1;
         const body = JSON.parse(String(init?.body ?? "{}"));
         openAiBodies.push(body);
@@ -422,7 +422,7 @@ describe("strategy.ts regime-severity wiring", () => {
   }, 75_000);
 
   it("policy.tuning.regimeSeverityScoring ON, scorer throws: does not fail the run — no regimeSeverity in userContent, proposal still generated", async () => {
-    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.doMock("../src/lib/regime-severity", () => ({
       computeMultiSignalSeverity: () => {
         throw new Error("boom");
@@ -432,7 +432,7 @@ describe("strategy.ts regime-severity wiring", () => {
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = String(url);
-      if (href.includes("api.openai.com")) {
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
         const body = JSON.parse(String(init?.body ?? "{}"));
         openAiBodies.push(body);
         if (isRedTeamRequest(body)) {

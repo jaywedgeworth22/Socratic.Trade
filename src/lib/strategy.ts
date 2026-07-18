@@ -60,7 +60,7 @@ import { OrderValidationError } from "./types";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
 import { planFundingSells } from "./sell-to-fund";
-import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState } from "./broker-side";
+import { hasBrokerReportedFill, hasBrokerReportedPricedFill, isRejectedOrCanceledState, isBracketOrderClass, isLiveExitOrder } from "./broker-side";
 import {
   calibratedConviction,
   getClosedLotCount,
@@ -122,7 +122,7 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
-import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan } from "./db";
+import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
@@ -818,12 +818,13 @@ export async function runStrategyOnce(
     // wide). Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the
     // fixed/beta stop (or the per-position fallback flat %, resolved downstream).
     const atrStopPctBySymbol: Record<string, number> = {};
+    const candidateAtrStopPctBySymbol: Record<string, number> = {};
     const anyHeldAtrPlan = workingPositions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "atr");
     if ((policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) || anyHeldAtrPlan) {
       const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
       const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
-      await Promise.all(
-        workingPositions
+      await Promise.all([
+        ...workingPositions
           .filter((p) => Math.abs(p.quantity) > 0.000001 && p.averageCost > 0)
           .map(async (p) => {
             const sym = normalizeSymbol(p.symbol);
@@ -835,8 +836,21 @@ export async function runStrategyOnce(
             } catch {
               // best-effort — fall back to the fixed/beta stop for this name
             }
-          })
-      );
+          }),
+        ...(marketScan
+          ? marketScan.topCandidates.map(async (c) => {
+              const sym = normalizeSymbol(c.symbol);
+              try {
+                const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+                if (!bars) return;
+                const pct = atrStopPct(atr(bars, period), c.price, multiple);
+                if (typeof pct === "number") candidateAtrStopPctBySymbol[sym] = pct;
+              } catch {
+                // best-effort
+              }
+            })
+          : [])
+      ]);
       lockGuard.assertOwned();
     }
     // Extended-hours protective-exit routing is decided ONCE here (the run knows the wall-clock
@@ -932,60 +946,95 @@ export async function runStrategyOnce(
         // held name outside the top-3 by score still needs a filings-RAG pass so sell/hold/trim
         // decisions on it are informed. Held symbols are unioned in, never substituted for the
         // top-N, and the top-N ordering/membership is untouched.
-        const topSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 3).map(c => c.symbol), ...heldSymbols]);
-        const contexts = await Promise.all(
-          topSymbols.map(async (sym) => {
-            const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
-            let variants: string[] = [];
-            if (wantMultiQuery) {
-              const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
-              const breakdown = candidate?.factorBreakdown;
-              let dominantFactor: string | undefined;
-              if (breakdown) {
-                let best = -Infinity;
-                for (const [key, value] of Object.entries(breakdown)) {
-                  if (key === "weightedTotal" || typeof value !== "number") continue;
-                  if (value > best) {
-                    best = value;
-                    dominantFactor = key;
+        // CIK map lookup for structured facts mapping
+        const tickerToCik: Record<string, string> = {};
+        try {
+          const { loadCikMap } = await import("./web-sources/sec8k");
+          const cikMap = await loadCikMap(Date.now());
+          if (cikMap) {
+            for (const [cik, tick] of Object.entries(cikMap)) {
+              if (tick) tickerToCik[tick.toUpperCase()] = cik.padStart(10, "0");
+            }
+          }
+        } catch (err) {
+          console.warn("[Strategy] failed to load CIK map for RAG dossiers:", err);
+        }
+
+        const scoutSymbols = marketScan ? marketScan.topCandidates.map((c) => c.symbol) : [];
+        const deepSymbols = uniqueSymbols([...(marketScan?.topCandidates.slice(0, 3).map((c) => c.symbol) || []), ...heldSymbols]);
+        const allSymbols = uniqueSymbols([...scoutSymbols, ...deepSymbols]);
+
+        const contexts: Array<{ sym: string; query: string; chunks: any[]; factsCard: string; insiderCard: string }> = [];
+        const batchSize = 5;
+        for (let i = 0; i < allSymbols.length; i += batchSize) {
+          const chunk = allSymbols.slice(i, i + batchSize);
+          const chunkResults = await Promise.all(
+            chunk.map(async (sym) => {
+              const isDeep = deepSymbols.includes(sym);
+              const limit = isDeep ? 8 : 1;
+              const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+              let variants: string[] = [];
+
+              if (wantMultiQuery && isDeep) {
+                const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
+                const breakdown = candidate?.factorBreakdown;
+                let dominantFactor: string | undefined;
+                if (breakdown) {
+                  let best = -Infinity;
+                  for (const [key, value] of Object.entries(breakdown)) {
+                    if (key === "weightedTotal" || typeof value !== "number") continue;
+                    if (value > best) {
+                      best = value;
+                      dominantFactor = key;
+                    }
                   }
                 }
+                variants = deriveQueryVariants({
+                  symbol: sym,
+                  sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
+                  dominantFactor,
+                  evidenceBulletins: candidate?.evidenceBulletins
+                });
+                if (wantHyde && variants.length > 0) {
+                  const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
+                  variants = [...variants, ...hydePassages];
+                }
               }
-              variants = deriveQueryVariants({
-                symbol: sym,
-                sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
-                dominantFactor,
-                evidenceBulletins: candidate?.evidenceBulletins
+
+              const chunks = await retrieveContextDetailed(query, sym, limit, userId, {
+                docType: requestedFilingsDocTypes,
+                asOf: runAsOf,
+                minScore: defaultMinScore(),
+                minRelevanceScore: defaultRelevanceFloor(),
+                dedupeSimilarity: defaultDedupeSimilarity(),
+                connectedAccountId: policy.connectedAccountId,
+                runId,
+                ...(variants.length > 0 ? { queries: variants } : {}),
+                onStatus: (status) => {
+                  ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
+                }
               });
-              if (wantHyde && variants.length > 0) {
-                // generateHydePassages self-gates on isOverLlmBudget(userId, connectedAccountId) —
-                // 2026-07-05 review fix — mirroring retrieveContextDetailed's own budget gate below.
-                const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
-                variants = [...variants, ...hydePassages];
+
+              // Retrieve structured facts & Form 4 transactions (RAG-B10)
+              const { formatCompanyFactsEvidenceCard, formatInsiderTransactionsEvidenceCard } = await import("./web-sources/sec-facts");
+              let factsCard = "";
+              let insiderCard = "";
+              try {
+                const cik = tickerToCik[sym.toUpperCase()];
+                if (cik) {
+                  factsCard = formatCompanyFactsEvidenceCard(cik);
+                  insiderCard = formatInsiderTransactionsEvidenceCard(cik);
+                }
+              } catch (err) {
+                console.warn(`[Strategy] failed to fetch structured facts for ${sym}:`, err);
               }
-            }
-            const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
-              docType: requestedFilingsDocTypes,
-              asOf: runAsOf,
-              minScore: defaultMinScore(),
-              // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
-              // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
-              // them, so neither ever ran). dedupeSimilarity is ON by default for this
-              // socratic-decision retrieval path per the composite review's guidance.
-              minRelevanceScore: defaultRelevanceFloor(),
-              dedupeSimilarity: defaultDedupeSimilarity(),
-              connectedAccountId: policy.connectedAccountId,
-              runId,
-              ...(variants.length > 0 ? { queries: variants } : {}),
-              // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): advisory only,
-              // never affects `chunks` — see RetrievalStatus in vector-db.ts.
-              onStatus: (status) => {
-                ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
-              }
-            });
-            return { sym, query, chunks };
-          })
-        );
+
+              return { sym, query, chunks, factsCard, insiderCard };
+            })
+          );
+          contexts.push(...chunkResults);
+        }
+
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
         fmpDerivedProvenance.splice(
@@ -1010,18 +1059,35 @@ export async function runStrategyOnce(
               relevanceScore: chunk.relevanceScore ?? chunk.score,
               relevanceFloor
             });
-            // corpus-coverage-receipt: track which requested doc types actually produced a chunk
-            // THIS run, regardless of symbol — coverage is corpus-wide, not per-symbol.
             if (chunk.doc_type) retrievedFilingsDocTypes.add(chunk.doc_type.toLowerCase());
           }
         }
-        if (validContexts.length > 0) {
-          // 2026-07-04 RAG quick-wins: prefix each chunk with a compact provenance header
-          // (doc_type/section/symbol/date/relevance) so the model can weight a fresh 8-K over a
-          // stale 10-K and reference which chunk it drew from — see formatChunkWithProvenance.
+
+        if (validContexts.length > 0 || contexts.some((c) => c.factsCard || c.insiderCard)) {
           ragContext = contexts
-            .flatMap((context) => context.chunks.map((chunk) => formatChunkWithProvenance(chunk, context.sym)))
-            .join("\n\n");
+            .map((context) => {
+              const formattedChunks = context.chunks
+                .map((chunk) => formatChunkWithProvenance(chunk, context.sym))
+                .join("\n\n");
+
+              const parts = [`### RAG Dossier for ${context.sym}`];
+              if (context.factsCard) {
+                parts.push(context.factsCard);
+              }
+              if (context.insiderCard) {
+                parts.push(context.insiderCard);
+              }
+              if (formattedChunks) {
+                parts.push(formattedChunks);
+              }
+
+              if (parts.length > 1) {
+                return parts.join("\n\n");
+              }
+              return "";
+            })
+            .filter(Boolean)
+            .join("\n\n---\n\n");
         }
       } catch (e) {
         if (e instanceof StrategyLockOwnershipLostError) throw e;
@@ -1359,6 +1425,8 @@ export async function runStrategyOnce(
         positions: workingPositions,
         recentOrders: compactRecentOrders(orders),
         marketScan,
+        candidateAtrStopPctBySymbol,
+        atrStopPctBySymbol,
         dailyNotionalUsed: daily.notional,
         dailyOrderCount: daily.openingOrderCount,
         ragContext,
@@ -3692,6 +3760,8 @@ async function proposeTrades(input: {
    */
   budgetAdvisory?: string;
   prefetched?: PrefetchedFills;
+  candidateAtrStopPctBySymbol?: Record<string, number>;
+  atrStopPctBySymbol?: Record<string, number>;
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -3876,7 +3946,8 @@ async function proposeTrades(input: {
     holdingHorizon: input.policy.holdingHorizon ?? "swing",
     maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
     stopLossPct: input.policy.riskRules.stopLossPct ?? 8,
-    takeProfitPct: input.policy.riskRules.takeProfitPct ?? 20
+    takeProfitPct: input.policy.riskRules.takeProfitPct ?? 20,
+    shortStopLossPct: input.policy.riskRules.shortStopLossPct ?? 8
   });
 
   // Delta-only macro: macro moves slowly, so on repeat runs send just the changed
@@ -3998,7 +4069,7 @@ async function proposeTrades(input: {
         })
       }
     : undefined;
-  const compactPromptMarketScan = compactMarketScanForPrompt(promptMarketScan);
+  const compactPromptMarketScan = compactMarketScanForPrompt(promptMarketScan, input.candidateAtrStopPctBySymbol);
   const evidenceSourceCoverage = summarizeSourceCoverage(input.marketScan?.topCandidates ?? []);
   const decisionAsOf = input.asOf;
   const evidenceSubject = input.policy.connectedAccountId ?? input.policy.accountNumber ?? input.userId;
@@ -4251,6 +4322,121 @@ async function proposeTrades(input: {
     input.userId,
     input.policy.connectedAccountId
   );
+  const rawStopPlans = input.policy.accountNumber ? getStopPlans(input.policy.accountNumber, input.userId) : {};
+  const stopPlanBySymbol = filterStopPlansByLiveBasis(rawStopPlans, input.positions);
+  const stopPlanRationaleBySymbol: Record<string, string | undefined> = {};
+  for (const sym of Object.keys(stopPlanBySymbol)) {
+    stopPlanRationaleBySymbol[sym] = rawStopPlans[sym]?.rationale;
+  }
+  const activeSyntheticStops = input.policy.accountNumber ? listSyntheticStops(input.policy.accountNumber, input.userId) : [];
+  const syntheticStopBySymbol = new Map<string, any>(activeSyntheticStops.map((s: any) => [normalizeSymbol(s.symbol), s]));
+
+  const activeProtection = input.positions.map((pos) => {
+    const sym = normalizeSymbol(pos.symbol);
+    const planStyle = stopPlanBySymbol[sym] ?? "default";
+    const rationale = stopPlanRationaleBySymbol[sym];
+    
+    const symbolOrders = (input.recentOrders as EquityOrder[]).filter(
+      (o) => normalizeSymbol(o.symbol) === sym
+    );
+    const positionSide = pos.quantity > 0 ? "long" : "short";
+    const openExitOrders = symbolOrders.filter(
+      (o) => isLiveExitOrder(o, positionSide)
+    );
+
+    const hasBracket = openExitOrders.some((o) => isBracketOrderClass(o.orderClass));
+    const hasSimpleStop = openExitOrders.some((o) => o.type === "stop_market" || o.type === "stop_limit");
+    const hasNativeTrail = openExitOrders.some((o) => (o.type as string) === "trailing_stop_market" || (o.type as string) === "trailing_stop_limit");
+    
+    const synStop = syntheticStopBySymbol.get(sym);
+
+    let enforcementLane: "bracket" | "broker_stop" | "native_trail" | "synthetic" | "NONE" = "NONE";
+    if (hasBracket) enforcementLane = "bracket";
+    else if (hasNativeTrail) enforcementLane = "native_trail";
+    else if (hasSimpleStop) enforcementLane = "broker_stop";
+    else if (synStop) enforcementLane = "synthetic";
+
+    const unprotected = enforcementLane === "NONE";
+
+    let effectiveStopPrice: number | undefined;
+    if (enforcementLane === "bracket" || enforcementLane === "broker_stop") {
+      const stopOrder = openExitOrders.find((o) => o.type === "stop_market" || o.type === "stop_limit");
+      effectiveStopPrice = stopOrder?.stopPrice;
+    } else if (enforcementLane === "synthetic" && synStop) {
+      const isShort = pos.quantity < 0;
+      effectiveStopPrice = isShort 
+        ? synStop.extremePrice * (1 + synStop.trailPercent / 100)
+        : synStop.extremePrice * (1 - synStop.trailPercent / 100);
+    }
+
+    if (effectiveStopPrice !== undefined) {
+      effectiveStopPrice = Number(effectiveStopPrice.toFixed(2));
+    }
+
+    const mark = pos.marketValue / pos.quantity;
+    let distancePct: number | undefined;
+    let distanceR: number | undefined;
+    if (effectiveStopPrice !== undefined && mark > 0) {
+      distancePct = Number((Math.abs(mark - effectiveStopPrice) / mark * 100).toFixed(2));
+      const atrPct = input.atrStopPctBySymbol?.[sym];
+      if (atrPct && atrPct > 0) {
+        distanceR = Number((distancePct / atrPct).toFixed(2));
+      }
+    }
+
+    const trailHwm = synStop ? Number(synStop.extremePrice.toFixed(2)) : undefined;
+
+    let holdingDays: number | undefined;
+    if (input.policy.accountNumber) {
+      try {
+        const query = getDb().prepare(`
+          SELECT julianday('now') - julianday(timestamp) as holding_days
+          FROM fill_events
+          WHERE account_number = ? AND symbol = ? AND side = ?
+          ORDER BY timestamp ASC LIMIT 1
+        `).get(input.policy.accountNumber, sym, pos.quantity > 0 ? "buy" : "short") as { holding_days: number } | undefined;
+        if (query) {
+          holdingDays = Math.max(0, Math.round(query.holding_days));
+        }
+      } catch {
+        // best-effort fallback
+      }
+    }
+
+    const q = input.marketScan?.quotesBySymbol[sym];
+    const daysToEarnings = q?.daysToEarnings;
+    const earningsDate = typeof daysToEarnings === "number"
+      ? new Date(Date.now() + daysToEarnings * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      : undefined;
+
+    const restingExitOrders = openExitOrders.map((o) => ({
+      id: o.id,
+      type: o.type,
+      qty: o.quantity,
+      limitPrice: o.limitPrice,
+      stopPrice: o.stopPrice
+    }));
+
+    return compactPromptObject({
+      symbol: pos.symbol,
+      qty: pos.quantity,
+      averageCost: Number(pos.averageCost.toFixed(2)),
+      marketValue: Number(pos.marketValue.toFixed(2)),
+      currentPrice: Number(mark.toFixed(2)),
+      planStyle,
+      rationale,
+      enforcementLane,
+      effectiveStopPrice,
+      effectiveStopDistancePct: distancePct,
+      effectiveStopDistanceR: distanceR,
+      trailHwm,
+      restingExitOrders: restingExitOrders.length > 0 ? restingExitOrders : undefined,
+      holdingDays,
+      earningsDate,
+      unprotected: unprotected ? true : undefined
+    });
+  });
+
   const userContent = {
     currentDate: decisionAsOf,
     evidenceManifest,
@@ -4258,6 +4444,7 @@ async function proposeTrades(input: {
     executionMode,
     executionModeClarification,
     currentMarketRegime,
+    activeProtection,
     ...(regimeSeverity
       ? {
           regimeSeverity: {
@@ -4438,8 +4625,16 @@ async function proposeTrades(input: {
   const llmSteps: StrategyLlmStep[] = [];
 
   const recordStep = (step: StrategyLlmStep, options: { includeInResult?: boolean } = {}) => {
-    if (options.includeInResult !== false) llmSteps.push(step);
-    audit("llm_step", { runId: input.runId, ...step }, input.userId, input.policy.connectedAccountId);
+    let provider = step.provider;
+    if (provider === "openrouter" && step.model && step.model.includes("/")) {
+      const raw = step.model.split("/")[0];
+      if (raw === "google") provider = "gemini";
+      else if (raw === "mistralai") provider = "mistral";
+      else provider = raw;
+    }
+    const mappedStep = { ...step, provider };
+    if (options.includeInResult !== false) llmSteps.push(mappedStep);
+    audit("llm_step", { runId: input.runId, ...mappedStep }, input.userId, input.policy.connectedAccountId);
   };
 
   const autonomyOverrideSchema = {
@@ -4509,24 +4704,7 @@ async function proposeTrades(input: {
         items: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "symbol",
-            "side",
-            "type",
-            "quantity",
-            "dollarAmount",
-            "limitPrice",
-            "stopPrice",
-            "timeInForce",
-            "marketHours",
-            "rationale",
-            "tradeThesisTag",
-            "confidenceScore",
-            "autonomyOverride",
-            "bracketStopLoss",
-            "bracketTakeProfit",
-            "stopPlan"
-          ],
+          required: [...BULL_PROPOSAL_REQUIRED_KEYS],
           properties: {
             symbol: proposalSymbolSchema,
             // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
@@ -4746,13 +4924,58 @@ async function proposeTrades(input: {
             try {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
-              const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-              return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+              try {
+                const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
+                return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
+              } catch {
+                // AMBIGUITY GUARD before repair (Codex P1, round 9), mirroring the Red Team's:
+                // a malformed reply carrying MORE THAN ONE `proposals` payload (e.g. a
+                // schema-complete block followed by a corrective `{"proposals":[]}`) must not be
+                // repaired from whichever block extraction keeps — contradictory output degrades
+                // to zero proposals exactly as it did pre-repair. Counted on the raw text with
+                // JSON \uXXXX escapes decoded so an escaped key cannot hide the second block.
+                const escapeNormalizedBullText = text.replace(/\\u([0-9a-fA-F]{4})/g, (_whole, hex: string) =>
+                  String.fromCharCode(Number.parseInt(hex, 16))
+                );
+                // Quotes OPTIONAL (Codex P1, round 10): jsonrepair accepts unquoted JSON5 keys,
+                // so a corrective `{proposals: []}` block must count too. The lookbehind stops
+                // word-suffix matches (e.g. "counterproposals:"); a prose mention still counting
+                // fails CLOSED to zero proposals, the accepted direction on this guard.
+                const proposalsKeyOccurrences = (escapeNormalizedBullText.match(/(?<![\w"'])["']?proposals["']?\s*:/g) ?? []).length;
+                if (proposalsKeyOccurrences > 1) {
+                  throw new Error(`Bull reply contained ${proposalsKeyOccurrences} proposals blocks (ambiguous); refusing repair.`);
+                }
+                // ANY trailing balanced JSON value counts as ambiguous too (Codex P1, round 11):
+                // a corrective bare array (`... Correction: []`) carries no proposals key but
+                // still contradicts the first block. Quote-tolerant scan, since the whole point
+                // of this path is that the reply may be single-quoted.
+                const firstBlockEnd = firstQuoteTolerantBlockEnd(escapeNormalizedBullText);
+                if (firstBlockEnd !== -1 && /[[{]/.test(escapeNormalizedBullText.slice(firstBlockEnd + 1))) {
+                  throw new Error("Bull reply contained trailing JSON after the first block (ambiguous); refusing repair.");
+                }
+                // Strict parse failed — retry WITH local jsonrepair, then gate every recovered
+                // proposal through the schema-completeness filter: repair can close a proposal
+                // truncated mid-object, and such partials must not reach sizing where defaults
+                // would fabricate the missing judgment fields (Codex P1, PR #1696). This
+                // generative path is the ONLY repair opt-in; Red Team / revalidation / tuning
+                // parse strictly and stay fail-closed.
+                const parsed = JSON.parse(extractJsonPayload(text, { repair: true })) as { proposals?: unknown[] };
+                const { kept, dropped } = filterRepairedProposals(
+                  parsed.proposals ?? [],
+                  allowedSides,
+                  proposalSymbols.length > 0 ? proposalSymbols : undefined
+                );
+                if (dropped > 0) {
+                  console.warn(`[Bull] jsonrepair recovered the payload but ${dropped} proposal(s) were incomplete (truncation artifacts) and were dropped; keeping ${kept.length}.`);
+                  audit("strategy_bull_repaired_partial_dropped", { runId: input.runId, model: attempt.model, dropped, kept: kept.length }, input.userId, input.policy.connectedAccountId);
+                }
+                return { text, proposals: kept, truncated, wireOutputCap, finishReason };
+              }
             } catch (parseError) {
               // A truncated/malformed model response must not crash the whole autonomous
               // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
               // record a DISTINCT truncation reason instead of a silent no-op (see below).
-              console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", parseError);
+              console.warn("Bull Agent response local healing failed; degrading to zero proposals this run");
               return { text, proposals: [] as TradeProposal[], truncated, wireOutputCap, finishReason };
             }
           } catch (err) {
@@ -4946,6 +5169,12 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
       side: order.side,
       type: order.type,
       state: order.state,
+      // orderClass, stopPrice, and limitPrice are needed by activeProtection
+      // evaluation (isBracketOrderClass, broker-stop detection) downstream in
+      // proposeTrades — don't drop them from the compaction.
+      ...(order.orderClass ? { orderClass: order.orderClass } : {}),
+      ...(order.stopPrice !== undefined ? { stopPrice: order.stopPrice } : {}),
+      ...(order.limitPrice !== undefined ? { limitPrice: order.limitPrice } : {}),
       ...(order.dollarAmount ? { dollarAmount: order.dollarAmount } : {}),
       ...(quantity ? { quantity } : {}),
       ...(order.averagePrice ? { avgPrice: order.averagePrice } : {}),
@@ -4960,7 +5189,7 @@ function hasRealAsk(quote: MarketQuote): boolean {
   return Boolean(quote.ask && quote.ask > 0 && !quote.syntheticAsk);
 }
 
-function compactMarketScanForPrompt(marketScan?: MarketScan) {
+function compactMarketScanForPrompt(marketScan?: MarketScan, candidateAtrStopPctBySymbol?: Record<string, number>) {
   if (!marketScan) return undefined;
   const hasAskData = marketScan.topCandidates.some(hasRealAsk);
   return {
@@ -4974,7 +5203,7 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
     cacheTtlMs: marketScan.cacheTtlMs,
     cached: marketScan.cached,
     hasAskData,
-    topCandidates: marketScan.topCandidates.map(compactCandidateForPrompt),
+    topCandidates: marketScan.topCandidates.map((c, i) => compactCandidateForPrompt(c, i, candidateAtrStopPctBySymbol)),
     instructions: hasAskData
       ? "Ask-relative buy limits are allowed only for candidates that include ask."
       : "No ask prices are available in this scan. Do not invent ask-relative limit prices."
@@ -5014,12 +5243,17 @@ function targetUpsidePct(quote: { price?: number; targetMean?: number }): number
 }
 
 // Exported for tests (prompt-field wiring assertions); only compactMarketScanForPrompt calls it in production.
-export function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+export function compactCandidateForPrompt(
+  quote: MarketScan["topCandidates"][number],
+  index: number,
+  candidateAtrStopPctBySymbol?: Record<string, number>
+): Record<string, unknown> {
   // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread —
   // it would wrongly anchor ask-relative limit-price reasoning. Emit each side only when it is not
   // synthetic (compactPromptObject drops undefined keys, matching hasAskData).
   const realBid = !quote.syntheticBid ? quote.bid : undefined;
   const realAsk = !quote.syntheticAsk ? quote.ask : undefined;
+  const sym = normalizeSymbol(quote.symbol);
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
@@ -5044,6 +5278,7 @@ export function compactCandidateForPrompt(quote: MarketScan["topCandidates"][num
     tgtUpsidePct: targetUpsidePct(quote),
     shortFloat: quote.shortPercentOfFloat,
     beta: quote.beta,
+    atrStopPct: candidateAtrStopPctBySymbol?.[sym] ? Number(candidateAtrStopPctBySymbol[sym].toFixed(2)) : undefined,
     earnIn: quote.daysToEarnings,
     instOwn: quote.institutionOwnershipPct,
     iv: quote.nearTheMoneyIv,
@@ -5151,6 +5386,190 @@ function recordLlmOutcome(
 // same binding imported above) so existing consumers (tests included) keep importing it from
 // "./strategy" unchanged.
 export { filterStopPlansByLiveBasis };
+
+/**
+ * Every key the Bull structured-output schema marks `required` on a proposal object (values may
+ * still be null where the schema allows it). Single source for the schema literal AND the
+ * post-repair completeness gate below — they must never drift.
+ */
+export const BULL_PROPOSAL_REQUIRED_KEYS = [
+  "symbol",
+  "side",
+  "type",
+  "quantity",
+  "dollarAmount",
+  "limitPrice",
+  "stopPrice",
+  "timeInForce",
+  "marketHours",
+  "rationale",
+  "tradeThesisTag",
+  "confidenceScore",
+  "autonomyOverride",
+  "bracketStopLoss",
+  "bracketTakeProfit",
+  "stopPlan"
+] as const;
+
+/**
+ * Completeness gate for proposals recovered via jsonrepair (Codex P1, PR #1696): repair proves
+ * SYNTAX, not completeness — a response truncated mid-proposal repairs into an object missing
+ * its tail fields, and `sanitizeProposals` only checks symbol/side/type before sizing fills the
+ * rest with defaults. A repaired proposal is kept only when every schema-required key is present
+ * and the three human-judgment fields carry real values (non-empty rationale/tradeThesisTag,
+ * finite confidenceScore) — anything less is a truncation artifact, not a trade idea.
+ */
+/**
+ * End index of the first balanced {...}/[...] block, scanning BOTH quote styles (the strict
+ * extractor's scanner is deliberately double-quote-only). Used by the Bull ambiguity guard to
+ * detect a trailing corrective JSON value — e.g. `{'proposals':[...]} Correction: []` — which
+ * carries no `proposals:` key yet contradicts the first block (Codex P1, round 11).
+ */
+export function firstQuoteTolerantBlockEnd(text: string): number {
+  const start = text.search(/[[{]/);
+  if (start === -1) return -1;
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === "{" || ch === "[") depth += 1;
+    else if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function isSchemaShapedStopPlan(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    "rationale" in o &&
+    (o.rationale === null || typeof o.rationale === "string") &&
+    typeof o.style === "string" &&
+    ["default", "fixed", "atr", "trailing", "none"].includes(o.style) &&
+    // "none" carries no stop at all — the schema prose requires a plain-language justification,
+    // and a repaired response must not strip protection without one.
+    (o.style !== "none" || (typeof o.rationale === "string" && o.rationale.trim() !== ""))
+  );
+}
+
+function isSchemaShapedAutonomyOverride(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    typeof o.requested === "boolean" &&
+    typeof o.thesis === "string" && o.thesis.trim() !== "" &&
+    Array.isArray(o.preferenceConflicts) && o.preferenceConflicts.every((item) => typeof item === "string") &&
+    (o.invalidation === null || typeof o.invalidation === "string") &&
+    (o.cashDeploymentPct === null || (typeof o.cashDeploymentPct === "number" && Number.isFinite(o.cashDeploymentPct)))
+  );
+}
+
+export function filterRepairedProposals(
+  proposals: unknown[],
+  // The RUN's schema enum, not the global four (Codex P1, round 8): when shortSellingEnabled is
+  // off or the account lacks short capability, the strict path rejects short/cover at
+  // `side: { enum: allowedSides }` — and the policy-level short gate is deliberately
+  // owner-overrideable, so the repair path must enforce the same schema boundary.
+  allowedSides: readonly string[] = ["buy", "sell", "short", "cover"],
+  // The RUN's symbol enum (Codex P1, round 10): the schema restricts symbols to the scan's
+  // candidates plus current holdings; a repaired `sell` on an UNHELD symbol bypasses both the
+  // openings candidate gate (buy/short only) and the policy holdings check, and Alpaca infers
+  // open-vs-close from `side: sell` — an unintended short. undefined mirrors the schema's
+  // bare-string fallback when the run has no candidates/holdings to enumerate.
+  allowedSymbols?: readonly string[]
+): { kept: TradeProposal[]; dropped: number } {
+  const kept: TradeProposal[] = [];
+  let dropped = 0;
+  for (const candidate of proposals) {
+    const record = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+      ? (candidate as Record<string, unknown>)
+      : undefined;
+    const complete =
+      record !== undefined &&
+      BULL_PROPOSAL_REQUIRED_KEYS.every((key) => key in record) &&
+      // Key presence alone is not enough (Codex P2, round 2): a repaired json_object-mode
+      // response can carry schema-INVALID values (numeric symbol, object side), and
+      // `sanitizeProposals` calls `normalizeSymbol(proposal.symbol)` → `.trim()` which would
+      // throw and abort the entire run instead of taking the zero-proposal path. Type-check
+      // the identity/enum fields the downstream pipeline dereferences unconditionally.
+      typeof record.symbol === "string" && record.symbol.trim() !== "" &&
+      (allowedSymbols === undefined || allowedSymbols.includes(normalizeSymbol(record.symbol))) &&
+      typeof record.side === "string" &&
+      allowedSides.includes(record.side) &&
+      typeof record.type === "string" &&
+      ["market", "limit", "stop_market", "stop_limit"].includes(record.type) &&
+      typeof record.rationale === "string" && record.rationale.trim() !== "" &&
+      // Playbook membership, not just non-emptiness (Codex P1, round 6): a fabricated tag has
+      // no scorecard history, so shouldSkipNegativeExpectancy treats it as unproven and a
+      // repaired reply could bypass a proven negative thesis's skip gate.
+      typeof record.tradeThesisTag === "string" &&
+      (THESIS_PLAYBOOK as readonly string[]).includes(record.tradeThesisTag) &&
+      typeof record.confidenceScore === "number" && Number.isFinite(record.confidenceScore) &&
+      // Numeric/null sizing fields (Codex P2, round 3): repair can deliver `dollarAmount: "100"`,
+      // which sanitize preserves via ?? and Robinhood later dereferences with .toFixed —
+      // crashing the run instead of taking the zero-proposal path. null stays allowed (the
+      // schema is nullable here); anything else must be a finite number.
+      (["quantity", "dollarAmount", "limitPrice", "stopPrice", "bracketStopLoss", "bracketTakeProfit"] as const)
+        .every((key) => record[key] === null || (typeof record[key] === "number" && Number.isFinite(record[key] as number))) &&
+      // Schema range for conviction (Codex P1, round 5): the contract bounds confidenceScore to
+      // 1-100; sanitize would CLAMP a repaired 999 to maximum conviction instead of rejecting it.
+      (record.confidenceScore as number) >= 1 && (record.confidenceScore as number) <= 100 &&
+      // Enum membership, exactly as declared (Codex P1, rounds 4-5): timeInForce/marketHours are
+      // NON-NULL enums in the schema — a repaired null would ride sanitize's defaults (gfd,
+      // regular_hours) into silently chosen order semantics, and Alpaca maps any other string
+      // to gtc.
+      (record.timeInForce === "gfd" || record.timeInForce === "gtc") &&
+      (record.marketHours === "regular_hours" || record.marketHours === "extended_hours" || record.marketHours === "all_day_hours") &&
+      // stopPlan must satisfy its subschema (Codex P1, round 5): a repaired {style:"default"}
+      // missing the required rationale key would otherwise carry a RESET instruction that
+      // clears the position's persisted fixed/atr/trailing/none plan at fill commit.
+      (record.stopPlan === null || isSchemaShapedStopPlan(record.stopPlan)) &&
+      // A repaired autonomyOverride must satisfy the override subschema (Codex P1, round 4):
+      // sanitize coerces a nested-object thesis to "[object Object]", which
+      // resolveSocraticOverride would treat as a REAL thesis and use to pass preference gates
+      // under socraticOverrideMode: "execute". requested must be boolean and thesis a real
+      // string before a repaired proposal may carry an override request at all.
+      (record.autonomyOverride === null || isSchemaShapedAutonomyOverride(record.autonomyOverride));
+    if (complete && record !== undefined) {
+      // additionalProperties: false, enforced by PROJECTION (Codex P1, round 7): a validated
+      // record may still smuggle unvalidated extras — e.g. a repaired `bracketStopLimit` that
+      // the Alpaca adapter would honor, turning the protective stop into a stop-limit order the
+      // declared schema rejects. Rebuild the kept proposal from exactly the schema's keys, and
+      // project the two nested objects onto THEIR declared keys for the same reason.
+      const projected: Record<string, unknown> = {};
+      for (const key of BULL_PROPOSAL_REQUIRED_KEYS) projected[key] = record[key];
+      if (projected.stopPlan && typeof projected.stopPlan === "object") {
+        const sp = projected.stopPlan as Record<string, unknown>;
+        projected.stopPlan = { style: sp.style, rationale: sp.rationale ?? null };
+      }
+      if (projected.autonomyOverride && typeof projected.autonomyOverride === "object") {
+        const ao = projected.autonomyOverride as Record<string, unknown>;
+        projected.autonomyOverride = {
+          requested: ao.requested,
+          thesis: ao.thesis,
+          preferenceConflicts: ao.preferenceConflicts,
+          invalidation: ao.invalidation ?? null,
+          cashDeploymentPct: ao.cashDeploymentPct ?? null
+        };
+      }
+      kept.push(projected as unknown as TradeProposal);
+    } else {
+      dropped += 1;
+    }
+  }
+  return { kept, dropped };
+}
 
 export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
@@ -5306,7 +5725,21 @@ export function enrichOpeningProposal(
   const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp" || policy.activeBroker === "tradier";
   const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / entryPrice) : undefined;
   const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
-  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {
+  // Tradier market-entry brackets are not supported (Tradier's multi-leg entry only accepts
+  // limit/stop/stop_limit — see tradier.ts placeEquityOrder). Strip them BEFORE the whole-share
+  // branch runs; the old else-if was unreachable for whole-share Tradier market orders because
+  // the preceding whole-share condition always matched first, so the proposal carried brackets
+  // that Tradier's gateway then silently ignored (Codex review, PR #1705).
+  const isTradierMarket = policy.activeBroker === "tradier" && next.type === "market";
+  if (bracketsEnabled && isTradierMarket && (next.bracketStopLoss != null || next.bracketTakeProfit != null)) {
+    next = {
+      ...next,
+      bracketStopLoss: undefined,
+      bracketTakeProfit: undefined,
+      rationale: next.rationale + `\n\n[Risk] Tradier native entry brackets are not supported for market entry orders. The bracket legs have been stripped; this position will have no native broker-held protection (and fixed/atr plans have no synthetic-stop monitor fallback).`
+    };
+  }
+  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket && !isTradierMarket) {
     const flatStopPct = proposal.side === "short"
       ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
       : (policy.riskRules?.stopLossPct ?? 0);

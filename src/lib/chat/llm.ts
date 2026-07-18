@@ -504,11 +504,24 @@ export class OpenAILLM implements ChatLLM {
     let text = "";
 
     for (let step = 0; step < MAX_STEPS; step++) {
-      const baseBody = {
+      const baseBody: Record<string, any> = {
         model: this.model,
         messages,
         ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
       };
+      if (this.provider === "openrouter") {
+        baseBody.metadata = {
+          context: this.usage.context ?? "assistant-chat",
+          ...((this.usage as any).metadata || {})
+        };
+        if (this.usage.userId) {
+          baseBody.user = this.usage.userId;
+        }
+      } else if (this.usage.userId) {
+        if (this.provider === "openai" || this.provider === "deepseek" || this.provider === "gemini") {
+          baseBody.user = this.usage.userId;
+        }
+      }
       const requestBody = reasoningCapabilityForModel(this.model)
         ? withLlmRequestBounds(baseBody, "chat-completions", {
             model: this.model,
@@ -576,12 +589,18 @@ export class OpenAILLM implements ChatLLM {
  * and share the OpenAILLM chat/completions tool loop, differing only by base URL + key.
  */
 export function chatProviderForModel(model: string): ChatProvider {
-  if (/^claude/i.test(model)) return "anthropic";
-  if (/^grok/i.test(model)) return "xai";
-  if (/^gemini/i.test(model)) return "gemini";
-  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(model)) return "mistral";
-  if (/^openrouter\//i.test(model)) return "openrouter";
-  if (/^deepseek/i.test(model)) return "deepseek";
+  const trimmed = model?.trim() ?? "";
+  if (/^openrouter\//i.test(trimmed)) return "openrouter";
+
+  let name = trimmed;
+  if (name.includes("/")) {
+    name = name.split("/").pop() || name;
+  }
+  if (/^claude/i.test(name)) return "anthropic";
+  if (/^grok/i.test(name)) return "xai";
+  if (/^gemini/i.test(name)) return "gemini";
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(name)) return "mistral";
+  if (/^deepseek/i.test(name)) return "deepseek";
   return "openai";
 }
 
@@ -601,9 +620,14 @@ function openAiCompatChatUrl(provider: OpenAiCompatProvider): string {  if (prov
 /** Build an OpenAI-style transport bound to a specific provider base URL (Bearer auth). The thrown
  *  error names the provider so the UI can render it in plain English (see humanizeLlmError). */
 function makeOpenAITransport(url: string, provider: OpenAiCompatProvider): OpenAITransport {  return async (body: any, apiKey: string) => {
+    const headers: Record<string, string> = { "content-type": "application/json", authorization: `Bearer ${apiKey}` };
+    if (provider === "openrouter") {
+      headers["HTTP-Referer"] = "https://socratictrade.com";
+      headers["X-Title"] = "Socratic.Trade";
+    }
     const res = await llmFetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      headers,
       body: JSON.stringify(body)
     });
     if (!res.ok) {
@@ -632,11 +656,15 @@ export function llmForModel(
   const { key, source, keyRef } = resolveLlmCredential(provider, userId);
   if (!key) return new MockLLM();
   const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+  // Strip the `openrouter/` prefix before passing the model ID to the API; OpenRouter
+  // expects the bare model name (e.g. "openai/gpt-4o"), and the strategy path already
+  // normalises this (resolveLlmEndpoint in llm-provider.ts — see that file's model strip).
+  const modelForApi = provider === "openrouter" ? trimmed.replace(/^openrouter\//i, "") : trimmed;
   if (provider === "anthropic") {
     return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage, opts.reasoningEffort);
   }
   const transport = opts.openAITransport ?? makeOpenAITransport(openAiCompatChatUrl(provider), provider);
-  return new OpenAILLM(key, trimmed, transport, usage, provider, opts.reasoningEffort);
+  return new OpenAILLM(key, modelForApi, transport, usage, provider, opts.reasoningEffort);
 }
 
 /**

@@ -1,4 +1,29 @@
-import type { ModelGroup } from "./model-picker";
+// Model catalog shape. These types formerly lived in app/ui/model-picker.tsx; that custom
+// dropdown component was retired 2026-07-17 (zero importers — the console assistant uses its own
+// picker), so the still-used type surface moved here, the catalog's own home.
+export type PickerProviderId =
+  | "openai"
+  | "anthropic"
+  | "xai"
+  | "gemini"
+  | "mistral"
+  | "deepseek"
+  | "openrouter"
+  | "offline";
+
+export interface ModelOption {
+  value: string;
+  label: string;
+  tier: "" | "$" | "$$" | "$$$";
+  recommendedGreen?: boolean;
+  recommendedRed?: boolean;
+}
+
+export interface ModelGroup {
+  provider: PickerProviderId;
+  label: string;
+  options: ModelOption[];
+}
 
 export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
 
@@ -123,6 +148,20 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     options: [
       { value: "deepseek-v4-flash", label: "deepseek-v4-flash - fast DeepSeek V4", tier: "$" },
       { value: "deepseek-v4-pro", label: "deepseek-v4-pro - stronger DeepSeek V4", tier: "$$" }
+    ]
+  },
+  {
+    provider: "openrouter",
+    label: "OpenRouter",
+    options: [
+      { value: "openrouter/openai/gpt-4o", label: "OpenRouter GPT-4o", tier: "$$$" },
+      { value: "openrouter/openai/gpt-4o-mini", label: "OpenRouter GPT-4o-mini", tier: "$" },
+      { value: "openrouter/anthropic/claude-3.5-sonnet", label: "OpenRouter Claude 3.5 Sonnet", tier: "$$$" },
+      { value: "openrouter/anthropic/claude-3-5-haiku", label: "OpenRouter Claude 3.5 Haiku", tier: "$" },
+      { value: "openrouter/google/gemini-2.5-pro", label: "OpenRouter Gemini 2.5 Pro", tier: "$$$" },
+      { value: "openrouter/google/gemini-2.5-flash", label: "OpenRouter Gemini 2.5 Flash", tier: "$" },
+      { value: "openrouter/meta-llama/llama-3.3-70b-instruct", label: "OpenRouter Llama 3.3 70B", tier: "$$" },
+      { value: "openrouter/deepseek/deepseek-r1", label: "OpenRouter DeepSeek R1", tier: "$$$" }
     ]
   }
 ];
