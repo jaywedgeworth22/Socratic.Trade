@@ -7,6 +7,8 @@
 - [x] Keep account scope, Start/Resume/STOP, and Run once controls absent from admin.
 - [x] Preserve admin tabs as the left rail and normalize all admin labels to title case.
 - [x] Rename the server panel to Server Stats without changing `/admin/server` or API routes.
+- [x] Keep the mobile admin header within narrow viewports by hiding the full brand at small breakpoints.
+- [x] Prevent profile-menu logout prefetch from triggering the side-effectful `/logout` GET.
 - [x] Run Node 24 lint, TypeScript, full Vitest, and production build gates.
 - [ ] Land through `scripts/land.sh`, then verify the auto-deployed production SHA and health.
 > **2026-07-18 - CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739).**

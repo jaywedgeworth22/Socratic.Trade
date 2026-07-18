@@ -20,6 +20,9 @@ used inconsistent sentence-case labels, and the server section's infrastructure 
 - Normalized labels to `API Connections`, `LLM Usage & Cost`, `RAG Coverage`, `Server Stats`, and
   `Chat Transcript` across the admin rail, overview cards, page headings, metadata, and Settings links.
 - Kept `/admin/server` and `/api/admin/server-metrics` routes unchanged.
+- Addressed review feedback in `app/admin/layout.tsx`: the full logo/name is hidden below the small
+  breakpoint so the mobile menu/profile controls remain reachable, while the console return arrow
+  remains visible; logout is a plain anchor so Next does not prefetch the side-effectful GET route.
 
 ## Files
 
@@ -39,9 +42,12 @@ All commands ran in `/Users/jay/.codex/worktrees/socratic-admin-console-shell` w
 - `npm test` — passed, 412 files / 4,794 tests.
 - `npm run build` — passed; Next.js emitted only existing middleware/Edge-runtime/cache warnings.
 - `git diff --check` — passed.
+- Focused review follow-up: `npx eslint app/admin/layout.tsx` and `npx tsc --noEmit` — passed.
 
 ## Follow-up
 
 Run `scripts/land.sh` from the clean Codex branch. After merge, verify Coolify auto-deploy serves the
 exact merge SHA and `/api/health` is healthy. No production deploy or admin API/security behavior was
-changed in this branch.
+changed in this branch. Full repository gates remain the existing PR baseline; this follow-up adds no
+new test file because both fixes are direct markup contracts already covered by the shell patterns and
+the existing logout route tests.

@@ -638,7 +638,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
-- **[Socratic.Trade][CODEX] Admin console shell parity (branch `codex/admin-console-shell`, 2026-07-18) — IN PROGRESS.** Aligning `admin.socratictrade.com` with the normal console chrome while preserving the admin-only tab rail: logo/name and profile remain visible; account scope plus Start/Run controls are hidden; labels are title-cased and the server panel is named Server Stats.
+- **[Socratic.Trade][CODEX] Admin console shell parity (branch `codex/admin-console-shell`, 2026-07-18) — IN PROGRESS / P2 REVIEW FIXES LOCAL.** Aligning `admin.socratictrade.com` with the normal console chrome while preserving the admin-only tab rail: logo/name and profile remain visible; account scope plus Start/Run controls are hidden; labels are title-cased and the server panel is named Server Stats. Follow-up fixes hide the large brand at narrow mobile widths and change logout to a plain anchor so opening the menu cannot prefetch the side-effectful GET. No push or deploy.
 
 **[Socratic.Trade][CODEX] CI event-SHA checkout pin (PR #1742, branch `codex/ci-checkout-ref`, 2026-07-18) — INTEGRATED INTO PR #1739; LANDING WITH PARENT.** Classifier jobs pin the event SHA. Security's pin was reverted so Gitleaks retains full history. PR #1742 merged into the routing branch as `b63fc78e`; no separate implementation remains active. Diff/YAML/actionlint checks passed.
 

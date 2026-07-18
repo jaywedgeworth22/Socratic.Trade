@@ -8,6 +8,11 @@ actions, and keeps trading account scope plus Start/Run controls out of the admi
 admin-only tab rail remains the left navigation. Normalized admin labels to title case and renamed
 the server panel to **Server Stats** across nav, overview, page headings, metadata, and Settings.
 
+Follow-up review fixes keep the large brand mark/name out of the narrow mobile header while retaining
+the console return affordance, and use a plain anchor for logout so opening the profile menu cannot
+prefetch the side-effectful GET route. Focused lint and TypeScript verification for the changed shell
+passed; the branch remains local pending the owner's landing workflow.
+
 Verification on Node 24: `npm run lint` passed with 0 errors (582 existing warnings), `npx tsc --noEmit`
 passed, `npm test` passed (412 files / 4,794 tests), and `npm run build` passed. The branch is ready
 for `scripts/land.sh`; no production deploy or admin data/API behavior was changed.

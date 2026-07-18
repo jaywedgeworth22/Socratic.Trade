@@ -131,8 +131,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
           <Link href="/console" className="flex shrink-0 items-center gap-2" title="Back to the trading console">
-            <HeaderLogo height={18} />
-            <span className="con-card-title">Socratic Trade</span>
+            <span className="hidden sm:block">
+              <HeaderLogo height={18} />
+            </span>
+            <span className="con-card-title hidden sm:inline">Socratic Trade</span>
             <ArrowLeft size={14} className="text-[color:var(--con-muted)]" />
           </Link>
           <div className="flex min-w-0 items-center gap-2">
@@ -250,9 +252,9 @@ function AdminProfileMenu({ theme, setTheme }: { theme: ConsoleTheme; setTheme: 
                 <Link href="/console/settings" className="con-btn con-btn-outline" onClick={close}>
                   Profile & Settings
                 </Link>
-                <Link href="/logout" className="con-btn con-btn-outline" onClick={close}>
+                <a href="/logout" className="con-btn con-btn-outline" onClick={close}>
                   Sign Out
-                </Link>
+                </a>
               </div>
             </div>
           </div>
