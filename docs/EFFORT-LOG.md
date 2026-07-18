@@ -1869,6 +1869,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Socratic server/infrastructure panel reliability (CODEX delegated implementation, owner-directed 2026-07-18) — IMPLEMENTED / FULL LOCAL GATES GREEN / COMMITTED LOCALLY; PR PENDING.** Partial provider failures now return HTTP 200 degraded receipts with valid data retained; current Hetzner network series and aggregate CPU normalization are covered; production partial configuration cannot masquerade as local; a 120-second one-entry single-flight cache plus bounded stale fallback prevents per-poll fanout; UI shows `asOf`/stale and leaves missing values unavailable. Remote targets default to neutral `REMOTE`; only explicit `SERVER_METRICS_TARGET_ENVIRONMENT=production` labels production. Focused tests 13/13, the full 412-file / 4,800-test suite, TypeScript, scoped ESLint, production build, and diff check pass. Branch `codex/socratic-infra-panel-reliability`, worktree `/Users/jay/apps/socratic-infra-panel-reliability`. No push, PR, merge, deploy, provider, token, Cloudflare Access, infrastructure, or production-data mutation.
 - **[Socratic.Trade][MONET] Editable connected-account name + legacy-app retirement (branch
   `monet/vigilant-fermi-220244`, cloud session, claimed 2026-07-18, owner-directed) — IMPLEMENTATION
   COMPLETE / gate running / PR pending.** (1) Inline rename of a connected account's cosmetic `label`

@@ -28,7 +28,10 @@ interface HostInfo {
 
 interface ServerMetricsData {
   isProd: boolean;
+  usesLocalHost?: boolean;
   degraded?: boolean;
+  stale?: boolean;
+  cacheAgeSeconds?: number;
   hostInfo: HostInfo;
   resources: unknown;
   metrics: {
@@ -98,8 +101,8 @@ export function ServerMetricsClient() {
         const json: unknown = await res.json().catch(() => undefined);
         const envelope = asRecord(json);
         const error = readText(envelope?.error) || "Failed to load metrics";
-        // The API preserves verified partial provider data in a degraded 502
-        // envelope. Keep that receipt; reject unrelated/malformed error JSON.
+        // Preserve verified partial data if a proxy or unexpected route error
+        // changes the status code; reject unrelated/malformed error JSON.
         if (asRecord(envelope?.hostInfo) && asRecord(envelope?.metrics) && Array.isArray(envelope?.resources)) {
           setData({ ...(envelope as unknown as ServerMetricsData), error });
           setRequestError(null);
@@ -151,11 +154,12 @@ export function ServerMetricsClient() {
       ? []
       : ["The server metrics warnings payload was malformed."];
   const warnings = [...providerWarnings, ...normalizedResources.warnings];
-  const hostName = displayProviderText(host?.name, data?.isProd ? "Unavailable" : "localhost", "host name");
+  const usesLocalHost = data?.usesLocalHost === true;
+  const hostName = displayProviderText(host?.name, usesLocalHost ? "localhost" : "Unavailable", "host name");
   const hostOs = displayProviderText(host?.os, "Unavailable", "operating system");
-  const hostIp = displayProviderText(host?.ip, data?.isProd ? "Unavailable" : "127.0.0.1", "server IP");
-  const hostLocation = displayProviderText(host?.location, data?.isProd ? "Unavailable" : "local", "server location");
-  const serverType = displayProviderText(host?.serverType, data?.isProd ? "Unavailable" : "local runtime", "server type");
+  const hostIp = displayProviderText(host?.ip, usesLocalHost ? "127.0.0.1" : "Unavailable", "server IP");
+  const hostLocation = displayProviderText(host?.location, usesLocalHost ? "local" : "Unavailable", "server location");
+  const serverType = displayProviderText(host?.serverType, usesLocalHost ? "local runtime" : "Unavailable", "server type");
   const cpuCores = typeof host?.cpus === "number" && Number.isFinite(host.cpus) && host.cpus > 0
     ? `${host.cpus} Cores`
     : "Unavailable";
@@ -168,6 +172,9 @@ export function ServerMetricsClient() {
   const loadAverage = Array.isArray(host?.loadAvg)
     ? readNonNegativeNumber(host.loadAvg[0])
     : undefined;
+  const asOf = data?.asOf ? new Date(data.asOf) : undefined;
+  const hasValidAsOf = asOf && Number.isFinite(asOf.getTime());
+  const formattedAsOf = hasValidAsOf ? asOf.toLocaleString() : "Unavailable";
 
   // CPU average of last 3 points
   const latestCpuValues = metrics?.cpu?.slice(-3).map(p => p.value) || [];
@@ -193,16 +200,25 @@ export function ServerMetricsClient() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold">Server & infrastructure</h1>
-            {data?.isProd ? (
-              <Chip tone={data.degraded ? "warn" : "accent"}>
-                {data.degraded ? "PRODUCTION - DEGRADED" : "PRODUCTION"}
-              </Chip>
-            ) : (
+            {usesLocalHost ? (
               <Chip tone="warn">LOCAL HOST</Chip>
+            ) : (
+              <Chip tone={data?.degraded ? "warn" : "accent"}>
+                {data?.isProd
+                  ? data.degraded ? "PRODUCTION - DEGRADED" : "PRODUCTION"
+                  : data?.degraded ? "REMOTE - DEGRADED" : "REMOTE"}
+              </Chip>
             )}
+            {data?.stale && <Chip tone="warn">STALE SNAPSHOT</Chip>}
           </div>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             Host node metrics and Coolify application resource statuses.
+          </p>
+          <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+            As of {formattedAsOf}
+            {typeof data?.cacheAgeSeconds === "number" && data.cacheAgeSeconds > 0
+              ? ` (${Math.floor(data.cacheAgeSeconds)}s old)`
+              : ""}
           </p>
         </div>
         <div className="flex items-center gap-3 self-start max-sm:w-full">

@@ -7,160 +7,323 @@ import {
   readPositiveNumber,
   readText,
 } from "@/lib/server-metrics-shapes";
+import {
+  SERVER_METRICS_CACHE_TTL_MS,
+  SERVER_METRICS_FAILURE_RETRY_MS,
+  SERVER_METRICS_MAX_STALE_MS,
+  serverMetricsRuntime,
+  type ServerMetricsCacheEntry,
+  type ServerMetricsConfigurationState,
+  type ServerMetricsMetricValue,
+  type ServerMetricsPayload,
+} from "@/lib/server-metrics-runtime";
 import os from "os";
 
 export const dynamic = "force-dynamic";
 
-interface MetricValue {
-  timestamp: number;
-  value: number;
+interface RefreshResult {
+  payload: ServerMetricsPayload;
+  attemptedProviderReads: number;
+  successfulProviderReads: number;
 }
 
 export async function GET(request: Request) {
   const denied = requireAdmin(request);
   if (denied) return denied;
 
-  const hetznerToken = process.env.HETZNER_API_TOKEN;
-  const hetznerServerId = process.env.HETZNER_SERVER_ID;
-  const coolifyToken = process.env.COOLIFY_API_TOKEN;
-  const coolifyServerUuid = process.env.COOLIFY_SERVER_UUID;
+  const configuration = readConfiguration();
+  const isRuntimeProduction = process.env.NODE_ENV === "production";
+  const isProd = readTargetEnvironment() === "production";
+  const hasAnyProviderConfiguration = [
+    configuration.hetznerToken,
+    configuration.hetznerServerId,
+    configuration.coolifyToken,
+    configuration.coolifyServerUuid,
+  ].some(Boolean);
 
-  const isConfigured = !!(hetznerToken && hetznerServerId && coolifyToken && coolifyServerUuid);
-
-  // Default local/fallback values using native Node os module
-  const localHostInfo = {
-    name: os.hostname(),
-    status: "running",
-    os: `${os.type()} ${os.release()} (${os.arch()})`,
-    cpus: os.cpus().length,
-    memoryTotalBytes: os.totalmem(),
-    memoryFreeBytes: os.freemem(),
-    uptimeSeconds: os.uptime(),
-    loadAvg: os.loadavg(),
-  };
-
-  if (!isConfigured) {
-    // Return fallback local stats in development or when not configured
-    return NextResponse.json({
-      isProd: false,
-      hostInfo: localHostInfo,
-      resources: [],
-      metrics: emptyMetrics(),
-      asOf: new Date().toISOString(),
-    });
+  if (!isRuntimeProduction && !hasAnyProviderConfiguration) {
+    return jsonResponse(localPayload(configuration.states));
   }
 
-  try {
-    // 1. Fetch server metadata and resources from Coolify API
-    const coolifyHeaders = {
-      Authorization: `Bearer ${coolifyToken}`,
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  const cacheKey = [
+    isProd ? "production" : "remote",
+    configuration.states.hetzner,
+    configuration.hetznerServerId ?? "",
+    configuration.states.coolify,
+    configuration.coolifyServerUuid ?? "",
+  ].join(":");
+  const now = Date.now();
+
+  if (serverMetricsRuntime.remoteCache?.key === cacheKey && serverMetricsRuntime.remoteCache.expiresAt > now) {
+    return jsonResponse(withCacheAge(serverMetricsRuntime.remoteCache.payload, now));
+  }
+
+  if (serverMetricsRuntime.remoteRefreshInFlight?.key !== cacheKey) {
+    const previous = serverMetricsRuntime.remoteCache?.key === cacheKey
+      ? serverMetricsRuntime.remoteCache
+      : undefined;
+    const promise = refreshRemoteMetrics(configuration, isProd, previous)
+      .finally(() => {
+        if (serverMetricsRuntime.remoteRefreshInFlight?.promise === promise) {
+          serverMetricsRuntime.remoteRefreshInFlight = undefined;
+        }
+      });
+    serverMetricsRuntime.remoteRefreshInFlight = { key: cacheKey, promise };
+  }
+
+  return jsonResponse(await serverMetricsRuntime.remoteRefreshInFlight!.promise);
+}
+
+function readConfiguration() {
+  const hetznerToken = readText(process.env.HETZNER_API_TOKEN);
+  const hetznerServerId = readText(process.env.HETZNER_SERVER_ID);
+  const coolifyToken = readText(process.env.COOLIFY_API_TOKEN);
+  const coolifyServerUuid = readText(process.env.COOLIFY_SERVER_UUID);
+
+  return {
+    hetznerToken,
+    hetznerServerId,
+    coolifyToken,
+    coolifyServerUuid,
+    states: {
+      hetzner: configurationState(hetznerToken, hetznerServerId),
+      coolify: configurationState(coolifyToken, coolifyServerUuid),
+    },
+  };
+}
+
+function readTargetEnvironment(): "production" | "remote" {
+  return readText(process.env.SERVER_METRICS_TARGET_ENVIRONMENT)?.toLowerCase() === "production"
+    ? "production"
+    : "remote";
+}
+
+function configurationState(
+  first: string | undefined,
+  second: string | undefined,
+): ServerMetricsConfigurationState {
+  if (first && second) return "configured";
+  if (first || second) return "partial";
+  return "missing";
+}
+
+function localPayload(configuration: ServerMetricsPayload["configuration"]): ServerMetricsPayload {
+  return {
+    isProd: false,
+    usesLocalHost: true,
+    degraded: false,
+    stale: false,
+    cacheAgeSeconds: 0,
+    configuration,
+    hostInfo: {
+      name: os.hostname(),
+      status: "running",
+      os: `${os.type()} ${os.release()} (${os.arch()})`,
+      cpus: os.cpus().length,
+      memoryTotalBytes: os.totalmem(),
+      memoryFreeBytes: os.freemem(),
+      uptimeSeconds: os.uptime(),
+      loadAvg: os.loadavg(),
+    },
+    resources: [],
+    metrics: emptyMetrics(),
+    asOf: new Date().toISOString(),
+  };
+}
+
+async function refreshRemoteMetrics(
+  configuration: ReturnType<typeof readConfiguration>,
+  isProd: boolean,
+  previous: ServerMetricsCacheEntry | undefined,
+): Promise<ServerMetricsPayload> {
+  const refreshedAt = Date.now();
+  const result = await loadRemoteMetrics(configuration, isProd, refreshedAt);
+
+  if (
+    previous
+    && previous.discardAt > refreshedAt
+    && result.attemptedProviderReads > 0
+    && result.successfulProviderReads === 0
+  ) {
+    const failureWarnings = result.payload.warnings ?? [];
+    const payload: ServerMetricsPayload = {
+      ...previous.payload,
+      degraded: true,
+      stale: true,
+      error: "Infrastructure providers are unavailable; showing the last successful snapshot.",
+      warnings: uniqueStrings([
+        ...(previous.payload.warnings ?? []),
+        ...failureWarnings,
+        "The displayed infrastructure snapshot is stale.",
+      ]),
+    };
+    serverMetricsRuntime.remoteCache = {
+      key: previous.key,
+      payload,
+      expiresAt: refreshedAt + SERVER_METRICS_FAILURE_RETRY_MS,
+      discardAt: previous.discardAt,
+    };
+    return withCacheAge(payload, refreshedAt);
+  }
+
+  const ttl = result.attemptedProviderReads > 0 && result.successfulProviderReads === 0
+    ? SERVER_METRICS_FAILURE_RETRY_MS
+    : SERVER_METRICS_CACHE_TTL_MS;
+  serverMetricsRuntime.remoteCache = {
+    key: [
+      isProd ? "production" : "remote",
+      configuration.states.hetzner,
+      configuration.hetznerServerId ?? "",
+      configuration.states.coolify,
+      configuration.coolifyServerUuid ?? "",
+    ].join(":"),
+    payload: result.payload,
+    expiresAt: refreshedAt + ttl,
+    discardAt: refreshedAt + SERVER_METRICS_MAX_STALE_MS,
+  };
+  return result.payload;
+}
+
+async function loadRemoteMetrics(
+  configuration: ReturnType<typeof readConfiguration>,
+  isProd: boolean,
+  refreshedAt: number,
+): Promise<RefreshResult> {
+  const warnings: string[] = [];
+  const providerErrors: string[] = [];
+  let attemptedProviderReads = 0;
+  let successfulProviderReads = 0;
+
+  if (configuration.states.hetzner === "partial") {
+    warnings.push("Hetzner configuration is incomplete; both API token and server ID are required.");
+  } else if (configuration.states.hetzner === "missing") {
+    warnings.push("Hetzner is not configured.");
+  }
+  if (configuration.states.coolify === "partial") {
+    warnings.push("Coolify configuration is incomplete; both API token and server UUID are required.");
+  } else if (configuration.states.coolify === "missing") {
+    warnings.push("Coolify is not configured.");
+  }
+
+  let coolifyServerFetch: ProviderFetchResult = {};
+  let coolifyResourcesFetch: ProviderFetchResult = {};
+  if (
+    configuration.states.coolify === "configured"
+    && configuration.coolifyToken
+    && configuration.coolifyServerUuid
+  ) {
+    const headers = {
+      Authorization: `Bearer ${configuration.coolifyToken}`,
+      "User-Agent": "Socratic.Trade infrastructure monitor",
       Accept: "application/json",
     };
-
-    const serverUrl = `https://host.jays.services/api/v1/servers/${coolifyServerUuid}`;
-    const resourcesUrl = `${serverUrl}/resources`;
-
-    const [coolifyServerFetch, coolifyResourcesFetch] = await Promise.all([
-      fetchProviderJson("Coolify server metadata", serverUrl, coolifyHeaders),
-      fetchProviderJson("Coolify resources", resourcesUrl, coolifyHeaders),
+    const serverUrl = `https://host.jays.services/api/v1/servers/${configuration.coolifyServerUuid}`;
+    attemptedProviderReads += 2;
+    [coolifyServerFetch, coolifyResourcesFetch] = await Promise.all([
+      fetchProviderJson("Coolify server metadata", serverUrl, headers),
+      fetchProviderJson("Coolify resources", `${serverUrl}/resources`, headers),
     ]);
+    successfulProviderReads += Number(coolifyServerFetch.payload !== undefined);
+    successfulProviderReads += Number(coolifyResourcesFetch.payload !== undefined);
+  }
 
-    // 2. Fetch server details and metrics from Hetzner Cloud API
-    const hetznerHeaders = {
-      Authorization: `Bearer ${hetznerToken}`,
+  let hetznerServerFetch: ProviderFetchResult = {};
+  let hetznerMetricsFetch: ProviderFetchResult = {};
+  if (
+    configuration.states.hetzner === "configured"
+    && configuration.hetznerToken
+    && configuration.hetznerServerId
+  ) {
+    const headers = {
+      Authorization: `Bearer ${configuration.hetznerToken}`,
       Accept: "application/json",
     };
-
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    const startStr = oneHourAgo.toISOString();
-    const endStr = now.toISOString();
-
-    const hetznerUrl = `https://api.hetzner.cloud/v1/servers/${hetznerServerId}`;
-    const hetznerMetricsUrl = `${hetznerUrl}/metrics?type=cpu&type=disk&type=network&start=${startStr}&end=${endStr}`;
-
-    const [hetznerServerFetch, hetznerMetricsFetch] = await Promise.all([
-      fetchProviderJson("Hetzner server metadata", hetznerUrl, hetznerHeaders),
-      fetchProviderJson("Hetzner metrics", hetznerMetricsUrl, hetznerHeaders),
+    const serverUrl = `https://api.hetzner.cloud/v1/servers/${configuration.hetznerServerId}`;
+    const start = new Date(refreshedAt - 60 * 60 * 1000).toISOString();
+    const end = new Date(refreshedAt).toISOString();
+    const metricsUrl = `${serverUrl}/metrics?type=cpu&type=disk&type=network&start=${start}&end=${end}`;
+    attemptedProviderReads += 2;
+    [hetznerServerFetch, hetznerMetricsFetch] = await Promise.all([
+      fetchProviderJson("Hetzner server metadata", serverUrl, headers),
+      fetchProviderJson("Hetzner metrics", metricsUrl, headers),
     ]);
+    successfulProviderReads += Number(hetznerServerFetch.payload !== undefined);
+    successfulProviderReads += Number(hetznerMetricsFetch.payload !== undefined);
+  }
 
-    // Parse provider responses at the API boundary. Never forward nested
-    // provider objects to the client as display strings.
-    const hetznerMetrics = asRecord(asRecord(hetznerMetricsFetch.payload)?.metrics);
-    const rawTimeSeries = hetznerMetrics?.time_series;
-    const parsedMetrics = parseHetznerTimeSeries(rawTimeSeries);
+  for (const error of [
+    coolifyServerFetch.error,
+    coolifyResourcesFetch.error,
+    hetznerServerFetch.error,
+    hetznerMetricsFetch.error,
+  ]) {
+    if (error) providerErrors.push(error);
+  }
 
-    // Merge metadata
-    const coolifyServer = asRecord(coolifyServerFetch.payload);
-    const coolifyMeta = asRecord(coolifyServer?.server_metadata);
-    const normalizedHetzner = normalizeHetznerServerResponse(hetznerServerFetch.payload);
-    const normalizedResources = normalizeCoolifyResources(coolifyResourcesFetch.payload);
-    const hcloudMeta = normalizedHetzner.server;
-    const providerErrors = [
-      coolifyServerFetch.error,
-      coolifyResourcesFetch.error,
-      hetznerServerFetch.error,
-      hetznerMetricsFetch.error,
-    ].filter((error): error is string => Boolean(error));
-    const warnings = [
-      ...providerErrors,
-      ...normalizedHetzner.warnings,
-      ...normalizedResources.warnings,
-      ...parsedMetrics.warnings,
-    ];
+  const coolifyServer = asRecord(coolifyServerFetch.payload);
+  const coolifyMeta = asRecord(coolifyServer?.server_metadata);
+  const normalizedHetzner = hetznerServerFetch.payload === undefined
+    ? { server: {}, warnings: [] as string[] }
+    : normalizeHetznerServerResponse(hetznerServerFetch.payload);
+  const normalizedResources = coolifyResourcesFetch.payload === undefined
+    ? { resources: [], warnings: [] as string[] }
+    : normalizeCoolifyResources(coolifyResourcesFetch.payload);
+  const coreCount = normalizedHetzner.server.cpus ?? readPositiveNumber(coolifyMeta?.cpus);
+  const rawTimeSeries = asRecord(asRecord(hetznerMetricsFetch.payload)?.metrics)?.time_series;
+  const parsedMetrics = parseHetznerTimeSeries(rawTimeSeries, coreCount);
 
-    const hostInfo = {
-      name: hcloudMeta.name || readText(coolifyServer?.name),
-      status: hcloudMeta.status || "unknown",
-      os: readText(coolifyMeta?.os),
-      cpus: readPositiveNumber(coolifyMeta?.cpus),
-      memoryTotalBytes: readPositiveNumber(coolifyMeta?.memory_bytes),
-      serverType: hcloudMeta.serverType,
-      location: hcloudMeta.location,
-      ip: hcloudMeta.ip,
-    };
+  warnings.push(
+    ...providerErrors,
+    ...normalizedHetzner.warnings,
+    ...normalizedResources.warnings,
+    ...parsedMetrics.warnings,
+  );
 
-    return NextResponse.json({
-      isProd: true,
-      degraded: warnings.length > 0,
-      ...(providerErrors.length > 0
-        ? { error: "One or more infrastructure providers could not be queried." }
-        : {}),
+  const hostInfo = compactRecord({
+    name: normalizedHetzner.server.name ?? readText(coolifyServer?.name),
+    status: normalizedHetzner.server.status,
+    os: readText(coolifyMeta?.os),
+    cpus: coreCount,
+    memoryTotalBytes: readPositiveNumber(coolifyMeta?.memory_bytes),
+    serverType: normalizedHetzner.server.serverType,
+    location: normalizedHetzner.server.location,
+    ip: normalizedHetzner.server.ip,
+  });
+  if (!hostInfo.status) hostInfo.status = "unknown";
+
+  const finalWarnings = uniqueStrings(warnings);
+  const degraded = finalWarnings.length > 0;
+  return {
+    attemptedProviderReads,
+    successfulProviderReads,
+    payload: {
+      isProd,
+      usesLocalHost: false,
+      degraded,
+      stale: false,
+      cacheAgeSeconds: 0,
+      configuration: configuration.states,
       hostInfo,
       resources: normalizedResources.resources,
       metrics: parsedMetrics.metrics,
-      asOf: new Date().toISOString(),
-      ...(warnings.length > 0 ? { warnings } : {}),
-    }, { status: providerErrors.length > 0 ? 502 : 200 });
-  } catch (err: unknown) {
-    return NextResponse.json({
-      isProd: true,
-      degraded: true,
-      error: err instanceof Error ? err.message : "Failed to fetch remote server metrics",
-      hostInfo: { status: "unknown" },
-      resources: [],
-      metrics: emptyMetrics(),
-      asOf: new Date().toISOString(),
-    }, { status: 500 });
-  }
+      asOf: new Date(refreshedAt).toISOString(),
+      ...(providerErrors.length > 0
+        ? { error: "One or more infrastructure providers could not be queried." }
+        : {}),
+      ...(finalWarnings.length > 0 ? { warnings: finalWarnings } : {}),
+    },
+  };
 }
 
-function parseHetznerTimeSeries(timeSeries: unknown): {
-  metrics: Record<string, MetricValue[]>;
+function parseHetznerTimeSeries(timeSeries: unknown, coreCount: number | undefined): {
+  metrics: Record<string, ServerMetricsMetricValue[]>;
   warnings: string[];
 } {
   const series = asRecord(timeSeries) ?? {};
   let omittedSamples = 0;
-  const result: Record<string, MetricValue[]> = {
-    cpu: [],
-    diskRead: [],
-    diskWrite: [],
-    networkRx: [],
-    networkTx: [],
-  };
+  const result = emptyMetrics();
 
-  const getValues = (key: string): MetricValue[] => {
+  const getValues = (key: string): ServerMetricsMetricValue[] => {
     const raw = asRecord(series[key])?.values;
     if (!Array.isArray(raw)) return [];
     return raw.flatMap((item) => {
@@ -178,40 +341,50 @@ function parseHetznerTimeSeries(timeSeries: unknown): {
     });
   };
 
-  // Find actual keys in the returned map (e.g. disk.0.bandwidth.read, network.0.bandwidth.rx)
-  const cpuKey = Object.keys(series).find((k) => k.startsWith("cpu")) || "cpu";
-  const diskReadKey = Object.keys(series).find((k) => k.includes("bandwidth.read")) || "disk.0.bandwidth.read";
-  const diskWriteKey = Object.keys(series).find((k) => k.includes("bandwidth.write")) || "disk.0.bandwidth.write";
-  const netRxKey = Object.keys(series).find((k) => k.includes("bandwidth.rx")) || "network.0.bandwidth.rx";
-  const netTxKey = Object.keys(series).find((k) => k.includes("bandwidth.tx")) || "network.0.bandwidth.tx";
+  const keys = Object.keys(series);
+  const cpuKey = keys.find((key) => key.startsWith("cpu")) ?? "cpu";
+  const diskReadKey = keys.find((key) => key.includes("bandwidth.read")) ?? "disk.0.bandwidth.read";
+  const diskWriteKey = keys.find((key) => key.includes("bandwidth.write")) ?? "disk.0.bandwidth.write";
+  const netRxKey = keys.find((key) => key.includes("bandwidth.in") || key.includes("bandwidth.rx"))
+    ?? "network.0.bandwidth.in";
+  const netTxKey = keys.find((key) => key.includes("bandwidth.out") || key.includes("bandwidth.tx"))
+    ?? "network.0.bandwidth.out";
 
-  result.cpu = getValues(cpuKey);
+  const rawCpu = getValues(cpuKey);
+  result.cpu = coreCount
+    ? rawCpu.map((point) => ({ ...point, value: point.value / coreCount }))
+    : [];
   result.diskRead = getValues(diskReadKey);
   result.diskWrite = getValues(diskWriteKey);
   result.networkRx = getValues(netRxKey);
   result.networkTx = getValues(netTxKey);
 
-  return {
-    metrics: result,
-    warnings: omittedSamples > 0
-      ? [`Hetzner metrics contained ${omittedSamples} malformed samples that were omitted.`]
-      : [],
-  };
+  const warnings: string[] = [];
+  if (rawCpu.length > 0 && !coreCount) {
+    warnings.push("Hetzner aggregate CPU metrics were omitted because the server core count was unavailable.");
+  }
+  if (omittedSamples > 0) {
+    warnings.push(`Hetzner metrics contained ${omittedSamples} malformed samples that were omitted.`);
+  }
+  return { metrics: result, warnings };
+}
+
+interface ProviderFetchResult {
+  payload?: unknown;
+  error?: string;
 }
 
 async function fetchProviderJson(
   label: string,
   url: string,
   headers: Record<string, string>,
-): Promise<{ payload?: unknown; error?: string }> {
+): Promise<ProviderFetchResult> {
   try {
     const response = await fetch(url, {
       headers,
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) {
-      return { error: `${label} returned HTTP ${response.status}.` };
-    }
+    if (!response.ok) return { error: `${label} returned HTTP ${response.status}.` };
     try {
       return { payload: await response.json() };
     } catch {
@@ -229,7 +402,7 @@ function toFiniteMetricNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function emptyMetrics(): Record<string, MetricValue[]> {
+function emptyMetrics(): Record<string, ServerMetricsMetricValue[]> {
   return {
     cpu: [],
     diskRead: [],
@@ -237,4 +410,27 @@ function emptyMetrics(): Record<string, MetricValue[]> {
     networkRx: [],
     networkTx: [],
   };
+}
+
+function compactRecord(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function withCacheAge(payload: ServerMetricsPayload, now: number): ServerMetricsPayload {
+  const asOf = Date.parse(payload.asOf);
+  return {
+    ...payload,
+    cacheAgeSeconds: Number.isFinite(asOf) ? Math.max(0, Math.floor((now - asOf) / 1000)) : 0,
+  };
+}
+
+function jsonResponse(payload: ServerMetricsPayload) {
+  return NextResponse.json(payload, {
+    status: 200,
+    headers: { "Cache-Control": "private, no-store" },
+  });
 }

@@ -1,5 +1,9 @@
 # Current Status
 
+## 2026-07-18 — Bounded server/infrastructure panel reliability (CODEX, branch `codex/socratic-infra-panel-reliability`)
+
+Implemented the owner-bounded admin panel repair without changing provider configuration or external state. The server-metrics endpoint now queries fully configured Hetzner and Coolify integrations independently, returns HTTP 200 degraded receipts while retaining valid partial data, never labels partial or missing production configuration as the local host, parses current Hetzner `bandwidth.in` / `bandwidth.out` series, and normalizes aggregate CPU by a verified core count (otherwise CPU remains unavailable). A one-entry module cache provides a 120-second TTL and single-flight refresh, retries total failures after 30 seconds, and retains a last-known snapshot for at most 10 minutes. The remote target is labeled `PRODUCTION` only with the explicit `SERVER_METRICS_TARGET_ENVIRONMENT=production`; `NODE_ENV` controls local-runtime fallback only. The client displays snapshot age and stale state; absent fields continue to render as unavailable. Focused server-metrics tests (13/13), the full 4,800-test suite, TypeScript, scoped ESLint, production build, and `git diff --check` pass. Implementation is committed locally only; no push, PR, merge, deploy, secret mutation, or provider mutation was performed. Rollout: `docs/rollouts/2026-07-18-admin-server-panel-reliability.md`.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
