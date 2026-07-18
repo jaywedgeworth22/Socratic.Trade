@@ -790,6 +790,22 @@
   color: var(--con-accent);
 }
 
+/* Bottom tab bar bottom-inset. In a normal browser tab, mobile Safari already
+ * holds a `position: fixed; bottom: 0` bar above its own address bar / toolbar,
+ * so adding `env(safe-area-inset-bottom)` here stacks a SECOND, redundant
+ * clearance — the empty band that showed under the tab labels, above Safari's
+ * address bar (nav background == page background, so it read as wasted page).
+ * Reserve the inset only in installed/standalone (or fullscreen) mode, where
+ * there's a physical home indicator and no browser chrome below the bar. */
+.con-tabbar {
+  padding-bottom: 0;
+}
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .con-tabbar {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
 .con-tab-item {
   display: flex;
   flex-direction: column;

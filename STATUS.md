@@ -97,6 +97,20 @@ universal-OpenRouter routing that creates the split); correct whether or not #17
 Gate: tsc clean, lint 0 errors, 7/7 new merge tests + full suite, build; live-verified with
 seeded same-model direct+OpenRouter rows. Rollout:
 `docs/rollouts/2026-07-17-usage-canonical-model-merge.md`.
+## 2026-07-18 — Mobile bottom tab bar wasted-space fix (CLAUDE, branch `claude/mobile-view-spacing-oetyav`, PR pending)
+
+Owner reported wasted vertical space on mobile between the console's fixed bottom tab bar
+labels and Safari's address bar. Root cause: the tab-bar `<nav>` applied
+`padding-bottom: env(safe-area-inset-bottom)` in every display mode, stacking a second,
+redundant bottom clearance on top of the one mobile Safari already gives a `fixed; bottom:0`
+bar — an empty band that read as wasted page (nav background == page background). Fix: moved
+the inline padding to a `.con-tabbar` class (`app/console/console.css`) that reserves the inset
+only under `@media (display-mode: standalone), (display-mode: fullscreen)` (installed PWA /
+physical home indicator); browser tabs get `padding-bottom: 0`. CSS/markup only — no logic or
+trading-path change; standalone PWA behavior unchanged. Full gate green (tsc clean, eslint 0
+errors, 4758 tests pass, build clean). Next: push branch + open PR.
+Rollout: `docs/rollouts/2026-07-18-mobile-tabbar-safe-area-band.md`.
+
 ## 2026-07-17 — ATR Stop & short cover-buy fixes (ANTIGRAVITY, branch `agent/strategy-atr-and-short-fixes`, PR #1713, auto-merge enabled — waiting on CI)
 
 Responded to automated Codex review findings on PR #1705:
