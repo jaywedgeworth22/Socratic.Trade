@@ -787,10 +787,24 @@ async function runCorpusReembedLocked(
   const results: CorpusReembedDocTypeResult[] = [];
   let stoppedForBudget = false;
 
+  // A symbol-scoped run scans a FILTERED subset of the corpus, but the persisted progress it would
+  // write is corpus-wide: `watermark` is a single shared per-docType cursor (not keyed by symbol)
+  // and `completedForEmbedRevision` is the gate `purgeLegacyEmbeddingSpace` checks before deleting
+  // legacy vectors — and `legacyVectorIdsFor` selects by source tag with NO symbol scoping. Letting
+  // a filtered scan write either one causes two distinct data-loss bugs:
+  //   1. the shared watermark advances past the filtered set's highest row, so a later FULL run
+  //      SKIPS every unprocessed document below that cursor for all other symbols; and
+  //   2. the docType looks "completed for this embedding revision", authorizing a subsequent
+  //      `--purge-legacy` to delete legacy vectors for symbols that were never re-embedded.
+  // So scoped runs persist nothing, exactly like dry runs — their counts still come back in the
+  // run result. Corpus-wide progress may only be advanced by a run that actually scanned the
+  // whole corpus.
+  const isSymbolScoped = Boolean(symbols && symbols.length > 0);
+
   const persistRunning = (docType: CorpusReembedDocType, docState: DocTypeRunState) => {
     // Dry runs are strictly read-only: counts come back in the response, and neither watermarks
     // nor status may advance (a real run afterwards must still process everything).
-    if (opts.dryRun) return;
+    if (opts.dryRun || isSymbolScoped) return;
     const now = new Date().toISOString();
     const existing = readProgress();
     const nextDocTypes = { ...(existing?.docTypes ?? {}) };
@@ -871,9 +885,11 @@ async function runCorpusReembedLocked(
   }
 
   const finalStatus: ReembedOutcomeStatus = stoppedForBudget ? "stopped-budget" : stoppedForCap ? "stopped-cap" : "completed";
-  // Dry runs persist NOTHING (same contract as persistRunning above) — counts return in the
-  // response, and the stored status/watermarks stay exactly as the last real run left them.
-  if (!opts.dryRun) {
+  // Dry runs and symbol-scoped runs persist NOTHING (same contract as persistRunning above) —
+  // counts return in the response, and the stored status/watermarks stay exactly as the last
+  // corpus-wide real run left them. A scoped run must not flip the global status to "completed"
+  // either: it only ever scanned a filtered subset.
+  if (!opts.dryRun && !isSymbolScoped) {
     const now = new Date().toISOString();
     const existing = readProgress();
     writeProgress({

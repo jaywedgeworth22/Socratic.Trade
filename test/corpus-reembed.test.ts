@@ -217,6 +217,12 @@ describe("corpus-reembed", () => {
     // clear it so the 1-text/day fuse below starts from zero used.
     const { getDb } = await import("../src/lib/db");
     getDb().prepare("DELETE FROM rag_usage").run();
+    // This test is about CORPUS-WIDE watermark persistence and budget resume, so it must run
+    // WITHOUT a symbol filter — a symbol-scoped run deliberately persists nothing (it only ever
+    // scans a filtered subset, so advancing the single shared watermark would make a later full
+    // run skip other symbols' documents). Clear the earlier tests' sec-edgar rows so the two BUDG
+    // chunks below ARE the whole corpus for this run.
+    getDb().prepare("DELETE FROM document_chunks_fts WHERE source = 'sec-edgar'").run();
     await insertSecFilingChunk({
       contentHash: "hash-budget-1",
       symbol: "BUDG",
@@ -235,7 +241,7 @@ describe("corpus-reembed", () => {
     });
 
     process.env.RAG_INGEST_MAX_TEXTS_PER_DAY = "1";
-    const run = await runCorpusReembedForTest({ docTypes: ["sec-filings"], symbols: ["BUDG"] });
+    const run = await runCorpusReembedForTest({ docTypes: ["sec-filings"] });
     const secResult = run.result!.docTypes.find((d) => d.docType === "sec-filings")!;
     expect(run.result!.stoppedForBudget).toBe(true);
     expect(secResult.stoppedForBudget).toBe(true);
@@ -251,7 +257,7 @@ describe("corpus-reembed", () => {
     // Lift the fuse and rerun: only the deferred second chunk embeds (the first is already
     // committed and would be reused if revisited — but the watermark skips straight past it).
     delete process.env.RAG_INGEST_MAX_TEXTS_PER_DAY;
-    const resumed = await runCorpusReembedForTest({ docTypes: ["sec-filings"], symbols: ["BUDG"] });
+    const resumed = await runCorpusReembedForTest({ docTypes: ["sec-filings"] });
     const resumedSec = resumed.result!.docTypes.find((d) => d.docType === "sec-filings")!;
     expect(resumedSec.embedded).toBe(1);
     expect(resumedSec.completed).toBe(true);
@@ -307,6 +313,62 @@ describe("corpus-reembed", () => {
     expect(secResult.candidatesSeen).toBe(1);
     expect(secResult.reusedInSpace).toBe(1);
     expect(secResult.embedded).toBe(0);
+  });
+
+  it("a symbol-scoped run persists no corpus-wide progress (no watermark advance, no completion)", async () => {
+    const { resetCorpusReembedStateForTest, runCorpusReembedForTest, getCorpusReembedProgress } =
+      await import("../src/lib/rag/corpus-reembed");
+    resetCorpusReembedStateForTest();
+    await insertSecFilingChunk({
+      contentHash: "hash-scoped-1",
+      symbol: "SCOP",
+      accession: "0000320193-26-000010",
+      text: "Symbol-scoped filing chunk for SCOP Corp; embeds but must not advance corpus progress.",
+      form: "10-K",
+      filedAt: "2026-02-10T00:00:00.000Z"
+    });
+    await activateBgeM3();
+
+    const run = await runCorpusReembedForTest({ docTypes: ["sec-filings"], symbols: ["SCOP"] });
+    const secResult = run.result!.docTypes.find((d) => d.docType === "sec-filings")!;
+    // The run itself still does real work and reports it back to the caller...
+    expect(secResult.embedded).toBe(1);
+    expect(secResult.completed).toBe(true);
+    // ...but nothing is written to the shared corpus-wide progress: the watermark is a single
+    // per-docType cursor, so advancing it from a filtered scan would make a later FULL run skip
+    // every unprocessed document below it for other symbols.
+    expect(getCorpusReembedProgress().persisted).toBeUndefined();
+  });
+
+  it("a completed symbol-scoped run does NOT authorize a legacy purge (corpus-wide delete guard)", async () => {
+    // Regression for the data-loss chain: `--ticker AAPL --yes` used to mark the docType complete
+    // for the current embedding revision, and `legacyVectorIdsFor` selects legacy vectors by
+    // source tag with NO symbol scoping — so a later `--purge-legacy` would delete old vectors for
+    // symbols that were never re-embedded.
+    const { resetCorpusReembedStateForTest, runCorpusReembedForTest, purgeLegacyEmbeddingSpace } =
+      await import("../src/lib/rag/corpus-reembed");
+    resetCorpusReembedStateForTest();
+    await insertSecFilingChunk({
+      contentHash: "hash-scoped-purge-1",
+      symbol: "SCPA",
+      accession: "0000320193-26-000011",
+      text: "Scoped-purge-guard filing chunk for SCPA Corp.",
+      form: "10-K",
+      filedAt: "2026-02-11T00:00:00.000Z"
+    });
+    await activateBgeM3();
+
+    // A fully-successful, completed run — but scoped to ONE symbol.
+    const scoped = await runCorpusReembedForTest({ docTypes: ["sec-filings"], symbols: ["SCPA"] });
+    expect(scoped.result!.docTypes.find((d) => d.docType === "sec-filings")!.completed).toBe(true);
+
+    // The purge must still refuse: no corpus-wide run has completed under this space.
+    const guarded = await purgeLegacyEmbeddingSpace({ docTypes: ["sec-filings"], confirm: "purge-voyage-vectors" });
+    expect(guarded.acquired).toBe(true);
+    expect(guarded.result!.ok).toBe(false);
+    expect(guarded.result!.refused).toMatch(/has not completed/);
+    expect(guarded.result!.purged).toBe(0);
+    expect(mocks.deleteMany).not.toHaveBeenCalled();
   });
 
   it("refuses legacy-space purge until re-embed reports complete for the covered docTypes", async () => {
