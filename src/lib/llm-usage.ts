@@ -33,6 +33,10 @@ export interface LlmUsageEntry {
   cachedPromptTokens?: number;
   /** Anthropic-only: tokens WRITTEN to the cache this call (bill at ~1.25× input). */
   cacheCreationTokens?: number;
+  /** OpenRouter's per-generation id (response `id`), so the monitor can call GET
+   *  /api/v1/generation?id=... to verify reported cost against the provider's own ledger. Only
+   *  meaningful when `provider === "openrouter"` — see `providerRequestIdFromPayload`. */
+  providerRequestId?: string;
 }
 
 export interface LlmTokenUsage {
@@ -185,6 +189,20 @@ export function extractLlmUsage(responseJson: unknown): LlmTokenUsage {
 }
 
 /**
+ * Extracts a provider-generation id from a raw LLM response body, but ONLY when the transport that
+ * actually served the call was OpenRouter — every provider's response envelope carries a top-level
+ * `id` (OpenAI `chatcmpl-...`, Anthropic `msg_...`, OpenRouter `gen-...`), and only OpenRouter's is
+ * useful downstream (the monitor calls `GET /api/v1/generation?id=...` to verify reported cost).
+ * Returns `undefined` (never `""`) for any other provider or a malformed/absent id — callers push
+ * this straight through as `providerRequestId`.
+ */
+export function providerRequestIdFromPayload(provider: string, payload: unknown): string | undefined {
+  if (provider !== "openrouter") return undefined;
+  const id = (payload as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+/**
  * Strips the routing prefix (e.g. "openai/") from OpenRouter models to yield the canonical model
  * identity for usage and benchmark persistence, so that historical stats aren't fragmented when
  * routing through OpenRouter.
@@ -271,6 +289,7 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
       completionTokens: entry.completionTokens,
       totalTokens: total,
       costUsd: cost,
+      providerRequestId: entry.providerRequestId,
     });
   } catch {
     /* ledger is best-effort; never break the caller */

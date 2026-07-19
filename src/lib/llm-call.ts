@@ -12,7 +12,68 @@
 import { withLlmRequestBounds, type LlmTransport } from "./llm-request";
 import type { LlmEndpoint } from "./llm-provider";
 import type { LlmReasoningEffort } from "./types";
+import { runtimeReleaseIdentity } from "./runtime-health";
 import { jsonrepair } from "jsonrepair";
+import { openrouterRequestEnrichment } from "@jaywedgeworth22/congress-trading-shared";
+
+const CLASSIFIER_SOURCE_APP = "socratic-trade";
+
+/** Deploy environment tag for the OpenRouter `trace` object — same resolution as
+ *  `usage-monitor-push.ts`'s `usageMonitorEnv()`, duplicated here (not imported) to keep this
+ *  request-shaping module decoupled from the telemetry-push module. */
+function classifierEnvironment(): string {
+  return process.env.USAGE_MONITOR_ENV?.trim() || process.env.NODE_ENV || "development";
+}
+
+/** Deployed commit sha, when the runtime exposes one — `undefined` (never a new required env var)
+ *  otherwise, e.g. local dev. See `runtimeReleaseIdentity`'s env probe list. */
+function classifierGitSha(): string | undefined {
+  return runtimeReleaseIdentity().sha ?? undefined;
+}
+
+/** Call-site classifier tag threaded into an OpenRouter request's `user`/`session_id`/`trace`. */
+export interface LlmClassifierTag {
+  userId?: string;
+  /** Non-secret key fingerprint already computed by the caller (resolveLlmEndpoint's/
+   *  resolveLlmCredential's `keyRef`) — reused verbatim, never a new lookup. */
+  keyRef?: string;
+  /** Broad subsystem bucket, e.g. "strategy" | "rag" | "chat" | "memory". Defaults to "llm". */
+  service?: string;
+  /** Fine-grained call-site tag — reuse the exact string already passed to the neighbouring
+   *  `recordLlmUsage`'s `context` (e.g. "red-team", "post-mortem", "chat-salience"). */
+  feature?: string;
+}
+
+/**
+ * Merge OpenRouter classifier enrichment (`user`/`session_id` + flat `trace`) into a request body
+ * that is about to be sent to OpenRouter. No-op for every other provider — call only when
+ * `endpoint.provider === "openrouter"`.
+ *
+ * Never breaks the call: static-context validation errors (e.g. malformed input) and any other
+ * unexpected throw are caught and logged, degrading to the un-enriched `base` body rather than
+ * failing a paid LLM request over telemetry metadata.
+ */
+export function applyOpenRouterClassifierEnrichment(base: Record<string, unknown>, tag: LlmClassifierTag): void {
+  try {
+    const enrichment = openrouterRequestEnrichment({
+      sourceApp: CLASSIFIER_SOURCE_APP,
+      environment: classifierEnvironment(),
+      service: tag.service || "llm",
+      feature: tag.feature,
+      keyRef: tag.keyRef,
+      gitSha: classifierGitSha(),
+      user: tag.userId,
+    });
+    if (enrichment.user !== undefined) base.user = enrichment.user;
+    if (enrichment.session_id !== undefined) base.session_id = enrichment.session_id;
+    base.trace = enrichment.trace;
+  } catch (err) {
+    console.warn(
+      "[llm-call] OpenRouter classifier enrichment failed; sending the request un-enriched:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
 
 /** A JSON schema plus the name/description used to label it (OpenAI json_schema / Anthropic tool). */
 export interface LlmJsonSchema {
@@ -58,7 +119,16 @@ export interface LlmRequestSpec {
    */
   openAiJsonObject?: boolean;
   userId?: string;
-  metadata?: Record<string, string>;
+  /** Non-secret key fingerprint already resolved by the caller (e.g. `resolveLlmEndpoint`'s
+   *  `keyRef`) — threaded into the OpenRouter classifier `trace.keyRef`. */
+  keyRef?: string;
+  /** Call-site tag reused verbatim as the OpenRouter classifier `trace.feature` — pass the same
+   *  string already given to the neighbouring `recordLlmUsage`'s `context`. Falls back to a
+   *  regex-inferred tag when omitted, so untouched call sites still get a best-effort feature. */
+  feature?: string;
+  /** Broad subsystem bucket for the OpenRouter classifier `trace.service` (e.g. "strategy",
+   *  "rag", "chat", "memory"). Defaults to "llm". */
+  service?: string;
 }
 
 /** Auth + content headers for the endpoint's provider (Anthropic uses x-api-key, others Bearer). */
@@ -92,7 +162,7 @@ export function buildLlmRequestBody(
   spec: LlmRequestSpec
 ): Record<string, unknown> {
   const { transport } = endpoint;
-  const { systemPrompt, userContent, schema, openAiJsonObject, userId, metadata } = spec;
+  const { systemPrompt, userContent, schema, openAiJsonObject, userId, keyRef, service, feature } = spec;
   const bounds = {
     maxOutputTokens: spec.maxOutputTokens,
     model: spec.model,
@@ -100,8 +170,10 @@ export function buildLlmRequestBody(
     temperature: spec.temperature
   };
 
-  // Build the OpenRouter-specific metadata tag if applicable.
-  const inferredContext = () => {
+  // Best-effort fallback for call sites that don't yet pass an explicit `feature` tag. Prefer the
+  // caller-supplied tag (the exact string already used for `recordLlmUsage`'s `context`) — this
+  // heuristic exists only so an un-migrated caller still gets a non-blank classifier feature.
+  const inferredFeature = () => {
     const sys = (systemPrompt || "").toLowerCase();
     const schemaName = schema?.name || "";
     if (schemaName === "trade_proposals" || sys.includes("green team") || sys.includes("proposer")) {
@@ -131,24 +203,25 @@ export function buildLlmRequestBody(
     return "assistant-chat";
   };
 
-  const openRouterMetadata = endpoint.provider === "openrouter" ? {
-    context: metadata?.context || inferredContext(),
-    ...metadata
-  } : undefined;
-
   const injectCommonFields = (base: Record<string, unknown>) => {
+    if (endpoint.provider === "openrouter") {
+      // OpenRouter gets the shared classifier enrichment (user/session_id + flat trace) instead of
+      // the old bare `metadata` field — see applyOpenRouterClassifierEnrichment's doc comment for
+      // the fail-open contract (never breaks the call on an enrichment error).
+      applyOpenRouterClassifierEnrichment(base, {
+        userId,
+        keyRef,
+        service,
+        feature: feature || inferredFeature()
+      });
+      return;
+    }
     if (userId) {
-      if (endpoint.provider === "openrouter" || endpoint.provider === "openai" || endpoint.provider === "deepseek" || endpoint.provider === "gemini") {
+      if (endpoint.provider === "openai" || endpoint.provider === "deepseek" || endpoint.provider === "gemini") {
         base.user = userId;
       } else if (endpoint.provider === "anthropic") {
         base.metadata = { ...(base.metadata as Record<string, unknown> || {}), user_id: userId };
       }
-    }
-    if (openRouterMetadata) {
-      base.metadata = {
-        ...(base.metadata as Record<string, unknown> || {}),
-        ...openRouterMetadata
-      };
     }
   };
 

@@ -22,8 +22,10 @@
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
+import { runtimeReleaseIdentity } from "./runtime-health";
 import {
   createUsageTelemetryClient,
+  telemetryEventClassifier,
   UsageTelemetryEventSchema,
   type UsageTelemetryEvent,
   type UsageTelemetryMetricType,
@@ -72,6 +74,41 @@ export function usageMonitorEnabled(): boolean {
 
 function usageMonitorEnv(): string {
   return trimmedEnv("USAGE_MONITOR_ENV") ?? trimmedEnv("NODE_ENV") ?? "development";
+}
+
+/** Deployed commit sha, when the runtime exposes one (see `runtimeReleaseIdentity`'s env probe
+ *  list) — reused as the classifier `gitSha`. `undefined` (never invents a new required env var)
+ *  when none of those vars are set, e.g. local dev. */
+function classifierGitSha(): string | undefined {
+  return runtimeReleaseIdentity().sha ?? undefined;
+}
+
+/**
+ * Classifier keys (sourceApp/environment/service/feature/keyRef/gitSha/user) as a flat string map,
+ * safe to merge into a pushed event's `metadata`. Never throws — an unexpected validation failure
+ * (e.g. a caller passing a blank required field) degrades to an empty object rather than dropping
+ * the whole telemetry event.
+ */
+function classifierTelemetryMetadata(ctx: {
+  service: string;
+  feature?: string;
+  keyRef?: string;
+  userId?: string;
+}): Record<string, string> {
+  try {
+    return telemetryEventClassifier({
+      sourceApp: SOURCE_APP,
+      environment: usageMonitorEnv(),
+      service: ctx.service,
+      feature: ctx.feature,
+      keyRef: ctx.keyRef,
+      gitSha: classifierGitSha(),
+      user: ctx.userId,
+    });
+  } catch (err) {
+    console.warn("[usage-monitor-push] classifier metadata build failed; pushing without it:", err instanceof Error ? err.message : String(err));
+    return {};
+  }
 }
 
 function flushDelayMs(): number {
@@ -351,6 +388,9 @@ export interface LlmUsageMonitorEntry {
   completionTokens?: number;
   totalTokens?: number;
   costUsd?: number;
+  /** OpenRouter's generation id for this call (see `providerRequestIdFromPayload` in llm-usage.ts).
+   *  Undefined for every non-OpenRouter provider. */
+  providerRequestId?: string;
 }
 
 function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
@@ -371,6 +411,7 @@ function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
     requests: 1,
     confidence: "estimated",
     occurredAt: entry.occurredAt ?? new Date().toISOString(),
+    providerRequestId: entry.providerRequestId,
     metadata: cleanMetadata({
       model: entry.model ?? null,
       context: entry.context ?? null,
@@ -378,6 +419,7 @@ function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
       keySource: entry.keySource,
       promptTokens: entry.promptTokens ?? null,
       completionTokens: entry.completionTokens ?? null,
+      ...classifierTelemetryMetadata({ service: "llm", feature: entry.context, keyRef: entry.keyRef, userId: entry.userId }),
     }),
   };
 }
@@ -418,6 +460,9 @@ export interface RagUsageMonitorEntry {
   tokensOut?: number;
   batchCount?: number;
   costUsd?: number;
+  /** OpenRouter's generation id for this call (embed/rerank via `baai/bge-m3`/`cohere/rerank-v3.5`).
+   *  Undefined for Voyage/SiliconFlow/Pinecone — see `providerRequestIdFromPayload` in llm-usage.ts. */
+  providerRequestId?: string;
 }
 
 function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
@@ -445,12 +490,17 @@ function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
     requests: 1,
     confidence: "estimated",
     occurredAt: entry.occurredAt ?? new Date().toISOString(),
+    providerRequestId: entry.providerRequestId,
     metadata: cleanMetadata({
       model: entry.model ?? null,
       operation: entry.operation,
       userId: entry.userId,
       batchCount: entry.batchCount ?? null,
       recordCount: isPinecone ? entry.tokensOut ?? null : null,
+      // Voyage/SiliconFlow bypass OpenRouter entirely (no request-side trace enrichment is
+      // possible), so this is the ONLY place their classifier context is ever recorded — sourced
+      // locally, never inferred from the provider response.
+      ...classifierTelemetryMetadata({ service: "rag", feature: entry.operation, userId: entry.userId }),
     }),
   };
 }

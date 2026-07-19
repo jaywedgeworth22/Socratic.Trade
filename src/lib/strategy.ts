@@ -4739,7 +4739,11 @@ async function proposeTrades(input: {
       userContent: JSON.stringify(userContent),
       schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-      reasoningEffort: bullReasoningEffort
+      reasoningEffort: bullReasoningEffort,
+      userId: input.userId,
+      keyRef: llmKeyRef,
+      service: "strategy",
+      feature: "strategy"
     }
   );
 
@@ -4783,7 +4787,11 @@ async function proposeTrades(input: {
           userContent: JSON.stringify(userContent),
           schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort)
+          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort),
+          userId: input.userId,
+          keyRef: ep.keyRef,
+          service: "strategy",
+          feature: "strategy"
         }
       )
     });
