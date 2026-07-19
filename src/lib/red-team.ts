@@ -16,7 +16,7 @@
 
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, remapOpenRouterTelemetry } from "./llm-usage";
 import {
   interactiveStrategyReasoningEffort,
   LLM_OUTPUT_TOKEN_CAPS,
@@ -305,13 +305,14 @@ export async function debateProposal(
     connectedAccountId: policy.connectedAccountId
   });
 
-  let finalModel = model;
+  const { model: canonicalModel } = remapOpenRouterTelemetry(provider, model);
+  let finalModel = canonicalModel;
 
   try {
     const traced = await withLlmGeneration(
       {
         name: "trading.red-team.review",
-        model,
+        model: canonicalModel,
         userId,
         connectedAccountId: policy.connectedAccountId,
         input: summarizeOpenAiRequest(body),
@@ -337,7 +338,8 @@ export async function debateProposal(
           const attempt = plannedRedAttempts[i];
           const isLast = i === plannedRedAttempts.length - 1;
           const next = plannedRedAttempts[i + 1];
-          finalModel = attempt.model;
+          const { model: attemptCanonicalModel } = remapOpenRouterTelemetry(attempt.provider, attempt.model);
+          finalModel = attemptCanonicalModel;
 
           try {
             // Bounded same-model retry on transient failures (§4.3): 2 attempts total, fresh

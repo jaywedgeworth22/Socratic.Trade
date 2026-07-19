@@ -183,7 +183,7 @@ export default function OperatorDashboard() {
       {/* Page Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Operator overview</h1>
+          <h1 className="text-xl font-bold tracking-tight">Operator Overview</h1>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             Real-time status, diagnostics, and metrics across the Socratic Trade environment.
           </p>
@@ -226,9 +226,9 @@ export default function OperatorDashboard() {
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {/* ── 1. API connections ───────────────────────────────────────────── */}
+          {/* ── 1. API Connections ───────────────────────────────────────────── */}
           <Card
-            title="API connections"
+            title="API Connections"
             action={
               <Link href="/admin/connections" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -260,9 +260,9 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 2. LLM usage & cost ──────────────────────────────────────────── */}
+          {/* ── 2. LLM Usage & Cost ──────────────────────────────────────────── */}
           <Card
-            title="LLM usage & cost"
+            title="LLM Usage & Cost"
             action={
               <Link href="/admin/llm-usage" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -310,9 +310,9 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 3. RAG coverage ──────────────────────────────────────────────── */}
+          {/* ── 3. RAG Coverage ──────────────────────────────────────────────── */}
           <Card
-            title="RAG coverage"
+            title="RAG Coverage"
             action={
               <Link href="/admin/rag-coverage" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -373,9 +373,9 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 4. Server & infrastructure ───────────────────────────────────── */}
+          {/* ── 4. Server Stats ───────────────────────────────────────────────── */}
           <Card
-            title="Server & infrastructure"
+            title="Server Stats"
             action={
               <Link href="/admin/server" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
@@ -426,9 +426,9 @@ export default function OperatorDashboard() {
             </div>
           </Card>
 
-          {/* ── 5. Chat transcript (full-width span) ─────────────────────────── */}
+          {/* ── 5. Chat Transcript (full-width span) ──────────────────────────── */}
           <Card
-            title="Chat transcript"
+            title="Chat Transcript"
             action={
               <Link href="/admin/transcript" className="con-btn con-btn-ghost con-btn-sm">
                 Open →
