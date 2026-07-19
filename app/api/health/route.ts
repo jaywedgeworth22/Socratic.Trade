@@ -10,6 +10,7 @@ import {
 } from "@/lib/runtime-health";
 import { getLease } from "@/lib/scheduler-lease";
 import { getTradingLivenessSummary } from "@/lib/trading-liveness";
+import { getOpenRouterCreditStatus } from "@/lib/openrouter-credits";
 import { statSync, statfsSync } from "fs";
 import { dirname } from "path";
 
@@ -222,6 +223,33 @@ export async function GET() {
     checks.dependencies = dependencies;
   } catch {
     // never let connection health summaries break the health probe
+  }
+
+  // OpenRouter prepaid-credit balance. Universal routing (#1703) makes OpenRouter the single point
+  // of failure for every LLM call AND all RAG embedding, so a drained balance = total decision-loop
+  // outage (see docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md). We surface the balance on
+  // this PUBLIC probe so an EXTERNAL monitor (Uptime Robot) alerts when the money runs low — a
+  // low balance sets dependencies.openrouter.ok=false (DEGRADE only; never 503, since a restart
+  // can't refill credits and would just restart-loop). Cached + best-effort; a failed READ never
+  // flips ok=false (see openrouter-credits.ts). Omitted entirely when no OpenRouter key is set.
+  try {
+    const credits = await getOpenRouterCreditStatus();
+    if (credits) {
+      const deps = (checks.dependencies ?? {}) as Record<string, { ok: boolean; degraded?: boolean }>;
+      deps.openrouter = { ok: credits.ok, degraded: credits.ok ? undefined : true };
+      checks.dependencies = deps;
+      checks.openrouterCredits = {
+        ok: credits.ok,
+        remainingUsd: credits.remainingUsd,
+        totalUsd: credits.totalUsd,
+        usedUsd: credits.usedUsd,
+        thresholdUsd: credits.thresholdUsd,
+        checkedAt: credits.checkedAt,
+        ...(credits.error ? { error: credits.error } : {})
+      };
+    }
+  } catch {
+    // never let the credit check break the health probe
   }
 
   // Disk and database headroom check (purely advisory, never fails the health probe)
