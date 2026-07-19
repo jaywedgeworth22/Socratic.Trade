@@ -1,5 +1,24 @@
 # Current Status
 
+## 2026-07-19 — Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier metadata (CLAUDE, branch `claude/usage-compliance-st`)
+
+Per `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2 (MONET-handoff credit). Closed the
+three unmetered paid-call gaps: `market-signals/massive.ts`'s 3 raw fetches now route through
+`fetchWithRetry` (circuit breaker + health rows + call-volume telemetry, `retries: 0` to keep the
+reserve-then-call budget truthful), `rag/query-deconstruct.ts` (gpt-4o-mini) now builds through
+`buildLlmRequestBody` + records `recordLlmUsage`, and `rag/search-fusion.ts`'s
+`fetchAlternativeEmbedding` meters via `meterEmbed`. Threaded the shared classifier enrichment
+(`openrouterRequestEnrichment` from congress-trading-shared v1.10.0, pin bumped `fee9937c`→`904ea96a`)
+into every OpenRouter request: flat `trace` (RESOLVED 2026-07-18 shape — no `metadata` nesting),
+`user` ≤128, fail-open wrapper so enrichment can never break a paid call. OpenRouter generation ids
+captured as `providerRequestId` on pushed telemetry events across all 11 LLM call sites + chat Path B
++ RAG embed/rerank; Voyage/SiliconFlow events carry classifier keys in event `metadata` (pushed-only,
+they bypass OR). Empirical acceptance probe (one $~0.0001 chat call + one embed): enrichment accepted
+(HTTP 200) on BOTH completions and embeddings; `GET /api/v1/generation` returns 200 with `total_cost`/
+`usage`/`cache_discount`/`upstream_inference_cost` + echoed `external_user`/`session_id`. 19 new tests
+(test/usage-compliance-classifier.test.ts) + 246 related existing tests green. PR open for adversarial
+review — NOT merged (auto-deploy). Rollout: `docs/rollouts/2026-07-19-usage-compliance-st-metadata.md`.
+
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
 Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
