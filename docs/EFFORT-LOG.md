@@ -84,9 +84,12 @@ As of 2026-07-08 (assignment-rule update).
   CLI-only guard would have left that path exposed — fixed in `src/lib/rag/corpus-reembed.ts`
   instead; (b) a SECOND data-loss bug shares the root cause — `watermark` is a single shared
   per-docType cursor, so a scoped run advances it and a later FULL run silently SKIPS other symbols'
-  documents, whose legacy vectors the purge then deletes. Symbol-scoped runs now persist nothing
-  (matches the existing dry-run contract); deliberate tradeoff — scoped runs are no longer observable
-  via the admin GET progress poll (follow-up filed). Plus 5 CLI guards: unknown `--doc-types` no
+  documents, whose legacy vectors the purge then deletes. **Library fix REMOVED from this PR before
+  merge** — #1777 (`claude/corpus-reembed-hardening`) already implements it, independently reaching
+  the identical mechanism plus a `watermarkEmbedRevision` guard and adversarial tests; keeping both
+  only produced a conflict in `corpus-reembed.ts`. That file and `test/corpus-reembed.test.ts` are
+  reverted to match `main`, so #1775 and #1777 no longer conflict and may land in either order.
+  **#1777 is the PR that lands the library fix.** This row now covers the CLI guards only. Plus 5 CLI guards: unknown `--doc-types` no
   longer selects ALL types, invalid `--max-texts` no longer means "no spend cap", retired flags abort,
   a refused purge exits 1 instead of 0, `--purge-legacy` requires an explicit `--purge-token`, and
   `--ticker`+`--purge-legacy` is refused. 9/9 corpus-reembed tests (2 new regression), 2/2

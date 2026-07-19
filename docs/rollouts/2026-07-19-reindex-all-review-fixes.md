@@ -10,6 +10,21 @@ five P2s, every one of them a real operator-safety or data-loss issue on a destr
 budget-spending script. The P1 turned out to be **broader than reported** and was fixed at the
 library level rather than in the CLI.
 
+> **Ownership correction (same session, before merge).** The P1 library fix described immediately
+> below was implemented here first, then **removed from this PR** on discovering that PR #1777
+> (`claude/corpus-reembed-hardening`) already implements the same fix as part of a broader hardening
+> pass — independently arriving at the identical mechanism (`const scoped = …; if (opts.dryRun ||
+> scoped) return;`) and the identical test-fixture change, plus things this PR did not address
+> (`watermarkEmbedRevision` to discard watermarks from a different embedding space, cumulative
+> resumed-run counts, and a dedicated `test/corpus-reembed-adversarial.test.ts`). Keeping both
+> produced a textual conflict in `src/lib/rag/corpus-reembed.ts` for no benefit.
+>
+> **This PR therefore carries only the CLI guards.** `src/lib/rag/corpus-reembed.ts` and
+> `test/corpus-reembed.test.ts` were reverted to match `main` exactly, so the two PRs no longer
+> conflict and may land in either order. The analysis below is retained because it independently
+> corroborates #1777's fix and documents the second failure mode (shared-watermark skip) for the
+> record. **#1777 is the PR to land for the library fix.**
+
 ### P1 — a symbol-scoped run must not write corpus-wide progress
 
 **Reported:** `--ticker AAPL --yes` marks the docType complete for the current embedding

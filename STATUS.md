@@ -109,6 +109,13 @@ persist nothing, exactly matching the dry-run contract already enforced in that 
 tradeoff: a scoped run started via the admin API's detached POST is no longer observable through the
 GET progress poll (follow-up filed in the rollout note).
 
+**Ownership correction before merge:** the library fix was removed from this PR — #1777
+(`claude/corpus-reembed-hardening`) already implements it as part of a broader hardening pass,
+independently arriving at the identical mechanism plus a `watermarkEmbedRevision` guard and
+adversarial tests. `src/lib/rag/corpus-reembed.ts` and `test/corpus-reembed.test.ts` are reverted to
+match `main`, so the two PRs no longer conflict. **#1777 is the PR to land for the library fix**;
+this one now carries only the CLI guards.
+
 Plus five CLI fail-fast guards on `scripts/reindex-all.ts` — a script that accepts `--yes` and drives
 destructive, budget-spending work, so a malformed flag must never fall back to a *broader* default.
 
