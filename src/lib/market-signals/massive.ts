@@ -10,7 +10,15 @@
  */
 
 import { getInternalSetting, resolveApiKeyWithSource } from "../db";
-import { fetchWithRetry } from "../data-providers";
+
+let cachedFetchWithRetry: typeof import("../data-providers").fetchWithRetry | undefined;
+async function getFetchWithRetry() {
+  if (!cachedFetchWithRetry) {
+    const mod = await import("../data-providers");
+    cachedFetchWithRetry = mod.fetchWithRetry;
+  }
+  return cachedFetchWithRetry;
+}
 
 export interface FullMarketBreadth {
   /** % of the full US universe advancing day-over-day. */
@@ -120,6 +128,7 @@ export async function fetchGroupedBarsRest(date: string, userId?: string): Promi
     // data-providers.ts. `retries: 0` because reserveMassiveRestCall() above reserved exactly ONE
     // call — fetchWithRetry's contract says exact-quota reservers must not hide an uncounted
     // internal 429 retry inside one logical call.
+    const fetchWithRetry = await getFetchWithRetry();
     const res = await fetchWithRetry(
       url,
       { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } },
@@ -189,6 +198,7 @@ export async function fetchMassiveNews(limit = 8, userId?: string): Promise<Mark
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
     // Tracked provider boundary — see fetchGroupedBarsRest for the retries: 0 rationale.
+    const fetchWithRetry = await getFetchWithRetry();
     const res = await fetchWithRetry(
       `${massiveApiBase()}/v2/reference/news?order=desc&limit=${limit}`,
       {
@@ -239,6 +249,7 @@ async function fetchGrouped(
   try {
     const url = `${massiveApiBase()}/v2/aggs/grouped/locale/us/market/stocks/${date}?adjusted=true`;
     // Tracked provider boundary — see fetchGroupedBarsRest for the retries: 0 rationale.
+    const fetchWithRetry = await getFetchWithRetry();
     const res = await fetchWithRetry(
       url,
       { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${key}` } },

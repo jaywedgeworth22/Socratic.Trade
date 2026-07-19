@@ -22,7 +22,7 @@
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
-import { runtimeReleaseIdentity } from "./runtime-health";
+import { getGitSha } from "./git-sha";
 import {
   createUsageTelemetryClient,
   telemetryEventClassifier,
@@ -80,7 +80,7 @@ function usageMonitorEnv(): string {
  *  list) — reused as the classifier `gitSha`. `undefined` (never invents a new required env var)
  *  when none of those vars are set, e.g. local dev. */
 function classifierGitSha(): string | undefined {
-  return runtimeReleaseIdentity().sha ?? undefined;
+  return getGitSha();
 }
 
 /**

@@ -12,7 +12,7 @@
 import { withLlmRequestBounds, type LlmTransport } from "./llm-request";
 import type { LlmEndpoint } from "./llm-provider";
 import type { LlmReasoningEffort } from "./types";
-import { runtimeReleaseIdentity } from "./runtime-health";
+import { getGitSha } from "./git-sha";
 import { jsonrepair } from "jsonrepair";
 import { openrouterRequestEnrichment } from "@jaywedgeworth22/congress-trading-shared";
 
@@ -28,7 +28,7 @@ function classifierEnvironment(): string {
 /** Deployed commit sha, when the runtime exposes one — `undefined` (never a new required env var)
  *  otherwise, e.g. local dev. See `runtimeReleaseIdentity`'s env probe list. */
 function classifierGitSha(): string | undefined {
-  return runtimeReleaseIdentity().sha ?? undefined;
+  return getGitSha();
 }
 
 /** Call-site classifier tag threaded into an OpenRouter request's `user`/`session_id`/`trace`. */
