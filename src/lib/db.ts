@@ -2224,6 +2224,19 @@ const MIGRATIONS: Migration[] = [
     version: 54,
     name: "fill_events_no_proposal_broker_order_unique_index",
     up: (database) => {
+      // Every real boot runs migrate()'s idempotent baseline (which creates fill_events,
+      // and a later baseline ALTER adds its user_id column) before applyVersionedMigrations
+      // ever runs, so fill_events always exists here in production/dev. The one exception is
+      // test/persistence-hardening.test.ts, which hand-rolls a minimal fixture schema and
+      // calls applyVersionedMigrations directly to exercise older migrations in isolation —
+      // it never creates fill_events because it doesn't exercise this migration's table. Skip
+      // rather than fabricate the table here: the baseline is the single source of truth for
+      // fill_events' real-world schema (including columns added by other migrations), and
+      // duplicating it here risks drifting from that truth.
+      const fillEventsExists = database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'fill_events'`)
+        .get();
+      if (!fillEventsExists) return;
       const dupGroups = database
         .prepare(
           `SELECT user_id, account_number, broker_order_id, COUNT(*) AS c, MIN(rowid) AS keep_rowid
