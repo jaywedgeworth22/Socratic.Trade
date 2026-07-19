@@ -1246,13 +1246,27 @@ async function recordMissingRagKey(
   assertVectorStoreLease(leaseGuard);
 }
 
+// Display names for the alert title/payload when the ACTIVE provider is known (the "rag-embed"/
+// "rag-rerank" lanes below) — distinct from the health-log `service` identifier itself.
+const RAG_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  voyage: "Voyage",
+  openrouter: "OpenRouter",
+  siliconflow: "SiliconFlow"
+};
+
 async function alertRagConnectionFailure(
-  service: "pinecone" | "voyage" | "voyage-rerank",
+  // "voyage"/"voyage-rerank" remain valid inputs for back-compat (recordMissingRagKey's
+  // missing-API-key path still reports under the literal "voyage" service, unrelated to this rename
+  // — see its call site). "rag-embed"/"rag-rerank" are the provider-generic lanes withRagApiHealth
+  // now uses for actual embed/rerank call failures (added 2026-07-19) — pass `activeProvider`
+  // alongside them so the title/payload still say which vendor is actually behind the failure.
+  service: "pinecone" | "voyage" | "voyage-rerank" | "rag-embed" | "rag-rerank",
   source: ApiKeySource,
   targetUserId: string,
   operation: string,
   message: string,
-  leaseGuard?: VectorStoreLeaseGuard
+  leaseGuard?: VectorStoreLeaseGuard,
+  activeProvider?: "voyage" | "openrouter" | "siliconflow"
 ): Promise<void> {
   try {
     const assertActive = leaseGuard ? () => assertVectorStoreLease(leaseGuard) : undefined;
@@ -1263,17 +1277,27 @@ async function alertRagConnectionFailure(
     assertVectorStoreLease(leaseGuard);
     setInternalSetting(key, new Date().toISOString());
 
-    const title = `${service === "pinecone" ? "Pinecone" : service === "voyage-rerank" ? "Voyage Rerank" : "Voyage"} connection failed`;
+    const title =
+      service === "pinecone" ? "Pinecone connection failed"
+      : service === "voyage" ? "Voyage connection failed"
+      : service === "voyage-rerank" ? "Voyage Rerank connection failed"
+      : `${RAG_PROVIDER_DISPLAY_NAMES[activeProvider ?? ""] ?? "RAG"} ${service === "rag-rerank" ? "rerank" : "embed"} connection failed`;
     const body = `${operation}: ${message}`;
+    // `provider` carries the ACTUAL active provider when known (rag-embed/rag-rerank), falling back
+    // to the raw service identifier for pinecone/legacy voyage calls — unchanged shape for those.
+    // `lane` additionally exposes the health/alert identifier itself so a reader can tell "rag-embed"
+    // apart from "rag-rerank" even when both currently resolve to the same active provider.
     const payload = {
-      provider: service,
+      provider: activeProvider ?? service,
+      lane: service,
       source,
       operation,
       reason: message,
       userSpecific: source === "user"
     };
     await captureRagSentryMessage("warning", title, {
-      provider: service,
+      provider: activeProvider ?? service,
+      lane: service,
       source,
       operation,
       userSpecific: source === "user",
@@ -1440,17 +1464,27 @@ async function withDurableRagProviderDispatch<T>(
 }
 
 async function withRagApiHealth<T>(
+  // Still what drives the durable-dispatch/credential path below (withDurableRagProviderDispatch) —
+  // unchanged, a separate concern from health/alert labeling. Pinecone call sites pass "pinecone"
+  // and nothing else changes for them.
   service: "pinecone" | "voyage" | "voyage-rerank",
   source: ApiKeySource,
   userId: string,
   operation: string,
   fn: () => Promise<T>,
   leaseGuard?: VectorStoreLeaseGuard,
-  dispatch?: RagDispatchOptions
+  dispatch?: RagDispatchOptions,
+  // Provider-generic health/alert identity for embed/rerank call sites (added 2026-07-19): when
+  // set, logApiHealth/alertRagConnectionFailure record `healthLane.lane` ("rag-embed"/"rag-rerank")
+  // instead of the historical "voyage"/"voyage-rerank" service name, and carry `healthLane.provider`
+  // (the ACTUAL active embed/rerank provider) so an OpenRouter/SiliconFlow outage is no longer
+  // misreported as "Voyage connection failed". Omit for pinecone calls (single fixed vendor).
+  healthLane?: { lane: "rag-embed" | "rag-rerank"; provider: "voyage" | "openrouter" | "siliconflow" }
 ): Promise<T> {
   assertVectorStoreLease(leaseGuard);
   const start = Date.now();
   const targetUserId = ragHealthUserId(source, userId);
+  const loggedService = healthLane?.lane ?? service;
   try {
     const result = dispatch?.durablyTrackedInside
       ? await fn()
@@ -1465,7 +1499,7 @@ async function withRagApiHealth<T>(
         );
     assertVectorStoreLease(leaseGuard);
     logApiHealth({
-      service,
+      service: loggedService,
       ok: true,
       latencyMs: Date.now() - start,
       keySource: source,
@@ -1480,7 +1514,7 @@ async function withRagApiHealth<T>(
     const message = `${operation}: ${ragErrorMessage(error)}`;
     assertVectorStoreLease(leaseGuard);
     logApiHealth({
-      service,
+      service: loggedService,
       ok: false,
       latencyMs: Date.now() - start,
       errorText: message,
@@ -1488,7 +1522,7 @@ async function withRagApiHealth<T>(
       userId: targetUserId
     });
     markRagSentryCaptured(error);
-    const alert = alertRagConnectionFailure(service, source, targetUserId, operation, ragErrorMessage(error), leaseGuard);
+    const alert = alertRagConnectionFailure(loggedService, source, targetUserId, operation, ragErrorMessage(error), leaseGuard, healthLane?.provider);
     if (leaseGuard) {
       await alert;
       assertVectorStoreLease(leaseGuard);
@@ -2277,7 +2311,12 @@ export async function rerankMatches(
         return res;
       },
       undefined,
-      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", modelName, provider) }
+      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", modelName, provider) },
+      // Provider-generic health/alert lane (2026-07-19): `provider` here is the ACTUAL active
+      // rerank provider (activeRerankProvider above) — carries correctly whether Voyage, OpenRouter,
+      // or SiliconFlow is serving this call, instead of the hardcoded "voyage-rerank" service name
+      // above (which still only drives the internal dispatch/credential path, unchanged).
+      { lane: "rag-rerank", provider }
     );
     meterRerank(query, documents, modelName, userId, provider);
     recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
@@ -2838,6 +2877,12 @@ async function storeContextsImpl(
         }
 
         if (missingInputs.length > 0) {
+          // Provider-generic health/alert lane (2026-07-19): embedProvider is the ACTUAL active
+          // embed provider, so an OpenRouter/SiliconFlow outage is no longer misreported as
+          // "Voyage connection failed" — the "voyage" service arg above still only drives the
+          // internal dispatch/credential path (a no-op here anyway, since durablyTrackedInside
+          // means embedDocumentsWithRetry -> embedWithRetry already dispatches with the real provider).
+          const embedProvider = activeEmbeddingProvider(userId);
           const response = await withRagApiHealth(
             "voyage",
             voyageSource,
@@ -2845,10 +2890,11 @@ async function storeContextsImpl(
             "embed documents",
             () => embedDocumentsWithRetry(voyage, missingInputs, voyageSource, userId, options?.leaseGuard),
             options?.leaseGuard,
-            { durablyTrackedInside: true }
+            { durablyTrackedInside: true },
+            { lane: "rag-embed", provider: embedProvider }
           );
           assertVectorStoreLease(options?.leaseGuard);
-          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId));
+          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId, embedProvider);
           const validated = validateDocumentEmbeddingBatch(response.data, missingInputs.length);
           if (!validated.embeddings) {
             rejected = validated.rejected;
@@ -2869,6 +2915,9 @@ async function storeContextsImpl(
           rejectionReason = "invalid-embedding";
         }
       } else {
+        // See the reuseExactEmbeddings branch above for why embedProvider (not the "voyage"
+        // service arg) drives the health/alert lane.
+        const embedProvider = activeEmbeddingProvider(userId);
         const response = await withRagApiHealth(
           "voyage",
           voyageSource,
@@ -2876,10 +2925,11 @@ async function storeContextsImpl(
           "embed documents",
           () => embedDocumentsWithRetry(voyage, embedInputs, voyageSource, userId, options?.leaseGuard),
           options?.leaseGuard,
-          { durablyTrackedInside: true }
+          { durablyTrackedInside: true },
+          { lane: "rag-embed", provider: embedProvider }
         );
         assertVectorStoreLease(options?.leaseGuard);
-        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId));
+        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId, embedProvider);
         const validated = validateDocumentEmbeddingBatch(response.data, batch.length);
         batchEmbeddings = validated.embeddings;
         rejected = validated.rejected;
@@ -5906,6 +5956,9 @@ export async function retrieveContextDetailed(
       const activeModel = activeEmbeddingModel(userId);
       let embedding = getCachedQueryEmbedding(activeModel, q);
       if (embedding == null) {
+        // Provider-generic health/alert lane (2026-07-19) — see the storeDocument embed-document
+        // call sites above for the same rationale.
+        const embedProvider = activeEmbeddingProvider(userId);
         const response = await withRagApiHealth(
           "voyage",
           voyageSource,
@@ -5913,9 +5966,10 @@ export async function retrieveContextDetailed(
           "embed query",
           () => embedWithRetry(voyage, [q], "query", undefined, voyageSource, userId),
           undefined,
-          { durablyTrackedInside: true }
+          { durablyTrackedInside: true },
+          { lane: "rag-embed", provider: embedProvider }
         );
-        meterEmbed([q], activeModel, userId, activeEmbeddingProvider(userId)); // count only on a cache MISS; book under the requesting userId
+        meterEmbed([q], activeModel, userId, embedProvider); // count only on a cache MISS; book under the requesting userId
         recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
         embedding = response.data?.[0]?.embedding;
       }
