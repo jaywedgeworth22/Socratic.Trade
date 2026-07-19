@@ -44,6 +44,14 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
+- **[Socratic.Trade][MONET] OpenRouter credit signal on /api/health (branch `monet/openrouter-credit-health`,
+  2026-07-18, owner-directed) — LANDING.** Universal routing (#1703) makes OpenRouter the single point of
+  failure for all LLM+RAG; `/api/health` now exposes prepaid-credit balance (`dependencies.openrouter.ok`
+  + `checks.openrouterCredits`) so an EXTERNAL monitor (Uptime Robot) alerts on low balance — owner-directed:
+  NO in-app alert, NO provider fallback. New `src/lib/openrouter-credits.ts` (free /credits query, cached,
+  fail-open, threshold `OPENROUTER_LOW_CREDIT_USD` default $10; DEGRADE-not-503). UR keyword monitor on
+  `"openrouterCredits":{"ok":false` → mail@jays.services. tsc clean, 5/5 tests, full gate via land.sh.
+  NEXT: create the UR monitor (needs UR API key via secret handoff, or owner does it in the dashboard).
 - **[Socratic.Trade][CODEX] PR #1760 review/comment/conflict closeout (branch `codex/pr1760-review-fixes`, worktree `/Users/jay/.codex/worktrees/socratic-pr-queue-closeout-20260718`, 2026-07-18) — IN PROGRESS / CORRECTIVE PR #1761 READY.** PR #1760 raced to auto-merge as `b2f22ccf` while its review-fix gate ran. All four threads are answered/resolved; #1761 restores bearer compatibility, aligns policy-namespace attribution tests, removes unsafe one-off artifacts, and is merged with that exact main. Local Node 24 gates pass lint, TypeScript, 412 files / 4,837 tests, and build. Await self-hosted checks, corrective merge, and exact production verification.
 
 - **[Socratic.Trade][CODEX] PR #1735 proposed-model attribution display contract (branch `codex/pr1735-proposal-attribution`, worktree `/Users/jay/.codex/worktrees/socratic-pr1735-proposal-attribution`, 2026-07-18) — LOCAL VERIFIED / UNPUSHED.** `TradeProposal.proposedByModel` now preserves the exact configured primary/fallback identifier while telemetry remains canonical for usage statistics. Regression coverage passes for `openrouter/openai/...` primary and `openrouter/google/...` fallback identity; TypeScript and scoped lint pass. Commit is intentionally local-only pending owner direction.
@@ -293,6 +301,26 @@ As of 2026-07-08 (assignment-rule update).
   succeeds only after a full clean current-space run. 8/8 suites, 92/92 tests, tsc clean.
   Operator guidance in the rollout note: full-corpus runs only, purge stays off until a full
   clean run per docType. Rollout: `docs/rollouts/2026-07-18-corpus-reembed.md`.
+- **[Socratic.Trade][CLAUDE] bge-m3 provider-aware RAG metering + health-probe gate (branch
+  `claude/bge-m3-metering-gate`, commit `39ca9ad6`) — LANDING 2026-07-18, part of a serial
+  4-lane landing train.** Fixes two live prod bugs from the bge-m3 embedding flip: (1)
+  `meterEmbed`/`meterRerank`/`estimateVoyageDispatchCost` hardcoded `provider:"voyage"`, so
+  OpenRouter/SiliconFlow bge-m3 calls were metered at Voyage prices (~12x overstatement); (2)
+  `/api/health` hard-503'd on the dead Voyage lane even while a non-Voyage provider was
+  active. Adds explicit `RAG_EMBED_PROVIDER` pin (default unset = key-presence precedence
+  preserved byte-for-byte). Adversarially verified SAFE — verifier advisories: keep
+  `provider` optional/defaulted on the metering fns (a future call site that omits it
+  silently reverts to the old bug), and the ingest-budget filter now counts all providers
+  (correct, but can bind the daily ingest cap slightly earlier on the flip day). **Landing-pass
+  finding:** this exact commit's file contents were already absorbed into
+  `origin/main@d9527cde` (PR #1762) via a different agent's branch that shared this repo's
+  local object store (see the rollout note addendum) — production `/api/health` already
+  showed `release.sha==d9527cde, ok:true` before this PR merged, so landing this branch is a
+  functional no-op for prod; it closes the loop (rollout note + effort log) and picks up
+  main's small additive deltas (`vector-db.ts` `purgeManagedVectorsByIds`, `.env.example`
+  SEC-ingest/server-metrics docs) via merge. `LAND_ALLOW_STALE_OVERLAP=1` used after manual
+  byte-diff review of every overlapping file (zero real conflict). Rollout:
+  `docs/rollouts/2026-07-18-bge-m3-metering-gate.md`.
 - **[Socratic.Trade][AG] BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`) — COMPLETED 2026-07-18; deployed to production via auto-deploy-on-merge.** Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `all: true` or `symbols: ["*"]` which resolves all tickers in the database and cleans their local RAG chunk cache rows in batches of 50. Created `scripts/reindex-all.ts` command-line reindexing tool. Fixed pre-existing unit test failures in `securities-import.test.ts` and `token-budget-ceiling.test.ts` (race conditions resolved using fake timers). Installed missing `@opentelemetry` packages to resolve Next.js webpack production build loading issues. Fully verified with typechecks, 100% green tests, and production build.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
@@ -3709,3 +3737,4 @@ brackets; effort S/M/L.
 - **2026-07-18 BGE-M3 reindex branch landing retry (CLAUDE).** `agent/ag-reindex-bge-m3` first land aborted at the test gate (12 failures / 6 files, fleet load 60-67). Real fixes: reindex-all test DB isolation (`73929f83`) + securities-import casing expectation superseded by #1735's preserve-case fix (merge `339676a5`); rest were serial-rerun-clean load flakes. Synced to post-#1761 main; re-landing via land.sh. State: **In Progress (landing)**.
 
 - **Repo Hygiene (AG, S) — COMPLETED 2026-07-18.** Merged PR #1754 (deleted tracked lint artifacts) and deployed Socratic.Trade to production on Coolify.
+- **2026-07-18 Merged-worktree cleanup sweep + Voyage /api/health RCA (CLAUDE, branch `claude/cleanup-merged-worktrees-bdbc08`).** Removed 5 verified merged worktree checkouts (#1740-tmp/#1587/#1559/#1624/#1563; ancestry-verified, branches retained); kept `codex/reconcile-pr1745` (7 unlanded commits, NO PR — CODEX disposition), `socratic-admin-console-shell` (dirty), `trading-ag-rag` (standing lane). Voyage RCA: /api/health 200 ok; red `voyage` lane = prod bge-m3 embeds via OpenRouter failing 402 — OpenRouter account EXHAUSTED (25.00/25.31); Voyage key valid; RAG ingestion stalled pending owner credit top-up (or SiliconFlow key — RAG-embed-only; LLM paths still need OpenRouter credits). Rollout: `docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`. State: **PR #1765 open (docs) — landing via MONET cap-handoff; INCIDENT RESOLVED (OpenRouter topped up 75/25.31, voyage.ok=true, prod recovered — verified). Flip to Completed on merge.**
