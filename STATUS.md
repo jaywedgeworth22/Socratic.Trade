@@ -11,6 +11,49 @@ filled-order fill-loss must-fix (visible-but-terminal WITH fills) applied + regr
 merge). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
 `docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
 
+## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
+
+Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
+makes OpenRouter the single point of failure for all LLM+RAG, `/api/health` now exposes the
+prepaid-credit balance (`dependencies.openrouter.ok` + `checks.openrouterCredits`) so an EXTERNAL
+watchdog (Uptime Robot) alerts when the money runs low — owner-directed: NO in-app alert, NO
+provider fallback. New `src/lib/openrouter-credits.ts` (FREE /credits query, cached, fails-open on
+read error, `ok=false` only on a genuinely-low balance below `OPENROUTER_LOW_CREDIT_USD` default
+$10); low balance DEGRADES the probe, never 503s (a restart can't refill credits). UR keyword
+monitor on `"openrouterCredits":{"ok":false` → `mail@jays.services`. tsc clean, 5/5 new tests, full
+gate via land.sh. Rollout: `docs/rollouts/2026-07-18-openrouter-credit-health-signal.md`.
+NEXT (owner or secret-handoff): create the UR monitor (needs the UR API key — absent from sanctioned
+secret files).
+
+## 2026-07-18 — Merged-worktree cleanup + Voyage `/api/health` RCA (CLAUDE, branch `claude/cleanup-merged-worktrees-bdbc08`)
+
+Docs-only receipt. Removed 5 verified-clean merged worktree checkouts (#1740 tmp, #1587,
+#1559, #1624, #1563 lanes; squash-merge ancestry verified via PR mergeCommit; branches
+retained), kept 3 (`codex/reconcile-pr1745` carries 7 unlanded commits with NO PR — CODEX
+disposition needed; `socratic-admin-console-shell` has 4 dirty docs files; `trading-ag-rag`
+standing lane). Voyage RCA: `/api/health` is 200/ok — the red `voyage` dependency lane is
+prod's bge-m3-via-OpenRouter embed path failing with **402 Insufficient credits (OpenRouter
+account exhausted: 25.00/25.31)**; the Voyage key itself is valid. RAG ingestion (incl. SEC
+backfill) is stalled until the owner tops up OpenRouter credits or adds a SiliconFlow key
+— but a SiliconFlow key is RAG-embed-only and also needs `RAG_EMBED_PROVIDER=siliconflow`
+(else `resolveActiveRagProvider` still routes to the exhausted OpenRouter key); the LLM
+decision loop stays down until OpenRouter credits return. **RESOLVED 2026-07-18 (MONET
+cap-handoff): OpenRouter topped up (75/25.31, ~$49.69 left), `voyage.ok=true`, prod LLM+RAG
+recovered — verified.** Details:
+`docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
+## 2026-07-18 — bge-m3 provider-aware RAG metering + health gate landing (CLAUDE, branch `claude/bge-m3-metering-gate`, lane 1 of a serial 4-lane landing train)
+
+Fixes two live prod bugs: RAG metering rows were being booked as `provider:"voyage"` (Voyage
+pricing) for OpenRouter/SiliconFlow bge-m3 calls, and `/api/health` hard-503'd on the dead
+Voyage lane while a non-Voyage provider was active. Adds an explicit `RAG_EMBED_PROVIDER` pin
+(default unset preserves existing key-presence routing). Adversarially verified SAFE.
+**Discovered mid-landing:** this commit's exact file contents were already present in
+`origin/main@d9527cde` (a different agent's PR, #1762, landed via a shared local object store
+before this PR opened) — production `/api/health` already showed this fix live
+(`release.sha==d9527cde`, `ok:true`) prior to this merge. This PR is therefore a functional
+no-op for prod; it lands the rollout note/effort-log history and picks up main's small
+additive deltas via merge. `LAND_ALLOW_STALE_OVERLAP=1` used after manual byte-diff review
+confirmed zero real conflict. Rollout: `docs/rollouts/2026-07-18-bge-m3-metering-gate.md`.
 ## 2026-07-18 — BGE-M3 reindexing branch: landing retry after test-gate abort (CLAUDE, branch `agent/ag-reindex-bge-m3`)
 
 First `land.sh` run aborted: 12 test failures across 6 files under fleet load 60-67 (84-min suite).
