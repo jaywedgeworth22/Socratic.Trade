@@ -2170,6 +2170,55 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_cik ON sec_insider_transactions(cik);
       `);
     }
+  },
+  {
+    // EarningsCalls.dev (symbol, fiscal_year, fiscal_quarter) -> provider earnings-call id map
+    // (burst/smart-daily program, docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md).
+    // Populated by the id-resolution engine (GET /transcripts/recent listing pages + GET
+    // /companies/ticker/{t} full call history), independent of whether a transcript was ever
+    // FETCHED for that period. This is deliberately a SEPARATE table from
+    // earningscalls_transcripts: a row here means "the provider told us this call's id exists",
+    // not "we have (or tried to fetch) its content" — overloading the transcripts table's
+    // content-NULL negative-cache semantics for this would incorrectly TTL-gate a plain id
+    // lookup (recon memo finding). GLOBAL market data, no user_id column, same class as
+    // earningscalls_transcripts/economic_events.
+    version: 53,
+    name: "earningscalls_event_index",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS earningscalls_event_index (
+          symbol TEXT NOT NULL,
+          fiscal_year INTEGER NOT NULL,
+          fiscal_quarter INTEGER NOT NULL,
+          event_id INTEGER NOT NULL,
+          event_date TEXT,
+          source TEXT NOT NULL,
+          discovered_at TEXT NOT NULL,
+          PRIMARY KEY (symbol, fiscal_year, fiscal_quarter)
+        );
+        CREATE INDEX IF NOT EXISTS idx_earningscalls_event_index_symbol
+          ON earningscalls_event_index (symbol, fiscal_year DESC, fiscal_quarter DESC);
+      `);
+    }
+  },
+  {
+    // ONE-SHOT owner-directed burst arm (docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md):
+    // seed earningscalls_burst_pending=25 so the scheduler's NEXT daily EarningsCalls pass runs the
+    // 25-transcript burst automatically post-deploy (entitlement-probe-gated: a preview-blocked
+    // detection refuses it same as any other pass; idempotent consume — the pass zeroes this
+    // counter before doing any work, so it can never re-arm itself). INSERT OR IGNORE is what makes
+    // this a genuine one-shot: it only takes effect on a database that has NEVER had this settings
+    // row before (a fresh deploy), never overwriting a later admin re-arm or the app's own
+    // post-consume zero on every subsequent migration run/restart.
+    version: 54,
+    name: "earningscalls_burst_seed",
+    up: (database) => {
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`
+        )
+        .run("earningscalls_burst_pending", "25", new Date().toISOString());
+    }
   }
 ];
 

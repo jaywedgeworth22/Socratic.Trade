@@ -172,6 +172,52 @@ export function listRecentlyHeldSymbolsAllUsers(maxAgeDays = 7, now: number = Da
   return [...symbols].sort();
 }
 
+/**
+ * Absolute position value (equity + option legs, summed across every (user, account)'s LATEST
+ * recent snapshot) per symbol — the holdings-weight signal for the EarningsCalls.dev smart picker
+ * (docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md): a position worth more gets
+ * fetched first regardless of long/short sign. Broker-call-free (reads the same snapshot rows as
+ * listRecentlyHeldSymbolsAllUsers). Options positions key off `underlyingSymbol` so a hedge/spread
+ * on a name still counts toward that name's weight.
+ */
+export function listRecentlyHeldSymbolValuesAllUsers(maxAgeDays = 7, now: number = Date.now()): Map<string, number> {
+  const cutoff = new Date(now - maxAgeDays * 86_400_000).toISOString();
+  const rows = getDb()
+    .prepare(
+      `SELECT positions, MAX(created_at) AS created_at
+       FROM portfolio_snapshots
+       GROUP BY user_id, account_number
+       HAVING MAX(created_at) >= ?`
+    )
+    .all(cutoff) as Array<{ positions: string }>;
+  const values = new Map<string, number>();
+  for (const row of rows) {
+    try {
+      const positions = JSON.parse(row.positions) as Array<{
+        symbol?: unknown;
+        underlyingSymbol?: unknown;
+        quantity?: unknown;
+        marketValue?: unknown;
+      }>;
+      if (!Array.isArray(positions)) continue;
+      for (const position of positions) {
+        const rawSymbol =
+          typeof position?.underlyingSymbol === "string" && position.underlyingSymbol.trim()
+            ? position.underlyingSymbol
+            : position?.symbol;
+        const symbol = typeof rawSymbol === "string" ? rawSymbol.trim().toUpperCase() : "";
+        const quantity = typeof position?.quantity === "number" ? position.quantity : 0;
+        const marketValue = typeof position?.marketValue === "number" ? position.marketValue : 0;
+        if (!symbol || quantity === 0) continue;
+        values.set(symbol, (values.get(symbol) ?? 0) + Math.abs(marketValue));
+      }
+    } catch {
+      // A single malformed snapshot must not break the holdings-value read.
+    }
+  }
+  return values;
+}
+
 export function listPortfolioSnapshots(accountNumber: string, source?: FillSource, limit = 100, userId: string = "local"): PortfolioSnapshot[] {
   const rows = source
     ? (getDb()

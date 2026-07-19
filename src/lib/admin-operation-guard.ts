@@ -38,7 +38,11 @@ export const ADMIN_OPERATION_LIMITS = {
   "congress-share": { limit: 2, windowMs: 60 * 60_000, concurrencyGroup: "congress-share", concurrencyScope: "manual-admin" },
   "refresh-websource": { limit: 4, windowMs: 10 * 60_000, concurrencyGroup: "refresh-websource", concurrencyScope: "manual-admin" },
   "robinhood-probe": { limit: 20, windowMs: 5 * 60_000, concurrencyGroup: "robinhood-probe", concurrencyScope: "admin" },
-  "sec-ingest-seed": { limit: 6, windowMs: 60 * 60_000, concurrencyGroup: "sec-ingest-seed", concurrencyScope: "manual-admin" }
+  "sec-ingest-seed": { limit: 6, windowMs: 60 * 60_000, concurrencyGroup: "sec-ingest-seed", concurrencyScope: "manual-admin" },
+  // Shares the RAG_REINDEX durable group with the scheduled EarningsCalls pass (and every other
+  // Voyage/Pinecone-spending producer) — a manual burst/probe/clear-block action must never race
+  // the scheduler's own daily pass or another reindex job into duplicate embedding spend.
+  "earningscalls": { limit: 10, windowMs: 10 * 60_000, concurrencyGroup: "earningscalls", concurrencyScope: "manual-admin" }
 } as const satisfies Record<string, AdminOperationLimit>;
 
 export type AdminOperationName = keyof typeof ADMIN_OPERATION_LIMITS;
@@ -52,7 +56,8 @@ const FIXED_DURABLE_GROUPS: Partial<Record<AdminOperationName, OperationLeaseGro
   "reindex-8k": OPERATION_LEASE_GROUPS.RAG_REINDEX,
   "reindex-10k": OPERATION_LEASE_GROUPS.RAG_REINDEX,
   "congress-share": OPERATION_LEASE_GROUPS.CONGRESS_SHARE,
-  "sec-ingest-seed": OPERATION_LEASE_GROUPS.SEC_INGEST_SEED
+  "sec-ingest-seed": OPERATION_LEASE_GROUPS.SEC_INGEST_SEED,
+  "earningscalls": OPERATION_LEASE_GROUPS.RAG_REINDEX
 };
 
 type AdminOperationGuardHost = typeof globalThis & {

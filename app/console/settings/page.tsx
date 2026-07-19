@@ -61,7 +61,8 @@ const EVENT_HINT: Record<NotificationEventType, string> = {
   evidence_age_anomaly: "a run leaned on evidence older than it should be",
   storage_warning: "the server's database storage crossed a warning threshold",
   autonomy_halted_on_boot: "a restart halted trading autonomy until you re-arm it",
-  option_alert: "an option contract changed status or expired"
+  option_alert: "an option contract changed status or expired",
+  earningscalls_entitlement_blocked: "the EarningsCalls transcript program paused on a plan-entitlement problem"
 };
 
 export default function SettingsPage() {

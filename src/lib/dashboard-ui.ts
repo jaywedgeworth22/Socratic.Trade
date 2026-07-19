@@ -330,7 +330,8 @@ export const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, strin
   evidence_age_anomaly: "Evidence age anomaly",
   storage_warning: "Storage warning",
   autonomy_halted_on_boot: "Autonomy halted on boot",
-  option_alert: "Option alert"
+  option_alert: "Option alert",
+  earningscalls_entitlement_blocked: "EarningsCalls plan entitlement blocked"
 };
 
 export function notificationTypeLabel(type?: string | null): string {
