@@ -29,18 +29,17 @@ name: Shared package pin check
 # (The shared package repo itself, congress-trading-shared, is PUBLIC, so ref-resolution calls
 # against it succeed regardless of GH_PACKAGES_TOKEN's scopes -- verified 2026-07-12.)
 #
-# NOTE: this workflow is intentionally NOT part of the branch-protection ruleset, so a red result
-# flags divergence loudly without hard-blocking a coordinated two-repo bump (bump one repo, open
-# its PR, then the other). Promote it to a required check once bumps always land as a matched pair.
+# NOTE: `check-pin` IS a required status context in main's branch protection (classic rules,
+# strict mode). That means every PR needs a check-pin run to become mergeable, not just PRs that
+# touch package.json/package-lock.json/this file. Do NOT reintroduce a `paths:` filter under
+# `pull_request` below -- an unmatched PR would never get a check-pin check-run and would sit
+# permanently blocked despite all other checks being green (this deadlocked PR #1771 on
+# 2026-07-19; fixed by removing the filter so the job runs, and no-ops in seconds, on every PR).
 #
 # Keep this file ASCII-only (AGENTS.md) -- no em dashes / arrows near shell $VARs.
 
 on:
-  pull_request:
-    paths:
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/shared-package-pin-check.yml'
+  pull_request: {}
   push:
     branches: [main]
   schedule:

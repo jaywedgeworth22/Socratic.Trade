@@ -43,6 +43,20 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] check-pin required-status-context merge deadlock fix (branch
+  `claude/checkpin-always-on-prs`, worktree `/private/tmp/socratic-checkpin-work/repo`, claimed
+  2026-07-19) — IN PROGRESS.** Root cause: main's classic branch protection requires status contexts
+  `verify`, `gitleaks`, `check-pin` (strict + `enforce_admins` + required conversation resolution),
+  but `.github/workflows/shared-package-pin-check.yml`'s `pull_request` trigger carried a `paths:`
+  filter (`package.json`, `package-lock.json`, the workflow file itself) — any PR that doesn't touch
+  those paths never produces a `check-pin` check-run and sits permanently BLOCKED despite every other
+  check green. This froze PR #1771 (`monet/fix-siliconflow-bge-m3-price`) on 2026-07-19; a manual
+  `gh workflow run shared-package-pin-check.yml --ref <branch>` is a stopgap, not a fix. Fix: remove
+  the `paths:` filter under `pull_request` only (`push`/`schedule`/`workflow_dispatch` untouched) so
+  `check-pin` runs — and no-ops in seconds, self-hosted, effectively $0 — on every PR going forward.
+  Dropping `check-pin` from required contexts instead is an owner branch-protection decision; not
+  taken here. Holding merge until PR #1771 is MERGED (strict mode would otherwise knock it behind
+  again).
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
