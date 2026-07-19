@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-18 — CF JWT + ENCRYPTION_KEY guard + key fingerprints landing (CLAUDE, branch `claude/cf-jwt-enckey-fingerprints`, lane 6 of the serial landing train)
+
+Codex latent-trap items 12/14/15: Cloudflare Access header trust now demands full JWT
+verification (team JWKS + audience; fail closed — closes a spoofable-header bypass for if the
+flag is ever enabled); production refuses to boot without a real `ENCRYPTION_KEY` (versioned
+`v1:` envelope, legacy rows decrypt; audited boot sweep re-encrypts legacy plaintext
+credentials); usage surfaces show only irreversible SHA-256 fingerprints, never real-key
+fragments. Adversarially verified SAFE (advisories: Robinhood OAuth blobs have their own
+encrypt path — unified sweep is a follow-up; enabling the CF flag needs team domain+aud set
+together). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
+`docs/rollouts/2026-07-18-cf-jwt-enckey-fingerprints.md`.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker

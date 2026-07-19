@@ -241,6 +241,25 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[Socratic.Trade][CLAUDE] CF Access JWT verification + ENCRYPTION_KEY prod guard/versioned
+  envelope + irreversible key fingerprints — Codex latent-trap items 12/14/15 (branch
+  `claude/cf-jwt-enckey-fingerprints`, head `e69248d4`) — LANDING 2026-07-18, lane 6 of the
+  serial landing train.** Item 12: `CF_ACCESS_TRUST_EMAIL_HEADER` no longer trusts the
+  `cf-access-authenticated-user-email` header alone — it now also requires
+  `CF_ACCESS_TEAM_DOMAIN`+`CF_ACCESS_AUD` and a `Cf-Access-Jwt-Assertion` verified against the
+  team JWKS with matching audience (jose edge-compatible); any missing config/failed verify
+  IGNORES the header (fail closed; flag is OFF in prod so no live behavior change — closes a
+  would-be trivially-spoofable auth bypass since the origin is directly reachable). Item 14:
+  production boot now throws before serving if `ENCRYPTION_KEY` is missing/invalid (no more
+  silent per-process ephemeral key), ciphertext envelope versioned `v1:` (legacy rows still
+  decrypt), and an idempotent audited boot sweep re-encrypts legacy plaintext
+  `user_api_keys`/`connected_accounts` rows once a real key is present. Item 15: usage/admin
+  surfaces ship only label + irreversible SHA-256 8-hex `displayKeyFingerprint` — never masked
+  real-key prefix/suffix chars. Adversarially verified SAFE — verifier advisories: Robinhood
+  OAuth token blobs deliberately excluded from the plaintext sweep (own encrypt-on-write path;
+  unified sweep is a small follow-up), and enabling the CF flag requires setting team
+  domain+aud simultaneously or all requests correctly 401. Rollout:
+  `docs/rollouts/2026-07-18-cf-jwt-enckey-fingerprints.md`.
 - **[Socratic.Trade][CLAUDE] Tradier: broker-connection-only, no duplicate API-key Settings
   card (PR #1673, branch `claude/tradier-connected-account-history-source`, merged as
   `2d294b7`) — COMPLETED 2026-07-16; deployed to production via auto-deploy-on-merge.**
