@@ -1,5 +1,19 @@
 # Current Status
 
+## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
+
+Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
+makes OpenRouter the single point of failure for all LLM+RAG, `/api/health` now exposes the
+prepaid-credit balance (`dependencies.openrouter.ok` + `checks.openrouterCredits`) so an EXTERNAL
+watchdog (Uptime Robot) alerts when the money runs low — owner-directed: NO in-app alert, NO
+provider fallback. New `src/lib/openrouter-credits.ts` (FREE /credits query, cached, fails-open on
+read error, `ok=false` only on a genuinely-low balance below `OPENROUTER_LOW_CREDIT_USD` default
+$10); low balance DEGRADES the probe, never 503s (a restart can't refill credits). UR keyword
+monitor on `"openrouterCredits":{"ok":false` → `mail@jays.services`. tsc clean, 5/5 new tests, full
+gate via land.sh. Rollout: `docs/rollouts/2026-07-18-openrouter-credit-health-signal.md`.
+NEXT (owner or secret-handoff): create the UR monitor (needs the UR API key — absent from sanctioned
+secret files).
+
 ## 2026-07-18 — Merged-worktree cleanup + Voyage `/api/health` RCA (CLAUDE, branch `claude/cleanup-merged-worktrees-bdbc08`)
 
 Docs-only receipt. Removed 5 verified-clean merged worktree checkouts (#1740 tmp, #1587,
