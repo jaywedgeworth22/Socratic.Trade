@@ -2170,6 +2170,30 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_cik ON sec_insider_transactions(cik);
       `);
     }
+  },
+  {
+    // Append-only archive for coach notes aged off the live `socratic_decisions.coach_notes`
+    // window (kept at COACH_NOTES_LIVE_CAP entries in db-socratic.ts). Before this migration, the
+    // 21st note appended to a decision silently deleted the 1st with zero trace. `note_seq` is a
+    // dense 0-based per-(user, decision) archive ordinal — an ordering/uniqueness device, not an
+    // all-time index (pre-port history is unrecoverable). See db-socratic.ts applyCoachNoteAppend.
+    version: 53,
+    name: "socratic_coach_note_archive",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS socratic_coach_note_archive (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          decision_id TEXT NOT NULL,
+          connected_account_id TEXT,
+          note TEXT NOT NULL,
+          note_seq INTEGER NOT NULL,
+          archived_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_socratic_coach_note_archive_user_decision
+          ON socratic_coach_note_archive (user_id, decision_id, note_seq);
+      `);
+    }
   }
 ];
 
