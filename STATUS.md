@@ -12,6 +12,137 @@ of CODEX's in-flight infra-panel lane. Adversarially verified SAFE (advisories: 
 the uncatalogued-id fallback). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
 `docs/rollouts/2026-07-18-ops-display-truth-batch.md`.
 
+## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
+
+Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
+makes OpenRouter the single point of failure for all LLM+RAG, `/api/health` now exposes the
+prepaid-credit balance (`dependencies.openrouter.ok` + `checks.openrouterCredits`) so an EXTERNAL
+watchdog (Uptime Robot) alerts when the money runs low — owner-directed: NO in-app alert, NO
+provider fallback. New `src/lib/openrouter-credits.ts` (FREE /credits query, cached, fails-open on
+read error, `ok=false` only on a genuinely-low balance below `OPENROUTER_LOW_CREDIT_USD` default
+$10); low balance DEGRADES the probe, never 503s (a restart can't refill credits). UR keyword
+monitor on `"openrouterCredits":{"ok":false` → `mail@jays.services`. tsc clean, 5/5 new tests, full
+gate via land.sh. Rollout: `docs/rollouts/2026-07-18-openrouter-credit-health-signal.md`.
+NEXT (owner or secret-handoff): create the UR monitor (needs the UR API key — absent from sanctioned
+secret files).
+
+## 2026-07-18 — Merged-worktree cleanup + Voyage `/api/health` RCA (CLAUDE, branch `claude/cleanup-merged-worktrees-bdbc08`)
+
+Docs-only receipt. Removed 5 verified-clean merged worktree checkouts (#1740 tmp, #1587,
+#1559, #1624, #1563 lanes; squash-merge ancestry verified via PR mergeCommit; branches
+retained), kept 3 (`codex/reconcile-pr1745` carries 7 unlanded commits with NO PR — CODEX
+disposition needed; `socratic-admin-console-shell` has 4 dirty docs files; `trading-ag-rag`
+standing lane). Voyage RCA: `/api/health` is 200/ok — the red `voyage` dependency lane is
+prod's bge-m3-via-OpenRouter embed path failing with **402 Insufficient credits (OpenRouter
+account exhausted: 25.00/25.31)**; the Voyage key itself is valid. RAG ingestion (incl. SEC
+backfill) is stalled until the owner tops up OpenRouter credits or adds a SiliconFlow key
+— but a SiliconFlow key is RAG-embed-only and also needs `RAG_EMBED_PROVIDER=siliconflow`
+(else `resolveActiveRagProvider` still routes to the exhausted OpenRouter key); the LLM
+decision loop stays down until OpenRouter credits return. **RESOLVED 2026-07-18 (MONET
+cap-handoff): OpenRouter topped up (75/25.31, ~$49.69 left), `voyage.ok=true`, prod LLM+RAG
+recovered — verified.** Details:
+`docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
+## 2026-07-18 — bge-m3 provider-aware RAG metering + health gate landing (CLAUDE, branch `claude/bge-m3-metering-gate`, lane 1 of a serial 4-lane landing train)
+
+Fixes two live prod bugs: RAG metering rows were being booked as `provider:"voyage"` (Voyage
+pricing) for OpenRouter/SiliconFlow bge-m3 calls, and `/api/health` hard-503'd on the dead
+Voyage lane while a non-Voyage provider was active. Adds an explicit `RAG_EMBED_PROVIDER` pin
+(default unset preserves existing key-presence routing). Adversarially verified SAFE.
+**Discovered mid-landing:** this commit's exact file contents were already present in
+`origin/main@d9527cde` (a different agent's PR, #1762, landed via a shared local object store
+before this PR opened) — production `/api/health` already showed this fix live
+(`release.sha==d9527cde`, `ok:true`) prior to this merge. This PR is therefore a functional
+no-op for prod; it lands the rollout note/effort-log history and picks up main's small
+additive deltas via merge. `LAND_ALLOW_STALE_OVERLAP=1` used after manual byte-diff review
+confirmed zero real conflict. Rollout: `docs/rollouts/2026-07-18-bge-m3-metering-gate.md`.
+## 2026-07-18 — BGE-M3 reindexing branch: landing retry after test-gate abort (CLAUDE, branch `agent/ag-reindex-bge-m3`)
+
+First `land.sh` run aborted: 12 test failures across 6 files under fleet load 60-67 (84-min suite).
+Triage: two real fixes — (1) `test/reindex-all.test.ts` now uses its own per-run temp
+`DATABASE_URL` (was bleeding SQLite state into `web-sources-sec8k` and others, commit `73929f83`);
+(2) dropped this branch's `'TESLA'` casing expectation in `test/securities-import.test.ts` in favor
+of main's post-#1735 preserve-case behavior (merge `339676a5`). Remainder were 30s-timeout
+load-flakes that pass on serial re-run. Branch subsequently synced to post-#1761 main (includes the
+bge-m3 metering/reembed/worker-wiring program `545da7c0`). Re-landing via `scripts/land.sh`.
+Details: `docs/rollouts/2026-07-18-bge-m3-reindexing.md` ("Landing retry" section).
+
+## 2026-07-18 — BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`)
+
+Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `{ all: true }` or `symbols: ["*"]` in the payload to resolve all tickers in the database and clear their RAG chunk caches. Created the `scripts/reindex-all.ts` CLI tool to enable command-line cache clearing and immediate ingestion under `baai/bge-m3` embedding model. Added unit testing suite `test/reindex-all.test.ts` to verify cache deletions. Fixed pre-existing failures in `test/securities-import.test.ts` (companyName casing) and `test/token-budget-ceiling.test.ts` (race conditions on debounced timers). Installed missing `@opentelemetry` helper packages (`@opentelemetry/core`, `@opentelemetry/sdk-trace-base`, `@opentelemetry/resources`) to resolve the Next.js production build compiler issues. Typecheck, tests, and production build all verify green. Next: Land changes using landing script.
+## 2026-07-18 — PR #1760 review closeout (CODEX, branch `codex/pr1760-review-fixes`)
+
+Addressed all four actionable review findings without editing the AG-owned worktree. The Congress
+webhook route keeps the shared-package HMAC verifier and restores the documented bearer fallback
+with constant-time comparison. Proposal attribution remains in the exact configured policy
+namespace while the three remaining usage-budget assertions now match that contract. Removed the
+committed review JSON dumps and the unsafe one-off `update_prs.sh`, which force-removed other agents'
+worktrees and could continue after checkout failures. Node 24 focused verification passes 36/36
+tests across the webhook, usage-budget, failover, and money-path suites. The serialized gate also
+passes lint (0 errors), TypeScript, 412 Vitest files / 4,837 tests, and the production build. PR
+#1760 auto-merged as `b2f22ccf` while that gate ran; all four threads were then answered and
+resolved, and corrective PR #1761 carries the fixes. Its branch is merged with that exact new main;
+self-hosted checks, corrective merge, and exact production verification remain.
+## 2026-07-18 — Remove tracked lint/verify artifacts from main (MONET, branch `monet/rm-tracked-lint-artifacts`)
+
+Repo-hygiene cleanup. PR #1735 accidentally merged ~9 MB of generated, machine-specific
+(`/Users/jay/...`) files into `main` — `error.log`, `lint-output.txt`, `lint-results.txt/.json`,
+`lint_results.json`, `eslint-report.json`, `eslint_test_results.json`, and the autogenerated
+`.codex/environments/environment.toml` (empty `setup.script`, which breaks cloud setup) — despite
+Codex flagging exactly these on #1735. `git rm`'d all 8 (confirmed unreferenced by any source/script/CI
+config) and added `.gitignore` patterns so they can never be re-tracked; `.codex/maintenance.sh` +
+`setup.sh` stay tracked. No app/test/runtime code touched. Sequenced after #1740 merged so no in-flight
+branch re-adds them. Rollout: `docs/rollouts/2026-07-18-rm-tracked-lint-artifacts.md`.
+
+## 2026-07-18 — Bounded server/infrastructure panel reliability (CODEX, branch `codex/socratic-infra-panel-reliability`)
+
+Implemented the owner-bounded admin panel repair without changing provider infrastructure. The server-metrics endpoint queries fully configured Hetzner and Coolify integrations independently, returns HTTP 200 degraded receipts while retaining valid partial data, never labels partial or missing production configuration as the local host, parses current Hetzner `bandwidth.in` / `bandwidth.out` series, and normalizes aggregate CPU by a verified core count (otherwise CPU remains unavailable). A one-entry module cache provides a 120-second TTL and single-flight refresh, retries failures after 30 seconds, and retains a last-known snapshot for at most 10 minutes. Provider JSON is bounded to 512 KiB; Coolify normalization processes at most 500 resources and caps detailed warnings; malformed Hetzner metrics envelopes are rejected before success accounting and cannot replace a good cached series. The remote target is labeled `PRODUCTION` only with explicit `SERVER_METRICS_TARGET_ENVIRONMENT=production`; `NODE_ENV` controls local-runtime fallback only. The `Server Stats` client validates successful envelopes and marks retained data stale after malformed or failed refreshes while leaving absent values unavailable. Focused server-metrics tests (19/19), TypeScript, scoped ESLint, local SSR smoke, and `git diff --check` pass; the independent P2 warning-expansion finding is fixed and re-review is pending. A final serialized Node 24 full gate is pending before publication because concurrent full gates caused unrelated timeout/network failures. No push, PR, merge, deploy, secret mutation, or provider mutation has been performed yet. Rollout: `docs/rollouts/2026-07-18-admin-server-panel-reliability.md`.
+## 2026-07-18 — Admin console shell parity (CODEX, branch `codex/admin-console-shell`)
+
+Implemented the admin.socratictrade.com chrome refresh. Admin now uses the console geometry/tokens,
+keeps the Socratic Trade logo/name visible, shows a profile popover with theme/settings/sign-out
+actions, and keeps trading account scope plus Start/Run controls out of the admin surface. The
+admin-only tab rail remains the left navigation. Normalized admin labels to title case and renamed
+the server panel to **Server Stats** across nav, overview, page headings, metadata, and Settings.
+
+Follow-up review fixes keep the large brand mark/name out of the narrow mobile header while retaining
+the console return affordance, and use a plain anchor for logout so opening the profile menu cannot
+prefetch the side-effectful GET route. Focused lint and TypeScript verification for the changed shell
+passed; the branch remains local pending the owner's landing workflow.
+
+Verification on Node 24: `npm run lint` passed with 0 errors (582 existing warnings), `npx tsc --noEmit`
+passed, `npm test` passed (412 files / 4,794 tests), and `npm run build` passed. The branch is ready
+for `scripts/land.sh`; no production deploy or admin data/API behavior was changed.
+
+The first post-routing Playwright smoke rerun reached the local Next webServer but was OOM-killed
+with exit 137 under the runner's 3 GiB cap. The CI-only Playwright heap ceiling is reduced to
+2048 MiB to leave room for Chromium and build-worker overhead; rerun smoke after this commit.
+## 2026-07-18 — PR #1735 proposed-model attribution P2 (CODEX, local-only branch `codex/pr1735-proposal-attribution`)
+
+Resolved the remaining P2 without changing telemetry semantics: proposal persistence now retains the
+exact primary/fallback policy identifier (including `openrouter/`), while usage telemetry still
+canonicalizes provider/model identity for merged statistics. This restores the approval card's direct
+primary/fallback comparisons. Targeted primary and fallback strategy regressions pass with normal
+test code (the local machine required a one-off extended timeout while each isolated test database
+replayed migrations 2–52); TypeScript and scoped lint pass. The commit is intentionally local-only
+and has not been pushed or applied to PR #1735. Rollout:
+`docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+
+## 2026-07-18 — PR #1735 review cleanup round 2 (CODEX, branch `agent/ag-recovery-v48-migration`)
+
+Resolved two fresh Codex review findings on PR #1735: preserved imported company-name display casing
+in `db-securities-import.ts` instead of uppercasing names through ticker-oriented `clean()`, and
+regenerated `package-lock.json` so clean installs include the peer dependency tree required by
+`@langfuse/otel` and webpack. Verification: `npm ci --dry-run --ignore-scripts` passes, and
+`npm test -- test/securities-import.test.ts` passes after a normal fresh `npm ci`.
+Rollout: `docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+
+## 2026-07-18 — PR #1735 verify cleanup (CODEX, branch `agent/ag-recovery-v48-migration`)
+
+Merged `origin/main` and fixed the hosted `verify` failures on PR #1735 by aligning the four missed
+OpenRouter attribution assertions with the branch's canonical bare-model telemetry behavior. Focused
+test command passed: `npm test -- test/llm-provider-cooldown.test.ts test/strategy-llm-failover.test.ts
+test/persistence-notification.test.ts test/strategy-money-path-f-g.test.ts` (34/34 pass). Rollout:
+`docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
 ## 2026-07-18 — #1727 deployed + EFFORT-LOG board corrected (MONET, branch `monet/effort-log-1727-deploy-flip`)
 
 PR #1727 (editable connected-account name + legacy-app retirement) is merged (`b0063a7`) and

@@ -2071,6 +2071,23 @@ const MIGRATIONS: Migration[] = [
     version: 50,
     name: "sec_insider_transactions_transaction_code",
     up: (database) => {
+      // A legacy v47 database may have advanced past the migration without
+      // creating this table. Recover it before inspecting or altering columns.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT ''
+        );
+      `);
       // v47's CREATE TABLE now includes transaction_code for fresh databases; this backfills any
       // database that ran the original v47 before the column existed (PR #1669 review: insider
       // rows must preserve the SEC transaction code so P/S open-market trades are distinguishable
@@ -2113,6 +2130,44 @@ const MIGRATIONS: Migration[] = [
           latest_event_id INTEGER,
           latest_event_date TEXT
         );
+      `);
+    }
+  },
+  {
+    version: 52,
+    name: "sec_rag_tables_recovery",
+    up: (database) => {
+      database.exec(`
+        -- Backfill/recovery for databases which skipped version 47 due to migration collision
+        CREATE TABLE IF NOT EXISTS sec_facts (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          concept TEXT NOT NULL,
+          value REAL NOT NULL,
+          unit TEXT,
+          period TEXT,
+          start_date TEXT,
+          end_date TEXT NOT NULL,
+          accepted_at TEXT NOT NULL,
+          segment TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_facts_cik_concept ON sec_facts(cik, concept);
+
+        CREATE TABLE IF NOT EXISTS sec_insider_transactions (
+          id TEXT PRIMARY KEY,
+          cik TEXT NOT NULL,
+          accession TEXT NOT NULL,
+          insider_name TEXT NOT NULL,
+          relationship TEXT NOT NULL,
+          side TEXT NOT NULL,
+          shares REAL NOT NULL,
+          price REAL NOT NULL,
+          period_of_report TEXT NOT NULL,
+          is_10b5_1 INTEGER NOT NULL DEFAULT 0,
+          transaction_code TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_sec_insider_transactions_cik ON sec_insider_transactions(cik);
       `);
     }
   }

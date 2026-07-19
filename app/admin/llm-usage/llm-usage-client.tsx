@@ -270,7 +270,7 @@ const WINDOW_OPTIONS = [
 export function LlmUsageClient({
   endpoint = "/api/admin/llm-usage",
   scope = "admin",
-  title = "LLM usage & cost"
+  title = "LLM Usage & Cost"
 }: {
   endpoint?: string;
   scope?: "admin" | "user";
