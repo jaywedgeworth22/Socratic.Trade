@@ -13,6 +13,8 @@ import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
 import { estimateVoyageDispatchCost, getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled, type RagEmbedRerankProvider } from "./rag-metering";
+import { applyOpenRouterClassifierEnrichment } from "./llm-call";
+import { providerRequestIdFromPayload } from "./llm-usage";
 import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPersistEnabled, recordCandidatePoolFull, type CandidateDisposition } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
@@ -2137,16 +2139,24 @@ async function embedWithRetry(
         }
 
         const url = isOpenRouter ? "https://openrouter.ai/api/v1/embeddings" : "https://api.siliconflow.cn/v1/embeddings";
+        const requestHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        };
+        const requestBody: Record<string, unknown> = { model: modelName, input: input };
+        if (isOpenRouter) {
+          // OpenRouter attribution headers + classifier enrichment (user + flat trace) — same
+          // fail-open contract as the completions paths (applyOpenRouterClassifierEnrichment
+          // degrades to an un-enriched request on any error). SiliconFlow bypasses OpenRouter;
+          // its classifier context flows only via the pushed telemetry event (meterEmbed).
+          requestHeaders["HTTP-Referer"] = "https://socratictrade.com";
+          requestHeaders["X-Title"] = "Socratic.Trade";
+          applyOpenRouterClassifierEnrichment(requestBody, { userId, service: "rag", feature: `embed-${inputType}` });
+        }
         const response = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: modelName,
-            input: input
-          }),
+          headers: requestHeaders,
+          body: JSON.stringify(requestBody),
           signal
         });
         if (!response.ok) {
@@ -2257,18 +2267,26 @@ export async function rerankMatches(
         }
 
         const url = isOpenRouter ? "https://openrouter.ai/api/v1/rerank" : "https://api.siliconflow.cn/v1/rerank";
+        const requestHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        };
+        const requestBody: Record<string, unknown> = {
+          model: modelName,
+          query,
+          documents,
+          top_n: Math.min(topK, rerankableMatches.length)
+        };
+        if (isOpenRouter) {
+          // Same attribution headers + fail-open classifier enrichment as the embed path above.
+          requestHeaders["HTTP-Referer"] = "https://socratictrade.com";
+          requestHeaders["X-Title"] = "Socratic.Trade";
+          applyOpenRouterClassifierEnrichment(requestBody, { userId, service: "rag", feature: "rerank" });
+        }
         const response = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: modelName,
-            query,
-            documents,
-            top_n: Math.min(topK, rerankableMatches.length)
-          })
+          headers: requestHeaders,
+          body: JSON.stringify(requestBody)
         });
         if (!response.ok) {
           throw new Error(`Rerank API failed (isOpenRouter=${isOpenRouter}): ${response.status} ${await response.text()}`);
@@ -2279,7 +2297,7 @@ export async function rerankMatches(
       undefined,
       { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", modelName, provider) }
     );
-    meterRerank(query, documents, modelName, userId, provider);
+    meterRerank(query, documents, modelName, userId, provider, providerRequestIdFromPayload(provider, resp));
     recordRagOperation(); // R16: count this rerank call against the per-run budget (no-op unless enabled).
     
     const data = isOpenRouter ? (resp.results ?? []) : (resp.data ?? []);
@@ -2848,7 +2866,7 @@ async function storeContextsImpl(
             { durablyTrackedInside: true }
           );
           assertVectorStoreLease(options?.leaseGuard);
-          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId));
+          meterEmbed(missingInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId), providerRequestIdFromPayload(activeEmbeddingProvider(userId), response));
           const validated = validateDocumentEmbeddingBatch(response.data, missingInputs.length);
           if (!validated.embeddings) {
             rejected = validated.rejected;
@@ -2879,7 +2897,7 @@ async function storeContextsImpl(
           { durablyTrackedInside: true }
         );
         assertVectorStoreLease(options?.leaseGuard);
-        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId));
+        meterEmbed(embedInputs, activeEmbeddingModel(userId), userId, activeEmbeddingProvider(userId), providerRequestIdFromPayload(activeEmbeddingProvider(userId), response));
         const validated = validateDocumentEmbeddingBatch(response.data, batch.length);
         batchEmbeddings = validated.embeddings;
         rejected = validated.rejected;
@@ -5915,7 +5933,7 @@ export async function retrieveContextDetailed(
           undefined,
           { durablyTrackedInside: true }
         );
-        meterEmbed([q], activeModel, userId, activeEmbeddingProvider(userId)); // count only on a cache MISS; book under the requesting userId
+        meterEmbed([q], activeModel, userId, activeEmbeddingProvider(userId), providerRequestIdFromPayload(activeEmbeddingProvider(userId), response)); // count only on a cache MISS; book under the requesting userId
         recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
         embedding = response.data?.[0]?.embedding;
       }

@@ -62,7 +62,9 @@ export function applyOpenRouterClassifierEnrichment(base: Record<string, unknown
       feature: tag.feature,
       keyRef: tag.keyRef,
       gitSha: classifierGitSha(),
-      user: tag.userId,
+      // OpenRouter documents a 128-char cap on `user`; truncate rather than let the shared
+      // builder's max(128) validation throw and needlessly degrade to an un-enriched request.
+      user: tag.userId === undefined ? undefined : tag.userId.slice(0, 128),
     });
     if (enrichment.user !== undefined) base.user = enrichment.user;
     if (enrichment.session_id !== undefined) base.session_id = enrichment.session_id;
