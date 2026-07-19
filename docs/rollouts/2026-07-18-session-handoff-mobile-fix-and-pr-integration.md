@@ -122,3 +122,51 @@ OpenRouter routing), not free hosting.
   · `npx vitest run` 405 files / 4758 tests pass · `npm run build` clean.
 - Prod deploy verified via `curl https://socratictrade.com/api/health` +
   `git merge-base --is-ancestor 2aa53e1 <prod-sha>`.
+
+---
+
+## Addendum (2026-07-19, PR #1774 Codex-review triage)
+
+Codex left 3 review findings on this note in PR #1774. Re-verified each in a
+fresh worktree rather than trusting the review framing as still current
+(more time had passed):
+
+1. **Commit author identity (P1).** Codex's comment referenced `git show
+   --format=fuller bbe7fe3` showing `Codex <codex@openai.com>` as both author
+   and committer. That short hash is not reachable anywhere in this branch's
+   history at the time of this addendum: both commits unique to the branch
+   (`aaca9be3`, this rollout note; `540190fd`, the merge-from-main commit)
+   already carry the correct `12656028+jaywedgeworth22@users.noreply.github.com`
+   identity for both author and committer, confirmed via `git log
+   --format=fuller 7be7139..claude/mobile-view-spacing-oetyav`. The commit was
+   evidently already re-authored (hash changed `bbe7fe3` -> `aaca9be3`)
+   between whatever Codex inspected and its comment landing. **No rebase was
+   needed or performed.**
+2. **Stale STATUS.md / EFFORT-LOG.md mobile tab-bar status (P2).** Confirmed
+   real: `STATUS.md` still read "PR pending" / "Next: push branch + open PR"
+   for this work. Re-verified current reality: PR **#1726** merged
+   2026-07-18T06:30:22Z as squash `2aa53e1`, which is an ancestor of both
+   `origin/main` and the currently deployed production release SHA. Fixed in
+   the same PR (#1774): `STATUS.md`'s entry now says Merged/Deployed;
+   `docs/EFFORT-LOG.md`'s row for this work (added at `2aa53e1`, then dropped
+   — not flipped to Completed — by a later `docs(effort-log): sync repo
+   mirror` pass) is restored with the correct Completed/Deployed state.
+3. **Stale open-PR inventory (P2).** Re-verified via `gh pr view <n> --json
+   state,mergedAt` for all 6 PRs in the section-2 table below: all merged
+   2026-07-18, all ancestors of `main`.
+
+   | PR | Merged at (UTC) | Merge commit |
+   |----|------------------|--------------|
+   | #1728 | 2026-07-18T13:23:06Z | `a02e417e` |
+   | #1733 | 2026-07-18T14:21:23Z | `df63bc76` |
+   | #1735 | 2026-07-18T15:22:51Z | `9a95b22c` |
+   | #1736 | 2026-07-18T14:38:29Z | `14a25371` |
+   | #1737 | 2026-07-18T14:14:12Z | `6f675f95` |
+   | #1738 | 2026-07-18T14:19:24Z | `4e3694a5` |
+
+   The "must be sequenced, not blind-merged" conflict-map guidance in section
+   2 is now historical only — they landed without an unresolved collision;
+   no follow-up action needed there.
+
+Section 2's original text above is left intact as the historical record of
+what was known at handoff time — do not treat it as a current PR inventory.
