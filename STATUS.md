@@ -94,6 +94,28 @@ completed full-corpus backfill for the 4 re-embed docTypes (`sec-filings`,
 gap and will drift as ingest continues — reread `describe-index-stats` or `GET
 /api/admin/reembed` before relying on the exact counts. Do NOT `purge-legacy` until the bge space
 is independently reverified full. Details: `docs/rollouts/2026-07-19-monet-session-handoff.md`.
+## 2026-07-19 — PR #1775 review-thread closeout: scoped re-embed progress isolation (CLAUDE, on AG's branch `agent/ag-reindex-bge-m3`)
+
+Owner-directed: resolve PR #1775's findings before merging rather than filing them as follow-ups.
+All six unresolved codex-connector threads (1 P1 + 5 P2) are fixed.
+
+The P1 — a `--ticker`-scoped run marking a docType "completed for this embedding revision", which
+authorizes `--purge-legacy` to delete legacy vectors corpus-wide — is real, and two things the
+report missed made it worse: the **admin API route also passes `symbols`** (so the suggested
+CLI-level guard would have left that path open), and the **shared per-docType `watermark`** is not
+symbol-keyed, so a scoped run advances it and a later FULL run silently skips other symbols'
+documents — which the purge then deletes. Both now closed at the library level: symbol-scoped runs
+persist nothing, exactly matching the dry-run contract already enforced in that file. Deliberate
+tradeoff: a scoped run started via the admin API's detached POST is no longer observable through the
+GET progress poll (follow-up filed in the rollout note).
+
+Plus five CLI fail-fast guards on `scripts/reindex-all.ts` — a script that accepts `--yes` and drives
+destructive, budget-spending work, so a malformed flag must never fall back to a *broader* default.
+
+Verification: 9/9 corpus-reembed tests (2 new regression, one reproducing the exact P1 chain), 2/2
+reindex-all tests, eslint 0 errors, all six guards smoke-tested to exit 1 with the right message.
+Rollout: `docs/rollouts/2026-07-19-reindex-all-review-fixes.md`.
+NEXT: CI green → reply to and resolve the six threads → merge (auto-deploys).
 
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 

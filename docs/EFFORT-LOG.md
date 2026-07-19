@@ -75,6 +75,24 @@ As of 2026-07-08 (assignment-rule update).
   (money-adjacent prompt path → frontier adversarial review). Team recipe: scouts → design → implementers →
   multi-lens verify → land via land.sh. Old w2 branches marked superseded once landed.
 
+- **[Socratic.Trade][CLAUDE on AG's lane] PR #1775 review-thread closeout — scoped re-embed progress
+  isolation + reindex-all CLI fail-fast guards (branch `agent/ag-reindex-bge-m3`, worktree
+  `land-ag-reindex-bge-m3`, 2026-07-19, owner-directed: fix the findings before merging rather than
+  defer them) — FIXES PUSHED, AWAITING CI + THREAD RESOLUTION.** Resolved all 6 unresolved
+  codex-connector threads (1 P1 + 5 P2). The P1 was confirmed and is BROADER than reported: (a) the
+  admin API route also passes `symbols` (`app/api/admin/reembed/route.ts:94`), so the suggested
+  CLI-only guard would have left that path exposed — fixed in `src/lib/rag/corpus-reembed.ts`
+  instead; (b) a SECOND data-loss bug shares the root cause — `watermark` is a single shared
+  per-docType cursor, so a scoped run advances it and a later FULL run silently SKIPS other symbols'
+  documents, whose legacy vectors the purge then deletes. Symbol-scoped runs now persist nothing
+  (matches the existing dry-run contract); deliberate tradeoff — scoped runs are no longer observable
+  via the admin GET progress poll (follow-up filed). Plus 5 CLI guards: unknown `--doc-types` no
+  longer selects ALL types, invalid `--max-texts` no longer means "no spend cap", retired flags abort,
+  a refused purge exits 1 instead of 0, `--purge-legacy` requires an explicit `--purge-token`, and
+  `--ticker`+`--purge-legacy` is refused. 9/9 corpus-reembed tests (2 new regression), 2/2
+  reindex-all, eslint 0 errors, all 6 guards smoke-tested. Rollout:
+  `docs/rollouts/2026-07-19-reindex-all-review-fixes.md`. _(AG owns the underlying PR; this row
+  covers only the review-fix pass.)_
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
