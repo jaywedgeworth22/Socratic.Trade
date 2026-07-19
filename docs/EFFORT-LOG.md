@@ -44,6 +44,18 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
+- **[Socratic.Trade][AG] Monet-handoff §7 ports: coach-note archive + coach-note/lesson vector writers
+  (worktree `socratic-trade-agent-team-697845`, branch `claude/socratic-trade-agent-team-697845`, claimed
+  2026-07-18, HANDOFF to AG 2026-07-19) — IN PROGRESS.** From-scratch schema port of the two PARTIAL-verdicted w2 branches per
+  `docs/handoffs/2026-07-19-monet-session-closeout-handoff.md` §7 (fresh port, NOT a rebase — base tables
+  moved since 2026-07-04): (1) `claude/w2-coaching-durable` intent — kill the silent coach-note `slice(-20)`
+  truncation in `src/lib/db-socratic.ts` via an append-only `socratic_coach_note_archive` table + audit
+  receipt + a `doc_type: 'coach-note'` vector writer (EPISODIC_DOC_TYPES already retrieves that type);
+  (2) `claude/w2-reflection-decompose` intent — a writer for the retrieved-but-never-written `lesson`
+  doc-type (writes into the money-adjacent decision prompt path → frontier-tier adversarial review before
+  land). Handoff note: docs/handoffs/2026-07-18-claude-to-antigravity-monet-s7-ports.md. Cached recon
+  results available; workflow wf_f2e1ca12-b41 can resume. Old branches to be marked superseded once this lands.
+
 - **[Socratic.Trade][MONET] OpenRouter credit signal on /api/health (branch `monet/openrouter-credit-health`,
   2026-07-18, owner-directed) — LANDING.** Universal routing (#1703) makes OpenRouter the single point of
   failure for all LLM+RAG; `/api/health` now exposes prepaid-credit balance (`dependencies.openrouter.ok`

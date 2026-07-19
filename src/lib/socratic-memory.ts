@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import type { ContextDocument, StoreContextsResult } from "./vector-db";
 import type { SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution } from "./types";
 
@@ -254,4 +255,145 @@ export function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Pro
     if (decisionIndexQueues.get(key) === run) decisionIndexQueues.delete(key);
   }).catch(() => undefined);
   return run;
+}
+
+function sha256Hex16(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16);
+}
+
+/**
+ * Standalone `doc_type: "coach-note"` vector per owner note (one per note, never overwritten by a
+ * sibling — `noteOrdinal` bakes uniqueness into `accession` so global content-hash dedup can never
+ * eat a sibling note). This is what EPISODIC_DOC_TYPES/coachingChunks retrieval actually consumes;
+ * `buildSocraticMemoryDocument`'s `coach_notes:` line only renders the live in-row window, so a
+ * note that ages off the live cap (db-socratic.ts COACH_NOTES_LIVE_CAP) remains retrievable via
+ * this vector even after it leaves the parent decision doc's text.
+ */
+export function buildCoachNoteMemoryDocument(
+  decision: SocraticDecisionCase,
+  note: string,
+  noteOrdinal: number,
+  appendedAt: string,
+  accountEnvironment?: "paper" | "live"
+): ContextDocument {
+  const symbol = decision.symbol ?? "PORTFOLIO";
+  const text = [
+    "Owner coaching note",
+    `ticker: ${symbol}`,
+    `decision_id: ${decision.id}`,
+    `note_seq: ${noteOrdinal}`,
+    `timestamp: ${appendedAt}`,
+    `thesis_tag: ${decision.thesisTag ?? "n/a"}`,
+    `entry_market_regime: ${decision.regime ?? "n/a"}`,
+    `note: ${compact(note)}`
+  ].join("\n");
+
+  return {
+    text,
+    metadata: {
+      symbol,
+      source: "socratic-coach-note",
+      timestamp: appendedAt,
+      accession: `${decision.id}:coach:${noteOrdinal}`,
+      doc_type: "coach-note",
+      memory_scope: "account",
+      decision_id: decision.id,
+      ...(decision.thesisTag ? { thesis_tag: decision.thesisTag } : {}),
+      ...(decision.regime ? { entry_market_regime: decision.regime } : {}),
+      ...(decision.connectedAccountId ? { connected_account_id: decision.connectedAccountId } : {}),
+      ...(accountEnvironment ? { account_environment: accountEnvironment } : {})
+    }
+  };
+}
+
+/**
+ * Best-effort: resolves the decision's account environment, builds the coach-note doc, and
+ * upserts it. Errors propagate to the caller (db-socratic.ts call sites catch + emit the
+ * `socratic_vector_write_degraded` receipt) — never blocks or fails the coach-note append itself.
+ */
+export async function indexCoachNoteMemory(
+  decision: SocraticDecisionCase,
+  note: string,
+  noteOrdinal: number,
+  appendedAt: string
+): Promise<void> {
+  const { getConnectedAccount } = await import("./db");
+  const { storeContexts } = await import("./vector-db");
+  const accountEnvironment = decision.connectedAccountId
+    ? getConnectedAccount(decision.connectedAccountId, decision.userId)?.environment
+    : undefined;
+  const result = await storeContexts(
+    [buildCoachNoteMemoryDocument(decision, note, noteOrdinal, appendedAt, accountEnvironment)],
+    decision.userId,
+    { dedupKeyPrefix: "coach-note", scope: "private" }
+  );
+  if (result.skipped || (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0) {
+    console.warn("[socratic-memory] coach-note vector write skipped:", JSON.stringify({ decisionId: decision.id, noteOrdinal, result }));
+  }
+}
+
+/**
+ * Standalone `doc_type: "lesson"` vector for an owner-promoted lesson
+ * (`attachSocraticDecisionCoachPrimitives` `promoteTo: "lesson"`). `vector_id` is derived from the
+ * lesson text (stable per distinct lesson string), so re-promoting identical text after it has
+ * aged out of the `lessons` slice(-12) cap is an idempotent overwrite, never a duplicate sibling —
+ * the caller (db-socratic.ts) additionally guards against re-emitting for text already present in
+ * `decision.lessons`.
+ */
+export function buildPromotedLessonDocument(
+  decision: SocraticDecisionCase,
+  lessonText: string,
+  accountEnvironment?: "paper" | "live"
+): ContextDocument {
+  const symbol = decision.symbol ?? "PORTFOLIO";
+  const timestamp = new Date().toISOString();
+  const hash = sha256Hex16(lessonText);
+  const text = [
+    "Owner-promoted lesson",
+    `ticker: ${symbol}`,
+    `decision_id: ${decision.id}`,
+    `thesis_tag: ${decision.thesisTag ?? "n/a"}`,
+    `entry_market_regime: ${decision.regime ?? "n/a"}`,
+    `timestamp: ${timestamp}`,
+    `lesson: ${compact(lessonText)}`
+  ].join("\n");
+
+  return {
+    text,
+    metadata: {
+      symbol,
+      source: "socratic-lesson",
+      timestamp,
+      accession: `${decision.id}:lesson:${hash}`,
+      vector_id: `socratic-lesson:${decision.id}:${hash}`,
+      doc_type: "lesson",
+      memory_scope: "account",
+      decision_id: decision.id,
+      ...(decision.thesisTag ? { thesis_tag: decision.thesisTag } : {}),
+      ...(decision.regime ? { entry_market_regime: decision.regime } : {}),
+      ...(decision.connectedAccountId ? { connected_account_id: decision.connectedAccountId } : {}),
+      ...(accountEnvironment ? { account_environment: accountEnvironment } : {})
+    }
+  };
+}
+
+/**
+ * Best-effort: resolves the decision's account environment, builds the promoted-lesson doc, and
+ * upserts it. Errors propagate to the caller (db-socratic.ts catches + emits the
+ * `socratic_vector_write_degraded` receipt) — never blocks or fails the promotion itself.
+ */
+export async function indexPromotedLessonMemory(decision: SocraticDecisionCase, lessonText: string): Promise<void> {
+  const { getConnectedAccount } = await import("./db");
+  const { storeContexts } = await import("./vector-db");
+  const accountEnvironment = decision.connectedAccountId
+    ? getConnectedAccount(decision.connectedAccountId, decision.userId)?.environment
+    : undefined;
+  const result = await storeContexts(
+    [buildPromotedLessonDocument(decision, lessonText, accountEnvironment)],
+    decision.userId,
+    { dedupKeyPrefix: "lesson", scope: "private" }
+  );
+  if (result.skipped || (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0) {
+    console.warn("[socratic-memory] promoted-lesson vector write skipped:", JSON.stringify({ decisionId: decision.id, result }));
+  }
 }

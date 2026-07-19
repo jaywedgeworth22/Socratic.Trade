@@ -49,6 +49,9 @@ const DELETE_TABLES_BY_USER_ID = [
   "llm_usage",
   "user_memory",
   "learned_context_pending",
+  // Added 2026-07-19: append-only archive of coach notes aged off the live socratic_decisions
+  // window (migration 53, db-socratic.ts). User-scoped like socratic_decisions itself.
+  "socratic_coach_note_archive",
   "socratic_decisions",
   "socratic_framework_proposals",
   "synthetic_trailing_stops",
