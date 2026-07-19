@@ -8,7 +8,6 @@
 // Row-level shapes are defined locally (NOT imported from ./congress-share) to keep the db barrel
 // free of a cycle: congress-share imports from ./db, and ./db re-exports this module.
 import { getDb } from "./db";
-import { normalizeCompanyName } from "@jaywedgeworth22/congress-trading-shared";
 
 // ── Row shapes (a structural subset of congress-share's payload types) ──────────
 
@@ -55,6 +54,11 @@ function normTicker(raw: string): string {
   return (raw ?? "").trim().toUpperCase();
 }
 
+function normDisplayText(raw: string | null | undefined): string | null {
+  const value = (raw ?? "").trim();
+  return value ? value : null;
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -94,7 +98,7 @@ export function upsertImportedRefs(refs: ImportedRefInput[], origin: string = DE
       if (!ticker) continue;
       stmt.run({
         ticker,
-        companyName: normalizeCompanyName(r.companyName) ?? null,
+        companyName: normDisplayText(r.companyName),
         sector: r.sector ?? null,
         industry: r.industry ?? null,
         assetClass: r.assetClass ?? null,

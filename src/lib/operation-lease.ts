@@ -11,7 +11,8 @@ export const OPERATION_LEASE_GROUPS = {
   RAG_REINDEX: "rag-reindex",
   CONGRESS_SHARE: "congress-share",
   CONGRESS_WEB_SOURCE: "web-source:congress",
-  SEC8K_WEB_SOURCE: "web-source:sec8k"
+  SEC8K_WEB_SOURCE: "web-source:sec8k",
+  SEC_INGEST_SEED: "sec-ingest-seed"
 } as const;
 
 export type OperationLeaseGroup = typeof OPERATION_LEASE_GROUPS[keyof typeof OPERATION_LEASE_GROUPS];
@@ -313,6 +314,68 @@ export async function runWithOperationLease<T>(
     clearInterval(interval);
     releaseOperationLease(acquired.claim);
   }
+}
+
+export interface OperationLeaseStartResult {
+  acquired: boolean;
+  busy?: OperationLeaseBusy;
+}
+
+/**
+ * Fire-and-forget sibling of `runWithOperationLease` for genuinely long-running admin-triggered
+ * work (e.g. corpus-reembed) where the HTTP request must return immediately instead of blocking on
+ * the whole operation. `runWithOperationLease`'s returned promise cannot resolve until `run`
+ * finishes even in the busy branch check — awaiting it at all means awaiting full completion — so
+ * a caller that wants an immediate "acquired or busy" answer needs acquisition split from
+ * completion. Lease acquisition, heartbeat, and release are otherwise identical to
+ * `runWithOperationLease`; this never accepts an inherited `options.claim` (fire-and-forget must
+ * own the lease it starts, not borrow another guard's).
+ *
+ * Returns synchronously with `{acquired: false, busy}` when another operation already holds the
+ * group. When acquired, `run` is started but NOT awaited by the caller; `onSettled` (best-effort,
+ * never thrown) observes the eventual outcome so the caller can persist a final status.
+ */
+export function startDetachedOperationLease(
+  options: Omit<OperationLeaseRunOptions, "claim">,
+  run: (claim: OperationLeaseClaim, signal: AbortSignal) => Promise<void>,
+  onSettled?: (result: { ok: boolean; error?: unknown }) => void
+): OperationLeaseStartResult {
+  const ttl = leaseTtlMs(options.ttlMs);
+  const acquired = acquireOperationLease(options.group, options.operation, ttl);
+  if ("busy" in acquired) return { acquired: false, busy: acquired.busy };
+
+  const state = claimStates.get(acquired.claim)!;
+  const interval = setInterval(() => {
+    if (!renewOperationLease(acquired.claim, ttl)) {
+      markClaimLost(
+        acquired.claim,
+        new Error(`Operation lease heartbeat could not prove ownership of group "${options.group}".`)
+      );
+    }
+  }, heartbeatMs(ttl, options.heartbeatMs));
+  interval.unref?.();
+
+  void run(acquired.claim, state.controller.signal)
+    .then(() => {
+      try {
+        onSettled?.({ ok: true });
+      } catch {
+        // onSettled is best-effort observability only; never let it mask the real outcome.
+      }
+    })
+    .catch((error: unknown) => {
+      try {
+        onSettled?.({ ok: false, error });
+      } catch {
+        // best-effort only
+      }
+    })
+    .finally(() => {
+      clearInterval(interval);
+      releaseOperationLease(acquired.claim);
+    });
+
+  return { acquired: true };
 }
 
 /** Test-only cleanup for isolated temp databases. Production code must rely on owner release/TTL. */
