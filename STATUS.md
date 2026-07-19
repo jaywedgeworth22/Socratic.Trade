@@ -1,5 +1,20 @@
 # Current Status
 
+## 2026-07-19 - Prod deploy wedge RESOLVED; litestream socket leak proven (CLAUDE)
+
+Production had stopped advancing (stuck at `7be71390`); every deploy failed at git-clone.
+Root cause **proven by live measurement**: litestream leaks ESTABLISHED sockets to R2
+(~15k/hr, one per request, response never drained/closed), exhausting `net.ipv4.tcp_mem`
+and clamping TCP receive windows so bulk transfers get cut. Owner-authorized container
+restart released ~2.3GB of pinned buffers and 5.3GB RAM; **prod is now == main and healthy.**
+The 2026-07-10 "durable fix" (pinning litestream 0.5.12) is **DISPROVEN** - that pin is
+running and leaks anyway; the HTTP transport code is byte-identical across 0.5.11/0.5.12/0.5.14
+and 0.5.14 is HEAD. Mitigation PR (`claude/litestream-leak-mitigation`) throttles
+`sync-interval` to 10s (10x lower leak rate; **RPO 1s->10s tradeoff - owner call, not
+auto-merged**) and fixes an empty-`region` misconfig. **The leak still recurs** - a watchdog
+alerts at 60% of the tcp_mem ceiling. Details:
+`docs/rollouts/2026-07-19-litestream-socket-leak-mitigation.md`.
+
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
 Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
