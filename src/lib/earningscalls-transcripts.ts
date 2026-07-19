@@ -435,6 +435,7 @@ async function earningsCallsGet(path: string, nowMs: number): Promise<EarningsCa
         retries: 0,
         service: "earningscalls",
         apiKey,
+        keySource: "env",
         // See PRE_SUBSCRIPTION_STATUS above: don't let the known pre-subscription 405 feed
         // api_health_log and trip the automatic Sentry connection-failed alert.
         suppressHealthStatuses: [PRE_SUBSCRIPTION_STATUS]
@@ -479,7 +480,10 @@ export function isEarningsCallsRefreshDue(nowMs: number = Date.now()): boolean {
 
 // ── Downstream ingest (the #1586 storeDocument boundary) ───────────────────────
 
-function accessionFor(row: { symbol: string; fiscalYear: number; fiscalQuarter: number }): string {
+/** Exported so corpus-reembed can compute the identical documentKey/accession identity when
+ *  re-pushing already-cached transcripts into a new embedding space, without duplicating the
+ *  format string. */
+export function accessionFor(row: { symbol: string; fiscalYear: number; fiscalQuarter: number }): string {
   return `earningscalls:${normalizeSymbol(row.symbol)}:${row.fiscalYear}Q${row.fiscalQuarter}`;
 }
 
