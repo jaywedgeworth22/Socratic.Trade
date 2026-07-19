@@ -49,7 +49,7 @@ export function TranscriptClient() {
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Chat transcript</h1>
+          <h1 className="text-xl font-semibold">Chat Transcript</h1>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">Every chat turn, with the model that produced each assistant reply.</p>
         </div>
         <Btn variant="outline" size="sm" onClick={() => void load()}>

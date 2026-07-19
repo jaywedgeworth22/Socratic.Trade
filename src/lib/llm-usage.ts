@@ -105,11 +105,16 @@ function defaultModelPricePerM(): [number, number] {
 
 function priceForModel(model: string | undefined): [number, number] {
   if (!model) return defaultModelPricePerM();
-  // Strip OpenRouter routing prefix (e.g. "openai/gpt-5.4-mini" → "gpt-5.4-mini")
-  // so the price table's bare model IDs can match the outbound model.
+  // Strip the full OpenRouter routing prefix so price-table bare IDs match outbound model names.
+  // Handles three forms:
+  //   "gpt-5.4-mini"                → unchanged
+  //   "openai/gpt-5.4-mini"         → "gpt-5.4-mini"  (vendor/model)
+  //   "openrouter/openai/gpt-5.4-mini" → "gpt-5.4-mini"  (full 3-part OR prefix)
+  // Mirrors stripRoutingPrefix() in app/admin/llm-usage/model-merge.ts.
   let m = model.toLowerCase();
+  m = m.replace(/^openrouter\//, ""); // strip leading "openrouter/" if present
   const slashIdx = m.indexOf("/");
-  if (slashIdx !== -1) m = m.slice(slashIdx + 1);
+  if (slashIdx !== -1) m = m.slice(slashIdx + 1); // strip one vendor segment (e.g. "openai/")
   if (MODEL_PRICE_PER_M[m]) return MODEL_PRICE_PER_M[m];
   // Prefix match (e.g. dated suffixes like claude-haiku-4-5-20251001).
   // Longest-prefix wins so family aliases cannot shadow a more specific tier snapshot
@@ -179,22 +184,49 @@ export function extractLlmUsage(responseJson: unknown): LlmTokenUsage {
   };
 }
 
+/**
+ * Strips the routing prefix (e.g. "openai/") from OpenRouter models to yield the canonical model
+ * identity for usage and benchmark persistence, so that historical stats aren't fragmented when
+ * routing through OpenRouter.
+ */
+export function remapOpenRouterTelemetry(provider: string, model: string): { provider: string; model: string };
+export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined };
+export function remapOpenRouterTelemetry(provider: string, model: string | undefined): { provider: string; model: string | undefined } {
+  if (provider === "openrouter" && model) {
+    const slashIdx = model.indexOf("/");
+    if (slashIdx !== -1) {
+      let p = model.slice(0, slashIdx);
+      if (p === "google") p = "gemini";
+      if (p === "mistralai") p = "mistral";
+      if (p === "x-ai") p = "xai";
+      return { provider: p, model: model.slice(slashIdx + 1) };
+    }
+  }
+  return { provider, model };
+}
+
 /** Record one LLM call against a user. Never throws — usage accounting must not break an LLM run. */
 export function recordLlmUsage(entry: LlmUsageEntry): void {
   try {
+    const canonical = remapOpenRouterTelemetry(entry.provider, entry.model);
+    // Keep the transport route in the ledger and telemetry. OpenRouter is
+    // the credential/key namespace that actually served the call; the
+    // canonical vendor model is only for pricing and model statistics.
+    const provider = entry.provider;
+    const model = entry.model;
     const usageId = crypto.randomUUID();
     const occurredAt = new Date().toISOString();
     const total =
       entry.promptTokens !== undefined || entry.completionTokens !== undefined ? (entry.promptTokens ?? 0) + (entry.completionTokens ?? 0) : undefined;
-    const cost = estimateLlmCostUsd(entry.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
+    const cost = estimateLlmCostUsd(canonical.model, entry.promptTokens, entry.completionTokens, entry.cachedPromptTokens, entry.cacheCreationTokens);
     // Prompt-cache visibility (no schema change): when the provider served part of the prompt from
     // cache, write an audit row so cache hit rates + savings are observable per provider/model/context.
     if ((entry.cachedPromptTokens ?? 0) > 0 || (entry.cacheCreationTokens ?? 0) > 0) {
       audit(
         "llm_cache_usage",
         {
-          provider: entry.provider,
-          model: entry.model,
+          provider,
+          model,
           context: entry.context,
           promptTokens: entry.promptTokens,
           cachedPromptTokens: entry.cachedPromptTokens,
@@ -213,8 +245,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
       .run(
         usageId,
         entry.userId,
-        entry.provider,
-        entry.model ?? null,
+        provider,
+        model ?? null,
         entry.context ?? "unknown",
         entry.keySource,
         entry.keyRef ?? null,
@@ -229,8 +261,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
     pushLlmUsage({
       sourceEventId: usageId,
       occurredAt,
-      provider: entry.provider,
-      model: entry.model,
+      provider,
+      model,
       context: entry.context,
       userId: entry.userId,
       keySource: entry.keySource,

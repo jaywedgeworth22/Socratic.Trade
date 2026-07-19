@@ -34,13 +34,20 @@ describe("Connection Health & Failure Routing", () => {
     db.getDb().prepare("DELETE FROM audit_events").run();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.PRIMARY_USER_EMAIL;
     delete process.env.RESEND_API_KEY;
     delete process.env.NOTIFY_EMAIL_FROM;
     delete process.env.DB_BOOTSTRAP;
     delete process.env.LITESTREAM_SOCKET_PATH;
     delete process.env.LITESTREAM_STATE_PATH;
+    delete process.env.RAG_EMBED_PROVIDER;
+    // Remove any stored openrouter key seeded by the provider-aware voyage-criticality tests so
+    // activeEmbeddingProvider() resolves back to voyage for the rest of the suite.
+    try {
+      const { db } = await load();
+      db.deleteUserApiKey("local", "openrouter");
+    } catch { /* best-effort */ }
     vi.unstubAllGlobals();
   });
 
@@ -197,6 +204,72 @@ describe("Connection Health & Failure Routing", () => {
     body = await response.json();
     expect(body.ok).toBe(false);
     expect(body.checks.dependencies.pinecone.ok).toBe(false);
+  });
+
+  // Provider-aware voyage criticality (bge-m3-metering-gate, 2026-07-18): the voyage/voyage-rerank
+  // health lanes fail liveness ONLY while Voyage is the ACTIVE embed provider. Prod flipped to
+  // bge-m3 via OpenRouter on 2026-07-18 and a dead Voyage lane was 503ing /api/health for a
+  // provider the app no longer calls.
+  it("/api/health stays 200 on a hard-stopped voyage lane when OpenRouter is the active embed provider", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    // Make OpenRouter the active embed provider (per-user tier: stored key for `local`).
+    db.upsertUserApiKey("local", "openrouter", "sk-or-test-key");
+
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
+      db.logApiHealth({ service: "voyage-rerank", ok: false, errorText: "Voyage down", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(200); // voyage is not the active provider -> not critical
+
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.checks.ragEmbedProvider).toBe("openrouter");
+    // Still REPORTED as failed — only the liveness gate is provider-aware, not the visibility.
+    expect(body.checks.dependencies.voyage.ok).toBe(false);
+    expect(body.checks.dependencies["voyage-rerank"].ok).toBe(false);
+  });
+
+  it("/api/health still 503s on a hard-stopped voyage lane when Voyage IS the active embed provider", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    // No openrouter/siliconflow key anywhere -> voyage is the active provider.
+
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(503);
+
+    const body = await response.json();
+    expect(body.ok).toBe(false);
+    expect(body.checks.ragEmbedProvider).toBe("voyage");
+    expect(body.checks.dependencies.voyage.ok).toBe(false);
+  });
+
+  it("/api/health survives a pinned-but-keyless RAG_EMBED_PROVIDER (reports the config error, no 503 loop)", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    process.env.RAG_EMBED_PROVIDER = "openrouter"; // pinned, but no openrouter key configured
+
+    // Even with a hard-stopped voyage lane, the pin misconfiguration must not 503 the container
+    // into a restart loop — it is surfaced as ragEmbedProviderError/ragConfigured:false instead.
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body.checks.ragConfigured).toBe(false);
+    expect(String(body.checks.ragEmbedProviderError)).toMatch(/RAG_EMBED_PROVIDER/);
   });
 
   it("/api/health remains 200 but lists degraded status for non-critical global dependencies", async () => {

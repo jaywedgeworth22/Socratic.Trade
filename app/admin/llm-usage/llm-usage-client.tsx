@@ -223,7 +223,7 @@ function ModelBreakdownCard({ models }: { models: ModelUsageAggregate[] }) {
               <div className="flex items-center justify-between gap-3 text-[length:var(--con-fs-sm)]">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="con-mono truncate font-medium text-[color:var(--con-fg)]">
-                    {m.canonicalId === "unknown" ? "—" : m.displayName}
+                    {m.canonicalId === "" ? "—" : m.displayName}
                   </span>
                   {!multiRoute && (
                     <span className="con-chip" title="Only one route recorded for this model in this window">
@@ -272,7 +272,7 @@ const WINDOW_OPTIONS = [
 export function LlmUsageClient({
   endpoint = "/api/admin/llm-usage",
   scope = "admin",
-  title = "LLM usage & cost"
+  title = "LLM Usage & Cost"
 }: {
   endpoint?: string;
   scope?: "admin" | "user";

@@ -346,7 +346,7 @@ describe("persistence and notifications", () => {
           step: "bull",
           label: "Green Team proposal",
           provider: "openai",
-          model: "openai/gpt-5.5",
+          model: "gpt-5.5",
           status: "failed"
         }
       ]);
