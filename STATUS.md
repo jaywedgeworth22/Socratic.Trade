@@ -1,6 +1,35 @@
 # Current Status
 
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
+## 2026-07-19 — PR #1776 review-thread closeout: all 4 codex-connector findings fixed (CLAUDE, branch `agent/ag-sec-parser-hardening`)
+
+Closed out the remaining two of four open `chatgpt-codex-connector` P2 review threads on PR #1776
+(a prior same-day session already fixed the other two, commit `8918da21`). All four are now real
+code fixes — none were false positives.
+
+- **`ChunkInput.published_at` made required** (`src/lib/rag/chunk.ts`): the runtime guard already
+  threw when it was missing, but the type stayed optional, so TypeScript callers could compile and
+  crash later. Grepped every `chunkDocument`/`storeDocument` call site (production + ~14 test
+  files) — every one already supplies `published_at`. Tightening the type had **zero** call-site
+  fallout (`npx tsc --noEmit` clean).
+- **Nested table headings now emit real section breaks** (`src/lib/web-sources/sec-parser.ts`,
+  `collectBlocks`): a heading like `Item 1A. Risk Factors` nested as a layout table inside an
+  outer table cell was previously flattened into plain cell prose, so the section never changed
+  and following content stayed misattributed. Heading sub-blocks discovered during nested-table
+  conversion now push directly into the real block stream instead of being folded into cell text.
+  Documented a known bounded limitation (content appearing *before* the nested heading in the same
+  outer table can now attach to the new section instead of the old one) in the rollout note —
+  net improvement over the pre-fix silent-drop behavior in the common case.
+- Verified findings #1 (hidden zero-style regex) and #4 (nested-table pipe escaping) were already
+  correctly fixed by the prior session; also verified #4's "escape newlines too" concern is already
+  structurally covered by the existing `\s+` whitespace collapse on cell text.
+
+Two new tests in `test/sec-parser.test.ts` (16/16 passing, plus 69/69 and 109/109 and 30/30 across
+the broader RAG/SEC ingestion suites — see rollout note for exact commands). `npx tsc --noEmit`
+clean, `npm run lint` 0 errors. Full `npm test`/`npm run build` gate run via `scripts/land.sh`.
+Details: `docs/rollouts/2026-07-19-pr1776-review-thread-closeout.md`.
+
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
 `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note):

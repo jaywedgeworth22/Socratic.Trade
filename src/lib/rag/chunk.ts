@@ -38,7 +38,15 @@ export interface ChunkInput {
   doc_id?: string;
   title?: string;
   ticker?: string | string[];
-  published_at?: string | number | Date;
+  /**
+   * Required, not optional: chunkDocument throws synchronously ("doc.published_at is required
+   * for provenance") when this is missing, so leaving it optional on the type let a caller
+   * compile clean and then crash at runtime. Every production call site (sec-filings.ts,
+   * sec-ingest-worker.ts, sec8k.ts, fmp-transcripts.ts, earningscalls-transcripts.ts,
+   * corpus-reembed.ts) already always supplies it — the runtime guard was defensive, not load
+   * -bearing for real callers. Making the field required moves that guarantee to compile time.
+   */
+  published_at: string | number | Date;
   acceptance_datetime?: string | number | Date;
   doc_type?: string;
   source?: string;

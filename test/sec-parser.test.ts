@@ -344,4 +344,62 @@ describe("SEC Parser and Chunker (Phase 3)", () => {
     expect(dataRow).not.toMatch(/(?<!\\)\|\s*Inner1/);
     expect(dataRow).toContain("Plain");
   });
+
+  it("preserves an Item heading nested inside an outer table cell as a real section break", () => {
+    // EDGAR sometimes encodes an Item heading as a single-cell layout table nested inside a
+    // wrapper <table> cell. Before this fix, collectBlocks classified the nested table as a
+    // heading ParsedBlock but the enclosing conversion path only folded `b.text` back into the
+    // outer cell's prose — the heading never reached the block stream, so the section never
+    // changed and everything stayed misattributed to the prior section (here, "1. Business").
+    const html = `
+      <html><body>
+        <div>Item 1. Business</div>
+        <p>Business overview text.</p>
+        <table>
+          <tr>
+            <td>
+              <table><tr><td>Item 1A. Risk Factors</td></tr></table>
+              <p>Our principal risks include market volatility and competition.</p>
+            </td>
+          </tr>
+        </table>
+        <div>Item 2. Properties</div>
+        <p>Properties details.</p>
+      </body></html>`;
+    const parsed = parseFilingHtml(html, { formType: "10-K" });
+
+    const business = parsed.sections.find((s) => s.itemCode === "1");
+    const riskFactors = parsed.sections.find((s) => s.itemCode === "1A");
+    const properties = parsed.sections.find((s) => s.itemCode === "2");
+
+    // The nested heading must produce its own section entry with the standard 10-K title...
+    expect(riskFactors).toBeDefined();
+    expect(riskFactors?.itemTitle).toBe("Risk Factors");
+    // ...and the content that followed the nested heading (inside the same outer cell) must be
+    // attributed to THAT section, not stay stuck under "1. Business".
+    expect(riskFactors?.text).toContain("Our principal risks include market volatility and competition.");
+    expect(business?.text).not.toContain("Our principal risks include market volatility and competition.");
+    expect(business?.text).toContain("Business overview text.");
+    // Sections after the nested-table heading must still parse normally.
+    expect(properties?.text).toContain("Properties details.");
+  });
+
+  it("does not leave the nested heading's own marker text duplicated as stray table prose", () => {
+    const html = `
+      <html><body>
+        <table>
+          <tr>
+            <td>
+              <table><tr><td>Item 1A. Risk Factors</td></tr></table>
+              <p>Risk factor commentary.</p>
+            </td>
+          </tr>
+        </table>
+      </body></html>`;
+    const parsed = parseFilingHtml(html, { formType: "10-K" });
+    // "Item 1A. Risk Factors" should appear exactly once, as the section header line
+    // ("## Item 1A. Risk Factors"), not a second time folded into the table cell body.
+    const occurrences = parsed.text.split("Item 1A. Risk Factors").length - 1;
+    expect(occurrences).toBe(1);
+  });
 });
