@@ -58,6 +58,7 @@ describe("admin operation guard", () => {
       "reindex-10k",
       "reindex-8k",
       "robinhood-probe",
+      "sec-ingest-seed",
       "tuning-dry-run"
     ]);
     for (const config of Object.values(ADMIN_OPERATION_LIMITS)) {

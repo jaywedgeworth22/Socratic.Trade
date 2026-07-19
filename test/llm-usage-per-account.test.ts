@@ -42,6 +42,7 @@ describe("per-account/broker LLM usage attribution", () => {
     recordLlmUsage({ userId: "local", provider: "openai", model: "openai/gpt-4o-mini", context: "outcome-postmortem", keySource: "user", connectedAccountId: "acct-alpaca", promptTokens: 200, completionTokens: 20 });
     recordLlmUsage({ userId: "local", provider: "anthropic", model: "claude-haiku-4-5", context: "strategy", keySource: "user", connectedAccountId: "acct-rh", promptTokens: 300, completionTokens: 60 });
     recordLlmUsage({ userId: "local", provider: "openai", model: "openai/gpt-4o-mini", context: "chat", keySource: "user", promptTokens: 10, completionTokens: 5 });
+    recordLlmUsage({ userId: "local", provider: "openrouter", model: "openai/gpt-4o-mini", context: "openrouter-route-preserved", keySource: "user", promptTokens: 10, completionTokens: 5 });
   });
 
   it("tags usage rows with the connected account + derives broker/environment/label via join", () => {
@@ -60,6 +61,12 @@ describe("per-account/broker LLM usage attribution", () => {
     expect(chat?.connectedAccountId).toBeNull();
     expect(chat?.broker).toBeNull();
     expect(chat?.accountLabel).toBeNull();
+  });
+
+  it("preserves the OpenRouter route while pricing the routed vendor model", () => {
+    const row = getLlmUsageSummary().find((r) => r.context === "openrouter-route-preserved");
+    expect(row).toMatchObject({ provider: "openrouter", model: "openai/gpt-4o-mini" });
+    expect(row?.costUsd).toBeGreaterThan(0);
   });
 
   it("filters by connectedAccountId", () => {

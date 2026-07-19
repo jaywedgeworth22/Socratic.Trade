@@ -20,14 +20,27 @@ export interface LlmEndpoint {
  * default below) can compare families without duplicating the regexes.
  */
 export function llmModelFamily(model: string | undefined): LlmModelFamily {
-  const normalized = (model ?? "").trim();
-  if (/^claude/i.test(normalized)) return "anthropic";
-  if (/^grok/i.test(normalized)) return "xai";
-  if (/^gemini/i.test(normalized)) return "gemini";
-  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(normalized)) return "mistral";
-  if (/^openrouter\//i.test(normalized)) return "openrouter";
-  if (/^deepseek/i.test(normalized)) return "deepseek";
+  let normalized = (model ?? "").trim().toLowerCase();
+  normalized = normalized.replace(/^openrouter\//i, "");
+
+  if (/claude/i.test(normalized)) return "anthropic";
+  if (/grok/i.test(normalized)) return "xai";
+  if (/gemini/i.test(normalized)) return "gemini";
+  if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(normalized)) return "mistral";
+  if (/deepseek/i.test(normalized)) return "deepseek";
   return "openai";
+}
+
+/**
+ * The credential SERVICE whose key must resolve for a model under universal OpenRouter routing.
+ * Production serves EVERY model through the OpenRouter credential (see `resolveLlmEndpoint`), so
+ * that's what eligibility/save-gate checks must key on — an OpenRouter-only account must not be
+ * rejected for lacking an (unused) native key. Under NODE_ENV=test we key the native family so the
+ * existing native-key test fixtures keep resolving. Single source of truth so `resolveLlmEndpoint`,
+ * rotation eligibility, and the policy save-gate never drift.
+ */
+export function modelCredentialService(model: string | undefined): LlmModelFamily {
+  return process.env.NODE_ENV === "test" ? llmModelFamily(model) : "openrouter";
 }
 
 // Cross-family Red Team DEFAULT removed 2026-07-07 (owner directive: no model is a default for
@@ -92,9 +105,14 @@ export function resolveLlmEndpoint(
   // (e.g. "openrouter/google/gemini-2.5-flash" → "google/gemini-2.5-flash").
   model = model.replace(/^openrouter\//i, "");
 
+  // Normalize the legacy `xai/` Grok slug to OpenRouter's `x-ai/` even when the id was ALREADY
+  // namespaced (e.g. a saved `xai/grok-4.3` policy value, or a test fixture). The bare-`grok`
+  // mapping above only fires for un-namespaced ids, so an already-`xai/`-qualified id would
+  // otherwise reach OpenRouter unchanged and hit an invalid-model failure (Codex finding, PR #1703).
+  model = model.replace(/^xai\//i, "x-ai/");
+
   const url = process.env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
-  const nativeProvider = llmModelFamily(rawModel);
-  const cred = resolveLlmCredential(process.env.NODE_ENV === "test" ? nativeProvider : "openrouter", userId);
+  const cred = resolveLlmCredential(modelCredentialService(rawModel), userId);
 
   return {
     provider: "openrouter",
