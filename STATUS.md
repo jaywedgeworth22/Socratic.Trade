@@ -1,5 +1,16 @@
 # Current Status
 
+## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
+
+Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
+`0.00001 / 10` (= 0.000001), 10x smaller than its own comment / the parallel confirmed OpenRouter
+`baai/bge-m3` rate (0.00001 = $0.01/1M tokens). Undercounted SiliconFlow bge-m3 embed spend in
+`rag_usage.cost_est_usd` + the $/day dispatch fuse whenever SiliconFlow is the active embed provider.
+Removed the `/ 10`; strengthened the SiliconFlow embed test to pin the exact cost (was `> 0` only) —
+regression proven (buggy value fails the pinned assertion). No live impact yet: OpenRouter, not
+SiliconFlow, is prod's active embed provider since the 2026-07-18 bge-m3 flip. tsc/targeted-tests/lint
+green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`.
+
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
 Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
