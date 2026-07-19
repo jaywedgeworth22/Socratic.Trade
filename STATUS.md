@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-19 — Handoff: CLAUDE seat -> Antigravity (owner-directed)
+
+Full session handoff note: `docs/rollouts/2026-07-19-claude-to-antigravity-handoff.md`. Short
+version: PR queue cleared, MCP servers verified, disk-janitor upgraded (worktree retirement was
+silently broken for months — fixed). One PR still in-flight (**#1775**, `agent/ag-reindex-bge-m3`
+— check its state before touching it, a CLAUDE-seat background agent may still be shepherding it).
+Two owner-blocked items: Coolify API token is dead (401s), and the prod deploy pipeline is wedged
+(`main` hasn't deployed in hours; prod itself is healthy, this only blocks *new* code). Read the
+rollout note before starting new work in this repo.
+
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
 Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
