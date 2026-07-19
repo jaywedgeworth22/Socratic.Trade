@@ -1,5 +1,326 @@
 # Current Status
 
+## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
+
+Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
+makes OpenRouter the single point of failure for all LLM+RAG, `/api/health` now exposes the
+prepaid-credit balance (`dependencies.openrouter.ok` + `checks.openrouterCredits`) so an EXTERNAL
+watchdog (Uptime Robot) alerts when the money runs low — owner-directed: NO in-app alert, NO
+provider fallback. New `src/lib/openrouter-credits.ts` (FREE /credits query, cached, fails-open on
+read error, `ok=false` only on a genuinely-low balance below `OPENROUTER_LOW_CREDIT_USD` default
+$10); low balance DEGRADES the probe, never 503s (a restart can't refill credits). UR keyword
+monitor on `"openrouterCredits":{"ok":false` → `mail@jays.services`. tsc clean, 5/5 new tests, full
+gate via land.sh. Rollout: `docs/rollouts/2026-07-18-openrouter-credit-health-signal.md`.
+NEXT (owner or secret-handoff): create the UR monitor (needs the UR API key — absent from sanctioned
+secret files).
+
+## 2026-07-18 — Merged-worktree cleanup + Voyage `/api/health` RCA (CLAUDE, branch `claude/cleanup-merged-worktrees-bdbc08`)
+
+Docs-only receipt. Removed 5 verified-clean merged worktree checkouts (#1740 tmp, #1587,
+#1559, #1624, #1563 lanes; squash-merge ancestry verified via PR mergeCommit; branches
+retained), kept 3 (`codex/reconcile-pr1745` carries 7 unlanded commits with NO PR — CODEX
+disposition needed; `socratic-admin-console-shell` has 4 dirty docs files; `trading-ag-rag`
+standing lane). Voyage RCA: `/api/health` is 200/ok — the red `voyage` dependency lane is
+prod's bge-m3-via-OpenRouter embed path failing with **402 Insufficient credits (OpenRouter
+account exhausted: 25.00/25.31)**; the Voyage key itself is valid. RAG ingestion (incl. SEC
+backfill) is stalled until the owner tops up OpenRouter credits or adds a SiliconFlow key
+— but a SiliconFlow key is RAG-embed-only and also needs `RAG_EMBED_PROVIDER=siliconflow`
+(else `resolveActiveRagProvider` still routes to the exhausted OpenRouter key); the LLM
+decision loop stays down until OpenRouter credits return. **RESOLVED 2026-07-18 (MONET
+cap-handoff): OpenRouter topped up (75/25.31, ~$49.69 left), `voyage.ok=true`, prod LLM+RAG
+recovered — verified.** Details:
+`docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
+## 2026-07-18 — bge-m3 provider-aware RAG metering + health gate landing (CLAUDE, branch `claude/bge-m3-metering-gate`, lane 1 of a serial 4-lane landing train)
+
+Fixes two live prod bugs: RAG metering rows were being booked as `provider:"voyage"` (Voyage
+pricing) for OpenRouter/SiliconFlow bge-m3 calls, and `/api/health` hard-503'd on the dead
+Voyage lane while a non-Voyage provider was active. Adds an explicit `RAG_EMBED_PROVIDER` pin
+(default unset preserves existing key-presence routing). Adversarially verified SAFE.
+**Discovered mid-landing:** this commit's exact file contents were already present in
+`origin/main@d9527cde` (a different agent's PR, #1762, landed via a shared local object store
+before this PR opened) — production `/api/health` already showed this fix live
+(`release.sha==d9527cde`, `ok:true`) prior to this merge. This PR is therefore a functional
+no-op for prod; it lands the rollout note/effort-log history and picks up main's small
+additive deltas via merge. `LAND_ALLOW_STALE_OVERLAP=1` used after manual byte-diff review
+confirmed zero real conflict. Rollout: `docs/rollouts/2026-07-18-bge-m3-metering-gate.md`.
+## 2026-07-18 — BGE-M3 reindexing branch: landing retry after test-gate abort (CLAUDE, branch `agent/ag-reindex-bge-m3`)
+
+First `land.sh` run aborted: 12 test failures across 6 files under fleet load 60-67 (84-min suite).
+Triage: two real fixes — (1) `test/reindex-all.test.ts` now uses its own per-run temp
+`DATABASE_URL` (was bleeding SQLite state into `web-sources-sec8k` and others, commit `73929f83`);
+(2) dropped this branch's `'TESLA'` casing expectation in `test/securities-import.test.ts` in favor
+of main's post-#1735 preserve-case behavior (merge `339676a5`). Remainder were 30s-timeout
+load-flakes that pass on serial re-run. Branch subsequently synced to post-#1761 main (includes the
+bge-m3 metering/reembed/worker-wiring program `545da7c0`). Re-landing via `scripts/land.sh`.
+Details: `docs/rollouts/2026-07-18-bge-m3-reindexing.md` ("Landing retry" section).
+
+## 2026-07-18 — BGE-M3 SEC Filings Reindexing & API Support (Antigravity/AG, branch `agent/ag-reindex-bge-m3`)
+
+Extended POST endpoint in `app/api/admin/reindex-10k/route.ts` to support `{ all: true }` or `symbols: ["*"]` in the payload to resolve all tickers in the database and clear their RAG chunk caches. Created the `scripts/reindex-all.ts` CLI tool to enable command-line cache clearing and immediate ingestion under `baai/bge-m3` embedding model. Added unit testing suite `test/reindex-all.test.ts` to verify cache deletions. Fixed pre-existing failures in `test/securities-import.test.ts` (companyName casing) and `test/token-budget-ceiling.test.ts` (race conditions on debounced timers). Installed missing `@opentelemetry` helper packages (`@opentelemetry/core`, `@opentelemetry/sdk-trace-base`, `@opentelemetry/resources`) to resolve the Next.js production build compiler issues. Typecheck, tests, and production build all verify green. Next: Land changes using landing script.
+## 2026-07-18 — PR #1760 review closeout (CODEX, branch `codex/pr1760-review-fixes`)
+
+Addressed all four actionable review findings without editing the AG-owned worktree. The Congress
+webhook route keeps the shared-package HMAC verifier and restores the documented bearer fallback
+with constant-time comparison. Proposal attribution remains in the exact configured policy
+namespace while the three remaining usage-budget assertions now match that contract. Removed the
+committed review JSON dumps and the unsafe one-off `update_prs.sh`, which force-removed other agents'
+worktrees and could continue after checkout failures. Node 24 focused verification passes 36/36
+tests across the webhook, usage-budget, failover, and money-path suites. The serialized gate also
+passes lint (0 errors), TypeScript, 412 Vitest files / 4,837 tests, and the production build. PR
+#1760 auto-merged as `b2f22ccf` while that gate ran; all four threads were then answered and
+resolved, and corrective PR #1761 carries the fixes. Its branch is merged with that exact new main;
+self-hosted checks, corrective merge, and exact production verification remain.
+## 2026-07-18 — Remove tracked lint/verify artifacts from main (MONET, branch `monet/rm-tracked-lint-artifacts`)
+
+Repo-hygiene cleanup. PR #1735 accidentally merged ~9 MB of generated, machine-specific
+(`/Users/jay/...`) files into `main` — `error.log`, `lint-output.txt`, `lint-results.txt/.json`,
+`lint_results.json`, `eslint-report.json`, `eslint_test_results.json`, and the autogenerated
+`.codex/environments/environment.toml` (empty `setup.script`, which breaks cloud setup) — despite
+Codex flagging exactly these on #1735. `git rm`'d all 8 (confirmed unreferenced by any source/script/CI
+config) and added `.gitignore` patterns so they can never be re-tracked; `.codex/maintenance.sh` +
+`setup.sh` stay tracked. No app/test/runtime code touched. Sequenced after #1740 merged so no in-flight
+branch re-adds them. Rollout: `docs/rollouts/2026-07-18-rm-tracked-lint-artifacts.md`.
+
+## 2026-07-18 — Bounded server/infrastructure panel reliability (CODEX, branch `codex/socratic-infra-panel-reliability`)
+
+Implemented the owner-bounded admin panel repair without changing provider infrastructure. The server-metrics endpoint queries fully configured Hetzner and Coolify integrations independently, returns HTTP 200 degraded receipts while retaining valid partial data, never labels partial or missing production configuration as the local host, parses current Hetzner `bandwidth.in` / `bandwidth.out` series, and normalizes aggregate CPU by a verified core count (otherwise CPU remains unavailable). A one-entry module cache provides a 120-second TTL and single-flight refresh, retries failures after 30 seconds, and retains a last-known snapshot for at most 10 minutes. Provider JSON is bounded to 512 KiB; Coolify normalization processes at most 500 resources and caps detailed warnings; malformed Hetzner metrics envelopes are rejected before success accounting and cannot replace a good cached series. The remote target is labeled `PRODUCTION` only with explicit `SERVER_METRICS_TARGET_ENVIRONMENT=production`; `NODE_ENV` controls local-runtime fallback only. The `Server Stats` client validates successful envelopes and marks retained data stale after malformed or failed refreshes while leaving absent values unavailable. Focused server-metrics tests (19/19), TypeScript, scoped ESLint, local SSR smoke, and `git diff --check` pass; the independent P2 warning-expansion finding is fixed and re-review is pending. A final serialized Node 24 full gate is pending before publication because concurrent full gates caused unrelated timeout/network failures. No push, PR, merge, deploy, secret mutation, or provider mutation has been performed yet. Rollout: `docs/rollouts/2026-07-18-admin-server-panel-reliability.md`.
+## 2026-07-18 — Admin console shell parity (CODEX, branch `codex/admin-console-shell`)
+
+Implemented the admin.socratictrade.com chrome refresh. Admin now uses the console geometry/tokens,
+keeps the Socratic Trade logo/name visible, shows a profile popover with theme/settings/sign-out
+actions, and keeps trading account scope plus Start/Run controls out of the admin surface. The
+admin-only tab rail remains the left navigation. Normalized admin labels to title case and renamed
+the server panel to **Server Stats** across nav, overview, page headings, metadata, and Settings.
+
+Follow-up review fixes keep the large brand mark/name out of the narrow mobile header while retaining
+the console return affordance, and use a plain anchor for logout so opening the profile menu cannot
+prefetch the side-effectful GET route. Focused lint and TypeScript verification for the changed shell
+passed; the branch remains local pending the owner's landing workflow.
+
+Verification on Node 24: `npm run lint` passed with 0 errors (582 existing warnings), `npx tsc --noEmit`
+passed, `npm test` passed (412 files / 4,794 tests), and `npm run build` passed. The branch is ready
+for `scripts/land.sh`; no production deploy or admin data/API behavior was changed.
+
+The first post-routing Playwright smoke rerun reached the local Next webServer but was OOM-killed
+with exit 137 under the runner's 3 GiB cap. The CI-only Playwright heap ceiling is reduced to
+2048 MiB to leave room for Chromium and build-worker overhead; rerun smoke after this commit.
+## 2026-07-18 — PR #1735 proposed-model attribution P2 (CODEX, local-only branch `codex/pr1735-proposal-attribution`)
+
+Resolved the remaining P2 without changing telemetry semantics: proposal persistence now retains the
+exact primary/fallback policy identifier (including `openrouter/`), while usage telemetry still
+canonicalizes provider/model identity for merged statistics. This restores the approval card's direct
+primary/fallback comparisons. Targeted primary and fallback strategy regressions pass with normal
+test code (the local machine required a one-off extended timeout while each isolated test database
+replayed migrations 2–52); TypeScript and scoped lint pass. The commit is intentionally local-only
+and has not been pushed or applied to PR #1735. Rollout:
+`docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+
+## 2026-07-18 — PR #1735 review cleanup round 2 (CODEX, branch `agent/ag-recovery-v48-migration`)
+
+Resolved two fresh Codex review findings on PR #1735: preserved imported company-name display casing
+in `db-securities-import.ts` instead of uppercasing names through ticker-oriented `clean()`, and
+regenerated `package-lock.json` so clean installs include the peer dependency tree required by
+`@langfuse/otel` and webpack. Verification: `npm ci --dry-run --ignore-scripts` passes, and
+`npm test -- test/securities-import.test.ts` passes after a normal fresh `npm ci`.
+Rollout: `docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+
+## 2026-07-18 — PR #1735 verify cleanup (CODEX, branch `agent/ag-recovery-v48-migration`)
+
+Merged `origin/main` and fixed the hosted `verify` failures on PR #1735 by aligning the four missed
+OpenRouter attribution assertions with the branch's canonical bare-model telemetry behavior. Focused
+test command passed: `npm test -- test/llm-provider-cooldown.test.ts test/strategy-llm-failover.test.ts
+test/persistence-notification.test.ts test/strategy-money-path-f-g.test.ts` (34/34 pass). Rollout:
+`docs/rollouts/2026-07-18-ag-recovery-v48-verify-cleanup.md`.
+## 2026-07-18 — #1727 deployed + EFFORT-LOG board corrected (MONET, branch `monet/effort-log-1727-deploy-flip`)
+
+PR #1727 (editable connected-account name + legacy-app retirement) is merged (`b0063a7`) and
+**live in production** — confirmed after the fleet-wide auto-deploy stall recovered (prod redeployed
+~13:32Z from post-`b0063a7` main; `/api/health` db/scheduler/litestream ok). PR #1745 is the docs-only
+board-hygiene follow-up: moved the #1727 row from `## In Progress` to `## Deployed`, dropped the stale
+"Board-mover" note, and corrected a chronology overstatement (the 13:32Z build PRE-dates #1737's 14:14Z
+merge, so it asserts only that #1727 — not #1737 — is live). No code/plan change. Rollout note:
+`docs/rollouts/2026-07-18-effort-log-1727-deploy-flip.md`.
+
+## 2026-07-18 — PR #1736 review cleanup (CODEX, branch `monet/model-identity-shared`)
+
+Merged `origin/main`, verified the author-identity review thread is stale because the current PR
+commit uses the required GitHub noreply email, and fixed the remaining review finding: model usage
+aggregation now remains case-insensitive while preserving the first display casing. Focused test:
+`npm test -- test/usage-model-merge.test.ts` (9/9 pass). Rollout updated:
+`docs/rollouts/2026-07-17-model-identity-shared-helper.md`.
+
+## 2026-07-17 — Shared model-identity helper (MONET, branch `monet/model-identity-shared`)
+
+Owner-directed follow-up (AG capped): consolidated the two duplicate model-ID canonicalizers now
+on main — `cleanModelId` (src/lib/model-stats.ts, AG/#1703) and `canonicalModelId`
+(app/admin/llm-usage/model-merge.ts, #1716) — into one shared `src/lib/model-identity.ts`.
+Behavior-preserving: the shared function is AG's verified logic verbatim; model-stats aliases it
+so the benchmark/perf rollup is byte-for-byte unchanged (model-stats + performance tests pass
+untouched). Closes the deferred follow-up from the usage-canonical-model-merge rollout. tsc clean,
+67 focused tests, full gate via land.sh. Rollout:
+`docs/rollouts/2026-07-17-model-identity-shared-helper.md`.
+## 2026-07-18 — Money-path/reliability follow-ups from PR #1705 (CLAUDE, branch `claude/money-path-followups-1701`)
+
+Fixed 4 money-path/reliability findings that merged into `main` UNFIXED via PR #1705 (a 5th was
+already resolved by PR #1713 and is skipped). Each fix is minimal + carries a regression test
+verified to fail pre-fix.
+
+1. **Halted broker-stop placement** (`synthetic-stops.ts`): a halted+`protectWhileHalted` tick passed
+   `running=true` into `reconcileBrokerProtectiveStops`, letting a HALTED account PLACE/REPLACE new
+   broker-held protective stops. Now gated so halted protection only FIRES existing exits + runs
+   risk-reducing cancels, never places/replaces. **Codex round-2 (PR #1738): the first cut passed
+   `running=false`, which ALSO killed the section-3 oversized-stop CANCEL (an out-of-band-shrunk
+   position could keep an over-selling stop resting). Re-fixed with a `haltedProtectOnly` flag that
+   blocks only placement + non-shrink replacement; the oversized/shrink cancel still runs.**
+2. **Tradier bracket strip vs limit conversion** (`strategy.ts` `enrichOpeningProposal`): a Tradier
+   `market` entry that the marketable-limit conversion turns into a `limit` (a type Tradier's native
+   bracket supports) had its brackets stripped BEFORE the conversion → limit with no protection. The
+   strip now skips when the conversion will apply (`willBecomeMarketableLimit`). **Codex round-2 (PR
+   #1738): the surviving legs were still priced off the pre-conversion `entryPrice`; a converted buy
+   limit above the reference could carry a take-profit at/below the fill. Now the converted limit is
+   computed once up front and the legs anchor to it (`bracketAnchorPrice`), reused by the conversion
+   block (single source of truth).**
+3. **Active-protection live-exit semantics** (`strategy.ts`): ALREADY FIXED on main by PR #1713
+   (`isLiveExitOrder`/`isLiveOrderState`). Skipped.
+4. **Atomic option-alert reservation** (`notifications.ts` + `db-notifications.ts` + `db.ts`):
+   concurrent dashboard snapshots could both deliver the same option alert. Added an atomic
+   `option_alert_reservations` UNIQUE-constraint claim (new table), released on non-delivery.
+5. **Dashboard option-fetch deadline** (`dashboard.ts`): best-effort `getOptionPositions` await sat
+   outside `withDeadline`; a hung options/MCP endpoint hung the whole snapshot. Now wrapped (8s →
+   `[]`).
+
+Gates (round 2): `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npx vitest run` 413 files /
+**4802 tests pass**; `npm run build` exit 0. Rollout:
+`docs/rollouts/2026-07-18-money-path-followups.md` (round-2 section appended). **PR #1738 open,
+auto-merge (squash) armed.** BLOCKED on merge ONLY by an account-level GitHub Actions
+runner-provisioning outage (every open PR's `verify` fails at job startup, `runner_id:0`, 404 logs —
+needs the owner to raise the Actions spending limit / minutes; not code).
+
+**Round 8 (2026-07-18):** codex-autofix pushed `4425b1a` implementing the round-8 findings (durable
+`pending_replace` halted right-size retry marker; mark `haltedRightsizeSymbols` only after a confirmed
+cancel; purge `option_alert_reservations` on account deletion). It did NOT compile (TS2304 `oversized`
+out of scope in the section-1 `try`) and its F1 marker was never read back
+(`listBrokerProtectiveStops` still filtered `resting`/`pending_cancel` only → section 1 never re-queued
+→ section 4 never retried → position could stay unprotected until unhalted). Repaired: (a) hoisted the
+mark-intent into a `markRightsizeOnCancel` flag (fixes tsc; preserves "mark only after a live cancel");
+(b) added `pending_replace` to the `listBrokerProtectiveStops` status filter; (c) guarded the two
+consumer loops that run BEFORE section 1's marker cleanup (`cancelBrokerProtectiveStop` + the
+`kind===null` teardown) to DROP a `pending_replace` marker rather than cancel its synthetic
+`pending-replace-*` id (which would 404 → stuck `pending_cancel`). Added F1 regression
+`SYN-HALT-F1RETRY`. Gates: tsc clean, lint 0 errors, synthetic-stops 65 pass + account-delete +
+option-alert-dedupe pass; `npm run build` exit 0.
+
+**Round 9 (2026-07-18):** Codex raised 3 P2 findings on the durable `pending_replace` retry marker
+(the mechanism made functional in round 8), all genuine, fixed together: (F#1) section 1 deleted the
+marker before section 4 proved it could place — a subsequent placement SKIP (order-list fetch fail /
+trail can't arm / sub-share) then lost the owed right-size, leaving the position unprotected until
+unhalted; now section 1 KEEPS the marker for halted+live+kind symbols and section 4's `existing` guard
+excludes `pending_replace` so the kept marker still places. (F#2) with markers now surviving, the
+cancel-on-close / plan-teardown loops could cancel a marker's synthetic `pending-replace-*` id (404 ->
+stuck pending_cancel) — added explicit `pending_replace` skip guards to both. (F#3) a placement that
+THREW after the broker accepted lost the submitted ref — now the marker preserves the client ref, and
+the next tick ADOPTS a ref-matched live order (tracked by its real id) instead of orphaning/duplicating,
+reusing the ref so broker idempotency guards the not-yet-visible case. Tests: `SYN-HALT-KEEPMARK`,
+`SYN-HALT-MARKCLOSE`, `SYN-HALT-ADOPT`. Gates: tsc clean, lint 0 errors, 168 tests across the affected
+files pass; full suite + build re-running before push. Rollout note round-8 section
+appended.
+
+**Round 10 (2026-07-18):** Codex raised 4 P2 findings, all consequences of round-9's F#3 (markers can
+now hold a REAL client ref). Fixed by consolidating marker/ref resolution into ONE owner (section 1)
+plus a loosening guard: (F#1) `cancelBrokerProtectiveStop` reconciles a real-ref marker (cancel the
+accepted order by its REAL id / drop-if-terminal / keep-if-invisible) instead of blindly dropping it
+(which would leave an accepted stop live to double-sell after a synthetic exit); (F#2) section 1 now
+reconciles real-ref markers up front — adopt-if-live / book-if-filled / drop-if-dead / keep-if-invisible
+— never losing the handle; (F#4) section 1 books terminal fills (the section-4 adopt filter ignored
+FILLED matches → missing from P&L); the redundant section-4 adopt block was removed, keeping only the
+ref-reuse idempotency guard; (F#3) a `haltedRightsizeFloor` clamps a halted fixed right-size UP to the
+cancelled stop's tighter trigger so a widened stopLossPct can't loosen protection mid-halt (trailing is
+already arm-gated). Branch also merged `origin/main` (4e04bea) carrying #1739 — CI routed to a
+self-hosted Coolify runner, which may lift the provisioning outage. Tests: `PS-REFCANCEL`, `PS-REFKEEP`,
+`PS-FLOOR`, `PS-REFFILL`. Gates: tsc clean, lint 0, 172 affected-file tests pass; full suite + build
+re-running before push.
+
+**Note on the finding tail:** rounds 8→9→10 on the halted right-size machinery have been
+self-compounding (each hardening layer spawns the next round's edge cases; round-10's 4 findings all
+stem from round-9's ref-preservation). The owner's offered "keep-oversized-while-halted" simplification
+(which would remove this entire finding class) remains available and un-taken — surfaced here for the
+owner's awareness; not switched unilaterally per their standing instruction.
+## 2026-07-18 — CI event-SHA checkout pin (CODEX, PR #1742 integrated into PR #1739)
+
+Follow-up to the shallow-checkout recovery. Classifier jobs pin checkout to `github.sha` in addition
+to shallow, tag-free fetches, then explicitly fetch their base/head endpoint trees. Security retains
+full history so Gitleaks can detect secrets added and removed in earlier PR commits or history.
+Rollout: `docs/rollouts/2026-07-18-ci-event-sha-checkout.md`.
+
+## 2026-07-18 — CI shallow-checkout recovery (CODEX, PR #1741 integrated into PR #1739)
+
+Stacked follow-up to the Coolify CI routing PR. Required lightweight jobs were repeatedly
+spending several minutes in full-history `actions/checkout` on the single self-hosted runner,
+causing classify cancellation and fail-closed smoke results. Classification now fetches only the
+base/head endpoint commits and compares their trees. Security deliberately keeps full history for
+Gitleaks coverage. This preserves conservative docs-only behavior while keeping the cheap
+classifiers bounded. Rollout: `docs/rollouts/2026-07-18-ci-shallow-checkout.md`.
+
+## 2026-07-18 — Coolify CI runner routing unblock (CODEX, branch `codex/coolify-ci-runner-routing`)
+
+GitHub-hosted `ubuntu-latest` jobs are failing before runner assignment on current open PRs
+(`runner_id=0`, no steps/log blob). Repo runners show Coolify Hetzner Linux runners, while the old
+`trading-live-mac` runner is offline. Both Socratic runner containers later exited and disappeared
+from GitHub; the Coolify `github-runner` service restart recovered them. This branch routes Actions
+jobs that still used `ubuntu-latest` onto the dedicated `[self-hosted, socratic-ci]` lane so PR work
+queues instead of consuming the deploy runner. It also disables Gitleaks' optional SARIF artifact
+upload because that action fails after a clean scan when the self-hosted workspace lives under
+`/_work` instead of `/root`. YAML parse and actionlint verification passed. Rollout:
+`docs/rollouts/2026-07-18-coolify-ci-runner-routing.md`.
+
+The rerun also exposed an independent workflow parse failure in `merge-shepherd.yml`: its local
+reusable-workflow path incorrectly included `@main`. The dispatcher now uses a fully qualified
+same-repository `@main` reference, so even dispatches against another ref execute the trusted
+default-branch implementation before inheriting write permissions and secrets.
+
+The first full Coolify verify reached TypeScript but Node 24 aborted at its default ~1 GiB heap
+ceiling; a 1536 MiB retry let TypeScript proceed but the Next build exhausted that heap. The
+dedicated `socratic-ci` container now has a 3 GiB hard cap and the heavy verify and Playwright jobs
+set `NODE_OPTIONS=--max-old-space-size=2560`; its low CPU shares/high OOM priority and single-job
+serialization still protect production. Vitest is already serialized by repo config.
+
+The resized runner completed Playwright's Next compilation but exceeded the fixed 240-second
+webServer startup timeout. CI now allows 600 seconds for that intentionally low-CPU runner; local
+Playwright keeps the existing 240-second timeout.
+
+Codex review identified that `pull_request_review` autofix events could otherwise admit fork PRs to
+the persistent runner with write credentials. The autofix job now refuses bot-triggered work unless
+the PR head repository exactly matches this repository; maintainer `workflow_dispatch` remains
+available.
+
+The same admission boundary now applies at job level to both CI/E2E classifier jobs and the
+shared-package pin check. Fork PRs are rejected before runner assignment or checkout, rather than
+after fork-controlled repository content has already entered the persistent workspace; non-PR
+push, schedule, merge-queue, and maintainer-dispatch events remain admitted.
+
+The runner image's `EPHEMERAL=1` registration was paired with Docker `restart: always`, which
+restarted the same container filesystem after each job instead of removing the container as the
+image's ephemeral-runner guidance requires. A canceled checkout therefore left an invalid
+`/_work/.../.git` (`ambiguous HEAD`) for every later registration. Coolify's Socratic CI service now
+wraps the image entrypoint with a bounded cleanup of only `/_work` before each registration. A fresh
+registration completed the shared-package checkout and check successfully.
+
+Failure/cron telemetry now runs on the separate `[self-hosted, socratic-deploy]` runner so a missing
+or unhealthy CI runner can still be reported. That runner received the same bounded `/_work`
+cleanup. The pinned runner image already includes Node.js, GitHub CLI, and `jq`; the post-clean
+shared-package check exercised its direct `node` calls successfully.
+
+Parallel direct pushes changed the runner label to generic Linux and added 2-minute checkout
+timeouts while final checks were running. They were reconciled non-destructively, but those settings
+were not retained: generic Linux can consume the deploy runner concurrently, and successful measured
+checkouts took 3m31s-3m57s. All CI work remains on `socratic-ci`, with no artificial checkout timeout;
+Security retains full history. A coordination freeze is posted until this parent PR lands.
+
+Coolify's production application had drifted from branch `main` to
+`agent/ag-recovery-v48-migration`, preventing normal main-branch webhooks from deploying. The
+application was restored to `git_branch=main` and auto-deploy was re-enabled through the API without
+manually triggering a deploy. Production remained healthy at release `70a2a39d` while PR gates run.
+
 ## 2026-07-18 — Editable account name + legacy-app retirement (MONET, branch `monet/vigilant-fermi-220244`)
 
 Owner-directed two-parter. (1) Connected accounts can now be RENAMED inline in Console → Broker
@@ -13,6 +334,17 @@ renderer (primitives/theme/cn power the in-use marketing/legal pages + error bou
 2026-07-16 "two renderers" decision) and the `/strategy` marketing SEO redirect — those are in use,
 not legacy. Add-account flow unchanged (still asks for Alpaca/Tradier account number; auto-fetch is a
 flagged follow-up). Rollout: `docs/rollouts/2026-07-18-account-rename-and-legacy-retirement.md`.
+## 2026-07-18 — OpenRouter post-merge Codex follow-ups (CLAUDE, branch `claude/openrouter-codex-followups`)
+
+#1703 (universal OpenRouter routing) MERGED to `main` with Codex threads still open (codex-autofix
+hit its 10-round/54-commit cap). This branch fixes the 3 live-in-production correctness findings:
+(1) P1 — Claude routed as `anthropic/*` through OpenRouter now uses OpenRouter's unified `reasoning`
+param instead of `reasoning_effort`+`temperature` (medium-effort Claude calls were rejected/no-thinking);
+(2) P2 — normalize an already-namespaced `xai/` Grok slug to `x-ai/` at resolve time; (3) P2 — keep
+billing/credits cooldowns on the OpenRouter credential lane (write + read) so an exhausted key doesn't
+retry other vendors on the same dead credential. Regression tests added; tsc clean, affected suites 39/39.
+Deferred to a focused follow-up: the 4th finding (rotation eligibility should gate on the OpenRouter
+credential). Rollout: `docs/rollouts/2026-07-18-openrouter-codex-followups.md`.
 
 ## 2026-07-17 — OpenRouter Model Stats Canonicalization: prefix-stripping in aggregateModelStats (Antigravity, branch `antigravity/openrouter-universal-routing`)
 
@@ -30,6 +362,21 @@ The sole remaining unresolved thread:
 - **P2 — Wire FMP toggles into provider execution (QUESTION ASKED):** The four FMP toggle flags (`fmpRealTimeDataEnabled`, `fmpMacroDataEnabled`, `fmpEventsDataEnabled`, `fmpFundamentalsDataEnabled`) are persisted in settings and defaults but not yet consumed by the FMP provider runtime code. Asked maintainer whether to wire them in this PR or leave as settings-first follow-up, and what behavior is expected when a toggle is off. Thread stays open pending answer.
 
 Auto-merge already enabled. No code changes this round.
+## 2026-07-18 — earningscalls Sentry alert suppression, SQLite busy_timeout, + priceForModel OpenRouter prefix fix (Antigravity/AG, PR #1728)
+
+Resolved Sentry connection-failed alerts from the dormant `earningscalls` integration (RapidAPI subscription inactive in prod) and made database writes resilient to transient disk-load thrashing. Also fixed a silent cost-accounting bug where 3-part OpenRouter model IDs were priced at the fallback default instead of their actual rates.
+
+Changes included in PR #1728:
+- `src/lib/earningscalls-transcripts.ts`: `keySource: "env"` + add 401/403 to `suppressHealthStatuses`.
+- `src/lib/db.ts`: SQLite `busy_timeout` 5s → 30s.
+- `src/lib/llm-provider.ts` + `test/model-rotation.test.ts`: `llmModelFamily` strips `openrouter/` prefix; tests use explicit model assertions instead of brittle regex loops.
+- `test/market-custom-symbol.test.ts`: database isolation fix.
+- `src/lib/llm-usage.ts` `priceForModel()`: fixed single-slash strip that failed for `openrouter/vendor/model` 3-part IDs — was producing `vendor/model` (no price-table hit, $15/M fallback); now mirrors `stripRoutingPrefix()` in `model-merge.ts`.
+- `test/llm-cache-usage.test.ts`: new regression test proving all three model name forms price identically.
+
+Full land.sh gate: tsc clean, lint clean, 4,794/4,794 tests green (412 files), build clean. PR #1728 pushed and ready to merge.
+Rollout: `docs/rollouts/2026-07-18-earningscalls-sentry-and-sqlite-fixes.md`.
+
 ## 2026-07-17 — PR #1669 Merged & Deployed: SEC/RAG Advanced RAG Backfill & SiliconFlow Integration (Antigravity/AG)
 
 Successfully resolved all 11 remaining Codex review thread issues on PR #1669, including:

@@ -1,5 +1,6 @@
 import { getInternalSetting, getServiceHealthSummaries, databasePath, resolveApiKeyWithSource, alertStorageWarning } from "@/lib/db";
 import { HEALTH_REASON_CONSECUTIVE_FAILURES } from "@/lib/db-health";
+import { activeEmbeddingProvider } from "@/lib/vector-db";
 import { getProviderTierStatus } from "@/lib/provider-tier";
 import {
   assessLitestreamRuntimeHealth,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/runtime-health";
 import { getLease } from "@/lib/scheduler-lease";
 import { getTradingLivenessSummary } from "@/lib/trading-liveness";
+import { getOpenRouterCreditStatus } from "@/lib/openrouter-credits";
 import { statSync, statfsSync } from "fs";
 import { dirname } from "path";
 
@@ -113,16 +115,35 @@ export async function GET() {
     // never let provider-tier reporting break the health probe
   }
 
-  // Surface Pinecone and Voyage configuration status
+  // Surface Pinecone and embed-provider configuration status. Provider-aware
+  // (bge-m3-metering-gate, 2026-07-18): "RAG configured" means Pinecone plus the ACTIVE embed
+  // provider's key — a missing Voyage key is irrelevant while OpenRouter/SiliconFlow serves
+  // embeddings (`activeEmbeddingProvider`, honoring a RAG_EMBED_PROVIDER pin). The historical
+  // voyageConfigured field is kept for dashboards that read it, but it no longer drives
+  // ragConfigured unless Voyage is genuinely the active provider.
+  let ragEmbedProvider: "voyage" | "openrouter" | "siliconflow" | null = null;
   try {
     const pineconeKey = resolveApiKeyWithSource("pinecone");
     const voyageKey = resolveApiKeyWithSource("voyage");
     checks.pineconeConfigured = pineconeKey.source !== "none";
     checks.voyageConfigured = voyageKey.source !== "none";
 
-    // If global keys are missing for critical dependencies, mark degraded
-    if (pineconeKey.source === "none" || voyageKey.source === "none") {
+    try {
+      ragEmbedProvider = activeEmbeddingProvider();
+      checks.ragEmbedProvider = ragEmbedProvider;
+    } catch (error) {
+      // RAG_EMBED_PROVIDER pinned to a keyless/invalid provider throws by design at embed time —
+      // surface it here as a config problem without breaking the probe.
       checks.ragConfigured = false;
+      checks.ragEmbedProviderError = error instanceof Error ? error.message : "invalid RAG embed provider";
+    }
+    if (ragEmbedProvider) {
+      const activeKeyConfigured = ragEmbedProvider === "voyage"
+        ? voyageKey.source !== "none"
+        : resolveApiKeyWithSource(ragEmbedProvider, "local").source !== "none";
+      if (pineconeKey.source === "none" || !activeKeyConfigured) {
+        checks.ragConfigured = false;
+      }
     }
   } catch {
     // do not break health check on key resolution
@@ -137,6 +158,17 @@ export async function GET() {
   try {
     const summaries = getServiceHealthSummaries();
     const dependencies: Record<string, { ok: boolean; degraded?: boolean }> = {};
+    // See the provider-aware voyage criticality comment below. Falls back to treating Voyage as
+    // critical when the provider can't be resolved EXCEPT for a pinned-but-keyless
+    // RAG_EMBED_PROVIDER (which throws by design) — that misconfiguration is already surfaced via
+    // ragEmbedProviderError above, and 503ing the container on it would just restart-loop.
+    const criticalServices = new Set(["pinecone", "alpaca-broker"]);
+    if (ragEmbedProvider === "voyage" || ragEmbedProvider === null) {
+      if (!checks.ragEmbedProviderError) {
+        criticalServices.add("voyage");
+        criticalServices.add("voyage-rerank");
+      }
+    }
     // Collapse (service, keySource) lanes to one entry per service. Prefer a CONFIGURED lane
     // (env/user) over a stale keySource:"none" lane so a service that later got a working key isn't
     // pinned failed forever by an old missing-key "none" lane (no future success is logged to "none").
@@ -172,7 +204,18 @@ export async function GET() {
       // Hard-liveness deps: only app-unsafe/unusable dependencies 503 the public probe. Paid
       // market-data lanes (fmp/massive) degrade to Yahoo/others (the provider-tier section already
       // reports data-provider degradation), so they mark degraded but never fail liveness.
-      const isCritical = ["pinecone", "voyage", "voyage-rerank", "alpaca-broker"].includes(summary.service);
+      //
+      // Provider-aware voyage criticality (bge-m3-metering-gate, 2026-07-18): the voyage /
+      // voyage-rerank lanes gate liveness ONLY while Voyage is the ACTIVE embed/rerank provider.
+      // With prod flipped to bge-m3 via OpenRouter, a dead/stale Voyage lane was 503ing the whole
+      // app (and a 503 here can restart the container) for a provider the app no longer calls.
+      // The lanes are still REPORTED in `dependencies` either way — this only stops them from
+      // failing liveness while inactive. Caveat: the RAG health lanes are still LOGGED under the
+      // historical "voyage"/"voyage-rerank" service names regardless of which provider actually
+      // served the call (see withRagApiHealth call sites in vector-db.ts), so while a non-Voyage
+      // provider is active, embed/rerank failures degrade this route rather than 503 it — renaming
+      // those lanes per-provider is a deliberate follow-up, not done here.
+      const isCritical = criticalServices.has(summary.service);
       if (isCritical && hardStopped) {
         ok = false;
       }
@@ -180,6 +223,33 @@ export async function GET() {
     checks.dependencies = dependencies;
   } catch {
     // never let connection health summaries break the health probe
+  }
+
+  // OpenRouter prepaid-credit balance. Universal routing (#1703) makes OpenRouter the single point
+  // of failure for every LLM call AND all RAG embedding, so a drained balance = total decision-loop
+  // outage (see docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md). We surface the balance on
+  // this PUBLIC probe so an EXTERNAL monitor (Uptime Robot) alerts when the money runs low — a
+  // low balance sets dependencies.openrouter.ok=false (DEGRADE only; never 503, since a restart
+  // can't refill credits and would just restart-loop). Cached + best-effort; a failed READ never
+  // flips ok=false (see openrouter-credits.ts). Omitted entirely when no OpenRouter key is set.
+  try {
+    const credits = await getOpenRouterCreditStatus();
+    if (credits) {
+      const deps = (checks.dependencies ?? {}) as Record<string, { ok: boolean; degraded?: boolean }>;
+      deps.openrouter = { ok: credits.ok, degraded: credits.ok ? undefined : true };
+      checks.dependencies = deps;
+      checks.openrouterCredits = {
+        ok: credits.ok,
+        remainingUsd: credits.remainingUsd,
+        totalUsd: credits.totalUsd,
+        usedUsd: credits.usedUsd,
+        thresholdUsd: credits.thresholdUsd,
+        checkedAt: credits.checkedAt,
+        ...(credits.error ? { error: credits.error } : {})
+      };
+    }
+  } catch {
+    // never let the credit check break the health probe
   }
 
   // Disk and database headroom check (purely advisory, never fails the health probe)
