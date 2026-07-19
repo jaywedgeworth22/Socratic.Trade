@@ -43,6 +43,23 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] Three new RapidAPI-backed enrichment providers: Mboum Finance, YH
+  Finance 15, Alpha Vantage RapidAPI transport (worktree
+  `model-availability-session-handoff-362fd3`, branch
+  `claude/model-availability-session-handoff-362fd3`, claimed 2026-07-19) — IN PROGRESS
+  (implementation + tests complete, FULL VERIFY GATE GREEN — tsc/lint/4927 tests/build — not yet landed).** Owner-directed
+  expansion of market enrichment redundancy against one shared RapidAPI subscription. New
+  `src/lib/rapidapi-quota.ts` (persisted daily budget, mirrors alpha-vantage-key-pool.ts's
+  tryReserve/refund pattern) enforces BOTH a per-provider cap (Mboum 16/day, YH Finance 15 3/day,
+  AV-RapidAPI 500/day — env-overridable via `PROVIDER_QUOTA_*_PER_DAY`) AND a combined 900/day
+  safety ceiling (`PROVIDER_QUOTA_RAPIDAPI_COMBINED_PER_DAY`) across all three, since Mboum/YHF's
+  real limits are MONTHLY (500/mo, 100/mo) and a naive per-scan dispatch could exhaust a month's
+  quota in one run. New `SteadyApiEnrichmentProvider` (shared by Mboum + YH Finance 15) +
+  `AlphaVantageRapidApiEnrichmentProvider` in `src/lib/data-providers.ts`, registered in
+  `getEnrichmentProvider` AFTER the free Yahoo scrape (deep failover tier — first-wins per field
+  means they only fill gaps the free scrape left empty), dormant unless `RAPIDAPI_KEY` is set. 33
+  new provider tests + 13 quota tests; full suite 420 files/4927 tests pass, build exit 0. Rollout:
+  `docs/rollouts/2026-07-19-rapidapi-yahoo-av-providers.md`.
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
