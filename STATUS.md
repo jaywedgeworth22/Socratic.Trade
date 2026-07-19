@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-19 — MONET session close-out: PR sweep landed, #1771/#1773 armed, re-embed still pending (ledger appended by CLAUDE handoff execution)
+
+MONET's 2026-07-19 cloud session merged the open-PR backlog (#1745/#1736/#1735/#1740/#1754;
+prod auto-deployed and healthy throughout) and left two armed PRs: **#1771** (SiliconFlow
+bge-m3 embed price 10x undercount fix) and **#1773** (session handoff note). The handoff's
+top operational flag stands: the **bge-m3 corpus re-embed has NOT run to completion**
+(re-embed docTypes are `sec-filings`, `earningscalls-transcripts`, `insider-form4`,
+`experience-memory`); do NOT `purge-legacy` until the bge space is verified full. Details:
+`docs/rollouts/2026-07-19-monet-session-handoff.md`.
+
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
 Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)

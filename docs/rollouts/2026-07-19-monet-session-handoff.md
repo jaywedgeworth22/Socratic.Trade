@@ -101,7 +101,9 @@ QUALITY-advantage question below remains partly open).
   `POST /api/admin/reembed`; CLI `scripts/reindex-all.ts`; `app/api/admin/reindex-10k`) but is
   **operator-triggered, not automatic on flip** (`docs/rollouts/2026-07-18-corpus-reembed.md` opens
   "URGENT — run-me-now"). **ACTION for owner/next agent: confirm the bge-m3 re-embed actually ran to
-  completion** (4 docTypes: sec-filings, earningscalls, insider-form4, experience-memory; 8-K summaries
+  completion** (4 docTypes: sec-filings, earningscalls-transcripts, insider-form4, experience-memory —
+  exact ids from `CORPUS_REEMBED_DOC_TYPES`; `resolveDocTypes()` silently drops unknown values, so a
+  bare `earningscalls` would skip earnings-call re-embedding without an error; 8-K summaries
   / FMP transcripts / congress trades / fundamentals repopulate only on normal ingest cadence). Do NOT
   run `action:"purge-legacy"` (deletes the voyage vectors) until the bge space is independently verified
   full — it's irreversible and would destroy the only fallback.
