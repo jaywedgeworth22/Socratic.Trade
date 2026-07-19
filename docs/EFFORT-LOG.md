@@ -44,6 +44,14 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
+- **[Socratic.Trade][MONET] OpenRouter credit signal on /api/health (branch `monet/openrouter-credit-health`,
+  2026-07-18, owner-directed) — LANDING.** Universal routing (#1703) makes OpenRouter the single point of
+  failure for all LLM+RAG; `/api/health` now exposes prepaid-credit balance (`dependencies.openrouter.ok`
+  + `checks.openrouterCredits`) so an EXTERNAL monitor (Uptime Robot) alerts on low balance — owner-directed:
+  NO in-app alert, NO provider fallback. New `src/lib/openrouter-credits.ts` (free /credits query, cached,
+  fail-open, threshold `OPENROUTER_LOW_CREDIT_USD` default $10; DEGRADE-not-503). UR keyword monitor on
+  `"openrouterCredits":{"ok":false` → mail@jays.services. tsc clean, 5/5 tests, full gate via land.sh.
+  NEXT: create the UR monitor (needs UR API key via secret handoff, or owner does it in the dashboard).
 - **[Socratic.Trade][CODEX] PR #1760 review/comment/conflict closeout (branch `codex/pr1760-review-fixes`, worktree `/Users/jay/.codex/worktrees/socratic-pr-queue-closeout-20260718`, 2026-07-18) — IN PROGRESS / CORRECTIVE PR #1761 READY.** PR #1760 raced to auto-merge as `b2f22ccf` while its review-fix gate ran. All four threads are answered/resolved; #1761 restores bearer compatibility, aligns policy-namespace attribution tests, removes unsafe one-off artifacts, and is merged with that exact main. Local Node 24 gates pass lint, TypeScript, 412 files / 4,837 tests, and build. Await self-hosted checks, corrective merge, and exact production verification.
 
 - **[Socratic.Trade][CODEX] PR #1735 proposed-model attribution display contract (branch `codex/pr1735-proposal-attribution`, worktree `/Users/jay/.codex/worktrees/socratic-pr1735-proposal-attribution`, 2026-07-18) — LOCAL VERIFIED / UNPUSHED.** `TradeProposal.proposedByModel` now preserves the exact configured primary/fallback identifier while telemetry remains canonical for usage statistics. Regression coverage passes for `openrouter/openai/...` primary and `openrouter/google/...` fallback identity; TypeScript and scoped lint pass. Commit is intentionally local-only pending owner direction.
