@@ -237,6 +237,29 @@ function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): 
   return tables;
 }
 
+/**
+ * True only for styles that genuinely hide an element.
+ *
+ * `opacity` and `font-size` MUST be compared as parsed numbers, not matched as a `0` prefix: a
+ * regex like `/opacity\s*:\s*0/` also matches the very common `opacity:0.5` and
+ * `font-size:0.875rem`. Because `collectBlocks` returns immediately on a hidden node, a false
+ * positive silently drops that element's ENTIRE subtree — and filings routinely wrap real prose and
+ * tables in inline-styled elements, so whole sections could vanish from parsed evidence with no
+ * error anywhere. Only an exact zero (`0`, `0.0`, `.0`, `0px`, …) means hidden.
+ */
+export function isHiddenStyle(style: string): boolean {
+  if (/display\s*:\s*none/i.test(style)) return true;
+  if (/visibility\s*:\s*hidden/i.test(style)) return true;
+  // Capture the numeric value (with optional unit) and test it as a number.
+  const zeroValued = (property: string): boolean => {
+    const match = new RegExp(`${property}\\s*:\\s*(-?[0-9]*\\.?[0-9]+)\\s*[a-z%]*`, "i").exec(style);
+    if (!match) return false;
+    const value = Number.parseFloat(match[1]!);
+    return Number.isFinite(value) && value === 0;
+  };
+  return zeroValued("opacity") || zeroValued("font-size");
+}
+
 function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: string) {
   if (node.type !== "tag") return;
 
@@ -248,8 +271,7 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
   // Remove display: none or visibility: hidden elements
   const style = $(node).attr("style");
   if (style) {
-    const isHidden = /display\s*:\s*none/i.test(style) || /visibility\s*:\s*hidden/i.test(style) || /opacity\s*:\s*0/i.test(style) || /font-size\s*:\s*0/i.test(style);
-    if (isHidden) return;
+    if (isHiddenStyle(style)) return;
   }
 
   // If table, convert and do not recurse into rows/cells
@@ -289,7 +311,12 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
           const nestedBlocks: ParsedBlock[] = [];
           collectBlocks($, nestedTable, nestedBlocks, formType);
           const md = nestedBlocks.map((b: ParsedBlock) => b.text).join("\n\n");
-          $(nestedTable).replaceWith(`\n\n${md}\n\n`);
+          // The nested table's Markdown carries its own `|` delimiters, and this text is about to
+          // become ONE cell of the outer table — whose renderer wraps it in `|` again without
+          // escaping. Unescaped, a single outer cell silently splits into extra columns and the
+          // row's alignment (and therefore every value's column meaning) is destroyed. GFM escapes
+          // a literal pipe inside a cell as `\|`.
+          $(nestedTable).replaceWith(`\n\n${md.replace(/\|/g, "\\|")}\n\n`);
         });
         // Replace <br> with space so concatenated text nodes stay separated
         $(cell).find("br").replaceWith(" ");
