@@ -270,6 +270,23 @@ export interface MarketEnrichmentProvider {
    *  "paid" providers receive a coverage hint so they can skip redundant sub-calls
    *  for symbols a free upstream (App A) already covered. */
   costTier?: "free" | "paid";
+  /** Opt-in: this provider's quota is SCARCE enough that dispatching it against symbols a
+   *  cheaper source already covered is self-defeating (e.g. YH Finance 15's real cap is 100
+   *  requests per MONTH). Setting this — together with a non-empty `suppliesFields` — moves the
+   *  provider out of the cascade's single concurrent wave into a SECOND wave that runs only after
+   *  the free/cheap providers have resolved, and only over the symbols still missing at least one
+   *  of the fields this provider can actually supply. See CascadingEnrichmentProvider.enrich and
+   *  `scarceEnrichmentGateEnabled()`. Providers without this flag keep today's behavior exactly
+   *  (dispatched concurrently over the full batch). */
+  quotaScarce?: boolean;
+  /** The `SymbolEnrichment` keys this provider is CAPABLE of supplying. Load-bearing only for a
+   *  `quotaScarce` provider: the wave-two gate compares this against what wave one actually filled
+   *  per symbol, so a scarce provider is never spent on a symbol where it could not add anything.
+   *  Declaring it wider than reality only costs calls; declaring it NARROWER than reality can lose
+   *  data (a field it uniquely supplies would never trigger a call) — so keep it in sync with the
+   *  provider's parser. A `quotaScarce` provider with this unset/empty is treated as ungated (it
+   *  stays in wave one) rather than silently never running. */
+  suppliesFields?: readonly (keyof SymbolEnrichment)[];
   /** Credential lane this provider instance actually runs on ("user" | "env").
    *  When set, the circuit breaker only trips this provider when the health lane
    *  matching BOTH its service AND this key source is hard-stopped — so a dead
@@ -290,6 +307,22 @@ function flagEnabled(value: string | undefined): boolean {
 function enrichmentShortCircuitEnabled(): boolean {
   // Needs the fundamentals tier (it supplies the coverage hint), not just price reads.
   return flagEnabled(process.env.ENRICHMENT_SHORT_CIRCUIT_ENABLED) && congressFundamentalsEnabled();
+}
+
+/**
+ * Per-symbol coverage gate for `quotaScarce` providers — DEFAULT ON, and scoped strictly to
+ * providers that opt in via `quotaScarce` + `suppliesFields`. Today that is only the RapidAPI
+ * failover tier (Mboum / YH Finance 15 / Alpha Vantage-RapidAPI), which is new and currently
+ * spends a MONTHLY-backed quota on whichever symbols happen to be cache-misses first with no
+ * regard for whether the free keyless Yahoo scrape already supplied that exact data. Every
+ * pre-existing provider is unaffected (they never set the flag), so defaulting this ON has no
+ * regression surface for them. Set `ENRICHMENT_SCARCE_TIER_GATE_ENABLED=0` to restore the old
+ * all-providers-in-one-concurrent-wave behavior for the scarce tier too.
+ */
+export function scarceEnrichmentGateEnabled(): boolean {
+  const raw = process.env.ENRICHMENT_SCARCE_TIER_GATE_ENABLED;
+  if (raw === undefined || raw.trim() === "") return true;
+  return flagEnabled(raw);
 }
 
 // ── Analyst scoring helpers ───────────────────────────────────────────────────
@@ -1137,7 +1170,29 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
           }
         }));
 
-    let results: ProviderRun[];
+    // ── Wave split ────────────────────────────────────────────────────────────
+    // WAVE ONE = every provider that has NOT declared itself quota-scarce. It is dispatched
+    // exactly as before (one concurrent Promise.all over the full symbol batch, or the App A
+    // short-circuit variant below) — no latency regression for the many providers where
+    // concurrency is correct and free.
+    // WAVE TWO = providers that declared `quotaScarce` + a non-empty `suppliesFields`. They run
+    // only AFTER wave one settles, and only over the symbols where wave one left at least one of
+    // their declared fields empty. A scarce provider with nothing to add is not called at all, so
+    // it reserves no quota (its reservation happens inside its own enrich()).
+    const gateOn = scarceEnrichmentGateEnabled();
+    const isGatedScarce = (p: MarketEnrichmentProvider): boolean =>
+      gateOn && p.quotaScarce === true && (p.suppliesFields?.length ?? 0) > 0;
+    const waveOneIndexes: number[] = [];
+    const scarceIndexes: number[] = [];
+    this.providers.forEach((p, i) => {
+      (isGatedScarce(p) ? scarceIndexes : waveOneIndexes).push(i);
+    });
+    const waveOneProviders = waveOneIndexes.map((i) => this.providers[i]);
+    // Positional, so the first-wins merge precedence below is registration order regardless of
+    // which wave a provider ran in (and regardless of duplicate provider names).
+    const results: ProviderRun[] = this.providers.map((p) => ({ name: p.name, data: {} }));
+
+    let waveOneRuns: ProviderRun[];
     if (enrichmentShortCircuitEnabled()) {
       // Short-circuit: ONLY the Congress.Trade tier feeds the coverage hint, so await
       // just it first, then run EVERY other provider (free AND paid) in parallel. Paid
@@ -1147,7 +1202,7 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       // quotes. No whole provider is skipped, so no field is lost; only duplicate upstream
       // calls are eliminated. Crucially, paid providers are NOT serialized behind
       // unrelated free tiers (Yahoo/Alpaca/SEC) — only behind the single App A read.
-      const congressProvider = this.providers.find((p) => p.name === "congress.trade");
+      const congressProvider = waveOneProviders.find((p) => p.name === "congress.trade");
       const appAResult = congressProvider
         ? await run(congressProvider, normalized)
         : { name: "congress.trade", data: {} as Record<string, SymbolEnrichment> } satisfies ProviderRun;
@@ -1166,17 +1221,60 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         }
       }
       const context: EnrichmentContext = { coveredFields, analystSource };
-      const otherProviders = this.providers.filter((p) => p.name !== "congress.trade");
+      const otherProviders = waveOneProviders.filter((p) => p.name !== "congress.trade");
       const otherResults = await Promise.all(
         otherProviders.map((p) => run(p, normalized, p.costTier === "paid" ? context : undefined))
       );
-      // Reassemble in registration order so the merge precedence is identical.
+      // Reassemble in wave-one registration order so the merge precedence is identical.
       const byName = new Map<string, ProviderRun>();
       for (const r of [appAResult, ...otherResults]) byName.set(r.name, r);
-      results = this.providers.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
+      waveOneRuns = waveOneProviders.map((p) => byName.get(p.name) ?? { name: p.name, data: {} });
     } else {
-      // Default: run every provider over every symbol in parallel.
-      results = await Promise.all(this.providers.map((p) => run(p, normalized)));
+      // Default: run every wave-one provider over every symbol in parallel.
+      waveOneRuns = await Promise.all(waveOneProviders.map((p) => run(p, normalized)));
+    }
+    waveOneIndexes.forEach((providerIndex, k) => {
+      results[providerIndex] = waveOneRuns[k];
+    });
+
+    if (scarceIndexes.length > 0) {
+      // What wave one ACTUALLY filled, per symbol. A wave-one provider that threw or timed out
+      // contributed `{}` (see `run`'s catch), so its fields correctly read as NOT covered and the
+      // scarce tier can still step in — a failure upstream must never suppress the failover tier.
+      const filledBySymbol = new Map<string, Set<string>>();
+      for (const symbol of normalized) {
+        const filled = new Set<string>();
+        for (const providerIndex of waveOneIndexes) {
+          const record = results[providerIndex].data[symbol];
+          if (!record) continue;
+          for (const [key, value] of Object.entries(record)) {
+            // `undefined` and an EMPTY array (e.g. `headlines: []`) are not coverage — a provider
+            // that returned the key with no usable value left the gap open.
+            if (value === undefined) continue;
+            if (Array.isArray(value) && value.length === 0) continue;
+            filled.add(key);
+          }
+        }
+        filledBySymbol.set(symbol, filled);
+      }
+      const coveredFields: Record<string, ReadonlySet<string>> = {};
+      for (const [symbol, filled] of filledBySymbol) coveredFields[symbol] = filled;
+      const scarceContext: EnrichmentContext = { coveredFields };
+      const scarceRuns = await Promise.all(
+        scarceIndexes.map(async (providerIndex) => {
+          const provider = this.providers[providerIndex];
+          const fields = provider.suppliesFields ?? [];
+          const gaps = normalized.filter((symbol) => {
+            const filled = filledBySymbol.get(symbol);
+            return fields.some((field) => !filled?.has(field as string));
+          });
+          // Nothing this provider supplies is missing anywhere → do not call it at all. No
+          // request, and therefore no quota reservation (reservations live inside enrich()).
+          if (gaps.length === 0) return { providerIndex, run: { name: provider.name, data: {} } as ProviderRun };
+          return { providerIndex, run: await run(provider, gaps, scarceContext) };
+        })
+      );
+      for (const { providerIndex, run: providerRun } of scarceRuns) results[providerIndex] = providerRun;
     }
     const merged: Record<string, SymbolEnrichment> = {};
 
@@ -3541,9 +3639,25 @@ export function parseSteadyApiAssetProfile(payload: unknown): SymbolEnrichment {
  * symbol that doesn't clear the budget gate is simply left unenriched by this provider this run and
  * falls through to whatever else in the cascade can fill it (the free Yahoo scrape, in practice).
  */
-class SteadyApiEnrichmentProvider implements MarketEnrichmentProvider {
+export class SteadyApiEnrichmentProvider implements MarketEnrichmentProvider {
   readonly configured = true;
   readonly costTier = "paid" as const;
+  // Quota-scarce: YH Finance 15's Basic tier is 100 requests per MONTH (Mboum ~500/month), so this
+  // lane must only ever be spent on symbols the free keyless Yahoo scrape (and every earlier tier)
+  // left with a real gap. See the cascade's wave-two gate in CascadingEnrichmentProvider.enrich.
+  readonly quotaScarce = true;
+  // Exactly the keys parseSteadyApiQuote + parseSteadyApiAssetProfile can produce — keep in sync
+  // with those two parsers (a field omitted here would never trigger a call and would be lost).
+  readonly suppliesFields = [
+    "price",
+    "intradayChangePct",
+    "volume",
+    "companyName",
+    "fiftyTwoWeekHigh",
+    "fiftyTwoWeekLow",
+    "sector",
+    "industry"
+  ] as const;
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
   // Mboum's modules-endpoint param name is UNCONFIRMED (only Mboum's OWN quote endpoint —
@@ -3768,6 +3882,23 @@ export class AlphaVantageRapidApiEnrichmentProvider implements MarketEnrichmentP
   readonly name = "alpha-vantage-rapidapi";
   readonly costTier = "paid" as const;
   readonly configured = true;
+  // Quota-scarce (500/day shared against the 900/day combined ceiling) — gated into the cascade's
+  // second wave so it is never spent on a symbol every field it supplies is already filled for.
+  readonly quotaScarce = true;
+  // Exactly the keys parseAlphaVantageOverview can produce — keep in sync with that parser.
+  readonly suppliesFields = [
+    "peRatio",
+    "dividendYield",
+    "eps",
+    "sector",
+    "industry",
+    "pbRatio",
+    "beta",
+    "fiftyTwoWeekHigh",
+    "fiftyTwoWeekLow",
+    "epsGrowth",
+    "analystBySource"
+  ] as const;
   private readonly host = "alpha-vantage.p.rapidapi.com";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;

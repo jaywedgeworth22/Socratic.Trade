@@ -60,6 +60,22 @@ As of 2026-07-08 (assignment-rule update).
   means they only fill gaps the free scrape left empty), dormant unless `RAPIDAPI_KEY` is set. 33
   new provider tests + 13 quota tests; full suite 420 files/4927 tests pass, build exit 0. Rollout:
   `docs/rollouts/2026-07-19-rapidapi-yahoo-av-providers.md`.
+  *Correction (2026-07-19, in place per board rules): this work now lives on branch
+  `claude/rapidapi-yahoo-av-providers` (PR #1796), not
+  `claude/model-availability-session-handoff-362fd3` as the row originally read.*
+  **Update 2026-07-19 — per-symbol coverage-narrowing gate added (the deferred P0 is CLOSED).**
+  `CascadingEnrichmentProvider.enrich` now runs a TWO-WAVE dispatch: wave one is every provider that
+  has not opted in (unchanged — same single concurrent `Promise.all` over the full batch, so zero
+  latency/behavior regression for pre-existing providers), then wave two runs only the providers
+  that declare `quotaScarce` + `suppliesFields`, and only over the symbols where wave one left one
+  of their declared fields empty. A scarce provider with nothing to add is not called at all and so
+  reserves no quota. Declared on all three RapidAPI providers; results reassembled positionally so
+  first-wins merge precedence / attribution are identical; a wave-one provider that throws counts as
+  "did not cover" so it can never suppress the failover tier. Flag
+  `ENRICHMENT_SCARCE_TIER_GATE_ENABLED`, default ON, scoped only to opted-in providers. New
+  `test/enrichment-scarce-tier-gate.test.ts` (13 tests, incl. a real-provider zero-quota check).
+  tsc clean, lint 0 errors, 405 targeted tests green across every cascade-touching file; full
+  `npm test`/`npm run build` deferred to the landing gate.
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per

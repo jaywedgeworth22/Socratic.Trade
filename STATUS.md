@@ -65,6 +65,28 @@ flagged as a follow-up task instead. Re-verified: `npx tsc --noEmit` clean, targ
 210/210 pass, `npm run lint` 0 errors/0 new warnings. See the rollout note's "Post-implementation
 verification pass" section for full detail.
 
+**Per-symbol coverage-narrowing gate (same day, follow-up pass — the deferred P0 is now CLOSED):**
+`CascadingEnrichmentProvider.enrich` now dispatches in TWO waves. Wave one is every provider that
+has not opted in — dispatched byte-for-byte as before (one concurrent `Promise.all` over the full
+batch, or the App A short-circuit variant), so no pre-existing provider changes behavior or
+latency. Wave two runs only after wave one settles and only over the symbols where wave one left a
+gap in the fields that provider declares it can supply; a scarce provider with nothing to add is
+not called at all and therefore reserves no quota. Providers opt in via two new
+`MarketEnrichmentProvider` fields following the existing `costTier`/`coveredFields` idiom:
+`quotaScarce: boolean` and `suppliesFields: readonly (keyof SymbolEnrichment)[]` (unset/empty →
+fails OPEN into wave one rather than silently never running). Declared on all three RapidAPI
+providers. Results are reassembled POSITIONALLY into registration order, so first-wins merge,
+field arbitration, analyst blending, and `MarketScan.source` attribution are unchanged. A wave-one
+provider that throws contributes `{}` → its fields read as uncovered → the scarce tier still runs
+(pinned by tests). Gated by `ENRICHMENT_SCARCE_TIER_GATE_ENABLED`, **default ON** and scoped only
+to opted-in providers (the RapidAPI tier is new and currently wasteful, so there is no regression
+surface). New `test/enrichment-scarce-tier-gate.test.ts` — 13 tests including a real
+`SteadyApiEnrichmentProvider` + persisted-budget check that a skipped call costs zero quota.
+Verified (with `/opt/homebrew/opt/node@24/bin` on `PATH`): `npx tsc --noEmit` clean; 13/13 new
+tests; 292/292 across the 8 provider/quota test files; 100/100 across the 5 remaining
+cascade-touching files; `npm run lint` 0 errors / 0 new warnings. Full `npm test` + `npm run build`
+deferred to the landing gate. Still NOT LANDED — reported back for review.
+
 ## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
 
 All four owner-linked handoff docs executed/dispositioned: missing model-availability rollout

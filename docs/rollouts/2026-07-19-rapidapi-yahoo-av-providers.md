@@ -249,13 +249,103 @@ test/rapidapi-providers.test.ts test/provider-rate-limit.test.ts test/data-provi
 210/210 pass (no test asserted the old `retries: 1` behavior or the bare-split edge case, so
 nothing needed updating); `npm run lint` — 0 errors, 0 new warnings.
 
+## Per-symbol coverage-narrowing gate for scarce providers (2026-07-19, follow-up pass — DONE)
+
+This closes the P0 architectural gap the verification pass above flagged and deferred: the cascade
+dispatched EVERY registered provider concurrently against the FULL symbol batch, so the RapidAPI
+tier spent a MONTHLY-backed quota (YH Finance 15: 100 requests/month) on whichever symbols happened
+to be cache-misses first, with zero regard for whether the free keyless Yahoo scrape running
+alongside it already supplied that exact data.
+
+**What changed.** `CascadingEnrichmentProvider.enrich` now dispatches in two waves:
+
+- **Wave one** — every provider that has NOT declared itself quota-scarce. Dispatched exactly as
+  before: one concurrent `Promise.all` over the full symbol batch (or the existing App A
+  short-circuit variant when `ENRICHMENT_SHORT_CIRCUIT_ENABLED` is on). **No behavior change and no
+  latency change for any pre-existing provider** — a naive "make everything sequential" rewrite
+  would have badly regressed the many providers where concurrency is correct and free.
+- **Wave two** — providers that opt in. Runs only after wave one settles, and only over the symbols
+  where wave one left at least one of that provider's declared fields empty. A scarce provider with
+  nothing to add is **not called at all**, so it reserves no quota (reservations happen inside
+  `enrich()`, which never runs).
+
+**How a provider opts in** — following the existing `costTier` / `coveredFields` /
+`EnrichmentContext` idiom on `MarketEnrichmentProvider` rather than a parallel system:
+
+- `quotaScarce?: boolean` — "my quota is scarce, gate me".
+- `suppliesFields?: readonly (keyof SymbolEnrichment)[]` — the exact keys this provider's parser can
+  produce, so the gate knows whether calling it could even help. Declaring it wider than reality
+  only costs calls; declaring it NARROWER can lose data, so it must stay in sync with the parser.
+  A `quotaScarce` provider with this unset/empty **fails OPEN** (stays in wave one, full batch)
+  rather than silently never running.
+
+Declared on all three RapidAPI providers: `SteadyApiEnrichmentProvider` (price, intradayChangePct,
+volume, companyName, fiftyTwoWeekHigh/Low, sector, industry — matching `parseSteadyApiQuote` +
+`parseSteadyApiAssetProfile`) and `AlphaVantageRapidApiEnrichmentProvider` (peRatio, dividendYield,
+eps, sector, industry, pbRatio, beta, fiftyTwoWeekHigh/Low, epsGrowth, analystBySource — matching
+`parseAlphaVantageOverview`). Wave two also passes the wave-one coverage set through the existing
+`EnrichmentContext.coveredFields` hint, so `SteadyApiEnrichmentProvider`'s per-symbol
+sector/industry sub-call skip now engages unconditionally instead of only under the default-OFF
+`ENRICHMENT_SHORT_CIRCUIT_ENABLED`.
+
+**Correctness details that matter (money-adjacent data path):**
+
+- **Merge precedence is unchanged.** Results are reassembled **positionally** into
+  registration order (`results[providerIndex]`), so the first-wins `takeScalar` merge, field
+  arbitration, analyst blending, and `MarketScan.source` attribution behave identically regardless
+  of which wave a provider ran in — and correctly even if two providers ever shared a name (the old
+  short-circuit branch keyed by name).
+- **A wave-one failure never suppresses the scarce tier.** `run()`'s catch already yields `{}` plus
+  a `ProviderFailureReceipt`, so a provider that throws or times out contributes no coverage; its
+  fields read as gaps and wave two still runs for them. Two tests pin this, including the subtle
+  case where a *different* wave-one provider succeeded (the surviving gap must still trigger).
+- **`undefined` and empty arrays are not coverage.** A record carrying `headlines: []` leaves the
+  gap open.
+- **No double-counted or leaked quota.** A skipped scarce provider issues no request, so there is
+  nothing to reserve and nothing to refund — verified against the REAL
+  `SteadyApiEnrichmentProvider` + persisted `rapidapi-quota.ts` budget, not just a stub.
+
+**Flag.** `ENRICHMENT_SCARCE_TIER_GATE_ENABLED` — **defaults ON**, and is scoped strictly to
+providers that opt in via `quotaScarce`. Today that is only the new RapidAPI tier, which is new and
+currently wasteful, so defaulting ON has no regression surface for anything pre-existing. Set it to
+`0` to restore the old single-wave behavior for the scarce tier too.
+
+**Files:** `src/lib/data-providers.ts` (`MarketEnrichmentProvider` capability fields,
+`scarceEnrichmentGateEnabled()`, `CascadingEnrichmentProvider.enrich` wave split, declarations on
+the three RapidAPI providers; `SteadyApiEnrichmentProvider` is now exported so tests can exercise
+the real class), `test/enrichment-scarce-tier-gate.test.ts` (new, 13 tests).
+
+**Verification** (all with `/opt/homebrew/opt/node@24/bin` prepended to `PATH` — see the node26 ABI
+trap noted above; without it every DB-backed quota call silently no-ops inside its own try/catch and
+the tests lie):
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run test/enrichment-scarce-tier-gate.test.ts` — 13/13 pass.
+- `npx vitest run test/rapidapi-providers.test.ts test/rapidapi-quota.test.ts
+  test/data-providers.test.ts test/alternative-data.test.ts
+  test/provider-dispatch-durability.test.ts test/provider-tier.test.ts
+  test/provider-rate-limit.test.ts test/alpha-vantage-key-pool.test.ts` — 292/292 pass (8 files).
+- `npx vitest run test/data-sources-breadth.test.ts test/quote-route.test.ts
+  test/quiver-provider.test.ts test/sec-filings.test.ts test/market-preselection.test.ts` — 100/100
+  pass (every remaining test file that touches the cascade).
+- `npm run lint` — 0 errors, 583 pre-existing warnings, 0 new.
+
+Not run in this pass: `npm test` (full suite) and `npm run build` — deferred to the landing gate per
+the session instruction to report back for review before `scripts/land.sh`.
+
 ## Follow-ups
 
-- **New:** implement real per-symbol/per-field coverage narrowing in
+- ~~**New:** implement real per-symbol/per-field coverage narrowing in
   `CascadingEnrichmentProvider.enrich` so a paid/scarce-quota tier registered after a free tier can
   skip a symbol the free tier already covered for the fields that tier would supply, instead of
-  racing it on every cold-cache scan. Flagged as a separate background task (chip); not done here —
-  see the "Post-implementation verification pass" section above for why.
+  racing it on every cold-cache scan.~~ **DONE** in the follow-up pass above ("Per-symbol
+  coverage-narrowing gate for scarce providers").
+- When adding further small-quota providers, set `quotaScarce = true` and declare `suppliesFields`
+  to exactly what the provider's parser emits — otherwise it silently falls back to wave one and
+  burns quota on already-covered symbols (fails open by design).
+- Consider extending `quotaScarce` to other genuinely scarce lanes (e.g. the native Alpha Vantage
+  25/day key pool) once this gate has real production mileage. Deliberately NOT done in this pass:
+  those lanes are pre-existing and the instruction was to keep their dispatch path untouched.
 - Land via `scripts/land.sh` in a separate phase (per this session's instructions, not run yet).
 - Owner still needs to provision `RAPIDAPI_KEY` in production Infisical/Coolify env for these
   providers to ever actually register (they stay fully dormant otherwise).
