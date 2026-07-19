@@ -43,6 +43,20 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] PR #1777 corpus-reembed hardening — review-thread closeout
+  (branch `claude/corpus-reembed-hardening`, worktree `agent-a5c7fde1cd1e58641`, 2026-07-19) —
+  FIXES READY, AWAITING CI + THREAD RESOLUTION.** Two P1s fixed: (1) the purge gate now also requires
+  `watermarkEmbedRevision === embedRevision`, rejecting PRE-hardening completion stamps that a
+  symbol-scoped run could have written (prod already runs bge-m3, so a poisoned stamp may already
+  exist — this forces one fresh full scan before any purge); (2) completion is stamped only while the
+  named embedding space is still active, closing the last-item window where a model flip during the
+  final async write still stamped completion. One P2 (provider-authority receipt retirement) deferred
+  with evidence: the write path's `providerAuthorityForInitKey` has a synthetic fallback while
+  `getCurrentVectorProviderAuthority` does not, so the filter made the adversarial purge delete 0 of 2
+  legitimately-purgeable vectors — correct fix belongs in `vector-db.ts`, recorded in-module + as an
+  open follow-up. New regression test in `test/corpus-reembed-adversarial.test.ts`. Rollout note
+  appended: `docs/rollouts/2026-07-18-corpus-reembed.md`. **This is the PR that lands the scoped-run
+  library fix** — #1775 dropped its duplicate to de-conflict.
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per

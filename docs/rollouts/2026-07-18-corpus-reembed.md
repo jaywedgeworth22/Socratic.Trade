@@ -224,3 +224,45 @@ lease-serialized like every other action.
 - The bare FTS join means any historical FTS rows whose accession is missing from `sec_filings`
   still re-embed (form defaults to 10-K, dates fall back) — acceptable; the text + accession are
   what retrieval needs.
+
+## 2026-07-19 review follow-up (CLAUDE): two P1s fixed, one P2 deliberately deferred
+
+Three unresolved `chatgpt-codex-connector` threads on PR #1777 were triaged.
+
+**Fixed — P1 "Reject pre-fix completion stamps".** The purge gate trusted any persisted
+`completedForEmbedRevision`, including a row written *before* this hardening, when a symbol-scoped
+run could still stamp completion. Such a row carries `status: "completed"`, a matching revision, and
+`failed: 0` — satisfying every prior gate condition — while covering only the symbols that one
+scoped run visited. This is not hypothetical: production already runs bge-m3, so a poisoned stamp
+may already exist in the settings table. The gate now additionally requires
+`watermarkEmbedRevision === embedRevision`; that field did not exist pre-hardening, so its absence
+forces one fresh full scan before any purge is authorized. Regression test:
+*"purge refuses a PRE-HARDENING completion stamp (no watermarkEmbedRevision), even though it looks
+complete"* in `test/corpus-reembed-adversarial.test.ts`, which seeds a legacy-shaped progress row
+directly and asserts refusal with zero provider deletes.
+
+**Fixed — P1 "Re-check active revision after vector writes".** The per-item drift guard runs
+*before* each write, so a model flip landing during the **final** item's async write had no later
+boundary to trip: the loop ended normally with `completed: true` and stamped completion naming a
+space the run was no longer writing into. Completion is now stamped only if the active model still
+matches at persist time (`stampCompletion`). Counts and the watermark still persist — they carry
+`watermarkEmbedRevision`, so a later run under a different space discards rather than resumes them —
+and only the delete-authorizing flag is withheld.
+
+**Deferred with cause — P2 "Refuse to retire receipts from another provider authority".** The
+finding is valid: `legacyReceiptsFor` selects by `source` + `embed_revision` only, so after a
+Pinecone key/index authority change the purge would delete ids through the *current* provider and
+retire local receipts for vectors still living in the *old* one. It is **not** fixed here because
+the obvious fix does not work from this module: the write path stamps
+`providerAuthorityForInitKey` (which falls back to a synthetic `fallback|<initKey>` hash when the
+index host is unresolved) while `getCurrentVectorProviderAuthority` uses
+`stableProviderAuthorityForInitKey`, which has no fallback — so the two disagree whenever the
+authority map was populated differently between write and purge. Adding the filter made the
+adversarial purge delete **0 of 2** legitimately-purgeable vectors, i.e. it would silently disable
+the purge rather than harden it. The real fix is to reconcile that fallback-vs-stable asymmetry
+inside `vector-db.ts` (and likely backfill `provider_authority` on existing commits) — a separate
+change with its own blast radius. Recorded in-module at `legacyReceiptsFor`.
+
+**Follow-up (open):** reconcile `providerAuthorityForInitKey` vs `stableProviderAuthorityForInitKey`
+in `vector-db.ts`, then re-apply the authority filter to `legacyReceiptsFor` with coverage for the
+changed-authority case.

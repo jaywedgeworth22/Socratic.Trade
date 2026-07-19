@@ -250,4 +250,49 @@ describe("corpus-reembed adversarial: symbol-scoped runs can never unlock the le
     `).get() as { n: number };
     expect(bgeCommits.n).toBe(2);
   }, 120_000);
+
+  it("purge refuses a PRE-HARDENING completion stamp (no watermarkEmbedRevision), even though it looks complete", async () => {
+    // The exploit this closes is a LEFTOVER, not a new run. Production already runs bge-m3, so a
+    // progress row written by the old code — where a symbol-scoped run could stamp completion —
+    // may already be sitting in the settings table. Such a row has status "completed", a matching
+    // `completedForEmbedRevision`, and `failed: 0`, satisfying every pre-existing gate condition,
+    // while covering only the symbols that one scoped run happened to visit. Requiring
+    // `watermarkEmbedRevision` (a field the old code never wrote) forces a fresh full scan first.
+    const { resetCorpusReembedStateForTest, purgeLegacyEmbeddingSpace } =
+      await import("../src/lib/rag/corpus-reembed");
+    const { setInternalSetting } = await import("../src/lib/db");
+    resetCorpusReembedStateForTest();
+    await activateBgeM3();
+
+    // Seed a progress row shaped exactly as the PRE-hardening code would have persisted it:
+    // complete, zero failures, stamped for the currently-active space — but no
+    // `watermarkEmbedRevision`, because that field did not exist yet.
+    setInternalSetting("corpusReembed:progress", {
+      updatedAt: "2026-07-18T00:00:00.000Z",
+      status: "completed",
+      embedModel: "baai/bge-m3",
+      embedRevision: "v1-baai-bge-m3",
+      dryRun: false,
+      docTypes: {
+        "sec-filings": {
+          status: "completed",
+          watermark: { rowid: 999999 },
+          candidatesSeen: 1,
+          embedded: 1,
+          reusedInSpace: 0,
+          failed: 0,
+          completedForEmbedRevision: "v1-baai-bge-m3",
+          lastRunAt: "2026-07-18T00:00:00.000Z"
+        }
+      }
+    });
+
+    mocks.deleteMany.mockClear();
+    const guarded = await purgeLegacyEmbeddingSpace({ docTypes: ["sec-filings"], confirm: "purge-voyage-vectors" });
+    expect(guarded.acquired).toBe(true);
+    expect(guarded.result!.ok).toBe(false);
+    expect(guarded.result!.refused).toMatch(/has not completed a FULL corpus-reembed run/);
+    expect(guarded.result!.purged).toBe(0);
+    expect(mocks.deleteMany).not.toHaveBeenCalled();
+  }, 120_000);
 });

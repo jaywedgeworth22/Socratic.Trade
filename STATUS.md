@@ -1,5 +1,30 @@
 # Current Status
 
+## 2026-07-19 — Corpus-reembed hardening: review-thread closeout (CLAUDE)
+
+Three unresolved codex-connector threads on PR #1777 triaged; two P1s fixed, one P2 deferred with
+cause (full write-up appended to `docs/rollouts/2026-07-18-corpus-reembed.md`).
+
+- **P1 pre-hardening completion stamps (fixed).** The purge gate trusted any persisted
+  `completedForEmbedRevision`, including rows written before this hardening when a symbol-scoped run
+  could still stamp completion. Production already runs bge-m3, so such a poisoned stamp may already
+  exist. The gate now also requires `watermarkEmbedRevision === embedRevision` — a field the old code
+  never wrote — forcing one fresh full scan before any purge is authorized. New regression test seeds
+  a legacy-shaped row and asserts refusal with zero provider deletes.
+- **P1 post-write revision drift (fixed).** A model flip during the FINAL item's async write had no
+  later per-item boundary to trip, so the loop completed and stamped a space it was no longer writing
+  into. Completion is now stamped only while the named space is still active; counts/watermark still
+  persist (they carry `watermarkEmbedRevision` and are discarded by a later run under another space).
+- **P2 provider-authority receipt retirement (deferred, evidence-backed).** Valid finding, but the
+  write path stamps `providerAuthorityForInitKey` (has a synthetic fallback) while
+  `getCurrentVectorProviderAuthority` uses `stableProviderAuthorityForInitKey` (no fallback); adding
+  the filter made the adversarial purge delete 0 of 2 legitimately-purgeable vectors — i.e. it would
+  silently disable the purge rather than harden it. Correct fix belongs in `vector-db.ts`; recorded
+  in-module and as an open follow-up.
+
+NEXT: CI green -> resolve the three threads -> merge. **#1777 is the PR that lands the scoped-run
+library fix**; #1775 dropped its duplicate of it to de-conflict.
+
 ## 2026-07-18 — Corpus-reembed hardening landing (CLAUDE, branch `claude/corpus-reembed-hardening`, PRIORITY lane of the serial landing train)
 
 Fixes 3 adversarially-proven MUST-FIXes in the corpus-reembed module already live on main/prod

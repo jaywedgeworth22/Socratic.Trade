@@ -921,6 +921,16 @@ async function runCorpusReembedLocked(
     // Dry runs and symbol-scoped runs are strictly non-persisting: counts come back in the
     // response, and neither watermarks, cumulative counts, nor completion stamps may advance.
     if (opts.dryRun || scoped) return;
+    // Post-write drift re-check, specifically for the COMPLETION stamp. `throwIfCancelled` catches
+    // a model flip at each per-item boundary, but a flip that lands *during* the final item's async
+    // write has no later boundary to trip: the loop ends normally with `completed: true`, and the
+    // stamp would then claim the whole docType is complete under a space this run was no longer
+    // writing into. Verifying the active model here — after every write this run performed — means
+    // the stamp is only ever written while the space it names is still the live one. Counts and the
+    // watermark still persist (they carry `watermarkEmbedRevision`, so a later run under a
+    // different space discards them rather than resuming); only the delete-authorizing flag is
+    // withheld (2026-07-18 adversarial review, MUST-FIX 1e follow-up).
+    const stampCompletion = docState.completed && activeEmbeddingModel(userId) === embedModel;
     const now = new Date().toISOString();
     const existing = readProgress();
     const nextDocTypes = { ...(existing?.docTypes ?? {}) };
@@ -933,9 +943,10 @@ async function runCorpusReembedLocked(
       embedded: base.embedded + docState.embedded,
       reusedInSpace: base.reusedInSpace + docState.reusedInSpace,
       failed: base.failed + docState.failed,
-      // Completion is stamped only by a full-corpus scan that reached the end; a stamp from an
-      // earlier revision is dropped once the scan runs under a new one (watermark chain restarts).
-      ...(docState.completed
+      // Completion is stamped only by a full-corpus scan that reached the end WHILE the space it
+      // names is still active; a stamp from an earlier revision is dropped once the scan runs under
+      // a new one (watermark chain restarts).
+      ...(stampCompletion
         ? { completedForEmbedRevision: embedRevision }
         : prior?.completedForEmbedRevision === embedRevision
           ? { completedForEmbedRevision: prior.completedForEmbedRevision }
@@ -1150,6 +1161,19 @@ interface LegacyReceiptRow {
   commit_id: string;
 }
 
+/** NOTE (2026-07-18 review, provider-authority finding — deliberately NOT filtered here):
+ *  `vector_ingest_commits.provider_authority` is intentionally ignored by this query. Filtering on
+ *  it is the obviously-correct-looking fix for "receipts written under a previous Pinecone
+ *  key/index authority get deleted through the current provider and then retired locally", but it
+ *  cannot be done correctly from this module today: the WRITE path stamps
+ *  `providerAuthorityForInitKey` (which falls back to a synthetic `fallback|<initKey>` hash when the
+ *  index host has not been resolved), while the READ side's `getCurrentVectorProviderAuthority`
+ *  uses `stableProviderAuthorityForInitKey`, which has NO fallback. The two therefore disagree
+ *  whenever the authority map was populated differently between write and purge — adding the filter
+ *  made the adversarial purge test delete 0 of 2 legitimately-purgeable vectors. Fixing this
+ *  properly means reconciling that fallback-vs-stable asymmetry inside `vector-db.ts` (and likely
+ *  backfilling authorities on existing commits), which is out of scope for this PR. Tracked as a
+ *  follow-up in docs/rollouts/2026-07-18-corpus-reembed.md. */
 function legacyReceiptsFor(sourceTag: string, currentEmbedRevision: string): LegacyReceiptRow[] {
   return getDb().prepare(`
     SELECT o.vector_id AS vector_id, o.commit_id AS commit_id
@@ -1221,9 +1245,18 @@ async function purgeLegacyEmbeddingSpaceLocked(
     // holds unless a genuinely complete, failure-free scan of the WHOLE docType finished under
     // the currently-active space (2026-07-18 adversarial review, MUST-FIX 1; exploit + fix proven
     // in test/corpus-reembed-adversarial.test.ts).
+    // `watermarkEmbedRevision` is REQUIRED, not merely checked for equality: it is the marker that
+    // this progress row was written by the post-hardening code path at all. A row persisted BEFORE
+    // this change carries `status: "completed"`, a matching `completedForEmbedRevision`, and
+    // `failed: 0`, but no `watermarkEmbedRevision` — and under the old code a symbol-scoped run
+    // could stamp exactly that. Trusting it would let a purge delete non-current-space vectors for
+    // every symbol the scoped run never visited. Demanding the field forces one fresh full scan
+    // under the current space before any purge is authorized (2026-07-18 adversarial review,
+    // MUST-FIX 1b follow-up).
     const completeUnderCurrentSpace =
       docProgress?.status === "completed" &&
       docProgress.completedForEmbedRevision === embedRevision &&
+      docProgress.watermarkEmbedRevision === embedRevision &&
       !docProgress.failed;
     if (!completeUnderCurrentSpace) {
       return {
