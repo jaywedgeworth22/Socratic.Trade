@@ -1,30 +1,49 @@
 import { getDb } from "../src/lib/db.js";
 import { normalizeSymbol } from "../src/lib/money.js";
-import { refreshFilingBodies } from "../src/lib/web-sources/sec-filings.js";
 import { activeEmbeddingModel, getVectorStoreStats } from "../src/lib/vector-db.js";
 import { migrateLocalEnvCredentials } from "../src/lib/db-api-keys.js";
+import { 
+  startCorpusReembedRun, 
+  runCorpusReembedDryRun,
+  purgeLegacyEmbeddingSpace,
+  getCorpusReembedProgress,
+  CORPUS_REEMBED_DOC_TYPES,
+  type CorpusReembedDocType
+} from "../src/lib/rag/corpus-reembed.js";
 import readline from "readline";
 
 // Parse CLI arguments
 const args = process.argv.slice(2);
-const isClearOnly = args.includes("--clear-only");
-const isIngest = args.includes("--ingest");
+const isDryRun = args.includes("--dry-run");
+const isPurgeLegacy = args.includes("--purge-legacy");
 const force = args.includes("--force");
 const autoYes = args.includes("--yes") || args.includes("-y");
 
-// Extract --ticker and --limit if present
+// Extract --ticker
 let targetTicker: string | undefined;
 const tickerIdx = args.indexOf("--ticker");
 if (tickerIdx !== -1 && args[tickerIdx + 1]) {
   targetTicker = normalizeSymbol(args[tickerIdx + 1]!);
 }
 
-let limit: number | undefined;
-const limitIdx = args.indexOf("--limit");
-if (limitIdx !== -1 && args[limitIdx + 1]) {
-  const parsed = parseInt(args[limitIdx + 1]!, 10);
+// Extract --max-texts
+let maxTexts: number | undefined;
+const maxTextsIdx = args.indexOf("--max-texts");
+if (maxTextsIdx !== -1 && args[maxTextsIdx + 1]) {
+  const parsed = parseInt(args[maxTextsIdx + 1]!, 10);
   if (Number.isFinite(parsed) && parsed > 0) {
-    limit = parsed;
+    maxTexts = parsed;
+  }
+}
+
+// Extract --doc-types (comma separated)
+let docTypes: CorpusReembedDocType[] | undefined;
+const docTypesIdx = args.indexOf("--doc-types");
+if (docTypesIdx !== -1 && args[docTypesIdx + 1]) {
+  const parsed = args[docTypesIdx + 1]!.split(",").map(s => s.trim());
+  const valid = parsed.filter(s => CORPUS_REEMBED_DOC_TYPES.includes(s as CorpusReembedDocType)) as CorpusReembedDocType[];
+  if (valid.length > 0) {
+    docTypes = valid;
   }
 }
 
@@ -42,8 +61,36 @@ async function askConfirm(question: string): Promise<boolean> {
   });
 }
 
+function printProgress() {
+  const progress = getCorpusReembedProgress();
+  console.log(`\n📊 Corpus Re-embed Progress:`);
+  console.log(`  Active Model: ${progress.activeEmbedModel}`);
+  console.log(`  Active Space Revision: ${progress.activeEmbedRevision}`);
+  if (progress.persisted) {
+    console.log(`  Status: ${progress.persisted.status}`);
+    console.log(`  Last Run: ${progress.persisted.updatedAt}`);
+    if (progress.persisted.error) {
+      console.log(`  Error: ${progress.persisted.error}`);
+    }
+    console.log(`  DocTypes:`);
+    for (const [docType, dtProgress] of Object.entries(progress.persisted.docTypes)) {
+      if (!dtProgress) continue;
+      console.log(`    - ${docType} (${dtProgress.status}):`);
+      console.log(`      Candidates Seen: ${dtProgress.candidatesSeen}`);
+      console.log(`      Embedded: ${dtProgress.embedded}`);
+      console.log(`      Reused in space: ${dtProgress.reusedInSpace}`);
+      console.log(`      Failed: ${dtProgress.failed}`);
+      if (dtProgress.completedForEmbedRevision) {
+        console.log(`      Completed for Revision: ${dtProgress.completedForEmbedRevision}`);
+      }
+    }
+  } else {
+    console.log("  No progress recorded yet.");
+  }
+}
+
 async function run() {
-  console.log("▶ Reindexing SEC filings pipeline starting...");
+  console.log("▶ Corpus Re-embed & Reindex Pipeline starting...");
 
   // 1. Migrate any credentials in env variables to local database
   console.log("  Migrating environment credentials...");
@@ -62,128 +109,59 @@ async function run() {
     console.error("   To proceed anyway, run the script with --force.");
     process.exit(1);
   }
+  
+  if (args.includes("--status")) {
+    printProgress();
+    process.exit(0);
+  }
 
-  const db = getDb();
+  const symbols = targetTicker ? [targetTicker] : undefined;
 
-  // 3. Resolve symbols to reindex
-  let tickers: string[] = [];
-  if (targetTicker) {
-    tickers = [targetTicker];
-  } else {
-    const tickersSet = new Set<string>();
-    try {
-      const filingsRows = db.prepare("SELECT DISTINCT ticker FROM sec_filings").all() as { ticker: string }[];
-      for (const r of filingsRows) if (r.ticker) tickersSet.add(r.ticker);
-      
-      const hasIngested = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ingested_accessions'").get();
-      if (hasIngested) {
-        const legacyRows = db.prepare("SELECT DISTINCT ticker FROM ingested_accessions").all() as { ticker: string }[];
-        for (const r of legacyRows) if (r.ticker) tickersSet.add(r.ticker);
-      }
-    } catch (err) {
-      console.warn("  Failed to query existing tickers:", err instanceof Error ? err.message : String(err));
+  if (isPurgeLegacy) {
+    console.log("⚠️  WARNING: You are about to PURGE legacy embedding space vectors!");
+    const confirmed = await askConfirm("Type 'YES' to confirm you want to delete old vectors: ");
+    if (!confirmed) {
+      console.log("❌ Cancelled by operator.");
+      process.exit(0);
     }
-    tickers = Array.from(tickersSet).map(s => normalizeSymbol(s));
-  }
-
-  if (tickers.length === 0) {
-    console.log("  No tickers found to reindex. Exiting.");
+    
+    const confirmStr = "purge-voyage-vectors"; // matching expected confirm string in purgeLegacyEmbeddingSpace
+    const result = await purgeLegacyEmbeddingSpace({ docTypes, confirm: confirmStr, dryRun: isDryRun });
+    if (!result.acquired) {
+      console.error(`❌ Could not acquire lock. Busy running: ${result.busy?.group}`);
+      process.exit(1);
+    }
+    
+    console.log("✅ Purge Result:", JSON.stringify(result.result, null, 2));
     process.exit(0);
   }
 
-  console.log(`  Targeting ${tickers.length} symbols: ${tickers.slice(0, 10).join(", ")}${tickers.length > 10 ? "..." : ""}`);
-
-  // 4. Resolve accessions to clear
-  const accessionsToClear = new Set<string>();
-  for (const ticker of tickers) {
-    const legacyRows = db.prepare(`
-      SELECT accession FROM ingested_accessions WHERE ticker = ? AND doc_type IN ('10-K', '10-Q')
-    `).all(ticker) as { accession: string }[];
-    for (const r of legacyRows) accessionsToClear.add(r.accession);
-
-    const filingRows = db.prepare(`
-      SELECT accession FROM sec_filings WHERE ticker = ? AND form IN ('10-K', '10-Q')
-    `).all(ticker) as { accession: string }[];
-    for (const r of filingRows) accessionsToClear.add(r.accession);
-  }
-
-  if (accessionsToClear.size === 0) {
-    console.log("  No completed cached filings found for target symbols.");
-  } else {
-    console.log(`  Found ${accessionsToClear.size} cached accession(s) to clear.`);
-  }
-
-  if (!isClearOnly && !isIngest) {
-    console.log("  Please specify either --clear-only or --ingest.");
+  if (isDryRun) {
+    console.log("  Running dry-run re-embed...");
+    const result = await runCorpusReembedDryRun({ docTypes, symbols, maxTexts });
+    if (!result.acquired) {
+      console.error(`❌ Could not acquire lock. Busy running: ${result.busy?.group}`);
+      process.exit(1);
+    }
+    console.log("✅ Dry-run Result:", JSON.stringify(result.result, null, 2));
     process.exit(0);
   }
 
-  // Ask for confirmation
-  const actionText = isClearOnly ? "CLEAR RAG caches" : "CLEAR RAG caches AND re-embed filings";
-  const confirmed = await askConfirm(`⚠️  Are you sure you want to ${actionText} for ${tickers.length} symbol(s)? Type YES to confirm: `);
+  // Ask for confirmation for real run
+  const confirmed = await askConfirm(`⚠️  Are you sure you want to start a real corpus re-embed run (consumes budget)? Type YES to confirm: `);
   if (!confirmed) {
     console.log("❌ Cancelled by operator.");
     process.exit(0);
   }
 
-  // 5. Clear caches
-  if (accessionsToClear.size > 0) {
-    console.log(`  Clearing local cache for ${accessionsToClear.size} accession(s)...`);
-    const acns = Array.from(accessionsToClear);
-    const BATCH_SIZE = 50;
-
-    for (let i = 0; i < acns.length; i += BATCH_SIZE) {
-      const batch = acns.slice(i, i + BATCH_SIZE);
-      const ph = batch.map(() => "?").join(",");
-
-      // 1. Delete from ingested_accessions
-      db.prepare(`DELETE FROM ingested_accessions WHERE accession IN (${ph})`).run(...batch);
-
-      // 2. Delete from document_chunks using chunk_id prefix check
-      const chunkQueries = batch.map(() => "chunk_id LIKE '%:' || ? || ':%'").join(" OR ");
-      db.prepare(`
-        DELETE FROM document_chunks WHERE content_hash IN (
-          SELECT content_hash FROM document_chunks WHERE (${chunkQueries}) AND source = 'sec-edgar'
-        )
-      `).run(...batch);
-
-      // 3. Delete from chunk_occurrences
-      db.prepare(`DELETE FROM chunk_occurrences WHERE accession IN (${ph})`).run(...batch);
-
-      // 4. Update status in sec_filings
-      const nowStr = new Date().toISOString();
-      db.prepare(`
-        UPDATE sec_filings SET status = 'discovered', updated_at = ? WHERE accession IN (${ph})
-      `).run(nowStr, ...batch);
-    }
-    console.log("  ✅ Local cache cleared successfully.");
+  const started = startCorpusReembedRun({ docTypes, symbols, maxTexts });
+  if (!started.acquired) {
+    console.error(`❌ Could not acquire lock. Busy running: ${started.busy?.group}`);
+    process.exit(1);
   }
 
-  if (isClearOnly) {
-    console.log("  ✅ --clear-only complete. Scheduler will pick up discovered filings incrementally.");
-    process.exit(0);
-  }
-
-  // 6. Immediate ingestion
-  console.log(`  Starting immediate ingestion for ${tickers.length} ticker(s)...`);
-  const result = await refreshFilingBodies(tickers, Date.now(), limit, { force: true });
-  
-  if (result.errors.length > 0) {
-    console.error("❌ Finished with errors:");
-    for (const err of result.errors) console.error(`  - ${err}`);
-  } else {
-    console.log("  ✅ Ingestion complete successfully.");
-  }
-  
-  console.log("  Ingestion stats:", {
-    attempted: result.attempted,
-    ingested: result.ingested,
-    skipped: result.skipped,
-    deferredForBudget: result.deferredForBudget
-  });
-
-  const stats = await getVectorStoreStats();
-  console.log("  Vector Store Stats:", stats);
+  console.log("✅ Background run started successfully! The process will continue in the background.");
+  console.log("   Run with --status to check progress.");
 }
 
 run().catch((err) => {
