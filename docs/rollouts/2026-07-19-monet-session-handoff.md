@@ -54,9 +54,20 @@ scheduler ticking, litestream `replicating`/0-degraded, 3 accounts trading / 0 d
 - **CI throughput** — #1739 routed Actions to the single-lane self-hosted Hetzner runner (shared with
   Coolify deploy builds at concurrency 1). CI dispatches fine but runs serially; fresh PRs read
   `unstable`/`blocked` while queued — retry `enable_pr_auto_merge` once `verify` materializes.
-- **Recurring Codex false positive** — the codex-connector "wrong author identity" nit cites shas that
-  don't exist in the repo (`git cat-file -t` → unknown object). It's spurious; reply non-actionable +
-  resolve, do NOT push (every push re-triggers a fresh Codex round → churn loop).
+- **Recurring Codex false-positive PATTERN — verify every occurrence, never blanket-trust.** The
+  codex-connector "wrong author identity" nit has repeatedly cited SHAs that turn out not to exist
+  anywhere in this repo's history — confirmed independently three times now: `15910f5e...`
+  (rebutted on this PR), and `a14df5f8f813742044fae4fd6a4e5af63c18be9...` (cited again in a later
+  round against this very line, re-checked and also does not resolve — `git cat-file -t` errors
+  "not a valid object name" against every fetched ref, and a `github-actions[bot]` comment on that
+  thread independently confirms the same). **Before dismissing any new instance of this nit, run
+  `git cat-file -t <cited-sha>` yourself against a fully-fetched repo** — do not take the citation
+  on faith. If a cited SHA ever DOES resolve and the identity is genuinely `Codex <codex@openai.com>`
+  (or any non-noreply address), that is a real AGENTS.md git-identity violation: amend/rebase it
+  before publishing, exactly like any other bad-identity commit — do not reflexively dismiss it
+  just because past instances were phantom. Only reply non-actionable + resolve once you've
+  personally verified the SHA is phantom; avoid pushing a no-op commit purely to re-trigger Codex
+  (every push starts a fresh review round → churn loop).
 
 ## 3. bge-m3 vs voyage-finance-2 — verified answer to the owner's question
 
@@ -74,7 +85,9 @@ QUALITY-advantage question below remains partly open).
   (`app/api/health/route.ts:210` "prod flipped to bge-m3 via OpenRouter"; `STATUS.md:24-31`) shows
   **prod is actively running bge-m3 via OpenRouter**. Ingestion and query paths use the same resolver
   (consistent). One env flips BOTH embed and rerank (rerank → `cohere/rerank-v3.5` on OpenRouter vs
-  `rerank-2.5` on Voyage).
+  `rerank-2.5` on Voyage). `docs/prod-config-voyage.md` was reconciled this session (banner added,
+  content otherwise preserved — see that file) to stop presenting Voyage as the production default;
+  it still documents accurate Voyage-tuning/gated-upgrade knowledge for the fallback path.
 
 - **"Cheaper?" — YES, ~12× cheaper per token.** voyage-finance-2 embed = `$0.00012/1K`;
   bge-m3 via OpenRouter = `$0.00001/1K` (confirmed $0.01/1M) → exactly **12×** cheaper.
@@ -97,14 +110,24 @@ QUALITY-advantage question below remains partly open).
   Pinecone filter (`vector-db.ts:208-217`, applied at `:5829`), so **bge-m3 queries match ONLY
   bge-stamped vectors and see ZERO of the ~8.5k existing voyage vectors**. Prod flipped to bge-m3 LIVE
   while that bge space started EMPTY, so **dense RAG retrieval degrades to sparse/no-match until the
-  corpus is re-embedded**. The backfill exists (`src/lib/rag/corpus-reembed.ts` via
-  `POST /api/admin/reembed`; CLI `scripts/reindex-all.ts`; `app/api/admin/reindex-10k`) but is
+  corpus is re-embedded**. The full 4-docType backfill is `src/lib/rag/corpus-reembed.ts` via
+  `POST /api/admin/reembed` — this is the ONLY path that covers all four docTypes. **CLI
+  `scripts/reindex-all.ts` and `app/api/admin/reindex-10k` are SEC 10-K/10-Q ONLY** (both drive
+  `refreshFilingBodies`; neither touches `earningscalls-transcripts`, `insider-form4`, or
+  `experience-memory` — confirmed by reading both call sites); do not substitute either for the
+  full-corpus `/api/admin/reembed` run. (`scripts/reindex-all.ts` is being rewritten to call
+  corpus-reembed directly per open PR #1775 — not yet merged as of this writing, so the SEC-only
+  scope above is still the current behavior.) All of these paths are
   **operator-triggered, not automatic on flip** (`docs/rollouts/2026-07-18-corpus-reembed.md` opens
   "URGENT — run-me-now"). **ACTION for owner/next agent: confirm the bge-m3 re-embed actually ran to
   completion** (4 docTypes: sec-filings, earningscalls-transcripts, insider-form4, experience-memory —
   exact ids from `CORPUS_REEMBED_DOC_TYPES`; `resolveDocTypes()` silently drops unknown values, so a
   bare `earningscalls` would skip earnings-call re-embedding without an error; 8-K summaries
-  / FMP transcripts / congress trades / fundamentals repopulate only on normal ingest cadence). Do NOT
+  repopulate on normal ingest cadence AND have their own admin backfill/re-embed path —
+  `POST /api/admin/reindex-8k` calls `reindexEightKDataset`, which re-embeds the ENTIRE persisted
+  8-K dataset from `getEightKDataset()`, not just newly-fresh filings (confirmed in `sec8k.ts`); FMP
+  transcripts / congress trades / fundamentals repopulate only on normal ingest cadence with no
+  admin backfill route). Do NOT
   run `action:"purge-legacy"` (deletes the voyage vectors) until the bge space is independently verified
   full — it's irreversible and would destroy the only fallback.
 
