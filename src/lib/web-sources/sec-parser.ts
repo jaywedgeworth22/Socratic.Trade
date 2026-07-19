@@ -173,6 +173,8 @@ function normalizeItemCode(text: string, formType?: string): { code: string; tit
 }
 
 function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): string[] {
+  // Prevent runaway amplification on degenerate table layouts
+  rows = rows.slice(0, 5000).map(r => r.slice(0, 500));
   if (rows.length <= 1) {
     return [rows.map((row) => `| ${row.join(" | ")} |`).join("\n")];
   }
@@ -246,7 +248,7 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
   // Remove display: none or visibility: hidden elements
   const style = $(node).attr("style");
   if (style) {
-    const isHidden = /display\s*:\s*none/i.test(style) || /visibility\s*:\s*hidden/i.test(style);
+    const isHidden = /display\s*:\s*none/i.test(style) || /visibility\s*:\s*hidden/i.test(style) || /opacity\s*:\s*0/i.test(style) || /font-size\s*:\s*0/i.test(style);
     if (isHidden) return;
   }
 
@@ -281,18 +283,19 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
           c++;
         }
 
-        // Process nested tables in this cell FIRST (blocks are emitted before
-        // we strip them from outer cell text)
+        // Process nested tables in this cell FIRST, converting them to markdown
+        // directly in the cell to preserve reading order and nested structure
         $(cell).find("table").each((__: any, nestedTable: any) => {
-          collectBlocks($, nestedTable, blocks, formType);
+          const nestedBlocks: ParsedBlock[] = [];
+          collectBlocks($, nestedTable, nestedBlocks, formType);
+          const md = nestedBlocks.map((b: ParsedBlock) => b.text).join("\n\n");
+          $(nestedTable).replaceWith(`\n\n${md}\n\n`);
         });
-        // Remove nested tables from cell text now that content is preserved
-        $(cell).find("table").remove();
         // Replace <br> with space so concatenated text nodes stay separated
         $(cell).find("br").replaceWith(" ");
 
-        const colspan = parseInt($(cell).attr("colspan") || "1", 10);
-        const rowspan = parseInt($(cell).attr("rowspan") || "1", 10);
+        const colspan = Math.max(1, Math.min(parseInt($(cell).attr("colspan") || "1", 10) || 1, 50));
+        const rowspan = Math.max(1, Math.min(parseInt($(cell).attr("rowspan") || "1", 10) || 1, 50));
         const cellText = $(cell).text().replace(/\s+/g, " ").trim();
 
         for (let rs = 0; rs < rowspan; rs++) {

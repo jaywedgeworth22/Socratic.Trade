@@ -165,6 +165,11 @@ passes lint (0 errors), TypeScript, 412 Vitest files / 4,837 tests, and the prod
 #1760 auto-merged as `b2f22ccf` while that gate ran; all four threads were then answered and
 resolved, and corrective PR #1761 carries the fixes. Its branch is merged with that exact new main;
 self-hosted checks, corrective merge, and exact production verification remain.
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
+
+Completed the SEC/RAG parser and chunker hardening by resolving outstanding structural and edge-case issues identified in recent parser reviews. Improved deterministic provenance by enforcing valid timestamps, prevented runaway token allocation by bounding maxTokens and tabular row/colspan iterations, handled XBRL structural anomalies securely (preventing NaN/null SQLite poisoning), fixed hidden content extraction poisoning, and secured nested table extraction. Verified via new regression tests in `test/rag-chunk.test.ts`. Full gate green (`npm run lint`, `npx tsc`, `npm test`, `npm run build`). Ready to land.
+
+
 ## 2026-07-18 — Remove tracked lint/verify artifacts from main (MONET, branch `monet/rm-tracked-lint-artifacts`)
 
 Repo-hygiene cleanup. PR #1735 accidentally merged ~9 MB of generated, machine-specific
@@ -2557,6 +2562,11 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
   there is no pending branch handoff to land from either PR.
 
 ## Current Status
+
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
+
+Completed the SEC/RAG parser and chunker hardening by resolving outstanding structural and edge-case issues identified in recent parser reviews. Improved deterministic provenance by enforcing valid timestamps, prevented runaway token allocation by bounding maxTokens and tabular row/colspan iterations, handled XBRL structural anomalies securely (preventing NaN/null SQLite poisoning), fixed hidden content extraction poisoning, and secured nested table extraction. Verified via new regression tests in `test/rag-chunk.test.ts`. Full gate green (`npm run lint`, `npx tsc`, `npm test`, `npm run build`). Ready to land.
+
 
 - PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, #1589, #1593, #1594, #1604, and #1607 are merged.
   Only draft PR #1586 remains open; it is the default-off FMP/RAG/privacy/account-risk consolidation.
