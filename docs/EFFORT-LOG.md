@@ -43,6 +43,28 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] Shared package bump to 904ea96a (Congress.Trade PR #626 compat, 2026-07-19) — IN PROGRESS.** Bumps shared pin to v1.10.0 to provide `callClassifier` exports; additive only. Branch `antigravity/bump-shared-904ea96a`, committed & pushed, PR opening. Gates Congress.Trade #626 merge & check-pin CI unblock.
+
+- **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
+  metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
+  claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
+  `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2: (A) close 3 unmetered paid-call gaps
+  (`market-signals/massive.ts` 3x fetch, `rag/query-deconstruct.ts` gpt-4o-mini,
+  `rag/search-fusion.ts` embedding fallback); (B) thread `buildCallClassifier`/
+  `openrouterRequestEnrichment` (flat `trace`, no `metadata` nesting — RESOLVED 2026-07-18 shape) +
+  OpenRouter generation-id capture (`providerRequestId`) across `llm-call.ts`, 11 call sites,
+  `chat/llm.ts`, `vector-db.ts`; bump shared pin to `904ea96a`. Empirical OpenRouter acceptance
+  check (tiny paid probe, ~$0.01) included. Never merges own PR (auto-deploy on merge) — adversarial
+  review lands it.
+- **[Socratic.Trade][CLAUDE] Monet-handoff §7 ports: coach-note archive + coach-note/lesson vector writers
+  (worktree `socratic-trade-agent-team-697845`, branch `claude/socratic-trade-agent-team-697845`, claimed
+  2026-07-18) — IN PROGRESS.** From-scratch schema port of the two PARTIAL-verdicted w2 branches per
+  `docs/handoffs/2026-07-19-monet-session-closeout-handoff.md` §7 (fresh port, NOT a rebase): (1) kill the
+  silent coach-note `slice(-20)` truncation via append-only `socratic_coach_note_archive` + audit receipt +
+  `doc_type: 'coach-note'` vector writer; (2) a writer for the retrieved-but-never-written `lesson` doc-type
+  (money-adjacent prompt path → frontier adversarial review). Team recipe: scouts → design → implementers →
+  multi-lens verify → land via land.sh. Old w2 branches marked superseded once landed.
+
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
