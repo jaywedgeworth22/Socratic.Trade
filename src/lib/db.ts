@@ -89,8 +89,13 @@ export function getDb(): Database.Database {
   db.function("account_setting_matches_subject", { deterministic: true }, accountSettingMatchesSubject);
   db.pragma("journal_mode = WAL");
   // With WAL, a concurrent writer otherwise throws SQLITE_BUSY immediately; wait
-  // up to 30s for the lock instead. NORMAL durability is the WAL-recommended pairing.
-  db.pragma("busy_timeout = 30000");
+  // up to 60s for the lock instead. NORMAL durability is the WAL-recommended pairing.
+  // Raised from 30s (2026-07-18, PR #1728) after "database is locked" kept surfacing
+  // in prod under heavy concurrent write load (bulk RAG backfill/reindex + scheduler
+  // + burst ingest all writing the same file); WAL already lets readers proceed
+  // during a writer, so a longer wait here only affects genuinely-contended writers,
+  // not the common read path.
+  db.pragma("busy_timeout = 60000");
   db.pragma("synchronous = NORMAL");
   // Larger page cache + memory-mapped I/O: the dashboard replays fill/proposal history on every
   // request, so a ~20MB page cache (negative = KB) and 256MB mmap keep those hot reads off the
