@@ -13,6 +13,45 @@ OpenRouter MCP OAuth verified broken (both on Socratic workspace — owner re-au
 alpha-vantage health red confirmed deliberate (deregistered lane, not a dead key). Owner
 ruling codified fleet-wide: OpenRouter MCP is research-only. Details:
 `docs/rollouts/2026-07-19-four-handoff-conquest.md`.
+## 2026-07-19 — PR #1773 Codex-review fix pass: 6 real findings fixed, verified individually (CLAUDE, on branch `monet/session-handoff-2026-07-19`)
+
+Owner-directed fix of 6 Codex P2 findings on PR #1773 (docs-only), each checked against live
+repo/git state before editing rather than taken at face value: (1) the rollout note's "recurring
+Codex false positive" guidance was too absolute (told the next operator to blanket-dismiss
+wrong-identity nits) — reworded to require `git cat-file -t <sha>` verification on every new
+instance; the specific SHA re-cited against this line (`a14df5f8...`) still does not exist
+anywhere in this repo (reconfirmed independently, matching a `github-actions[bot]` comment on the
+same thread), and `git log --format=fuller` on this branch shows every commit already carries the
+correct noreply identity, so no amend/rebase was needed. (2) Added a PLAN.md next-action entry
+(previously missing) covering the #1771 → #1773 → #1777 landing order and the pending corpus
+re-embed. (3) Rewrote STATUS's re-embed line below from an unbacked assertion into a
+live-verified one (see that entry). (4) and (6) Qualified the rollout note's operational-finding
+block: `scripts/reindex-all.ts`/`reindex-10k` are confirmed SEC 10-K/10-Q only
+(`refreshFilingBodies`), and the existing `POST /api/admin/reindex-8k` route
+(`reindexEightKDataset`, re-embeds the full persisted 8-K dataset) is now listed as an available
+backfill path. (5) Added a reconciliation banner (not a rewrite — content preserved, per AGENTS.md's
+no-silent-doc-replacement rule) to `docs/prod-config-voyage.md`: prod now runs bge-m3 via
+OpenRouter, not the Voyage default that doc's body describes; Voyage content stays accurate for
+the fallback path. All corrections are grounded in direct code reads (`vector-db.ts`,
+`corpus-reembed.ts`, `sec8k.ts`, both reindex routes) and a live Pinecone `describe-index-stats`
+check performed during this session — nothing here is guessed. Files:
+`docs/rollouts/2026-07-19-monet-session-handoff.md`, `STATUS.md`, `PLAN.md`,
+`docs/prod-config-voyage.md`, `docs/EFFORT-LOG.md`.
+
+## 2026-07-19 — MONET session close-out: PR sweep landed, #1771/#1773 armed, re-embed still pending (ledger appended by CLAUDE handoff execution)
+
+MONET's 2026-07-19 cloud session merged the open-PR backlog (#1745/#1736/#1735/#1740/#1754;
+prod auto-deployed and healthy throughout) and left two armed PRs: **#1771** (SiliconFlow
+bge-m3 embed price 10x undercount fix) and **#1773** (session handoff note). The handoff's
+top operational flag stands: the **bge-m3 corpus re-embed is VERIFIED INCOMPLETE** — checked
+directly via Pinecone `describe-index-stats` on the `socratic-trade` index (2026-07-19, live):
+the legacy (Voyage) namespace still holds ~8.7k vectors intact (no purge has run) versus the
+managed (bge-m3) namespace at ~1.6k and growing only via normal ingest, nowhere near a
+completed full-corpus backfill for the 4 re-embed docTypes (`sec-filings`,
+`earningscalls-transcripts`, `insider-form4`, `experience-memory`). This is a real (not assumed)
+gap and will drift as ingest continues — reread `describe-index-stats` or `GET
+/api/admin/reembed` before relying on the exact counts. Do NOT `purge-legacy` until the bge space
+is independently reverified full. Details: `docs/rollouts/2026-07-19-monet-session-handoff.md`.
 
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
