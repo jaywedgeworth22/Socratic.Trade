@@ -18,6 +18,36 @@ compounded by the unusually high deploy cadence from this session's PR-landing t
 by this agent — re-arming autonomy requires the owner's authenticated session (`/api/strategy/enable`
 and `/api/settings/auto-resume` are plain session-authenticated routes, no admin-token path exists);
 flagged directly to the owner in-session rather than acted on.
+## 2026-07-20 — Which-key visibility on Connections + owner ruling: agents never create API keys (CLAUDE, branch `claude/stop-intent-idempotency`)
+
+The per-user key store is write-only, which made "WHICH of several provider keys is serving me?"
+unanswerable — the fallout of agents minting their own OpenRouter keys for both apps instead of
+using the one key the owner had put spend caps on. `GET /api/keys` now returns a `preview` (the
+canonical `maskApiKeyPreview`: first 8 + `...` + last 4) of the key that ACTUALLY resolves, and
+`/console/connections#api-keys` renders it; the operator's env key is previewable to admins only.
+`llm-usage.ts`'s duplicate `maskApiKey` now delegates to the same helper. Owner ruling — **no agent
+on any platform ever creates a provider API key** — codified in `AGENTS.md` "Don't" and broadcast to
+#agent-sync.
+
+Diagnosis of the owner's "no credits / API key failed" strategy-run error is in the rollout note:
+prod `/api/health` shows OpenRouter healthy with $33.71 credit, so the leading suspects are the
+app-internal budget caps (Usage-Monitor monthly budget; `llmDailyCostBudgetUsd`) that skip a run
+with `status: "completed"` and therefore surface as an ordinary toast. **Blocker: needs the owner's
+exact on-screen wording (or the admin `/admin/llm-usage` view) to close.** Also confirmed:
+`migrateLocalEnvCredentials` + DB-before-env resolution means a stored key permanently shadows a
+rotated `OPENROUTER_API_KEY`. Next: land.sh, PR, auto-merge. Rollout:
+`docs/rollouts/2026-07-20-which-key-visibility-and-no-new-keys-ruling.md`.
+
+## 2026-07-18 — Stop-placement intent + atomic recovered fills landing (CLAUDE, branch `claude/stop-intent-idempotency`, lane 6/final of a serial landing train)
+
+Codex findings 5/6 (money path): durable pre-network placement-intent rows (v53) make a lost
+broker reply reconcile-and-adopt instead of double-placing a full-size stop; all recovered
+stop-fill delete+book pairs are one transaction, with a v54 partial UNIQUE index +
+idempotent-replay handling for proposal-less protective-stop fills. Adversarially verified; the
+filled-order fill-loss must-fix (visible-but-terminal WITH fills) applied + regression-tested;
+8 suites / 250 tests green on the merged tree (contains main `b4dd8a54`, #1738 both-mechanisms
+merge). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
+`docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
 ## 2026-07-19 — PR #1773 Codex-review fix pass: 6 real findings fixed, verified individually (CLAUDE, on branch `monet/session-handoff-2026-07-19`)
 
 Owner-directed fix of 6 Codex P2 findings on PR #1773 (docs-only), each checked against live
