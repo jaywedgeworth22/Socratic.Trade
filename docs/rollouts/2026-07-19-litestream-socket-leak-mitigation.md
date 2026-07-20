@@ -131,3 +131,38 @@ Safety properties, all verified by running the real code paths before trusting t
 
 **This is a stopgap that masks the bug. Remove it once a real fix lands.** It exists so the
 box survives unattended, not because repeated restarts are acceptable.
+
+---
+
+## GODEBUG test RESULT (2026-07-20, owner-authorized): H-A ELIMINATED
+
+`GODEBUG=http2client=0` was added to the `socratic-trade-prod` Coolify env and deployed, then
+litestream fd growth was measured on the new container.
+
+| | |
+|---|---|
+| fds | **137 → 1,044 over 4 minutes** |
+| implied rate | **~13,600/hr** (baseline ~15,000/hr) |
+| litestream error lines in logs | **0** |
+| verdict | **leak continues → H-A is WRONG** |
+
+**HTTP/2 GOAWAY retention is NOT the cause.** Forcing the Go HTTP client to HTTP/1.1 changed
+nothing meaningful about the leak rate. Usefully, it also caused **zero** replication errors, so
+HTTP/1.1 against R2 is safe — it is simply not the fix. The env var was **removed** after the
+test (Coolify env `GODEBUG` deleted; it clears on the next deploy).
+
+**Hypothesis space now:**
+- ~~H-A: HTTP/2 + GOAWAY retention~~ — **eliminated by direct experiment.**
+- **H-B (now leading): un-drained response bodies in litestream's own S3 read paths.**
+  `OpenLTXFile` / `OpenSnapshotV3` / `OpenWALSegmentV3` hand raw `out.Body` to callers; upstream
+  #1308 documents callers dropping those streams. The earlier objection ("that's an error path,
+  but our leak is systematic every tick") is weakened by Lane 1's finding that the replica
+  monitor calls `Replica.Sync()` **every second even on an idle DB** (upstream #1210 — the
+  `if changed` guard is commented out in `db.go:1048-1052`), so a body dropped on a routine
+  no-op path would leak exactly this steadily.
+- H-C: per-request client/transport construction — still no code evidence.
+
+**What this means practically:** there is no one-line runtime fix. The remaining candidates are
+upstream code defects, so the realistic path is (a) the `sync-interval` throttle in this PR,
+(b) the self-healing watchdog already installed, and (c) an upstream issue/PR against litestream
+with this evidence. Treat the watchdog as load-bearing for now.
