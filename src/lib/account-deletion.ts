@@ -95,7 +95,9 @@ const DELETE_TABLES_BY_USER_ID = [
   "position_stop_plan_open_brackets",
   // Added 2026-07-18: option_alert_reservations (src/lib/db.ts) — atomic option-alert dedupe claims
   // are user-scoped (user_id column) like notification_events.
-  "option_alert_reservations"
+  "option_alert_reservations",
+  // Added 2026-07-20: broker_stop_placement_intents (src/lib/db.ts) — user-scoped stop placement intents.
+  "broker_stop_placement_intents"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];

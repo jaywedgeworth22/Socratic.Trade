@@ -143,7 +143,7 @@ function rowToFramework(row: FrameworkRow): SocraticFrameworkProposal {
 }
 
 // Live in-row coach-note window. Notes beyond this cap age off into
-// socratic_coach_note_archive (migration 53) instead of being silently dropped.
+// socratic_coach_note_archive (migration 55) instead of being silently dropped.
 const COACH_NOTES_LIVE_CAP = 20;
 
 /**
@@ -493,7 +493,7 @@ export async function attachSocraticDecisionCoachPrimitives(
 }
 
 /**
- * User-scoped read of coach notes that aged off the live window (migration 53). Cross-user ids
+ * User-scoped read of coach notes that aged off the live window (migration 55). Cross-user ids
  * (a decision belonging to a different user) return an empty array — never another user's notes.
  */
 export function listArchivedCoachNotes(

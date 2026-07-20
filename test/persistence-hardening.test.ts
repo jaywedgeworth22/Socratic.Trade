@@ -68,7 +68,8 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(53);
+    expect(getSchemaVersion(db)).toBe(55);
+
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -82,7 +83,8 @@ describe("runMigrations — versioned schema migrations", () => {
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
     db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(53);
+    expect(getSchemaVersion(db)).toBe(55);
+
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 
@@ -99,7 +101,8 @@ describe("runMigrations — versioned schema migrations", () => {
 
     db.pragma("user_version = 25");
     applyVersionedMigrations(db);
-    expect(getSchemaVersion(db)).toBe(53);
+    expect(getSchemaVersion(db)).toBe(55);
+
 
     const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
     const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);
@@ -145,7 +148,8 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 29");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(53);
+    expect(getSchemaVersion(db)).toBe(55);
+
     expect(db.prepare(`
       SELECT state, attempt_token, ledger_authority FROM vector_ingest_commits WHERE id = ?
     `).get(commitId)).toEqual({ state: "committed", attempt_token: null, ledger_authority: null });
@@ -191,7 +195,8 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 31");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(53);
+    expect(getSchemaVersion(db)).toBe(55);
+
     expect(db.prepare(`
       SELECT id, state, attempt_token, lease_expires_at
       FROM vector_ingest_commits
@@ -268,7 +273,8 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 32");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(53);
+    expect(getSchemaVersion(db)).toBe(55);
+
     expect(db.prepare(`
       SELECT commit_id FROM vector_document_heads
       WHERE tenant_scope = ? AND source = ? AND accession = ?
@@ -309,7 +315,8 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 25");
 
-    expect(applyVersionedMigrations(db)).toBe(53);
+    expect(applyVersionedMigrations(db)).toBe(55);
+
 
     for (const json of [
       (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
@@ -352,7 +359,8 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 26");
 
-    expect(applyVersionedMigrations(db)).toBe(53);
+    expect(applyVersionedMigrations(db)).toBe(55);
+
 
     for (const json of [
       (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
@@ -401,7 +409,8 @@ describe("runMigrations — versioned schema migrations", () => {
     `);
     db.pragma("user_version = 27");
 
-    expect(applyVersionedMigrations(db)).toBe(53);
+    expect(applyVersionedMigrations(db)).toBe(55);
+
     expect(db.prepare(`
       SELECT status, COUNT(*) AS count
       FROM order_replacements
@@ -437,7 +446,8 @@ describe("runMigrations — versioned schema migrations", () => {
       .run("unrelated:setting", JSON.stringify(now), now);
     db.pragma("user_version = 39");
 
-    expect(applyVersionedMigrations(db)).toBe(53);
+    expect(applyVersionedMigrations(db)).toBe(55);
+
     expect(db.prepare("SELECT key FROM settings ORDER BY key").all()).toEqual([
       { key: "unrelated:setting" }
     ]);
@@ -480,7 +490,8 @@ describe("runMigrations — versioned schema migrations", () => {
     ).run(now);
     db.pragma("user_version = 45");
 
-    expect(applyVersionedMigrations(db)).toBe(53);
+    expect(applyVersionedMigrations(db)).toBe(55);
+
     expect(
       db.prepare(
         "SELECT symbol, order_id FROM position_stop_plan_open_brackets WHERE user_id = 'local' AND account_number = 'LEGACY-ACCT'"
@@ -489,12 +500,12 @@ describe("runMigrations — versioned schema migrations", () => {
     db.close();
   });
 
-  it("creates socratic_coach_note_archive at migration v53 (fresh DB, legacy upgrade, and idempotent re-run)", async () => {
+  it("creates socratic_coach_note_archive at migration v55 (fresh DB, legacy upgrade, and idempotent re-run)", async () => {
     const { applyVersionedMigrations, getDb, getSchemaVersion } = await import("../src/lib/db");
 
-    // Fresh DB (the shared beforeAll DATABASE_URL) already migrated through v53 by getDb().
+    // Fresh DB (the shared beforeAll DATABASE_URL) already migrated through v55 by getDb().
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(53);
+    expect(getSchemaVersion(db)).toBe(55);
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'socratic_coach_note_archive'").get()
     ).toBeTruthy();
@@ -505,7 +516,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // Legacy v52 on-disk DB gains the table when versioned migrations re-run.
     const legacy = new RawDatabase(":memory:");
     legacy.pragma("user_version = 52");
-    expect(applyVersionedMigrations(legacy)).toBe(53);
+    expect(applyVersionedMigrations(legacy)).toBe(55);
     expect(
       legacy.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'socratic_coach_note_archive'").get()
     ).toBeTruthy();
