@@ -55,17 +55,14 @@ The TypeScript finding was fixed by using `Boolean(symbols?.length)` for scoped-
 Planned ordered gate:
 
 ```bash
-npm run lint
-npx tsc --noEmit
-npm test
-npm run build
+npm run lint        # passed (existing warning backlog only)
+npx tsc --noEmit    # passed
+npm test            # passed: 420 files / 4,901 tests
+npm run build       # passed; existing middleware/proxy and Sentry Edge warnings only
 ```
 
-Focused check:
-
-```bash
-npx vitest run test/corpus-reembed.test.ts
-```
+The focused regression is included in `test/corpus-reembed.test.ts` and was exercised by the full
+Vitest suite.
 
 ## Follow-ups
 

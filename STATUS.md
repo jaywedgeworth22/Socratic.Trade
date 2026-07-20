@@ -8,8 +8,9 @@ could mark the whole docType `completedForEmbedRevision`; the separate `purge-le
 trusted that stamp and would delete every legacy vector for the docType even though only the scoped
 symbol was backfilled into the active bge-m3 space. The fix keeps scoped runs resumable but withholds
 the full-corpus completion stamp, so purge remains blocked until an unscoped docType run completes.
-Added a focused regression in `test/corpus-reembed.test.ts`. Verification is in progress after the
-required pre-test commit/push. Rollout:
+Added a focused regression in `test/corpus-reembed.test.ts`. Verification passed:
+`npm run lint`, `npx tsc --noEmit`, `npm test` (420 files / 4,901 tests), and
+`npm run build`. Rollout:
 `docs/rollouts/2026-07-20-corpus-reembed-scoped-purge-gate.md`.
 
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
