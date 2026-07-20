@@ -8,7 +8,7 @@
 
 import crypto from "crypto";
 import { audit, getDb } from "./db";
-import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, type LlmKeySource } from "./db-api-keys";
+import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, maskApiKeyPreview, type LlmKeySource } from "./db-api-keys";
 import { pushLlmUsage } from "./usage-monitor-push";
 export { keyFingerprint };
 
@@ -397,6 +397,15 @@ export interface KeyDescriptor {
  */
 export function displayKeyFingerprint(rawKey: string): string {
   return crypto.createHash("sha256").update(rawKey).digest("hex").slice(0, 8);
+}
+
+/** Produce a display-safe masked representation of a raw API key. Delegates to the canonical
+ *  `maskApiKeyPreview` (db-api-keys.ts) — the same mask the Connections page shows — and degrades to
+ *  a head-only form for a key too short to elide, since this descriptor always needs a string.
+ *  Usage/admin descriptors use `displayKeyFingerprint` instead; this remains for Connections-style
+ *  previews and tests that share the same mask helper. */
+export function maskApiKey(rawKey: string): string {
+  return maskApiKeyPreview(rawKey) ?? `${rawKey.slice(0, 4)}...`;
 }
 
 /**
