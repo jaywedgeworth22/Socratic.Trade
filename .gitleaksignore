@@ -25,3 +25,15 @@ edc62261e8cc085ab494c567462e6e97755db0d9:test/provider-rate-limit.test.ts:generi
 # Fake deterministic ENCRYPTION_KEY fixture in PR #1586. The current tree uses "0".repeat(64), but
 # hosted gitleaks scans the branch's first-parent history and still sees the original placeholder literal.
 dd63ba35cbd5023f3571992380454dad22225536:test/rag-doc-type-coverage.test.ts:generic-api-key:55
+#
+# FAKE API-key fixtures in test/api-key-preview.test.ts, flagged by generic-api-key on the
+# introducing commit's diff. Not real secrets -- they exist precisely so the test can assert that
+# GET /api/keys previews/masks a key correctly, so they are deliberately shaped like real keys:
+#   OPENROUTER_KEY / TENANT_KEY  "sk-or-v1-..."  41 chars  (a REAL OpenRouter key is 73:
+#                                                           "sk-or-v1-" + 64 hex -- these are far
+#                                                           too short to be genuine)
+#   TENANT_KEY / SHARED_KEY      bodies contain a SINGLE repeated character (e.g. "aaaa...") --
+#                                no real key looks like that
+#   SHARED_KEY                   "finnhub-" prefix, which is not a real Finnhub key format
+# Verified fixture-only before suppressing (length, prefix, and character-distinctness checks).
+1ea0caa9bbf2c72746b016214032da4d3f141ab8:test/api-key-preview.test.ts:generic-api-key:19
