@@ -94,6 +94,6 @@
     "sharp@0.34.5": true,
     "esbuild@0.23.1": true,
     "unrs-resolver@1.12.2": true,
-    "git+https://github.com/jaywedgeworth22/congress-trading-shared.git#fee9937c25db1de75c1a676826801e3399f36106": true
+    "git+https://github.com/jaywedgeworth22/congress-trading-shared.git#904ea96ac237b775c54c8e4bb29df0d1a40da125": true
   }
 }
