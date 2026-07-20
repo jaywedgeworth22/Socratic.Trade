@@ -1029,6 +1029,9 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
       "env"
     ));
     providers.push(withHealthLane(new AlphaVantageRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    providers.push(withHealthLane(new FmpRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    providers.push(withHealthLane(new InsidersRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
+    providers.push(withHealthLane(new TwelveDataRapidApiEnrichmentProvider(rapidApiKey, "env", userId), "env"));
   }
   // Opt-in active circuit breaker: skip a lane whose db-health lane is currently `stoppedWorking`,
   // re-probing only after the backoff window. Default OFF so it can't silently black out a
@@ -4951,5 +4954,381 @@ export class SecXbrlEnrichmentProvider implements MarketEnrichmentProvider {
     // could flip a symbol's winning source after enrich() resolved, making the cascade merge order
     // timing-dependent. The spread decouples the returned value from those post-race mutations.
     return { ...result };
+  }
+}
+
+// ── RapidAPI: Financial Modeling Prep ────────────────────────────────────────
+
+export class FmpRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "fmp-rapidapi";
+  readonly costTier = "free" as const;
+  readonly configured = true;
+  readonly quotaScarce = false; // "doubles the quota" per inventory - putting it in wave 1!
+  private readonly base = "https://financial-modeling-prep.p.rapidapi.com/v3";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("fmp-rapidapi", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    const CONCURRENCY = 3;
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const admitted = tryReserveRapidApiCalls("fmp-rapidapi", 2, now);
+          if (admitted < 2) {
+            // Give back whatever partial we got, skip this symbol
+            refundRapidApiCalls("fmp-rapidapi", admitted, now);
+            result[symbol] = {};
+            return;
+          }
+          try {
+            const [profileRaw, ratiosRaw] = await Promise.allSettled([
+              this.getJson(`${this.base}/profile/${encodeURIComponent(symbol)}`),
+              this.getJson(`${this.base}/ratios-ttm/${encodeURIComponent(symbol)}`)
+            ]);
+
+            let companyName: string | undefined;
+            let sector: string | undefined;
+            let industry: string | undefined;
+            let beta: number | undefined;
+            let dividendYield: number | undefined;
+            let fiftyTwoWeekHigh: number | undefined;
+            let fiftyTwoWeekLow: number | undefined;
+
+            if (profileRaw.status === "fulfilled" && Array.isArray(profileRaw.value)) {
+              const row = (profileRaw.value as Array<Record<string, unknown>>)[0];
+              if (row) {
+                const clean = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined);
+                const finite = (value: unknown) => {
+                  const parsed = Number(value);
+                  return Number.isFinite(parsed) ? parsed : undefined;
+                };
+                companyName = clean(row.companyName);
+                sector = clean(row.sector);
+                industry = clean(row.industry);
+                beta = finite(row.beta);
+                const lastDividend = finite(row.lastDividend ?? row.lastDiv);
+                const profilePrice = finite(row.price);
+                if (lastDividend !== undefined && lastDividend >= 0 && profilePrice !== undefined && profilePrice > 0) {
+                  dividendYield = Math.round((lastDividend / profilePrice) * 10_000) / 100;
+                }
+                const range = clean(row.range)?.match(/^\s*([\d.]+)\s*-\s*([\d.]+)\s*$/);
+                if (range) {
+                  fiftyTwoWeekLow = finite(range[1]);
+                  fiftyTwoWeekHigh = finite(range[2]);
+                }
+              }
+            }
+
+            let peRatio: number | undefined;
+            let pbRatio: number | undefined;
+            let debtToEquity: number | undefined;
+            let returnOnEquity: number | undefined;
+            let returnOnAssets: number | undefined;
+            let grossProfitMargin: number | undefined;
+
+            if (ratiosRaw.status === "fulfilled" && Array.isArray(ratiosRaw.value)) {
+              const row = (ratiosRaw.value as Array<Record<string, unknown>>)[0];
+              if (row) {
+                const finite = (value: unknown) => {
+                  const parsed = Number(value);
+                  return Number.isFinite(parsed) ? parsed : undefined;
+                };
+                const percent = (value: unknown) => {
+                  const parsed = finite(value);
+                  return parsed === undefined ? undefined : Math.round(parsed * 10_000) / 100;
+                };
+                const pe = finite(row.priceToEarningsRatioTTM);
+                const pb = finite(row.priceToBookRatioTTM);
+                if (pe !== undefined && pe > 0) peRatio = pe;
+                if (pb !== undefined && pb > 0) pbRatio = pb;
+                debtToEquity = finite(row.debtToEquityRatioTTM ?? row.debtEquityRatioTTM);
+                returnOnEquity = percent(row.returnOnEquityTTM);
+                returnOnAssets = percent(row.returnOnAssetsTTM);
+                grossProfitMargin = percent(row.grossProfitMarginTTM);
+                if (dividendYield === undefined) {
+                  dividendYield = percent(row.dividendYieldTTM);
+                }
+              }
+            }
+
+            const data: SymbolEnrichment = {
+              ...(peRatio !== undefined && { peRatio }),
+              ...(pbRatio !== undefined && { pbRatio }),
+              ...(debtToEquity !== undefined && { debtToEquity }),
+              ...(returnOnEquity !== undefined && { returnOnEquity }),
+              ...(returnOnAssets !== undefined && { returnOnAssets }),
+              ...(grossProfitMargin !== undefined && { grossProfitMargin }),
+              ...(companyName !== undefined && { companyName }),
+              ...(sector !== undefined && { sector }),
+              ...(industry !== undefined && { industry }),
+              ...(beta !== undefined && { beta }),
+              ...(dividendYield !== undefined && { dividendYield }),
+              ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+              ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+            };
+
+            writeEnrichmentCache("fmp-rapidapi", symbol, this.scope, this.userId, data, now + ttlMs());
+            result[symbol] = data;
+          } catch (err) {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetchWithRetry(
+        url,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: {
+            "x-rapidapi-host": "financial-modeling-prep.p.rapidapi.com",
+            "x-rapidapi-key": this.apiKey
+          }
+        },
+        { service: this.name, keySource: this.keySource, userId: this.userId }
+      );
+      if (response.status === 404) return [];
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// ── RapidAPI: Insiders ───────────────────────────────────────────────────────
+
+export class InsidersRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "insiders-rapidapi";
+  readonly costTier = "free" as const;
+  readonly configured = true;
+  readonly quotaScarce = true; // Use sparingly
+  private readonly base = "https://insiders.p.rapidapi.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("insiders-rapidapi", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    const CONCURRENCY = 3;
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const admitted = tryReserveRapidApiCalls("insiders-rapidapi", 1, now) > 0;
+          if (!admitted) { result[symbol] = {}; return; }
+          try {
+            const raw = await this.getJson(`${this.base}/gedetailedtinsiders/${encodeURIComponent(symbol)}?timeframe=1y`);
+            
+            let insiderSentiment: number | undefined;
+            if (raw && typeof raw === "object" && Array.isArray((raw as any).transactions)) {
+              let buys = 0;
+              let sells = 0;
+              
+              const txns = (raw as any).transactions;
+              for (const group of txns) {
+                if (Array.isArray(group.transactions)) {
+                  for (const trade of group.transactions) {
+                    const type = String(trade.transactionLabel || "").toLowerCase();
+                    const code = String(trade.transactionAcquiredDisposedCode || "").toLowerCase();
+                    if (type.includes("buy") || type.includes("purchase") || code === "a") buys++;
+                    else if (type.includes("sell") || type.includes("sale") || code === "d") sells++;
+                  }
+                }
+              }
+              const total = buys + sells;
+              if (total > 0) {
+                insiderSentiment = Math.round((buys / total) * 100);
+              }
+            }
+
+            const data: SymbolEnrichment = {
+              ...(insiderSentiment !== undefined && { insiderSentiment })
+            };
+
+            writeEnrichmentCache("insiders-rapidapi", symbol, this.scope, this.userId, data, now + ttlMs());
+            result[symbol] = data;
+          } catch (err) {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetchWithRetry(
+        url,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: {
+            "x-rapidapi-host": "insiders.p.rapidapi.com",
+            "x-rapidapi-key": this.apiKey
+          }
+        },
+        { service: this.name, keySource: this.keySource, userId: this.userId }
+      );
+      if (response.status === 404) return { transactions: [] };
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+// ── RapidAPI: Twelve Data ────────────────────────────────────────────────────
+
+export class TwelveDataRapidApiEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "twelvedata-rapidapi";
+  readonly costTier = "free" as const;
+  readonly configured = true;
+  readonly quotaScarce = true; // Use sparingly
+  private readonly base = "https://twelve-data1.p.rapidapi.com";
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("twelvedata-rapidapi", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    const CONCURRENCY = 3;
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          const admitted = tryReserveRapidApiCalls("twelvedata-rapidapi", 1, now) > 0;
+          if (!admitted) { result[symbol] = {}; return; }
+          try {
+            const raw = await this.getJson(`${this.base}/quote?symbol=${encodeURIComponent(symbol)}&interval=1day`);
+            
+            let fiftyTwoWeekHigh: number | undefined;
+            let fiftyTwoWeekLow: number | undefined;
+            
+            if (raw && typeof raw === "object") {
+              const fiftyTwo = (raw as any).fifty_two_week;
+              if (fiftyTwo) {
+                const high = Number(fiftyTwo.high);
+                const low = Number(fiftyTwo.low);
+                if (Number.isFinite(high) && high > 0) fiftyTwoWeekHigh = high;
+                if (Number.isFinite(low) && low > 0) fiftyTwoWeekLow = low;
+              }
+            }
+
+            const data: SymbolEnrichment = {
+              ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+              ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow })
+            };
+
+            writeEnrichmentCache("twelvedata-rapidapi", symbol, this.scope, this.userId, data, now + ttlMs());
+            result[symbol] = data;
+          } catch (err) {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetchWithRetry(
+        url,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: {
+            "x-rapidapi-host": "twelve-data1.p.rapidapi.com",
+            "x-rapidapi-key": this.apiKey
+          }
+        },
+        { service: this.name, keySource: this.keySource, userId: this.userId }
+      );
+      if (response.status === 404) return {};
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
