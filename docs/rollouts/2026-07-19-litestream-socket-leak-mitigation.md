@@ -96,3 +96,38 @@ watchdog alerts at 60% of the `net.ipv4.tcp_mem` ceiling.
   `MaxIdleConnsPerHost` to litestream's S3 transport.
 - Correct upstream issue #1354.
 - Consider a container memory limit so this can never again take the whole box toward OOM.
+
+---
+
+## Stopgap deployed: self-healing watchdog on the prod box (2026-07-20, owner-authorized)
+
+The leak refills to 60% of the `tcp_mem` ceiling every ~1.5-2h, and manual restarts are not a
+strategy — especially unattended overnight with markets opening. **Risk being covered:** at
+100% of the ceiling the kernel does not merely clamp receive windows (breaking deploys at
+git-clone), it can begin refusing TCP allocations outright, which would degrade the trading
+app's own outbound broker/market-data calls. That is trading-critical, unlike a blocked deploy.
+
+**Installed on `135.181.192.190` (NOT in this repo — it lives on the box):**
+
+| Path | Purpose |
+|---|---|
+| `/usr/local/sbin/litestream-leak-watchdog.sh` | Restarts `socratic-trade-prod` when TCP mem >= **70%** of `net.ipv4.tcp_mem` max |
+| `/etc/systemd/system/litestream-leak-watchdog.{service,timer}` | Runs the check every **10 min** |
+| `/var/log/litestream-leak-watchdog.log` | One line per skip/restart decision |
+| `/root/README-litestream-watchdog.txt` | On-box explanation + uninstall instructions |
+
+Safety properties, all verified by running the real code paths before trusting them:
+- **Skips while a Coolify build container is running**, so it can never kill an in-flight deploy
+  (regex confirmed to match a real build-container name, and confirmed NOT to match the prod
+  container's own name).
+- **No-ops below threshold** (verified: exits 0, writes nothing).
+- **Restart branch verified** via a logic-only harness with the threshold forced to 1% and the
+  `docker restart` swapped for an echo — confirmed it selects the correct container and logs
+  both the decision and the post-restart state.
+
+    Status:  systemctl status litestream-leak-watchdog.timer
+    Log:     tail /var/log/litestream-leak-watchdog.log
+    Disable: systemctl disable --now litestream-leak-watchdog.timer
+
+**This is a stopgap that masks the bug. Remove it once a real fix lands.** It exists so the
+box survives unattended, not because repeated restarts are acceptable.
