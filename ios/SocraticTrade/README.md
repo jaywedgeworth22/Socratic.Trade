@@ -7,6 +7,15 @@ to `/api/mobile/commands`, reads `/api/mobile/snapshot`, and listens to
 
 ## Target Setup
 
+Fastest path — generate the Xcode project from the checked-in spec:
+
+1. `brew install xcodegen` (one-time).
+2. `cd ios && xcodegen generate` — produces `SocraticTrade.xcodeproj` from
+   `project.yml` (gitignored; regenerate any time instead of committing it).
+3. `open SocraticTrade.xcodeproj` and build.
+
+Manual alternative (no xcodegen):
+
 1. Create an iOS SwiftUI app target in Xcode.
 2. Add the Swift files from this directory to the target.
 3. Set the backend base URL in `SocraticTradeApp.swift`.
