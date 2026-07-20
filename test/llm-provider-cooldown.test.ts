@@ -214,7 +214,7 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, listAudit } = await import("../src/lib/db");
+    const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey, listAudit, getDb } = await import("../src/lib/db");
     upsertUserApiKey("local", "openrouter", "test-openai-key", "fixture");
     upsertUserApiKey("local", "gemini", "test-gemini-key", "fixture");
     const accountId = randomUUID();
@@ -246,6 +246,9 @@ describe("cross-run cooldown wired into the Bull failover chain", () => {
     );
     expect(cooldownSet).toBeDefined();
     expect((cooldownSet!.payload as { provider: string; kind: string }).provider).toBe("openai");
+
+    // Clear pending proposals from the first run so they don't trigger the revalidation step in the second run.
+    getDb().prepare("DELETE FROM trade_proposals").run();
 
     // Run 2: the cooled primary is never called — the fallback serves directly, loudly audited.
     const second = await runStrategyOnce();
