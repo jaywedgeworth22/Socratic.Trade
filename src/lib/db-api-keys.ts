@@ -541,6 +541,30 @@ export function keyFingerprint(key: string | undefined): string | undefined {
   return crypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
 
+/** Leading / trailing characters `maskApiKeyPreview` reveals, and the shortest key that earns a
+ *  preview. At 12 revealed characters a 13-char key hides only one — but no real provider key is
+ *  that short, and this threshold is the convention the admin usage ledger already ships
+ *  (`maskApiKey` in llm-usage.ts, which now delegates here). */
+const PREVIEW_HEAD = 8;
+const PREVIEW_TAIL = 4;
+const PREVIEW_MIN_LENGTH = PREVIEW_HEAD + PREVIEW_TAIL + 1;
+
+/**
+ * An IDENTIFYING, non-usable rendering of an API key: first 8 and last 4 characters with the middle
+ * elided (`sk-or-v1-...ab12`). Enough to answer "WHICH key is this?" when several exist for the same
+ * provider — the recurring cost of agents provisioning their own keys instead of using the one the
+ * owner set spend guardrails on — without ever showing a value anyone could authenticate with.
+ *
+ * Returns undefined for an absent/empty key and for one too short to elide (see PREVIEW_MIN_LENGTH),
+ * so callers must decide what to show instead rather than getting a near-complete secret by default.
+ * THE canonical mask: `llm-usage.ts`'s `maskApiKey` and the Connections preview both come through here.
+ */
+export function maskApiKeyPreview(key: string | undefined | null): string | undefined {
+  const trimmed = key?.trim();
+  if (!trimmed || trimmed.length < PREVIEW_MIN_LENGTH) return undefined;
+  return `${trimmed.slice(0, PREVIEW_HEAD)}...${trimmed.slice(-PREVIEW_TAIL)}`;
+}
+
 /**
  * Resolve an LLM provider key for a user. `source` distinguishes the user's own key from the
  * operator-funded failover, and `keyRef` is the non-secret fingerprint of the resolved key so the

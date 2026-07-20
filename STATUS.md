@@ -1,5 +1,25 @@
 # Current Status
 
+## 2026-07-20 — Which-key visibility on Connections + owner ruling: agents never create API keys (CLAUDE, branch `claude/stop-intent-idempotency`)
+
+The per-user key store is write-only, which made "WHICH of several provider keys is serving me?"
+unanswerable — the fallout of agents minting their own OpenRouter keys for both apps instead of
+using the one key the owner had put spend caps on. `GET /api/keys` now returns a `preview` (the
+canonical `maskApiKeyPreview`: first 8 + `...` + last 4) of the key that ACTUALLY resolves, and
+`/console/connections#api-keys` renders it; the operator's env key is previewable to admins only.
+`llm-usage.ts`'s duplicate `maskApiKey` now delegates to the same helper. Owner ruling — **no agent
+on any platform ever creates a provider API key** — codified in `AGENTS.md` "Don't" and broadcast to
+#agent-sync.
+
+Diagnosis of the owner's "no credits / API key failed" strategy-run error is in the rollout note:
+prod `/api/health` shows OpenRouter healthy with $33.71 credit, so the leading suspects are the
+app-internal budget caps (Usage-Monitor monthly budget; `llmDailyCostBudgetUsd`) that skip a run
+with `status: "completed"` and therefore surface as an ordinary toast. **Blocker: needs the owner's
+exact on-screen wording (or the admin `/admin/llm-usage` view) to close.** Also confirmed:
+`migrateLocalEnvCredentials` + DB-before-env resolution means a stored key permanently shadows a
+rotated `OPENROUTER_API_KEY`. Next: land.sh, PR, auto-merge. Rollout:
+`docs/rollouts/2026-07-20-which-key-visibility-and-no-new-keys-ruling.md`.
+
 ## 2026-07-18 — Stop-placement intent + atomic recovered fills landing (CLAUDE, branch `claude/stop-intent-idempotency`, lane 6/final of a serial landing train)
 
 Codex findings 5/6 (money path): durable pre-network placement-intent rows (v53) make a lost

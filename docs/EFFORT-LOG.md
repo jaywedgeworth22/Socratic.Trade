@@ -43,6 +43,16 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
+  `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
+  Owner-triggered: `/console/connections` key store is write-only, so there was no way to tell WHICH
+  of several provider keys is serving — the fallout of agents minting their own keys around the
+  owner's guardrailed key. (A) canonical `maskApiKeyPreview` in `db-api-keys.ts` (first-8/last-4;
+  `llm-usage.ts`'s `maskApiKey` now delegates — de-duped); (B) `GET /api/keys` returns `preview` of
+  the key that ACTUALLY resolves, operator env keys previewable to admins only; (C) Connections UI
+  renders it; (D) owner ruling codified in `AGENTS.md` "Don't" — NO agent on ANY platform ever
+  creates a provider API key — and broadcast to #agent-sync. Diagnosis of the owner's
+  "no credits / API key failed" strategy-run error is in the rollout note.
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
