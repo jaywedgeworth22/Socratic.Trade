@@ -2172,6 +2172,101 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    // Durable pre-network intent for broker protective-stop placement (CRUD in db-api-keys.ts,
+    // alongside broker_protective_stops). reconcileBrokerProtectiveStops previously called
+    // gateway.placeEquityOrder with no persisted state beforehand — if the broker accepted the order
+    // but the reply was lost (crash/timeout), a retry had no record a request was ever sent and could
+    // place a SECOND full-size stop. A row here is written BEFORE the network call, keyed by the
+    // stable client_order_id submitted, and deleted on every definite outcome (rejected/no-id/
+    // success); a call that THROWS deliberately leaves the row so the next tick can look its
+    // client_order_id up in the broker's own order list and adopt the order it already placed instead
+    // of duplicating it. One row per (user, account, symbol) — a fresh placement attempt replaces any
+    // stale row for that symbol.
+    // NOTE (numbering): resolved at the 2026-07-18 merge of origin/main — v52 (sec_rag_tables_recovery,
+    // PR #1735) is on main; this branch takes v53/v54 after it.
+    version: 53,
+    name: "broker_stop_placement_intents",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS broker_stop_placement_intents (
+          user_id TEXT NOT NULL,
+          account_number TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          client_order_id TEXT NOT NULL,
+          quantity REAL NOT NULL,
+          stop_price REAL NOT NULL,
+          kind TEXT NOT NULL,
+          trail_percent REAL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, account_number, symbol)
+        );
+      `);
+    }
+  },
+  {
+    // A recovered/booked broker-held stop fill (bookBrokerHeldStopFill in broker-protective-stops.ts)
+    // never sets proposal_id, so migration 16's partial UNIQUE index on (proposal_id, broker_order_id)
+    // — which requires proposal_id NOT NULL — never covers it. Add a second partial UNIQUE index for
+    // exactly that recovery path: (user_id, account_number, broker_order_id) WHERE proposal_id IS
+    // NULL AND broker_order_id IS NOT NULL AND raw carries bookBrokerHeldStopFill's own
+    // `brokerHeldProtectiveStop: true` marker. insertFillEvent treats a violation the same way it
+    // already treats the proposal_id-scoped one: an idempotent no-op returning the already-booked
+    // fill. Existing duplicates (if any) are collapsed first, same approach as migration 16.
+    //
+    // Scoped to that ONE marker deliberately, not every proposal-less fill: order-replacement.ts's
+    // reconciliation intentionally books multiple proposal-less rows that can share the SAME
+    // broker_order_id across different (user, account) scopes and even, by its own test coverage
+    // ("does not let another tenant/account fill with the same broker order id suppress recovery"),
+    // within the same (user, account) for a DIFFERENT replacement — it keys its own idempotency off
+    // `raw.replacementRefId`, not the broker id, because broker order ids are not assumed globally
+    // unique there. A broad (user_id, account_number, broker_order_id) index across ALL proposal-less
+    // fills would silently collide with that design and drop a legitimate second fill.
+    version: 54,
+    name: "fill_events_no_proposal_broker_order_unique_index",
+    up: (database) => {
+      // Every real boot runs migrate()'s idempotent baseline (which creates fill_events,
+      // and a later baseline ALTER adds its user_id column) before applyVersionedMigrations
+      // ever runs, so fill_events always exists here in production/dev. The one exception is
+      // test/persistence-hardening.test.ts, which hand-rolls a minimal fixture schema and
+      // calls applyVersionedMigrations directly to exercise older migrations in isolation —
+      // it never creates fill_events because it doesn't exercise this migration's table. Skip
+      // rather than fabricate the table here: the baseline is the single source of truth for
+      // fill_events' real-world schema (including columns added by other migrations), and
+      // duplicating it here risks drifting from that truth.
+      const fillEventsExists = database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'fill_events'`)
+        .get();
+      if (!fillEventsExists) return;
+      const dupGroups = database
+        .prepare(
+          `SELECT user_id, account_number, broker_order_id, COUNT(*) AS c, MIN(rowid) AS keep_rowid
+           FROM fill_events
+           WHERE proposal_id IS NULL AND broker_order_id IS NOT NULL
+             AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1
+           GROUP BY user_id, account_number, broker_order_id
+           HAVING c > 1`
+        )
+        .all() as Array<{ user_id: string; account_number: string; broker_order_id: string; c: number; keep_rowid: number }>;
+      const deleteExtras = database.prepare(
+        `DELETE FROM fill_events
+         WHERE user_id = ? AND account_number = ? AND broker_order_id = ? AND proposal_id IS NULL
+           AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1 AND rowid != ?`
+      );
+      for (const g of dupGroups) {
+        const info = deleteExtras.run(g.user_id, g.account_number, g.broker_order_id, g.keep_rowid);
+        console.warn(
+          `[db] migration 54: collapsed ${info.changes} duplicate broker-held-stop-recovery fill_events row(s) for (user_id=${g.user_id}, account_number=${g.account_number}, broker_order_id=${g.broker_order_id}) — kept rowid ${g.keep_rowid}.`
+        );
+      }
+      database.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_fill_events_no_proposal_broker_order
+         ON fill_events (user_id, account_number, broker_order_id)
+         WHERE proposal_id IS NULL AND broker_order_id IS NOT NULL
+           AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1`
+      );
+    }
+  },
+  {
     // EarningsCalls.dev (symbol, fiscal_year, fiscal_quarter) -> provider earnings-call id map
     // (burst/smart-daily program, docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md).
     // Populated by the id-resolution engine (GET /transcripts/recent listing pages + GET
@@ -2182,7 +2277,9 @@ const MIGRATIONS: Migration[] = [
     // content-NULL negative-cache semantics for this would incorrectly TTL-gate a plain id
     // lookup (recon memo finding). GLOBAL market data, no user_id column, same class as
     // earningscalls_transcripts/economic_events.
-    version: 53,
+    // NOTE (numbering): renumbered from branch v53->v55 when merging origin/main (which claimed
+    // v53 broker_stop_placement_intents and v54 fill_events_no_proposal_broker_order_unique_index).
+    version: 55,
     name: "earningscalls_event_index",
     up: (database) => {
       database.exec(`
@@ -2210,7 +2307,8 @@ const MIGRATIONS: Migration[] = [
     // this a genuine one-shot: it only takes effect on a database that has NEVER had this settings
     // row before (a fresh deploy), never overwriting a later admin re-arm or the app's own
     // post-consume zero on every subsequent migration run/restart.
-    version: 54,
+    // NOTE (numbering): renumbered from branch v54->v56 when merging origin/main.
+    version: 56,
     name: "earningscalls_burst_seed",
     up: (database) => {
       database
@@ -2221,6 +2319,7 @@ const MIGRATIONS: Migration[] = [
     }
   }
 ];
+
 
 /**
  * ONE-TIME migration (v7): PR #267 moved llmModel/redTeamLlmModel/llmReasoningEffort

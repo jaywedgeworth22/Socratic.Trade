@@ -68,7 +68,7 @@ describe("runMigrations — versioned schema migrations", () => {
       upsertConnectedAccount
     } = await import("../src/lib/db");
     const db = getDb();
-    expect(getSchemaVersion(db)).toBe(54);
+    expect(getSchemaVersion(db)).toBe(56);
     upsertConnectedAccount({
       id: "legacy-product-test",
       userId: "local",
@@ -82,7 +82,7 @@ describe("runMigrations — versioned schema migrations", () => {
     // DELETE catches missing account/user columns as well as proving the account itself is removed.
     db.pragma("user_version = 24");
     expect(() => applyVersionedMigrations(db)).not.toThrow();
-    expect(getSchemaVersion(db)).toBe(54);
+    expect(getSchemaVersion(db)).toBe(56);
     expect(listConnectedAccounts("local").some((account) => account.broker === "test")).toBe(false);
   });
 
@@ -99,7 +99,7 @@ describe("runMigrations — versioned schema migrations", () => {
 
     db.pragma("user_version = 25");
     applyVersionedMigrations(db);
-    expect(getSchemaVersion(db)).toBe(54);
+    expect(getSchemaVersion(db)).toBe(56);
 
     const migrated = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-default") as { value: string }).value);
     const preserved = JSON.parse((db.prepare("SELECT value FROM user_settings WHERE id = ?").get("cap-explicit") as { value: string }).value);
@@ -145,7 +145,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 29");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(54);
+    expect(getSchemaVersion(db)).toBe(56);
     expect(db.prepare(`
       SELECT state, attempt_token, ledger_authority FROM vector_ingest_commits WHERE id = ?
     `).get(commitId)).toEqual({ state: "committed", attempt_token: null, ledger_authority: null });
@@ -191,7 +191,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 31");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(54);
+    expect(getSchemaVersion(db)).toBe(56);
     expect(db.prepare(`
       SELECT id, state, attempt_token, lease_expires_at
       FROM vector_ingest_commits
@@ -268,7 +268,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.pragma("user_version = 32");
     applyVersionedMigrations(db);
 
-    expect(getSchemaVersion(db)).toBe(54);
+    expect(getSchemaVersion(db)).toBe(56);
     expect(db.prepare(`
       SELECT commit_id FROM vector_document_heads
       WHERE tenant_scope = ? AND source = ? AND accession = ?
@@ -309,7 +309,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 25");
 
-    expect(applyVersionedMigrations(db)).toBe(54);
+    expect(applyVersionedMigrations(db)).toBe(56);
 
     for (const json of [
       (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
@@ -352,7 +352,7 @@ describe("runMigrations — versioned schema migrations", () => {
     db.prepare("INSERT INTO strategy_profiles (policy) VALUES (?)").run(JSON.stringify({ maxDailyNotional: 500 }));
     db.pragma("user_version = 26");
 
-    expect(applyVersionedMigrations(db)).toBe(54);
+    expect(applyVersionedMigrations(db)).toBe(56);
 
     for (const json of [
       (db.prepare("SELECT value AS json FROM settings WHERE key = 'policy'").get() as { json: string }).json,
@@ -401,7 +401,7 @@ describe("runMigrations — versioned schema migrations", () => {
     `);
     db.pragma("user_version = 27");
 
-    expect(applyVersionedMigrations(db)).toBe(54);
+    expect(applyVersionedMigrations(db)).toBe(56);
     expect(db.prepare(`
       SELECT status, COUNT(*) AS count
       FROM order_replacements
@@ -437,7 +437,7 @@ describe("runMigrations — versioned schema migrations", () => {
       .run("unrelated:setting", JSON.stringify(now), now);
     db.pragma("user_version = 39");
 
-    expect(applyVersionedMigrations(db)).toBe(54);
+    expect(applyVersionedMigrations(db)).toBe(56);
     expect(db.prepare("SELECT key FROM settings ORDER BY key").all()).toEqual([
       { key: "earningscalls_burst_pending" },
       { key: "unrelated:setting" }
@@ -487,7 +487,7 @@ describe("runMigrations — versioned schema migrations", () => {
     ).run(now);
     db.pragma("user_version = 45");
 
-    expect(applyVersionedMigrations(db)).toBe(54);
+    expect(applyVersionedMigrations(db)).toBe(56);
     expect(
       db.prepare(
         "SELECT symbol, order_id FROM position_stop_plan_open_brackets WHERE user_id = 'local' AND account_number = 'LEGACY-ACCT'"

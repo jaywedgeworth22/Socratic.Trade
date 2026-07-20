@@ -275,6 +275,32 @@ export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id
         .get(fill.proposalId, fill.brokerOrderId, userId) as RawFillEvent | undefined;
       if (existing) return toFillEvent(existing);
     }
+    // The broker-held-stop recovery backstop index (see the fill_events_no_proposal_broker_order
+    // migration in db.ts) covers recovered broker-held stop fills specifically — bookBrokerHeldStopFill
+    // (broker-protective-stops.ts) never sets proposal_id, and tags its own inserts with
+    // `raw.brokerHeldProtectiveStop: true`: (user_id, account_number, broker_order_id) WHERE
+    // proposal_id IS NULL AND that marker is set. Scoped that narrowly (not every proposal-less fill)
+    // because order-replacement.ts deliberately books multiple proposal-less rows that can share a
+    // broker_order_id within the same (user, account) — it keys its OWN idempotency off
+    // `raw.replacementRefId` instead, so this backstop must not intercept those. Same
+    // idempotent-replay rationale as above — a retry that re-books the same physical broker order must
+    // return the already-booked fill, not throw or double-book (Item 6, 2026-07-18).
+    if (
+      isUniqueConstraintError(e) &&
+      !fill.proposalId &&
+      fill.brokerOrderId &&
+      (fill.raw as { brokerHeldProtectiveStop?: unknown } | undefined)?.brokerHeldProtectiveStop === true
+    ) {
+      // The lookup repeats the index's marker condition: an UNMARKED proposal-less row (an
+      // order-replacement booking) can legitimately coexist for the same broker id and must never be
+      // returned as "the already-booked recovery fill".
+      const existing = getDb()
+        .prepare(
+          "SELECT * FROM fill_events WHERE user_id = ? AND account_number = ? AND broker_order_id = ? AND proposal_id IS NULL AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1 ORDER BY filled_at ASC LIMIT 1"
+        )
+        .get(userId, fill.accountNumber, fill.brokerOrderId) as RawFillEvent | undefined;
+      if (existing) return toFillEvent(existing);
+    }
     throw e;
   }
   return fill;

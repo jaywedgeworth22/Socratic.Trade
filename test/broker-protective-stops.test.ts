@@ -1173,6 +1173,221 @@ describe("reconcileBrokerProtectiveStops — round-9 (Codex review, PR #1331)", 
     expect(fills).toHaveLength(1);
     expect(fills[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 3, price: 92, status: "filled" }); // the partial, not the full row qty
   });
+
+  it("Item 5: does not double-place when the broker accepts an order but the reply is lost — adopts it on a later tick instead", async () => {
+    // Simulate "the broker accepted the order, but our process crashed/timed out before the reply
+    // came back" — placeEquityOrder captures the client ref it was given, then throws.
+    let capturedRefId: string | undefined;
+    let placeCallCount = 0;
+    let throwOnPlace = true;
+    (gw as unknown as { placeEquityOrder: (order: Record<string, unknown>) => Promise<unknown> }).placeEquityOrder = async (order: Record<string, unknown>) => {
+      placeCallCount++;
+      capturedRefId = order.refId as string;
+      if (throwOnPlace) throw new Error("simulated network timeout after broker accept");
+      return { orderId: gw.nextOrderId, refId: order.refId, state: gw.placeState, raw: {} };
+    };
+
+    const account = "PS-CRASH";
+    const args = {
+      userId: "local", policy: rhPolicy(account), accountNumber: account, gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live" as const, running: true
+    };
+
+    // Tick 1: the broker call throws. No resting stop is recorded (never got that far), but a
+    // durable "placing" intent MUST persist — that's the only trace a request was ever sent.
+    const r1 = await reconcileBrokerProtectiveStops(args);
+    expect(r1.placed).toBe(0);
+    expect(listBrokerProtectiveStops(account, "local")).toHaveLength(0); // no zombie 'resting' row
+    expect(placeCallCount).toBe(1);
+    expect(capturedRefId).toBeTruthy();
+
+    const { getBrokerStopPlacementIntent } = await import("../src/lib/db");
+    const intent = getBrokerStopPlacementIntent(account, "AAPL", "local");
+    expect(intent).toBeTruthy();
+    expect(intent!.clientOrderId).toBe(capturedRefId);
+    expect(intent!.quantity).toBe(10);
+
+    // Tick 2: a naive retry with no memory of tick 1 would just place a SECOND full-size stop. The
+    // caller's freshly fetched order list now shows the broker DID accept the earlier request (it
+    // just never sent a reply) — reconcile must ADOPT that live order rather than duplicate it.
+    throwOnPlace = false; // if this regressed to placing again, placeCallCount would tick to 2
+    const liveAcceptedOrder: EquityOrder = {
+      id: "ord-real-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "new",
+      clientOrderId: capturedRefId, quantity: 10, stopPrice: 92, createdAt: new Date().toISOString()
+    };
+    const r2 = await reconcileBrokerProtectiveStops({ ...args, orders: [liveAcceptedOrder] });
+    expect(r2.placed).toBe(1);
+    expect(r2.placedStopSymbols).toEqual(["AAPL"]);
+    // The broker was only ever actually called ONCE across both ticks — tick 2 adopted instead of
+    // re-submitting.
+    expect(placeCallCount).toBe(1);
+    const rows = listBrokerProtectiveStops(account, "local");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-real-1", status: "resting", quantity: 10 });
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeUndefined(); // intent cleared
+  });
+
+  it("Item 5: clears a confirmed-dead intent and places fresh (does not adopt on rejected/absent evidence)", async () => {
+    let placeCallCount = 0;
+    let throwOnPlace = true;
+    (gw as unknown as { placeEquityOrder: (order: Record<string, unknown>) => Promise<unknown> }).placeEquityOrder = async (order: Record<string, unknown>) => {
+      placeCallCount++;
+      if (throwOnPlace) throw new Error("simulated network timeout after broker accept");
+      return { orderId: gw.nextOrderId, refId: order.refId, state: gw.placeState, raw: {} };
+    };
+    const account = "PS-CRASH-DEAD";
+    const args = {
+      userId: "local", policy: rhPolicy(account), accountNumber: account, gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live" as const, running: true
+    };
+    await reconcileBrokerProtectiveStops(args); // tick 1: throws, leaves an intent
+    const { getBrokerStopPlacementIntent } = await import("../src/lib/db");
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeTruthy();
+
+    // Tick 2: a REAL fetch (ordersListed defaults true) shows nothing matching the intent's client
+    // ref at all — positive evidence the earlier submission never landed. The stale intent must be
+    // cleared and a fresh placement attempted (not stuck waiting forever).
+    throwOnPlace = false;
+    gw.nextOrderId = "ord-fresh";
+    const r2 = await reconcileBrokerProtectiveStops({ ...args, orders: [] });
+    expect(r2.placed).toBe(1);
+    expect(placeCallCount).toBe(2); // tick 1's failed attempt + tick 2's fresh one — never stuck
+    expect(listBrokerProtectiveStops(account, "local")[0]).toMatchObject({ brokerOrderId: "ord-fresh", status: "resting" });
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeUndefined();
+  });
+
+  it("Item 6: a recovered stop fill is booked exactly once even on a replayed recovery (transaction + unique-index idempotency)", async () => {
+    // Place a fixed broker stop while enabled...
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("ITEM6-REPLAY"), accountNumber: "ITEM6-REPLAY", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("ITEM6-REPLAY", "local")).toHaveLength(1);
+
+    // ...then the feature is disabled while the stop has already FILLED at the broker. Recovery
+    // deletes the tracking row and books the fill together.
+    const filledOrder: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled",
+      filledQuantity: 10, averagePrice: 92, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("ITEM6-REPLAY", { robinhoodBrokerStops: false }), accountNumber: "ITEM6-REPLAY",
+      gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true, orders: [filledOrder]
+    });
+    expect(r.filledRecoverySymbols).toEqual(["AAPL"]);
+    expect(listBrokerProtectiveStops("ITEM6-REPLAY", "local")).toHaveLength(0); // tracking gone
+    const firstFills = listFillEvents("ITEM6-REPLAY", "live");
+    expect(firstFills).toHaveLength(1);
+
+    // Replay: a crash right after this recovery committed (before the caller could act on the
+    // result) would retry the SAME recovery against the SAME broker order. Since the tracking row
+    // (delete) and the fill (insert) landed together in one transaction, there is nothing left to
+    // re-delete — but if some other path ever attempts to book this exact fill again (the scenario
+    // the broker-held-stop-recovery unique index exists for), it must be an idempotent no-op, not a duplicate.
+    const { insertFillEvent } = await import("../src/lib/db");
+    const replay = insertFillEvent({
+      userId: "local", accountNumber: "ITEM6-REPLAY", source: "live", executionMode: "broker/live",
+      symbol: "AAPL", side: "sell", quantity: 10, price: 92, notional: 920, status: "filled",
+      brokerOrderId: "ord-1", raw: { brokerHeldProtectiveStop: true, kind: "fixed" }
+    });
+    expect(replay.id).toBe(firstFills[0].id); // idempotent no-op, returns the already-booked fill
+    expect(listFillEvents("ITEM6-REPLAY", "live")).toHaveLength(1); // still exactly once, not twice
+  });
+
+  it("Item 5+6: intent reconciliation when the accepted order already FILLED before the next tick — books the fill, defers re-placement (2026-07-18 adversarial finding)", async () => {
+    // Gap under attack: the intent lane handled adopt-if-LIVE and confirmed-dead-by-ABSENCE, but not
+    // the third outcome — the accepted order is VISIBLE in the fetched list but already TERMINAL
+    // with executed quantity (the stop was accepted after the crash and FILLED before the next tick;
+    // entirely plausible for a stop placed into a falling market, which is exactly when stops fill).
+    // Pre-fix: the intent fell into the confirm-dead lane, NO fill was booked, and section 4
+    // immediately placed a fresh full-size stop sized off the stale pre-fill position snapshot
+    // (fill lost + possible over-sell short).
+    let capturedRefId: string | undefined;
+    let throwOnPlace = true;
+    (gw as unknown as { placeEquityOrder: (order: Record<string, unknown>) => Promise<unknown> }).placeEquityOrder = async (order: Record<string, unknown>) => {
+      capturedRefId = order.refId as string;
+      if (throwOnPlace) throw new Error("simulated network timeout after broker accept");
+      gw.placed.push({ symbol: order.symbol as string, side: order.side as string, type: order.type as string, quantity: order.quantity as number, stopPrice: order.stopPrice as number, timeInForce: order.timeInForce as string });
+      return { orderId: gw.nextOrderId, refId: order.refId, state: gw.placeState, raw: {} };
+    };
+
+    const account = "ADV-INTENT-FILLED";
+    const args = {
+      userId: "local", policy: rhPolicy(account), accountNumber: account, gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live" as const, running: true
+    };
+
+    // Tick 1: placement throws after the broker (invisibly) accepted — durable intent persists.
+    const r1 = await reconcileBrokerProtectiveStops(args);
+    expect(r1.placed).toBe(0);
+    const { getBrokerStopPlacementIntent } = await import("../src/lib/db");
+    const intent = getBrokerStopPlacementIntent(account, "AAPL", "local");
+    expect(intent).toBeTruthy();
+    expect(intent!.clientOrderId).toBe(capturedRefId);
+
+    // Between ticks: the accepted stop (10 sh @ trigger 92) FILLED — the position is really 0 now,
+    // but this tick's `positions` snapshot (fetched before orders, per synthetic-stops.ts ordering)
+    // still shows the pre-fill 10 shares. The freshly fetched order list shows the terminal order
+    // carrying the intent's client ref (Alpaca getEquityOrders pages status:"all", so terminal
+    // orders ARE visible).
+    throwOnPlace = false;
+    const filledAcceptedOrder: EquityOrder = {
+      id: "ord-real-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled",
+      clientOrderId: intent!.clientOrderId, quantity: 10, filledQuantity: 10, averagePrice: 92,
+      createdAt: new Date().toISOString()
+    };
+    const r2 = await reconcileBrokerProtectiveStops({ ...args, orders: [filledAcceptedOrder] });
+
+    // Intent must be resolved either way.
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeUndefined();
+
+    // (b) The same tick must NOT place a fresh full-size stop sized off the stale 10-share
+    // snapshot: those shares were just sold by the recovered fill. Defers via filledRecoverySymbols
+    // for exactly this reason.
+    expect(gw.placed).toHaveLength(0);
+    expect(r2.filledRecoverySymbols).toEqual(["AAPL"]);
+    expect(listBrokerProtectiveStops(account, "local")).toHaveLength(0);
+
+    // (a) The executed 10-share sell MUST reach fill_events — this is real money that moved.
+    const fills = listFillEvents(account, "live");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 10, price: 92, status: "filled" });
+  });
+
+  it("Item 5+6: a visible-but-terminal intent order with ZERO executed quantity is confirmed dead — places fresh, books nothing", async () => {
+    let throwOnPlace = true;
+    (gw as unknown as { placeEquityOrder: (order: Record<string, unknown>) => Promise<unknown> }).placeEquityOrder = async (order: Record<string, unknown>) => {
+      if (throwOnPlace) throw new Error("simulated network timeout after broker accept");
+      gw.placed.push({ symbol: order.symbol as string, side: order.side as string, type: order.type as string, quantity: order.quantity as number, stopPrice: order.stopPrice as number, timeInForce: order.timeInForce as string });
+      return { orderId: gw.nextOrderId, refId: order.refId, state: gw.placeState, raw: {} };
+    };
+    const account = "ADV-INTENT-DEADZERO";
+    const args = {
+      userId: "local", policy: rhPolicy(account), accountNumber: account, gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live" as const, running: true
+    };
+    await reconcileBrokerProtectiveStops(args); // tick 1: throws, leaves an intent
+    const { getBrokerStopPlacementIntent } = await import("../src/lib/db");
+    const intent = getBrokerStopPlacementIntent(account, "AAPL", "local");
+    expect(intent).toBeTruthy();
+
+    // Tick 2: the order IS visible but terminal with nothing executed (broker canceled it outright,
+    // e.g. risk-check kill) — genuinely dead, position untouched. Fresh placement must proceed and
+    // no phantom fill may be booked.
+    throwOnPlace = false;
+    gw.nextOrderId = "ord-fresh-2";
+    const canceledZeroFill: EquityOrder = {
+      id: "ord-dead-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "canceled",
+      clientOrderId: intent!.clientOrderId, quantity: 10, createdAt: new Date().toISOString()
+    };
+    const r2 = await reconcileBrokerProtectiveStops({ ...args, orders: [canceledZeroFill] });
+    expect(r2.placed).toBe(1);
+    expect(r2.filledRecoverySymbols).toEqual([]);
+    expect(gw.placed).toHaveLength(1); // the fresh placement
+    expect(listFillEvents(account, "live")).toHaveLength(0); // nothing executed, nothing booked
+    expect(listBrokerProtectiveStops(account, "local")[0]).toMatchObject({ brokerOrderId: "ord-fresh-2", status: "resting" });
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeUndefined();
+  });
 });
 
 describe("reconcilePendingBracketTeardowns", () => {
