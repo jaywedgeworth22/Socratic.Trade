@@ -41,7 +41,16 @@ data loss.
 
 ## Verification
 
-Pending at first commit per Cursor Cloud branch rule to commit/push before testing.
+First pass:
+
+```bash
+npm run lint        # failed before dependencies were installed: sh: 1: eslint: not found
+npm install         # installed dependencies; npm reported existing audit warnings
+npm run lint        # passed (existing warning backlog only)
+npx tsc --noEmit    # failed: src/lib/rag/corpus-reembed.ts 'symbols' is possibly undefined
+```
+
+The TypeScript finding was fixed by using `Boolean(symbols?.length)` for scoped-run detection.
 
 Planned ordered gate:
 

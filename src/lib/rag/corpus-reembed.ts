@@ -786,7 +786,7 @@ async function runCorpusReembedLocked(
   const priorProgress = readProgress();
   const results: CorpusReembedDocTypeResult[] = [];
   let stoppedForBudget = false;
-  const isSymbolScopedRun = symbols.length > 0;
+  const isSymbolScopedRun = Boolean(symbols?.length);
 
   const persistRunning = (docType: CorpusReembedDocType, docState: DocTypeRunState) => {
     // Dry runs are strictly read-only: counts come back in the response, and neither watermarks
