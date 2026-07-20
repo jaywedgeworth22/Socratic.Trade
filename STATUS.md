@@ -3,6 +3,75 @@
 ## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
 
 Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
+## 2026-07-20 — Which-key visibility on Connections + owner ruling: agents never create API keys (CLAUDE, branch `claude/stop-intent-idempotency`)
+
+The per-user key store is write-only, which made "WHICH of several provider keys is serving me?"
+unanswerable — the fallout of agents minting their own OpenRouter keys for both apps instead of
+using the one key the owner had put spend caps on. `GET /api/keys` now returns a `preview` (the
+canonical `maskApiKeyPreview`: first 8 + `...` + last 4) of the key that ACTUALLY resolves, and
+`/console/connections#api-keys` renders it; the operator's env key is previewable to admins only.
+`llm-usage.ts`'s duplicate `maskApiKey` now delegates to the same helper. Owner ruling — **no agent
+on any platform ever creates a provider API key** — codified in `AGENTS.md` "Don't" and broadcast to
+#agent-sync.
+
+Diagnosis of the owner's "no credits / API key failed" strategy-run error is in the rollout note:
+prod `/api/health` shows OpenRouter healthy with $33.71 credit, so the leading suspects are the
+app-internal budget caps (Usage-Monitor monthly budget; `llmDailyCostBudgetUsd`) that skip a run
+with `status: "completed"` and therefore surface as an ordinary toast. **Blocker: needs the owner's
+exact on-screen wording (or the admin `/admin/llm-usage` view) to close.** Also confirmed:
+`migrateLocalEnvCredentials` + DB-before-env resolution means a stored key permanently shadows a
+rotated `OPENROUTER_API_KEY`. Next: land.sh, PR, auto-merge. Rollout:
+`docs/rollouts/2026-07-20-which-key-visibility-and-no-new-keys-ruling.md`.
+
+## 2026-07-18 — Stop-placement intent + atomic recovered fills landing (CLAUDE, branch `claude/stop-intent-idempotency`, lane 6/final of a serial landing train)
+
+Codex findings 5/6 (money path): durable pre-network placement-intent rows (v53) make a lost
+broker reply reconcile-and-adopt instead of double-placing a full-size stop; all recovered
+stop-fill delete+book pairs are one transaction, with a v54 partial UNIQUE index +
+idempotent-replay handling for proposal-less protective-stop fills. Adversarially verified; the
+filled-order fill-loss must-fix (visible-but-terminal WITH fills) applied + regression-tested;
+8 suites / 250 tests green on the merged tree (contains main `b4dd8a54`, #1738 both-mechanisms
+merge). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
+`docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
+## 2026-07-19 — PR #1773 Codex-review fix pass: 6 real findings fixed, verified individually (CLAUDE, on branch `monet/session-handoff-2026-07-19`)
+
+Owner-directed fix of 6 Codex P2 findings on PR #1773 (docs-only), each checked against live
+repo/git state before editing rather than taken at face value: (1) the rollout note's "recurring
+Codex false positive" guidance was too absolute (told the next operator to blanket-dismiss
+wrong-identity nits) — reworded to require `git cat-file -t <sha>` verification on every new
+instance; the specific SHA re-cited against this line (`a14df5f8...`) still does not exist
+anywhere in this repo (reconfirmed independently, matching a `github-actions[bot]` comment on the
+same thread), and `git log --format=fuller` on this branch shows every commit already carries the
+correct noreply identity, so no amend/rebase was needed. (2) Added a PLAN.md next-action entry
+(previously missing) covering the #1771 → #1773 → #1777 landing order and the pending corpus
+re-embed. (3) Rewrote STATUS's re-embed line below from an unbacked assertion into a
+live-verified one (see that entry). (4) and (6) Qualified the rollout note's operational-finding
+block: `scripts/reindex-all.ts`/`reindex-10k` are confirmed SEC 10-K/10-Q only
+(`refreshFilingBodies`), and the existing `POST /api/admin/reindex-8k` route
+(`reindexEightKDataset`, re-embeds the full persisted 8-K dataset) is now listed as an available
+backfill path. (5) Added a reconciliation banner (not a rewrite — content preserved, per AGENTS.md's
+no-silent-doc-replacement rule) to `docs/prod-config-voyage.md`: prod now runs bge-m3 via
+OpenRouter, not the Voyage default that doc's body describes; Voyage content stays accurate for
+the fallback path. All corrections are grounded in direct code reads (`vector-db.ts`,
+`corpus-reembed.ts`, `sec8k.ts`, both reindex routes) and a live Pinecone `describe-index-stats`
+check performed during this session — nothing here is guessed. Files:
+`docs/rollouts/2026-07-19-monet-session-handoff.md`, `STATUS.md`, `PLAN.md`,
+`docs/prod-config-voyage.md`, `docs/EFFORT-LOG.md`.
+
+## 2026-07-19 — MONET session close-out: PR sweep landed, #1771/#1773 armed, re-embed still pending (ledger appended by CLAUDE handoff execution)
+
+MONET's 2026-07-19 cloud session merged the open-PR backlog (#1745/#1736/#1735/#1740/#1754;
+prod auto-deployed and healthy throughout) and left two armed PRs: **#1771** (SiliconFlow
+bge-m3 embed price 10x undercount fix) and **#1773** (session handoff note). The handoff's
+top operational flag stands: the **bge-m3 corpus re-embed is VERIFIED INCOMPLETE** — checked
+directly via Pinecone `describe-index-stats` on the `socratic-trade` index (2026-07-19, live):
+the legacy (Voyage) namespace still holds ~8.7k vectors intact (no purge has run) versus the
+managed (bge-m3) namespace at ~1.6k and growing only via normal ingest, nowhere near a
+completed full-corpus backfill for the 4 re-embed docTypes (`sec-filings`,
+`earningscalls-transcripts`, `insider-form4`, `experience-memory`). This is a real (not assumed)
+gap and will drift as ingest continues — reread `describe-index-stats` or `GET
+/api/admin/reembed` before relying on the exact counts. Do NOT `purge-legacy` until the bge space
+is independently reverified full. Details: `docs/rollouts/2026-07-19-monet-session-handoff.md`.
 
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
