@@ -1,5 +1,30 @@
 # Current Status
 
+## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
+
+Docs-only fix for 3 Codex review findings on PR #1774 (the
+`docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note):
+
+1. **P1 — commit author identity.** Codex flagged a commit (`bbe7fe3`) with Codex's own
+   `codex@openai.com` identity. Re-verified in a fresh worktree: that short hash is not
+   reachable in the branch's history — both commits unique to the branch (`aaca9be3`,
+   `540190fd`) already carry the correct `12656028+jaywedgeworth22@users.noreply.github.com`
+   author/committer identity. It was apparently already re-authored (hash changed) between
+   whatever Codex inspected and its comment posting. **No rebase needed or performed** —
+   confirmed via `git log --format=fuller 7be7139..claude/mobile-view-spacing-oetyav`.
+2. **P2 — stale STATUS.md/EFFORT-LOG.md mobile tab-bar status.** Real: this file's mobile
+   tab-bar entry (below) still said "PR pending". Verified current reality (PR #1726 merged
+   2026-07-18T06:30:22Z as `2aa53e1`, ancestor of the live prod release) and corrected both
+   this file and `docs/EFFORT-LOG.md` in place.
+3. **P2 — stale open-PR inventory.** The handoff note documented #1728/#1733/#1735/#1736/
+   #1737/#1738 as still-open needing conflict sequencing. Re-verified via `gh pr view <n>
+   --json state,mergedAt`: all 6 merged 2026-07-18 (exact timestamps + merge SHAs in the
+   rollout-note addendum). Corrected via an addendum to the existing rollout note (original
+   text left intact as the historical record).
+
+Docs-only; no product code changed. Full local gate (tsc/test/build) run via `scripts/land.sh`
+before pushing. Rollout: addendum on
+`docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 ## 2026-07-20 — Which-key visibility on Connections + owner ruling: agents never create API keys (CLAUDE, branch `claude/stop-intent-idempotency`)
 
 The per-user key store is write-only, which made "WHICH of several provider keys is serving me?"
@@ -30,6 +55,45 @@ filled-order fill-loss must-fix (visible-but-terminal WITH fills) applied + regr
 8 suites / 250 tests green on the merged tree (contains main `b4dd8a54`, #1738 both-mechanisms
 merge). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
 `docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
+## 2026-07-19 — PR #1773 Codex-review fix pass: 6 real findings fixed, verified individually (CLAUDE, on branch `monet/session-handoff-2026-07-19`)
+
+Owner-directed fix of 6 Codex P2 findings on PR #1773 (docs-only), each checked against live
+repo/git state before editing rather than taken at face value: (1) the rollout note's "recurring
+Codex false positive" guidance was too absolute (told the next operator to blanket-dismiss
+wrong-identity nits) — reworded to require `git cat-file -t <sha>` verification on every new
+instance; the specific SHA re-cited against this line (`a14df5f8...`) still does not exist
+anywhere in this repo (reconfirmed independently, matching a `github-actions[bot]` comment on the
+same thread), and `git log --format=fuller` on this branch shows every commit already carries the
+correct noreply identity, so no amend/rebase was needed. (2) Added a PLAN.md next-action entry
+(previously missing) covering the #1771 → #1773 → #1777 landing order and the pending corpus
+re-embed. (3) Rewrote STATUS's re-embed line below from an unbacked assertion into a
+live-verified one (see that entry). (4) and (6) Qualified the rollout note's operational-finding
+block: `scripts/reindex-all.ts`/`reindex-10k` are confirmed SEC 10-K/10-Q only
+(`refreshFilingBodies`), and the existing `POST /api/admin/reindex-8k` route
+(`reindexEightKDataset`, re-embeds the full persisted 8-K dataset) is now listed as an available
+backfill path. (5) Added a reconciliation banner (not a rewrite — content preserved, per AGENTS.md's
+no-silent-doc-replacement rule) to `docs/prod-config-voyage.md`: prod now runs bge-m3 via
+OpenRouter, not the Voyage default that doc's body describes; Voyage content stays accurate for
+the fallback path. All corrections are grounded in direct code reads (`vector-db.ts`,
+`corpus-reembed.ts`, `sec8k.ts`, both reindex routes) and a live Pinecone `describe-index-stats`
+check performed during this session — nothing here is guessed. Files:
+`docs/rollouts/2026-07-19-monet-session-handoff.md`, `STATUS.md`, `PLAN.md`,
+`docs/prod-config-voyage.md`, `docs/EFFORT-LOG.md`.
+
+## 2026-07-19 — MONET session close-out: PR sweep landed, #1771/#1773 armed, re-embed still pending (ledger appended by CLAUDE handoff execution)
+
+MONET's 2026-07-19 cloud session merged the open-PR backlog (#1745/#1736/#1735/#1740/#1754;
+prod auto-deployed and healthy throughout) and left two armed PRs: **#1771** (SiliconFlow
+bge-m3 embed price 10x undercount fix) and **#1773** (session handoff note). The handoff's
+top operational flag stands: the **bge-m3 corpus re-embed is VERIFIED INCOMPLETE** — checked
+directly via Pinecone `describe-index-stats` on the `socratic-trade` index (2026-07-19, live):
+the legacy (Voyage) namespace still holds ~8.7k vectors intact (no purge has run) versus the
+managed (bge-m3) namespace at ~1.6k and growing only via normal ingest, nowhere near a
+completed full-corpus backfill for the 4 re-embed docTypes (`sec-filings`,
+`earningscalls-transcripts`, `insider-form4`, `experience-memory`). This is a real (not assumed)
+gap and will drift as ingest continues — reread `describe-index-stats` or `GET
+/api/admin/reembed` before relying on the exact counts. Do NOT `purge-legacy` until the bge space
+is independently reverified full. Details: `docs/rollouts/2026-07-19-monet-session-handoff.md`.
 
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
@@ -438,7 +502,7 @@ universal-OpenRouter routing that creates the split); correct whether or not #17
 Gate: tsc clean, lint 0 errors, 7/7 new merge tests + full suite, build; live-verified with
 seeded same-model direct+OpenRouter rows. Rollout:
 `docs/rollouts/2026-07-17-usage-canonical-model-merge.md`.
-## 2026-07-18 — Mobile bottom tab bar wasted-space fix (CLAUDE, branch `claude/mobile-view-spacing-oetyav`, PR pending)
+## 2026-07-18 — Mobile bottom tab bar wasted-space fix (CLAUDE, PR #1726 MERGED & DEPLOYED)
 
 Owner reported wasted vertical space on mobile between the console's fixed bottom tab bar
 labels and Safari's address bar. Root cause: the tab-bar `<nav>` applied
@@ -449,7 +513,11 @@ the inline padding to a `.con-tabbar` class (`app/console/console.css`) that res
 only under `@media (display-mode: standalone), (display-mode: fullscreen)` (installed PWA /
 physical home indicator); browser tabs get `padding-bottom: 0`. CSS/markup only — no logic or
 trading-path change; standalone PWA behavior unchanged. Full gate green (tsc clean, eslint 0
-errors, 4758 tests pass, build clean). Next: push branch + open PR.
+errors, 4758 tests pass, build clean). PR #1726 merged 2026-07-18T06:30:22Z (squash `2aa53e1`);
+confirmed deployed — `2aa53e1` is an ancestor of the live production release SHA.
+**Corrected 2026-07-19** (PR #1774 Codex-review triage): this entry previously read "PR
+pending" / "Next: push branch + open PR", stale by the time PR #1774 (the handoff note
+documenting this work) was under review.
 Rollout: `docs/rollouts/2026-07-18-mobile-tabbar-safe-area-band.md`.
 
 ## 2026-07-17 — ATR Stop & short cover-buy fixes (ANTIGRAVITY, branch `agent/strategy-atr-and-short-fixes`, PR #1713, auto-merge enabled — waiting on CI)
