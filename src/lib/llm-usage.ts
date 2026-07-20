@@ -8,7 +8,7 @@
 
 import crypto from "crypto";
 import { audit, getDb } from "./db";
-import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, type LlmKeySource } from "./db-api-keys";
+import { apiKeyEnvVarForService, getUserApiKey, keyFingerprint, LOCAL_USER, maskApiKeyPreview, type LlmKeySource } from "./db-api-keys";
 import { pushLlmUsage } from "./usage-monitor-push";
 export { keyFingerprint };
 
@@ -408,10 +408,11 @@ export interface KeyDescriptor {
   label: string;
 }
 
-/** Produce a display-safe masked representation of a raw API key. */
+/** Produce a display-safe masked representation of a raw API key. Delegates to the canonical
+ *  `maskApiKeyPreview` (db-api-keys.ts) — the same mask the Connections page shows — and degrades to
+ *  a head-only form for a key too short to elide, since this descriptor always needs a string. */
 export function maskApiKey(rawKey: string): string {
-  if (rawKey.length <= 12) return `${rawKey.slice(0, 4)}...`;
-  return `${rawKey.slice(0, 8)}...${rawKey.slice(-4)}`;
+  return maskApiKeyPreview(rawKey) ?? `${rawKey.slice(0, 4)}...`;
 }
 
 /**
