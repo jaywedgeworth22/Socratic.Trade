@@ -3,6 +3,31 @@
 ## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
 
 Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
+## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
+
+Docs-only fix for 3 Codex review findings on PR #1774 (the
+`docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note):
+
+1. **P1 — commit author identity.** Codex flagged a commit (`bbe7fe3`) with Codex's own
+   `codex@openai.com` identity. Re-verified in a fresh worktree: that short hash is not
+   reachable in the branch's history — both commits unique to the branch (`aaca9be3`,
+   `540190fd`) already carry the correct `12656028+jaywedgeworth22@users.noreply.github.com`
+   author/committer identity. It was apparently already re-authored (hash changed) between
+   whatever Codex inspected and its comment posting. **No rebase needed or performed** —
+   confirmed via `git log --format=fuller 7be7139..claude/mobile-view-spacing-oetyav`.
+2. **P2 — stale STATUS.md/EFFORT-LOG.md mobile tab-bar status.** Real: this file's mobile
+   tab-bar entry (below) still said "PR pending". Verified current reality (PR #1726 merged
+   2026-07-18T06:30:22Z as `2aa53e1`, ancestor of the live prod release) and corrected both
+   this file and `docs/EFFORT-LOG.md` in place.
+3. **P2 — stale open-PR inventory.** The handoff note documented #1728/#1733/#1735/#1736/
+   #1737/#1738 as still-open needing conflict sequencing. Re-verified via `gh pr view <n>
+   --json state,mergedAt`: all 6 merged 2026-07-18 (exact timestamps + merge SHAs in the
+   rollout-note addendum). Corrected via an addendum to the existing rollout note (original
+   text left intact as the historical record).
+
+Docs-only; no product code changed. Full local gate (tsc/test/build) run via `scripts/land.sh`
+before pushing. Rollout: addendum on
+`docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 ## 2026-07-20 — Which-key visibility on Connections + owner ruling: agents never create API keys (CLAUDE, branch `claude/stop-intent-idempotency`)
 ## 2026-07-20 — Use OpenRouter "latest" Aliases for Anthropic Models (AG, branch `agent/antigravity/openrouter-latest-alias`)
 
@@ -465,7 +490,7 @@ universal-OpenRouter routing that creates the split); correct whether or not #17
 Gate: tsc clean, lint 0 errors, 7/7 new merge tests + full suite, build; live-verified with
 seeded same-model direct+OpenRouter rows. Rollout:
 `docs/rollouts/2026-07-17-usage-canonical-model-merge.md`.
-## 2026-07-18 — Mobile bottom tab bar wasted-space fix (CLAUDE, branch `claude/mobile-view-spacing-oetyav`, PR pending)
+## 2026-07-18 — Mobile bottom tab bar wasted-space fix (CLAUDE, PR #1726 MERGED & DEPLOYED)
 
 Owner reported wasted vertical space on mobile between the console's fixed bottom tab bar
 labels and Safari's address bar. Root cause: the tab-bar `<nav>` applied
@@ -476,7 +501,11 @@ the inline padding to a `.con-tabbar` class (`app/console/console.css`) that res
 only under `@media (display-mode: standalone), (display-mode: fullscreen)` (installed PWA /
 physical home indicator); browser tabs get `padding-bottom: 0`. CSS/markup only — no logic or
 trading-path change; standalone PWA behavior unchanged. Full gate green (tsc clean, eslint 0
-errors, 4758 tests pass, build clean). Next: push branch + open PR.
+errors, 4758 tests pass, build clean). PR #1726 merged 2026-07-18T06:30:22Z (squash `2aa53e1`);
+confirmed deployed — `2aa53e1` is an ancestor of the live production release SHA.
+**Corrected 2026-07-19** (PR #1774 Codex-review triage): this entry previously read "PR
+pending" / "Next: push branch + open PR", stale by the time PR #1774 (the handoff note
+documenting this work) was under review.
 Rollout: `docs/rollouts/2026-07-18-mobile-tabbar-safe-area-band.md`.
 
 ## 2026-07-17 — ATR Stop & short cover-buy fixes (ANTIGRAVITY, branch `agent/strategy-atr-and-short-fixes`, PR #1713, auto-merge enabled — waiting on CI)
