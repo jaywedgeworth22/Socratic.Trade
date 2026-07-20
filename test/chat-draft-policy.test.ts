@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
   vi.resetModules();
+  vi.setConfig({ testTimeout: 180000 });
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-chat-draft-policy-${randomUUID()}.db`)}`;
 });
 
@@ -528,6 +529,8 @@ describe("chat draft policy bridge", () => {
       taxationType: "taxable",
       isActive: true
     });
+    const nowIso = new Date();
+    const daysAgo = (n: number) => new Date(nowIso.getTime() - n * 86_400_000).toISOString();
     insertFillEvent({
       userId: DEFAULT_REQUEST_USER_ID,
       accountNumber: "REAL",
@@ -538,7 +541,7 @@ describe("chat draft policy bridge", () => {
       price: 100,
       notional: 100,
       status: "filled",
-      filledAt: "2026-06-01T14:30:00.000Z"
+      filledAt: daysAgo(20)
     });
     insertFillEvent({
       userId: DEFAULT_REQUEST_USER_ID,
@@ -550,7 +553,7 @@ describe("chat draft policy bridge", () => {
       price: 90,
       notional: 90,
       status: "filled",
-      filledAt: "2026-06-20T14:30:00.000Z"
+      filledAt: daysAgo(5) // $10 loss, 5 days ago -> inside the 30-day wash window
     });
     setPolicy(
       {
