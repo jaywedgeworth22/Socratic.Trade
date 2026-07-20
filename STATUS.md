@@ -1,5 +1,24 @@
 # Current Status
 
+## 2026-07-20 — CI-load trim: Playwright Smoke off every PR (CLAUDE, worktree `ci-trim-smoke`, branch `claude/ci-trim-smoke-on-prs`)
+
+Owner-approved CI-load reduction ("trim smoke AND add one runner" — this covers ONLY the smoke
+trim; adding a runner is separate, untouched work). The repo's single self-hosted `socratic-ci`
+runner was backlogged 71 queued runs, 25 (~35%) of them Playwright Smoke PR runs; smoke is also
+documented as flaky. `.github/workflows/e2e.yml` triggers changed from `pull_request` +
+`merge_group` + `push: main` + weekly `schedule` to `push: main` + nightly `schedule` (was
+weekly `17 9 * * 1`, now `17 9 * * *`) + `workflow_dispatch`. Verified live against both gate
+mechanisms (`gh api repos/.../rulesets/17945518` → required checks = `[verify]` only; `gh api
+repos/.../branches/main/protection` → required contexts = `[verify, gitleaks, check-pin]` only)
+that `smoke` is NOT a required status check and no GitHub merge queue is configured (so
+`merge_group` was already inert) — gating it off PRs cannot strand a required check or block
+merges, so no fake-success gate-job shim was needed. The `classify`/docs-only fast-path job body
+in `e2e.yml` was left in place (dormant, not deleted) so restoring PR coverage later is a
+one-line trigger re-add. Verification: YAML parses clean via both `python3 -c "import
+yaml..."` and Node's `js-yaml`; no source code changed so the full lint/tsc/test/build gate was
+not run locally for this change (PR's own `ci.yml` `verify` check covers it). Rollout:
+`docs/rollouts/2026-07-20-ci-trim-smoke.md`.
+
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
 Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)

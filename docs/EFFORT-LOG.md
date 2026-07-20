@@ -43,6 +43,18 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] CI-load trim: Playwright Smoke off every PR (worktree `ci-trim-smoke`,
+  branch `claude/ci-trim-smoke-on-prs`, claimed 2026-07-20) — IN PROGRESS.** Owner-approved
+  (`trim smoke AND add one runner`; this effort is ONLY the smoke trim — runner infra is separate,
+  untouched work). The repo's single self-hosted `socratic-ci` runner was backlogged 71 queued runs,
+  25 (~35%) of them Playwright Smoke PR runs; smoke is also documented as flaky. Verified live
+  against both gate mechanisms (`gh api .../rulesets/17945518` and
+  `gh api .../branches/main/protection`) that `smoke` is NOT a required status check (only `verify`,
+  `gitleaks`, `check-pin` are) and no GitHub merge queue is configured, so gating it off
+  `pull_request` cannot strand a required check or block merges — no fake-success shim needed.
+  `.github/workflows/e2e.yml` triggers changed to push-to-`main` + nightly `schedule` (was weekly) +
+  `workflow_dispatch`; `pull_request`/`merge_group` dropped (the latter was already inert). Details:
+  `docs/rollouts/2026-07-20-ci-trim-smoke.md`.
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
