@@ -43,6 +43,14 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CLAUDE] Guardrails section-heading chevron position + darker heading color
+  (branch `claude/section-heading-chevron-style-3tv9kp`, 2026-07-20, cloud session) — PUSHED, PR
+  pending.** Owner-requested CSS-only fix from a screenshot: `.con-disclosure` chevron moved from
+  `summary::before` (left) to `summary::after` + `margin-left:auto` (right); `.con-card-title`
+  darkened `--con-faint` → `--con-fg` app-wide (shared section-heading class, 22 files). No product
+  logic touched. Full gate green except 3 pre-existing unrelated test flakes + a pre-existing
+  sandbox-only build error, both confirmed via stash-and-rerun. Rollout:
+  `docs/rollouts/2026-07-20-guardrails-section-heading-chevron-and-color.md`.
 - **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
   metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
   claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per

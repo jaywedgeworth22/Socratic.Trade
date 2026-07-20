@@ -1,5 +1,24 @@
 # Current Status
 
+## 2026-07-20 — Guardrails section-heading chevron position + darker heading color (CLAUDE, branch `claude/section-heading-chevron-style-3tv9kp`)
+
+CSS-only owner request from a screenshot: on the Guardrails page's collapsible section
+headers (Essentials / Protective stops / Advanced rulebook), moved the disclosure chevron
+from the left to the right of the heading text (`summary::before` → `::after` +
+`margin-left: auto` in `app/console/console.css`), and darkened `.con-card-title` from
+`--con-faint` to `--con-fg` (the app's darkest text token) — this class is the shared
+section-heading style across the whole console/admin app (22 files), so every section
+heading is now as dark as body text, not just these two. `collapsible` is currently only
+used by these 3 Guardrails accordions, so blast radius is contained to that page.
+Verified visually via an isolated Playwright screenshot of the real CSS against the exact
+`Card` collapsible markup (this cloud sandbox has no path through the app's Google-OAuth
+login to drive the real page) — chevron right-aligned, heading darkened, in both light
+and dark themes. `npm run lint` 0 errors, `npx tsc --noEmit` clean, `npm test` 4878/4881
+(3 pre-existing unrelated failures, confirmed via stash-and-rerun against unmodified
+tree). `npm run build` hits a pre-existing sandbox-only `/_not-found` page-data-collection
+error, also confirmed present without this change. Rollout:
+`docs/rollouts/2026-07-20-guardrails-section-heading-chevron-and-color.md`.
+
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
 Owner-directed follow-up to the OpenRouter-exhaustion outage. Since universal routing (#1703)
