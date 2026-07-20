@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-20 — Corpus re-embed scoped-run purge gate fix (CURSOR, branch `cursor/critical-bug-management-0770`)
+
+Hourly critical-bug sweep found a concrete RAG data-loss path in `src/lib/rag/corpus-reembed.ts`:
+an admin symbol-scoped re-embed such as `{ "docTypes": ["sec-filings"], "symbols": ["AAPL"] }`
+could mark the whole docType `completedForEmbedRevision`; the separate `purge-legacy` action then
+trusted that stamp and would delete every legacy vector for the docType even though only the scoped
+symbol was backfilled into the active bge-m3 space. The fix keeps scoped runs resumable but withholds
+the full-corpus completion stamp, so purge remains blocked until an unscoped docType run completes.
+Added a focused regression in `test/corpus-reembed.test.ts`. Verification is in progress after the
+required pre-test commit/push. Rollout:
+`docs/rollouts/2026-07-20-corpus-reembed-scoped-purge-gate.md`.
+
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the

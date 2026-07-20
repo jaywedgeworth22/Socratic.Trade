@@ -43,6 +43,13 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Corpus re-embed scoped-run purge gate fix (branch
+  `cursor/critical-bug-management-0770`, claimed 2026-07-20) — IN PROGRESS.**
+  Critical-bug automation found that a symbol-scoped `POST /api/admin/reembed` could persist a
+  full-docType `completedForEmbedRevision` stamp; the explicit `purge-legacy` action then trusted
+  that stamp and could delete all legacy vectors for the docType even though only the scoped symbols
+  were backfilled. Patch withholds full-corpus completion stamps on scoped runs and adds a focused
+  regression. Verification/PR pending.
 - **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
   `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
   Owner-triggered: `/console/connections` key store is write-only, so there was no way to tell WHICH
