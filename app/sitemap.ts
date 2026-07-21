@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 
-const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://socratictrade.com";
+const base = process.env.NEXT_PUBLIC_SITE_URL || "https://socratictrade.com";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   // Only public product pages belong in the sitemap; the app itself is gated.
