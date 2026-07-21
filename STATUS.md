@@ -9,6 +9,15 @@ Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with
 ## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
 
 Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
+## 2026-07-19 — Handoff: CLAUDE seat -> Antigravity (owner-directed)
+
+Full session handoff note: `docs/rollouts/2026-07-19-claude-to-antigravity-handoff.md`. Short
+version: PR queue cleared, MCP servers verified, disk-janitor upgraded (worktree retirement was
+silently broken for months — fixed). One PR still in-flight (**#1775**, `agent/ag-reindex-bge-m3`
+— check its state before touching it, a CLAUDE-seat background agent may still be shepherding it).
+Two owner-blocked items: Coolify API token is dead (401s), and the prod deploy pipeline is wedged
+(`main` hasn't deployed in hours; prod itself is healthy, this only blocks *new* code). Read the
+rollout note before starting new work in this repo.
 ## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
 
 Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
