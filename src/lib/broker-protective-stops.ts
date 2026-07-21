@@ -1289,10 +1289,11 @@ export async function reconcileBrokerProtectiveStops(args: {
     // new this tick (a live order this reconciler doesn't yet track would otherwise be miscounted as
     // "other" coverage below and short-circuit the qty check before ever reaching this adoption
     // logic). A live order carrying the intent's client_order_id means the earlier submission WAS
-    // accepted; adopt it instead of risking a duplicate. Clear the intent only on POSITIVE evidence
-    // (a real fetch, `ordersListed`, showing no match) — an unavailable order list stays ambiguous,
-    // so this symbol is skipped entirely rather than guessed at (the same evidentiary standard the
-    // rest of this reconciler already applies to coverage).
+    // accepted; adopt it instead of risking a duplicate. Clear the intent only on POSITIVE evidence:
+    // either a visible terminal zero-fill order, or absence from an order list that is explicitly
+    // authoritative for recently-terminal orders. A live-only/non-authoritative list (Robinhood) is
+    // still ambiguous: absence can mean "accepted, filled, and aged out", so a fresh stop could
+    // double-sell.
     const priorIntent = getBrokerStopPlacementIntent(accountNumber, sym, userId);
     if (priorIntent) {
       const acceptedOrder = orders.find((o) => o.clientOrderId === priorIntent.clientOrderId);
@@ -1346,18 +1347,20 @@ export async function reconcileBrokerProtectiveStops(args: {
           continue;
         }
         deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
-      } else if (ordersListed) {
-        // A real fetch succeeded and shows no live order for this client_order_id — the earlier
-        // submission is confirmed dead (rejected, never reached the broker, or already terminal).
-        // Clear it; the placement below runs fresh with a new id.
+      } else if (ordersListed && gateway.ordersListIncludesTerminal === true) {
+        // An AUTHORITATIVE fetch succeeded and shows no order for this client_order_id — the earlier
+        // submission is confirmed dead (rejected or never reached the broker). Clear it; the
+        // placement below runs fresh with a new id.
         deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
       } else {
-        // Order list unavailable this tick — genuinely unknown whether the earlier request landed.
-        // Skip this symbol entirely rather than guess: a fresh placement here could double up on an
-        // order that WAS accepted but simply isn't visible this tick.
+        // Order list unavailable OR non-authoritative this tick — genuinely unknown whether the
+        // earlier request landed. Skip this symbol entirely rather than guess: a fresh placement here
+        // could double up on an order that WAS accepted but simply isn't visible this tick.
         audit("broker_protective_stop_skipped", {
           symbol: sym, kind: priorIntent.kind,
-          note: "a prior placement's outcome is still unresolved and the order list is unavailable this tick — waiting rather than risking a duplicate"
+          note: ordersListed
+            ? "a prior placement's outcome is still unresolved and the broker order list is not authoritative for terminal orders — waiting rather than risking a duplicate"
+            : "a prior placement's outcome is still unresolved and the order list is unavailable this tick — waiting rather than risking a duplicate"
         }, userId, policy.connectedAccountId);
         continue;
       }

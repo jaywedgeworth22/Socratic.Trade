@@ -1,5 +1,13 @@
 # Active Implementation Plan
 
+> **2026-07-21 - Stop placement intent authoritative-absence fix (CURSOR,
+> branch `cursor/critical-bug-management-8edd`).** Narrow money-path repair from the hourly
+> high-severity bug scan: a broker protective-stop placement intent created before a timed-out broker
+> call must not be cleared just because a non-authoritative/live-only order list lacks the
+> `clientOrderId`. Only gateways with `ordersListIncludesTerminal === true` may treat absence as
+> confirmed-dead and place fresh; Robinhood-style lists keep the intent and skip the symbol to avoid
+> duplicate sell stops. Focused test added; full gate pending.
+
 > **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
 > (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**
 > (SiliconFlow bge-m3 embed-price 10x undercount fix — auto-merge armed, no open findings,

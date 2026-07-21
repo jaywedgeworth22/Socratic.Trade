@@ -1,5 +1,20 @@
 # Current Status
 
+## 2026-07-21 — Stop placement intent must require authoritative absence before retry (CURSOR, branch `cursor/critical-bug-management-8edd`)
+
+High-severity bug-finding automation found a money-path regression in the 2026-07-18 broker
+protective-stop intent lane: after a timeout/crash following broker acceptance, the next reconcile
+cleared the durable intent and placed a fresh stop whenever `getEquityOrders` returned successfully
+without the client ref. That is only safe for gateways whose order list is authoritative for
+recently-terminal orders. Robinhood-style/non-authoritative lists can omit accepted/filled/aged-out
+orders, so the old path could place a second full-size sell stop for the same shares.
+
+Fix in progress: `reconcileBrokerProtectiveStops` now clears absent intents only when
+`gateway.ordersListIncludesTerminal === true`; otherwise it keeps the intent and skips fresh
+placement for that symbol. Focused tests cover non-authoritative absence (no duplicate placement)
+and authoritative absence (fresh retry allowed). Rollout:
+`docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`. Verification pending.
+
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the

@@ -43,6 +43,13 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Stop placement intent authoritative-absence fix (branch
+  `cursor/critical-bug-management-8edd`, claimed 2026-07-21) — IN PROGRESS.** Hourly
+  high-severity scan found a money-path duplicate-stop risk: a durable broker stop placement intent
+  was cleared on absent `clientOrderId` after any successful order-list fetch, even for
+  non-authoritative/live-only broker lists. Fix requires `ordersListIncludesTerminal === true` before
+  absence authorizes a fresh placement; non-authoritative lists keep the intent and skip the symbol.
+  Rollout: `docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`.
 - **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
   `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
   Owner-triggered: `/console/connections` key store is write-only, so there was no way to tell WHICH
