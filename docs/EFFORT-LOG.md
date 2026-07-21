@@ -95,31 +95,6 @@ As of 2026-07-08 (assignment-rule update).
   (money-adjacent prompt path → frontier adversarial review). Team recipe: scouts → design → implementers →
   multi-lens verify → land via land.sh. Old w2 branches marked superseded once landed.
 
-- **[Socratic.Trade][AG] Monet-handoff §7 ports: coach-note archive + coach-note/lesson vector writers
-  (worktree `socratic-trade-agent-team-697845`, branch `claude/socratic-trade-agent-team-697845`, claimed
-  2026-07-18, HANDOFF to AG 2026-07-19) — IN PROGRESS.** From-scratch schema port of the two PARTIAL-verdicted w2 branches per
-  `docs/handoffs/2026-07-19-monet-session-closeout-handoff.md` §7 (fresh port, NOT a rebase — base tables
-  moved since 2026-07-04): (1) `claude/w2-coaching-durable` intent — kill the silent coach-note `slice(-20)`
-  truncation in `src/lib/db-socratic.ts` via an append-only `socratic_coach_note_archive` table + audit
-  receipt + a `doc_type: 'coach-note'` vector writer (EPISODIC_DOC_TYPES already retrieves that type);
-  (2) `claude/w2-reflection-decompose` intent — a writer for the retrieved-but-never-written `lesson`
-  doc-type (writes into the money-adjacent decision prompt path → frontier-tier adversarial review before
-  land). Handoff note: docs/handoffs/2026-07-18-claude-to-antigravity-monet-s7-ports.md. Cached recon
-  results available; workflow wf_f2e1ca12-b41 can resume. Old branches to be marked superseded once this lands.
-
-- **[Socratic.Trade][MONET] OpenRouter credit signal on /api/health (branch `monet/openrouter-credit-health`,
-  2026-07-18, owner-directed) — LANDING.** Universal routing (#1703) makes OpenRouter the single point of
-  failure for all LLM+RAG; `/api/health` now exposes prepaid-credit balance (`dependencies.openrouter.ok`
-  + `checks.openrouterCredits`) so an EXTERNAL monitor (Uptime Robot) alerts on low balance — owner-directed:
-  NO in-app alert, NO provider fallback. New `src/lib/openrouter-credits.ts` (free /credits query, cached,
-  fail-open, threshold `OPENROUTER_LOW_CREDIT_USD` default $10; DEGRADE-not-503). UR keyword monitor on
-  `"openrouterCredits":{"ok":false` → mail@jays.services. tsc clean, 5/5 tests, full gate via land.sh.
-  NEXT: create the UR monitor (needs UR API key via secret handoff, or owner does it in the dashboard).
-- **[Socratic.Trade][CODEX] PR #1760 review/comment/conflict closeout (branch `codex/pr1760-review-fixes`, worktree `/Users/jay/.codex/worktrees/socratic-pr-queue-closeout-20260718`, 2026-07-18) — IN PROGRESS / CORRECTIVE PR #1761 READY.** PR #1760 raced to auto-merge as `b2f22ccf` while its review-fix gate ran. All four threads are answered/resolved; #1761 restores bearer compatibility, aligns policy-namespace attribution tests, removes unsafe one-off artifacts, and is merged with that exact main. Local Node 24 gates pass lint, TypeScript, 412 files / 4,837 tests, and build. Await self-hosted checks, corrective merge, and exact production verification.
-
-- **[Socratic.Trade][CODEX] PR #1735 proposed-model attribution display contract (branch `codex/pr1735-proposal-attribution`, worktree `/Users/jay/.codex/worktrees/socratic-pr1735-proposal-attribution`, 2026-07-18) — LOCAL VERIFIED / UNPUSHED.** `TradeProposal.proposedByModel` now preserves the exact configured primary/fallback identifier while telemetry remains canonical for usage statistics. Regression coverage passes for `openrouter/openai/...` primary and `openrouter/google/...` fallback identity; TypeScript and scoped lint pass. Commit is intentionally local-only pending owner direction.
-
----
 - **[Socratic.Trade][CLAUDE] Serial 6-lane landing train (operator session, 2026-07-18) — IN PROGRESS.**
   Landing, in order, each merge deploy-verified before the next: (1) `claude/bge-m3-metering-gate`
   (provider-aware RAG metering + health gate; discovered already absorbed byte-identical into main via
@@ -3747,3 +3722,5 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
+
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
