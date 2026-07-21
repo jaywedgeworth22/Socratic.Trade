@@ -45,14 +45,6 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
-- **[Socratic.Trade][CLAUDE] Guardrails section-heading chevron position + darker heading color
-  (branch `claude/section-heading-chevron-style-3tv9kp`, 2026-07-20, cloud session) — PUSHED, PR
-  pending.** Owner-requested CSS-only fix from a screenshot: `.con-disclosure` chevron moved from
-  `summary::before` (left) to `summary::after` + `margin-left:auto` (right); `.con-card-title`
-  darkened `--con-faint` → `--con-fg` app-wide (shared section-heading class, 22 files). No product
-  logic touched. Full gate green except 3 pre-existing unrelated test flakes + a pre-existing
-  sandbox-only build error, both confirmed via stash-and-rerun. Rollout:
-  `docs/rollouts/2026-07-20-guardrails-section-heading-chevron-and-color.md`.
 - **[Socratic.Trade][AG] Purge Voyage AI SDK and standardize RAG on OpenRouter BAAI bge-m3 / Cohere reranker (branch `agent/antigravity-docs-update`) — COMPLETED 2026-07-21.** Purged Voyage AI SDK and standardized the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Isolated Voyage client instantiation to test mode via dynamic imports, ensuring complete isolation from production while maintaining compatibility with the unit test suite. Verified green via `tsc`, `lint`, the 4,898 vitest suite, and a production Next.js build.
 - **[Socratic.Trade][GROK4] Multi-wave expert-review implementation (claimed 2026-07-20) — IN PROGRESS.** PR #1847. Waves A/C partial + coach/lesson writers + **Wave D partial** (chat directives/URLs → learned_context). Prod bge-m3 re-embed running (sec-filings in progress after dry-run 2644 candidates).
 - **[Socratic.Trade][GROK4] Full multi-expert app review (claimed 2026-07-20) — DONE (read-only).** 12-specialist panel complete. Deliverable: `docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md`. Headline P0s: (1) budget skips as status=completed (2) Usage-Monitor enforce mis-keyed vs openrouter (3) incomplete bge-m3 re-embed (4) iOS SIWA/live-confirm/deletion broken (5) shorts no continuous cover stops (6) CF Access header / SSRF class (7) coach-note slice(-20)+missing lesson writers (8) api-circuit-breaker null byte in worktree. No code landed. Read-only panel: UI/UX, iOS, mobile/desktop web, LLM cost/OpenRouter, API budgets, alert storms/cross-app coordination, Hetzner/Coolify, RAG/embeddings, trading/broker/signals, ML learning loops, cascading data APIs. Deliverable: docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md. No code edits, no prod mutations. Worktree: code-socratictrade/grok.

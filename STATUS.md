@@ -6,24 +6,6 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
-## 2026-07-20 — Guardrails section-heading chevron position + darker heading color (CLAUDE, branch `claude/section-heading-chevron-style-3tv9kp`)
-
-CSS-only owner request from a screenshot: on the Guardrails page's collapsible section
-headers (Essentials / Protective stops / Advanced rulebook), moved the disclosure chevron
-from the left to the right of the heading text (`summary::before` → `::after` +
-`margin-left: auto` in `app/console/console.css`), and darkened `.con-card-title` from
-`--con-faint` to `--con-fg` (the app's darkest text token) — this class is the shared
-section-heading style across the whole console/admin app (22 files), so every section
-heading is now as dark as body text, not just these two. `collapsible` is currently only
-used by these 3 Guardrails accordions, so blast radius is contained to that page.
-Verified visually via an isolated Playwright screenshot of the real CSS against the exact
-`Card` collapsible markup (this cloud sandbox has no path through the app's Google-OAuth
-login to drive the real page) — chevron right-aligned, heading darkened, in both light
-and dark themes. `npm run lint` 0 errors, `npx tsc --noEmit` clean, `npm test` 4878/4881
-(3 pre-existing unrelated failures, confirmed via stash-and-rerun against unmodified
-tree). `npm run build` hits a pre-existing sandbox-only `/_not-found` page-data-collection
-error, also confirmed present without this change. Rollout:
-`docs/rollouts/2026-07-20-guardrails-section-heading-chevron-and-color.md`.
 ## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
 
 Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
