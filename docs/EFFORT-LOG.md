@@ -3802,3 +3802,6 @@ brackets; effort S/M/L.
 
 | 2026-07-20 | GROK | In Progress | Claude Desktop residual: ST 0 conflicts (phantoms cleared), CT #650/#665 unstuck, UM #583 merged; CI queue drain (smoke cancelled); #1841 OR $3 threshold auto-merge armed | multi |
 | 2026-07-20 | Document Summarizer & Abstracts DB Migration | Completed | Added migration 55 for document_abstracts, db-document-abstracts CRUD, document-summarizer engine, and vitest unit tests | AG |
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
+
+- **2026-07-20 CI deadlock + package-pin update (AG, branch `claude/checkpin-always-on-prs`) — Completed.** Restored the stalled check-pin fixes after a server restart. Diagnosed that the Hetzner runner `socratic-deploy` was disconnecting/failing jobs. Re-routed PR 1771 CI workflows to the online `trading-live-mac` runner, allowing PR 1771 to auto-merge. For PR 1780, `check-pin` failed because `Congress.Trade` was recently bumped to `v1.11.1` while `Socratic.Trade` lagged behind; bumped Socratic.Trade's shared package to `v1.11.1` to resolve the divergence. PR 1780 is now armed for auto-merge on the Mac runner.
