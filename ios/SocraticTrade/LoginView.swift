@@ -118,6 +118,26 @@ struct LoginView: View {
         // Let's create an instance property or a global temporary holder.
         WebAuthSessionManager.shared.start(session: session, provider: contextProvider)
     }
+    private func handleAuthorization(_ authorization: ASAuthorization) {
+        guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
+              let identityTokenData = appleIDCredential.identityToken,
+              let identityToken = String(data: identityTokenData, encoding: .utf8) else {
+            store.error = "Failed to extract identity token from Apple."
+            return
+        }
+        
+        let name: String? = {
+            if let fullName = appleIDCredential.fullName {
+                let parts = [fullName.givenName, fullName.familyName].compactMap { $0 }
+                return parts.isEmpty ? nil : parts.joined(separator: " ")
+            }
+            return nil
+        }()
+        
+        Task {
+            await store.loginWithApple(identityToken: identityToken, name: name)
+        }
+    }
 }
 
 class WebAuthSessionManager {
@@ -138,26 +158,5 @@ class ContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding
             .compactMap { $0 as? UIWindowScene }
             .flatMap { $0.windows }
             .first { $0.isKeyWindow } ?? ASPresentationAnchor()
-    }
-    
-    private func handleAuthorization(_ authorization: ASAuthorization) {
-        guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
-              let identityTokenData = appleIDCredential.identityToken,
-              let identityToken = String(data: identityTokenData, encoding: .utf8) else {
-            store.error = "Failed to extract identity token from Apple."
-            return
-        }
-        
-        let name: String? = {
-            if let fullName = appleIDCredential.fullName {
-                let parts = [fullName.givenName, fullName.familyName].compactMap { $0 }
-                return parts.isEmpty ? nil : parts.joined(separator: " ")
-            }
-            return nil
-        }()
-        
-        Task {
-            await store.loginWithApple(identityToken: identityToken, name: name)
-        }
     }
 }
