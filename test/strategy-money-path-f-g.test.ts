@@ -277,7 +277,7 @@ describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () =
 
     // The run still COMPLETES — non-LLM safety maintenance (reconcile + drawdown breaker) ran; only
     // the LLM proposal generation was skipped by the budget gate.
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("skipped");
     expect(listAudit(500).filter((e) => e.kind === "strategy_run_suppressed_budget").length).toBeGreaterThanOrEqual(1);
     // The Bull/Bear model call never fired.
     expect(openAiCalled).toBe(false);
