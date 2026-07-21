@@ -49,7 +49,7 @@ As of 2026-07-08 (assignment-rule update).
   `planLlmProviderAttempts` from returning an empty failover chain during all-billing cooldowns
   after credits/billing are manually fixed, and make scheduler draining-account cleanup treat the
   full broker-live state vocabulary as still-cancellable before purging local account state.
-  Focused regressions added; full verification pending.
+  Focused regressions added; focused Vitest, lint, TypeScript, full Vitest, and build are green.
 
 - **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
   `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**

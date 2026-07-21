@@ -10,7 +10,10 @@ and scheduler draining-account cleanup must use the broker-agnostic live-order c
 purging a deleted account's local state, or live `accepted`/`queued`/`pending` broker orders can be
 left unmanaged after local records are deleted. Focused regressions added in
 `test/llm-provider-cooldown.test.ts` and `test/scheduler-draining.test.ts`. Verification pending:
-focused Vitest, `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build`. Rollout:
+initial focused Vitest attempt failed before tests loaded because `node_modules` was absent; after
+`npm install`, focused Vitest passed (2 files, 10 tests), `npm run lint` passed,
+`npx tsc --noEmit` passed, `npm test` passed (421 files, 4902 tests), and `npm run build` passed
+with existing Next/Sentry warnings. Rollout:
 `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
 
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)

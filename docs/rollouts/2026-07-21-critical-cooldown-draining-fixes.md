@@ -33,17 +33,23 @@ was deleted.
 - `PLAN.md`
 - `docs/EFFORT-LOG.md`
 - `docs/phase-1-autonomy-loop.md`
+- `docs/phase-2-correctness.md`
 - `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`
 
 ## Verification
 
-Pending. Planned commands:
-
-- `npx vitest run test/llm-provider-cooldown.test.ts test/scheduler-draining.test.ts`
-- `npm run lint`
-- `npx tsc --noEmit`
-- `npm test`
-- `npm run build`
+- Initial `npx vitest run test/llm-provider-cooldown.test.ts test/scheduler-draining.test.ts`
+  failed before tests loaded because `node_modules` was absent and `vitest/config` could not be
+  resolved.
+- `npm install` (environment setup; reverted the one-line `package-lock.json` metadata noise it
+  produced).
+- `npx vitest run test/llm-provider-cooldown.test.ts test/scheduler-draining.test.ts` - passed
+  (2 files, 10 tests).
+- `npm run lint` - passed.
+- `npx tsc --noEmit` - passed.
+- `npm test` - passed (421 files, 4902 tests).
+- `npm run build` - passed; emitted existing Next/Sentry Edge Runtime warning and middleware
+  deprecation warning.
 
 ## Follow-ups
 
