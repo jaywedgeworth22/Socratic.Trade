@@ -239,7 +239,8 @@ export interface StrategyLlmStep {
 
 export interface StrategyResult {
   runId: string;
-  status: "completed" | "failed";
+  /** completed = decision cycle ran; skipped = pre-decision gate (budget/market/broker); failed = hard error */
+  status: "completed" | "failed" | "skipped";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
@@ -404,8 +405,8 @@ export async function runStrategyOnce(
       const reason = "Market is closed (holiday or weekend). Skipping strategy run.";
       console.log(`[Strategy] ${reason}`);
       audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "completed", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "completed", reason, userId);
+      result = { runId, status: "skipped", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "skipped", reason, userId);
       return result;
     }
 
@@ -488,8 +489,8 @@ export async function runStrategyOnce(
       const reason = `Broker health check failed: ${healthSignals.reason}. Skipping strategy run to avoid consuming budget.`;
       console.warn(`[Strategy] ${reason}`);
       audit("run_skipped_broker_unhealthy", { runId, userId, reason }, userId, connectedAccountId);
-      result = { runId, status: "completed", summary: reason, proposals: [] };
-      finishStrategyRun(runId, "completed", reason, userId);
+      result = { runId, status: "skipped", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "skipped", reason, userId);
       return result;
     }
 
@@ -503,6 +504,88 @@ export async function runStrategyOnce(
     const selected = accounts.find((account) => account.accountNumber === policy.accountNumber);
     if (!selected) throw new Error("Selected account is not available.");
     if (!selected.agenticAllowed) throw new Error("Selected account is not agentic_allowed.");
+
+    // ── Early LLM budget admission (BEFORE market scan / enrichment thrash) ──
+    // Usage-Monitor enforce + daily/monthly ceilings + reservation: risk maintenance
+    // already ran above; from here a skip must not burn scan/enrichment quota.
+    {
+      let earlyEnforce: Awaited<ReturnType<typeof evaluateBudgetForRun>> = { skip: false, downgraded: false };
+      try {
+        earlyEnforce = await evaluateBudgetForRun(userId, { ...policy, ...rotationOverride }, { status: budgetStatus });
+      } catch {
+        /* fail-open */
+      }
+      lockGuard.assertOwned();
+      if (earlyEnforce.skip) {
+        const reason = earlyEnforce.reason ?? "Over usage budget.";
+        audit("usage_budget_enforced", { runId, userId, action: "skip", reason, phase: "early_admission" }, userId, connectedAccountId);
+        await notifyBudgetSkip(userId, policy, runId, reason);
+        lockGuard.assertOwned();
+        const summary = `Strategy run skipped — over usage budget. ${reason}`;
+        result = { runId, status: "skipped", summary, proposals: [] };
+        finishStrategyRun(runId, "skipped", summary, userId);
+        return result;
+      }
+      // Carry early downgrade into later runLlmOverride merge (re-evaluated below for TOCTOU).
+      if (earlyEnforce.downgraded) {
+        /* re-applied at the post-scan choke; early only gates skip */
+      }
+    }
+    {
+      const earlyBudget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
+      let earlySkip = !earlyBudget.ok;
+      let earlySkipReason = earlyBudget.reason ?? "Daily LLM/RAG budget reached.";
+      if (!earlySkip) {
+        const monthly = checkMonthlyLlmSpendCeiling();
+        if (!monthly.ok) {
+          earlySkip = true;
+          earlySkipReason = `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)}).`;
+          audit(
+            "usage_budget_enforced",
+            { runId, userId, action: "skip", reason: earlySkipReason, scope: "operator_monthly", phase: "early_admission" },
+            userId,
+            connectedAccountId
+          );
+        }
+      }
+      if (!earlySkip) {
+        const reservation = reserveLlmRunBudget(userId, connectedAccountId);
+        llmReservationId = reservation.reservationId;
+        if (!reservation.ok) {
+          earlySkip = true;
+          earlySkipReason = reservation.reason ?? "LLM budget reservation unavailable.";
+          audit(
+            "strategy_run_suppressed_budget_reservation",
+            { runId, userId, reason: earlySkipReason, phase: "early_admission" },
+            userId,
+            connectedAccountId
+          );
+        }
+      }
+      if (earlySkip && !earlyBudget.ok) {
+        audit(
+          "strategy_run_suppressed_budget",
+          {
+            runId,
+            userId,
+            reason: earlyBudget.reason,
+            tokensToday: earlyBudget.tokensToday,
+            costUsdToday: earlyBudget.costUsdToday,
+            tokenLimit: earlyBudget.tokenLimit,
+            costLimitUsd: earlyBudget.costLimitUsd,
+            phase: "early_admission"
+          },
+          userId,
+          connectedAccountId
+        );
+      }
+      if (earlySkip) {
+        const summary = `Strategy run skipped — ${earlySkipReason} Risk maintenance still ran; market scan and LLM were not started.`;
+        result = { runId, status: "skipped", summary, proposals: [] };
+        finishStrategyRun(runId, "skipped", summary, userId);
+        return result;
+      }
+    }
 
     const allowedSymbols = allowedSymbolsForPolicy(policy);
     // Item 3 (opt-in): thread a sample-gated, audited per-factor nudge from matured missed-opportunity
@@ -669,8 +752,8 @@ export async function runStrategyOnce(
       await notifyBudgetSkip(userId, policy, runId, reason);
       lockGuard.assertOwned();
       const summary = `Strategy run skipped — over usage budget. ${reason}`;
-      result = { runId, status: "completed", summary, proposals: [] };
-      finishStrategyRun(runId, "completed", summary, userId);
+      result = { runId, status: "skipped", summary, proposals: [] };
+      finishStrategyRun(runId, "skipped", summary, userId);
       return result;
     }
     // Run-scoped model override: carried SEPARATELY from `policy` so nothing that persists (setPolicy,
@@ -722,33 +805,31 @@ export async function runStrategyOnce(
     // A reservation failure (over budget OR fail-closed DB error) degrades to "skip LLM", never a failed
     // run. No ceiling configured → reserve returns ok with no id (default OFF preserved). See
     // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
+    // TOCTOU re-check: early admission already reserved headroom; re-read ledger only.
+    // Do not double-reserve (llmReservationId set at early admission). If spend landed between
+    // early check and here, skip LLM for the rest of this run (scan already paid).
     const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
-    // Operator-level MONTHLY spend ceiling (LLM_SPEND_CEILING) enforced at this same single
-    // choke point so EVERY run entry inherits it — not just the interval scheduler. Event-triggered
-    // runs (triggers.ts -> runStrategyOnce), manual "Run once", and mobile commands all pass through
-    // here, so checking the ceiling only in the scheduler tick let those paths bypass it. Skips only
-    // the LLM proposal step (never the risk breakers above); default OFF when LLM_SPEND_CEILING unset.
     if (!skipLlmDueToBudget) {
       const monthly = checkMonthlyLlmSpendCeiling();
       if (!monthly.ok) {
         skipLlmDueToBudget = true;
         audit(
           "usage_budget_enforced",
-          { runId, userId, action: "skip", reason: `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)})`, scope: "operator_monthly" },
+          { runId, userId, action: "skip", reason: `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)})`, scope: "operator_monthly", phase: "post_scan_recheck" },
           userId,
           connectedAccountId
         );
       }
     }
-    if (!skipLlmDueToBudget) {
+    if (!skipLlmDueToBudget && !llmReservationId) {
       const reservation = reserveLlmRunBudget(userId, connectedAccountId);
       llmReservationId = reservation.reservationId;
       if (!reservation.ok) {
         skipLlmDueToBudget = true;
         audit(
           "strategy_run_suppressed_budget_reservation",
-          { runId, userId, reason: reservation.reason ?? "reservation_unavailable" },
+          { runId, userId, reason: reservation.reason ?? "reservation_unavailable", phase: "post_scan_recheck" },
           userId,
           connectedAccountId
         );
@@ -757,7 +838,7 @@ export async function runStrategyOnce(
     if (skipLlmDueToBudget && budget.ok === false) {
       audit(
         "strategy_run_suppressed_budget",
-        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
+        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd, phase: "post_scan_recheck" },
         userId,
         connectedAccountId
       );
@@ -3353,26 +3434,40 @@ export async function runStrategyOnce(
     const filled = results.filter((r) => r.status === "filled").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
     const tradeCount = placed + filled + proposed;
-    const summary = [
-      `Evaluated ${results.length} proposal(s).`,
-      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} Trade${tradeCount === 1 ? "" : "s"}.`,
-      placed > 0 ? `Placed: ${placed}.` : "",
-      filled > 0 ? `Filled: ${filled}.` : "",
-      proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
-      expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
-      revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
-        ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
-        : "",
-      sellToFundNote
-    ]
-      .filter(Boolean)
-      .join(" ");
+    // If LLM was suppressed mid-run (budget TOCTOU after scan) and nothing was proposed/placed
+    // by the decision path, this is a skip — not a successful "evaluated 0 proposals" completion.
+    const finishStatus: "completed" | "skipped" =
+      skipLlmDueToBudget && tradeCount === 0 && results.length === 0 ? "skipped" : "completed";
+    const summary = skipLlmDueToBudget && finishStatus === "skipped"
+      ? [
+          "Strategy run skipped — LLM/RAG budget or reservation blocked reasoning after risk maintenance.",
+          expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
+          sellToFundNote
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : [
+          `Evaluated ${results.length} proposal(s).`,
+          skipLlmDueToBudget
+            ? "LLM proposal step was suppressed by budget (risk/expiry work still ran)."
+            : `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} Trade${tradeCount === 1 ? "" : "s"}.`,
+          placed > 0 ? `Placed: ${placed}.` : "",
+          filled > 0 ? `Filled: ${filled}.` : "",
+          proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
+          expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
+          revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
+            ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
+            : "",
+          sellToFundNote
+        ]
+          .filter(Boolean)
+          .join(" ");
 
     // Persist diversity result as an advisory audit event (no schema migration needed).
     // Account-attributed like strategy_run/signal_snapshot so the Activity feed can say
     // WHICH account's run this analyzed (#8).
     audit("rationale_diversity", { runId, llmSteps, ...rationaleDiversity }, userId, connectedAccountId);
-    finishStrategyRun(runId, "completed", summary, userId);
+    finishStrategyRun(runId, finishStatus, summary, userId);
     recordPortfolioSnapshot({
       userId,
       runId,
@@ -3382,7 +3477,7 @@ export async function runStrategyOnce(
       portfolio,
       positions
     });
-    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
+    result = { runId, status: finishStatus, summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
     
     // Phase 7: Async trigger post-mortem reflection. Skipped when LLM work was budget/reservation-suppressed
     // (it spends LLM via withLlmGeneration + semantic gate, whose checks read only the committed ledger, not
