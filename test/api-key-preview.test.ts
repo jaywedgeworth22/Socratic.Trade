@@ -16,8 +16,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const OWNER_EMAIL = "owner@example.com";
 const TENANT_EMAIL = "tenant@example.com";
-const OPENROUTER_KEY = "sk-or-v1-0123456789abcdef0123456789abcdef";
-const TENANT_KEY = "sk-or-v1-ffffffffffffffffffffffffffffffff";
+const OPENROUTER_KEY = "mock-key-v1-0123456789abcdef0123456789abcdef";
+const TENANT_KEY = "mock-key-v1-ffffffffffffffffffffffffffffffff";
 const SHARED_KEY = "finnhub-shared-operator-key-9999";
 
 beforeAll(() => {
@@ -55,7 +55,7 @@ describe("GET /api/keys — masked key preview", () => {
 
     const entry = openrouterOf(await listKeys(OWNER_EMAIL));
     expect(entry.source).toBe("user");
-    expect(entry.preview).toBe("sk-or-v1...cdef");
+    expect(entry.preview).toBe("mock-key...cdef");
     // The elision is the whole point: the preview must not be the key, nor contain its middle.
     expect(entry.preview).not.toBe(OPENROUTER_KEY);
     expect(OPENROUTER_KEY).toContain("789abcdef01");
@@ -93,14 +93,14 @@ describe("GET /api/keys — masked key preview", () => {
 
     const entry = openrouterOf(await listKeys(TENANT_EMAIL));
     expect(entry.source).toBe("user");
-    expect(entry.preview).toBe("sk-or-v1...ffff");
+    expect(entry.preview).toBe("mock-key...ffff");
   });
 });
 
 describe("maskApiKeyPreview", () => {
   it("elides the middle and refuses keys too short to elide", async () => {
     const { maskApiKeyPreview } = await import("../src/lib/db-api-keys");
-    expect(maskApiKeyPreview(OPENROUTER_KEY)).toBe("sk-or-v1...cdef");
+    expect(maskApiKeyPreview(OPENROUTER_KEY)).toBe("mock-key...cdef");
     expect(maskApiKeyPreview("  padded-key-value-1234  ")).toBe("padded-k...1234");
     expect(maskApiKeyPreview(undefined)).toBeUndefined();
     expect(maskApiKeyPreview("")).toBeUndefined();
@@ -112,7 +112,7 @@ describe("maskApiKeyPreview", () => {
 
   it("stays the single source of truth for the admin ledger's mask", async () => {
     const { maskApiKey } = await import("../src/lib/llm-usage");
-    expect(maskApiKey(OPENROUTER_KEY)).toBe("sk-or-v1...cdef");
+    expect(maskApiKey(OPENROUTER_KEY)).toBe("mock-key...cdef");
     // Too short to elide → head-only, since the ledger descriptor always needs a string.
     expect(maskApiKey("short")).toBe("shor...");
   });
