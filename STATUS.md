@@ -10,6 +10,15 @@ Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with
 
 Owner directive: permanently stopped, uninstalled, and deleted self-hosted runner `trading-live-mac` (ID 22 on Socratic.Trade, ID 687 on Congress.Trade). Updated all workflow files in `.github/workflows/` (`ci.yml`, `security.yml`, `cleanup-caches.yml`, `sentry-ci-report.yml`, `_merge-shepherd-impl.yml`, `shared-package-pin-check.yml`, `e2e.yml`, `codex-autofix.yml`, `effort-issues-sync.yml`) to route to `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`. Added explicit binding fleet directive in `AGENTS.md` prohibiting any future use or re-registration of Mac self-hosted runners. Rollout: `docs/rollouts/2026-07-21-retire-mac-runner.md`.
 
+## 2026-07-19 — Handoff: CLAUDE seat -> Antigravity (owner-directed)
+
+Full session handoff note: `docs/rollouts/2026-07-19-claude-to-antigravity-handoff.md`. Short
+version: PR queue cleared, MCP servers verified, disk-janitor upgraded (worktree retirement was
+silently broken for months — fixed). One PR still in-flight (**#1775**, `agent/ag-reindex-bge-m3`
+— check its state before touching it, a CLAUDE-seat background agent may still be shepherding it).
+Two owner-blocked items: Coolify API token is dead (401s), and the prod deploy pipeline is wedged
+(`main` hasn't deployed in hours; prod itself is healthy, this only blocks *new* code). Read the
+rollout note before starting new work in this repo.
 ## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
 
 Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
