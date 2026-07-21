@@ -22,6 +22,19 @@ no RAPIDAPI_KEY usage — pure gating-logic fix on the existing EDGAR-direct ing
 45/45 tests pass. Blocked on landing only by the shared CI runner's queue depth (see
 #agent-sync — fleet-wide capacity issue, not specific to this branch).
 Rollout: `docs/rollouts/2026-07-19-rag-ingestion-provider-aware-gate.md`.
+## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
+
+All four owner-linked handoff docs executed/dispositioned: missing model-availability rollout
+authored as a stamped reconstruction (underlying work verified landed via #1703-#1737);
+bge-m3 corpus re-embed verified INCOMPLETE (legacy 8,688 vs managed 1,418 vectors; voyage
+space intact) with the gating `claude/corpus-reembed-hardening` branch found unpushed and
+landed (PR auto-merge armed — 2026-07-18 fleet hold lifts on merge+deploy); AG's concurrent
+"prod reindex triggered" flagged as a hold conflict in #agent-sync; PRs #1771/#1773/#1774
+shepherded (Codex threads triaged, 2 real #1773 findings fixed via `b3f05425`); dual-workspace
+OpenRouter MCP OAuth verified broken (both on Socratic workspace — owner re-auth needed);
+alpha-vantage health red confirmed deliberate (deregistered lane, not a dead key). Owner
+ruling codified fleet-wide: OpenRouter MCP is research-only. Details:
+`docs/rollouts/2026-07-19-four-handoff-conquest.md`.
 ## 2026-07-19 — Handoff: CLAUDE seat -> Antigravity (owner-directed)
 
 Full session handoff note: `docs/rollouts/2026-07-19-claude-to-antigravity-handoff.md`. Short
