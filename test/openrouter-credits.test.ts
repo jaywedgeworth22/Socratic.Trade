@@ -39,25 +39,34 @@ describe("openrouter credit status", () => {
   it("ok=true when the balance is at/above the threshold; reports the remaining amount", async () => {
     const { upsertUserApiKey } = await import("../src/lib/db");
     upsertUserApiKey("local", "openrouter", "sk-or-test");
-    process.env.OPENROUTER_LOW_CREDIT_USD = "10";
+    // Default threshold is $3; leave env unset to exercise the default.
     const { getOpenRouterCreditStatus } = await import("../src/lib/openrouter-credits");
     const { fetcher } = makeFetcher({ data: { total_credits: 75, total_usage: 25.31 } });
     const s = (await getOpenRouterCreditStatus(1000, fetcher))!;
     expect(s.ok).toBe(true);
     expect(s.remainingUsd).toBeCloseTo(49.69, 2);
-    expect(s.thresholdUsd).toBe(10);
+    expect(s.thresholdUsd).toBe(3);
   });
 
   it("ok=false ONLY when the balance is genuinely below the threshold (the alert signal)", async () => {
     const { upsertUserApiKey } = await import("../src/lib/db");
     upsertUserApiKey("local", "openrouter", "sk-or-test");
-    process.env.OPENROUTER_LOW_CREDIT_USD = "10";
+    process.env.OPENROUTER_LOW_CREDIT_USD = "3";
     const { getOpenRouterCreditStatus, __resetOpenRouterCreditCache } = await import("../src/lib/openrouter-credits");
     __resetOpenRouterCreditCache();
-    const { fetcher } = makeFetcher({ data: { total_credits: 30, total_usage: 25.31 } }); // ~4.69 left
-    const s = (await getOpenRouterCreditStatus(1000, fetcher))!;
+    // ~4.69 remaining is ABOVE the $3 floor → still ok (this was the false-alarm zone under the old $10 default)
+    const { fetcher: above } = makeFetcher({ data: { total_credits: 30, total_usage: 25.31 } });
+    const aboveS = (await getOpenRouterCreditStatus(1000, above))!;
+    expect(aboveS.ok).toBe(true);
+    expect(aboveS.remainingUsd).toBeCloseTo(4.69, 2);
+
+    __resetOpenRouterCreditCache();
+    // ~2.00 remaining is BELOW $3 → alert signal
+    const { fetcher: below } = makeFetcher({ data: { total_credits: 30, total_usage: 28 } });
+    const s = (await getOpenRouterCreditStatus(2000, below))!;
     expect(s.ok).toBe(false);
-    expect(s.remainingUsd).toBeCloseTo(4.69, 2);
+    expect(s.remainingUsd).toBeCloseTo(2.0, 2);
+    expect(s.thresholdUsd).toBe(3);
   });
 
   it("fails OPEN on a read error — a broken credits check never masquerades as low balance", async () => {
