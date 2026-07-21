@@ -9,6 +9,75 @@ silently broken for months — fixed). One PR still in-flight (**#1775**, `agent
 Two owner-blocked items: Coolify API token is dead (401s), and the prod deploy pipeline is wedged
 (`main` hasn't deployed in hours; prod itself is healthy, this only blocks *new* code). Read the
 rollout note before starting new work in this repo.
+## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
+
+Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
+`0.00001 / 10` (= 0.000001), 10x smaller than its own comment / the parallel confirmed OpenRouter
+`baai/bge-m3` rate (0.00001 = $0.01/1M tokens). Undercounted SiliconFlow bge-m3 embed spend in
+`rag_usage.cost_est_usd` + the $/day dispatch fuse whenever SiliconFlow is the active embed provider.
+Removed the `/ 10`; strengthened the SiliconFlow embed test to pin the exact cost (was `> 0` only) —
+regression proven (buggy value fails the pinned assertion). No live impact yet: OpenRouter, not
+SiliconFlow, is prod's active embed provider since the 2026-07-18 bge-m3 flip. tsc/targeted-tests/lint
+green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`.
+## 2026-07-20 — OpenRouter UptimeRobot low-credit threshold $10 → $3 (GROK, branch `monet/openrouter-low-credit-threshold-3`)
+
+Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
+
+## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
+
+Docs-only fix for 3 Codex review findings on PR #1774 (the
+`docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note):
+
+1. **P1 — commit author identity.** Codex flagged a commit (`bbe7fe3`) with Codex's own
+   `codex@openai.com` identity. Re-verified in a fresh worktree: that short hash is not
+   reachable in the branch's history — both commits unique to the branch (`aaca9be3`,
+   `540190fd`) already carry the correct `12656028+jaywedgeworth22@users.noreply.github.com`
+   author/committer identity. It was apparently already re-authored (hash changed) between
+   whatever Codex inspected and its comment posting. **No rebase needed or performed** —
+   confirmed via `git log --format=fuller 7be7139..claude/mobile-view-spacing-oetyav`.
+2. **P2 — stale STATUS.md/EFFORT-LOG.md mobile tab-bar status.** Real: this file's mobile
+   tab-bar entry (below) still said "PR pending". Verified current reality (PR #1726 merged
+   2026-07-18T06:30:22Z as `2aa53e1`, ancestor of the live prod release) and corrected both
+   this file and `docs/EFFORT-LOG.md` in place.
+3. **P2 — stale open-PR inventory.** The handoff note documented #1728/#1733/#1735/#1736/
+   #1737/#1738 as still-open needing conflict sequencing. Re-verified via `gh pr view <n>
+   --json state,mergedAt`: all 6 merged 2026-07-18 (exact timestamps + merge SHAs in the
+   rollout-note addendum). Corrected via an addendum to the existing rollout note (original
+   text left intact as the historical record).
+
+Docs-only; no product code changed. Full local gate (tsc/test/build) run via `scripts/land.sh`
+before pushing. Rollout: addendum on
+`docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
+## 2026-07-20 — Which-key visibility on Connections + owner ruling: agents never create API keys (CLAUDE, branch `claude/stop-intent-idempotency`)
+
+The per-user key store is write-only, which made "WHICH of several provider keys is serving me?"
+unanswerable — the fallout of agents minting their own OpenRouter keys for both apps instead of
+using the one key the owner had put spend caps on. `GET /api/keys` now returns a `preview` (the
+canonical `maskApiKeyPreview`: first 8 + `...` + last 4) of the key that ACTUALLY resolves, and
+`/console/connections#api-keys` renders it; the operator's env key is previewable to admins only.
+`llm-usage.ts`'s duplicate `maskApiKey` now delegates to the same helper. Owner ruling — **no agent
+on any platform ever creates a provider API key** — codified in `AGENTS.md` "Don't" and broadcast to
+#agent-sync.
+
+Diagnosis of the owner's "no credits / API key failed" strategy-run error is in the rollout note:
+prod `/api/health` shows OpenRouter healthy with $33.71 credit, so the leading suspects are the
+app-internal budget caps (Usage-Monitor monthly budget; `llmDailyCostBudgetUsd`) that skip a run
+with `status: "completed"` and therefore surface as an ordinary toast. **Blocker: needs the owner's
+exact on-screen wording (or the admin `/admin/llm-usage` view) to close.** Also confirmed:
+`migrateLocalEnvCredentials` + DB-before-env resolution means a stored key permanently shadows a
+rotated `OPENROUTER_API_KEY`. Next: land.sh, PR, auto-merge. Rollout:
+`docs/rollouts/2026-07-20-which-key-visibility-and-no-new-keys-ruling.md`.
+
+## 2026-07-18 — Stop-placement intent + atomic recovered fills landing (CLAUDE, branch `claude/stop-intent-idempotency`, lane 6/final of a serial landing train)
+
+Codex findings 5/6 (money path): durable pre-network placement-intent rows (v53) make a lost
+broker reply reconcile-and-adopt instead of double-placing a full-size stop; all recovered
+stop-fill delete+book pairs are one transaction, with a v54 partial UNIQUE index +
+idempotent-replay handling for proposal-less protective-stop fills. Adversarially verified; the
+filled-order fill-loss must-fix (visible-but-terminal WITH fills) applied + regression-tested;
+8 suites / 250 tests green on the merged tree (contains main `b4dd8a54`, #1738 both-mechanisms
+merge). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
+`docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
 ## 2026-07-19 — PR #1773 Codex-review fix pass: 6 real findings fixed, verified individually (CLAUDE, on branch `monet/session-handoff-2026-07-19`)
 
 Owner-directed fix of 6 Codex P2 findings on PR #1773 (docs-only), each checked against live
@@ -456,7 +525,7 @@ universal-OpenRouter routing that creates the split); correct whether or not #17
 Gate: tsc clean, lint 0 errors, 7/7 new merge tests + full suite, build; live-verified with
 seeded same-model direct+OpenRouter rows. Rollout:
 `docs/rollouts/2026-07-17-usage-canonical-model-merge.md`.
-## 2026-07-18 — Mobile bottom tab bar wasted-space fix (CLAUDE, branch `claude/mobile-view-spacing-oetyav`, PR pending)
+## 2026-07-18 — Mobile bottom tab bar wasted-space fix (CLAUDE, PR #1726 MERGED & DEPLOYED)
 
 Owner reported wasted vertical space on mobile between the console's fixed bottom tab bar
 labels and Safari's address bar. Root cause: the tab-bar `<nav>` applied
@@ -467,7 +536,11 @@ the inline padding to a `.con-tabbar` class (`app/console/console.css`) that res
 only under `@media (display-mode: standalone), (display-mode: fullscreen)` (installed PWA /
 physical home indicator); browser tabs get `padding-bottom: 0`. CSS/markup only — no logic or
 trading-path change; standalone PWA behavior unchanged. Full gate green (tsc clean, eslint 0
-errors, 4758 tests pass, build clean). Next: push branch + open PR.
+errors, 4758 tests pass, build clean). PR #1726 merged 2026-07-18T06:30:22Z (squash `2aa53e1`);
+confirmed deployed — `2aa53e1` is an ancestor of the live production release SHA.
+**Corrected 2026-07-19** (PR #1774 Codex-review triage): this entry previously read "PR
+pending" / "Next: push branch + open PR", stale by the time PR #1774 (the handoff note
+documenting this work) was under review.
 Rollout: `docs/rollouts/2026-07-18-mobile-tabbar-safe-area-band.md`.
 
 ## 2026-07-17 — ATR Stop & short cover-buy fixes (ANTIGRAVITY, branch `agent/strategy-atr-and-short-fixes`, PR #1713, auto-merge enabled — waiting on CI)
