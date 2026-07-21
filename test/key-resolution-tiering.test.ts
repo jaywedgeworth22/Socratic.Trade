@@ -100,6 +100,41 @@ describe("LLM credential — operator-funded failover", () => {
   });
 });
 
+describe("deletion tombstone — explicit key deletion prevents env auto-reseeding", () => {
+  it("prevents migrateLocalEnvCredentials from re-seeding gemini and deepseek after explicit deletion", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "env-gemini-key");
+    vi.stubEnv("DEEPSEEK_API_KEY", "env-deepseek-key");
+
+    const { deleteUserApiKey, getUserApiKey, resolveLlmCredential, migrateLocalEnvCredentials } = await import("../src/lib/db");
+
+    // 1. Initial boot migration seeds GEMINI_API_KEY and DEEPSEEK_API_KEY
+    const boot1 = migrateLocalEnvCredentials();
+    expect(boot1.migrated).toContain("gemini");
+    expect(boot1.migrated).toContain("deepseek");
+    expect(getUserApiKey("local", "gemini")?.apiKey).toBe("env-gemini-key");
+
+    // 2. User deletes the gemini and deepseek keys in the UI
+    deleteUserApiKey("local", "gemini");
+    deleteUserApiKey("local", "deepseek");
+
+    // 3. UI and LLM resolution treat them as unconfigured / deleted (fail closed)
+    expect(getUserApiKey("local", "gemini")).toBeUndefined();
+    expect(getUserApiKey("local", "deepseek")).toBeUndefined();
+    expect(resolveLlmCredential("gemini", "local")).toEqual({ source: "none" });
+    expect(resolveLlmCredential("deepseek", "local")).toEqual({ source: "none" });
+
+    // 4. Subsequent server restarts call migrateLocalEnvCredentials again
+    const boot2 = migrateLocalEnvCredentials();
+    expect(boot2.migrated).not.toContain("gemini");
+    expect(boot2.migrated).not.toContain("deepseek");
+
+    // 5. Keys stay deleted across server reboots!
+    expect(getUserApiKey("local", "gemini")).toBeUndefined();
+    expect(getUserApiKey("local", "deepseek")).toBeUndefined();
+    expect(resolveLlmCredential("gemini", "local")).toEqual({ source: "none" });
+  });
+});
+
 describe("LLM usage ledger", () => {
   it("extractLlmUsage normalizes OpenAI and Anthropic usage shapes", async () => {
     const { extractLlmUsage } = await import("../src/lib/llm-usage");

@@ -1,3 +1,7 @@
+## 2026-07-21 — Deleted API Key Reseeding Fix (ANTIGRAVITY, branch `agent/antigravity-key-deletion-tombstone`)
+
+Fixed API key deletion behavior so deleted LLM keys (Gemini, DeepSeek, OpenAI, etc.) stay deleted across server reboots/restarts. Previously, `migrateLocalEnvCredentials()` ran on every Next.js startup and re-seeded keys from process environment variables if no database row existed. Updated `deleteUserApiKey` for `LOCAL_ENV_MIGRATION_SERVICES` to store a tombstone row (`apiKey = "__DELETED__"`), preventing `migrateLocalEnvCredentials()` from re-seeding deleted keys while allowing `listUserApiKeys` to filter them out and key resolvers to fail closed. Shared infrastructure keys (e.g. Finnhub) continue to hard-delete and fall back to global env as designed. All 4,919 unit tests, ESLint, TypeScript, and production build verify 100% green. Rollout: `docs/rollouts/2026-07-21-key-deletion-tombstone.md`.
+
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
 
 Purged the Voyage AI SDK and its dependencies, standardizing the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Dynamic imports and test-only shims maintain test suite compatibility while completely isolating Voyage from production. All 4,898 tests and the production Next.js build are fully green. Rollout: `docs/rollouts/2026-07-21-voyage-ai-purge.md`.

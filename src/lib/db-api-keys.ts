@@ -221,7 +221,7 @@ export function listSupportedApiKeyServices(): string[] {
   return Object.keys(API_KEY_ENV_MAP);
 }
 
-export function getUserApiKey(userId: string, service: string): UserApiKey | undefined {
+export function getUserApiKey(userId: string, service: string, options?: { includeDeleted?: boolean }): UserApiKey | undefined {
   const canonical = normalizeApiKeyService(service);
   const statement = getDb().prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? AND service = ?");
   const row =
@@ -230,14 +230,16 @@ export function getUserApiKey(userId: string, service: string): UserApiKey | und
       ? (statement.get(userId, service) as { id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string } | undefined)
       : undefined);
   if (!row) return undefined;
-  return keyRowToApiKey(row);
+  const result = keyRowToApiKey(row);
+  if (result.apiKey === "__DELETED__" && !options?.includeDeleted) return undefined;
+  return result;
 }
 
 export function listUserApiKeys(userId: string): UserApiKey[] {
   const rows = getDb()
     .prepare("SELECT id, user_id, service, api_key, label, created_at, updated_at FROM user_api_keys WHERE user_id = ? ORDER BY service")
     .all(userId) as Array<{ id: string; user_id: string; service: string; api_key: string; label: string | null; created_at: string; updated_at: string }>;
-  return rows.map(keyRowToApiKey);
+  return rows.map(keyRowToApiKey).filter((k) => k.apiKey !== "__DELETED__");
 }
 
 export function upsertUserApiKey(userId: string, service: string, apiKey: string, label?: string): UserApiKey {
@@ -257,10 +259,14 @@ export function upsertUserApiKey(userId: string, service: string, apiKey: string
 
 export function deleteUserApiKey(userId: string, service: string): void {
   const canonical = normalizeApiKeyService(service);
-  const db = getDb();
-  db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, canonical);
-  if (canonical !== service) {
-    db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, service);
+  if ((LOCAL_ENV_MIGRATION_SERVICES as readonly string[]).includes(canonical)) {
+    upsertUserApiKey(userId, canonical, "__DELETED__", "deleted by user");
+  } else {
+    const db = getDb();
+    db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, canonical);
+    if (canonical !== service) {
+      db.prepare("DELETE FROM user_api_keys WHERE user_id = ? AND service = ?").run(userId, service);
+    }
   }
 }
 
@@ -328,10 +334,13 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
   const canonical = normalizeApiKeyService(service);
   const envVar = apiKeyEnvVarForService(canonical);
 
-  // 1. A per-user stored key always wins.
+  // 1. A per-user stored key always wins (or an explicit deletion fails closed).
   if (userId) {
-    const userKey = getUserApiKey(userId, canonical);
-    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
+    const userKey = getUserApiKey(userId, canonical, { includeDeleted: true });
+    if (userKey?.apiKey) {
+      if (userKey.apiKey === "__DELETED__") return { source: "none", envVar, service: canonical };
+      return { key: userKey.apiKey, source: "user", envVar, service: canonical };
+    }
   }
 
   const envKey = envVar ? process.env[envVar] : undefined;
@@ -574,8 +583,11 @@ export function maskApiKeyPreview(key: string | undefined | null): string | unde
 export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
   if (userId) {
-    const userKey = getUserApiKey(userId, canonical);
-    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
+    const userKey = getUserApiKey(userId, canonical, { includeDeleted: true });
+    if (userKey?.apiKey) {
+      if (userKey.apiKey === "__DELETED__") return { source: "none" };
+      return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
+    }
 
     if (process.env.NODE_ENV === "test") {
       if (canonical === "openrouter") {
@@ -651,7 +663,8 @@ export function migrateLocalEnvCredentials(): { migrated: string[] } {
   for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
     const envVar = API_KEY_ENV_MAP[svc];
     const envVal = envVar ? process.env[envVar]?.trim() : undefined;
-    if (envVal && !getUserApiKey(LOCAL_USER, svc)?.apiKey) {
+    const existing = getUserApiKey(LOCAL_USER, svc, { includeDeleted: true });
+    if (envVal && !existing) {
       try {
         upsertUserApiKey(LOCAL_USER, svc, envVal, "migrated from env");
         migrated.push(svc);

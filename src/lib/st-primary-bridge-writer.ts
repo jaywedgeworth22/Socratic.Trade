@@ -346,8 +346,8 @@ function desiredEntries(): DesiredEntry[] {
   return ENTRY_CONTRACT.map((contract) => {
     // The source account is a compile-time constant. No caller, request, env,
     // or manifest can select another Socratic user.
-    const stored = getUserApiKey(LOCAL_USER, contract.service);
-    if (!stored) {
+    const stored = getUserApiKey(LOCAL_USER, contract.service, { includeDeleted: true });
+    if (!stored || stored.apiKey === "__DELETED__") {
       return {
         id: contract.id,
         providerName: contract.providerName,
