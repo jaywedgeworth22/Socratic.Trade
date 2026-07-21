@@ -6,24 +6,6 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
-## 2026-07-20 — SQLite busy_timeout headroom 30s->60s (CLAUDE, branch `claude/sqlite-busy-timeout-headroom`)
-
-Owner-directed prod triage. Sentry SOCRATIC-TRADE-T ("Pinecone connection failed", 13 events over
-5 days, most recent minutes before this fix) was misleading: the event's own `reason` tag reads
-`"database is locked"` (SQLITE_BUSY) surfacing during a RAG query's incidental local DB read, not
-an actual Pinecone outage — Pinecone's index status API reported `Ready` throughout the whole
-window. PR #1728 (2026-07-18) raised busy_timeout 5s->30s for the same class of contention; 30s
-isn't absorbing lock contention during the current unusually heavy concurrent-write period (bulk
-RAG backfill/reindex + scheduler + EarningsCalls burst ingest all writing the same prod SQLite
-file at once). One-line pragma bump to 60s in `src/lib/db.ts` — WAL already lets readers proceed
-during a writer, so the longer wait only affects genuinely write-contended callers, not the common
-read path. Also found (same triage pass): production trading autonomy was very likely halted on
-all 3 accounts for ~69h+ — this is the app's designed `reconcileAutonomyOnBoot` safety behavior
-(every deploy/restart reverts `active`->`halted` unless a user has `autoResumeOnBoot` enabled),
-compounded by the unusually high deploy cadence from this session's PR-landing train. NOT touched
-by this agent — re-arming autonomy requires the owner's authenticated session (`/api/strategy/enable`
-and `/api/settings/auto-resume` are plain session-authenticated routes, no admin-token path exists);
-flagged directly to the owner in-session rather than acted on.
 ## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
 
 Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
