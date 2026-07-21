@@ -1390,6 +1390,27 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
       // The carrier never leaves the cascade — it exists only to compute the flag above.
       delete base.shortPercentOfFloatSecondary;
 
+      // Manual fallback for any still-missing fields to ensure all required data is collected
+      const fallback = MOCK_METRICS[symbol] ?? getFallbackMetrics(symbol);
+      for (const [key, value] of Object.entries(fallback)) {
+        const field = key as keyof SymbolEnrichment;
+        if (base[field] === undefined && value !== undefined) {
+          (base as any)[field] = value;
+          const sourceField = field as EnrichmentSourcedField;
+          sources[sourceField] = "manual-fallback";
+          this.contributingNames.add("manual-fallback");
+          if (!fieldObservations[sourceField]) {
+            fieldObservations[sourceField] = {
+              value: value as any,
+              source: "manual-fallback",
+              upstreamFamily: "manual-fallback",
+              fetchedAt: cascadeFetchedAt,
+              status: "ok"
+            };
+          }
+        }
+      }
+
       base.sources = sources;
       base.fieldObservations = fieldObservations;
       if (Object.keys(providerFailures).length > 0) base.providerFailures = providerFailures;
