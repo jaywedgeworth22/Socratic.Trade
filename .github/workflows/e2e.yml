@@ -48,7 +48,7 @@ jobs:
     # self-hosted workspace (defense in depth, even though forks can't reach this
     # workflow via the triggers currently configured).
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
     outputs:
@@ -115,7 +115,7 @@ jobs:
     if: ${{ !cancelled() }}
     # 2026-07-18: GitHub-hosted `ubuntu-latest` is not assigning runners for this repo
     # (runner_id=0/no step logs), so required smoke runs on the online Coolify Hetzner CI runner.
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
       packages: read
