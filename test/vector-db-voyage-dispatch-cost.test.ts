@@ -90,11 +90,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.PINECONE_API_KEY = "pinecone-test";
   process.env.OPENROUTER_API_KEY = "openrouter-test";
+  process.env.VOYAGE_API_KEY = "voyage-test";
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
   delete process.env.PINECONE_INDEX_NAME;
   mocks.resolveApiKey.mockImplementation((service: string) => {
     if (service === "pinecone") return process.env.PINECONE_API_KEY;
     if (service === "openrouter") return process.env.OPENROUTER_API_KEY;
+    if (service === "voyage") return process.env.VOYAGE_API_KEY;
     return undefined;
   });
   mocks.reserveProviderDispatch.mockReturnValue({

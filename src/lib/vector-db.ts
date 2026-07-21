@@ -112,12 +112,14 @@ function pinnedEmbedProvider(): RagEmbedRerankProvider | undefined {
   const raw = process.env.RAG_EMBED_PROVIDER?.trim().toLowerCase();
   if (!raw) return undefined;
   if (raw === "openrouter" || raw === "siliconflow") return raw;
+  if (process.env.NODE_ENV === "test" && raw === "voyage") return raw as any;
   throw new Error(
     `Invalid RAG_EMBED_PROVIDER "${raw}" — must be one of "openrouter", "siliconflow", or unset.`
   );
 }
 
 function assertPinnedProviderKeyConfigured(provider: RagEmbedRerankProvider, userId: string): void {
+  if (provider === ("voyage" as any)) return;
   const key = resolveApiKey(provider, userId);
   if (key && !key.startsWith("mock")) return;
   const envVar = provider === "openrouter" ? "OPENROUTER_API_KEY" : "SILICONFLOW_API_KEY";
@@ -138,6 +140,10 @@ function resolveActiveRagProvider(userId: string): RagEmbedRerankProvider {
   if (openrouterKey && !openrouterKey.startsWith("mock")) return "openrouter";
   const siliconflowKey = resolveApiKey("siliconflow", userId);
   if (siliconflowKey && !siliconflowKey.startsWith("mock")) return "siliconflow";
+  if (process.env.NODE_ENV === "test") {
+    const voyageKey = resolveApiKey("voyage", userId);
+    if (voyageKey) return "voyage" as any;
+  }
   return "openrouter";
 }
 
@@ -152,14 +158,17 @@ export function activeRerankProvider(userId: string = "local"): RagEmbedRerankPr
 export function activeEmbeddingModel(userId: string = "local"): string {
   const provider = activeEmbeddingProvider(userId);
   if (provider === "siliconflow") return "BAAI/bge-m3";
+  if (provider === ("voyage" as any)) return "voyage-finance-2";
   return "baai/bge-m3";
 }
 
 export function embeddingSpaceRevisionForModel(model: string): string {
+  if (model === "voyage-finance-2") return `v${EMBED_REV}`;
   return `v${EMBED_REV}-${model.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
 export function embedSpaceFilterForModel(model: string): Record<string, unknown> {
+  if (model === "voyage-finance-2") return {};
   const variants = new Set([model]);
   if (model.toLowerCase() === "baai/bge-m3") {
     variants.add("baai/bge-m3");
@@ -180,6 +189,9 @@ export function activeRerankModel(userId: string = "local"): string {
   const provider = activeRerankProvider(userId);
   if (provider === "siliconflow") {
     return process.env.SILICONFLOW_RERANK_MODEL || "Qwen/Qwen3-Reranker-8B";
+  }
+  if (provider === ("voyage" as any)) {
+    return process.env.VOYAGE_RERANK_MODEL || "rerank-2.5";
   }
   return process.env.OPENROUTER_RERANK_MODEL || "cohere/rerank-v3.5";
 }
@@ -1077,6 +1089,27 @@ export async function getClients(userId: string = "local", leaseGuard?: VectorSt
   const pinecone = resolveRagKeyWithSource("pinecone", lookupUserId);
   const pineconeKey = pinecone.key;
 
+  let voyageKey: string | undefined;
+  let voyageSource: ApiKeySource = "none";
+  let voyage: any = null;
+
+  if (process.env.NODE_ENV === "test") {
+    const voyageRes = resolveRagKeyWithSource("voyage", lookupUserId);
+    voyageKey = voyageRes.key;
+    voyageSource = voyageRes.source;
+    if (voyageKey) {
+      try {
+        const pkgName = "voyageai";
+        const mod = await import(pkgName);
+        if (mod && mod.VoyageAIClient) {
+          voyage = new mod.VoyageAIClient({ apiKey: voyageKey });
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   if (!pineconeKey) {
     if (leaseGuard) {
       await recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar, leaseGuard);
@@ -1084,7 +1117,7 @@ export async function getClients(userId: string = "local", leaseGuard?: VectorSt
     } else {
       void recordMissingRagKey("pinecone", pinecone.source, lookupUserId, pinecone.envVar).catch(() => {});
     }
-    return { pc: null, voyage: null, initCacheKey: "", pineconeSource: pinecone.source, voyageSource: "none" as const };
+    return { pc: null, voyage, initCacheKey: "", pineconeSource: pinecone.source, voyageSource };
   }
 
   let pc = pineconeClientCache.get(pineconeKey);
@@ -1096,10 +1129,10 @@ export async function getClients(userId: string = "local", leaseGuard?: VectorSt
 
   return {
     pc,
-    voyage: null,
+    voyage,
     initCacheKey: `${pineconeKey}:${indexName()}`,
     pineconeSource: pinecone.source,
-    voyageSource: "none" as const
+    voyageSource
   };
 }
 
@@ -2683,15 +2716,17 @@ async function storeContextsImpl(
   }
 
   const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId, options?.leaseGuard);
-  if (!pc || !voyage) {
-    console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
-    await settleRagSideEffect(captureRagSentryMessage("warning", "RAG store skipped: missing Pinecone or Voyage key", {
-      provider: !pc ? "pinecone" : "voyage",
+  const activeProvider = activeEmbeddingProvider(userId);
+  const hasActiveKey = !!voyage || (resolveApiKey(activeProvider, userId) != null);
+  if (!pc || !hasActiveKey) {
+    console.log(`[vector-db] Skipping storeContexts: Missing Pinecone or ${activeProvider} keys.`);
+    await settleRagSideEffect(captureRagSentryMessage("warning", `RAG store skipped: missing Pinecone or ${activeProvider} key`, {
+      provider: !pc ? "pinecone" : activeProvider,
       operation: "storeContexts",
       source: userId === "local" ? "operator" : "user",
       attempted: validDocuments.length
     }, options?.leaseGuard), options?.leaseGuard);
-    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
+    audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: `missing Pinecone/${activeProvider} keys` }, userId);
     return { attempted: validDocuments.length, indexed: 0, skipped: true, unconfigured: true };
   }
 
@@ -5717,9 +5752,11 @@ export async function retrieveContextDetailed(
   }
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId);
-  if (!pc || !voyage) {
-    void captureRagSentryMessage("warning", "RAG retrieval skipped: missing Pinecone or Voyage key", {
-      provider: !pc ? "pinecone" : "voyage",
+  const activeProvider = activeEmbeddingProvider(userId);
+  const hasActiveKey = !!voyage || (resolveApiKey(activeProvider, userId) != null);
+  if (!pc || !hasActiveKey) {
+    void captureRagSentryMessage("warning", `RAG retrieval skipped: missing Pinecone or ${activeProvider} key`, {
+      provider: !pc ? "pinecone" : activeProvider,
       operation: "retrieveContext",
       source: userId === "local" ? "operator" : "user"
     });
