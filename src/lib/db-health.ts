@@ -16,7 +16,7 @@ export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all 
 // 2026-07-07T14:01Z and 22:01Z in prod). Keep the richer vector-db.ts alert as the single source of
 // truth for these three lanes; every OTHER provider (finnhub, tiingo, twelvedata, etc.) has no
 // dedicated alerter, so it still needs this generic automatic path.
-const RAG_SERVICES_WITH_OWN_ALERTING = new Set(["pinecone", "voyage", "voyage-rerank"]);
+const RAG_SERVICES_WITH_OWN_ALERTING = new Set(["pinecone", "openrouter", "openrouter-rerank", "siliconflow", "siliconflow-rerank"]);
 
 /**
  * Per-credential-lane health for the API circuit breaker. A "lane" is (service, keySource) — the SAME

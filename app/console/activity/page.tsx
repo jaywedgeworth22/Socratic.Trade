@@ -322,16 +322,33 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                   Run · <Ago iso={run.startedAt} /> · {runDuration(run)}
                 </span>
                 <span className="con-num block text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-                  {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount} simulated · {run.blockedCount} blocked
+                  {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount > 0 ? `${run.paperCount} paper · ` : ""}{run.blockedCount} blocked
                 </span>
               </span>
-              <Chip tone={run.status === "failed" ? "neg" : run.status === "running" ? "accent" : "pos"}>{feedStatusLabel(run.status)}</Chip>
+              <Chip
+                tone={
+                  run.status === "failed"
+                    ? "neg"
+                    : run.status === "running"
+                      ? "accent"
+                      : run.status === "skipped"
+                        ? "warn"
+                        : "pos"
+                }
+              >
+                {feedStatusLabel(run.status)}
+              </Chip>
             </summary>
             <div className="border-t border-[color:var(--con-line)] py-2">
               {run.summary && <p className="mb-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{run.summary}</p>}
               {run.status === "completed" && run.totalCount === 0 && (
                 <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  Did nothing on purpose — no candidate cleared the bar this run.
+                  No candidate cleared the bar this run — deliberate hold after a full evaluation.
+                </p>
+              )}
+              {run.status === "skipped" && (
+                <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+                  Pre-decision skip (budget, market closed, or broker health) — not a successful evaluation.
                 </p>
               )}
               {proposals.length > 0 ? (

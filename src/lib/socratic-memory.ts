@@ -141,6 +141,110 @@ export async function fmpDerivedSocraticMemoryVectorId(
   return `fmp-derived-socratic:v1:${digest}`;
 }
 
+/**
+ * Persist a single owner coach note as a retrievable `doc_type: coach-note` vector so decision-time
+ * episodic retrieval (experience-memory EPISODIC_DOC_TYPES) can surface "Owner coaching" blocks.
+ * Fire-and-forget safe: failures log and do not throw to the coach path.
+ */
+export async function indexCoachNoteMemory(input: {
+  decision: SocraticDecisionCase;
+  note: string;
+  noteIndex: number;
+}): Promise<StoreContextsResult | undefined> {
+  const note = input.note.replace(/\s+/g, " ").trim();
+  if (!note) return undefined;
+  try {
+    const { storeContexts } = await import("./vector-db");
+    const symbol = input.decision.symbol ?? "PORTFOLIO";
+    const accession = `${input.decision.id}:coach:${input.noteIndex}`;
+    const text = [
+      "Owner coaching note for a Socratic decision case",
+      `ticker: ${symbol}`,
+      `decision_id: ${input.decision.id}`,
+      `thesis_tag: ${input.decision.thesisTag ?? "n/a"}`,
+      `entry_market_regime: ${input.decision.regime ?? "n/a"}`,
+      `side: ${input.decision.side ?? "n/a"}`,
+      `coach_note: ${note}`
+    ].join("\n");
+    return await storeContexts(
+      [
+        {
+          text,
+          metadata: {
+            symbol,
+            source: "socratic-coach",
+            timestamp: new Date().toISOString(),
+            accession,
+            doc_type: "coach-note",
+            memory_scope: "account",
+            decision_id: input.decision.id,
+            ...(input.decision.runId ? { run_id: input.decision.runId } : {}),
+            ...(input.decision.thesisTag ? { thesis_tag: input.decision.thesisTag } : {}),
+            ...(input.decision.regime ? { entry_market_regime: input.decision.regime } : {}),
+            ...(input.decision.connectedAccountId ? { connected_account_id: input.decision.connectedAccountId } : {})
+          }
+        }
+      ],
+      input.decision.userId,
+      { dedupKeyPrefix: "coach-note", scope: "private" }
+    );
+  } catch (err) {
+    console.warn("[socratic-memory] coach-note vector write failed:", err instanceof Error ? err.message : err);
+    return undefined;
+  }
+}
+
+/**
+ * Persist a lesson string as `doc_type: lesson` so episodic retrieval can surface durable lessons
+ * (not only SQL learned_context facts).
+ */
+export async function indexLessonMemory(input: {
+  decision: SocraticDecisionCase;
+  lesson: string;
+  lessonIndex: number;
+}): Promise<StoreContextsResult | undefined> {
+  const lesson = input.lesson.replace(/\s+/g, " ").trim();
+  if (!lesson) return undefined;
+  try {
+    const { storeContexts } = await import("./vector-db");
+    const symbol = input.decision.symbol ?? "PORTFOLIO";
+    const accession = `${input.decision.id}:lesson:${input.lessonIndex}`;
+    const text = [
+      "Durable lesson from a Socratic decision case",
+      `ticker: ${symbol}`,
+      `decision_id: ${input.decision.id}`,
+      `thesis_tag: ${input.decision.thesisTag ?? "n/a"}`,
+      `entry_market_regime: ${input.decision.regime ?? "n/a"}`,
+      `lesson: ${lesson}`
+    ].join("\n");
+    return await storeContexts(
+      [
+        {
+          text,
+          metadata: {
+            symbol,
+            source: "socratic-lesson",
+            timestamp: new Date().toISOString(),
+            accession,
+            doc_type: "lesson",
+            memory_scope: "account",
+            decision_id: input.decision.id,
+            ...(input.decision.runId ? { run_id: input.decision.runId } : {}),
+            ...(input.decision.thesisTag ? { thesis_tag: input.decision.thesisTag } : {}),
+            ...(input.decision.regime ? { entry_market_regime: input.decision.regime } : {}),
+            ...(input.decision.connectedAccountId ? { connected_account_id: input.decision.connectedAccountId } : {})
+          }
+        }
+      ],
+      input.decision.userId,
+      { dedupKeyPrefix: "lesson", scope: "private" }
+    );
+  } catch (err) {
+    console.warn("[socratic-memory] lesson vector write failed:", err instanceof Error ? err.message : err);
+    return undefined;
+  }
+}
+
 export function indexSocraticDecisionMemory(decision: SocraticDecisionCase): Promise<StoreContextsResult> {
   const key = `${decision.userId}:${decision.id}`;
   const prior = decisionIndexQueues.get(key);

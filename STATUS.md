@@ -1,3 +1,9 @@
+## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
+
+Purged the Voyage AI SDK and its dependencies, standardizing the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Dynamic imports and test-only shims maintain test suite compatibility while completely isolating Voyage from production. All 4,898 tests and the production Next.js build are fully green. Rollout: `docs/rollouts/2026-07-21-voyage-ai-purge.md`.
+
+## 2026-07-21 — Mass PR CI Runner Synchronization (Antigravity)
+Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
 ## 2026-07-19 - Prod deploy wedge RESOLVED; litestream socket leak proven (CLAUDE)
@@ -14,6 +20,9 @@ and 0.5.14 is HEAD. Mitigation PR (`claude/litestream-leak-mitigation`) throttle
 auto-merged**) and fixes an empty-`region` misconfig. **The leak still recurs** - a watchdog
 alerts at 60% of the tcp_mem ceiling. Details:
 `docs/rollouts/2026-07-19-litestream-socket-leak-mitigation.md`.
+## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
+
+Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
 ## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
 
 Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
@@ -2622,3 +2631,6 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - Run the ordered full gate, push #1586 through `scripts/land.sh`, mark the PR ready, resolve hosted
   checks/review, merge it, require zero open PRs, then verify the exact final `main` SHA through production
   health/readiness and Coolify runtime surfaces.
+
+## 2026-07-21 — Switch RAG Default Embedding Provider from Voyage to OpenRouter (BAAI bge-m3)
+Switched the default fallback RAG embedding and rerank provider in `src/lib/vector-db.ts` to OpenRouter using BAAI's `baai/bge-m3` embedding model and Cohere reranker. Updated tests in `test/rag-embed-provider-gate.test.ts` and `test/connection-health-routing.test.ts`.
