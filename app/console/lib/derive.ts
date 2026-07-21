@@ -29,7 +29,7 @@ export interface RealityInfo {
   /** The load-bearing word. */
   word: "NO ACCOUNT" | "PAPER" | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "nothing connected yet" | "NOT real money" | "connected account";
+  phrase: "nothing connected yet" | "broker practice account" | "live orders";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -46,16 +46,17 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         mode,
         tone: "paper",
         word: "PAPER",
-        phrase: "NOT real money",
-        clarification: "Your broker's practice sandbox — real broker endpoints, zero real dollars."
+        phrase: "broker practice account",
+        clarification:
+          "Same broker-mediated trading path as live — practice dollars at the broker. Useful for reps and system training; live is the primary focus."
       };
     case "broker/live":
       return {
         mode,
         tone: "live",
         word: "BROKERAGE",
-        phrase: "connected account",
-        clarification: "Orders route through this connected broker account when approved or permitted by Autopilot."
+        phrase: "live orders",
+        clarification: "Orders route through this connected live broker account when approved or permitted by Autopilot."
       };
     default:
       return {
@@ -65,7 +66,7 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         // Not "no account connected" — the banner renders "WORD · phrase", and
         // repeating the word's meaning made it a tautology.
         phrase: "nothing connected yet",
-        clarification: "Connect a broker account (paper or live) before the app can place orders."
+        clarification: "Connect a broker account before the app can place orders. Prefer live when ready; paper is for training reps."
       };
   }
 }
@@ -425,8 +426,31 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
     items.push({
       id: "llm",
       tone: "warn",
-      title: "No LLM key configured",
-      detail: "Runs that generate proposals need one. Market data, positions, and guardrails still work without it."
+      title: "Setup: add an LLM key",
+      detail:
+        "Strategy runs need OpenRouter (or another configured LLM key) so Green/Red teams can propose and debate. Market data, positions, and guardrails still work without it.",
+      href: "/console/connections#api-keys"
+    });
+  }
+  // First-run / setup checklist (robust for many users; still useful as sole-operator checklist).
+  if (!activeConnectedAccount(snapshot) && snapshot.connectedAccounts.length === 0) {
+    items.push({
+      id: "setup-broker",
+      tone: "accent",
+      title: "Setup: connect a broker account",
+      detail:
+        "Connect Alpaca or Robinhood (live preferred when ready; paper is fine for training reps). The app cannot place orders without a connected account.",
+      href: "/console/connections"
+    });
+  }
+  const greenModel = snapshot.policy.llmModel?.trim();
+  if (!greenModel && snapshot.llmConfigured !== false) {
+    items.push({
+      id: "setup-models",
+      tone: "warn",
+      title: "Setup: choose Green team model",
+      detail: "Strategy → Models — pick the model that writes trade ideas. Red team is optional; blank means you are the sole adversary.",
+      href: "/console/strategy"
     });
   }
   if (snapshot.accountReadiness && !snapshot.accountReadiness.ok) {
@@ -434,7 +458,8 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       id: "readiness",
       tone: "warn",
       title: "Account not ready to run",
-      detail: snapshot.accountReadiness.detail
+      detail: snapshot.accountReadiness.detail,
+      href: "/console/connections"
     });
   }
   const failed = (snapshot.recentProposals ?? []).filter((p) => p.status === "placing_failed");

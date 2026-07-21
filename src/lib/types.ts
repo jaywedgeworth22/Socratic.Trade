@@ -2119,7 +2119,8 @@ export interface StrategyRun {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  status: "running" | "completed" | "failed";
+  /** skipped = pre-decision gate (budget/market/broker); not a successful evaluation */
+  status: "running" | "completed" | "failed" | "skipped";
   summary?: string;
 }
 
@@ -2127,7 +2128,7 @@ export interface StrategyRunRow {
   id: string;
   startedAt: string;
   finishedAt?: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "skipped";
   summary?: string;
   connectedAccountId?: string;
   placedCount: number;
