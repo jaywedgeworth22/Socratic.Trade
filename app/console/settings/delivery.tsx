@@ -241,9 +241,13 @@ export function DeliveryChannelsCard() {
                     {ch.id === "push" && ch.available && (
                       <span
                         className="rounded-full border border-[color:var(--con-pos-border)] bg-[color:var(--con-pos-soft)] px-2 py-0.5 text-[length:var(--con-fs-2xs)] font-bold uppercase tracking-wide text-[color:var(--con-pos)]"
-                        title="Push via ntfy needs no account or key and is free — the recommended first channel."
+                        title={
+                          ch.provider === "pushover"
+                            ? "Phone push via Pushover — paste your Pushover user key as the target. Server needs PUSHOVER_APP_TOKEN + NOTIFY_PUSH_PROVIDER=pushover."
+                            : "Phone push via ntfy (free topic) or Pushover (server: NOTIFY_PUSH_PROVIDER=pushover + PUSHOVER_APP_TOKEN). Paste the topic or user key below."
+                        }
                       >
-                        recommended · free
+                        {ch.provider === "pushover" ? "pushover" : "recommended · free"}
                       </span>
                     )}
                     {!ch.available && (
