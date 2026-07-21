@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-20 — GROK4 multi-wave Wave A (+C partial) on `grok/multi-wave-a-onward`
+
+Owner-directed after multi-expert review. **Wave A:** strategy runs that skip for market/broker/budget
+finish as `status: "skipped"` (not green completed); early LLM budget admission before scan;
+Usage-Monitor enforce prefers `openrouter` under universal routing; SiliconFlow bge-m3 embed price
+10× fix; paper = broker-mediated (no "simulated"); first-run Needs-attention setup; circuit-breaker
+null-byte cleaned. **Wave C partial:** add-to-loser uses scan mark; short/cover UI labels; synthetic
+short trail from `shortStopLossPct`; brackets honor shortStopLossPct. Pushover already supported
+(`NOTIFY_PUSH_PROVIDER=pushover` + `PUSHOVER_APP_TOKEN`). Review:
+`docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md`. Rollout:
+`docs/rollouts/2026-07-20-grok4-wave-a-trust-spend-paper.md`. **Next:** Wave B bge re-embed + RAG
+expansion/summarization; coach plain-English doctrine ingest; Alpaca cover broker-held stops.
+
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the

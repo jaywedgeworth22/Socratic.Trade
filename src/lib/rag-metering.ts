@@ -66,7 +66,8 @@ const VOYAGE_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number
 };
 
 const SILICONFLOW_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number }> = {
-  "BAAI/bge-m3": { embed: 0.00001 / 10, rerank: 0 }, // $0.01 per 1M tokens = $0.00001 per 1K tokens
+  // $0.01 per 1M tokens = $0.00001 per 1K tokens (must match OpenRouter row below — never divide by 10).
+  "BAAI/bge-m3": { embed: 0.00001, rerank: 0 },
   "Qwen/Qwen3-Reranker-8B": { embed: 0, rerank: 0.00005 }, // nominal or matching rate
 };
 
