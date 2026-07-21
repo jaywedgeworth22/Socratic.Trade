@@ -71,7 +71,7 @@ jobs:
     # Reject fork PRs at admission so fork-controlled repository content never reaches
     # the persistent self-hosted workspace, including through actions/checkout.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, socratic-deploy]
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
     outputs:
@@ -288,7 +288,7 @@ jobs:
   verify-hosted:
     needs: [classify, verify-self]
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && (needs.classify.outputs.route != 'self' || needs.verify-self.result != 'success') }}
-    runs-on: [self-hosted, socratic-deploy]
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
       packages: read
@@ -364,7 +364,7 @@ jobs:
     # while classify/lane failures cannot silently skip a required check (skipped required
     # checks can fail open — Codex review, PR #370).
     if: ${{ !cancelled() }}
-    runs-on: [self-hosted, socratic-deploy]
+    runs-on: [self-hosted, trading-live]
     permissions:
       contents: read
     steps:
@@ -382,7 +382,7 @@ jobs:
           note "### verify gate"
           note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, route: ${ROUTE:-n/a})"
           note "- verify-self (macOS, production Mac): ${SELF_RESULT}"
-          note "- verify-hosted (Coolify socratic-deploy): ${HOSTED_RESULT}"
+          note "- verify-hosted (Coolify trading-live): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             note "- RESULT: FAIL — classify did not succeed; the gate never fails open."
@@ -394,9 +394,9 @@ jobs:
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then
             if [ "$SELF_RESULT" = "failure" ]; then
-              note "- RESULT: PASS — produced by Coolify socratic-deploy (ARBITER: self-hosted Mac lane failed, Linux lane passed)."
+              note "- RESULT: PASS — produced by Coolify trading-live (ARBITER: self-hosted Mac lane failed, Linux lane passed)."
             else
-              note "- RESULT: PASS — produced by Coolify socratic-deploy."
+              note "- RESULT: PASS — produced by Coolify trading-live."
             fi
             exit 0
           fi
