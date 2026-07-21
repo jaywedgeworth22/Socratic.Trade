@@ -71,7 +71,7 @@ jobs:
     # Reject fork PRs at admission so fork-controlled repository content never reaches
     # the persistent self-hosted workspace, including through actions/checkout.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
     outputs:
@@ -288,7 +288,7 @@ jobs:
   verify-hosted:
     needs: [classify, verify-self]
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && (needs.classify.outputs.route != 'self' || needs.verify-self.result != 'success') }}
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
       packages: read
@@ -363,7 +363,7 @@ jobs:
     # while classify/lane failures cannot silently skip a required check (skipped required
     # checks can fail open — Codex review, PR #370).
     if: ${{ !cancelled() }}
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
     steps:

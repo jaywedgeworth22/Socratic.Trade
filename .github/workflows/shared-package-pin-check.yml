@@ -169,7 +169,7 @@ jobs:
             return 0
           }
 
-          LOCAL_SPEC=$(node -p "require('./${LOCAL_PACKAGE_JSON_PATH}').dependencies['${PKG}'] ?? ''")
+          LOCAL_SPEC=$(node -e "const p=require('path').resolve(process.env.LOCAL_PACKAGE_JSON_PATH); const pkg=require(p); console.log((pkg.dependencies||{})[process.env.PKG]||'')")
           if [ -z "$LOCAL_SPEC" ]; then
             echo "::warning::${PKG} not found in ${LOCAL_PACKAGE_JSON_PATH} dependencies"
             exit 0
