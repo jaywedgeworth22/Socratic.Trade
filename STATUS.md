@@ -10,6 +10,19 @@ Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with
 
 Owner directive: permanently stopped, uninstalled, and deleted self-hosted runner `trading-live-mac` (ID 22 on Socratic.Trade, ID 687 on Congress.Trade). Updated all workflow files in `.github/workflows/` (`ci.yml`, `security.yml`, `cleanup-caches.yml`, `sentry-ci-report.yml`, `_merge-shepherd-impl.yml`, `shared-package-pin-check.yml`, `e2e.yml`, `codex-autofix.yml`, `effort-issues-sync.yml`) to route to `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`. Added explicit binding fleet directive in `AGENTS.md` prohibiting any future use or re-registration of Mac self-hosted runners. Rollout: `docs/rollouts/2026-07-21-retire-mac-runner.md`.
 
+## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
+
+All four owner-linked handoff docs executed/dispositioned: missing model-availability rollout
+authored as a stamped reconstruction (underlying work verified landed via #1703-#1737);
+bge-m3 corpus re-embed verified INCOMPLETE (legacy 8,688 vs managed 1,418 vectors; voyage
+space intact) with the gating `claude/corpus-reembed-hardening` branch found unpushed and
+landed (PR auto-merge armed — 2026-07-18 fleet hold lifts on merge+deploy); AG's concurrent
+"prod reindex triggered" flagged as a hold conflict in #agent-sync; PRs #1771/#1773/#1774
+shepherded (Codex threads triaged, 2 real #1773 findings fixed via `b3f05425`); dual-workspace
+OpenRouter MCP OAuth verified broken (both on Socratic workspace — owner re-auth needed);
+alpha-vantage health red confirmed deliberate (deregistered lane, not a dead key). Owner
+ruling codified fleet-wide: OpenRouter MCP is research-only. Details:
+`docs/rollouts/2026-07-19-four-handoff-conquest.md`.
 ## 2026-07-19 — Handoff: CLAUDE seat -> Antigravity (owner-directed)
 
 Full session handoff note: `docs/rollouts/2026-07-19-claude-to-antigravity-handoff.md`. Short
