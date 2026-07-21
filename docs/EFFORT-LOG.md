@@ -324,24 +324,6 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
-- **[Socratic.Trade][CLAUDE] Ops/display truth batch — Codex review items 33/38/43/45/46
-  (branch `claude/ops-display-truth-batch`, head `fd662758`) — LANDING 2026-07-18, lane 4 of a
-  serial landing train.** Truth-in-display fixes: OpenRouter-routed model ids now brand their
-  real vendor via the shared `canonicalModelId` (`src/lib/model-identity.ts`) with "via
-  OpenRouter" as a separate transport signal (item 45); orders page shows executed
-  qty/notional on finished orders, nothing on zero-fill (43, display slice); dynamic-universe
-  source labels keyed to the camelCase ids actually emitted + NYSE/FT Wilshire labels, unfilled
-  ADR `(Representing - )` placeholders stripped at the screener boundary (46a/b); Red-Team
-  unavailable summaries no longer double the period via `appendSentence` (46c); RAG-coverage
-  tiles name their source system (local ledger vs Pinecone vs app-recorded spend) (46d);
-  item 38's wrong-live-board-filename bug was traced OUTSIDE the repo to
-  `/Users/jay/apps/codex-coordination-audit.py` and fixed there; item 33 (server-metrics 502)
-  deliberately SKIPPED as duplicate of CODEX's in-flight `codex/socratic-infra-panel-reliability`
-  rewrite. Adversarially verified SAFE — verifier advisories: `redteam-failure-routing` 30s
-  per-test caps flake under shared-box load (verified pre-existing on clean main; candidate for
-  the approval-lock-style timeout raise), and `test/console-models.test.ts` expectations must be
-  updated if the curated catalog ever gains the currently-uncatalogued routed ids it asserts
-  bare-id fallback for. Rollout: `docs/rollouts/2026-07-18-ops-display-truth-batch.md`.
 - **[Socratic.Trade][CLAUDE] Durable pre-network stop-placement intent + atomic idempotent
   recovered fills — Codex findings 5/6 (branch `claude/stop-intent-idempotency`, head `761b524b`
   = gate-verified merge of `8f6160bd` + main `b4dd8a54`) — LANDING 2026-07-18, lane 6 (final) of
@@ -3740,3 +3722,5 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
+
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
