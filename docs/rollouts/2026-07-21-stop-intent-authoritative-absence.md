@@ -27,16 +27,12 @@ that state could leave two resting sell stops for the same shares or sell again 
 
 ## Verification
 
-Pending at implementation checkpoint:
-
-- `npm run lint`
+- `npm test -- test/broker-protective-stops.test.ts` (70 tests passed)
+- `npm test -- test/broker-protective-stops.test.ts test/synthetic-stops.test.ts` (138 tests passed)
+- `npm run lint` (exit 0; warnings only)
 - `npx tsc --noEmit`
-- `npm test`
-- `npm run build`
-
-Focused test to run before broad gates:
-
-- `npm test -- test/broker-protective-stops.test.ts`
+- `npm test` (420 files / 4,901 tests passed)
+- `npm run build` (passed; existing Next/Sentry Edge-runtime warning only)
 
 ## Follow-ups
 

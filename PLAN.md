@@ -6,7 +6,7 @@
 > call must not be cleared just because a non-authoritative/live-only order list lacks the
 > `clientOrderId`. Only gateways with `ordersListIncludesTerminal === true` may treat absence as
 > confirmed-dead and place fresh; Robinhood-style lists keep the intent and skip the symbol to avoid
-> duplicate sell stops. Focused test added; full gate pending.
+> duplicate sell stops. Focused and full gates passed; PR publication/hosted checks next.
 
 > **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
 > (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**

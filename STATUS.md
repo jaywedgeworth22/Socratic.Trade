@@ -13,7 +13,9 @@ Fix in progress: `reconcileBrokerProtectiveStops` now clears absent intents only
 `gateway.ordersListIncludesTerminal === true`; otherwise it keeps the intent and skips fresh
 placement for that symbol. Focused tests cover non-authoritative absence (no duplicate placement)
 and authoritative absence (fresh retry allowed). Rollout:
-`docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`. Verification pending.
+`docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`. Verification: focused
+protective-stop suite, affected synthetic-stop suite, lint, TypeScript, full Vitest (420 files /
+4,901 tests), and production build all passed.
 
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
