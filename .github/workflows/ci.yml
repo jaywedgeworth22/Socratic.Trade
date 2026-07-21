@@ -382,7 +382,7 @@ jobs:
           note "### verify gate"
           note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, route: ${ROUTE:-n/a})"
           note "- verify-self (macOS, production Mac): ${SELF_RESULT}"
-          note "- verify-hosted (Coolify socratic-ci): ${HOSTED_RESULT}"
+          note "- verify-hosted (Coolify trading-live): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             note "- RESULT: FAIL — classify did not succeed; the gate never fails open."
@@ -394,9 +394,9 @@ jobs:
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then
             if [ "$SELF_RESULT" = "failure" ]; then
-              note "- RESULT: PASS — produced by Coolify socratic-ci (ARBITER: self-hosted Mac lane failed, Linux lane passed)."
+              note "- RESULT: PASS — produced by Coolify trading-live (ARBITER: self-hosted Mac lane failed, Linux lane passed)."
             else
-              note "- RESULT: PASS — produced by Coolify socratic-ci."
+              note "- RESULT: PASS — produced by Coolify trading-live."
             fi
             exit 0
           fi

@@ -77,8 +77,8 @@ describe("rag-metering", () => {
   // hardcode provider: "voyage" on every row regardless of which provider actually served the
   // call, so an OpenRouter/SiliconFlow bge-m3 call was silently priced and labeled as Voyage. These
   // guard the fix: a non-voyage provider argument must stamp the true provider on the row AND price
-  // it from that provider's own table, while a caller that omits `provider` entirely still books
-  // Voyage exactly as before (no default-behavior change for the many pre-existing call sites).
+  // it from that provider's own table, while a caller that omits `provider` entirely now books
+  // OpenRouter exactly as expected for the new unified fleet strategy.
   describe("provider-aware metering", () => {
     it("openrouter embed stamps provider='openrouter' and prices at the confirmed bge-m3 rate ($0.01 per 1M tokens)", () => {
       const text = "OpenRouter bge-m3 embed call for provider-aware metering test.";
@@ -106,27 +106,36 @@ describe("rag-metering", () => {
       expect(row!.costEstUsd).toBeCloseTo(0.001, 12);
     });
 
-    it("siliconflow embed stamps provider='siliconflow' with its own (already-tabled) rate", () => {
-      meterEmbed(["siliconflow bge-m3 embed text"], "BAAI/bge-m3", "prov-sf-embed", "siliconflow");
+    it("siliconflow embed stamps provider='siliconflow' and prices bge-m3 at $0.01 per 1M tokens (pins the 10x-mismatch regression)", () => {
+      const text = "siliconflow bge-m3 embed text";
+      meterEmbed([text], "BAAI/bge-m3", "prov-sf-embed", "siliconflow");
 
       const row = getRagUsageSummary().find((r) => r.userId === "prov-sf-embed" && r.operation === "embed");
       expect(row).toBeDefined();
       expect(row!.provider).toBe("siliconflow");
-      expect(row!.costEstUsd).toBeGreaterThan(0);
+      expect(row!.model).toBe("BAAI/bge-m3");
+
+      const expectedTokens = Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4));
+      expect(row!.tokensIn).toBe(expectedTokens);
+      // $0.01 per 1M tokens = $0.00001 per 1K tokens — the SAME rate as OpenRouter's confirmed
+      // baai/bge-m3 above. Pin the exact cost so the SiliconFlow table can't silently drift 10x
+      // again (was `0.00001 / 10` = 0.000001, which this assertion would fail against).
+      const expectedCost = (expectedTokens * 0.00001) / 1000;
+      expect(row!.costEstUsd).toBeCloseTo(expectedCost, 12);
     });
 
-    it("omitting `provider` still defaults to voyage — unchanged behavior for existing callers", () => {
+    it("omitting `provider` now defaults to openrouter", () => {
       meterEmbed(["unchanged default voyage behavior text"], undefined, "prov-default-embed");
       const embedRow = getRagUsageSummary().find((r) => r.userId === "prov-default-embed" && r.operation === "embed");
       expect(embedRow).toBeDefined();
-      expect(embedRow!.provider).toBe("voyage");
-      expect(embedRow!.model).toBe("voyage-finance-2");
+      expect(embedRow!.provider).toBe("openrouter");
+      expect(embedRow!.model).toBe("baai/bge-m3");
 
       meterRerank("q", ["d1", "d2"], undefined, "prov-default-rerank");
       const rerankRow = getRagUsageSummary().find((r) => r.userId === "prov-default-rerank" && r.operation === "rerank");
       expect(rerankRow).toBeDefined();
-      expect(rerankRow!.provider).toBe("voyage");
-      expect(rerankRow!.model).toBe("rerank-2.5");
+      expect(rerankRow!.provider).toBe("openrouter");
+      expect(rerankRow!.model).toBe("cohere/rerank-v3.5");
     });
   });
 

@@ -253,7 +253,7 @@ export class MockLLM implements ChatLLM {
       const lead = result?.blocked
         ? `I've drafted this order but it can't proceed as-is — ${(result.warnings ?? []).join("; ")}.`
         : `I've prepared a draft order for your review — it won't go through until you confirm.` +
-          ` (Account: ${result.account_label}${result.is_real ? "" : " — simulated, not a real broker"}.)`;
+          ` (Account: ${result.account_label}${result.is_real ? "" : " — broker paper account"}.)`;
       return { text: `${lead}\n\n${DISCLAIMER}`, toolCalls, citations: [] };
     }
 
