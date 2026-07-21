@@ -106,13 +106,22 @@ describe("rag-metering", () => {
       expect(row!.costEstUsd).toBeCloseTo(0.001, 12);
     });
 
-    it("siliconflow embed stamps provider='siliconflow' with its own (already-tabled) rate", () => {
-      meterEmbed(["siliconflow bge-m3 embed text"], "BAAI/bge-m3", "prov-sf-embed", "siliconflow");
+    it("siliconflow embed stamps provider='siliconflow' and prices bge-m3 at $0.01 per 1M tokens (pins the 10x-mismatch regression)", () => {
+      const text = "siliconflow bge-m3 embed text";
+      meterEmbed([text], "BAAI/bge-m3", "prov-sf-embed", "siliconflow");
 
       const row = getRagUsageSummary().find((r) => r.userId === "prov-sf-embed" && r.operation === "embed");
       expect(row).toBeDefined();
       expect(row!.provider).toBe("siliconflow");
-      expect(row!.costEstUsd).toBeGreaterThan(0);
+      expect(row!.model).toBe("BAAI/bge-m3");
+
+      const expectedTokens = Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4));
+      expect(row!.tokensIn).toBe(expectedTokens);
+      // $0.01 per 1M tokens = $0.00001 per 1K tokens — the SAME rate as OpenRouter's confirmed
+      // baai/bge-m3 above. Pin the exact cost so the SiliconFlow table can't silently drift 10x
+      // again (was `0.00001 / 10` = 0.000001, which this assertion would fail against).
+      const expectedCost = (expectedTokens * 0.00001) / 1000;
+      expect(row!.costEstUsd).toBeCloseTo(expectedCost, 12);
     });
 
     it("omitting `provider` still defaults to voyage — unchanged behavior for existing callers", () => {

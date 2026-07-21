@@ -15,7 +15,10 @@
 import { resolveLlmCredential } from "./db";
 
 const CREDITS_URL = "https://openrouter.ai/api/v1/credits";
-const DEFAULT_THRESHOLD_USD = 10;
+// Alert when account prepaid remaining is under this floor (USD). Owner 2026-07-20: $3 is
+// "nearly out"; the old $10 default paged while ~a week of ST spend headroom was still left.
+// Overridable via OPENROUTER_LOW_CREDIT_USD. Not related to per-key weekly spend limits.
+const DEFAULT_THRESHOLD_USD = 3;
 const DEFAULT_CACHE_MS = 10 * 60_000;
 const FETCH_TIMEOUT_MS = 8_000;
 
