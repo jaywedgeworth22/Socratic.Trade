@@ -428,8 +428,15 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // plans don't touch this lane (they pin generateProactiveRiskProposals' distance instead).
   if (policy.systemState !== "halted") {
     const trailPct = policy.riskRules?.trailingStopPct ?? 0;
+    // Long/short parity: when account-wide trailing is off, still arm synthetic trails on shorts
+    // from shortStopLossPct so short books are not left to strategy-cadence proactive covers only.
+    const shortTrailFallback = policy.riskRules?.shortStopLossPct ?? 0;
     const anyTrailingPlan = positions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "trailing");
-    if (trailPct > 0 || anyTrailingPlan) {
+    const anyShorts =
+      policy.shortSellingEnabled === true &&
+      positions.some((p) => p.quantity < -0.000001) &&
+      shortTrailFallback > 0;
+    if (trailPct > 0 || anyTrailingPlan || anyShorts) {
       // "Already protected" includes TRIGGERED stops: a triggered stop's exit order may still be
       // resting at the broker (e.g. a market sell placed after hours). Re-registering over it flipped
       // the row back to 'active' and re-fired the same stop every tick all night (MU, 2026-07-08).
@@ -447,10 +454,15 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         // SAME pass the purge just removed one from, contrary to the plan's pinned protection (Codex
         // review, PR #1371).
         if (planStyle === "none" || planStyle === "fixed" || planStyle === "atr") continue;
-        const effectiveTrailPct = planStyle === "trailing" ? (trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT) : trailPct;
-        if (!(effectiveTrailPct > 0)) continue;
         const isShort = pos.quantity < 0;
         if (isShort && !policy.shortSellingEnabled) continue;
+        // Default trail: account trailing %; trailing plan fallback; shorts without trail use shortStopLossPct.
+        let effectiveTrailPct =
+          planStyle === "trailing" ? (trailPct > 0 ? trailPct : STOP_PLAN_FALLBACK_STOP_PCT) : trailPct;
+        if (!(effectiveTrailPct > 0) && isShort && shortTrailFallback > 0) {
+          effectiveTrailPct = shortTrailFallback;
+        }
+        if (!(effectiveTrailPct > 0)) continue;
         // Reconcile PLACED (or cancel/REPLACED) a broker-held protective stop for this symbol THIS
         // tick. That fresh full-size stop cannot appear in the pre-reconcile order list, so the
         // coverage check below would undercount — the synthetic would register against stale
