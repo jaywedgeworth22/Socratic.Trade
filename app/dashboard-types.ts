@@ -38,7 +38,7 @@ export interface AuditEvent {
 export interface StrategyDecision {
   runId: string;
   createdAt?: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "skipped";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
