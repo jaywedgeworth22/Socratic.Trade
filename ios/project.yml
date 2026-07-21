@@ -9,6 +9,9 @@ targets:
     platform: iOS
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: trade.socratic.app
+      CODE_SIGN_ENTITLEMENTS: SocraticTrade/SocraticTrade.entitlements
+    entitlements:
+      path: SocraticTrade/SocraticTrade.entitlements
     info:
       path: SocraticTrade/Info.plist
       properties:
