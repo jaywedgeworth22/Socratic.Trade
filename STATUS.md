@@ -3,6 +3,10 @@
 Integrated 5 new data enrichment providers into the cascading enrichment system: `FilingApiEnrichmentProvider`, `RoicEnrichmentProvider`, `FmpRapidApiEnrichmentProvider`, `InsidersRapidApiEnrichmentProvider`, and `TwelveDataRapidApiEnrichmentProvider`. All new providers are fully covered by unit tests, handle their specific quotas natively, and fail gracefully without crashing the cascade.
 
 The user signed up for a 2-week enterprise trial of FilingAPI and a free tier of ROIC.ai. In addition, there were over 45 subscriptions available on the RapidAPI account, and the user requested that all functional ones be integrated into the enrichment cascade. We audited the available subscriptions, identifying three functional endpoints (FMP, Insiders, TwelveData) alongside the existing three, and discarded the rest which were largely returning 404s/502s.
+## 2026-07-20 — OpenRouter UptimeRobot low-credit threshold $10 → $3 (GROK, branch `monet/openrouter-low-credit-threshold-3`)
+
+Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
+
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
