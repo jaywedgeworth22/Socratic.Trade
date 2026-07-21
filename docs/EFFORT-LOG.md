@@ -43,6 +43,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][AG] CI Runner Migration to ubuntu-latest (branch `agent/antigravity-ci-fix`) — IN PROGRESS.** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows to unblock PR merging. The Mac self-hosted runner environment was corrupted after Hetzner failure. Python-assisted refactor of `.github/workflows/*.yml`. Scheduled to land via `scripts/land.sh`.
 - **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
   `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
   Owner-triggered: `/console/connections` key store is write-only, so there was no way to tell WHICH
