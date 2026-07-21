@@ -9,6 +9,19 @@ Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with
 ## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
 
 Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
+## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
+
+All four owner-linked handoff docs executed/dispositioned: missing model-availability rollout
+authored as a stamped reconstruction (underlying work verified landed via #1703-#1737);
+bge-m3 corpus re-embed verified INCOMPLETE (legacy 8,688 vs managed 1,418 vectors; voyage
+space intact) with the gating `claude/corpus-reembed-hardening` branch found unpushed and
+landed (PR auto-merge armed — 2026-07-18 fleet hold lifts on merge+deploy); AG's concurrent
+"prod reindex triggered" flagged as a hold conflict in #agent-sync; PRs #1771/#1773/#1774
+shepherded (Codex threads triaged, 2 real #1773 findings fixed via `b3f05425`); dual-workspace
+OpenRouter MCP OAuth verified broken (both on Socratic workspace — owner re-auth needed);
+alpha-vantage health red confirmed deliberate (deregistered lane, not a dead key). Owner
+ruling codified fleet-wide: OpenRouter MCP is research-only. Details:
+`docs/rollouts/2026-07-19-four-handoff-conquest.md`.
 ## 2026-07-19 — Handoff: CLAUDE seat -> Antigravity (owner-directed)
 
 Full session handoff note: `docs/rollouts/2026-07-19-claude-to-antigravity-handoff.md`. Short
