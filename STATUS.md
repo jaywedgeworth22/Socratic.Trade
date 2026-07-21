@@ -16,6 +16,20 @@ no RAPIDAPI_KEY usage — pure gating-logic fix on the existing EDGAR-direct ing
 45/45 tests pass. Blocked on landing only by the shared CI runner's queue depth (see
 #agent-sync — fleet-wide capacity issue, not specific to this branch).
 Rollout: `docs/rollouts/2026-07-19-rag-ingestion-provider-aware-gate.md`.
+## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
+
+Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
+`0.00001 / 10` (= 0.000001), 10x smaller than its own comment / the parallel confirmed OpenRouter
+`baai/bge-m3` rate (0.00001 = $0.01/1M tokens). Undercounted SiliconFlow bge-m3 embed spend in
+`rag_usage.cost_est_usd` + the $/day dispatch fuse whenever SiliconFlow is the active embed provider.
+Removed the `/ 10`; strengthened the SiliconFlow embed test to pin the exact cost (was `> 0` only) —
+regression proven (buggy value fails the pinned assertion). No live impact yet: OpenRouter, not
+SiliconFlow, is prod's active embed provider since the 2026-07-18 bge-m3 flip. tsc/targeted-tests/lint
+green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`.
+## 2026-07-20 — OpenRouter UptimeRobot low-credit threshold $10 → $3 (GROK, branch `monet/openrouter-low-credit-threshold-3`)
+
+Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
+
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
