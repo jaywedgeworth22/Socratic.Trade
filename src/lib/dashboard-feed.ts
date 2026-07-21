@@ -30,7 +30,7 @@ interface SourceAuditEvent {
 export interface StrategyDecisionLike {
   runId: string;
   createdAt?: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "skipped";
   summary: string;
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: {
@@ -105,7 +105,7 @@ export function buildAuditFeed(input: {
 function formatAuditEvent(
   kind: string,
   payload: Record<string, unknown>,
-  context: { symbol?: string; side?: "buy" | "sell"; companyName?: string }
+  context: { symbol?: string; side?: "buy" | "sell" | "short" | "cover"; companyName?: string }
 ): { title: string; detail: string; fullText?: string } {
   if (kind === "strategy_run") {
     const llm = formatLlmSteps(payload.llmSteps);
@@ -531,14 +531,16 @@ function normalizeSymbol(symbol?: string): string | undefined {
   return value ? value : undefined;
 }
 
-function normalizeSide(side?: string): "buy" | "sell" | undefined {
-  return side === "buy" || side === "sell" ? side : undefined;
+function normalizeSide(side?: string): "buy" | "sell" | "short" | "cover" | undefined {
+  return side === "buy" || side === "sell" || side === "short" || side === "cover" ? side : undefined;
 }
 
-function sideLabel(side?: "buy" | "sell", symbol?: string): string | undefined {
+function sideLabel(side?: "buy" | "sell" | "short" | "cover", symbol?: string): string | undefined {
   if (!symbol) return undefined;
   if (!side) return symbol;
-  return `${side === "buy" ? "Buy" : "Sell"} ${symbol}`;
+  const word =
+    side === "buy" ? "Buy" : side === "sell" ? "Sell" : side === "short" ? "Short" : side === "cover" ? "Cover" : "Trade";
+  return `${word} ${symbol}`;
 }
 
 function capitalize(value: string): string {
@@ -837,7 +839,7 @@ export interface UnifiedActivityGroup {
   createdAt: string;
   updatedAt: string;
   symbol?: string;
-  side?: "buy" | "sell";
+  side?: "buy" | "sell" | "short" | "cover";
   companyName?: string;
   title: string;
   detail: string;
@@ -896,7 +898,7 @@ export function buildUnifiedFeed(input: {
 
   const proposalIdByGroupId = new Map<string, string>();
   const symbolByGroupId = new Map<string, string>();
-  const sideByGroupId = new Map<string, "buy" | "sell" | undefined>();
+  const sideByGroupId = new Map<string, "buy" | "sell" | "short" | "cover" | undefined>();
   const accountIdByGroupId = new Map<string, string>();
 
   // Helper to extract symbol and side from a proposal lookup
@@ -1192,7 +1194,8 @@ export function buildUnifiedFeed(input: {
 
       // Group title mirrors the broker-style fill/order title casing (uppercase side),
       // distinct from the title-case used by individual notification/audit sub-events.
-      const displaySide = side === "buy" ? "BUY" : side === "sell" ? "SELL" : "Trade";
+      const displaySide =
+        side === "buy" ? "BUY" : side === "sell" ? "SELL" : side === "short" ? "SHORT" : side === "cover" ? "COVER" : "TRADE";
       title = `${isPaper ? "Paper " : ""}${displaySide} ${symbol}`;
 
       if (status === "filled") {

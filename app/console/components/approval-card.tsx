@@ -246,7 +246,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
     } else if (result.status === "placed") {
       toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} placed`, "The order went to the broker with a durable, idempotent intent record.");
     } else if (result.status === "paper") {
-      toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} filled (simulated)`, "Recorded as a practice-money fill.");
+      toast.push("pos", `${SIDE_LABEL[p.side] ?? p.side} ${p.symbol} filled (paper)`, "Recorded on the broker paper account.");
     } else if (result.status === "blocked") {
       toast.push("warn", "Blocked at approval time", (result.reasons ?? []).join(" ") || "The policy gate re-ran and refused it.");
     } else {
