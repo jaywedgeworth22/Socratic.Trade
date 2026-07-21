@@ -43,6 +43,7 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][AG] CI package-lock fix + unblocking 38 open PRs (worktree `trading-antigravity`, branch `agent/antigravity-apple-auth-fix`, claimed 2026-07-21) — IN PROGRESS.** Root cause of 38 pending PRs identified: `package-lock.json` is untracked in Socratic.Trade; CI workflows using `cache: npm` and `npm ci` crashed setup-node and failed the `verify` gate check. Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`. Closed invalid PR #1849 (`socratic-ci` offline runner). Updating all PR branches and enabling auto-merge across Socratic.Trade and Congress.Trade.
 - **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
   `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
   Owner-triggered: `/console/connections` key store is write-only, so there was no way to tell WHICH

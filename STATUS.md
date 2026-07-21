@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-07-21 — Fix CI workflow package-lock.json dependency & Apple Sign-In audience (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **Root cause of 38 stuck PRs resolved**: Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` where `cache: npm` and `npm ci` were failing because `package-lock.json` is untracked/gitignored in Socratic.Trade. Updated setup steps to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`.
+2. **Apple Sign-In client ID fix**: Corrected hardcoded fallback audience in `app/api/mobile/auth-redirect/route.ts` with `await cookies()` for Next.js 15+ compatibility.
+3. Rollout: `docs/rollouts/2026-07-21-ci-package-lock-and-pr-unblock.md`.
+
 ## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
 
 Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was

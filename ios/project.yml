@@ -1,0 +1,30 @@
+name: SocraticTrade
+options:
+  bundleIdPrefix: trade.socratic
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  SocraticTrade:
+    type: application
+    platform: iOS
+    info:
+      path: SocraticTrade/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIBackgroundModes: 
+          - fetch
+          - remote-notification
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - socratictrade
+            CFBundleURLName: "trade.socratic.app"
+    sources: [SocraticTrade]
