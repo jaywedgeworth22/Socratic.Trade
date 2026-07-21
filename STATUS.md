@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-21 — Critical bug automation: LLM billing cooldown + draining-account live-order purge fixes (CURSOR, branch `cursor/critical-bug-management-2b05`)
+
+High-severity scan found two concrete correctness bugs not covered by the existing open memory PRs
+(#1840 corpus re-embed purge gate, #1844 protective stop duplicate retry). Fix in progress:
+`planLlmProviderAttempts` must never return an empty chain when every lane is in billing cooldown,
+because a manual credit/billing fix should recover immediately rather than waiting for the full TTL;
+and scheduler draining-account cleanup must use the broker-agnostic live-order classifier before
+purging a deleted account's local state, or live `accepted`/`queued`/`pending` broker orders can be
+left unmanaged after local records are deleted. Focused regressions added in
+`test/llm-provider-cooldown.test.ts` and `test/scheduler-draining.test.ts`. Verification pending:
+focused Vitest, `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build`. Rollout:
+`docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
+
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the

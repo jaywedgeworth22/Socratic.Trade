@@ -43,6 +43,14 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Critical bug automation: LLM billing cooldown + draining-account
+  live-order purge fixes (branch `cursor/critical-bug-management-2b05`, claimed 2026-07-21) —
+  IN PROGRESS.** Minimal correctness PR from the scheduled high-severity scan: keep
+  `planLlmProviderAttempts` from returning an empty failover chain during all-billing cooldowns
+  after credits/billing are manually fixed, and make scheduler draining-account cleanup treat the
+  full broker-live state vocabulary as still-cancellable before purging local account state.
+  Focused regressions added; full verification pending.
+
 - **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
   `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
   Owner-triggered: `/console/connections` key store is write-only, so there was no way to tell WHICH
