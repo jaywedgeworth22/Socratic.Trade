@@ -237,7 +237,8 @@ describe("Connection Health & Failure Routing", () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    // No openrouter/siliconflow key anywhere -> voyage is the active provider.
+    process.env.RAG_EMBED_PROVIDER = "voyage";
+    process.env.VOYAGE_API_KEY = "voyage-key";
 
     for (let i = 0; i < 5; i++) {
       db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
