@@ -39,7 +39,6 @@ on:
   pull_request:
     paths:
       - 'package.json'
-      - 'package-lock.json'
       - '.github/workflows/shared-package-pin-check.yml'
   push:
     branches: [main]
