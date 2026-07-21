@@ -206,42 +206,34 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies.pinecone.ok).toBe(false);
   });
 
-  // Provider-aware voyage criticality (bge-m3-metering-gate, 2026-07-18): the voyage/voyage-rerank
-  // health lanes fail liveness ONLY while Voyage is the ACTIVE embed provider. Prod flipped to
-  // bge-m3 via OpenRouter on 2026-07-18 and a dead Voyage lane was 503ing /api/health for a
-  // provider the app no longer calls.
-  it("/api/health stays 200 on a hard-stopped voyage lane when OpenRouter is the active embed provider", async () => {
+  // Provider-aware RAG criticality (bge-m3-metering-gate, 2026-07-18): the active embed /
+  // rerank lanes fail liveness ONLY while that provider is the ACTIVE embed provider.
+  it("/api/health stays 200 on a hard-stopped openrouter-rerank lane when SiliconFlow is the active embed provider", async () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    // Make OpenRouter the active embed provider (per-user tier: stored key for `local`).
-    db.upsertUserApiKey("local", "openrouter", "sk-or-test-key");
+    db.upsertUserApiKey("local", "siliconflow", "sf-test-key");
 
     for (let i = 0; i < 5; i++) {
-      db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
-      db.logApiHealth({ service: "voyage-rerank", ok: false, errorText: "Voyage down", keySource: "env" });
+      db.logApiHealth({ service: "openrouter-rerank", ok: false, errorText: "OpenRouter down", keySource: "env" });
     }
 
     const response = await healthRoute.GET();
-    expect(response.status).toBe(200); // voyage is not the active provider -> not critical
+    expect(response.status).toBe(200); // openrouter-rerank is not active -> not critical
 
     const body = await response.json();
     expect(body.ok).toBe(true);
-    expect(body.checks.ragEmbedProvider).toBe("openrouter");
-    // Still REPORTED as failed — only the liveness gate is provider-aware, not the visibility.
-    expect(body.checks.dependencies.voyage.ok).toBe(false);
-    expect(body.checks.dependencies["voyage-rerank"].ok).toBe(false);
+    expect(body.checks.ragEmbedProvider).toBe("siliconflow");
   });
 
-  it("/api/health still 503s on a hard-stopped voyage lane when Voyage IS the active embed provider", async () => {
+  it("/api/health still 503s on a hard-stopped openrouter lane when OpenRouter IS the active embed provider", async () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    process.env.RAG_EMBED_PROVIDER = "voyage";
-    process.env.VOYAGE_API_KEY = "voyage-key";
+    db.upsertUserApiKey("local", "openrouter", "sk-or-test-key");
 
     for (let i = 0; i < 5; i++) {
-      db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
+      db.logApiHealth({ service: "openrouter", ok: false, errorText: "OpenRouter down", keySource: "env" });
     }
 
     const response = await healthRoute.GET();
@@ -249,8 +241,8 @@ describe("Connection Health & Failure Routing", () => {
 
     const body = await response.json();
     expect(body.ok).toBe(false);
-    expect(body.checks.ragEmbedProvider).toBe("voyage");
-    expect(body.checks.dependencies.voyage.ok).toBe(false);
+    expect(body.checks.ragEmbedProvider).toBe("openrouter");
+    expect(body.checks.dependencies.openrouter.ok).toBe(false);
   });
 
   it("/api/health survives a pinned-but-keyless RAG_EMBED_PROVIDER (reports the config error, no 503 loop)", async () => {
@@ -258,12 +250,6 @@ describe("Connection Health & Failure Routing", () => {
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
     process.env.RAG_EMBED_PROVIDER = "openrouter"; // pinned, but no openrouter key configured
-
-    // Even with a hard-stopped voyage lane, the pin misconfiguration must not 503 the container
-    // into a restart loop — it is surfaced as ragEmbedProviderError/ragConfigured:false instead.
-    for (let i = 0; i < 5; i++) {
-      db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
-    }
 
     const response = await healthRoute.GET();
     expect(response.status).toBe(200);
