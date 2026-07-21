@@ -289,7 +289,14 @@ export function insertStrategyRun(id: string, userId: string = "local", connecte
     .run(id, userId, connectedAccountId ?? null, accountNumber ?? null, policyRevision ?? null, new Date().toISOString());
 }
 
-export function finishStrategyRun(id: string, status: "completed" | "failed", summary: string, userId: string = "local"): void {
+/** Terminal statuses for strategy_runs.
+ *  - completed: a decision cycle ran (LLM evaluated candidates, even if it proposed nothing)
+ *  - skipped: pre-decision gate (market closed, broker unhealthy, budget) — no LLM reasoning
+ *  - failed: hard error
+ * Skipped must NOT feed trading-liveness "healthy" or auto-tune. */
+export type StrategyRunFinishStatus = "completed" | "failed" | "skipped";
+
+export function finishStrategyRun(id: string, status: StrategyRunFinishStatus, summary: string, userId: string = "local"): void {
   getDb()
     .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
     .run(new Date().toISOString(), status, summary, id, userId);
