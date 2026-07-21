@@ -159,7 +159,7 @@ else
   ok "  tsc clean."
 
   info "  [2/3] npm test"
-  if ! npm test -- --run 2>&1; then
+  if ! VITEST_MAX_THREADS="${VITEST_MAX_THREADS:-4}" npm test -- --run 2>&1; then
     die "Tests failed.  Fix them, then re-run land.sh."
   fi
   ok "  tests pass."
