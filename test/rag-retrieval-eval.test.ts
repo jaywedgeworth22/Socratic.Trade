@@ -103,6 +103,15 @@ function meanReciprocalRank(results: string[][], goldIds: string[][]): number {
   return results.length === 0 ? 0 : sum / results.length;
 }
 
+function hasTopLevelUserId(obj: any): boolean {
+  if (!obj || typeof obj !== "object") return false;
+  if ("userId" in obj) return true;
+  if (Array.isArray(obj.$and)) {
+    return obj.$and.some(hasTopLevelUserId);
+  }
+  return false;
+}
+
 // ── Harness: run retrieveContextDetailed against each fixture's recorded pool ──────────────────
 
 async function runFixture(
@@ -137,20 +146,25 @@ async function runFixture(
   const gold: string[][] = [];
 
   for (const testCase of fixtureCases) {
-    mocks.query.mockResolvedValueOnce({
-      matches: testCase.pool.map((m: FixtureMatch) => ({
-        id: m.id,
-        score: m.score,
-        metadata: {
-          text: m.text,
-          userId: "local",
-          scope: "shared",
-          doc_type: m.doc_type,
-          section: m.section,
-          source: m.source,
-          acceptance_datetime: m.acceptance_datetime
-        }
-      }))
+    mocks.query.mockImplementation((args: any) => {
+      if (hasTopLevelUserId(args?.filter)) {
+        return { matches: [] };
+      }
+      return {
+        matches: testCase.pool.map((m: FixtureMatch) => ({
+          id: m.id,
+          score: m.score,
+          metadata: {
+            text: m.text,
+            userId: "local",
+            scope: "shared",
+            doc_type: m.doc_type,
+            section: m.section,
+            source: m.source,
+            acceptance_datetime: m.acceptance_datetime
+          }
+        }))
+      };
     });
 
     const chunks = await retrieveContextDetailed(testCase.query, testCase.symbol, limit, "local", testCase.asOf ? { asOf: testCase.asOf } : undefined);
