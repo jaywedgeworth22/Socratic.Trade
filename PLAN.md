@@ -1,5 +1,22 @@
 # Active Implementation Plan
 
+> **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
+> **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
+> (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**
+> (SiliconFlow bge-m3 embed-price 10x undercount fix — auto-merge armed, no open findings,
+> queued on the single-lane Hetzner CI runner); (2) land **#1773** (this session-handoff note —
+> 6 Codex P2 threads fixed and resolved this pass); (3) land **#1777** (`corpus-reembed`
+> hardening — purge-gate exploit, live-identity double-embed, and insider-Form-4 PIT fixes;
+> this is what the 2026-07-18 FLEET HOLD on `purge-legacy`/scoped re-embeds is waiting on).
+> (4) Once #1777 is live, run the full 4-docType corpus re-embed (`sec-filings`,
+> `earningscalls-transcripts`, `insider-form4`, `experience-memory`) via `POST
+> /api/admin/reembed` to completion and independently reverify via `describe-index-stats`/`GET
+> /api/admin/reembed` before ever running `purge-legacy`. **Verified 2026-07-19 (live Pinecone
+> `describe-index-stats` on `socratic-trade`): the re-embed is genuinely incomplete** — legacy
+> (Voyage) namespace ~8.7k vectors intact (no purge run), managed (bge-m3) namespace only ~1.6k
+> and growing solely via normal ingest cadence, not a completed backfill. Details:
+> `docs/rollouts/2026-07-19-monet-session-handoff.md`, `docs/rollouts/2026-07-18-corpus-reembed.md`.
+
 > **2026-07-18 - PR #1760 review closeout (CODEX, branch `codex/pr1760-review-fixes`).** Resolve all
 > four actionable review threads in an isolated Codex lane: retain both shared-package HMAC and
 > documented bearer webhook authentication, keep proposal attribution in policy namespace and align

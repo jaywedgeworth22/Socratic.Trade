@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiKeyEnvVarForService, listUserApiKeys, LOCAL_USER, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import { apiKeyEnvVarForService, listUserApiKeys, LOCAL_USER, maskApiKeyPreview, normalizeApiKeyService, upsertUserApiKey, deleteUserApiKey, resolveApiKeyWithSource } from "@/lib/db";
+import { checkAdmin } from "@/lib/auth/admin";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { queueStPrimaryBridgeWriterSync } from "@/lib/st-primary-bridge-writer";
 
@@ -149,6 +150,16 @@ export async function GET(request: NextRequest) {
   const userId = resolveRequestUserId(request);
   const service = searchParams.get("service");
 
+  // A key's masked preview (first 8 + last 4, never a usable value) answers "WHICH key is serving
+  // me?" — the question the write-only key store otherwise makes unanswerable when several keys
+  // exist for one provider. Your OWN stored key is always previewable to you; the operator's env
+  // credential is previewable only to an operator/admin, so a tenant riding the shared key can see
+  // that one is serving them ("server key") without learning anything about the operator's secret.
+  // Token-based admin is excluded on purpose: this is an interactive, identity-bound disclosure.
+  const isOperator = checkAdmin(request, { allowToken: false }).ok;
+  const previewFor = (resolved: { key?: string; source: string }): string | undefined =>
+    resolved.source === "user" || isOperator ? maskApiKeyPreview(resolved.key) : undefined;
+
   // If a specific service is requested, resolve the key (user DB → env fallback)
   if (service) {
     const canonical = normalizeApiKeyService(service);
@@ -160,8 +171,10 @@ export async function GET(request: NextRequest) {
       service: canonical,
       configured: Boolean(resolved.key),
       source: resolved.source,
-      envVar: resolved.envVar
-      // NOTE: never return the actual key in a GET response for security
+      envVar: resolved.envVar,
+      preview: previewFor(resolved)
+      // NOTE: never return the actual key in a GET response for security — `preview` is the
+      // elided first-8/last-4 form only (see maskApiKeyPreview).
     });
   }
 
@@ -178,6 +191,7 @@ export async function GET(request: NextRequest) {
         envVar,
         configured: Boolean(resolved.key),
         source: resolved.source,
+        preview: previewFor(resolved),
         updatedAt: stored?.updatedAt,
         savedLabel: stored?.label
       };
