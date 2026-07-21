@@ -18,6 +18,10 @@ compounded by the unusually high deploy cadence from this session's PR-landing t
 by this agent — re-arming autonomy requires the owner's authenticated session (`/api/strategy/enable`
 and `/api/settings/auto-resume` are plain session-authenticated routes, no admin-token path exists);
 flagged directly to the owner in-session rather than acted on.
+## 2026-07-20 — OpenRouter UptimeRobot low-credit threshold $10 → $3 (GROK, branch `monet/openrouter-low-credit-threshold-3`)
+
+Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
+
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
