@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
+
+Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
 ## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
 
 Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
