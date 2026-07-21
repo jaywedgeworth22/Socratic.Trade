@@ -297,6 +297,7 @@ const FEED_STATUS_LABELS: Record<string, string> = {
   placed: "Placed",
   paper: "Paper trade",
   completed: "Completed",
+  skipped: "Skipped",
   placing_failed: "Placement failed",
   not_placed: "Not placed - safe to retry",
   running: "Running"
@@ -439,15 +440,27 @@ function notificationReason(error?: string): string | undefined {
 }
 
 function actionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Sell" : side === "buy" ? "Buy" : "Trade";
+  if (side === "sell") return "Sell";
+  if (side === "buy") return "Buy";
+  if (side === "short") return "Short";
+  if (side === "cover") return "Cover";
+  return "Trade";
 }
 
 function executedActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Sold" : side === "buy" ? "Bought" : "Traded";
+  if (side === "sell") return "Sold";
+  if (side === "buy") return "Bought";
+  if (side === "short") return "Shorted";
+  if (side === "cover") return "Covered";
+  return "Traded";
 }
 
 function paperActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Paper Sell" : side === "buy" ? "Paper Buy" : "Paper Trade";
+  if (side === "sell") return "Paper Sell";
+  if (side === "buy") return "Paper Buy";
+  if (side === "short") return "Paper Short";
+  if (side === "cover") return "Paper Cover";
+  return "Paper Trade";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -470,5 +483,5 @@ function normalizeSymbol(symbol?: string): string | undefined {
 }
 
 function normalizeSide(side?: string): OrderSide | undefined {
-  return side === "buy" || side === "sell" ? side : undefined;
+  return side === "buy" || side === "sell" || side === "short" || side === "cover" ? side : undefined;
 }
