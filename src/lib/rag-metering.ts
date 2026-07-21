@@ -22,9 +22,8 @@ export type RagOperation = "embed" | "rerank" | "query" | "upsert";
  * The embed/rerank provider dimension (PR bge-m3-metering-gate, 2026-07-18). Distinct from the
  * broader `RagUsageEntry.provider` (which also carries "pinecone" for query/upsert rows) — this
  * narrower union is what `activeEmbeddingProvider`/`activeRerankProvider` in vector-db.ts select
- * between, and what `meterEmbed`/`meterRerank`/`estimateVoyageDispatchCost` need to price
- * correctly. Defaults to "voyage" everywhere it's optional so omitting it reproduces today's
- * behavior exactly.
+ * between, and what `meterEmbed`/`meterRerank`/`estimateRagDispatchCost` need to price
+ * correctly. Defaults to "openrouter" everywhere it's optional.
  */
 export type RagEmbedRerankProvider = "voyage" | "openrouter" | "siliconflow";
 
@@ -57,16 +56,6 @@ export interface RagUsageRow {
 }
 
 // ── Cost estimation (best-effort) ────────────────────────────────────────────
-
-const VOYAGE_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number }> = {
-  "voyage-finance-2": { embed: 0.00012, rerank: 0 },
-  "voyage-4": { embed: 0.00006, rerank: 0 },
-  "voyage-4-lite": { embed: 0.00002, rerank: 0 },
-  "voyage-4-large": { embed: 0.00012, rerank: 0 },
-  "rerank-2.5": { embed: 0, rerank: 0.00005 },
-  "rerank-2.5-lite": { embed: 0, rerank: 0.00002 },
-  "rerank-2": { embed: 0, rerank: 0.00005 },
-};
 
 const SILICONFLOW_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number }> = {
   // $0.01 per 1M tokens = $0.00001 per 1K tokens — the SAME model + rate as the OpenRouter
@@ -128,13 +117,7 @@ function estimateRagCost(
     const rate = operation === "embed" ? prices.embed : prices.rerank;
     return (tokensIn * rate) / 1000;
   }
-  if (provider !== "voyage") return undefined;
-  const modelKey = model || "voyage-finance-2";
-  const prices =
-    VOYAGE_PRICE_PER_1K_TOKENS[modelKey] ?? VOYAGE_PRICE_PER_1K_TOKENS["voyage-finance-2"];
-  if (!prices) return undefined;
-  const rate = operation === "embed" ? prices.embed : prices.rerank;
-  return (tokensIn * rate) / 1000;
+  return undefined;
 }
 
 // ── Approximate token counting ───────────────────────────────────────────────
@@ -150,11 +133,11 @@ function approxTokens(texts: string[]): number {
  * caller that omits it) now selects the correct price table so an OpenRouter/SiliconFlow dispatch
  * reserves its OWN cost estimate instead of a Voyage one.
  */
-export function estimateVoyageDispatchCost(
+export function estimateRagDispatchCost(
   texts: string[],
   operation: "embed" | "rerank",
   model?: string,
-  provider: RagEmbedRerankProvider = "voyage"
+  provider: RagEmbedRerankProvider = "openrouter"
 ): number {
   // For rerank, `texts` is `[query, ...documents]` (see call sites in vector-db.ts) — the document
   // count (texts.length - 1) is what OpenRouter's per-search rerank pricing needs; embed cost is
@@ -171,7 +154,7 @@ export function recordRagUsage(entry: RagUsageEntry): void {
     const usageId = crypto.randomUUID();
     const occurredAt = new Date().toISOString();
     const userId = entry.userId || "local";
-    const provider = entry.provider || "voyage";
+    const provider = entry.provider || "openrouter";
     const tokensIn = entry.tokensIn ?? 0;
     const tokensOut = entry.tokensOut ?? 0;
     const batchCount = entry.batchCount ?? 1;
@@ -217,16 +200,15 @@ export function recordRagUsage(entry: RagUsageEntry): void {
  * Convenience: record an embed call. Pass `userId` for per-user retrieval spend so the daily
  * LLM/RAG budget (`checkLlmDailyBudget`, which filters `rag_usage` by userId) actually sees it —
  * omitting it books the spend under the default "local" user and a non-local user's ceiling never trips.
- * `provider` (default "voyage", preserving prior behavior for any caller that omits it) must match
+ * `provider` (default "openrouter") must match
  * whichever provider actually served the embed call — see `activeEmbeddingProvider` in
- * vector-db.ts — so the ledger row's price and the `rag_usage.provider` column both reflect reality
- * instead of always crediting Voyage.
+ * vector-db.ts — so the ledger row's price and the `rag_usage.provider` column both reflect reality.
  */
 export function meterEmbed(
   texts: string[],
   model?: string,
   userId?: string,
-  provider: RagEmbedRerankProvider = "voyage",
+  provider: RagEmbedRerankProvider = "openrouter",
   providerRequestId?: string
 ): void {
   const tokens = approxTokens(texts);
@@ -236,7 +218,7 @@ export function meterEmbed(
     provider,
     model:
       model ||
-      (provider === "openrouter" ? "baai/bge-m3" : provider === "siliconflow" ? "BAAI/bge-m3" : "voyage-finance-2"),
+      (provider === "openrouter" ? "baai/bge-m3" : "BAAI/bge-m3"),
     tokensIn: tokens,
     batchCount: texts.length,
     providerRequestId
@@ -245,7 +227,7 @@ export function meterEmbed(
 
 /**
  * Convenience: record a rerank call. Pass `userId` so retrieval rerank spend counts toward that
- * user's daily budget (see `meterEmbed`). `provider` (default "voyage") must match the active
+ * user's daily budget (see `meterEmbed`). `provider` (default "openrouter") must match the active
  * rerank provider — see `activeRerankProvider` in vector-db.ts.
  */
 export function meterRerank(
@@ -253,7 +235,7 @@ export function meterRerank(
   documents: string[],
   model?: string,
   userId?: string,
-  provider: RagEmbedRerankProvider = "voyage",
+  provider: RagEmbedRerankProvider = "openrouter",
   providerRequestId?: string
 ): void {
   const tokens = approxTokens([query, ...documents]);
@@ -265,9 +247,7 @@ export function meterRerank(
       model ||
       (provider === "openrouter"
         ? "cohere/rerank-v3.5"
-        : provider === "siliconflow"
-          ? "Qwen/Qwen3-Reranker-8B"
-          : "rerank-2.5"),
+        : "Qwen/Qwen3-Reranker-8B"),
     tokensIn: tokens,
     batchCount: documents.length,
     providerRequestId
