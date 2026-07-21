@@ -66,7 +66,11 @@ const VOYAGE_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number
 };
 
 const SILICONFLOW_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number }> = {
-  "BAAI/bge-m3": { embed: 0.00001 / 10, rerank: 0 }, // $0.01 per 1M tokens = $0.00001 per 1K tokens
+  // $0.01 per 1M tokens = $0.00001 per 1K tokens — the SAME model + rate as the OpenRouter
+  // baai/bge-m3 table below (confirmed on openrouter.ai; SiliconFlow's published bge-m3 embed
+  // price matches). The prior literal `0.00001 / 10` was a 10x-too-small typo that undercounted
+  // SiliconFlow bge-m3 embed spend in rag_usage.cost_est_usd; pinned exactly in test/rag-metering.test.ts.
+  "BAAI/bge-m3": { embed: 0.00001, rerank: 0 },
   "Qwen/Qwen3-Reranker-8B": { embed: 0, rerank: 0.00005 }, // nominal or matching rate
 };
 

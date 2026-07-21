@@ -556,7 +556,7 @@ describe("chat draft policy bridge", () => {
       price: 90,
       notional: 90,
       status: "filled",
-      filledAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString()
+      filledAt: new Date(Date.now() - 5 * 86400000).toISOString()
     });
     setPolicy(
       {
