@@ -68,7 +68,7 @@ jobs:
     # Keep failure telemetry independent of the CI runner it observes. GitHub-hosted
     # admission is the incident this PR is recovering from, so use the separate,
     # low-duty Coolify deploy runner for this short failure/schedule-only job.
-    runs-on: [self-hosted, socratic-deploy]
+    runs-on: [self-hosted, trading-live]
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
         # Deliberately no `ref:` override: actions/checkout defaults workflow_run events to the
