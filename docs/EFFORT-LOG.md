@@ -324,20 +324,6 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
-- **[Socratic.Trade][CLAUDE] Egress/SSRF guard + streaming body caps + module-scope Apple JWKS
-  (branch `claude/egress-ssrf-body-caps`, commit `77701bb7`) — LANDING 2026-07-18, lane 2 of a
-  serial landing train.** Codex app-review backlog items 11+13: new shared `egress-guard.ts`
-  (broker `baseUrl` HTTPS+allowlist at save time; webhook URLs DNS-resolved and
-  loopback/RFC1918/link-local/metadata/encoded-IP-blocked, re-validated before EVERY send with
-  `redirect:"manual"` to defeat DNS rebinding) and new `bounded-body.ts` streaming caps on the
-  congress/tradingview webhooks + Apple mobile auth (actual-byte mid-stream abort — a
-  missing/lying content-length no longer bypasses the cap), plus `createRemoteJWKSet` hoisted to
-  module scope so the JWKS cache survives across sign-ins. Adversarially verified SAFE —
-  verifier advisories: two secondary webhook save paths (`notifications` route, mobile-api
-  patch) still lack the save-time guard (send-time guard catches them unconditionally; UX-only
-  follow-up), and re-validate-then-fetch leaves a same-millisecond DNS-rebind sliver vs true
-  socket-level IP pinning (accepted per task spec). Rollout:
-  `docs/rollouts/2026-07-18-egress-ssrf-body-caps.md`.
 - **[Socratic.Trade][CLAUDE] Durable pre-network stop-placement intent + atomic idempotent
   recovered fills — Codex findings 5/6 (branch `claude/stop-intent-idempotency`, head `761b524b`
   = gate-verified merge of `8f6160bd` + main `b4dd8a54`) — LANDING 2026-07-18, lane 6 (final) of
@@ -3736,3 +3722,5 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
+
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
