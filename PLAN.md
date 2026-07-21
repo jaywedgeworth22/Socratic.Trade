@@ -1,13 +1,5 @@
 # Active Implementation Plan
 
-> **2026-07-21 - Critical bug automation fixes (CURSOR, branch
-> `cursor/critical-bug-management-2b05`).** Narrow correctness PR in progress: (1) preserve the
-> LLM failover planner invariant that a non-empty chain never becomes empty when every provider
-> lane is cooling, including all-billing cooldown windows; (2) block draining-account purge on every
-> broker-live order state recognized by `isLiveOrderState`, not only literal `open` and
-> `partially_filled`. Scope is limited to `src/lib/llm-provider-cooldown.ts`,
-> `src/lib/scheduler.ts`, focused regressions, and handoff docs.
-
 > **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
 > **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
 > (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**

@@ -6,21 +6,6 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
-## 2026-07-21 — Critical bug automation: LLM billing cooldown + draining-account live-order purge fixes (CURSOR, branch `cursor/critical-bug-management-2b05`)
-
-PR #1845 open. High-severity scan found two concrete correctness bugs not covered by the existing open memory PRs
-(#1840 corpus re-embed purge gate, #1844 protective stop duplicate retry). Fix in progress:
-`planLlmProviderAttempts` must never return an empty chain when every lane is in billing cooldown,
-because a manual credit/billing fix should recover immediately rather than waiting for the full TTL;
-and scheduler draining-account cleanup must use the broker-agnostic live-order classifier before
-purging a deleted account's local state, or live `accepted`/`queued`/`pending` broker orders can be
-left unmanaged after local records are deleted. Focused regressions added in
-`test/llm-provider-cooldown.test.ts` and `test/scheduler-draining.test.ts`. Verification pending:
-initial focused Vitest attempt failed before tests loaded because `node_modules` was absent; after
-`npm install`, focused Vitest passed (2 files, 10 tests), `npm run lint` passed,
-`npx tsc --noEmit` passed, `npm test` passed (421 files, 4902 tests), and `npm run build` passed
-with existing Next/Sentry warnings. Rollout:
-`docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
 ## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
 
 Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
