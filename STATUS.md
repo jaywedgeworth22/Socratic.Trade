@@ -2,7 +2,7 @@
 
 ## 2026-07-21 — Critical bug automation: LLM billing cooldown + draining-account live-order purge fixes (CURSOR, branch `cursor/critical-bug-management-2b05`)
 
-High-severity scan found two concrete correctness bugs not covered by the existing open memory PRs
+PR #1845 open. High-severity scan found two concrete correctness bugs not covered by the existing open memory PRs
 (#1840 corpus re-embed purge gate, #1844 protective stop duplicate retry). Fix in progress:
 `planLlmProviderAttempts` must never return an empty chain when every lane is in billing cooldown,
 because a manual credit/billing fix should recover immediately rather than waiting for the full TTL;

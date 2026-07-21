@@ -45,7 +45,7 @@ As of 2026-07-08 (assignment-rule update).
 ## In Progress
 - **[Socratic.Trade][CURSOR] Critical bug automation: LLM billing cooldown + draining-account
   live-order purge fixes (branch `cursor/critical-bug-management-2b05`, claimed 2026-07-21) —
-  IN PROGRESS.** Minimal correctness PR from the scheduled high-severity scan: keep
+  PR #1845 OPEN / VERIFIED.** Minimal correctness PR from the scheduled high-severity scan: keep
   `planLlmProviderAttempts` from returning an empty failover chain during all-billing cooldowns
   after credits/billing are manually fixed, and make scheduler draining-account cleanup treat the
   full broker-live state vocabulary as still-cancellable before purging local account state.

@@ -2,7 +2,7 @@
 
 ## Summary
 
-Scheduled critical-bug automation found and fixed two high-impact correctness bugs:
+Scheduled critical-bug automation found and fixed two high-impact correctness bugs in PR #1845:
 
 - `planLlmProviderAttempts` no longer returns an empty attempt list when every LLM lane is in a
   billing cooldown.
@@ -53,4 +53,4 @@ was deleted.
 
 ## Follow-ups
 
-- Record the PR in automation memory once opened.
+- Automation memory updated with the two PR #1845 bug records.
