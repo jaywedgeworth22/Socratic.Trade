@@ -1,0 +1,22 @@
+name: Auto Update PRs
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  autoupdate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Automatically update PRs
+        uses: chinthakagodawita/autoupdate@v1.22.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          merge_msg: "chore: auto-update branch with main"
+          pr_filter: "auto_merge"
+          exclude_labels: "do-not-update"
+          retry_interval: "2"
+          retry_count: "3"
+          update_limit: "5"
