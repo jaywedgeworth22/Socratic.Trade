@@ -1,43 +1,19 @@
 # Current Status
 
-## 2026-07-19 — Corpus-reembed hardening: review-thread closeout (CLAUDE)
+## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
 
-Three unresolved codex-connector threads on PR #1777 triaged; two P1s fixed, one P2 deferred with
-cause (full write-up appended to `docs/rollouts/2026-07-18-corpus-reembed.md`).
+Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
+`0.00001 / 10` (= 0.000001), 10x smaller than its own comment / the parallel confirmed OpenRouter
+`baai/bge-m3` rate (0.00001 = $0.01/1M tokens). Undercounted SiliconFlow bge-m3 embed spend in
+`rag_usage.cost_est_usd` + the $/day dispatch fuse whenever SiliconFlow is the active embed provider.
+Removed the `/ 10`; strengthened the SiliconFlow embed test to pin the exact cost (was `> 0` only) —
+regression proven (buggy value fails the pinned assertion). No live impact yet: OpenRouter, not
+SiliconFlow, is prod's active embed provider since the 2026-07-18 bge-m3 flip. tsc/targeted-tests/lint
+green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`.
+## 2026-07-20 — OpenRouter UptimeRobot low-credit threshold $10 → $3 (GROK, branch `monet/openrouter-low-credit-threshold-3`)
 
-- **P1 pre-hardening completion stamps (fixed).** The purge gate trusted any persisted
-  `completedForEmbedRevision`, including rows written before this hardening when a symbol-scoped run
-  could still stamp completion. Production already runs bge-m3, so such a poisoned stamp may already
-  exist. The gate now also requires `watermarkEmbedRevision === embedRevision` — a field the old code
-  never wrote — forcing one fresh full scan before any purge is authorized. New regression test seeds
-  a legacy-shaped row and asserts refusal with zero provider deletes.
-- **P1 post-write revision drift (fixed).** A model flip during the FINAL item's async write had no
-  later per-item boundary to trip, so the loop completed and stamped a space it was no longer writing
-  into. Completion is now stamped only while the named space is still active; counts/watermark still
-  persist (they carry `watermarkEmbedRevision` and are discarded by a later run under another space).
-- **P2 provider-authority receipt retirement (deferred, evidence-backed).** Valid finding, but the
-  write path stamps `providerAuthorityForInitKey` (has a synthetic fallback) while
-  `getCurrentVectorProviderAuthority` uses `stableProviderAuthorityForInitKey` (no fallback); adding
-  the filter made the adversarial purge delete 0 of 2 legitimately-purgeable vectors — i.e. it would
-  silently disable the purge rather than harden it. Correct fix belongs in `vector-db.ts`; recorded
-  in-module and as an open follow-up.
+Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
 
-NEXT: CI green -> resolve the three threads -> merge. **#1777 is the PR that lands the scoped-run
-library fix**; #1775 dropped its duplicate of it to de-conflict.
-
-## 2026-07-18 — Corpus-reembed hardening landing (CLAUDE, branch `claude/corpus-reembed-hardening`, PRIORITY lane of the serial landing train)
-
-Fixes 3 adversarially-proven MUST-FIXes in the corpus-reembed module already live on main/prod
-(PR #1764): the symbol-scoped-run purge-gate exploit (scoped runs now stateless;
-revision-namespaced watermarks; cumulative failed counts; mid-run model-drift abort;
-purged-receipt retirement), live-identity dedup, and insider Form-4 PIT lookahead
-(default-dropped + 2-business-day availability floor). Exploit test inverted into
-`test/corpus-reembed-adversarial.test.ts` to prove the fix. Fleet HOLD on symbol-scoped
-re-embeds/purge-legacy lifts once this deploy verifies. Rollout:
-`docs/rollouts/2026-07-18-corpus-reembed.md`.
-## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
-
-Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
