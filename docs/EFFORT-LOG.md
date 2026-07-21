@@ -324,23 +324,6 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
-- **[Socratic.Trade][CLAUDE] SEC ingest backfill wiring: manifest schema fix + seeder + gated
-  worker startup + admin route (branch `claude/sec-ingest-worker-wiring`, commit `f5e2a2ea`) —
-  LANDING 2026-07-18, lane 3 of a serial landing train.** Wires the dormant SEC backfill
-  end-to-end: universe-manifest generator now emits (and the committed 1,000-issuer artifact now
-  passes) the versioned `FrozenSecUniverseManifest` schema with a CI test on the committed file;
-  new idempotent dead-letter-disciplined manifest->jobs seeder (latest 10-K + 4 10-Qs per
-  issuer); `SecIngestWorker` starts from background-worker startup gated on
-  `SEC_INGEST_WORKER_ENABLED` (default OFF) with clean shutdown; `POST/GET /api/admin/sec-ingest`
-  seeds and reports receipts. No numbered migration (guarded ALTERs + CREATE-IF-NOT-EXISTS only —
-  verified no v53/v54 collision at merge). Adversarially verified SAFE — verifier advisories:
-  committed manifest carries sentinel exchange/market-cap placeholders (seeder ignores them);
-  seed the 1,000-issuer universe in windows (limit <= ~50/call) to stay inside the admin request
-  timeout and to ramp embed spend deliberately. **Landing-pass finding:** like lane 1, this
-  commit's file contents were already absorbed byte-identical into `origin/main@d9527cde`
-  (PR #1762) via a peer branch sharing the local object store — the merge is a functional no-op
-  for prod; this PR closes the loop (docs/effort-log) and records the absorption. Rollout:
-  `docs/rollouts/2026-07-18-sec-ingest-worker-wiring.md`.
 - **[Socratic.Trade][CLAUDE] Durable pre-network stop-placement intent + atomic idempotent
   recovered fills — Codex findings 5/6 (branch `claude/stop-intent-idempotency`, head `761b524b`
   = gate-verified merge of `8f6160bd` + main `b4dd8a54`) — LANDING 2026-07-18, lane 6 (final) of
@@ -3739,3 +3722,5 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
+
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
