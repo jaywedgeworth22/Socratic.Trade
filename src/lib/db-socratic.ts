@@ -308,11 +308,18 @@ export function getSocraticDecisionCase(id: string, userId: string = "local"): S
 export function appendSocraticDecisionCoachNote(id: string, note: string, userId: string = "local"): SocraticDecisionCase | undefined {
   const existing = getSocraticDecisionCase(id, userId);
   if (!existing) return undefined;
-  const coachNotes = [...existing.coachNotes, note.trim()].filter(Boolean).slice(-20);
+  const cleaned = note.trim();
+  if (!cleaned) return undefined;
+  // No silent slice(-20): every note is retained on the case and indexed as coach-note for RAG.
+  const coachNotes = [...existing.coachNotes, cleaned].filter(Boolean);
+  const noteIndex = coachNotes.length - 1;
   const updated = updateDecisionLifecycle(existing, userId, { coachNotes });
-  audit("socratic_decision_coached", { decisionId: id, note }, userId, existing.connectedAccountId);
+  audit("socratic_decision_coached", { decisionId: id, note: cleaned, noteIndex }, userId, existing.connectedAccountId);
   if (updated) {
     reindexDecisionMemory(updated, "fire-and-forget");
+    void import("./socratic-memory")
+      .then(({ indexCoachNoteMemory }) => indexCoachNoteMemory({ decision: updated, note: cleaned, noteIndex }))
+      .catch((err) => console.warn("[db-socratic] coach-note vector write failed:", err instanceof Error ? err.message : err));
   }
   return updated;
 }
@@ -331,18 +338,34 @@ export async function attachSocraticDecisionCoachPrimitives(
   if (!existing) return undefined;
   const cleanedNote = input.note.trim();
   if (!cleanedNote) return undefined;
-  const coachNotes = [...existing.coachNotes, cleanedNote].filter(Boolean).slice(-20);
+  // Retain all coach notes (no silent drop); keep lessons unique without a hard 12-cap wipe of early lessons.
+  const coachNotes = [...existing.coachNotes, cleanedNote].filter(Boolean);
+  const noteIndex = coachNotes.length - 1;
   const lessonCandidate = (input.lessonText ?? cleanedNote).trim();
   const promotedLesson =
     input.promoteTo === "lesson" && lessonCandidate
-      ? [...existing.lessons, lessonCandidate].filter((value, index, list) => Boolean(value) && list.indexOf(value) === index).slice(-12)
+      ? [...existing.lessons, lessonCandidate].filter((value, index, list) => Boolean(value) && list.indexOf(value) === index)
       : existing.lessons;
   const updated = updateDecisionLifecycle(existing, userId, {
     coachNotes,
     lessons: promotedLesson
   });
   if (!updated) return undefined;
-  audit("socratic_decision_coached", { decisionId: id, note: cleanedNote }, userId, existing.connectedAccountId);
+  audit("socratic_decision_coached", { decisionId: id, note: cleanedNote, noteIndex }, userId, existing.connectedAccountId);
+  void import("./socratic-memory")
+    .then(({ indexCoachNoteMemory, indexLessonMemory }) =>
+      Promise.all([
+        indexCoachNoteMemory({ decision: updated, note: cleanedNote, noteIndex }),
+        input.promoteTo === "lesson" && lessonCandidate
+          ? indexLessonMemory({
+              decision: updated,
+              lesson: lessonCandidate,
+              lessonIndex: promotedLesson.length - 1
+            })
+          : Promise.resolve(undefined)
+      ])
+    )
+    .catch((err) => console.warn("[db-socratic] coach/lesson vector write failed:", err instanceof Error ? err.message : err));
   if (input.promoteTo === "lesson" && lessonCandidate) {
     audit("socratic_decision_coach_promoted", { decisionId: id, kind: "lesson", lesson: lessonCandidate }, userId, existing.connectedAccountId);
   }
@@ -466,8 +489,11 @@ export async function writeSocraticDecisionLessons(id: string, lessons: string[]
   if (updated) {
     // AWAITED for the same reason as writeSocraticDecisionOutcome; non-fatal on failure.
     try {
-      const { indexSocraticDecisionMemory } = await import("./socratic-memory");
+      const { indexSocraticDecisionMemory, indexLessonMemory } = await import("./socratic-memory");
       await indexSocraticDecisionMemory(updated);
+      await Promise.all(
+        cleaned.map((lesson, lessonIndex) => indexLessonMemory({ decision: updated, lesson, lessonIndex }))
+      );
     } catch (err) {
       console.warn("[db-socratic] re-index after lessons write failed:", err instanceof Error ? err.message : String(err));
     }
