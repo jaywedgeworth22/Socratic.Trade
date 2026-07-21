@@ -324,25 +324,6 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
-- **[Socratic.Trade][CLAUDE] Fixed/ATR synthetic-stop backstop + Alpaca fractional-GTC tif
-  normalization — Codex audit items 7+10 (branch `claude/stop-coverage-alpaca-tif`, head
-  `bbc3cb75` = `003dd33e` + adversarial must-fix) — LANDING 2026-07-18, lane 5 of a serial
-  landing train.** Item 7: fixed/atr stop plans now register a static-trigger row on the
-  tick-cadence synthetic-stop monitor whenever no live broker exit order covers the position
-  (quantity-aware coverage check; reuses the trailing lane's CAS/dedup/partial-fire/bad-tick
-  machinery verbatim; `extremePrice` re-pinned to entry each tick so the same math yields a
-  fixed distance) — previously such positions could cross their stop unwatched for a full
-  strategy-run interval. Item 10: new `resolveAlpacaTimeInForce()` normalizes GTC->day for
-  fractional/notional Alpaca orders at all three placement paths with an
-  `alpaca_tif_normalized_to_day` audit receipt (Alpaca 422s GTC fractional orders). Adversarially
-  verified with one MUST-FIX found, fixed, and regression-tested: the short-position distance
-  resolution skipped the `stopLossPct` middle tier (armed 8% when the owner configured 15%) —
-  now the identical three-tier chain as `generateProactiveRiskProposals`. Verifier advisories:
-  atr rows use the flat-%/no-bars fallback until roadmap Rec 3 persists resolved distances at
-  fill; fixed-row quantity refreshes on registration (fires size from live position, drift
-  bounded). Merge-time truth edit performed: main strategy.ts's "(and fixed/atr plans have no
-  synthetic-stop monitor fallback)" rationale string updated — it becomes false with this lane.
-  Rollout: `docs/rollouts/2026-07-18-stop-coverage-alpaca-tif.md`.
 - **[Socratic.Trade][CLAUDE] Durable pre-network stop-placement intent + atomic idempotent
   recovered fills — Codex findings 5/6 (branch `claude/stop-intent-idempotency`, head `761b524b`
   = gate-verified merge of `8f6160bd` + main `b4dd8a54`) — LANDING 2026-07-18, lane 6 (final) of
@@ -3741,3 +3722,5 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
+
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
