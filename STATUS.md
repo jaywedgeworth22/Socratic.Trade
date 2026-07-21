@@ -6,20 +6,6 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
-## 2026-07-19 - Prod deploy wedge RESOLVED; litestream socket leak proven (CLAUDE)
-
-Production had stopped advancing (stuck at `7be71390`); every deploy failed at git-clone.
-Root cause **proven by live measurement**: litestream leaks ESTABLISHED sockets to R2
-(~15k/hr, one per request, response never drained/closed), exhausting `net.ipv4.tcp_mem`
-and clamping TCP receive windows so bulk transfers get cut. Owner-authorized container
-restart released ~2.3GB of pinned buffers and 5.3GB RAM; **prod is now == main and healthy.**
-The 2026-07-10 "durable fix" (pinning litestream 0.5.12) is **DISPROVEN** - that pin is
-running and leaks anyway; the HTTP transport code is byte-identical across 0.5.11/0.5.12/0.5.14
-and 0.5.14 is HEAD. Mitigation PR (`claude/litestream-leak-mitigation`) throttles
-`sync-interval` to 10s (10x lower leak rate; **RPO 1s->10s tradeoff - owner call, not
-auto-merged**) and fixes an empty-`region` misconfig. **The leak still recurs** - a watchdog
-alerts at 60% of the tcp_mem ceiling. Details:
-`docs/rollouts/2026-07-19-litestream-socket-leak-mitigation.md`.
 ## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
 
 Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
