@@ -143,6 +143,29 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     expect(decision.skip).toBe(false);
     expect(decision.downgraded).toBe(false);
   });
+
+  it("enforces on openrouter when spend is booked there (universal routing)", async () => {
+    // After #1703 all strategy LLM spend is provider openrouter even for gpt-* model ids.
+    const decision = await budget.evaluateBudgetForRun(
+      "local",
+      { llmModel: "openai/gpt-4o-mini" },
+      { status: status([{ name: "openrouter", status: "exceeded" }, { name: "openai", status: "ok" }]) }
+    );
+    expect(decision.skip).toBe(true);
+    expect(decision.downgraded).toBe(false);
+    expect(decision.reason).toMatch(/openrouter/i);
+  });
+
+  it("downgrades using openrouter status when present even if family lane is ok", async () => {
+    const decision = await budget.evaluateBudgetForRun(
+      "local",
+      { llmModel: "openai/gpt-4o", redTeamLlmModel: "openai/gpt-4o" },
+      { status: status([{ name: "openrouter", status: "exceeded" }, { name: "openai", status: "ok" }]) }
+    );
+    expect(decision.skip).toBe(false);
+    expect(decision.downgraded).toBe(true);
+    expect(decision.llmModel).toBe("openai/gpt-4o-mini");
+  });
 });
 
 describe("usage-budget: getBudgetStatusCached", () => {
