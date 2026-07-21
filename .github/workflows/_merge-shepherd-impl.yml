@@ -10,7 +10,7 @@ on:
 
 jobs:
   shepherd:
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, Linux, X64]
     environment: merge-shepherd
     steps:
       - uses: actions/checkout@v4
