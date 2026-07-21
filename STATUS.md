@@ -1,3 +1,7 @@
+## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
+
+Purged the Voyage AI SDK and its dependencies, standardizing the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Dynamic imports and test-only shims maintain test suite compatibility while completely isolating Voyage from production. All 4,898 tests and the production Next.js build are fully green. Rollout: `docs/rollouts/2026-07-21-voyage-ai-purge.md`.
+
 ## 2026-07-21 — Mass PR CI Runner Synchronization (Antigravity)
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status

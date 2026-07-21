@@ -1099,8 +1099,7 @@ export async function getClients(userId: string = "local", leaseGuard?: VectorSt
     voyageSource = voyageRes.source;
     if (voyageKey) {
       try {
-        const pkgName = "voyageai";
-        const mod = await import(pkgName);
+        const mod = await import("voyageai" as any);
         if (mod && mod.VoyageAIClient) {
           voyage = new mod.VoyageAIClient({ apiKey: voyageKey });
         }
@@ -2246,7 +2245,7 @@ export async function rerankMatches(
     meterRerank(query, documents, modelName, userId, provider);
     recordRagOperation();
     
-    const data = isOpenRouter ? (resp.results ?? []) : (resp.data ?? []);
+    const data = useMockClient ? (resp.data ?? []) : (isOpenRouter ? (resp.results ?? []) : (resp.data ?? []));
     if (data.length === 0) return rerankableMatches;
     const reordered: any[] = [];
     for (const item of data) {
