@@ -18,6 +18,10 @@ one-line trigger re-add. Verification: YAML parses clean via both `python3 -c "i
 yaml..."` and Node's `js-yaml`; no source code changed so the full lint/tsc/test/build gate was
 not run locally for this change (PR's own `ci.yml` `verify` check covers it). Rollout:
 `docs/rollouts/2026-07-20-ci-trim-smoke.md`.
+## 2026-07-20 — OpenRouter UptimeRobot low-credit threshold $10 → $3 (GROK, branch `monet/openrouter-low-credit-threshold-3`)
+
+Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
+
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
