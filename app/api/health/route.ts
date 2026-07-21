@@ -1,6 +1,7 @@
 import { getInternalSetting, getServiceHealthSummaries, databasePath, resolveApiKeyWithSource, alertStorageWarning } from "@/lib/db";
 import { HEALTH_REASON_CONSECUTIVE_FAILURES } from "@/lib/db-health";
 import { activeEmbeddingProvider } from "@/lib/vector-db";
+import type { RagEmbedRerankProvider } from "@/lib/rag-metering";
 import { getProviderTierStatus } from "@/lib/provider-tier";
 import {
   assessLitestreamRuntimeHealth,
@@ -117,16 +118,12 @@ export async function GET() {
 
   // Surface Pinecone and embed-provider configuration status. Provider-aware
   // (bge-m3-metering-gate, 2026-07-18): "RAG configured" means Pinecone plus the ACTIVE embed
-  // provider's key — a missing Voyage key is irrelevant while OpenRouter/SiliconFlow serves
-  // embeddings (`activeEmbeddingProvider`, honoring a RAG_EMBED_PROVIDER pin). The historical
-  // voyageConfigured field is kept for dashboards that read it, but it no longer drives
-  // ragConfigured unless Voyage is genuinely the active provider.
-  let ragEmbedProvider: "voyage" | "openrouter" | "siliconflow" | null = null;
+  // provider's key — a missing key is irrelevant unless that provider is the active one
+  // (`activeEmbeddingProvider`, honoring a RAG_EMBED_PROVIDER pin).
+  let ragEmbedProvider: RagEmbedRerankProvider | null = null;
   try {
     const pineconeKey = resolveApiKeyWithSource("pinecone");
-    const voyageKey = resolveApiKeyWithSource("voyage");
     checks.pineconeConfigured = pineconeKey.source !== "none";
-    checks.voyageConfigured = voyageKey.source !== "none";
 
     try {
       ragEmbedProvider = activeEmbeddingProvider();
@@ -138,9 +135,7 @@ export async function GET() {
       checks.ragEmbedProviderError = error instanceof Error ? error.message : "invalid RAG embed provider";
     }
     if (ragEmbedProvider) {
-      const activeKeyConfigured = ragEmbedProvider === "voyage"
-        ? voyageKey.source !== "none"
-        : resolveApiKeyWithSource(ragEmbedProvider, "local").source !== "none";
+      const activeKeyConfigured = resolveApiKeyWithSource(ragEmbedProvider, "local").source !== "none";
       if (pineconeKey.source === "none" || !activeKeyConfigured) {
         checks.ragConfigured = false;
       }
@@ -158,16 +153,10 @@ export async function GET() {
   try {
     const summaries = getServiceHealthSummaries();
     const dependencies: Record<string, { ok: boolean; degraded?: boolean }> = {};
-    // See the provider-aware voyage criticality comment below. Falls back to treating Voyage as
-    // critical when the provider can't be resolved EXCEPT for a pinned-but-keyless
-    // RAG_EMBED_PROVIDER (which throws by design) — that misconfiguration is already surfaced via
-    // ragEmbedProviderError above, and 503ing the container on it would just restart-loop.
     const criticalServices = new Set(["pinecone", "alpaca-broker"]);
-    if (ragEmbedProvider === "voyage" || ragEmbedProvider === null) {
-      if (!checks.ragEmbedProviderError) {
-        criticalServices.add("voyage");
-        criticalServices.add("voyage-rerank");
-      }
+    if (ragEmbedProvider && !checks.ragEmbedProviderError) {
+      criticalServices.add(ragEmbedProvider);
+      criticalServices.add(`${ragEmbedProvider}-rerank`);
     }
     // Collapse (service, keySource) lanes to one entry per service. Prefer a CONFIGURED lane
     // (env/user) over a stale keySource:"none" lane so a service that later got a working key isn't
@@ -205,16 +194,10 @@ export async function GET() {
       // market-data lanes (fmp/massive) degrade to Yahoo/others (the provider-tier section already
       // reports data-provider degradation), so they mark degraded but never fail liveness.
       //
-      // Provider-aware voyage criticality (bge-m3-metering-gate, 2026-07-18): the voyage /
-      // voyage-rerank lanes gate liveness ONLY while Voyage is the ACTIVE embed/rerank provider.
-      // With prod flipped to bge-m3 via OpenRouter, a dead/stale Voyage lane was 503ing the whole
-      // app (and a 503 here can restart the container) for a provider the app no longer calls.
+      // Provider-aware RAG criticality (bge-m3-metering-gate, 2026-07-18): the active embed /
+      // rerank lanes gate liveness ONLY while they are the ACTIVE embed/rerank provider.
       // The lanes are still REPORTED in `dependencies` either way — this only stops them from
-      // failing liveness while inactive. Caveat: the RAG health lanes are still LOGGED under the
-      // historical "voyage"/"voyage-rerank" service names regardless of which provider actually
-      // served the call (see withRagApiHealth call sites in vector-db.ts), so while a non-Voyage
-      // provider is active, embed/rerank failures degrade this route rather than 503 it — renaming
-      // those lanes per-provider is a deliberate follow-up, not done here.
+      // failing liveness while inactive.
       const isCritical = criticalServices.has(summary.service);
       if (isCritical && hardStopped) {
         ok = false;
@@ -236,7 +219,11 @@ export async function GET() {
     const credits = await getOpenRouterCreditStatus();
     if (credits) {
       const deps = (checks.dependencies ?? {}) as Record<string, { ok: boolean; degraded?: boolean }>;
-      deps.openrouter = { ok: credits.ok, degraded: credits.ok ? undefined : true };
+      const existing = deps.openrouter;
+      deps.openrouter = {
+        ok: (existing ? existing.ok : true) && credits.ok,
+        degraded: (existing?.degraded) || (credits.ok ? undefined : true)
+      };
       checks.dependencies = deps;
       checks.openrouterCredits = {
         ok: credits.ok,
