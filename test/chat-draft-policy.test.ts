@@ -534,6 +534,10 @@ describe("chat draft policy bridge", () => {
       taxationType: "taxable",
       isActive: true
     });
+    const now = Date.now();
+    const fiftyDaysAgo = new Date(now - 50 * 24 * 60 * 60_000).toISOString();
+    const tenDaysAgo = new Date(now - 10 * 24 * 60 * 60_000).toISOString();
+
     insertFillEvent({
       userId: DEFAULT_REQUEST_USER_ID,
       accountNumber: "REAL",
@@ -544,7 +548,7 @@ describe("chat draft policy bridge", () => {
       price: 100,
       notional: 100,
       status: "filled",
-      filledAt: "2026-06-01T14:30:00.000Z"
+      filledAt: fiftyDaysAgo
     });
     insertFillEvent({
       userId: DEFAULT_REQUEST_USER_ID,
@@ -556,7 +560,7 @@ describe("chat draft policy bridge", () => {
       price: 90,
       notional: 90,
       status: "filled",
-      filledAt: "2026-06-20T14:30:00.000Z"
+      filledAt: tenDaysAgo
     });
     setPolicy(
       {
