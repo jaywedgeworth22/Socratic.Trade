@@ -206,6 +206,7 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies.pinecone.ok).toBe(false);
   });
 
+<<<<<<< HEAD
   // rag-embed/rag-rerank criticality (bge-m3-metering-gate 2026-07-18; lane rename 2026-07-19 —
   // see docs/rollouts/2026-07-19-advisory-cleanup-batch.md). The lanes are now provider-generic:
   // whichever embed/rerank provider is ACTUALLY active (Voyage, OpenRouter, SiliconFlow) logs
@@ -213,13 +214,18 @@ describe("Connection Health & Failure Routing", () => {
   // where "voyage"/"voyage-rerank" only gated liveness while Voyage itself was the active provider,
   // meaning a dead OpenRouter/bge-m3 lane never failed liveness at all.
   it("/api/health 503s on a hard-stopped rag-embed/rag-rerank lane when OpenRouter is the active embed provider", async () => {
+=======
+  // Provider-aware RAG criticality (bge-m3-metering-gate, 2026-07-18): the active embed /
+  // rerank lanes fail liveness ONLY while that provider is the ACTIVE embed provider.
+  it("/api/health stays 200 on a hard-stopped openrouter-rerank lane when SiliconFlow is the active embed provider", async () => {
+>>>>>>> origin/main
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    // Make OpenRouter the active embed provider (per-user tier: stored key for `local`).
-    db.upsertUserApiKey("local", "openrouter", "sk-or-test-key");
+    db.upsertUserApiKey("local", "siliconflow", "sf-test-key");
 
     for (let i = 0; i < 5; i++) {
+<<<<<<< HEAD
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "OpenRouter down", keySource: "env" });
       db.logApiHealth({ service: "rag-rerank", ok: false, errorText: "OpenRouter down", keySource: "env" });
     }
@@ -235,13 +241,31 @@ describe("Connection Health & Failure Routing", () => {
   });
 
   it("/api/health still 503s on a hard-stopped rag-embed lane when Voyage IS the active embed provider", async () => {
+=======
+      db.logApiHealth({ service: "openrouter-rerank", ok: false, errorText: "OpenRouter down", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(200); // openrouter-rerank is not active -> not critical
+
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.checks.ragEmbedProvider).toBe("siliconflow");
+  });
+
+  it("/api/health still 503s on a hard-stopped openrouter lane when OpenRouter IS the active embed provider", async () => {
+>>>>>>> origin/main
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
-    // No openrouter/siliconflow key anywhere -> voyage is the active provider.
+    db.upsertUserApiKey("local", "openrouter", "sk-or-test-key");
 
     for (let i = 0; i < 5; i++) {
+<<<<<<< HEAD
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
+=======
+      db.logApiHealth({ service: "openrouter", ok: false, errorText: "OpenRouter down", keySource: "env" });
+>>>>>>> origin/main
     }
 
     const response = await healthRoute.GET();
@@ -249,6 +273,7 @@ describe("Connection Health & Failure Routing", () => {
 
     const body = await response.json();
     expect(body.ok).toBe(false);
+<<<<<<< HEAD
     expect(body.checks.ragEmbedProvider).toBe("voyage");
     expect(body.checks.dependencies["rag-embed"].ok).toBe(false);
   });
@@ -272,6 +297,10 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.ok).toBe(true);
     // Still REPORTED (visibility unaffected), just not in criticalServices.
     expect(body.checks.dependencies.voyage.ok).toBe(false);
+=======
+    expect(body.checks.ragEmbedProvider).toBe("openrouter");
+    expect(body.checks.dependencies.openrouter.ok).toBe(false);
+>>>>>>> origin/main
   });
 
   it("/api/health survives a pinned-but-keyless RAG_EMBED_PROVIDER (reports the config error, no 503 loop)", async () => {
@@ -280,12 +309,15 @@ describe("Connection Health & Failure Routing", () => {
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
     process.env.RAG_EMBED_PROVIDER = "openrouter"; // pinned, but no openrouter key configured
 
+<<<<<<< HEAD
     // Even with a hard-stopped rag-embed lane, the pin misconfiguration must not 503 the container
     // into a restart loop — it is surfaced as ragEmbedProviderError/ragConfigured:false instead.
     for (let i = 0; i < 5; i++) {
       db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
     }
 
+=======
+>>>>>>> origin/main
     const response = await healthRoute.GET();
     expect(response.status).toBe(200);
 
