@@ -36,7 +36,7 @@ concurrency:
 jobs:
   delete-pr-caches:
     if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, socratic-deploy]
     steps:
       - name: Delete every cache scoped to this PR's ref
         env:
@@ -50,7 +50,7 @@ jobs:
 
   prune-stale-caches:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, socratic-deploy]
     steps:
       - uses: actions/checkout@v4
         with:

@@ -10,7 +10,7 @@ on:
 
 jobs:
   shepherd:
-    runs-on: [self-hosted, socratic-ci]
+    runs-on: [self-hosted, socratic-deploy]
     environment: merge-shepherd
     steps:
       - uses: actions/checkout@v4
