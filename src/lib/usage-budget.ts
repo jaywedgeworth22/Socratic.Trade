@@ -403,9 +403,27 @@ function computeBudgetDecision(
   if (!greenModel) return NO_DECISION;
   const redModel = policy.redTeamLlmModel?.trim() || "";
 
+  // Universal OpenRouter (#1703): strategy LLM spend is booked as provider "openrouter", while
+  // model ids remain family-native (gpt-*, claude-*, …). Prefer openrouter status when present;
+  // fall back to model-family name for older multi-provider monitor shapes. Summary.overBudget is
+  // only a fallback when NEITHER openrouter NOR the model family appear in the provider list —
+  // never treat alpaca/etc. exceeded as an LLM skip.
   const statusByProvider = new Map(status.providers.map((p) => [p.name.toLowerCase(), p.status]));
-  const primaryProvider = providerForModel(greenModel);
-  const primaryStatus = statusByProvider.get(primaryProvider) ?? "ok";
+  const familyProvider = providerForModel(greenModel);
+  let primaryProvider = familyProvider;
+  let primaryStatus = statusByProvider.get(familyProvider) ?? "ok";
+  if (statusByProvider.has("openrouter")) {
+    primaryProvider = "openrouter";
+    primaryStatus = statusByProvider.get("openrouter") ?? "ok";
+  } else if (!statusByProvider.has(familyProvider)) {
+    if (status.summary.overBudget) {
+      primaryProvider = "openrouter";
+      primaryStatus = "exceeded";
+    } else if (status.summary.warning) {
+      primaryProvider = "openrouter";
+      primaryStatus = "warning";
+    }
+  }
 
   if (primaryStatus !== "exceeded" && primaryStatus !== "warning") return NO_DECISION;
 

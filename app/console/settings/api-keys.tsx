@@ -87,10 +87,13 @@ export function ApiKeysCard() {
   return (
     <Card title="API keys">
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Optional provider keys, stored per user on the server. Keys are write-only: once saved the full value is never
-        displayed again — only whether one is set, where it came from, and the first and last few characters of the key
-        that actually resolves, so you can tell which key is in use. Everything works without any of these; each key
-        just unlocks the data or models it names.
+        Provider keys, stored per user on the server. Keys are write-only: once saved the full value is never displayed
+        again — only whether one is set, where it came from, and the first and last few characters of the key that
+        actually resolves. <strong className="font-semibold text-[color:var(--con-muted)]">Required for strategy runs:</strong>{" "}
+        an LLM key (OpenRouter is the production path) so Green/Red team models can propose and debate.{" "}
+        <strong className="font-semibold text-[color:var(--con-muted)]">Optional enrichment:</strong> Finnhub, FMP, FRED,
+        and similar data providers deepen the scan — without them the app still uses free floors (e.g. Yahoo). Market
+        data, positions, and guardrails work without optional keys; autonomous proposals do not.
       </p>
 
       {loadError && (
