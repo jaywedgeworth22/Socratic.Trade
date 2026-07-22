@@ -925,7 +925,6 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
   // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider(userId));
-  if (intrinio.key) providers.push(withHealthLane(new IntrinioEnrichmentProvider(intrinio.key, intrinio.source, userId), intrinio.source));
   if (tiingo.key) providers.push(withHealthLane(new TiingoEnrichmentProvider(tiingo.key, tiingo.source, userId), tiingo.source));
   if (fintech.key) providers.push(withHealthLane(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId), fintech.source));
   if (finnhub.key) providers.push(withHealthLane(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId), finnhub.source));
@@ -2059,7 +2058,7 @@ const YF_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 // for every symbol this run — retry once after this short backoff before giving up.
 const YF_CREDS_RETRY_BACKOFF_MS = 500;
 
-class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
+export class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "yahoo-finance";
   readonly configured = true;
 

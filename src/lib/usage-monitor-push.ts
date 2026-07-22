@@ -154,7 +154,11 @@ function breakerAllowsAttempt(now: number): boolean {
 }
 
 /** Record the outcome of a delivery attempt that breakerAllowsAttempt permitted. */
-function breakerRecordResult(ok: boolean, now: number): void {
+function breakerRecordResult(
+  ok: boolean,
+  now: number,
+  retryAfterSeconds: number | null = null
+): void {
   const breaker = state.breaker;
   breaker.probing = false;
   if (ok) {
@@ -164,6 +168,15 @@ function breakerRecordResult(ok: boolean, now: number): void {
   }
   breaker.consecutiveFailures += 1;
   const threshold = breakerThreshold();
+  // Wave H / C1: honor server Retry-After immediately (even before threshold)
+  // so a 429/503 does not become a retry storm within the same second.
+  if (retryAfterSeconds != null && retryAfterSeconds > 0) {
+    const fromHeader = now + retryAfterSeconds * 1000;
+    const exponent = Math.min(Math.max(0, breaker.consecutiveFailures - threshold), 10);
+    const exponential = Math.min(breakerMaxMs(), breakerBaseMs() * 2 ** Math.max(0, exponent));
+    breaker.openUntil = Math.max(fromHeader, now + Math.min(exponential, breakerMaxMs()));
+    return;
+  }
   if (breaker.consecutiveFailures < threshold) return; // below trip threshold: keep the normal cadence
   const exponent = Math.min(breaker.consecutiveFailures - threshold, 10);
   const backoff = Math.min(breakerMaxMs(), breakerBaseMs() * 2 ** exponent);
@@ -911,7 +924,15 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
     return true;
   } catch (err) {
     recordUsageMonitorHealth(false, start, err);
-    breakerRecordResult(false, Date.now());
+    const retryAfter =
+      err && typeof err === "object" && "retryAfterSeconds" in err
+        ? Number((err as { retryAfterSeconds?: unknown }).retryAfterSeconds)
+        : null;
+    breakerRecordResult(
+      false,
+      Date.now(),
+      Number.isFinite(retryAfter) && retryAfter != null && retryAfter >= 0 ? retryAfter : null
+    );
     return false;
   } finally {
     clearTimeout(timer);
@@ -977,7 +998,15 @@ export async function sendUsageMonitorBatch(
     return true;
   } catch (err) {
     recordUsageMonitorHealth(false, start, err);
-    breakerRecordResult(false, Date.now());
+    const retryAfter =
+      err && typeof err === "object" && "retryAfterSeconds" in err
+        ? Number((err as { retryAfterSeconds?: unknown }).retryAfterSeconds)
+        : null;
+    breakerRecordResult(
+      false,
+      Date.now(),
+      Number.isFinite(retryAfter) && retryAfter != null && retryAfter >= 0 ? retryAfter : null
+    );
     return false;
   } finally {
     clearTimeout(timer);
