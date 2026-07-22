@@ -41,6 +41,16 @@ attaches only surrounding parent prose rather than duplicating prompt text. Unde
 ingestion or re-embedding change; evaluate it against prompt consumption and production-path PIT results
 before enabling it.
 
+## 2026-07-22 exact retrieval-versus-consumption receipts
+
+Retrieval is not evidence use. Strategy now derives decision-case RAG attribution only from chunks
+that survived containment and the final shared prompt budget into the Bull/Red payload. It retains
+the rejected retrieval candidates separately as identifier-only diagnostics, so later usefulness
+learning cannot award outcomes to a chunk the model never saw. Chat KB tool results use the same
+stable `rag_*` evidence references and propagate them into citations. New receipt/audit payloads
+contain identifiers, metadata, character counts, and text-free empty/error/deduplication counters
+only—never raw prompts, raw retrieval queries, or error strings.
+
 ## 1. Core decision — HYBRID: separate WRITE surfaces, one shared READ substrate
 
 The question is not "one brain or two." Decompose "separation" into **read** and **write**; the
