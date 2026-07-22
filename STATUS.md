@@ -15,6 +15,19 @@ already live-pushed under v1, while any unacknowledged remainder may be lost rat
 money. No legacy wire path remains. The receiver gate is cleared: Usage-Monitor exact main
 `335723775ef0f8114ee1ca77b4716139018026dc` is committed live on Oracle. The final direct-v2
 focused gate passes under Node 24: 3 files / 52 tests, TypeScript, scoped ESLint, and diff-check.
+focused gate passes under Node 24: 3 files / 51 tests, TypeScript, scoped ESLint, and diff-check.
+## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
+
+The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
+temporary SHA suffix created a new concurrency group for every push, so `cancel-in-progress:
+false` could not collapse duplicate pending runs and the self-hosted pool accumulated a large
+queue. The non-cancelling policy remains: an active verify is preserved and only the newest
+pending run per ref remains eligible. Added a regression to `test/ci-workflow-queue-safety.test.ts`.
+Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+
+Review follow-up: moved the CI effort row under the `## In Progress` bucket so the effort-issues
+sync parser includes it. Focused workflow-safety tests remain green; hosted verification is still
+running on the pre-follow-up commit and will be replaced once this documentation-only fix lands.
 
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
