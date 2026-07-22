@@ -68,7 +68,6 @@ jobs:
     # Keep failure telemetry independent of the CI runner it observes. GitHub-hosted
     # admission is the incident this PR is recovering from, so use the separate,
     # low-duty Coolify deploy runner for this short failure/schedule-only job.
-    # Keep failure reporting observable even if the socratic-ci pool is unavailable.
     runs-on: [self-hosted, socratic-deploy]
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
