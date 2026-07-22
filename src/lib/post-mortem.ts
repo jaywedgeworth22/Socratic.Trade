@@ -123,11 +123,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
       systemPrompt,
       userContent,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection,
-      reasoningEffort: policy.llmReasoningEffort,
-      userId,
-      keyRef,
-      service: "strategy",
-      feature: "post-mortem"
+      reasoningEffort: policy.llmReasoningEffort
     }
   );
 
@@ -167,7 +163,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, connectedAccountId: connectedAccount?.id, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, connectedAccountId: connectedAccount?.id, ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
 
         return { text: typeof text === "string" ? text : undefined };
