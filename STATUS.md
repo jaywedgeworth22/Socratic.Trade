@@ -2805,8 +2805,8 @@ live-account switching confirmation, Red Team/model provenance, and accessibilit
 fixes. Review remediation adds read-only deletion preview with final admission fencing, terminal
 command reconciliation, immediate protective-state commands with a final broker-placement state
 re-read, explicit unknown execution-mode rendering, and an app icon. Release signing remains enabled and automatic for team
-`CC8UTF7ATG`. `ios/project.yml` is canonical; the generated `.xcodeproj` is intentionally
-ephemeral. XcodeGen generation, generic and Release simulator builds, and test-target
+`CC8UTF7ATG`. `ios/project.yml` is canonical; its generated checked-in `.xcodeproj` is kept
+in sync for direct Xcode builds. XcodeGen generation, direct-project, generic and Release simulator builds, and test-target
 `build-for-testing` are green under Xcode 27 beta; no simulator runtimes are installed, so XCTest
 execution is deferred. The only server change aligns the Apple identity-token audience fallback
 with `trade.socratic.app` and has 3/3 focused tests. Targeted Node tests (7/7), TypeScript, ESLint,

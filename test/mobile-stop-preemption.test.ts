@@ -149,7 +149,7 @@ describe("immediate mobile protective state", () => {
     expect(db.getPolicy(userId, accountId).systemState).toBe("close_only");
   });
 
-  it("preserves queued sell/cover approvals while cancelling opening approvals", async () => {
+  it("preserves queued exits in close-only, but a full Stop cancels every queued approval", async () => {
     const db = await import("../src/lib/db");
     const mobile = await import("../src/lib/mobile-api");
     const userId = `mobile-exit-preserve-${randomUUID()}`;
@@ -201,16 +201,28 @@ describe("immediate mobile protective state", () => {
       payload: { proposalId: "opening-proposal" },
       idempotencyKey: "opening-approval"
     });
+    const closeOnly = mobile.queueMobileCommand({
+      userId,
+      commandType: "strategy.close_only",
+      idempotencyKey: "close-only-exits"
+    });
+
+    await mobile.executeProtectiveMobileCommandImmediately(closeOnly.command.id, userId);
+
+    expect(mobile.getMobileCommand(exitApproval.command.id, userId)?.status).toBe("queued");
+    expect(mobile.getMobileCommand(openingApproval.command.id, userId)).toMatchObject({
+      status: "cancelled",
+      error: "Cancelled because strategy.close_only took immediate effect."
+    });
+
     const stop = mobile.queueMobileCommand({
       userId,
       commandType: "strategy.stop",
       idempotencyKey: "stop-exits"
     });
-
     await mobile.executeProtectiveMobileCommandImmediately(stop.command.id, userId);
 
-    expect(mobile.getMobileCommand(exitApproval.command.id, userId)?.status).toBe("queued");
-    expect(mobile.getMobileCommand(openingApproval.command.id, userId)).toMatchObject({
+    expect(mobile.getMobileCommand(exitApproval.command.id, userId)).toMatchObject({
       status: "cancelled",
       error: "Cancelled because strategy.stop took immediate effect."
     });

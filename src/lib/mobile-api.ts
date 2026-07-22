@@ -606,10 +606,11 @@ function cancelQueuedRiskIncreasingCommands(
     `);
     const records: MobileCommandRecord[] = [];
     for (const row of rows) {
-      // A queued approval may be an exit: preserve sell/cover approvals so Close-only and
-      // Liquidating can still reduce risk. Only buy/short approvals increase exposure. An
-      // approval whose proposal has already disappeared is safe to cancel as stale work.
-      if (row.command_type === "proposal.approve") {
+      // A queued approval may be an exit: preserve sell/cover approvals only while Close-only
+      // or Liquidating is being applied, so those containment modes can still reduce risk. A
+      // full Stop must cancel every queued approval, including exits, because it promises no
+      // additional broker submission. An approval whose proposal has disappeared is stale work.
+      if (protectiveCommandType !== "strategy.stop" && row.command_type === "proposal.approve") {
         let proposalId: string | undefined;
         try {
           const payload = JSON.parse(row.payload) as Record<string, unknown>;

@@ -6,8 +6,8 @@
 > native Apple audience, read-only deletion preview/final deletion admission, immediate protective
 > mobile commands, and the final broker-placement state fence are server-side contract/safety work.
 > Release signing
-> is configured for team `CC8UTF7ATG`; the XcodeGen spec is canonical and
-> the generated `.xcodeproj` is ephemeral. Deferred after landing: device/simulator interaction QA
+> is configured for team `CC8UTF7ATG`; the XcodeGen spec is canonical and its
+> generated, checked-in `.xcodeproj` is direct-buildable. Deferred after landing: device/simulator interaction QA
 > on a machine with an installed
 > iOS runtime, notification/background-refresh work, and any richer Coach conversation
 > contract that requires a new server API.
@@ -1959,4 +1959,3 @@ scope, timeline, or approach changed.
 
 ## 2026-07-21 PR #1845
 LLM cooldown + draining purge safety — see rollout note.
-

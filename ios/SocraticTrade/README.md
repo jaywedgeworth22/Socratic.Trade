@@ -10,8 +10,10 @@ proposal revalidation, inference, and order placement stay on the server.
 
 ## Generate and build
 
-The XcodeGen spec at `ios/project.yml` is the single project definition. Do not
-commit a separately maintained `.xcodeproj`.
+The XcodeGen spec at `ios/project.yml` is the single project definition. The
+checked-in `.xcodeproj` is regenerated from that spec so Xcode users can open
+and build it directly; never hand-edit it. When the spec changes, regenerate
+the project and include the generated project update in the same change.
 
 ```bash
 cd ios
