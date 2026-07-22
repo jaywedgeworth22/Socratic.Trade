@@ -2804,7 +2804,8 @@ snapshot refreshes, durable retry idempotency, a corrected deletion response con
 live-account switching confirmation, Red Team/model provenance, and accessibility sizing/layout
 fixes. Review remediation adds read-only deletion preview with final admission fencing, terminal
 command reconciliation, immediate protective-state commands with a final broker-placement state
-re-read, explicit unknown execution-mode rendering, and an app icon. Release signing remains enabled and automatic for team
+re-read, explicit unknown execution-mode rendering, an app icon, and a verifier-bound opaque
+web-auth handoff so Google/GitHub callback URLs do not contain Auth.js session credentials. Release signing remains enabled and automatic for team
 `CC8UTF7ATG`. `ios/project.yml` is canonical; its generated checked-in `.xcodeproj` is kept
 in sync for direct Xcode builds. XcodeGen generation, direct-project, generic and Release simulator builds, and test-target
 `build-for-testing` are green under Xcode 27 beta; no simulator runtimes are installed, so XCTest

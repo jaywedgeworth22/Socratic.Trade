@@ -165,9 +165,17 @@ struct LoginView: View {
 
     private func beginWebAuth(provider: String) {
         store.dismissError()
+        guard let verifier = WebAuthCodeVerifier.make() else {
+            store.error = "Could not securely start web sign-in. Try again."
+            return
+        }
+        var callbackComponents = URLComponents(string: "https://socratictrade.com/api/mobile/auth-redirect")
+        callbackComponents?.queryItems = [
+            URLQueryItem(name: "code_challenge", value: verifier.challenge)
+        ]
         var components = URLComponents(string: "https://socratictrade.com/api/auth/signin/\(provider)")
         components?.queryItems = [
-            URLQueryItem(name: "callbackUrl", value: "https://socratictrade.com/api/mobile/auth-redirect")
+            URLQueryItem(name: "callbackUrl", value: callbackComponents?.url?.absoluteString)
         ]
         guard let url = components?.url else {
             store.error = "Could not start web sign-in."
@@ -185,14 +193,14 @@ struct LoginView: View {
             }
             guard
                 let callbackURL,
-                let token = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "token" })?.value,
-                !token.isEmpty
+                let code = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value,
+                !code.isEmpty
             else {
                 Task { @MainActor in store.error = "Invalid callback URL from web sign-in." }
                 return
             }
             Task { @MainActor in
-                await store.loginWithToken(jwt: token)
+                await store.loginWithWebAuthCode(code, verifier: verifier.value)
             }
         }
         session.presentationContextProvider = contextProvider

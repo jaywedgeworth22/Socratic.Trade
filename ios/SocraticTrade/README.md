@@ -38,8 +38,10 @@ xcodebuild \
 
 The canonical application bundle identifier is `trade.socratic.app`. The
 project includes the Sign in with Apple entitlement and the `socratictrade` URL
-scheme. The current app signs in directly with Apple's identity token endpoint;
-it deliberately does not accept session JWTs in callback query strings.
+scheme. The app signs in directly with Apple's identity-token endpoint. Google
+and GitHub use `ASWebAuthenticationSession`, but the custom callback carries a
+short-lived opaque code bound to a device-generated verifier; the session JWT
+never appears in a callback URL and is exchanged into an HTTP-only cookie.
 
 ## Data and failure states
 

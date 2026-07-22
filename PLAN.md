@@ -5,6 +5,8 @@
 > isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:
 > native Apple audience, read-only deletion preview/final deletion admission, immediate protective
 > mobile commands, and the final broker-placement state fence are server-side contract/safety work.
+> Google/GitHub browser authentication uses a short-lived verifier-bound opaque handoff rather
+> than a session credential in the custom callback URL.
 > Release signing
 > is configured for team `CC8UTF7ATG`; the XcodeGen spec is canonical and its
 > generated, checked-in `.xcodeproj` is direct-buildable. Deferred after landing: device/simulator interaction QA
