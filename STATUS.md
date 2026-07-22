@@ -5,8 +5,12 @@
 PRs were stuck ~2-3 days primarily because (1) **cancel-in-progress thrash** killed nearly every
 verify (18/20 recent CI cancelled), and (2) **Security/gitleaks + pin-check + smoke** targeted the
 **offline `trading-live` Mac**, so those checks never finished while the Coolify `socratic-ci` pool
-ran only suite jobs. Fixes: route gitleaks + pin-check onto `socratic-ci`; stop Playwright Smoke on
-every PR (main/nightly/manual only). Conflicts/comments were not the multi-day bottleneck.
+ran only suite jobs. Fixes: remove every workflow target for `trading-live`, with PR code on
+`socratic-ci` and trusted failure reporting on `socratic-deploy`; stop Playwright Smoke on every
+PR (main/nightly/manual only); preserve the active CI run while GitHub collapses superseded
+pending runs to the newest head. The first durable local gate also exposed six stale assertions on
+current `main`; this branch now carries the already-prepared isolation/expectation corrections from
+the #1856 lineage. Conflicts/comments were not the multi-day bottleneck.
 Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
 
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)

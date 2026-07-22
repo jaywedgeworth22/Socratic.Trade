@@ -3799,4 +3799,4 @@ brackets; effort S/M/L.
 | 2026-07-20 | GROK | In Progress | Claude Desktop residual: ST 0 conflicts (phantoms cleared), CT #650/#665 unstuck, UM #583 merged; CI queue drain (smoke cancelled); #1841 OR $3 threshold auto-merge armed | multi |
 | 2026-07-20 | Document Summarizer & Abstracts DB Migration | Completed | Added migration 55 for document_abstracts, db-document-abstracts CRUD, document-summarizer engine, and vitest unit tests | AG |
 
-| 2026-07-21 | GROK | In Progress | ST multi-day PR stuck: route gitleaks/pin off offline trading-live; stop smoke-on-PR; document cancel thrash | monet/ci-runner-and-queue-fixes |
+| 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs while collapsing stale pending heads; remove every workflow target for absent trading-live; keep observer reporting on socratic-deploy; stop smoke-on-PR; align six stale main assertions | monet/ci-runner-and-queue-fixes |

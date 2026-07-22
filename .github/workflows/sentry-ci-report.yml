@@ -33,7 +33,7 @@ name: Sentry CI Report
 #   Cleanup Actions Caches   -> "5 3 * * *"   (cleanup-caches.yml)
 #   Effort Issues Sync       -> "12 6 * * *"  (effort-issues-sync.yml)
 #   Security                 -> "41 10 * * 1" (security.yml)
-#   Playwright Smoke         -> "17 9 * * 1"  (e2e.yml)
+#   Playwright Smoke         -> "17 9 * * *"  (e2e.yml)
 #   Shared package pin check -> "0 13 * * 1"  (shared-package-pin-check.yml)
 
 on:
@@ -68,7 +68,8 @@ jobs:
     # Keep failure telemetry independent of the CI runner it observes. GitHub-hosted
     # admission is the incident this PR is recovering from, so use the separate,
     # low-duty Coolify deploy runner for this short failure/schedule-only job.
-    runs-on: [self-hosted, trading-live]
+    # Keep failure reporting observable even if the socratic-ci pool is unavailable.
+    runs-on: [self-hosted, socratic-deploy]
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
         # Deliberately no `ref:` override: actions/checkout defaults workflow_run events to the

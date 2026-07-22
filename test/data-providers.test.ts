@@ -20,6 +20,7 @@ import {
   parseRobinhoodFundamentals,
   parseWebullUnofficialQuote,
   scoreHeadlines,
+  YahooFinanceEnrichmentProvider,
   type MarketEnrichmentProvider,
   type EnrichmentContext,
   type SymbolEnrichment
@@ -1318,12 +1319,8 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
       throw new Error(`unexpected fetch to ${url}`);
     });
 
-    const provider = getEnrichmentProvider();
-    // Not an exact-match: unrelated describe blocks in this file may leave a provider key set
-    // (e.g. FINTECH_STUDIOS_API_KEY) depending on run order — irrelevant to what's under test
-    // here (Yahoo's own handshake retry), and any such extra provider's fetch calls are caught
-    // by CascadingEnrichmentProvider without affecting Yahoo's result.
-    expect(provider.name).toContain("yahoo-finance");
+    const provider = new YahooFinanceEnrichmentProvider();
+    expect(provider.name).toBe("yahoo-finance");
 
     vi.useFakeTimers();
     try {
@@ -1348,7 +1345,7 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
       throw new Error(`unexpected fetch to ${url}`);
     });
 
-    const provider = getEnrichmentProvider();
+    const provider = new YahooFinanceEnrichmentProvider();
     vi.useFakeTimers();
     try {
       const resultPromise = provider.enrich(["AAPL"]);
