@@ -326,6 +326,9 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 
+- **[fleet/Hetzner][GROK] Multi-app fleet-watchdog + litestream 7d + runner EPHEMERAL (2026-07-21) — COMPLETED (ops on host; docs in ST rollout).** Not Mac-local. `fleet-watchdog.service` enabled on boot watches socratictrade.com (container restart only), congress.trade + usage.jays.services (alert only). Host reboot OFF (ALLOW_HOST_REBOOT=0); skips remediations during Coolify builds; old socratic-watchdog stays parked. Usage-Monitor PR #714 merged (snapshot retention 168h). All github-runners EPHEMERAL=true + restart always + daily disk-guard prune. Rollout: `docs/rollouts/2026-07-21-fleet-watchdog-disk-followups.md`.
+
+
 - **[Socratic.Trade][CLAUDE] Durable pre-network stop-placement intent + atomic idempotent
   recovered fills — Codex findings 5/6 (branch `claude/stop-intent-idempotency`, head `761b524b`
   = gate-verified merge of `8f6160bd` + main `b4dd8a54`) — LANDING 2026-07-18, lane 6 (final) of
