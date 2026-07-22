@@ -11,8 +11,12 @@ identity collisions. Focused integration verification passes 9 files / 72 tests 
 final ordered gate passes lint (0 errors / 615 warnings), TypeScript, 434 files / 5,015 tests, and the
 production build. After the current-main merge, Node 24 landing verification also passes TypeScript,
 439 files / 5,027 tests, and production build; ready PR #1892 is open with hosted checks queued.
-Protected merge/auto-deploy and live exact-SHA verification remain. No provider/corpus/config/
-production writes or flag changes.
+Review found one id-less legacy evidence-ref mismatch; the branch now shares exact immutable identity
+construction between prompt consumption and Socratic attribution, with 2 files / 4 focused tests,
+TypeScript, and scoped lint green. Its final Node 24 gate passes lint (0 errors / 613 warnings),
+TypeScript, 439 files / 5,028 tests, and production build. Push/hosted checks, protected merge/
+auto-deploy, and live exact-SHA verification remain. No provider/corpus/config/production writes or
+flag changes.
 Rollout: `docs/rollouts/2026-07-22-rag-retrieval-integration.md`.
 
 ## 2026-07-21 — RAG rerank policy + retrieval-stage telemetry foundation (CODEX team, branch `codex/rag-strategy-program-20260721`)

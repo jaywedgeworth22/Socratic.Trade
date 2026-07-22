@@ -109,6 +109,15 @@ production build. It pushed the branch and opened ready PR #1892. A first Node 2
 discarded because the local `better-sqlite3` binary had been built for Node 26 ABI 147; rebuilding
 that untracked dependency for Node 24 ABI 137 eliminated the cascading database-load failures.
 
+PR review then found an id-less legacy attribution mismatch: prompt-consumption identity included
+the section and immutable metadata coordinates, while the Socratic attribution path passed section
+as display title and omitted the remaining fallback coordinates. A shared
+`ragEvidenceIdentityFromChunk` builder now feeds both prompt candidates and attribution refs, with a
+regression covering accession, section, ordinal, content hash, namespace, scope, and tenant scope.
+Focused verification passes 2 files / 4 tests, standalone TypeScript, and scoped ESLint with no
+errors. The final Node 24 gate then passed in order: lint with 0 errors / 613 warnings, TypeScript,
+439 files / 5,028 tests, and production build.
+
 ## Follow-ups
 
 - Complete required hosted checks on ready PR #1892, protected merge/auto-deploy, and exact-SHA

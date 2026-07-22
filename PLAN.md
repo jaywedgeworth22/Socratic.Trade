@@ -20,6 +20,11 @@
 > verification passes TypeScript, 439 files / 5,027 tests, and production build; ready PR #1892 is
 > open. Remaining: required hosted checks, merge/auto-deploy receipt, and live exact-SHA verification.
 > Production activation stays off.
+> **2026-07-22 PR review update:** Centralize immutable id-less evidence identity so prompt
+> consumption and Socratic attribution use identical accession/section/ordinal/content/namespace/
+> tenant coordinates. Focused tests, TypeScript, scoped lint, and the final Node 24 ordered gate are
+> green (lint 0 errors / 613 warnings, TypeScript, 439 files / 5,028 tests, production build); push
+> the remediation to PR #1892 and resolve its review thread.
 > **2026-07-21 — Managed RAG ingestion authority repair (CODEX, branch `codex/rag-ingestion-gate-20260721`).**
 > Repair the stale `storeDocument` provider gate left by the Voyage SDK purge: require Pinecone
 > initialization plus the actual active embedding provider credential, while preserving the explicit

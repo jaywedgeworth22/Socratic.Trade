@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { normalizeSymbol } from "./money";
 import { isHardGateReason } from "./policy";
-import { stableRagEvidenceRef } from "./rag/evidence-consumption";
+import { stableRagEvidenceRef, type PromptRagCandidate } from "./rag/evidence-consumption";
 import type { RetrievedChunk } from "./vector-db";
 import type {
   MarketQuote,
@@ -136,20 +136,39 @@ export function applySocraticOverrideSizing(proposal: TradeProposal, policy: Tra
   };
 }
 
+export function ragEvidenceIdentityFromChunk(
+  symbol: string,
+  chunk: RetrievedChunk
+): Omit<PromptRagCandidate, "serializedText" | "text"> {
+  const metadata = chunk.metadata ?? {};
+  return {
+    ...(chunk.id ? { chunkId: chunk.id } : {}),
+    symbol: normalizeSymbol(symbol),
+    ...(chunk.source ? { source: chunk.source } : {}),
+    ...(chunk.doc_type ? { docType: chunk.doc_type } : {}),
+    ...(typeof metadata.accession === "string" ? { accession: metadata.accession } : {}),
+    ...(chunk.section ? { section: chunk.section } : {}),
+    ...(typeof metadata.chunk_ordinal === "number"
+      ? { ordinal: metadata.chunk_ordinal }
+      : typeof metadata.ordinal === "number"
+        ? { ordinal: metadata.ordinal }
+        : {}),
+    ...(typeof metadata.content_hash === "string" ? { contentHash: metadata.content_hash } : {}),
+    ...(typeof metadata.vector_namespace === "string" ? { vectorNamespace: metadata.vector_namespace } : {}),
+    ...(chunk.scope ? { scope: chunk.scope } : {}),
+    ...(typeof metadata.tenant_scope === "string" ? { tenantScope: metadata.tenant_scope } : {}),
+    ...(chunk.section ? { title: chunk.section } : {}),
+    ...(chunk.url ? { url: chunk.url } : {}),
+    ...(chunk.as_of ? { publishedAt: chunk.as_of } : {}),
+    ...(typeof chunk.score === "number" ? { score: chunk.score } : {}),
+    ...(typeof chunk.relevanceScore === "number" ? { relevanceScore: chunk.relevanceScore } : {})
+  };
+}
+
 export function ragAttributionsFromChunks(symbol: string, query: string, chunks: RetrievedChunk[]): SocraticRagAttribution[] {
   return chunks.map((chunk) => ({
     symbol: normalizeSymbol(symbol),
-    evidenceRef: stableRagEvidenceRef({
-      ...(chunk.id ? { chunkId: chunk.id } : {}),
-      symbol: normalizeSymbol(symbol),
-      ...(chunk.source ? { source: chunk.source } : {}),
-      ...(chunk.doc_type ? { docType: chunk.doc_type } : {}),
-      ...(chunk.section ? { title: chunk.section } : {}),
-      ...(chunk.url ? { url: chunk.url } : {}),
-      ...(chunk.as_of ? { publishedAt: chunk.as_of } : {}),
-      ...(typeof chunk.score === "number" ? { score: chunk.score } : {}),
-      ...(typeof chunk.relevanceScore === "number" ? { relevanceScore: chunk.relevanceScore } : {})
-    }),
+    evidenceRef: stableRagEvidenceRef(ragEvidenceIdentityFromChunk(symbol, chunk)),
     queryHash: createHash("sha256").update(query, "utf8").digest("hex").slice(0, 24),
     ...(chunk.id ? { chunkId: chunk.id } : {}),
     ...(chunk.source ? { source: chunk.source } : {}),
