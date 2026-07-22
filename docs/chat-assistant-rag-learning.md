@@ -190,6 +190,16 @@ already shipped in earlier passes (#297/#299) and were verified, not re-implemen
 default-off/opt-in and proven byte-identical when unset — see the rollout note for the full
 item-by-item detail and verify-quartet results.
 
+**Strategic-performance follow-on, 2026-07-21:** the 28-case mocked fixture remains a regression
+net, not evidence that one embedding/reranker wins on the live financial corpus. The active program
+therefore separates four concerns before changing production defaults: a production-path PIT
+evaluator; corpus-wide FTS5 candidates unioned with dense recall before one rerank; independently
+selectable rerank route/model plus default-off scout/deep/exact/general candidate depths; and
+text-free per-stage latency/candidate/drop receipts. The pure rerank-policy and stage-telemetry
+modules are implemented on `codex/rag-strategy-program-20260721`; production wiring remains gated on
+the parallel ingestion, evaluator, and lexical lanes. No local model service or sparse-vector API is
+assumed: BGE-M3 sparse capability counts only when the selected transport actually returns it.
+
 ## 6. User-guidance design ("how to advise users to interact")
 
 Grounded in the existing `AssistantView` — keep its trust framing as the spine ("drafts orders you

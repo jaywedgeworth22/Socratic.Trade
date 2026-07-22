@@ -1,3 +1,17 @@
+## 2026-07-21 — RAG rerank policy + retrieval-stage telemetry foundation (CODEX team, branch `codex/rag-strategy-program-20260721`)
+
+The first non-overlapping foundation for the owner-directed RAG strategic-performance program is
+implemented locally. `src/lib/rag/env-flag.ts` now accepts an optional explicit environment while
+preserving ambient-process defaults. `src/lib/rag/rerank-policy.ts` separates rerank route/model resolution from the
+embedding route without silently falling back across providers, and defines default-off adaptive
+candidate depths for scout/deep/exact/general retrieval. `src/lib/rag/retrieval-stage-telemetry.ts`
+adds text-free, per-stage duration/candidate/provider/model/route receipts suitable for p50/p95
+aggregation. These modules deliberately do not touch `vector-db.ts` yet: the production integration
+waits for the managed-ingestion fix, corpus-wide lexical candidate module, and production-path PIT
+evaluator being built in parallel. Focused tests 28/28, scoped ESLint, and TypeScript are green. No
+provider key, corpus, Pinecone, re-embed, purge, or production state changed. Rollout:
+`docs/rollouts/2026-07-21-rag-rerank-policy-telemetry.md`.
+
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
 
 Purged the Voyage AI SDK and its dependencies, standardizing the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Dynamic imports and test-only shims maintain test suite compatibility while completely isolating Voyage from production. All 4,898 tests and the production Next.js build are fully green. Rollout: `docs/rollouts/2026-07-21-voyage-ai-purge.md`.
