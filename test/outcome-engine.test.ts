@@ -61,6 +61,8 @@ describe("outcome engine — the outcome writer", () => {
   });
 
   it("matures a PLACED decision: joins the fill + closed lot, writes multi-horizon outcome, receipts, re-indexes", async () => {
+    // Clear cross-test capture so every() assertions only see this case's re-index calls.
+    storeContextsCalls.length = 0;
     const userId = `oe-placed-${randomUUID()}`;
     const { insertFillEvent, listAudit, upsertConnectedAccount, upsertSocraticDecisionCase, getSocraticDecisionCase } = await import("../src/lib/db");
     const { matureSocraticDecisionOutcomes } = await import("../src/lib/outcome-engine");
