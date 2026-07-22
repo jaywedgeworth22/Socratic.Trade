@@ -62,8 +62,10 @@ on:
 # without cancelling the expensive in-flight suite. This prevents high-churn branches from
 # repeatedly losing all progress before `verify` can turn green.
 concurrency:
-  # TEMP: include sha so a stuck in_progress run cannot hold the whole ref (2026-07-22 queue drain)
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  # Keep one active run and one newest pending run per ref. Including a commit SHA here
+  # creates a distinct group for every push, so duplicate pending verifies accumulate
+  # indefinitely even though cancellation is disabled (2026-07-22 queue-drain fix).
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
