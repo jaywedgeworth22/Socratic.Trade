@@ -8,7 +8,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
-import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "../llm-usage";
+import { applyOpenRouterClassifierEnrichment } from "../llm-call";
 import { llmFetch, reasoningCapabilityForModel, withLlmRequestBounds } from "../llm-request";
 import type { LlmReasoningEffort } from "../types";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
@@ -26,8 +27,11 @@ export interface LlmUsageOpts {
 /** The chat providers. All but Anthropic are OpenAI-compatible (chat/completions tool loop). */
 export type ChatProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
 
-/** Sum usage across the (possibly multi-step) tool loop and record one ledger row. */
-function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: string, prompt: number, completion: number, saw: boolean): void {
+/** Sum usage across the (possibly multi-step) tool loop and record one ledger row.
+ *  `providerRequestId` is only meaningful when the loop made exactly ONE provider request
+ *  (the ledger row is a per-run aggregate; a single generation id can only verify a single
+ *  call's cost, so multi-step runs pass undefined rather than a misleading partial id). */
+function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: string, prompt: number, completion: number, saw: boolean, providerRequestId?: string): void {
   if (!opts.userId) return;
   recordLlmUsage({
     userId: opts.userId,
@@ -37,7 +41,8 @@ function recordChatUsage(opts: LlmUsageOpts, provider: ChatProvider, model: stri
     keySource: opts.keySource ?? "user",
     keyRef: opts.keyRef,
     promptTokens: saw ? prompt : undefined,
-    completionTokens: saw ? completion : undefined
+    completionTokens: saw ? completion : undefined,
+    providerRequestId
   });
 }
 
@@ -502,6 +507,7 @@ export class OpenAILLM implements ChatLLM {
 
     const toolCalls: ToolCall[] = [];
     let text = "";
+    const generationIds: string[] = [];
 
     for (let step = 0; step < MAX_STEPS; step++) {
       const baseBody: Record<string, any> = {
@@ -510,13 +516,15 @@ export class OpenAILLM implements ChatLLM {
         ...(oaiTools ? { tools: oaiTools, tool_choice: "auto" } : {})
       };
       if (this.provider === "openrouter") {
-        baseBody.metadata = {
-          context: this.usage.context ?? "assistant-chat",
-          ...((this.usage as any).metadata || {})
-        };
-        if (this.usage.userId) {
-          baseBody.user = this.usage.userId;
-        }
+        // Shared classifier enrichment (user + flat trace) — replaces the old hand-built bare
+        // `metadata` object this path used to duplicate alongside llm-call.ts. Fail-open: an
+        // enrichment error degrades to an un-enriched request, never a failed chat call.
+        applyOpenRouterClassifierEnrichment(baseBody, {
+          userId: this.usage.userId,
+          keyRef: this.usage.keyRef,
+          service: "chat",
+          feature: this.usage.context ?? "chat"
+        });
       } else if (this.usage.userId) {
         if (this.provider === "openai" || this.provider === "deepseek" || this.provider === "gemini") {
           baseBody.user = this.usage.userId;
@@ -534,6 +542,8 @@ export class OpenAILLM implements ChatLLM {
         this.apiKey
       );
 
+      const genId = providerRequestIdFromPayload(this.provider, resp);
+      if (genId) generationIds.push(genId);
       const u = extractLlmUsage(resp);
       if (u.promptTokens !== undefined || u.completionTokens !== undefined) {
         sawUsage = true;
@@ -577,7 +587,15 @@ export class OpenAILLM implements ChatLLM {
     for (const c of toolCalls.filter((tc) => tc.name === "kb_search" && tc.result?.chunks?.length)) {
       for (const chunk of c.result.chunks) citations.push({ source: chunk.source, chunk_id: chunk.chunk_id, evidence_ref: chunk.evidence_ref, as_of: chunk.as_of, url: chunk.url });
     }
-    recordChatUsage(this.usage, this.provider, this.model, promptTokens, completionTokens, sawUsage);
+    recordChatUsage(
+      this.usage,
+      this.provider,
+      this.model,
+      promptTokens,
+      completionTokens,
+      sawUsage,
+      generationIds.length === 1 ? generationIds[0] : undefined
+    );
     return { text: text || DISCLAIMER, toolCalls, citations };
   }
 }

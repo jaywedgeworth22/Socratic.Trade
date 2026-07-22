@@ -127,7 +127,7 @@ import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
 import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
-import { recordLlmUsage, extractLlmUsage, remapOpenRouterTelemetry } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import {
@@ -4938,7 +4938,11 @@ async function proposeTrades(input: {
       userContent: JSON.stringify(userContent),
       schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-      reasoningEffort: bullReasoningEffort
+      reasoningEffort: bullReasoningEffort,
+      userId: input.userId,
+      keyRef: llmKeyRef,
+      service: "strategy",
+      feature: "strategy"
     }
   );
 
@@ -4982,7 +4986,11 @@ async function proposeTrades(input: {
           userContent: JSON.stringify(userContent),
           schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort)
+          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort),
+          userId: input.userId,
+          keyRef: ep.keyRef,
+          service: "strategy",
+          feature: "strategy"
         }
       )
     });
@@ -5110,7 +5118,7 @@ async function proposeTrades(input: {
               throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
             }
             const payload = await response.json();
-            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(payload) });
+            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(attempt.provider, payload), ...extractLlmUsage(payload) });
             bullServedProposalModel = attempt.proposalModel;
             // Served-by-fallback detection compares the ATTEMPT to the configured primary (not
             // `i > 0`): cooldown planning can drop the primary from the chain entirely, making a
