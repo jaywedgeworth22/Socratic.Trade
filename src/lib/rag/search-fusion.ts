@@ -1,5 +1,8 @@
 import { getDb, resolveApiKey } from "../db";
 import { retrieveContextDetailed, getClients } from "../vector-db";
+import { applyOpenRouterClassifierEnrichment } from "../llm-call";
+import { providerRequestIdFromPayload } from "../llm-usage";
+import { meterEmbed } from "../rag-metering";
 import { deconstructQuery } from "./query-deconstruct";
 import { routeRetrievalIntent } from "./intent-router";
 import { hashContent } from "./chunk";
@@ -32,8 +35,9 @@ function getJaccardSimilarity(a: string, b: string): number {
  * Returns `null` when neither is configured — in the normal Voyage-only deployment there is no
  * HTTP endpoint that accepts the Voyage credential, so the caller must use the Jaccard MMR
  * fallback deliberately instead of sending a Voyage key to SiliconFlow and failing every time.
+ * (Exported for the usage-compliance test suite; production callers stay module-internal.)
  */
-async function fetchAlternativeEmbedding(texts: string[], userId: string = "local"): Promise<number[][] | null> {
+export async function fetchAlternativeEmbedding(texts: string[], userId: string = "local"): Promise<number[][] | null> {
   const siliconflowKey = resolveApiKey("siliconflow", userId);
   const openrouterKey = resolveApiKey("openrouter", userId);
   const useSiliconFlow = !!siliconflowKey && !siliconflowKey.startsWith("mock");
@@ -43,21 +47,38 @@ async function fetchAlternativeEmbedding(texts: string[], userId: string = "loca
   const url = useSiliconFlow ? "https://api.siliconflow.cn/v1/embeddings" : "https://openrouter.ai/api/v1/embeddings";
   const model = useSiliconFlow ? "BAAI/bge-m3" : "baai/bge-m3";
   const apiKey = useSiliconFlow ? siliconflowKey : openrouterKey;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${apiKey}`
+  };
+  const body: Record<string, unknown> = { model, input: texts };
+  if (!useSiliconFlow) {
+    // OpenRouter attribution headers + classifier enrichment (user + flat trace), same as the
+    // vector-db.ts OpenRouter embed path. Enrichment never breaks the call — see
+    // applyOpenRouterClassifierEnrichment. SiliconFlow bypasses OpenRouter, so its classifier
+    // context flows only via the pushed telemetry event (meterEmbed below).
+    headers["HTTP-Referer"] = "https://socratictrade.com";
+    headers["X-Title"] = "Socratic.Trade";
+    applyOpenRouterClassifierEnrichment(body, { userId, service: "rag", feature: "search-fusion-mmr" });
+  }
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      input: texts
-    })
+    headers,
+    body: JSON.stringify(body)
   });
   if (!response.ok) {
     throw new Error(`Alternative embedding failed in search fusion (${useSiliconFlow ? "siliconflow" : "openrouter"}): ${response.status}`);
   }
   const res = await response.json();
+  // Meter this paid embed call (usage-compliance WS1 gap #3), mirroring vector-db.ts's
+  // meterEmbed call sites; the OpenRouter generation id rides along for monitor-side verification.
+  meterEmbed(
+    texts,
+    model,
+    userId,
+    useSiliconFlow ? "siliconflow" : "openrouter",
+    useSiliconFlow ? undefined : providerRequestIdFromPayload("openrouter", res)
+  );
   return res.data.map((d: any) => d.embedding);
 }
 
