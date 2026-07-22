@@ -1,12 +1,10 @@
 # Phase 11 - Multi-user & API-key management (plan)
 
-## Native auth exchange CSRF boundary (2026-07-22)
+## CI pin-check reliability (2026-07-22)
 
-The native mobile auth exchange is unauthenticated only with respect to session identity. It is
-not a public-prefix bypass: middleware runs `checkSameOrigin` for the state-changing exchange
-before allowing the route to validate its one-time code and device verifier. This prevents a
-cross-site browser from forcing a session cookie while preserving server-to-server/native calls
-without browser-origin headers.
+The shared-package pin workflow runs on every pull request so the status cannot disappear for
+unrelated code changes. It installs the pinned Node 24 toolchain before the comparison script,
+which uses Node for GitHub API JSON parsing.
 
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and

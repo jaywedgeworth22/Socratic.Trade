@@ -75,6 +75,13 @@ describe("background worker startup", () => {
   it("starts every worker family once after an explicit development opt-in", async () => {
     const starters = starterSpies();
     const log = vi.fn();
+    let replayBoundaryReady = false;
+    vi.mocked(starters.startUsageMonitorReplay).mockImplementation(() => {
+      replayBoundaryReady = true;
+    });
+    vi.mocked(starters.startScheduler).mockImplementation(() => {
+      expect(replayBoundaryReady).toBe(true);
+    });
 
     await expect(startServerBackgroundWorkers({
       env: { NODE_ENV: "development", DEV_BACKGROUND_WORKERS: "on" },
@@ -86,6 +93,8 @@ describe("background worker startup", () => {
     expect(starters.startUsageMonitorReplay).toHaveBeenCalledTimes(1);
     expect(starters.startStreams).toHaveBeenCalledTimes(1);
     expect(starters.startSecIngestWorker).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(starters.startUsageMonitorReplay).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(starters.startScheduler).mock.invocationCallOrder[0]!);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("enabled (development"));
   });
 });
