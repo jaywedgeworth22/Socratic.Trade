@@ -34,6 +34,16 @@
 > test-only Voyage path. Add a production-mode OpenRouter/Pinecone regression. This is a code-path
 > prerequisite only; no re-embed, purge, secret, or production operation is included.
 > **2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, branch `codex/rag-shadow-benchmarks-20260722`).** Land the default-off read-only harness only after focused test/lint/TypeScript checks. Do not add a libSQL runtime dependency or route production retrieval to Turso until an explicit shadow comparison has a configured remote target and measured recall/latency/cost receipt. Pinecone Assistant remains a pre-existing-assistant contextual-retrieval baseline; no file/corpus migration or production use follows from this work without evidence/PIT/tenant-erasure acceptance.
+> **2026-07-19 - Three new RapidAPI-backed enrichment providers (CLAUDE, branch
+> `claude/model-availability-session-handoff-362fd3`).** No roadmap scope change; market-data
+> redundancy only. Owner-directed: add Mboum Finance, YH Finance 15, and an Alpha Vantage
+> RapidAPI transport (OVERVIEW fundamentals) as a dormant-unless-`RAPIDAPI_KEY`-set, quota-safe
+> failover tier registered AFTER the free Yahoo scrape in `getEnrichmentProvider`. New
+> `src/lib/rapidapi-quota.ts` enforces a per-provider daily cap (Mboum 16/day, YH Finance 15
+> 3/day, AV-RapidAPI 500/day) AND a combined 900/day ceiling across all three, mirroring
+> `alpha-vantage-key-pool.ts`'s persisted budget pattern. tsc clean, lint 0 new warnings, 33 + 13
+> new tests green. Not yet landed — `scripts/land.sh` is a separate phase. Details:
+> `docs/rollouts/2026-07-19-rapidapi-yahoo-av-providers.md`.
 > **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
 > `codex/mobile-first-ios-20260721`).** Implementation and review remediation are complete in the
 > isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:
