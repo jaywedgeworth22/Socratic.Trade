@@ -11,6 +11,7 @@
 > verified.
 
 > **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
+> **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; and repair the six stale current-main test assertions that would otherwise fail the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
 > **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
 > (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**
 > (SiliconFlow bge-m3 embed-price 10x undercount fix — auto-merge armed, no open findings,

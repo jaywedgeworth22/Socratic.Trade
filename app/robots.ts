@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 
-const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://socratictrade.com";
+const base = process.env.NEXT_PUBLIC_SITE_URL || "https://socratictrade.com";
 
 // AI crawlers and training-data harvesters are told to stay out of the whole
 // site regardless of the indexing flag. This is a published opt-out signal
