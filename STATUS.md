@@ -21,6 +21,20 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
+## 2026-07-21 — Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **iOS Google & GitHub Sign-In**: Used `ASWebAuthenticationSession` to pop a secure browser in-app and authenticate via the Next.js `socratictrade.com` backend, injecting the valid JWT into the native `HTTPCookieStorage` for seamless API usage.
+2. **Backend Authentication Token Exchange**: Added a new route at `app/api/mobile/auth-redirect/route.ts` that intercepts the Auth.js callback and natively redirects `socratictrade://` with the signed session JWT back to iOS.
+3. **Implicit Web Apple Sign-In support**: Web is fully set up, just awaiting the owner to configure `AUTH_APPLE_ID` and `AUTH_APPLE_SECRET`.
+4. **Verification**: Generated `SocraticTrade.xcodeproj` via `xcodegen` and successfully passed all Swift compilation and validation steps in `xcodebuild` without error.
+5. Rollout: `docs/rollouts/2026-07-21-unified-authentication.md`.
+
+## 2026-07-21 — Fix CI workflow package-lock.json dependency & Apple Sign-In audience (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **Root cause of 38 stuck PRs resolved**: Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` where `cache: npm` and `npm ci` were failing because `package-lock.json` is untracked/gitignored in Socratic.Trade. Updated setup steps to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`.
+2. **Apple Sign-In client ID fix**: Corrected hardcoded fallback audience in `app/api/mobile/auth-redirect/route.ts` with `await cookies()` for Next.js 15+ compatibility.
+3. Rollout: `docs/rollouts/2026-07-21-ci-package-lock-and-pr-unblock.md`.
+
 ## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
 
 All four owner-linked handoff docs executed/dispositioned: missing model-availability rollout

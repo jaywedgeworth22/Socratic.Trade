@@ -238,7 +238,7 @@
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--con-faint);
+  color: var(--con-fg);
 }
 
 /* ── Autonomy desk home ── */
@@ -1061,17 +1061,18 @@
   user-select: none;
 }
 .con-disclosure > summary::-webkit-details-marker { display: none; }
-.con-disclosure > summary::before {
+.con-disclosure > summary::after {
   content: "";
   width: 6px;
   height: 6px;
+  margin-left: auto;
   border-right: 1.5px solid var(--con-faint);
   border-bottom: 1.5px solid var(--con-faint);
   transform: rotate(-45deg);
   transition: transform 140ms ease;
   flex: none;
 }
-.con-disclosure[open] > summary::before { transform: rotate(45deg); }
+.con-disclosure[open] > summary::after { transform: rotate(45deg); }
 
 .con-hr {
   border: none;

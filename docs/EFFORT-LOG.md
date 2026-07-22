@@ -3862,6 +3862,7 @@ brackets; effort S/M/L.
 | 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
 
 - **2026-07-20 CI deadlock + package-pin update (AG, branch `claude/checkpin-always-on-prs`) — Completed.** Restored the stalled check-pin fixes after a server restart. Diagnosed that the Hetzner runner `socratic-deploy` was disconnecting/failing jobs. Re-routed PR 1771 CI workflows to the online `trading-live-mac` runner, allowing PR 1771 to auto-merge. For PR 1780, `check-pin` failed because `Congress.Trade` was recently bumped to `v1.11.1` while `Socratic.Trade` lagged behind; bumped Socratic.Trade's shared package to `v1.11.1` to resolve the divergence. PR 1780 is now armed for auto-merge on the Mac runner.
+| 2026-07-21 | ANTIGRAVITY | Completed | Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) | agent/antigravity-apple-auth-fix |
 | 2026-07-20 | GROK | In Progress | ST: 32/32 open PRs MERGEABLE (phantom main merges pushed; CI queue drain residual) (ST/CT/UM unstick + residual) | multi-app |
 | 2026-07-20 | Integrate 5 RapidAPI/FilingAPI/ROIC Providers | Completed | Added FMP, Insiders, TwelveData, FilingAPI, and ROIC.ai into the enrichment cascade with tests and quotas | AG |
 
