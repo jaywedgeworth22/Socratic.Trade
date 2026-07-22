@@ -253,7 +253,7 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
 });
 
 describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () => {
-  it("skips LLM generation (no OpenAI call, no fill) but still COMPLETES when over the daily budget", async () => {
+  it("skips LLM generation (no OpenAI call, no fill) and marks the run skipped when over the daily budget", async () => {
     process.env.OPENROUTER_API_KEY = "test-openai-key";
     vi.stubEnv("TRIGGER_LLM_DAILY_TOKEN_BUDGET", "1000");
     let openAiCalled = false;
@@ -275,9 +275,9 @@ describe("strategy LLM budget ceiling — choke point AFTER risk breakers", () =
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const result = await runStrategyOnce();
 
-    // The run still COMPLETES — non-LLM safety maintenance (reconcile + drawdown breaker) ran; only
-    // the LLM proposal generation was skipped by the budget gate.
-    expect(result.status).toBe("completed");
+    // Wave A (PR #1847): pre-decision budget gate ends the run as "skipped" (not a green completed
+    // cycle). Non-LLM safety maintenance still ran before the gate; only LLM/scan generation stopped.
+    expect(result.status).toBe("skipped");
     expect(listAudit(500).filter((e) => e.kind === "strategy_run_suppressed_budget").length).toBeGreaterThanOrEqual(1);
     // The Bull/Bear model call never fired.
     expect(openAiCalled).toBe(false);
