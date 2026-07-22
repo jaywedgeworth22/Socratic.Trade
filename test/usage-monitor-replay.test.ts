@@ -486,6 +486,36 @@ describe("usage monitor durable replay", () => {
     expect(intervalSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("clears a stale v2 HMR timer and installs fresh direct-v2 replay state", async () => {
+    const host = globalThis as unknown as {
+      __usageMonitorReplay?: {
+        version: number;
+        timer: ReturnType<typeof setInterval> | null;
+        inFlight: Promise<unknown> | null;
+      };
+    };
+    const staleTimer = setInterval(() => undefined, 60_000);
+    staleTimer.unref?.();
+    host.__usageMonitorReplay = {
+      version: 2,
+      timer: staleTimer,
+      inFlight: Promise.resolve({ stale: true }),
+    };
+    const clearSpy = vi.spyOn(globalThis, "clearInterval");
+    vi.resetModules();
+
+    const freshReplay = await import("../src/lib/usage-monitor-replay");
+
+    expect(clearSpy).toHaveBeenCalledWith(staleTimer);
+    expect(host.__usageMonitorReplay).toMatchObject({
+      version: 3,
+      timer: null,
+      inFlight: null,
+    });
+    freshReplay.__resetUsageMonitorReplayState();
+    delete host.__usageMonitorReplay;
+  });
+
   it("shares the live-push circuit breaker: a tripped breaker suppresses replay's own delivery attempts too", async () => {
     process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
     process.env.USAGE_MONITOR_BREAKER_BASE_MS = "60000";

@@ -14,7 +14,7 @@ the migration intentionally does not replay the bounded pre-v2 remainder: those 
 already live-pushed under v1, while any unacknowledged remainder may be lost rather than risk duplicate
 money. No legacy wire path remains. The receiver gate is cleared: Usage-Monitor exact main
 `335723775ef0f8114ee1ca77b4716139018026dc` is committed live on Oracle. The final direct-v2
-focused gate passes under Node 24: 3 files / 51 tests, TypeScript, scoped ESLint, and diff-check.
+focused gate passes under Node 24: 3 files / 52 tests, TypeScript, scoped ESLint, and diff-check.
 
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 

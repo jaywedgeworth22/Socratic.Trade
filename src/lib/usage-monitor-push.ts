@@ -28,8 +28,6 @@ import {
   telemetryEventClassifier,
   UsageTelemetryV2EventSchema,
   type UsageTelemetryV2Event,
-  UsageTelemetryEventSchema,
-  type UsageTelemetryEvent,
   type UsageTelemetryMetricType,
   type UsageTelemetryUnit,
   type UsageTelemetryBillingMode,
@@ -628,7 +626,7 @@ export function pushBrokerBalance(entry: {
     const snapshotId = randomDeliveryId();
     const maskedAcc = maskAccountNumber(entry.accountNumber);
     // Number.isFinite (not typeof === "number") at admission: NaN and Infinity are both typeof
-    // "number" but the shared UsageTelemetryEvent schema rejects them (.finite()), so a NaN balance
+    // "number" but the shared v2 event schema rejects them (.finite()), so a NaN balance
     // would poison the batch. Reject it here so the bad reading never enters the buffer.
     if (Number.isFinite(entry.cash)) {
       enqueuePending({

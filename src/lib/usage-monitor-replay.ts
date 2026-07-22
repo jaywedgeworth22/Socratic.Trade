@@ -98,9 +98,9 @@ interface ReplayState {
 }
 
 const replayHost = globalThis as unknown as { __usageMonitorReplay?: ReplayState };
-// Bump when replay lanes change so HMR cannot leave an older timer running without the provider
-// outbox lane added by the durable-dispatch migration.
-const REPLAY_STATE_VERSION = 2;
+// Bump when replay semantics change so HMR cannot retain an older timer/in-flight worker across an
+// identity migration. v3 installs the atomic direct-v2 cutover before any replay/producer work.
+const REPLAY_STATE_VERSION = 3;
 const priorReplayState = replayHost.__usageMonitorReplay;
 if (priorReplayState && priorReplayState.version !== REPLAY_STATE_VERSION && priorReplayState.timer) {
   clearInterval(priorReplayState.timer);

@@ -43,10 +43,11 @@ or state writes. There is no v1 sender or dual-write path in the final implement
   `sourceApp` assertion updated during that run. The final affected producer/replay/FMP regression
   set passed 3 files / 46 tests after the update.
 - Production build: `npm run build` under Node 24.
-- Direct-v2 cutover revalidation under Node 24: 3 files / 51 tests (push, replay, and background
+- Direct-v2 cutover revalidation under Node 24: 3 files / 52 tests (push, replay, and background
   startup), TypeScript, scoped ESLint, and diff-check pass. Coverage includes atomic all-ledger
   seeding, skipped-row receipts, seeded-boundary exclusion, strict-v2 activation/overlap, malformed
-  JSON and invalid-timestamp fail-closed behavior, no partial seed, and replay-before-producer boot.
+  JSON and invalid-timestamp fail-closed behavior, no partial seed, replay-before-producer boot, and
+  stale-HMR timer replacement for the v3 direct-v2 replay state.
 
 ## Promotion gate
 
