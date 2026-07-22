@@ -1,5 +1,9 @@
 # Active Implementation Plan
 
+> **2026-07-22 — PR #1792 typecheck repair (CODEX).** The provider-generic health-lane merge
+> resolution is now aligned with the current durable dispatch API in `28a09b84`; run hosted
+> verification, let auto-merge land it, and confirm the exact post-merge deployment receipt.
+
 > **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
 > `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
 > but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per

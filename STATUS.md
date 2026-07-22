@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-22 — PR #1792 hosted typecheck remediation (CODEX)
+
+The prior head failed `verify-hosted` because a merge resolution left stale vector-db provider
+dispatch/cost references. Commit `28a09b84` now keeps the durable `voyage-rerank` service key,
+narrows the active provider for the health lane, and uses `estimateRagDispatchCost`. The branch is
+ready for a fresh hosted gate; auto-merge is armed. No production/provider/corpus writes were made.
+
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous

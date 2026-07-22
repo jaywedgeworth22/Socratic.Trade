@@ -1,5 +1,20 @@
 # 2026-07-19 - advisory-cleanup-batch
 
+## 2026-07-22 PR #1792 hosted typecheck remediation
+
+The prior head failed TypeScript because its merge resolution used stale provider dispatch/cost
+references. Commit `28a09b84` keeps the durable `voyage-rerank` service identifier, narrows the
+active provider passed to the health lane, and uses `estimateRagDispatchCost`.
+
+Files: `src/lib/vector-db.ts`, `STATUS.md`, `PLAN.md`, this rollout note, and `docs/EFFORT-LOG.md`.
+
+Verification: hosted `verify-hosted` on the previous head failed only at TypeScript with the stale
+references; `npx tsc --noEmit` passed on the repaired branch before the docs-only receipt commit.
+No production, provider, corpus, or broker writes were made.
+
+Follow-up: confirm hosted verify green, then allow auto-merge and verify the exact post-merge
+Coolify deployment SHA.
+
 ## Summary
 
 Four small, independent verifier advisories from this week's adversarial reviews, landed together
