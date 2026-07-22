@@ -42,4 +42,6 @@ before PR code ran because its self-hosted runner did not have `unzip`, preventi
 
 ## Follow-ups
 
-No production native distribution is claimed; TestFlight/App Store release remains separate.
+Corrected the duplicate/stale native iOS effort row in `docs/EFFORT-LOG.md`: #1886 is merged and
+#1888 is the active middleware follow-up. No production native distribution is claimed; TestFlight/
+App Store release remains separate.

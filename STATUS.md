@@ -1,5 +1,10 @@
 # Current Status
 
+## 2026-07-22 — PR #1888 effort-log correction
+
+Corrected the stale duplicate effort row in `docs/EFFORT-LOG.md`: PR #1886 is merged, and the
+active middleware follow-up is PR #1888 in the current row. No product or deployment state changed.
+
 ## 2026-07-22 — Mobile auth exchange CSRF follow-up (PR #1888)
 
 The unauthenticated native exchange path now still passes the middleware same-origin CSRF guard;
