@@ -30,6 +30,11 @@ vi.mock("../src/lib/vector-db", () => ({
   storeContexts: async () => {}
 }));
 
+// Money-path assertions do not cover delivery; keep notification I/O out of this focused suite.
+vi.mock("../src/lib/notifications", () => ({
+  sendNotification: async () => ({ id: "test", status: "skipped" })
+}));
+
 const brokerBehavior = vi.hoisted(() => ({ terminalPartial: false, unpricedFill: false }));
 
 vi.mock("../src/lib/broker", async (importOriginal) => {
