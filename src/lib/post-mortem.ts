@@ -1,5 +1,5 @@
 import { getDb, getUserSetting, setUserSetting, deleteUserSetting, audit, getInternalSetting, setInternalSetting, deleteInternalSetting, getPolicy, listConnectedAccounts, upsertFillExcursionsByKey } from "./db";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "./llm-usage";
 import { getRegimeScorecard, getThesisScorecard, getThesisRegimeScorecard, getClosedLotsDetailed } from "./performance";
 import { ingestLearned } from "./learned-context/store";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
@@ -123,7 +123,11 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
       systemPrompt,
       userContent,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection,
-      reasoningEffort: policy.llmReasoningEffort
+      reasoningEffort: policy.llmReasoningEffort,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "post-mortem"
     }
   );
 
@@ -163,7 +167,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, connectedAccountId: connectedAccount?.id, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, connectedAccountId: connectedAccount?.id, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
 
         return { text: typeof text === "string" ? text : undefined };
