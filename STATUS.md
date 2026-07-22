@@ -1,3 +1,14 @@
+# Current Status
+
+## 2026-07-21 -- ST PR queue stuck for days: CI root-cause fixes (GROK, `monet/ci-runner-and-queue-fixes`)
+
+PRs were stuck ~2-3 days primarily because (1) **cancel-in-progress thrash** killed nearly every
+verify (18/20 recent CI cancelled), and (2) **Security/gitleaks + pin-check + smoke** targeted the
+**offline `trading-live` Mac**, so those checks never finished while the Coolify `socratic-ci` pool
+ran only suite jobs. Fixes: route gitleaks + pin-check onto `socratic-ci`; stop Playwright Smoke on
+every PR (main/nightly/manual only). Conflicts/comments were not the multi-day bottleneck.
+Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
+
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
 
 Purged the Voyage AI SDK and its dependencies, standardizing the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Dynamic imports and test-only shims maintain test suite compatibility while completely isolating Voyage from production. All 4,898 tests and the production Next.js build are fully green. Rollout: `docs/rollouts/2026-07-21-voyage-ai-purge.md`.
