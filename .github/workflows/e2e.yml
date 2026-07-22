@@ -1,35 +1,17 @@
 name: Playwright Smoke
 
-# CI-load trim (2026-07-20): `smoke` is NOT a required status check — verified live
-# against both gate mechanisms on this repo: the `main-protection` ruleset's
-# `required_status_checks` lists only `verify`, and classic branch protection's
-# `contexts` lists only `verify`, `gitleaks`, `check-pin`. (`gh api
-# repos/jaywedgeworth22/Socratic.Trade/rulesets/17945518` and
-# `gh api repos/jaywedgeworth22/Socratic.Trade/branches/main/protection`.) No GitHub
-# merge queue is configured either (no `merge_queue` ruleset rule), so the old
-# `merge_group:` trigger below was already inert. That means gating this workflow off
-# `pull_request` cannot strand a required check pending and cannot block merges.
-#
-# Why: the repo's single self-hosted `socratic-ci` runner was backlogged 71 queued
-# runs deep, and 25 of those (~35%) were Playwright Smoke PR runs — smoke is also
-# documented as flaky. Dropping the per-PR trigger removes that share of the backlog.
-# Runner capacity itself (adding a second runner) is separate, owner-approved but
-# NOT part of this change — see docs/rollouts/2026-07-20-ci-trim-smoke.md.
-#
-# Smoke now runs only on: push to `main`, a nightly schedule, and manual
-# `workflow_dispatch` — never on `pull_request` or `merge_group`. The `classify`
-# docs-only fast path below is left in place even though it's vestigial for these
-# trigger types (it always resolves `docs-only=false` for non-`pull_request` events)
-# so that restoring PR coverage later (e.g. once a second runner lands) is just
-# re-adding the `pull_request:`/`merge_group:` triggers, not redesigning the gate.
+# Playwright Smoke — NOT a required merge check (ruleset: verify only). PR trigger removed
+# 2026-07-21 to unclog the self-hosted runner queue; still runs on main / nightly / manual.
 
 on:
+  # smoke is NOT a required status check (ruleset requires only `verify`). Running it on
+  # every PR clogged the single socratic-ci pool (~35% of backlog was smoke). PR coverage
+  # removed 2026-07-21; smoke remains on main push, nightly schedule, and workflow_dispatch.
   push:
     branches:
       - main
   schedule:
-    # Nightly full-browser baseline (was weekly `17 9 * * 1`) now that smoke no
-    # longer runs on every PR.
+    # Nightly full-browser baseline now that smoke no longer runs on every PR.
     - cron: "17 9 * * *"
   workflow_dispatch:
 
@@ -39,16 +21,12 @@ concurrency:
 
 jobs:
   classify:
-    # Cheap gate-shape job: is this diff documentation-only? This workflow no longer
-    # triggers on `pull_request`/`merge_group` (see the file header), so in practice
-    # every run here is push/schedule/workflow_dispatch and always takes the "running
-    # full smoke" branch below — the docs-only fast path is retained dormant so it
-    # snaps back to life unmodified if `pull_request:` is ever re-added.
+    # Cheap gate-shape job: is this diff documentation-only? Only `pull_request` gets
+    # the fast path — push/merge_group/schedule always run the full smoke suite.
     # Reject fork PRs before fork-controlled repository content reaches the persistent
-    # self-hosted workspace (defense in depth, even though forks can't reach this
-    # workflow via the triggers currently configured).
+    # self-hosted workspace.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
     outputs:
@@ -115,7 +93,7 @@ jobs:
     if: ${{ !cancelled() }}
     # 2026-07-18: GitHub-hosted `ubuntu-latest` is not assigning runners for this repo
     # (runner_id=0/no step logs), so required smoke runs on the online Coolify Hetzner CI runner.
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     permissions:
       contents: read
       packages: read
@@ -159,10 +137,9 @@ jobs:
         if: needs.classify.outputs.docs-only != 'true'
         with:
           node-version: 24
-          cache: npm
       - name: Install dependencies
         if: needs.classify.outputs.docs-only != 'true'
-        run: npm ci
+        run: npm install --no-audit --no-fund
       # Cache the Playwright browser download (chromium, ~130MB) keyed on the lockfile
       # (which pins the playwright version). On a hit, the install step below skips the
       # multi-minute download and only re-applies system deps.
@@ -171,7 +148,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package.json') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
       - name: Install Playwright browser
@@ -190,9 +167,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-
             ${{ runner.os }}-nextjs-
       - name: Run smoke tests
         if: needs.classify.outputs.docs-only != 'true'
