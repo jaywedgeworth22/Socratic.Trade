@@ -111,14 +111,20 @@ beforeEach(() => {
     "DELETE FROM provider_usage_outbox; DELETE FROM provider_dispatch_attempts;"
   );
   getDb()
-    .prepare("DELETE FROM settings WHERE key IN (?, ?, ?, ?, ?, ?)")
+    .prepare("DELETE FROM settings WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .run(
       replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
       replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag,
       replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider,
       replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm,
       replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag,
-      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider,
+      `${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm}:legacy_high_water`,
+      `${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag}:legacy_high_water`,
+      `${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider}:legacy_high_water`,
+      `${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm}:legacy_overlap_acknowledged`,
+      `${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag}:legacy_overlap_acknowledged`,
+      `${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider}:legacy_overlap_acknowledged`
     );
 });
 
@@ -289,6 +295,92 @@ describe("usage monitor durable replay", () => {
     expect(captured[0]!.body.events[0]!.eventId).toBe(
       telemetryKey("llm", "llm-second-v2")
     );
+  });
+
+  it("keeps a persisted legacy high-water mark across bounded replay passes", async () => {
+    const boundaryAt = "2026-07-10T13:40:00.000Z";
+    const backlogAt = "2026-07-10T13:41:00.000Z";
+    insertLlm({ id: "llm-v1-boundary", createdAt: boundaryAt, costUsd: 0.01 });
+    insertLlm({ id: "llm-v1-backlog", createdAt: backlogAt, costUsd: 0.02 });
+    getDb()
+      .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(
+        replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
+        JSON.stringify({ createdAt: boundaryAt, id: "llm-v1-boundary" }),
+        new Date().toISOString()
+      );
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const first = await replay.runUsageMonitorReplay({
+      pageSize: 1,
+      maxPagesPerLedger: 1,
+    });
+    expect(first.llm).toEqual({ sent: 1, complete: false, failed: false });
+    expect(captured[0]!.body.schemaVersion).toBeUndefined();
+    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(
+      telemetryKey("llm", "llm-v1-boundary")
+    );
+    expect(storedWatermark(`${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm}:legacy_high_water`))
+      .toEqual({ createdAt: backlogAt, id: "llm-v1-backlog" });
+
+    insertLlm({
+      id: "llm-live-v2",
+      createdAt: "2026-07-10T13:42:00.000Z",
+      costUsd: 0.03,
+    });
+    captured.length = 0;
+    const second = await replay.runUsageMonitorReplay({
+      pageSize: 1,
+      maxPagesPerLedger: 1,
+    });
+    expect(second.llm).toEqual({ sent: 1, complete: false, failed: false });
+    expect(captured[0]!.body.schemaVersion).toBeUndefined();
+    expect(captured[0]!.body.events.map((event) => event.idempotencyKey)).toEqual([
+      telemetryKey("llm", "llm-v1-backlog"),
+    ]);
+
+    captured.length = 0;
+    const third = await replay.runUsageMonitorReplay({
+      pageSize: 1,
+      maxPagesPerLedger: 1,
+    });
+    expect(third.llm).toEqual({ sent: 1, complete: false, failed: false });
+    expect(captured[0]!.body.schemaVersion).toBe(2);
+    expect(captured[0]!.body.events.map((event) => event.eventId)).toEqual([
+      telemetryKey("llm", "llm-live-v2"),
+    ]);
+  });
+
+  it("fails closed to legacy catch-up for corrupt cutover state", async () => {
+    insertLlm({
+      id: "llm-corrupt-cutover",
+      createdAt: "2026-07-10T13:50:00.000Z",
+      costUsd: 0.01,
+    });
+    const cutoverKey = replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm;
+    const now = new Date().toISOString();
+    getDb()
+      .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(cutoverKey, "legacy-drain-typo", now);
+    getDb()
+      .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(`${cutoverKey}:legacy_high_water`, "not-json", now);
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.llm).toEqual({ sent: 1, complete: true, failed: false });
+    expect(captured[0]!.body.schemaVersion).toBeUndefined();
+    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(
+      telemetryKey("llm", "llm-corrupt-cutover")
+    );
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(cutoverKey))
+      .toEqual({ value: "legacy-drained" });
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+      `${cutoverKey}:legacy_high_water`
+    )).toBeUndefined();
   });
 
   it("does not advance a watermark on ambiguous failure and reconstructs the same payload", async () => {

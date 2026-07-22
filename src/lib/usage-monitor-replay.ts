@@ -159,17 +159,79 @@ function readV2CutoverState(key: string): V2CutoverState | null {
   const row = getDb()
     .prepare("SELECT value FROM settings WHERE key = ?")
     .get(key) as { value: string } | undefined;
-  return row?.value === "v2-active" ? "v2-active" : row ? "legacy-drained" : null;
+  if (row?.value === "legacy-drained" || row?.value === "v2-active") return row.value;
+  return null;
+}
+
+function legacyHighWatermarkKey(v2CutoverKey: string): string {
+  return `${v2CutoverKey}:legacy_high_water`;
+}
+
+function legacyOverlapAcknowledgedKey(v2CutoverKey: string): string {
+  return `${v2CutoverKey}:legacy_overlap_acknowledged`;
+}
+
+function readSettingValue(key: string): string | undefined {
+  const row = getDb()
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(key) as { value: string } | undefined;
+  return row?.value;
+}
+
+/**
+ * Persist the first pre-v2 high-water mark before network I/O. A bounded replay can span multiple
+ * startup/interval passes; recomputing this mark would let newly written strict-v2 rows drift into
+ * the later legacy window and acquire a second receiver identity.
+ */
+function readOrFreezeLegacyHighWatermark(
+  v2CutoverKey: string,
+  readHighWatermark: () => ReplayCursor | null
+): ReplayCursor | null {
+  const database = getDb();
+  const key = legacyHighWatermarkKey(v2CutoverKey);
+  const freeze = database.transaction((): ReplayCursor | null => {
+    const existing = database
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+    const frozen = parseCursor(existing?.value);
+    if (frozen) return frozen;
+
+    const candidate = readHighWatermark();
+    if (!candidate) return null;
+    database
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+      )
+      .run(key, JSON.stringify(candidate), new Date().toISOString());
+    const persisted = database
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+    return parseCursor(persisted?.value);
+  });
+  return freeze.immediate() as ReplayCursor | null;
 }
 
 /** Mark the v2 identity cutover only after the bounded legacy catch-up is fully acknowledged. */
 function completeV2Cutover(key: string): void {
   const now = new Date().toISOString();
-  getDb()
-    .prepare(
-      "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, 'legacy-drained', ?)"
-    )
-    .run(key, now);
+  const database = getDb();
+  const complete = database.transaction(() => {
+    database
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, 'legacy-drained', ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at " +
+        "WHERE settings.value <> 'v2-active'"
+      )
+      .run(key, now);
+    database
+      .prepare("DELETE FROM settings WHERE key = ?")
+      .run(legacyHighWatermarkKey(key));
+    database
+      .prepare("DELETE FROM settings WHERE key = ?")
+      .run(legacyOverlapAcknowledgedKey(key));
+  });
+  complete.immediate();
 }
 
 /** Monotonic BEGIN IMMEDIATE update prevents overlapping app processes from regressing a cursor. */
@@ -177,7 +239,8 @@ function advanceWatermark(
   key: string,
   v2CutoverKey: string,
   candidate: ReplayCursor,
-  markCutover = true
+  markCutover = true,
+  markLegacyOverlapAcknowledged = false
 ): ReplayCursor {
   const database = getDb();
   const advance = database.transaction((): ReplayCursor => {
@@ -185,7 +248,14 @@ function advanceWatermark(
       .prepare("SELECT value FROM settings WHERE key = ?")
       .get(key) as { value: string } | undefined;
     const current = parseCursor(row?.value);
-    if (current && compareCursors(current, candidate) >= 0) return current;
+    if (current && compareCursors(current, candidate) >= 0) {
+      if (markLegacyOverlapAcknowledged) {
+        database
+          .prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, '1', ?)")
+          .run(legacyOverlapAcknowledgedKey(v2CutoverKey), new Date().toISOString());
+      }
+      return current;
+    }
 
     const now = new Date().toISOString();
     database
@@ -201,6 +271,11 @@ function advanceWatermark(
           "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
         )
         .run(v2CutoverKey, now);
+    }
+    if (markLegacyOverlapAcknowledged) {
+      database
+        .prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, '1', ?)")
+        .run(legacyOverlapAcknowledgedKey(v2CutoverKey), now);
     }
     return candidate;
   });
@@ -371,15 +446,22 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
     // Freeze a high-water mark and drain that bounded window through the legacy idempotency path
     // before switching the ledger to strict v2 identities; rows arriving after the mark are left
     // for the normal v2 pass and can never be double-counted by the cutover.
-    const legacyHighWatermark = cutoverComplete ? null : input.readHighWatermark();
+    const legacyHighWatermark = cutoverComplete
+      ? null
+      : readOrFreezeLegacyHighWatermark(input.v2CutoverKey, input.readHighWatermark);
     const legacyCatchup = !cutoverComplete && legacyHighWatermark !== null;
+    const legacyOverlapAcknowledged = readSettingValue(
+      legacyOverlapAcknowledgedKey(input.v2CutoverKey)
+    ) === "1";
     // Legacy replay may safely include the boundary because its durable v1 identity is exactly the
     // key the receiver already deduped. Once cutover is complete, the same overlap uses strict-v2
     // event IDs and remains crash-safe as before.
     // The row at a legacy-drained cursor was ACKed under v1 identity. Keep that boundary strict
     // until a later v2 row is ACKed and advances the marker to v2-active; only v2-active cursors
     // are safe to resend inclusively under the derived v2 persistence key.
-    let inclusive = cursor !== null && (legacyCatchup || cutoverState === "v2-active");
+    let inclusive = cursor !== null && (
+      (legacyCatchup && !legacyOverlapAcknowledged) || cutoverState === "v2-active"
+    );
 
     for (let page = 0; page < input.maxPages; page += 1) {
       const rows = input.readRows(
@@ -406,7 +488,7 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
       cursor = advanceWatermark(input.watermarkKey, input.v2CutoverKey, {
         createdAt: last.created_at,
         id: last.id,
-      }, !legacyCatchup);
+      }, !legacyCatchup, legacyCatchup);
       sent += rows.length;
 
       if (rows.length < input.pageSize) {
