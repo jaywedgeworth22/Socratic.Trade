@@ -1348,18 +1348,18 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
   });
 
   it("still degrades to empty (never throws) when the retry also fails", async () => {
-    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    // Instantiate Yahoo directly — getEnrichmentProvider() is the full cascade, which fills
+    // missing fields from manual fallback after Yahoo returns {} (Codex P1 on #1857: ZZZZ got pe=10.5).
+    const { clearEnrichmentCache, YahooFinanceEnrichmentProvider } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
     vi.stubGlobal("fetch", async (url: string) => {
       if (url === "https://fc.yahoo.com") throw new Error("network down");
-      // Any quoteSummary hit would be a bug — handshake never completed.
       throw new Error(`unexpected fetch to ${url}`);
     });
 
-    const provider = getEnrichmentProvider();
-    // Unique symbol avoids cross-test cache bleed if a prior case left a shared entry.
-    const sym = "ZZZZ";
+    const provider = new YahooFinanceEnrichmentProvider();
+    const sym = "AAPL";
     vi.useFakeTimers();
     try {
       const resultPromise = provider.enrich([sym]);
