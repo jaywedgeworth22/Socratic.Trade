@@ -2232,8 +2232,14 @@ export async function rerankMatches(
   }
 
   try {
+    // Dispatch/credential lane stays on the historical "voyage-rerank" service id; health/alert
+    // labeling uses healthLane so OpenRouter/SiliconFlow outages are not misreported as Voyage.
+    const rerankProvider =
+      provider === "openrouter" || provider === "siliconflow" || provider === "voyage"
+        ? provider
+        : "voyage";
     const resp = await withRagApiHealth(
-      provider === "openrouter" ? "openrouter" : "siliconflow",
+      "voyage-rerank",
       source,
       userId,
       "rerank",
@@ -2268,12 +2274,8 @@ export async function rerankMatches(
         return res;
       },
       undefined,
-      { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", modelName, provider) },
-      // Provider-generic health/alert lane (2026-07-19): `provider` here is the ACTUAL active
-      // rerank provider (activeRerankProvider above) — carries correctly whether Voyage, OpenRouter,
-      // or SiliconFlow is serving this call, instead of the hardcoded "voyage-rerank" service name
-      // above (which still only drives the internal dispatch/credential path, unchanged).
-      { lane: "rag-rerank", provider }
+      { estimatedCostUsd: estimateRagDispatchCost([query, ...documents], "rerank", modelName, provider) },
+      { lane: "rag-rerank", provider: rerankProvider }
     );
     meterRerank(query, documents, modelName, userId, provider);
     recordRagOperation();
