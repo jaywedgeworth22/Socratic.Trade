@@ -15,6 +15,37 @@
 Rollout: `docs/rollouts/2026-07-21-fleet-watchdog-disk-followups.md`.
 
 ## 2026-07-20 — GROK4 multi-wave Wave A (+C partial) on `grok/multi-wave-a-onward`
+## 2026-07-22 — Usage telemetry v2 producer adoption (CODEX, `codex/usage-telemetry-v2-20260721`)
+
+Socratic now exact-pins shared `v2.0.0` over HTTPS and emits only strict v2 usage telemetry:
+batch-level `producerId`, event-level `eventId`, and `producerKeyRef`, with typed v2 ACK parsing.
+Fresh durable replay is rebuilt directly from the LLM/RAG/provider ledgers; pre-v2 in-memory HMR
+buffers are normalized once before retry. Replay now performs one synchronous `BEGIN IMMEDIATE`
+direct-v2 cutover for all three ledgers before any network await: each cursor is seeded to its current
+high-water mark, skipped pre-v2 row counts are retained as rollout receipts, and only newer rows use
+strict v2. The seeded boundary stays exclusive until the first newer v2 ACK; unknown/corrupt cutover
+or watermark state halts that lane without network or state mutation. Per the owner's risk tolerance,
+the migration intentionally does not replay the bounded pre-v2 remainder: those rows were normally
+already live-pushed under v1, while any unacknowledged remainder may be lost rather than risk duplicate
+money. No legacy wire path remains. Schema-valid partial ACKs are delivery failures unless the
+receiver reports the full sent count with zero rejected events, so live payloads retry unchanged and
+durable replay cannot advance its watermark past a partial acceptance. The receiver gate is cleared:
+Usage-Monitor exact main `2bc276497ae28441762768911f34eb5e8e2fdd30` is committed live on
+Oracle. The combined landing gate passes under Node 24: 5 files / 71 tests (66 telemetry and 5
+workflow), TypeScript, scoped ESLint, workflow YAML parsing, and diff-check.
+## 2026-07-22 — Shared-package pin check queue unblock (PR replacement for #1780)
+
+The pin check now emits a status on every pull request and installs Node 24 before its shell
+comparison invokes `node`. This replaces the stale #1780 branch, whose current workflow did not
+touch the pin workflow and whose hosted check failed with `node: command not found`. Rollout:
+`docs/rollouts/2026-07-22-shared-package-pin-check-queue-unblock.md`.
+
+The workflow correction is now subsumed into telemetry PR #1889 so one protected gate can verify the
+combined change. Its focused queue-safety test passes 5/5; the combined Node 24 gate passes 5 files /
+71 tests plus TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. PR #1890 is closed as
+superseded after its exact reviewed history was subsumed into #1889; its branch is retained and
+reopenable. Auto-merge on #1889 is held off until final-head hosted checks and review-thread
+verification pass.
 ## 2026-07-22 — PR #1888 effort-log correction
 
 Corrected the stale duplicate effort row in `docs/EFFORT-LOG.md`: PR #1886 is merged, and the
