@@ -196,6 +196,49 @@ As of 2026-07-08 (assignment-rule update).
   `docs/handoffs/2026-07-19-monet-session-closeout-handoff.md` §7 (fresh port, NOT a rebase): (1) kill the
   silent coach-note `slice(-20)` truncation via append-only `socratic_coach_note_archive` + audit receipt +
   `doc_type: 'coach-note'` vector writer; (2) a writer for the retrieved-but-never-written `lesson` doc-type
+  (money-adjacent prompt path → frontier adversarial review). Team recipe: scouts → design → implementers →
+  multi-lens verify → land via land.sh. Old w2 branches marked superseded once landed.
+
+- **[Socratic.Trade][CLAUDE on AG's lane] PR #1775 review-thread closeout — scoped re-embed progress
+  isolation + reindex-all CLI fail-fast guards (branch `agent/ag-reindex-bge-m3`, worktree
+  `land-ag-reindex-bge-m3`, 2026-07-19, owner-directed: fix the findings before merging rather than
+  defer them) — FIXES PUSHED, AWAITING CI + THREAD RESOLUTION.** Resolved all 6 unresolved
+  codex-connector threads (1 P1 + 5 P2). The P1 was confirmed and is BROADER than reported: (a) the
+  admin API route also passes `symbols` (`app/api/admin/reembed/route.ts:94`), so the suggested
+  CLI-only guard would have left that path exposed — fixed in `src/lib/rag/corpus-reembed.ts`
+  instead; (b) a SECOND data-loss bug shares the root cause — `watermark` is a single shared
+  per-docType cursor, so a scoped run advances it and a later FULL run silently SKIPS other symbols'
+  documents, whose legacy vectors the purge then deletes. **Library fix REMOVED from this PR before
+  merge** — #1777 (`claude/corpus-reembed-hardening`) already implements it, independently reaching
+  the identical mechanism plus a `watermarkEmbedRevision` guard and adversarial tests; keeping both
+  only produced a conflict in `corpus-reembed.ts`. That file and `test/corpus-reembed.test.ts` are
+  reverted to match `main`, so #1775 and #1777 no longer conflict and may land in either order.
+  **#1777 is the PR that lands the library fix.** This row now covers the CLI guards only. Plus 5 CLI guards: unknown `--doc-types` no
+  longer selects ALL types, invalid `--max-texts` no longer means "no spend cap", retired flags abort,
+  a refused purge exits 1 instead of 0, `--purge-legacy` requires an explicit `--purge-token`, and
+  `--ticker`+`--purge-legacy` is refused. 9/9 corpus-reembed tests (2 new regression), 2/2
+  reindex-all, eslint 0 errors, all 6 guards smoke-tested. Rollout:
+  `docs/rollouts/2026-07-19-reindex-all-review-fixes.md`. _(AG owns the underlying PR; this row
+  covers only the review-fix pass.)_
+- **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
+  metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
+  claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
+  `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2: (A) close 3 unmetered paid-call gaps
+  (`market-signals/massive.ts` 3x fetch, `rag/query-deconstruct.ts` gpt-4o-mini,
+  `rag/search-fusion.ts` embedding fallback); (B) thread `buildCallClassifier`/
+  `openrouterRequestEnrichment` (flat `trace`, no `metadata` nesting — RESOLVED 2026-07-18 shape) +
+  OpenRouter generation-id capture (`providerRequestId`) across `llm-call.ts`, 11 call sites,
+  `chat/llm.ts`, `vector-db.ts`; bump shared pin to `904ea96a`. Empirical OpenRouter acceptance
+  check (tiny paid probe, ~$0.01) included. Never merges own PR (auto-deploy on merge) — adversarial
+  review lands it.
+- **[Socratic.Trade][CLAUDE] Monet-handoff §7 ports: coach-note archive + coach-note/lesson vector writers
+  (worktree `socratic-trade-agent-team-697845`, branch `claude/socratic-trade-agent-team-697845`, claimed
+  2026-07-18) — IN PROGRESS.** From-scratch schema port of the two PARTIAL-verdicted w2 branches per
+  `docs/handoffs/2026-07-19-monet-session-closeout-handoff.md` §7 (fresh port, NOT a rebase): (1) kill the
+  silent coach-note `slice(-20)` truncation via append-only `socratic_coach_note_archive` + audit receipt +
+  `doc_type: 'coach-note'` vector writer; (2) a writer for the retrieved-but-never-written `lesson` doc-type
+  (money-adjacent prompt path → frontier adversarial review). Team recipe: scouts → design → implementers →
+  multi-lens verify → land via land.sh. Old w2 branches marked superseded once landed.
   (money-adjacent prompt path → frontier adversarial review). Handoff: docs/handoffs/2026-07-18-claude-to-antigravity-monet-s7-ports.md.
   Cached recon available; resume wf_f2e1ca12-b41 or start fresh. Old w2 branches marked superseded once landed.
 
@@ -2054,6 +2097,18 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **SEC/RAG parser/chunker hardening and structured facts/events extraction (branch `agent/ag-sec-parser-hardening`, PR #1776) — READY TO LAND 2026-07-19.** Hardened SEC/RAG parser to address deterministic provenance rules, prevent runaway token amplification, validate structured XBRL numerics to prevent SQLite NaN/null poisoning, and fix nested table DOM recursion. Verified via regression test fixtures and full compilation gates.
+  *Correction (2026-07-19, CLAUDE, in place per board rules): originally tagged ANTIGRAVITY; ownership moved through a same-day review-thread closeout pass (see below) — untag on completion per the "assignment is a live claim" rule.*
+  **2026-07-19 review-thread closeout (CLAUDE):** all four `chatgpt-codex-connector` P2 threads on PR #1776 now have code fixes (a prior same-day pass fixed 2/4, this pass fixed the remaining 2/4 — none were false positives). `ChunkInput.published_at` made required in `src/lib/rag/chunk.ts` (zero call-site fallout, verified via `npx tsc --noEmit`); nested table headings inside outer table cells now emit real section-break blocks instead of being flattened into cell prose (`src/lib/web-sources/sec-parser.ts`). 2 new tests in `test/sec-parser.test.ts` (16/16 passing); 69/69 + 109/109 + 30/30 across the broader RAG/SEC suites; lint 0 errors; tsc clean. Full `npm test`/`npm run build` gate via `scripts/land.sh`. Details: `docs/rollouts/2026-07-19-pr1776-review-thread-closeout.md`.
+- **Socratic server/infrastructure panel reliability (CODEX delegated implementation, owner-directed 2026-07-18) — FINAL HARDENING GREEN / SERIALIZED FULL GATE PENDING; PR PENDING.** Partial provider failures return HTTP 200 degraded receipts with valid data retained; current Hetzner network series and core-normalized CPU are covered; production partial configuration cannot masquerade as local; a 120-second one-entry single-flight cache plus bounded stale fallback prevents per-poll fanout. Provider JSON is capped at 512 KiB, malformed metrics envelopes cannot replace good cached series, and the client rejects malformed success bodies while marking retained data stale. The UI shows `asOf`/cache age/stale, leaves missing values unavailable, and preserves the coordinated `Server Stats` title. Remote targets default to neutral `REMOTE`; only explicit `SERVER_METRICS_TARGET_ENVIRONMENT=production` labels production. Focused tests 18/18, TypeScript, scoped ESLint, and diff check pass; independent re-review found no P0-P2 and its P3 coverage request is addressed. The first Node 24 full rerun was invalidated by concurrent unannounced full gates and unrelated timeout flakes, so the required serialized final-tree gate is pending. Branch `codex/socratic-infra-panel-reliability`, worktree `/Users/jay/apps/socratic-infra-panel-reliability`. No push, PR, merge, deploy, provider, token, Cloudflare Access, infrastructure, or production-data mutation yet.
+  **2026-07-18 current-main update (CODEX):** merged `origin/main` including PR #1740, resolved the sole admin-client conflict while retaining `Server Stats`, fixed the independent P2 warning-expansion finding by limiting Coolify normalization to 500 resources and 20 detailed warnings plus summaries, and passed 19/19 focused tests, scoped ESLint, TypeScript, diff check, and local HTTP 200 SSR smoke. Re-review and hosted/full gates remain before merge/deploy.
+- **[Socratic.Trade][CODEX] PR #1735 verify cleanup (branch `agent/ag-recovery-v48-migration`,
+  2026-07-18) — LANDING / REVIEW ROUND 2 FIXED LOCALLY.** Merged `origin/main` and aligned the
+  missed OpenRouter attribution assertions with the branch's bare-model telemetry behavior. Fresh
+  Codex comments fixed by preserving imported company-name display casing and regenerating
+  `package-lock.json` so clean installs include the missing peer dependency tree. Verification:
+  `npm ci --dry-run --ignore-scripts` passes; `npm test -- test/securities-import.test.ts` passes
+  after a normal fresh `npm ci`. Pushing back to PR #1735 for hosted verify.
 - **[Socratic.Trade][MONET] Shared model-identity helper (branch `monet/model-identity-shared`,
   2026-07-17) — LANDING.** Owner-directed follow-up (AG capped): one shared
   `src/lib/model-identity.ts` replaces the duplicate `cleanModelId` (model-stats, AG/#1703) +
@@ -3798,6 +3853,8 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
 
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
+| 2026-07-21 | ANTIGRAVITY | Completed | Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) | agent/antigravity-apple-auth-fix |
 | 2026-07-20 | GROK | In Progress | ST: 32/32 open PRs MERGEABLE (phantom main merges pushed; CI queue drain residual) (ST/CT/UM unstick + residual) | multi-app |
 | 2026-07-20 | Integrate 5 RapidAPI/FilingAPI/ROIC Providers | Completed | Added FMP, Insiders, TwelveData, FilingAPI, and ROIC.ai into the enrichment cascade with tests and quotas | AG |
 
@@ -3806,3 +3863,5 @@ brackets; effort S/M/L.
 
 | 2026-07-20 | GROK | In Progress | Claude Desktop residual: ST 0 conflicts (phantoms cleared), CT #650/#665 unstuck, UM #583 merged; CI queue drain (smoke cancelled); #1841 OR $3 threshold auto-merge armed | multi |
 | 2026-07-20 | Document Summarizer & Abstracts DB Migration | Completed | Added migration 55 for document_abstracts, db-document-abstracts CRUD, document-summarizer engine, and vitest unit tests | AG |
+
+| 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs while collapsing stale pending heads; remove every workflow target for absent trading-live; keep observer reporting on socratic-deploy; stop smoke-on-PR; align six stale main assertions | monet/ci-runner-and-queue-fixes |
