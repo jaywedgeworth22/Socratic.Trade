@@ -422,6 +422,32 @@ describe("corpus-reembed", () => {
     expect(mocks.deleteMany).not.toHaveBeenCalled();
   });
 
+  it("does not let a symbol-scoped re-embed authorize full legacy purge", async () => {
+    const { resetCorpusReembedStateForTest, runCorpusReembedForTest, purgeLegacyEmbeddingSpace } =
+      await import("../src/lib/rag/corpus-reembed");
+    resetCorpusReembedStateForTest();
+    await insertSecFilingChunk({
+      contentHash: "hash-scoped-purge-1",
+      symbol: "SCOP",
+      accession: "0000320193-26-000008",
+      text: "Scoped re-embed filing chunk for SCOP Corp; not proof the full corpus is complete.",
+      form: "10-K",
+      filedAt: "2026-02-08T00:00:00.000Z"
+    });
+    await activateBgeM3();
+
+    const scopedRun = await runCorpusReembedForTest({ docTypes: ["sec-filings"], symbols: ["SCOP"] });
+    const secResult = scopedRun.result!.docTypes.find((d) => d.docType === "sec-filings")!;
+    expect(secResult.completed).toBe(true);
+
+    const purge = await purgeLegacyEmbeddingSpace({ docTypes: ["sec-filings"], confirm: "purge-voyage-vectors" });
+    expect(purge.acquired).toBe(true);
+    expect(purge.result!.ok).toBe(false);
+    expect(purge.result!.refused).toMatch(/has not completed/);
+    expect(purge.result!.purged).toBe(0);
+    expect(mocks.deleteMany).not.toHaveBeenCalled();
+  });
+
   it("refuses purge on wrong confirm token and while Voyage is still the active model", async () => {
     const { resetCorpusReembedStateForTest, runCorpusReembedForTest, purgeLegacyEmbeddingSpace } =
       await import("../src/lib/rag/corpus-reembed");
