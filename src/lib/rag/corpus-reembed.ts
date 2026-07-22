@@ -331,14 +331,21 @@ function listSecFilingCandidates(afterRowid: number, symbols: string[] | undefin
 }
 
 /**
- * True when the LIVE sec-filings ingestion path (`ingestFiling`, sec-filings.ts) has already
- * committed this accession into the CURRENT embedding space. The live path's whole-document
- * identity — doc_id `${ticker}:${accession}:${docType}` with the full section-derived body and
- * url — CANNOT be reconstructed from FTS chunk rows, so the backfill cannot dedup onto the same
- * commit; instead it must SKIP accessions the live path already covered (2026-07-18 adversarial
- * review, MUST-FIX 2: without this, post-flip filings ingested live AND backfilled here would
- * exist twice in the corpus under two identities). `vector_ingest_commits.accession` stores the
- * live path's doc_id verbatim.
+ * True when a CURRENT-space committed ingest already covers this SEC accession, under any of the
+ * identities production writers use:
+ *   - Live `ingestFiling` (sec-filings.ts): doc_id/accession = `${ticker}:${accession}:${form}`
+ *   - SEC ingest worker (sec-ingest-worker.ts): doc_id = `${accession}:${sequence}:${documentName}`
+ *     (storeDocument stores that string in `vector_ingest_commits.accession` / document_key)
+ *   - Bare accession (FTS / legacy shapes that keep the dashed accession alone)
+ *
+ * The FTS backfill cannot reconstruct the live whole-document body/url, so it must SKIP accessions
+ * already covered rather than create a second, differently-identified copy (2026-07-18 adversarial
+ * review, MUST-FIX 2; extended 2026-07-22 to include the worker identity so post-flip worker
+ * commits are not double-embedded by this path).
+ *
+ * Matching is intentionally exact / prefix-exact on the accession field variants above — never a
+ * free-text `CONTAINS` — so an unrelated commit whose id merely mentions the accession mid-string
+ * cannot false-positive skip a filing that is not actually covered.
  */
 function liveSecFilingCommittedInCurrentSpace(
   symbol: string,
@@ -347,11 +354,24 @@ function liveSecFilingCommittedInCurrentSpace(
   embedRevision: string
 ): boolean {
   const liveDocId = `${symbol}:${accession}:${form ?? "10-K"}`;
+  // Worker multi-doc identity: `${accession}:${sequence}:${documentName}`. Trailing `:%` is safe
+  // because EDGAR accessions are fixed-shape and never prefixes of each other.
+  const workerPrefix = `${accession}:%`;
   const row = getDb().prepare(`
     SELECT 1 FROM vector_ingest_commits
-    WHERE source = 'sec-edgar' AND accession = ? AND embed_revision = ? AND state = 'committed'
+    WHERE source = 'sec-edgar'
+      AND embed_revision = ?
+      AND state = 'committed'
+      AND (
+        accession = ?
+        OR document_key = ?
+        OR accession = ?
+        OR document_key = ?
+        OR accession LIKE ?
+        OR document_key LIKE ?
+      )
     LIMIT 1
-  `).get(liveDocId, embedRevision);
+  `).get(embedRevision, liveDocId, liveDocId, accession, accession, workerPrefix, workerPrefix);
   return Boolean(row);
 }
 
@@ -622,6 +642,11 @@ export function insiderForm4AvailabilityFloor(periodOfReport: string): string {
     const day = date.getUTCDay();
     if (day !== 0 && day !== 6) added += 1;
   }
+  // Rule 16a-3(g): Form 4 is due by the END of the second business day after the transaction.
+  // `period_of_report` is date-only, so +2 business days lands at midnight UTC of the due day;
+  // stamp end-of-due-day UTC so as-of queries earlier that calendar day cannot retrieve the
+  // filing before the legal deadline closes (look-ahead-safe direction).
+  date.setUTCHours(23, 59, 59, 999);
   return date.toISOString();
 }
 
@@ -743,8 +768,11 @@ function listAccountCandidates(symbols: string[] | undefined): Array<{ userId: s
   }
   // Experience-memory documents aren't per-symbol content — the `symbols` filter doesn't apply at
   // the account level (a symbol filter would require inspecting every account's closed lots, which
-  // defeats the point of an account-granularity watermark). Accepted trade-off, documented in the
-  // rollout note: `symbols` scopes sec-filings/earningscalls/insider-form4 only.
+  // defeats the point of an account-granularity watermark). Accepted trade-off: `symbols` scopes
+  // sec-filings/earningscalls/insider-form4 only. Because this path still does a FULL account
+  // scan when symbols are set, runCorpusReembedLocked treats experience-memory as non-scoped for
+  // watermark/completion persistence (isScopedPersist) so targeted top-ups cannot burn the
+  // experience-memory budget with no resumable progress.
   void symbols;
   return accounts.sort((a, b) => (a.userId === b.userId ? a.accountNumber.localeCompare(b.accountNumber) : a.userId.localeCompare(b.userId)));
 }
@@ -903,14 +931,29 @@ async function runCorpusReembedLocked(
     : undefined;
   let stoppedForCap = false;
 
-  // Symbol-scoped runs are STATELESS "targeted top-up" operations: they neither read nor write
-  // watermarks or cumulative counts, and they can never stamp completion. A scoped scan only
-  // visits the requested symbols' rows, so any watermark it advanced would leave un-requested
-  // symbols permanently skipped by a later full scan — and any completion it stamped would let
-  // the purge gate believe the whole docType was covered (2026-07-18 adversarial review,
-  // MUST-FIX 1a — proven by test/corpus-reembed-adversarial.test.ts). Idempotency for scoped
-  // reruns comes from storeDocument's committed-receipt reuse, not from watermarks.
-  const scoped = Boolean(symbols && symbols.length > 0);
+  // Symbol filters make most docTypes STATELESS "targeted top-up" operations: they neither read
+  // nor write watermarks/completion for those types. A scoped scan only visits the requested
+  // symbols' rows, so any watermark it advanced would leave un-requested symbols permanently
+  // skipped by a later full scan — and any completion it stamped would let the purge gate believe
+  // the whole docType was covered (2026-07-18 adversarial review, MUST-FIX 1a — proven by
+  // test/corpus-reembed-adversarial.test.ts). Idempotency for scoped reruns comes from
+  // storeDocument's committed-receipt reuse, not from watermarks.
+  //
+  // Per-docType exception: `experience-memory` ignores the symbol filter (listAccountCandidates
+  // always scans every connected account — lots aren't filterable without inspecting every
+  // account). When symbols are set, experience-memory still does a full account scan, so its
+  // watermarks/completion remain trustworthy and MUST persist — otherwise a targeted top-up that
+  // includes experience-memory can burn the full account budget with no resumable progress
+  // (2026-07-22 review P2). Symbol-honoring docTypes still skip all persistence under symbols.
+  const requestHasSymbols = Boolean(symbols && symbols.length > 0);
+  /** True when this docType actually narrows its candidate scan by `symbols`. */
+  const docTypeHonorsSymbolFilter = (docType: CorpusReembedDocType): boolean =>
+    docType !== "experience-memory";
+  /** True when persistence (watermark / completion) must be skipped for this docType. */
+  const isScopedPersist = (docType: CorpusReembedDocType): boolean =>
+    requestHasSymbols && docTypeHonorsSymbolFilter(docType);
+  // Keep `scoped` for audit payload / callers that mean "request carried a symbol filter".
+  const scoped = requestHasSymbols;
 
   const priorProgress = readProgress();
   const results: CorpusReembedDocTypeResult[] = [];
@@ -918,9 +961,10 @@ async function runCorpusReembedLocked(
   let driftError: string | undefined;
 
   const persistRunning = (docType: CorpusReembedDocType, docState: DocTypeRunState, base: { candidatesSeen: number; embedded: number; reusedInSpace: number; failed: number }) => {
-    // Dry runs and symbol-scoped runs are strictly non-persisting: counts come back in the
-    // response, and neither watermarks, cumulative counts, nor completion stamps may advance.
-    if (opts.dryRun || scoped) return;
+    // Dry runs and symbol-scoped (filter-honoring) docTypes are strictly non-persisting: counts
+    // come back in the response, and neither watermarks, cumulative counts, nor completion stamps
+    // may advance. experience-memory is NOT symbol-scoped even when symbols are set — see above.
+    if (opts.dryRun || isScopedPersist(docType)) return;
     // Post-write drift re-check, specifically for the COMPLETION stamp. `throwIfCancelled` catches
     // a model flip at each per-item boundary, but a flip that lands *during* the final item's async
     // write has no later boundary to trip: the loop ends normally with `completed: true`, and the
@@ -968,7 +1012,10 @@ async function runCorpusReembedLocked(
     // under the embedding-space revision that produced them. On mismatch — a model flip since the
     // last run — discard and rescan from the start (MUST-FIX 1b): resuming a stale end-of-corpus
     // watermark would "complete" instantly with zero embeds into the new space.
-    const priorIsCurrentRevision = !scoped && !opts.dryRun && prior?.watermarkEmbedRevision === embedRevision;
+    // Symbol-filter-honoring docTypes never resume from watermarks (they are stateless top-ups);
+    // experience-memory does resume even when the request carries symbols.
+    const priorIsCurrentRevision =
+      !isScopedPersist(docType) && !opts.dryRun && prior?.watermarkEmbedRevision === embedRevision;
     const initialWatermark = priorIsCurrentRevision ? (prior?.watermark ?? null) : null;
     const base = priorIsCurrentRevision
       ? {
@@ -1059,10 +1106,13 @@ async function runCorpusReembedLocked(
       : stoppedForCap
         ? "stopped-cap"
         : "completed";
-  // Dry runs and symbol-scoped runs persist NOTHING (same contract as persistRunning above) —
-  // counts return in the response, and the stored status/watermarks stay exactly as the last
-  // full-corpus real run left them.
-  if (!opts.dryRun && !scoped) {
+  // Dry runs and purely symbol-scoped runs (every requested docType honors the symbol filter)
+  // persist NOTHING at the top level — counts return in the response, and the stored status/
+  // watermarks stay exactly as the last full-corpus real run left them. When the run includes
+  // experience-memory (which ignores symbols and does persist per-docType progress), still write
+  // the top-level status so the operator can observe completion/budget/drift for that work.
+  const anyPersistingDocType = docTypes.some((dt) => !isScopedPersist(dt));
+  if (!opts.dryRun && anyPersistingDocType) {
     const now = new Date().toISOString();
     const existing = readProgress();
     writeProgress({
