@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
   vi.resetModules();
+  vi.setConfig({ testTimeout: 180000 });
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-chat-draft-policy-${randomUUID()}.db`)}`;
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-05T12:00:00.000Z"));
