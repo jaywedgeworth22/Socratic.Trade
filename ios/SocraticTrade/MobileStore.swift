@@ -293,6 +293,22 @@ final class MobileStore: ObservableObject {
         }
     }
 
+    func loginWithToken(jwt: String) async {
+        guard !isSigningIn else { return }
+        guard client.installSessionToken(jwt) else {
+            error = "The web sign-in callback did not contain a valid session. Try again."
+            return
+        }
+        isSigningIn = true
+        defer { isSigningIn = false }
+        await load()
+        if isAuthenticated {
+            startEvents()
+        } else if error == nil {
+            error = "Authentication failed after web sign-in. Try again."
+        }
+    }
+
     func dismissError() {
         error = nil
     }

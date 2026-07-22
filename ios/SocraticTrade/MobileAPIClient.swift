@@ -103,6 +103,41 @@ struct MobileAPIClient {
         return try await send(request)
     }
 
+    /// Install an Auth.js session token returned by the native OAuth callback. The web OAuth flow
+    /// remains server-authoritative; this only bridges the browser session into URLSession's
+    /// cookie jar so Google/GitHub accounts can use the same mobile API as Apple accounts.
+    @discardableResult
+    func installSessionToken(_ token: String) -> Bool {
+        guard
+            !token.isEmpty,
+            let host = baseURL.host,
+            let cookie = HTTPCookie(properties: [
+                .domain: host,
+                .path: "/",
+                .name: "__Secure-authjs.session-token",
+                .value: token,
+                .secure: "TRUE",
+                .expires: NSDate(timeIntervalSinceNow: 30 * 24 * 60 * 60)
+            ])
+        else {
+            return false
+        }
+        HTTPCookieStorage.shared.setCookie(cookie)
+        // Development deployments use the unprefixed Auth.js cookie name. Setting both is safe
+        // because the backend selects the appropriate name for its current HTTPS mode.
+        if let fallbackCookie = HTTPCookie(properties: [
+            .domain: host,
+            .path: "/",
+            .name: "authjs.session-token",
+            .value: token,
+            .secure: "TRUE",
+            .expires: NSDate(timeIntervalSinceNow: 30 * 24 * 60 * 60)
+        ]) {
+            HTTPCookieStorage.shared.setCookie(fallbackCookie)
+        }
+        return true
+    }
+
     func events(onEvent: @escaping () -> Void) async throws {
         let bytes: URLSession.AsyncBytes
         let response: URLResponse

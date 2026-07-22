@@ -93,7 +93,25 @@ struct LoginView: View {
                         .tint(.white)
                 }
             }
+
+            webAuthButton(provider: "google", title: "Sign in with Google", systemImage: "g.circle.fill", tint: .blue)
+            webAuthButton(provider: "github", title: "Sign in with GitHub", systemImage: "chevron.left.forwardslash.chevron.right", tint: .gray)
         }
+    }
+
+    private func webAuthButton(provider: String, title: String, systemImage: String, tint: Color) -> some View {
+        Button {
+            beginWebAuth(provider: provider)
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 52)
+                .foregroundStyle(.white)
+                .background(tint, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .disabled(store.isSigningIn)
+        .accessibilityHint("Opens the secure Socratic.Trade sign-in page")
     }
 
     private var privacyNote: some View {
@@ -144,6 +162,43 @@ struct LoginView: View {
             await store.loginWithApple(identityToken: identityToken, name: name)
         }
     }
+
+    private func beginWebAuth(provider: String) {
+        store.dismissError()
+        var components = URLComponents(string: "https://socratictrade.com/api/auth/signin/\(provider)")
+        components?.queryItems = [
+            URLQueryItem(name: "callbackUrl", value: "https://socratictrade.com/api/mobile/auth-redirect")
+        ]
+        guard let url = components?.url else {
+            store.error = "Could not start web sign-in."
+            return
+        }
+
+        let contextProvider = WebAuthContextProvider()
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "socratictrade") { callbackURL, error in
+            if let error {
+                if let authError = error as? ASWebAuthenticationSessionError, authError.code == .canceledLogin {
+                    return
+                }
+                Task { @MainActor in store.error = error.localizedDescription }
+                return
+            }
+            guard
+                let callbackURL,
+                let token = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "token" })?.value,
+                !token.isEmpty
+            else {
+                Task { @MainActor in store.error = "Invalid callback URL from web sign-in." }
+                return
+            }
+            Task { @MainActor in
+                await store.loginWithToken(jwt: token)
+            }
+        }
+        session.presentationContextProvider = contextProvider
+        session.prefersEphemeralWebBrowserSession = false
+        WebAuthSessionManager.shared.start(session: session, provider: contextProvider)
+    }
 }
 
 private struct LoginFeature: View {
@@ -159,6 +214,28 @@ private struct LoginFeature: View {
                 .font(.subheadline)
             Spacer(minLength: 0)
         }
+    }
+}
+
+@MainActor
+private final class WebAuthSessionManager {
+    static let shared = WebAuthSessionManager()
+    private var session: ASWebAuthenticationSession?
+    private var contextProvider: WebAuthContextProvider?
+
+    func start(session: ASWebAuthenticationSession, provider: WebAuthContextProvider) {
+        self.session = session
+        self.contextProvider = provider
+        session.start()
+    }
+}
+
+private final class WebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
     }
 }
 

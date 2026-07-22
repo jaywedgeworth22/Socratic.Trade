@@ -148,4 +148,71 @@ describe("immediate mobile protective state", () => {
     expect(completed.status).toBe("succeeded");
     expect(db.getPolicy(userId, accountId).systemState).toBe("close_only");
   });
+
+  it("preserves queued sell/cover approvals while cancelling opening approvals", async () => {
+    const db = await import("../src/lib/db");
+    const mobile = await import("../src/lib/mobile-api");
+    const userId = `mobile-exit-preserve-${randomUUID()}`;
+    const accountId = `account-${randomUUID()}`;
+    const accountNumber = `PAPER-${randomUUID()}`;
+    db.upsertConnectedAccount({
+      id: accountId,
+      userId,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber,
+      label: "Exit preservation",
+      isActive: true
+    });
+    db.setPolicy({
+      ...db.getPolicy(userId, accountId),
+      systemState: "active",
+      additionalSymbols: ["AAPL"]
+    }, userId, accountId);
+
+    db.insertProposal({
+      id: "exit-proposal",
+      userId,
+      runId: "run-exit",
+      accountNumber,
+      proposal: { symbol: "AAPL", side: "sell" },
+      decision: { approved: true, reasons: [] },
+      status: "proposed"
+    });
+    db.insertProposal({
+      id: "opening-proposal",
+      userId,
+      runId: "run-opening",
+      accountNumber,
+      proposal: { symbol: "AAPL", side: "buy" },
+      decision: { approved: true, reasons: [] },
+      status: "proposed"
+    });
+
+    const exitApproval = mobile.queueMobileCommand({
+      userId,
+      commandType: "proposal.approve",
+      payload: { proposalId: "exit-proposal" },
+      idempotencyKey: "exit-approval"
+    });
+    const openingApproval = mobile.queueMobileCommand({
+      userId,
+      commandType: "proposal.approve",
+      payload: { proposalId: "opening-proposal" },
+      idempotencyKey: "opening-approval"
+    });
+    const stop = mobile.queueMobileCommand({
+      userId,
+      commandType: "strategy.stop",
+      idempotencyKey: "stop-exits"
+    });
+
+    await mobile.executeProtectiveMobileCommandImmediately(stop.command.id, userId);
+
+    expect(mobile.getMobileCommand(exitApproval.command.id, userId)?.status).toBe("queued");
+    expect(mobile.getMobileCommand(openingApproval.command.id, userId)).toMatchObject({
+      status: "cancelled",
+      error: "Cancelled because strategy.stop took immediate effect."
+    });
+  });
 });

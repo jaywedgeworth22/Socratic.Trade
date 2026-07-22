@@ -586,13 +586,19 @@ function cancelQueuedRiskIncreasingCommands(
   const cancelled = database.transaction(() => {
     const rows = database.prepare(`
       SELECT id
+        , command_type
+        , payload
       FROM mobile_commands
       WHERE user_id = ?
         AND id <> ?
         AND status = 'queued'
         AND command_type IN (${placeholders})
       ORDER BY queued_at ASC
-    `).all(userId, exceptCommandId, ...RISK_INCREASING_QUEUED_COMMAND_TYPES) as Array<{ id: string }>;
+    `).all(userId, exceptCommandId, ...RISK_INCREASING_QUEUED_COMMAND_TYPES) as Array<{
+      id: string;
+      command_type: MobileCommandType;
+      payload: string;
+    }>;
     const update = database.prepare(`
       UPDATE mobile_commands
       SET status = 'cancelled', error = ?, finished_at = ?, updated_at = ?
@@ -600,6 +606,22 @@ function cancelQueuedRiskIncreasingCommands(
     `);
     const records: MobileCommandRecord[] = [];
     for (const row of rows) {
+      // A queued approval may be an exit: preserve sell/cover approvals so Close-only and
+      // Liquidating can still reduce risk. Only buy/short approvals increase exposure. An
+      // approval whose proposal has already disappeared is safe to cancel as stale work.
+      if (row.command_type === "proposal.approve") {
+        let proposalId: string | undefined;
+        try {
+          const payload = JSON.parse(row.payload) as Record<string, unknown>;
+          proposalId = typeof payload.proposalId === "string" ? payload.proposalId : undefined;
+        } catch {
+          // Malformed queued payloads cannot execute a valid approval, so they remain cancellable.
+        }
+        const proposal = proposalId ? getProposal(proposalId, userId) : undefined;
+        if (proposal && (proposal.proposal.side === "sell" || proposal.proposal.side === "cover")) {
+          continue;
+        }
+      }
       const reason = `Cancelled because ${protectiveCommandType} took immediate effect.`;
       const result = update.run(reason, nowIso, nowIso, row.id, userId);
       if (result.changes !== 1) continue;
