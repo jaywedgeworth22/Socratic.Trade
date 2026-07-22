@@ -1445,18 +1445,15 @@ async function withRagApiHealth<T>(
   // Still what drives the durable-dispatch/credential path below (withDurableRagProviderDispatch) —
   // unchanged, a separate concern from health/alert labeling. Pinecone call sites pass "pinecone"
   // and nothing else changes for them.
-  service: "pinecone" | "voyage" | "voyage-rerank",
+  // Dispatch/credential service id (must match withDurableRagProviderDispatch). healthLane is a
+  // separate label for rag-embed/rag-rerank so OpenRouter/SiliconFlow outages are not reported as Voyage.
+  service: "pinecone" | "voyage" | "voyage-rerank" | "openrouter" | "openrouter-rerank" | "siliconflow" | "siliconflow-rerank",
   source: ApiKeySource,
   userId: string,
   operation: string,
   fn: () => Promise<T>,
   leaseGuard?: VectorStoreLeaseGuard,
   dispatch?: RagDispatchOptions,
-  // Provider-generic health/alert identity for embed/rerank call sites (added 2026-07-19): when
-  // set, logApiHealth/alertRagConnectionFailure record `healthLane.lane` ("rag-embed"/"rag-rerank")
-  // instead of the historical "voyage"/"voyage-rerank" service name, and carry `healthLane.provider`
-  // (the ACTUAL active embed/rerank provider) so an OpenRouter/SiliconFlow outage is no longer
-  // misreported as "Voyage connection failed". Omit for pinecone calls (single fixed vendor).
   healthLane?: { lane: "rag-embed" | "rag-rerank"; provider: "voyage" | "openrouter" | "siliconflow" }
 ): Promise<T> {
   assertVectorStoreLease(leaseGuard);
@@ -2232,14 +2229,18 @@ export async function rerankMatches(
   }
 
   try {
-    // Dispatch/credential lane stays on the historical "voyage-rerank" service id; health/alert
-    // labeling uses healthLane so OpenRouter/SiliconFlow outages are not misreported as Voyage.
     const rerankProvider =
       provider === "openrouter" || provider === "siliconflow" || provider === "voyage"
         ? provider
         : "voyage";
+    // Durable dispatch must use the active provider id (openrouter/siliconflow/voyage-rerank),
+    // not a hardcoded voyage-rerank service — otherwise OpenRouter cost-cap reservation is wrong.
+    const dispatchService =
+      rerankProvider === "openrouter" ? "openrouter"
+      : rerankProvider === "siliconflow" ? "siliconflow"
+      : "voyage-rerank";
     const resp = await withRagApiHealth(
-      "voyage-rerank",
+      dispatchService,
       source,
       userId,
       "rerank",
