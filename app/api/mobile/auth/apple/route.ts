@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { isEmailAllowed } from "../../../../../src/lib/auth/identity";
 import { encodeSessionToken } from "../../../../../src/lib/auth/session-token";
+import { resolveAppleClientId } from "../../../../../src/lib/auth/apple-client-id";
 
 export async function POST(request: Request) {
   try {
@@ -16,7 +17,7 @@ export async function POST(request: Request) {
     const { payload } = await jwtVerify(identityToken, JWKS, {
       issuer: "https://appleid.apple.com",
       // We accept the iOS App Bundle ID. You must set APPLE_CLIENT_ID or we use the known app id.
-      audience: process.env.APPLE_CLIENT_ID || "com.jays.SocraticTrade"
+      audience: resolveAppleClientId()
     });
 
     const email = payload.email as string | undefined;

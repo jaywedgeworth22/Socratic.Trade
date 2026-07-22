@@ -23,6 +23,11 @@ vi.mock("../src/lib/vector-db", () => ({
   storeContexts: async () => {}
 }));
 
+// Order-state assertions do not cover delivery; keep notification I/O out of this focused suite.
+vi.mock("../src/lib/notifications", () => ({
+  sendNotification: async () => ({ id: "test", status: "skipped" })
+}));
+
 // The market scan inside executeProposal is incidental to what this file verifies (broker
 // order-state confirmation). Left unmocked it fans out to REAL Nasdaq-screener/Yahoo fetches
 // (6-8s abort timeouts, 429-retry backoff): ~12s per test solo, and the direct cause of the
