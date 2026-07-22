@@ -10,7 +10,8 @@ touch the pin workflow and whose hosted check failed with `node: command not fou
 Review follow-up: the rollout now records the exact focused test, lint, TypeScript, YAML, diff, and
 hosted verification commands/results, including the tracked effort-log mirror. The focused
 queue-safety test passes 5/5. The hosted `verify-hosted` gate passed on `4748ce80`; the current
-main-synchronized head is `4e240469` and its replacement checks are queued.
+main-synchronized head is `0dfbc945` and its replacement `gitleaks`, `check-pin`, and required
+`verify` checks are queued. Auto-merge is armed; the next action is current-head verification.
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
