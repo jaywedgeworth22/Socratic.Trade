@@ -93,5 +93,11 @@ jobs:
           WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}
           WORKFLOW_ACTOR: ${{ github.event.workflow_run.actor.login }}
           WORKFLOW_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: python3 scripts/sentry-ci-report.py
+
+      - name: Disable sparse checkout (prevent poisoning self-hosted runner workspace)
+        if: always()
+        shell: bash
+        run: |
+          git sparse-checkout disable || true

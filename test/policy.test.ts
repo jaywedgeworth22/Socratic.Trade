@@ -718,7 +718,7 @@ describe("evaluateTradeProposal", () => {
   describe("bracket-order permission (Codex review, PR #1371)", () => {
     // A bare account: no "bracket" in permittedOrderTypes, no stopLossPct configured — the two
     // pre-existing green-lights for a bracket order.
-    const barePolicy: TradingPolicy = { ...enabledPolicy, riskRules: { ...enabledPolicy.riskRules, stopLossPct: 0, shortStopLossPct: 0 } };
+    const barePolicy: TradingPolicy = { ...enabledPolicy, riskRules: { ...enabledPolicy.riskRules, stopLossPct: 0 } };
 
     it("still blocks a bracket with no explicit stop plan on a bare account (unchanged baseline)", () => {
       const decision = evaluateTradeProposal(
