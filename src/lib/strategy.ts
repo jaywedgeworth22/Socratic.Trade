@@ -56,6 +56,7 @@ import { LlmCredentialRequiredError, LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_RE
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
+import { freshPlacementBlockReason } from "./system-state-placement-guard";
 import { OrderValidationError } from "./types";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
@@ -3138,6 +3139,44 @@ export async function runStrategyOnce(
       }
 
       let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
+      const protectiveStateBlock = freshPlacementBlockReason({
+        userId,
+        connectedAccountId,
+        side: normalizedProposal.side
+      });
+      if (protectiveStateBlock) {
+        const blockedDecision: PolicyDecision = {
+          ...decision,
+          approved: false,
+          reasons: [...decision.reasons, protectiveStateBlock]
+        };
+        updateProposalStatus(
+          proposalId,
+          "blocked",
+          undefined,
+          review,
+          review.estimatedNotional,
+          userId,
+          undefined,
+          protectiveStateBlock,
+          blockedDecision
+        );
+        audit(
+          "order_blocked_fresh_protective_state",
+          {
+            runId,
+            proposalId,
+            refId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            reason: protectiveStateBlock
+          },
+          userId,
+          connectedAccountId
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [protectiveStateBlock] });
+        continue;
+      }
       try {
         execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal, refId });
       } catch (placeError) {
