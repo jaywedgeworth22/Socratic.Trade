@@ -1342,6 +1342,7 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
 
     vi.stubGlobal("fetch", async (url: string) => {
       if (url === "https://fc.yahoo.com") throw new Error("network down");
+      // Any quoteSummary hit would be a bug — handshake never completed.
       throw new Error(`unexpected fetch to ${url}`);
     });
 
