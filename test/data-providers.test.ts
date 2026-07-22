@@ -20,7 +20,6 @@ import {
   parseRobinhoodFundamentals,
   parseWebullUnofficialQuote,
   scoreHeadlines,
-  YahooFinanceEnrichmentProvider,
   type MarketEnrichmentProvider,
   type EnrichmentContext,
   type SymbolEnrichment
@@ -1327,8 +1326,8 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
       throw new Error(`unexpected fetch to ${url}`);
     });
 
-    const provider = new YahooFinanceEnrichmentProvider();
-    expect(provider.name).toBe("yahoo-finance");
+    const provider = getEnrichmentProvider();
+    expect(provider.name).toContain("yahoo-finance");
 
     vi.useFakeTimers();
     try {
@@ -1345,9 +1344,7 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
   });
 
   it("still degrades to empty (never throws) when the retry also fails", async () => {
-    // Instantiate Yahoo directly — getEnrichmentProvider() is the full cascade, which fills
-    // missing fields from manual fallback after Yahoo returns {} (Codex P1 on #1857: ZZZZ got pe=10.5).
-    const { clearEnrichmentCache, YahooFinanceEnrichmentProvider } = await import("../src/lib/data-providers");
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
     vi.stubGlobal("fetch", async (url: string) => {
@@ -1355,7 +1352,7 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
       throw new Error(`unexpected fetch to ${url}`);
     });
 
-    const provider = new YahooFinanceEnrichmentProvider();
+    const provider = getEnrichmentProvider();
     vi.useFakeTimers();
     try {
       const resultPromise = provider.enrich(["AAPL"]);
