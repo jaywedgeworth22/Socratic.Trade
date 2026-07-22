@@ -107,11 +107,14 @@ beforeEach(() => {
     "DELETE FROM provider_usage_outbox; DELETE FROM provider_dispatch_attempts;"
   );
   getDb()
-    .prepare("DELETE FROM settings WHERE key IN (?, ?, ?)")
+    .prepare("DELETE FROM settings WHERE key IN (?, ?, ?, ?, ?, ?)")
     .run(
       replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
       replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag,
-      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider
+      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider,
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm,
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag,
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider
     );
 });
 
@@ -216,6 +219,42 @@ describe("usage monitor durable replay", () => {
     expect(captured[0]!.body.events[0]!.eventId).toBe(telemetryKey("llm", "llm-b"));
   });
 
+  it("does not duplicate the prior v1 watermark row when strict v2 first takes over", async () => {
+    const oldAt = "2026-07-10T13:30:00.000Z";
+    const newAt = "2026-07-10T13:31:00.000Z";
+    insertLlm({ id: "llm-v1-boundary", createdAt: oldAt, costUsd: 0.01 });
+    insertLlm({ id: "llm-first-v2", createdAt: newAt, costUsd: 0.02 });
+    getDb()
+      .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(
+        replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
+        JSON.stringify({ createdAt: oldAt, id: "llm-v1-boundary" }),
+        new Date().toISOString()
+      );
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+
+    const first = await replay.runUsageMonitorReplay();
+
+    expect(first.llm).toEqual({ sent: 1, complete: true, failed: false });
+    expect(captured[0]!.body.events.map((event) => event.eventId)).toEqual([
+      telemetryKey("llm", "llm-first-v2"),
+    ]);
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)?.id).toBe(
+      "llm-first-v2"
+    );
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm
+    )).toEqual({ value: "complete" });
+
+    captured.length = 0;
+    const second = await replay.runUsageMonitorReplay();
+    expect(second.llm).toEqual({ sent: 1, complete: true, failed: false });
+    expect(captured[0]!.body.events[0]!.eventId).toBe(
+      telemetryKey("llm", "llm-first-v2")
+    );
+  });
+
   it("does not advance a watermark on ambiguous failure and reconstructs the same payload", async () => {
     insertLlm({
       id: "llm-retry",
@@ -296,6 +335,12 @@ describe("usage monitor durable replay", () => {
         .run(
           replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
           JSON.stringify({ createdAt: newer, id: "llm-newer" }),
+          new Date().toISOString()
+        );
+      getDb()
+        .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, 'complete', ?)")
+        .run(
+          replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm,
           new Date().toISOString()
         );
       return ack(1);

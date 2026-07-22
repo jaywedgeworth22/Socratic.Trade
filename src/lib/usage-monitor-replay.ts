@@ -32,6 +32,12 @@ export const USAGE_MONITOR_REPLAY_WATERMARK_KEYS = {
   provider: "usage_monitor_replay:provider_usage_outbox:watermark:v1",
 } as const;
 
+export const USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS = {
+  llm: "usage_monitor_replay:llm_usage:strict_v2_cutover:v1",
+  rag: "usage_monitor_replay:rag_usage:strict_v2_cutover:v1",
+  provider: "usage_monitor_replay:provider_usage_outbox:strict_v2_cutover:v1",
+} as const;
+
 interface ReplayCursor {
   createdAt: string;
   id: string;
@@ -146,8 +152,16 @@ function readWatermark(key: string): ReplayCursor | null {
   return parseCursor(row?.value);
 }
 
+function hasCompletedV2Cutover(key: string): boolean {
+  return Boolean(getDb().prepare("SELECT 1 FROM settings WHERE key = ?").get(key));
+}
+
 /** Monotonic BEGIN IMMEDIATE update prevents overlapping app processes from regressing a cursor. */
-function advanceWatermark(key: string, candidate: ReplayCursor): ReplayCursor {
+function advanceWatermark(
+  key: string,
+  v2CutoverKey: string,
+  candidate: ReplayCursor
+): ReplayCursor {
   const database = getDb();
   const advance = database.transaction((): ReplayCursor => {
     const row = database
@@ -163,6 +177,11 @@ function advanceWatermark(key: string, candidate: ReplayCursor): ReplayCursor {
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
       )
       .run(key, JSON.stringify(candidate), now);
+    database
+      .prepare(
+        "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, 'complete', ?)"
+      )
+      .run(v2CutoverKey, now);
     return candidate;
   });
   return advance.immediate() as ReplayCursor;
@@ -289,6 +308,7 @@ async function providerEvents(rows: ProviderUsageOutboxRow[]): Promise<UsageMoni
 
 async function replayLedger<Row extends { id: string; created_at: string }>(input: {
   watermarkKey: string;
+  v2CutoverKey: string;
   pageSize: number;
   maxPages: number;
   readRows: (cursor: ReplayCursor | null, inclusive: boolean, limit: number) => Row[];
@@ -297,9 +317,11 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
   let sent = 0;
   try {
     let cursor = readWatermark(input.watermarkKey);
-    // Include the prior ACKed row exactly once per pass. Its deterministic key makes the overlap
-    // safe, and a subsequent strict page prevents the inclusive row from causing a loop.
-    let inclusive = cursor !== null;
+    // A pre-v2 cursor points at a row ACKed under the old explicit idempotency key. Strict v2
+    // derives a different receiver key from (producerId,eventId), so inclusively replaying that
+    // boundary row would count it twice. Keep the first v2 pass strict until a v2 ACK advances the
+    // cursor and atomically records the cutover marker; normal crash-safe overlap resumes after it.
+    let inclusive = cursor !== null && hasCompletedV2Cutover(input.v2CutoverKey);
 
     for (let page = 0; page < input.maxPages; page += 1) {
       const rows = input.readRows(cursor, inclusive, input.pageSize);
@@ -312,7 +334,7 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
       }
 
       const last = rows.at(-1)!;
-      cursor = advanceWatermark(input.watermarkKey, {
+      cursor = advanceWatermark(input.watermarkKey, input.v2CutoverKey, {
         createdAt: last.created_at,
         id: last.id,
       });
@@ -349,6 +371,7 @@ async function executeUsageMonitorReplay(
   const maxPages = positiveInteger(options.maxPagesPerLedger, DEFAULT_MAX_PAGES_PER_LEDGER, 1_000);
   const llm = await replayLedger<LlmUsageLedgerRow>({
     watermarkKey: USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
+    v2CutoverKey: USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm,
     pageSize,
     maxPages,
     readRows: readLlmRows,
@@ -356,6 +379,7 @@ async function executeUsageMonitorReplay(
   });
   const rag = await replayLedger<RagUsageLedgerRow>({
     watermarkKey: USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag,
+    v2CutoverKey: USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag,
     pageSize,
     maxPages,
     readRows: readRagRows,
@@ -363,6 +387,7 @@ async function executeUsageMonitorReplay(
   });
   const provider = await replayLedger<ProviderUsageOutboxRow>({
     watermarkKey: USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider,
+    v2CutoverKey: USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider,
     pageSize,
     maxPages,
     readRows: readProviderRows,

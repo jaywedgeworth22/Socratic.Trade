@@ -18,6 +18,12 @@ them from source rows, so it now produces strict-v2 payloads directly. A process
 normalizes any pre-v2 HMR buffer once (`sourceApp` removed, `idempotencyKey` to `eventId`, `keyRef`
 to `producerKeyRef`) before validation and retry. There is no dual-write path.
 
+Existing replay cursors were ACKed under v1's explicit persistence key. A durable per-ledger cutover
+marker therefore keeps the first v2 pass strict (`>` the v1 cursor), preventing the old boundary row
+from being inserted again under v2's derived `(producerId,eventId)` key. The marker is written in the
+same transaction that advances the first v2-ACKed cursor; inclusive crash-safe overlap resumes only
+after that point.
+
 ## Verification
 
 - Cold tokenless install: `GIT_SSH_COMMAND=false npm ci` under Node 24; shared version 2 and v2
@@ -30,6 +36,8 @@ to `producerKeyRef`) before validation and retry. There is no dual-write path.
   `sourceApp` assertion updated during that run. The final affected producer/replay/FMP regression
   set passed 3 files / 46 tests after the update.
 - Production build: `npm run build` under Node 24.
+- Cutover regression: push + durable replay suites passed 2 files / 35 tests under Node 24,
+  including a seeded v1 watermark that sends only the following v2 row before overlap resumes.
 
 ## Promotion gate
 
