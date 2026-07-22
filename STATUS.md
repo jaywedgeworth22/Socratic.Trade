@@ -16,6 +16,20 @@ money. No legacy wire path remains. The receiver gate is cleared: Usage-Monitor 
 `335723775ef0f8114ee1ca77b4716139018026dc` is committed live on Oracle. The final direct-v2
 focused gate passes under Node 24: 3 files / 52 tests, TypeScript, scoped ESLint, and diff-check.
 focused gate passes under Node 24: 3 files / 51 tests, TypeScript, scoped ESLint, and diff-check.
+## 2026-07-22 — Shared-package pin check queue unblock (PR replacement for #1780)
+
+The pin check now emits a status on every pull request and installs Node 24 before its shell
+comparison invokes `node`. This replaces the stale #1780 branch, whose current workflow did not
+touch the pin workflow and whose hosted check failed with `node: command not found`. Rollout:
+`docs/rollouts/2026-07-22-shared-package-pin-check-queue-unblock.md`.
+
+Review follow-up: the rollout now records the exact focused test, lint, TypeScript, YAML, diff, and
+hosted verification commands/results, including the tracked effort-log mirror. The focused
+queue-safety test passes 5/5. The hosted `verify-hosted` gate passed on an earlier head; main
+synchronization has advanced the branch again, so this snapshot intentionally avoids pinning a
+supersedable SHA. Refresh PR #1890 before acting; current-head `gitleaks`, `check-pin`, and required
+`verify` checks are queued. Auto-merge is intentionally held off until current-head verification
+passes and every review thread is resolved.
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
