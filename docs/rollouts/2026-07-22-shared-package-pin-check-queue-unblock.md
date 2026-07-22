@@ -32,5 +32,7 @@ with `node: command not found`; unrelated PRs could also be stranded with no pin
 
 ## Follow-ups
 
-Close #1780 as superseded after this replacement merges; do not restore `check-pin` as a required
-context until both consumers' shared-package pins are coordinated.
+The hosted `verify-hosted` gate passed on `4748ce80`; a subsequent main synchronization advanced
+the PR to `4e240469`, so replacement checks are queued and must pass before merge. Close #1780 as
+superseded after this replacement merges; do not restore `check-pin` as a required context until
+both consumers' shared-package pins are coordinated.

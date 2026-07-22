@@ -1,5 +1,9 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Shared-package pin-check review correction (PR #1890).** Keep the effort ledger
+> truthful across main synchronization: `verify-hosted` passed on `4748ce80`, then the PR advanced
+> to `4e240469` and new required checks are queued. Merge only after the current head verifies.
+
 > **2026-07-22 — Shared-package pin check queue unblock (CODEX).** Keep the pin check non-required
 > until the coordinated consumers are stable, but make its signal reliable: remove the PR path
 > filter and install Node before the comparison step. Verify the workflow regression plus required
