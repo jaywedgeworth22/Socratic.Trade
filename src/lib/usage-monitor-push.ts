@@ -24,7 +24,6 @@
 import { logApiHealth } from "./db-health";
 import {
   createUsageTelemetryClient,
-  usageMonitorIngestUrl,
   UsageTelemetryV2EventSchema,
   type UsageTelemetryV2Event,
   type UsageTelemetryMetricType,
@@ -972,10 +971,7 @@ const REPLAY_SEND_TIMEOUT_MS = 30_000;
  * Applies an AbortSignal timeout so that a connection stall cannot permanently block the caller
  * (the replay worker's inFlight guard is never cleared if the POST promise never settles).
  */
-async function sendReplayBatch(
-  events: UsageMonitorEvent[],
-  legacy: boolean
-): Promise<boolean> {
+async function sendReplayBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   if (events.length === 0) return true;
   if (!usageMonitorEnabled()) return false;
 
@@ -989,7 +985,7 @@ async function sendReplayBatch(
   // valid remains) lets the durable caller advance its watermark past the bad row instead of
   // re-failing it forever.
   const deliverable = events.filter(isDeliverableEvent);
-  warnPoisonDropped(events.length - deliverable.length, legacy ? "legacy-replay" : "replay");
+  warnPoisonDropped(events.length - deliverable.length, "replay");
   if (deliverable.length === 0) return true;
 
   // Shares the live-push breaker: the replay interval fires every 60s regardless, but while the
@@ -1003,57 +999,14 @@ async function sendReplayBatch(
   const start = Date.now();
 
   try {
-    if (legacy) {
-      // This is the one bounded exception to the fresh-v2-only wire rule: these source rows were
-      // created before cutover and may already exist at the receiver under their explicit v1
-      // idempotencyKey. The shared sendLegacyOutbox adapter promotes that key to a v2 eventId,
-      // which intentionally derives a NEW receiver key and therefore cannot dedupe the old row.
-      // Post the actual v1 envelope here (no v2 header/schemaVersion), then retire this path as
-      // soon as the durable cutover marker advances beyond the frozen high-water mark.
-      const legacyEvents = deliverable.map((event) => {
-        const legacyEvent: Record<string, unknown> = {
-          ...event,
-          sourceApp: SOURCE_APP,
-          ...(event.producerKeyRef ? { keyRef: event.producerKeyRef } : {}),
-          idempotencyKey: event.eventId,
-        };
-        delete legacyEvent.eventId;
-        delete legacyEvent.producerKeyRef;
-        delete legacyEvent.providerConnectionRef;
-        delete legacyEvent.billingAccountRef;
-        delete legacyEvent.coverage;
-        return legacyEvent;
-      });
-      const response = await fetchImpl(usageMonitorIngestUrl(baseUrl), {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ events: legacyEvents }),
-        signal: controller.signal,
-      });
-      const payload = await response.json().catch(() => null) as {
-        ok?: unknown;
-        accepted?: unknown;
-        ignoredPruned?: unknown;
-      } | null;
-      if (
-        !response.ok || payload?.ok !== true ||
-        !Number.isInteger(payload.accepted) || !Number.isInteger(payload.ignoredPruned)
-      ) {
-        throw new Error(`Usage Monitor legacy replay returned HTTP ${response.status}`);
-      }
-    } else {
-      const client = createUsageTelemetryClient({
-        baseUrl,
-        token,
-        producerId: SOURCE_APP,
-        fetchImpl: (input, init) =>
-          fetchImpl(input, { ...init, signal: controller.signal }),
-      });
-      await client.send(deliverable);
-    }
+    const client = createUsageTelemetryClient({
+      baseUrl,
+      token,
+      producerId: SOURCE_APP,
+      fetchImpl: (input, init) =>
+        fetchImpl(input, { ...init, signal: controller.signal }),
+    });
+    await client.send(deliverable);
     // Record health from the replay lane too — if replay is the first/only lane talking to a down
     // monitor, this is what keeps the admin health row truthful instead of stale-healthy while the
     // shared breaker (below) suppresses the live-push lane's own health writes.
@@ -1077,17 +1030,10 @@ async function sendReplayBatch(
   }
 }
 
-/** Send the bounded pre-v2 catch-up using the receiver's legacy idempotency contract. */
-export async function sendLegacyUsageMonitorBatch(
-  events: UsageMonitorEvent[]
-): Promise<boolean> {
-  return sendReplayBatch(events, true);
-}
-
 export async function sendUsageMonitorBatch(
   events: UsageMonitorEvent[]
 ): Promise<boolean> {
-  return sendReplayBatch(events, false);
+  return sendReplayBatch(events);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

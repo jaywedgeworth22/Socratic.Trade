@@ -3,9 +3,9 @@
 // Live writes still enqueue immediately through usage-monitor-push.ts. This worker closes the
 // durability gap left by a process crash: it reconstructs events from llm_usage / rag_usage using
 // each row's existing ID + timestamp, and advances an ordered settings-table watermark only after
-// the monitor acknowledges the batch. Every run inclusively re-sends the prior watermark row, so
-// a crash between remote acknowledgement and the local watermark write is harmless (the receiver
-// dedupes the deterministic idempotency key).
+// the monitor acknowledges the batch. Once a lane has ACKed its first strict-v2 row, every run
+// inclusively re-sends the prior watermark row, so a crash between remote acknowledgement and the
+// local watermark write is harmless (the receiver dedupes the deterministic v2 identity).
 
 import {
   getDb,
@@ -17,7 +17,6 @@ import {
   createLlmUsageMonitorEvent,
   createProviderDispatchUsageMonitorEvent,
   createRagUsageMonitorEvent,
-  sendLegacyUsageMonitorBatch,
   sendUsageMonitorBatch,
   usageMonitorEnabled,
   type UsageMonitorEvent,
@@ -130,7 +129,9 @@ function parseCursor(raw: string | undefined): ReplayCursor | null {
     const parsed = JSON.parse(raw) as Partial<ReplayCursor>;
     if (
       typeof parsed.createdAt !== "string" || parsed.createdAt.length === 0 ||
-      typeof parsed.id !== "string" || parsed.id.length === 0
+      typeof parsed.id !== "string" || parsed.id.length === 0 ||
+      !Number.isFinite(Date.parse(parsed.createdAt)) ||
+      new Date(parsed.createdAt).toISOString() !== parsed.createdAt
     ) return null;
     return { createdAt: parsed.createdAt, id: parsed.id };
   } catch {
@@ -153,94 +154,132 @@ function readWatermark(key: string): ReplayCursor | null {
   return parseCursor(row?.value);
 }
 
-type V2CutoverState = "legacy-drained" | "v2-active";
+type ReplayLane = keyof typeof USAGE_MONITOR_REPLAY_WATERMARK_KEYS;
+type V2CutoverState = "v2-seeded" | "v2-active";
+type PreparedV2Cutover = V2CutoverState | "invalid";
 
-function readV2CutoverState(key: string): V2CutoverState | null {
+const REPLAY_TABLES: Record<ReplayLane, string> = {
+  llm: "llm_usage",
+  rag: "rag_usage",
+  provider: "provider_usage_outbox",
+};
+
+function skippedPreV2RowsKey(v2CutoverKey: string): string {
+  return `${v2CutoverKey}:pre_v2_rows_skipped`;
+}
+
+function countRowsAfterCursor(table: string, cursor: ReplayCursor | null): number {
+  if (!cursor) {
+    const row = getDb().prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number };
+    return row.count;
+  }
   const row = getDb()
-    .prepare("SELECT value FROM settings WHERE key = ?")
-    .get(key) as { value: string } | undefined;
-  if (row?.value === "legacy-drained" || row?.value === "v2-active") return row.value;
-  return null;
-}
-
-function legacyHighWatermarkKey(v2CutoverKey: string): string {
-  return `${v2CutoverKey}:legacy_high_water`;
-}
-
-function legacyOverlapAcknowledgedKey(v2CutoverKey: string): string {
-  return `${v2CutoverKey}:legacy_overlap_acknowledged`;
-}
-
-function readSettingValue(key: string): string | undefined {
-  const row = getDb()
-    .prepare("SELECT value FROM settings WHERE key = ?")
-    .get(key) as { value: string } | undefined;
-  return row?.value;
+    .prepare(
+      `SELECT COUNT(*) AS count FROM ${table} WHERE ` +
+      "created_at > ? OR (created_at = ? AND id > ?)"
+    )
+    .get(cursor.createdAt, cursor.createdAt, cursor.id) as { count: number };
+  return row.count;
 }
 
 /**
- * Persist the first pre-v2 high-water mark before network I/O. A bounded replay can span multiple
- * startup/interval passes; recomputing this mark would let newly written strict-v2 rows drift into
- * the later legacy window and acquire a second receiver identity.
+ * One atomic direct-v2 cutover for all ledgers, before any await or producer reconciliation.
+ * Existing rows are intentionally not replayed across the identity boundary: most were already
+ * live-pushed under v1, and the owner accepted bounded loss of any unacknowledged remainder in
+ * preference to duplicate money. The skipped-row count is retained as a durable rollout receipt.
  */
-function readOrFreezeLegacyHighWatermark(
-  v2CutoverKey: string,
-  readHighWatermark: () => ReplayCursor | null
-): ReplayCursor | null {
+function prepareV2ReplayCutovers(): Record<ReplayLane, PreparedV2Cutover> {
   const database = getDb();
-  const key = legacyHighWatermarkKey(v2CutoverKey);
-  const freeze = database.transaction((): ReplayCursor | null => {
-    const existing = database
-      .prepare("SELECT value FROM settings WHERE key = ?")
-      .get(key) as { value: string } | undefined;
-    const frozen = parseCursor(existing?.value);
-    if (frozen) return frozen;
+  const prepared = {} as Record<ReplayLane, PreparedV2Cutover>;
+  const prepare = database.transaction(() => {
+    const now = new Date().toISOString();
+    const snapshots = {} as Record<ReplayLane, {
+      marker: string | undefined;
+      watermark: ReplayCursor | null;
+      invalid: boolean;
+    }>;
 
-    const candidate = readHighWatermark();
-    if (!candidate) return null;
-    database
-      .prepare(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) " +
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
-      )
-      .run(key, JSON.stringify(candidate), new Date().toISOString());
-    const persisted = database
-      .prepare("SELECT value FROM settings WHERE key = ?")
-      .get(key) as { value: string } | undefined;
-    return parseCursor(persisted?.value);
-  });
-  return freeze.immediate() as ReplayCursor | null;
-}
+    // Validate every lane first. If even one seed candidate is corrupt, the transaction performs
+    // zero cutover writes so it cannot leave a partially initialized cross-ledger boundary.
+    for (const lane of Object.keys(REPLAY_TABLES) as ReplayLane[]) {
+      const watermarkKey = USAGE_MONITOR_REPLAY_WATERMARK_KEYS[lane];
+      const cutoverKey = USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS[lane];
+      const markerRow = database
+        .prepare("SELECT value FROM settings WHERE key = ?")
+        .get(cutoverKey) as { value: string } | undefined;
+      const watermarkRow = database
+        .prepare("SELECT value FROM settings WHERE key = ?")
+        .get(watermarkKey) as { value: string } | undefined;
+      const watermark = parseCursor(watermarkRow?.value);
+      const corruptWatermark = Boolean(watermarkRow && !watermark);
+      const marker = markerRow?.value;
+      const invalidMarker = marker !== undefined && marker !== "v2-active" && marker !== "v2-seeded";
+      const seededWithoutCursor = marker === "v2-seeded" && !watermark;
+      snapshots[lane] = {
+        marker,
+        watermark,
+        invalid: corruptWatermark || invalidMarker || seededWithoutCursor,
+      };
+    }
 
-/** Mark the v2 identity cutover only after the bounded legacy catch-up is fully acknowledged. */
-function completeV2Cutover(key: string): void {
-  const now = new Date().toISOString();
-  const database = getDb();
-  const complete = database.transaction(() => {
-    database
-      .prepare(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, 'legacy-drained', ?) " +
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at " +
-        "WHERE settings.value <> 'v2-active'"
-      )
-      .run(key, now);
-    database
-      .prepare("DELETE FROM settings WHERE key = ?")
-      .run(legacyHighWatermarkKey(key));
-    database
-      .prepare("DELETE FROM settings WHERE key = ?")
-      .run(legacyOverlapAcknowledgedKey(key));
+    if ((Object.values(snapshots) as Array<{ invalid: boolean }>).some((lane) => lane.invalid)) {
+      for (const lane of Object.keys(REPLAY_TABLES) as ReplayLane[]) {
+        const snapshot = snapshots[lane];
+        prepared[lane] = !snapshot.invalid &&
+          (snapshot.marker === "v2-active" || snapshot.marker === "v2-seeded")
+          ? snapshot.marker
+          : "invalid";
+      }
+      return;
+    }
+
+    for (const lane of Object.keys(REPLAY_TABLES) as ReplayLane[]) {
+      const watermarkKey = USAGE_MONITOR_REPLAY_WATERMARK_KEYS[lane];
+      const cutoverKey = USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS[lane];
+      const snapshot = snapshots[lane];
+      if (snapshot.marker === "v2-active" || snapshot.marker === "v2-seeded") {
+        prepared[lane] = snapshot.marker;
+        continue;
+      }
+
+      const priorCursor = snapshot.watermark;
+      const highWatermark = latestCursor(REPLAY_TABLES[lane]);
+      const seededCursor = !priorCursor
+        ? highWatermark
+        : !highWatermark || compareCursors(priorCursor, highWatermark) >= 0
+          ? priorCursor
+          : highWatermark;
+      if (seededCursor) {
+        database
+          .prepare(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) " +
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+          )
+          .run(watermarkKey, JSON.stringify(seededCursor), now);
+      }
+      const state: V2CutoverState = seededCursor ? "v2-seeded" : "v2-active";
+      database
+        .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+        .run(cutoverKey, state, now);
+      database
+        .prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+        .run(
+          skippedPreV2RowsKey(cutoverKey),
+          String(countRowsAfterCursor(REPLAY_TABLES[lane], priorCursor)),
+          now
+        );
+      prepared[lane] = state;
+    }
   });
-  complete.immediate();
+  prepare.immediate();
+  return prepared;
 }
 
 /** Monotonic BEGIN IMMEDIATE update prevents overlapping app processes from regressing a cursor. */
 function advanceWatermark(
   key: string,
   v2CutoverKey: string,
-  candidate: ReplayCursor,
-  markCutover = true,
-  markLegacyOverlapAcknowledged = false
+  candidate: ReplayCursor
 ): ReplayCursor {
   const database = getDb();
   const advance = database.transaction((): ReplayCursor => {
@@ -248,36 +287,23 @@ function advanceWatermark(
       .prepare("SELECT value FROM settings WHERE key = ?")
       .get(key) as { value: string } | undefined;
     const current = parseCursor(row?.value);
-    if (current && compareCursors(current, candidate) >= 0) {
-      if (markLegacyOverlapAcknowledged) {
-        database
-          .prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, '1', ?)")
-          .run(legacyOverlapAcknowledgedKey(v2CutoverKey), new Date().toISOString());
-      }
-      return current;
-    }
-
     const now = new Date().toISOString();
-    database
-      .prepare(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) " +
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
-      )
-      .run(key, JSON.stringify(candidate), now);
-    if (markCutover) {
+    const result = current && compareCursors(current, candidate) >= 0 ? current : candidate;
+    if (result === candidate) {
       database
         .prepare(
-          "INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?) " +
+          "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) " +
           "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
         )
-        .run(v2CutoverKey, now);
+        .run(key, JSON.stringify(candidate), now);
     }
-    if (markLegacyOverlapAcknowledged) {
-      database
-        .prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, '1', ?)")
-        .run(legacyOverlapAcknowledgedKey(v2CutoverKey), now);
-    }
-    return candidate;
+    database
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+      )
+      .run(v2CutoverKey, now);
+    return result;
   });
   return advance.immediate() as ReplayCursor;
 }
@@ -426,6 +452,7 @@ async function providerEvents(rows: ProviderUsageOutboxRow[]): Promise<UsageMoni
 async function replayLedger<Row extends { id: string; created_at: string }>(input: {
   watermarkKey: string;
   v2CutoverKey: string;
+  cutoverState: PreparedV2Cutover;
   pageSize: number;
   maxPages: number;
   readRows: (
@@ -434,52 +461,28 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
     limit: number,
     upperBound?: ReplayCursor | null
   ) => Row[];
-  readHighWatermark: () => ReplayCursor | null;
   toEvents: (rows: Row[]) => Promise<UsageMonitorEvent[]>;
 }): Promise<LedgerReplayResult> {
   let sent = 0;
   try {
+    if (input.cutoverState === "invalid") {
+      return { sent: 0, complete: false, failed: true };
+    }
     let cursor = readWatermark(input.watermarkKey);
-    const cutoverState = readV2CutoverState(input.v2CutoverKey);
-    const cutoverComplete = cutoverState !== null;
-    // A pre-v2 cursor does not include rows that were live-pushed after the last replay pass.
-    // Freeze a high-water mark and drain that bounded window through the legacy idempotency path
-    // before switching the ledger to strict v2 identities; rows arriving after the mark are left
-    // for the normal v2 pass and can never be double-counted by the cutover.
-    const legacyHighWatermark = cutoverComplete
-      ? null
-      : readOrFreezeLegacyHighWatermark(input.v2CutoverKey, input.readHighWatermark);
-    const legacyCatchup = !cutoverComplete && legacyHighWatermark !== null;
-    const legacyOverlapAcknowledged = readSettingValue(
-      legacyOverlapAcknowledgedKey(input.v2CutoverKey)
-    ) === "1";
-    // Legacy replay may safely include the boundary because its durable v1 identity is exactly the
-    // key the receiver already deduped. Once cutover is complete, the same overlap uses strict-v2
-    // event IDs and remains crash-safe as before.
-    // The row at a legacy-drained cursor was ACKed under v1 identity. Keep that boundary strict
-    // until a later v2 row is ACKed and advances the marker to v2-active; only v2-active cursors
-    // are safe to resend inclusively under the derived v2 persistence key.
-    let inclusive = cursor !== null && (
-      (legacyCatchup && !legacyOverlapAcknowledged) || cutoverState === "v2-active"
-    );
+    // A seeded cursor points at a row intentionally skipped across the v1 -> v2 identity boundary.
+    // Keep it exclusive until a newer strict-v2 ACK moves the marker to v2-active; after that,
+    // inclusive overlap is the normal crash-safe v2 retry behavior.
+    let inclusive = cursor !== null && input.cutoverState === "v2-active";
 
     for (let page = 0; page < input.maxPages; page += 1) {
-      const rows = input.readRows(
-        cursor,
-        inclusive,
-        input.pageSize,
-        legacyCatchup ? legacyHighWatermark : null
-      );
+      const rows = input.readRows(cursor, inclusive, input.pageSize);
       inclusive = false;
       if (rows.length === 0) {
-        if (!cutoverComplete) completeV2Cutover(input.v2CutoverKey);
         return { sent, complete: true, failed: false };
       }
 
       const events = await input.toEvents(rows);
-      const acknowledged = legacyCatchup
-        ? await sendLegacyUsageMonitorBatch(events)
-        : await sendUsageMonitorBatch(events);
+      const acknowledged = await sendUsageMonitorBatch(events);
       if (!acknowledged) {
         return { sent, complete: false, failed: true };
       }
@@ -488,16 +491,12 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
       cursor = advanceWatermark(input.watermarkKey, input.v2CutoverKey, {
         createdAt: last.created_at,
         id: last.id,
-      }, !legacyCatchup, legacyCatchup);
+      });
       sent += rows.length;
 
       if (rows.length < input.pageSize) {
-        if (!cutoverComplete) completeV2Cutover(input.v2CutoverKey);
         return { sent, complete: true, failed: false };
       }
-    }
-    if (legacyCatchup && cursor && legacyHighWatermark && compareCursors(cursor, legacyHighWatermark) >= 0) {
-      completeV2Cutover(input.v2CutoverKey);
     }
     return { sent, complete: false, failed: false };
   } catch {
@@ -518,6 +517,16 @@ async function executeUsageMonitorReplay(
     };
   }
 
+  let cutovers: Record<ReplayLane, PreparedV2Cutover>;
+  try {
+    // This synchronous BEGIN IMMEDIATE is deliberately the first DB action in the configured lane.
+    // All three identity boundaries exist before reconciliation, event construction, or network I/O.
+    cutovers = prepareV2ReplayCutovers();
+  } catch {
+    const failed = { sent: 0, complete: false, failed: true };
+    return { configured: true, llm: failed, rag: failed, provider: failed };
+  }
+
   // A prior process may have died after dispatch but before observing the provider outcome. Keep
   // the call in usage truth as `unknown`; never guess success/failure or silently release quota.
   reconcileStaleProviderDispatches();
@@ -527,28 +536,28 @@ async function executeUsageMonitorReplay(
   const llm = await replayLedger<LlmUsageLedgerRow>({
     watermarkKey: USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
     v2CutoverKey: USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm,
+    cutoverState: cutovers.llm,
     pageSize,
     maxPages,
     readRows: readLlmRows,
-    readHighWatermark: () => latestCursor("llm_usage"),
     toEvents: llmEvents,
   });
   const rag = await replayLedger<RagUsageLedgerRow>({
     watermarkKey: USAGE_MONITOR_REPLAY_WATERMARK_KEYS.rag,
     v2CutoverKey: USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.rag,
+    cutoverState: cutovers.rag,
     pageSize,
     maxPages,
     readRows: readRagRows,
-    readHighWatermark: () => latestCursor("rag_usage"),
     toEvents: ragEvents,
   });
   const provider = await replayLedger<ProviderUsageOutboxRow>({
     watermarkKey: USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider,
     v2CutoverKey: USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider,
+    cutoverState: cutovers.provider,
     pageSize,
     maxPages,
     readRows: readProviderRows,
-    readHighWatermark: () => latestCursor("provider_usage_outbox"),
     toEvents: providerEvents,
   });
   return { configured: true, llm, rag, provider };

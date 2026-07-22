@@ -18,17 +18,18 @@ version bump normalizes any pre-v2 HMR buffer once (`sourceApp` removed, `idempo
 `eventId`, `keyRef` to `producerKeyRef`) before validation and retry.
 
 Existing replay cursors were ACKed under v1's explicit persistence key, while live pushes did not
-advance those cursors. Before switching a ledger to strict-v2 identities, replay freezes a durable
-high-water mark, persists it before network I/O, and drains that fixed bounded window through the
-actual accepted v1 envelope, preserving
-the receiver's old explicit `idempotencyKey`. The shared `sendLegacyOutbox` adapter is intentionally
-not used here because it promotes the old key to a v2 `eventId`, which derives a new receiver identity.
-Replay also persists whether the legacy overlap row has already been acknowledged so a later bounded
-page is exclusive; a crash before the watermark/overlap transaction remains safe to retry inclusively.
-After the bounded window is acknowledged, replay records `legacy-drained`; its boundary remains
-exclusive until a later strict-v2 row is acknowledged and advances the marker to `v2-active`.
-Rows created after the snapshot therefore use strict-v2 identities without double-counting the
-migration boundary, while normal inclusive overlap remains crash-safe once v2 is active.
+advance those cursors. Replaying that window under a v2 `(producerId,eventId)` identity could duplicate
+money, and a legacy bridge introduced cross-ledger cutover races. The final design therefore uses one
+synchronous `BEGIN IMMEDIATE` transaction to seed all three replay cursors to their current high-water
+marks before reconciliation, event construction, or network I/O. Each seeded lane records a durable
+`pre_v2_rows_skipped` count and keeps the seed row exclusive. The first newer strict-v2 ACK atomically
+advances the cursor and marker to `v2-active`; normal inclusive v2 overlap is crash-safe thereafter.
+
+This direct-v2 migration intentionally does not replay the bounded pre-v2 remainder. Most such rows
+were already live-pushed under v1; any unacknowledged remainder can be lost. The owner explicitly
+accepted that bounded loss in preference to duplicate spend/usage and a legacy retry storm. Unknown
+or corrupt cutover/watermark state is distinct from absence and halts only that lane with zero network
+or state writes. There is no v1 sender or dual-write path in the final implementation.
 
 ## Verification
 
@@ -42,11 +43,10 @@ migration boundary, while normal inclusive overlap remains crash-safe once v2 is
   `sourceApp` assertion updated during that run. The final affected producer/replay/FMP regression
   set passed 3 files / 46 tests after the update.
 - Production build: `npm run build` under Node 24.
-- Cutover regression: `npx vitest run --maxWorkers=1 test/usage-monitor-replay.test.ts` — 12/12
-  tests passed after rebuilding `better-sqlite3` for the active Node ABI; the suite covers the
-  actual-v1 bounded catch-up, a fixed boundary across page-limited passes, fail-closed corrupt-state
-  recovery, boundary exclusion, and transition to post-cutover strict-v2 overlap.
-- Review follow-up regression: `npx vitest run --maxWorkers=1 test/usage-monitor-replay.test.ts test/usage-monitor-push.test.ts` — 37/37 tests passed.
+- Direct-v2 cutover revalidation under Node 24: 3 files / 51 tests (push, replay, and background
+  startup), TypeScript, scoped ESLint, and diff-check pass. Coverage includes atomic all-ledger
+  seeding, skipped-row receipts, seeded-boundary exclusion, strict-v2 activation/overlap, malformed
+  JSON and invalid-timestamp fail-closed behavior, no partial seed, and replay-before-producer boot.
 
 ## Promotion gate
 
