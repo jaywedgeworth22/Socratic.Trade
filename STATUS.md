@@ -140,6 +140,15 @@ protective-stop suite, affected synthetic-stop suite, lint, TypeScript, full Vit
 1. **Root cause of 38 stuck PRs resolved**: Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` where `cache: npm` and `npm ci` were failing because `package-lock.json` is untracked/gitignored in Socratic.Trade. Updated setup steps to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`.
 2. **Apple Sign-In client ID fix**: Corrected hardcoded fallback audience in `app/api/mobile/auth-redirect/route.ts` with `await cookies()` for Next.js 15+ compatibility.
 3. Rollout: `docs/rollouts/2026-07-21-ci-package-lock-and-pr-unblock.md`.
+## 2026-07-21 — Production-path RAG evaluation framework (CODEX, branch `codex/rag-production-eval-20260721`)
+
+Added a read-only corpus evaluator that exercises `retrieveContextDetailedWithStatus`, not the FTS-only
+search-fusion helper. It accepts frozen JSON or DB-backed cases with authoritative source-availability timestamps
+and expected real vector ids, emits machine-readable relevance/PIT/coverage/latency/status/usage receipts, and
+requires `--allow-live` before any provider read. No corpus or provider writes were run. Next: curate frozen
+EDGAR cases into `rag_production_eval_cases`, then run labeled shadow comparisons before changing embed/rerank
+defaults. Focused tests, scoped lint, TypeScript, and CLI help are green; committed locally, with parent
+integration/PR still pending.
 
 ## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
 
