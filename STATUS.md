@@ -2789,7 +2789,7 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
 
 ## 2026-07-21 — Switch RAG Default Embedding Provider from Voyage to OpenRouter (BAAI bge-m3)
 Switched the default fallback RAG embedding and rerank provider in `src/lib/vector-db.ts` to OpenRouter using BAAI's `baai/bge-m3` embedding model and Cohere reranker. Updated tests in `test/rag-embed-provider-gate.test.ts` and `test/connection-health-routing.test.ts`.
-## 2026-07-21 — Native iOS mobile-first Phase 1 PR #1859 (CODEX, protected landing pending)
+## 2026-07-21 — Native iOS mobile-first Phase 1 PR #1859 (CODEX, merged; secure web-auth follow-up #1886)
 
 The isolated iOS lane now has a buildable XcodeGen app/test project and a stable five-tab native
 shell (Home, Proposals, Markets, Activity, Coach). It selectively composes PR #1790's typed HTTP
