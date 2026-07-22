@@ -68,9 +68,9 @@ struct MobileAPIClient {
         return envelope.command
     }
 
-    func startAccountDeletion() async throws -> AccountDeletionRequest {
+    func accountDeletionPreview() async throws -> AccountDeletionRequest {
         let envelope: DeletionRequestEnvelope = try await send(
-            request(path: "/api/mobile/account-deletion/request", method: "POST")
+            request(path: "/api/mobile/account-deletion/request")
         )
         return envelope.deletionRequest
     }
@@ -85,7 +85,11 @@ struct MobileAPIClient {
             "typedIdentity": typedIdentity,
             "typedText": typedText
         ])
-        return try await send(request)
+        let data = try await successfulResponseData(for: request)
+        // A 2xx from this endpoint means the backend completed account deletion. Optional receipt
+        // fields must never strand a locally-authenticated session if the response evolves or is
+        // empty after the destructive server transaction has committed.
+        return (try? JSONDecoder().decode(AccountDeletionResult.self, from: data)) ?? .successfulHTTP
     }
 
     func loginWithApple(identityToken: String, name: String?) async throws -> AppleLoginResponse {
@@ -161,6 +165,15 @@ struct MobileAPIClient {
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
+        let data = try await successfulResponseData(for: request)
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw MobileAPIError.decoding(error)
+        }
+    }
+
+    private func successfulResponseData(for request: URLRequest) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
@@ -171,11 +184,7 @@ struct MobileAPIClient {
             throw MobileAPIError.network(error)
         }
         try Self.requireSuccess(response, body: data)
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw MobileAPIError.decoding(error)
-        }
+        return data
     }
 
     private static func requireSuccess(_ response: URLResponse, body: Data?) throws {

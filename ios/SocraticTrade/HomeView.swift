@@ -138,6 +138,11 @@ private struct StrategyControlsCard: View {
                 }
                 .tint(AppPalette.negative)
 
+                Text("Stop immediately halts future broker submissions. A broker request already submitted before the halt may still complete; review existing orders in Markets.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 if snapshot.readiness.commandBacklog.queued + snapshot.readiness.commandBacklog.running > 0 {
                     Text("\(snapshot.readiness.commandBacklog.queued) queued · \(snapshot.readiness.commandBacklog.running) running")
                         .font(.caption)
@@ -414,21 +419,21 @@ private struct AccountSettingsView: View {
                 }
                 .disabled(deletionConfirmationDisabled(deletion))
 
-                Button("Cancel") {
-                    store.cancelAccountDeletion()
+                Button("Hide Deletion Details") {
+                    store.clearAccountDeletionPreview()
                     deleteIdentity = ""
                     deletePhrase = ""
                 }
             } else {
-                Button("Review Deletion Steps", role: .destructive) {
-                    Task { await store.startAccountDeletion() }
+                Button("Review Account Deletion", role: .destructive) {
+                    Task { await store.loadAccountDeletionPreview() }
                 }
                 .disabled(store.isDeletingAccount)
             }
         } header: {
             Text("Delete account")
         } footer: {
-            Text("Deletes this app account, its server-stored secrets, proposals, fills, watchlists, alerts, and learned context. Provider-side OAuth grants must be revoked separately.")
+            Text("Reviewing is read-only and does not pause the agent. Final confirmation prepares and deletes this app account, its server-stored secrets, proposals, fills, watchlists, alerts, and learned context. Provider-side OAuth grants must be revoked separately.")
         }
     }
 

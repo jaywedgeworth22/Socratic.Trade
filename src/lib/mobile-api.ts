@@ -55,6 +55,24 @@ export const MOBILE_COMMAND_TYPES = [
 export type MobileCommandType = (typeof MOBILE_COMMAND_TYPES)[number];
 export type MobileCommandStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
+const IMMEDIATE_PROTECTIVE_COMMAND_TYPES = new Set<MobileCommandType>([
+  "strategy.stop",
+  "strategy.close_only",
+  "strategy.liquidating"
+]);
+
+const RISK_INCREASING_QUEUED_COMMAND_TYPES = [
+  "strategy.run_once",
+  "strategy.start",
+  "proposal.approve"
+] as const satisfies readonly MobileCommandType[];
+
+export function isImmediateProtectiveMobileCommandType(
+  commandType: MobileCommandType
+): boolean {
+  return IMMEDIATE_PROTECTIVE_COMMAND_TYPES.has(commandType);
+}
+
 export interface MobileClientInfo {
   platform?: "ios" | "web" | "unknown";
   appVersion?: string;
@@ -557,6 +575,56 @@ function finishCommand(command: MobileCommandRecord, status: "succeeded" | "fail
   return updated;
 }
 
+function cancelQueuedRiskIncreasingCommands(
+  userId: string,
+  exceptCommandId: string,
+  protectiveCommandType: MobileCommandType
+): PublicMobileCommand[] {
+  const database = getDb();
+  const nowIso = new Date().toISOString();
+  const placeholders = RISK_INCREASING_QUEUED_COMMAND_TYPES.map(() => "?").join(",");
+  const cancelled = database.transaction(() => {
+    const rows = database.prepare(`
+      SELECT id
+      FROM mobile_commands
+      WHERE user_id = ?
+        AND id <> ?
+        AND status = 'queued'
+        AND command_type IN (${placeholders})
+      ORDER BY queued_at ASC
+    `).all(userId, exceptCommandId, ...RISK_INCREASING_QUEUED_COMMAND_TYPES) as Array<{ id: string }>;
+    const update = database.prepare(`
+      UPDATE mobile_commands
+      SET status = 'cancelled', error = ?, finished_at = ?, updated_at = ?
+      WHERE id = ? AND user_id = ? AND status = 'queued'
+    `);
+    const records: MobileCommandRecord[] = [];
+    for (const row of rows) {
+      const reason = `Cancelled because ${protectiveCommandType} took immediate effect.`;
+      const result = update.run(reason, nowIso, nowIso, row.id, userId);
+      if (result.changes !== 1) continue;
+      const updated = getMobileCommandRecord(row.id, userId);
+      if (updated) records.push(updated);
+    }
+    return records;
+  })() as MobileCommandRecord[];
+
+  for (const command of cancelled) {
+    audit(
+      "mobile_command_cancelled_by_protective_state",
+      {
+        commandId: command.id,
+        commandType: command.commandType,
+        protectiveCommandType,
+        error: command.error
+      },
+      userId
+    );
+    emitMobileCommandEvent(command);
+  }
+  return cancelled.map(toPublicMobileCommand);
+}
+
 function summarizeResult(result: unknown): unknown {
   if (!result || typeof result !== "object") return result;
   const obj = result as Record<string, unknown>;
@@ -573,7 +641,10 @@ function summarizeResult(result: unknown): unknown {
 
 async function setStrategyState(userId: string, state: SystemState): Promise<{ ok: true; systemState: SystemState }> {
   const policy = getPolicy(userId);
-  if (state !== "halted") {
+  // Active is the only state that can authorize new strategy work. The three containment states
+  // must remain available even when a user has an incomplete universe: they are the path to stop
+  // future submissions or allow only exits for an already-held account.
+  if (state === "active") {
     if (!policy.accountNumber) throw new Error("Select an account before changing strategy state.");
     if (policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) {
       throw new Error("Select at least one base index or additional watchlist symbol before changing strategy state.");
@@ -707,6 +778,42 @@ export async function executeMobileCommand(command: MobileCommandRecord): Promis
   }
 }
 
+/**
+ * Applies a protective strategy state independently of the global sequential worker. This makes a
+ * Stop authoritative while a long run-once command is awaiting providers. It cannot revoke a broker
+ * request that crossed the submission boundary already; the strategy placement path re-reads the
+ * durable state at its final synchronous pre-submit boundary to block everything after that point.
+ */
+export async function executeProtectiveMobileCommandImmediately(
+  commandId: string,
+  userId: string
+): Promise<PublicMobileCommand> {
+  const current = getMobileCommandRecord(commandId, userId);
+  if (!current) throw new MobileCommandValidationError("Command not found.");
+  if (!isImmediateProtectiveMobileCommandType(current.commandType)) {
+    throw new MobileCommandValidationError("Command is not an immediate protective state action.");
+  }
+  if (current.status !== "queued") return toPublicMobileCommand(current);
+
+  const nowIso = new Date().toISOString();
+  const claimed = getDb().prepare(`
+    UPDATE mobile_commands
+    SET status = 'running', started_at = ?, updated_at = ?
+    WHERE id = ? AND user_id = ? AND status = 'queued'
+  `).run(nowIso, nowIso, commandId, userId);
+  if (claimed.changes !== 1) {
+    return getMobileCommand(commandId, userId) ?? toPublicMobileCommand(current);
+  }
+
+  const running = getMobileCommandRecord(commandId, userId)!;
+  emitMobileCommandEvent(running);
+  const completed = await executeMobileCommand(running);
+  if (completed.status === "succeeded") {
+    cancelQueuedRiskIncreasingCommands(userId, commandId, running.commandType);
+  }
+  return completed;
+}
+
 export async function processPendingMobileCommands(options: { limit?: number } = {}): Promise<{ processed: number }> {
   if (globalForMobileEvents.__mobileCommandWorkerInFlight) return { processed: 0 };
   globalForMobileEvents.__mobileCommandWorkerInFlight = true;
@@ -749,10 +856,10 @@ export function mobileControlCatalog() {
       eventTypes: ["mobile.command", "dashboard.run-complete", "dashboard.proposal", "dashboard.order", "dashboard.market-data", "dashboard.dirty"]
     },
     accountDeletion: {
-      request: "POST /api/mobile/account-deletion/request",
+      request: "GET /api/mobile/account-deletion/request (read-only preview)",
       confirm: "POST /api/mobile/account-deletion/confirm",
       requiredText: "DELETE MY ACCOUNT",
-      note: "Deletes app-side data and server-stored secrets for the signed-in OAuth identity, then the client should sign out."
+      note: "Previewing is read-only. Final confirmation prepares and deletes app-side data and server-stored secrets for the signed-in OAuth identity, then the client should sign out."
     },
     commands: MOBILE_COMMAND_TYPES.map((type) => ({ type }))
   };

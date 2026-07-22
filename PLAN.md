@@ -1,14 +1,15 @@
 # Active Implementation Plan
 
 > **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
-> `codex/mobile-first-ios-20260721`).** Implementation is complete and simulator-build verified in
-> the isolated worktree. Parent safety review is complete; next is commit/push/PR through the normal
-> protected landing flow. Phase 1 intentionally keeps the backend authoritative; its only server
-> change aligns the native Apple audience fallback and adds a focused contract test. Release signing
+> `codex/mobile-first-ios-20260721`).** Implementation and review remediation are complete in the
+> isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:
+> native Apple audience, read-only deletion preview/final deletion admission, immediate protective
+> mobile commands, and the final broker-placement state fence are server-side contract/safety work.
+> Release signing
 > is configured for team `CC8UTF7ATG`; the XcodeGen spec is canonical and
 > the generated `.xcodeproj` is ephemeral. Deferred after landing: device/simulator interaction QA
 > on a machine with an installed
-> iOS runtime, app-icon/notification/background-refresh work, and any richer Coach conversation
+> iOS runtime, notification/background-refresh work, and any richer Coach conversation
 > contract that requires a new server API.
 
 

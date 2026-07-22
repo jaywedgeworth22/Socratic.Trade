@@ -1,9 +1,17 @@
 import Foundation
+import Combine
 
 struct CommandAttemptTracker {
     private struct PendingAttempt {
         let fingerprint: String
         let idempotencyKey: String
+        var commandID: String?
+    }
+
+    struct Resolution: Equatable {
+        let operationID: String
+        let status: String
+        let error: String?
     }
 
     private var attempts: [String: PendingAttempt] = [:]
@@ -20,8 +28,37 @@ struct CommandAttemptTracker {
             return pending.idempotencyKey
         }
         let key = UUID().uuidString
-        attempts[operationID] = PendingAttempt(fingerprint: fingerprint, idempotencyKey: key)
+        attempts[operationID] = PendingAttempt(
+            fingerprint: fingerprint,
+            idempotencyKey: key,
+            commandID: nil
+        )
         return key
+    }
+
+    mutating func track(_ command: MobileCommand, operationID: String) {
+        guard var attempt = attempts[operationID] else { return }
+        attempt.commandID = command.id
+        attempts[operationID] = attempt
+    }
+
+    mutating func reconcile(_ commands: [MobileCommand]) -> [Resolution] {
+        let commandsByID = Dictionary(uniqueKeysWithValues: commands.map { ($0.id, $0) })
+        var resolutions: [Resolution] = []
+        for (operationID, attempt) in Array(attempts) {
+            guard
+                let commandID = attempt.commandID,
+                let command = commandsByID[commandID],
+                command.isTerminal
+            else {
+                continue
+            }
+            attempts.removeValue(forKey: operationID)
+            resolutions.append(
+                Resolution(operationID: operationID, status: command.status, error: command.error)
+            )
+        }
+        return resolutions
     }
 
     mutating func release(operationID: String) {
@@ -110,6 +147,7 @@ final class MobileStore: ObservableObject {
             snapshotLoadFailed = false
             isAuthenticated = true
             error = nil
+            reconcileTrackedCommands(loadedSnapshot.recentCommands)
         } catch is CancellationError {
             return
         } catch let caught {
@@ -174,41 +212,47 @@ final class MobileStore: ObservableObject {
             payload: payload
         )
         busyOperations.insert(operationID)
-        defer { busyOperations.remove(operationID) }
 
         do {
-            _ = try await client.submit(
+            let command = try await client.submit(
                 commandType: commandType,
                 payload: payload,
                 idempotencyKey: idempotencyKey
             )
-            commandAttemptTracker.release(operationID: operationID)
+            commandAttemptTracker.track(command, operationID: operationID)
             await load()
-            return true
+            // A deduplicated request can already be terminal even if it has fallen out of the
+            // latest snapshot page. Reconcile that direct response as a final fallback.
+            reconcileTrackedCommands([command])
+            return !command.didFail
         } catch is CancellationError {
+            busyOperations.remove(operationID)
             return false
         } catch let caught {
             if shouldReleaseCommandAttempt(after: caught) {
                 commandAttemptTracker.release(operationID: operationID)
             }
+            // Network/decoding errors keep the idempotency key for an explicit retry, but they do
+            // not leave the control visually locked when no command id was confirmed.
+            busyOperations.remove(operationID)
             applyAuthAwareError(caught)
             return false
         }
     }
 
-    func startAccountDeletion() async {
+    func loadAccountDeletionPreview() async {
         guard !isDeletingAccount else { return }
         isDeletingAccount = true
         defer { isDeletingAccount = false }
         do {
-            deletionRequest = try await client.startAccountDeletion()
+            deletionRequest = try await client.accountDeletionPreview()
             error = nil
         } catch {
             applyAuthAwareError(error)
         }
     }
 
-    func cancelAccountDeletion() {
+    func clearAccountDeletionPreview() {
         deletionRequest = nil
     }
 
@@ -221,9 +265,10 @@ final class MobileStore: ObservableObject {
                 typedIdentity: typedIdentity,
                 typedText: typedText
             )
-            let logoutURL = client.resolvedURL(result.logoutUrl)
+            // The HTTP success is authoritative. Clear cookies and all in-memory account state
+            // before inspecting optional receipt fields so response drift cannot preserve access.
             clearLocalSession()
-            return logoutURL
+            return client.resolvedURL(result.logoutUrl ?? "/logout")
         } catch {
             applyAuthAwareError(error)
             return nil
@@ -283,6 +328,18 @@ final class MobileStore: ObservableObject {
                 await load()
             } while reloadPending && !Task.isCancelled
             reloadInFlight = false
+        }
+    }
+
+    private func reconcileTrackedCommands(_ commands: [MobileCommand]) {
+        let resolutions = commandAttemptTracker.reconcile(commands)
+        for resolution in resolutions {
+            busyOperations.remove(resolution.operationID)
+            guard resolution.status == "failed" || resolution.status == "cancelled" else { continue }
+            let detail = resolution.error?.trimmingCharacters(in: .whitespacesAndNewlines)
+            error = detail?.isEmpty == false
+                ? detail
+                : "The queued action was \(resolution.status)."
         }
     }
 

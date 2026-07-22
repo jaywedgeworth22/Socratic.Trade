@@ -21,14 +21,56 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.recentCommands.first?.status, "succeeded")
     }
 
-    func testDeletionRequestMatchesCurrentServerWithoutExpiry() throws {
+    func testDeletionPreviewMatchesReadOnlyServerContract() throws {
         let envelope = try JSONDecoder().decode(
             DeletionRequestEnvelope.self,
-            from: Data(#"{"deletionRequest":{"requestId":"delete-1","userId":"user-1","email":"owner@example.com","requiredText":"DELETE MY ACCOUNT","steps":["Export records","Confirm deletion"]}}"#.utf8)
+            from: Data(#"{"deletionRequest":{"userId":"user-1","email":"owner@example.com","requiredText":"DELETE MY ACCOUNT","steps":["Export records","Confirm deletion"]}}"#.utf8)
         )
 
-        XCTAssertEqual(envelope.deletionRequest.requestId, "delete-1")
+        XCTAssertNil(envelope.deletionRequest.requestId)
         XCTAssertNil(envelope.deletionRequest.expiresAt)
+    }
+
+    func testDeletionResultDecodesActualServerReceiptWithoutDeletedUserId() throws {
+        let result = try JSONDecoder().decode(
+            AccountDeletionResult.self,
+            from: Data(#"{"ok":true,"counts":{"alerts":2,"connected_accounts":1},"logoutUrl":"/logout"}"#.utf8)
+        )
+
+        XCTAssertTrue(result.ok)
+        XCTAssertEqual(result.counts["alerts"], 2)
+        XCTAssertEqual(result.logoutUrl, "/logout")
+    }
+
+    func testLegacyRedTeamVerdictsDecodeWithSafeDefaults() throws {
+        let legacyObject = try JSONDecoder().decode(
+            RedTeamVerdict.self,
+            from: Data(#"{"decision":"reject","rationale":"Legacy objection"}"#.utf8)
+        )
+        let legacyString = try JSONDecoder().decode(
+            RedTeamVerdict.self,
+            from: Data(#""approve""#.utf8)
+        )
+        let emptyObject = try JSONDecoder().decode(
+            RedTeamVerdict.self,
+            from: Data(#"{}"#.utf8)
+        )
+        let oldestPersistedVerdict = try JSONDecoder().decode(
+            RedTeamVerdict.self,
+            from: Data(#"{"rejected":true}"#.utf8)
+        )
+
+        XCTAssertEqual(legacyObject.verdict, "reject")
+        XCTAssertTrue(legacyObject.rejected)
+        XCTAssertTrue(legacyObject.available)
+        XCTAssertEqual(legacyObject.reason, "Legacy objection")
+        XCTAssertEqual(legacyString.verdict, "approve")
+        XCTAssertTrue(legacyString.available)
+        XCTAssertFalse(emptyObject.available)
+        XCTAssertFalse(emptyObject.rejected)
+        XCTAssertFalse(emptyObject.reason.isEmpty)
+        XCTAssertTrue(oldestPersistedVerdict.available)
+        XCTAssertTrue(oldestPersistedVerdict.rejected)
     }
 
     @MainActor
@@ -120,13 +162,93 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(first, retry)
         XCTAssertNotEqual(first, changedIntent)
 
-        tracker.release(operationID: "proposal.approve:proposal-1")
+        let queued = decodeCommand(
+            #"{"id":"command-1","commandType":"proposal.approve","status":"queued","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:30:00.000Z"}"#
+        )
+        tracker.track(queued, operationID: "proposal.approve:proposal-1")
+        XCTAssertTrue(tracker.reconcile([queued]).isEmpty)
+        XCTAssertEqual(
+            first,
+            tracker.idempotencyKey(
+                operationID: "proposal.approve:proposal-1",
+                commandType: "proposal.approve",
+                payload: ["proposalId": "proposal-1"]
+            )
+        )
+
+        let failed = decodeCommand(
+            #"{"id":"command-1","commandType":"proposal.approve","status":"failed","error":"Proposal expired","createdAt":"2026-07-21T17:30:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}"#
+        )
+        XCTAssertEqual(
+            tracker.reconcile([failed]),
+            [CommandAttemptTracker.Resolution(
+                operationID: "proposal.approve:proposal-1",
+                status: "failed",
+                error: "Proposal expired"
+            )]
+        )
         let resolvedThenRetried = tracker.idempotencyKey(
             operationID: "proposal.approve:proposal-1",
             commandType: "proposal.approve",
             payload: ["proposalId": "proposal-1"]
         )
         XCTAssertNotEqual(first, resolvedThenRetried)
+    }
+
+    @MainActor
+    func testSuccessfulDeletionHTTPAlwaysClearsLocalSessionWhenOptionalReceiptFieldsDrift() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MobileTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer {
+            MobileTestURLProtocol.handler = nil
+            session.invalidateAndCancel()
+        }
+
+        MobileTestURLProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["content-type": "application/json"]
+            )!
+            if request.url?.path == "/api/mobile/account-deletion/request" {
+                XCTAssertEqual(request.httpMethod, "GET")
+                return (
+                    response,
+                    Data(#"{"deletionRequest":{"userId":"user-1","email":"owner@example.com","requiredText":"DELETE MY ACCOUNT","steps":["Confirm deletion"]}}"#.utf8)
+                )
+            }
+            XCTAssertEqual(request.url?.path, "/api/mobile/account-deletion/confirm")
+            XCTAssertEqual(request.httpMethod, "POST")
+            // Current server fields are present, deletedUserId is intentionally absent, and the
+            // optional logout URL is omitted to exercise the local fallback.
+            return (response, Data(#"{"ok":true,"counts":{"alerts":1},"futureField":"ignored"}"#.utf8))
+        }
+
+        let snapshot = try JSONDecoder().decode(MobileSnapshot.self, from: Data(minimalSnapshotJSON.utf8))
+        let store = MobileStore(
+            client: MobileAPIClient(
+                baseURL: URL(string: "https://socratictrade.com")!,
+                session: session
+            ),
+            previewSnapshot: snapshot
+        )
+
+        await store.loadAccountDeletionPreview()
+        XCTAssertNotNil(store.deletionRequest)
+        let logoutURL = await store.confirmAccountDeletion(
+            typedIdentity: "owner@example.com",
+            typedText: "DELETE MY ACCOUNT"
+        )
+
+        XCTAssertFalse(store.isAuthenticated)
+        XCTAssertNil(store.snapshot)
+        XCTAssertEqual(logoutURL?.absoluteString, "https://socratictrade.com/logout")
+    }
+
+    private func decodeCommand(_ json: String) -> MobileCommand {
+        try! JSONDecoder().decode(MobileCommand.self, from: Data(json.utf8))
     }
 
     private let minimalSnapshotJSON = #"""
@@ -190,4 +312,29 @@ final class MobileModelsTests: XCTestCase {
       "recentCommands":[{"id":"command-1","commandType":"strategy.run_once","status":"succeeded","error":null,"createdAt":"2026-07-21T17:30:00.000Z","queuedAt":"2026-07-21T17:30:00.000Z","startedAt":"2026-07-21T17:30:01.000Z","finishedAt":"2026-07-21T17:31:00.000Z","updatedAt":"2026-07-21T17:31:00.000Z"}]
     }
     """#
+}
+
+private final class MobileTestURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

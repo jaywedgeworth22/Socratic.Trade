@@ -28,6 +28,7 @@ targets:
         DEVELOPMENT_TEAM: CC8UTF7ATG
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: SocraticTrade/SocraticTrade.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: SocraticTrade/Info.plist
       properties:

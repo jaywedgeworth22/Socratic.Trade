@@ -196,6 +196,63 @@ struct RedTeamVerdict: Decodable {
     let overridden: Bool?
     let humanOverrideApplied: Bool?
     let failureKind: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case verdict
+        case decision
+        case rejected
+        case available
+        case reason
+        case rationale
+        case model
+        case overridden
+        case humanOverrideApplied
+        case failureKind
+    }
+
+    init(from decoder: Decoder) throws {
+        if let value = try? decoder.singleValueContainer().decode(String.self) {
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            verdict = normalized.isEmpty ? nil : normalized
+            rejected = normalized == "reject" || normalized == "rejected"
+            available = !normalized.isEmpty
+            reason = "Legacy adversarial verdict; no rationale was recorded."
+            model = nil
+            overridden = nil
+            humanOverrideApplied = nil
+            failureKind = nil
+            return
+        }
+
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedVerdict =
+            try values.decodeIfPresent(String.self, forKey: .verdict) ??
+            values.decodeIfPresent(String.self, forKey: .decision)
+        let normalizedVerdict = decodedVerdict?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let decodedReason =
+            try values.decodeIfPresent(String.self, forKey: .reason) ??
+            values.decodeIfPresent(String.self, forKey: .rationale)
+        let normalizedReason = decodedReason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let decodedRejected = try values.decodeIfPresent(Bool.self, forKey: .rejected)
+
+        verdict = normalizedVerdict?.isEmpty == false ? normalizedVerdict : nil
+        // The oldest persisted review shape carried only `rejected`. It is still evidence that a
+        // review happened, so never present it as an unavailable review merely because it predates
+        // `available`, `verdict`, and the reviewer rationale.
+        rejected = decodedRejected ??
+            (verdict == "reject" || verdict == "rejected")
+        available = try values.decodeIfPresent(Bool.self, forKey: .available) ??
+            (verdict != nil || normalizedReason?.isEmpty == false || decodedRejected != nil)
+        reason = normalizedReason?.isEmpty == false
+            ? normalizedReason!
+            : "No adversarial review rationale was recorded."
+        model = try values.decodeIfPresent(String.self, forKey: .model)
+        overridden = try values.decodeIfPresent(Bool.self, forKey: .overridden)
+        humanOverrideApplied = try values.decodeIfPresent(Bool.self, forKey: .humanOverrideApplied)
+        failureKind = try values.decodeIfPresent(String.self, forKey: .failureKind)
+    }
 }
 
 func liveApprovalConfirmationText(forSymbol symbol: String) -> String {
@@ -302,6 +359,14 @@ struct MobileCommand: Decodable, Identifiable {
     let startedAt: String?
     let finishedAt: String?
     let updatedAt: String
+
+    var isTerminal: Bool {
+        status == "succeeded" || status == "failed" || status == "cancelled"
+    }
+
+    var didFail: Bool {
+        status == "failed" || status == "cancelled"
+    }
 }
 
 struct CommandEnvelope: Decodable {
@@ -314,7 +379,9 @@ struct DeletionRequestEnvelope: Decodable {
 }
 
 struct AccountDeletionRequest: Decodable {
-    let requestId: String
+    // Read-only previews intentionally have no durable request id. The backend creates the
+    // prepared request only inside the final confirmation action.
+    let requestId: String?
     let userId: String
     let email: String?
     let requiredText: String
@@ -326,6 +393,27 @@ struct AccountDeletionRequest: Decodable {
 
 struct AccountDeletionResult: Decodable {
     let ok: Bool
-    let deletedUserId: String
-    let logoutUrl: String
+    let counts: [String: Int]
+    let logoutUrl: String?
+
+    static let successfulHTTP = AccountDeletionResult(ok: true, counts: [:], logoutUrl: nil)
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case counts
+        case logoutUrl
+    }
+
+    init(ok: Bool, counts: [String: Int], logoutUrl: String?) {
+        self.ok = ok
+        self.counts = counts
+        self.logoutUrl = logoutUrl
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try values.decodeIfPresent(Bool.self, forKey: .ok) ?? true
+        counts = try values.decodeIfPresent([String: Int].self, forKey: .counts) ?? [:]
+        logoutUrl = try values.decodeIfPresent(String.self, forKey: .logoutUrl)
+    }
 }

@@ -184,9 +184,9 @@ private struct ProposalCard: View {
 
                 HStack(spacing: 8) {
                     StatusPill(
-                        proposal.executionMode == "broker/live" ? "Live" : "Paper",
-                        color: proposal.executionMode == "broker/live" ? AppPalette.negative : AppPalette.accent,
-                        systemImage: proposal.executionMode == "broker/live" ? "dollarsign.circle.fill" : "doc.text"
+                        executionModeLabel,
+                        color: executionModeColor,
+                        systemImage: executionModeSystemImage
                     )
                     if let confidence = proposal.proposal.confidenceScore {
                         StatusPill("\(Int(confidence.rounded()))% confidence", color: AppPalette.accent)
@@ -251,6 +251,22 @@ private struct ProposalCard: View {
                 }
             }
         }
+    }
+
+    private var executionModeLabel: String {
+        switch proposal.executionMode {
+        case "broker/live": return "Live"
+        case "broker/paper": return "Paper"
+        default: return "Unknown"
+        }
+    }
+
+    private var executionModeColor: Color {
+        proposal.executionMode == "broker/live" ? AppPalette.negative : AppPalette.accent
+    }
+
+    private var executionModeSystemImage: String {
+        proposal.executionMode == "broker/live" ? "dollarsign.circle.fill" : "questionmark.circle"
     }
 
     private var orderDescription: String {

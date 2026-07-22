@@ -52,7 +52,10 @@ posting Apple's identity token directly to the existing mobile auth endpoint.
 - Mobile commands use per-operation busy identifiers. A proposal action, watchlist edit, or Run
   once cannot disable an unrelated Stop command.
 - The backend remains the sole authority for credentials, inference, policy validation,
-  revalidation, and order placement.
+  revalidation, and order placement. The post-review safety patch also makes
+  Stop/close-only/liquidating commands execute immediately, cancels queued risk-increasing mobile
+  commands after a protective transition, and re-reads durable state at the final broker-placement
+  boundary.
 - Background refresh, push delivery, and on-device inference remain deferred; no unused background
   modes were declared merely because PR #1851 contained them.
 
@@ -75,6 +78,15 @@ posting Apple's identity token directly to the existing mobile auth endpoint.
 - The server-side Apple audience fallback is now the canonical `trade.socratic.app` identifier,
   with a focused resolver test. No callback-query JWT or manual cookie injection was introduced.
 
+## Post-review remediation
+
+PR #1859 is open with additional safety and contract work: deletion preview is read-only and final
+confirmation performs admission checks/preparation; command retries reconcile terminal outcomes;
+PWA/native deletion clients use the current GET preview contract; protective commands preempt queued
+risk-increasing work; and the app includes its production app-icon catalog. Unknown proposal
+execution modes render as unknown rather than paper. The server placement guard is covered by a
+focused stop-preemption test.
+
 ## Files
 
 - `ios/project.yml`
@@ -95,9 +107,21 @@ posting Apple's identity token directly to the existing mobile auth endpoint.
 - `ios/SocraticTrade/SocraticTrade.entitlements`
 - `ios/SocraticTrade/SocraticTradeApp.swift`
 - `ios/SocraticTradeTests/MobileModelsTests.swift`
+- `ios/SocraticTrade/Assets.xcassets/Contents.json`
+- `ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/Contents.json`
+- `ios/SocraticTrade/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png`
 - `app/api/mobile/auth/apple/route.ts`
 - `src/lib/auth/apple-client-id.ts`
 - `src/lib/auth/__tests__/apple-client-id.test.ts`
+- `app/api/mobile/account-deletion/request/route.ts`
+- `app/api/mobile/account-deletion/confirm/route.ts`
+- `app/api/mobile/commands/route.ts`
+- `app/mobile/mobile-pwa-client.tsx`
+- `src/lib/mobile-api.ts`
+- `src/lib/strategy.ts`
+- `src/lib/system-state-placement-guard.ts`
+- `test/mobile-account-deletion-route.test.ts`
+- `test/mobile-stop-preemption.test.ts`
 - `docs/EFFORT-LOG.md`
 - `STATUS.md`
 - `PLAN.md`
@@ -156,12 +180,16 @@ The final canonical iOS 26 build produced both app and XCTest products for arm64
 sole deprecated scene-phase callback was migrated to the current two-argument `onChange` form; the
 incremental final build is warning-free.
 
+The post-review focused Node gate passed `tsc --noEmit`, 7/7 targeted Vitest tests (including mobile
+deletion, stop preemption, and Apple audience), scoped ESLint with zero errors, JSON/plist asset
+validation, and `git diff --check`. No simulator runtime is installed, so XCTest execution remains
+unavailable.
+
 ## Follow-ups
 
-1. Commit and open the reviewed diff through the protected PR flow; do not deploy from this lane.
+1. Clear review/check gates and merge PR #1859 through the protected flow; do not deploy manually.
 2. Run the XCTest suite and a touch/dynamic-type/VoiceOver pass once an iOS simulator runtime or
    physical device is available.
-3. Add the production app icon, push/background refresh, and notification delivery in separate
-   entitlement-aware phases.
+3. Add push/background refresh and notification delivery in separate entitlement-aware phases.
 4. Add a richer Coach conversation only after defining an authenticated server contract; do not
    move trading inference or authority onto the phone.
