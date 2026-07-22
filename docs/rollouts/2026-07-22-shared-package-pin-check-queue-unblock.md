@@ -30,12 +30,12 @@ with `node: command not found`; unrelated PRs could also be stranded with no pin
 - `git diff --check` — passed.
 - Hosted `CI / verify-hosted` run `29941083303` — passed 2026-07-22 17:46 UTC; the required `CI / verify` gate was queued immediately afterward.
 
-## Follow-ups
+## Combined landing
 
-The hosted `verify-hosted` gate passed on an earlier head; subsequent main synchronizations have
-advanced the PR again, so this note does not pin a supersedable SHA. Refresh PR #1890 before acting;
-current-head replacement `gitleaks`, `check-pin`, and required `verify` checks are queued and must
-pass before merge. Auto-merge is intentionally held off until current-head verification passes and
-every review thread is resolved. Close #1780 as
-superseded after this replacement merges; do not restore `check-pin` as a required context until
-both consumers' shared-package pins are coordinated.
+The reviewed workflow correction is subsumed into telemetry PR #1889 so both changes consume one
+protected gate. Standalone PR #1890 stays open only as a held rollback/reference vehicle until the
+combined PR lands. The combined Node 24 local gate passes 5 files / 71 tests, TypeScript, scoped
+ESLint, workflow YAML parsing, and diff-check. Auto-merge remains off until the final combined head
+passes hosted checks and zero-thread verification. After #1889 lands, close #1890 and #1780 as
+superseded; do not restore `check-pin` as a required context until both consumers' shared-package
+pins are coordinated.

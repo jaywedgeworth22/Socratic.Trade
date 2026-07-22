@@ -52,11 +52,13 @@ or state writes. There is no v1 sender or dual-write path in the final implement
   stale-HMR timer replacement for the v3 direct-v2 replay state. The FMP producer suite explicitly
   establishes the same active cutover marker that production instrumentation creates before provider
   workers start, preventing a test-only pre-v2 ordering from masking provider events.
+- Combined landing verification after subsuming the shared-package pin-check workflow fix: Node 24
+  5 files / 71 tests, TypeScript, scoped ESLint, workflow YAML parsing, and diff-check pass.
 
 ## Promotion gate
 
 The receiver gate cleared on exact Usage-Monitor main
-`335723775ef0f8114ee1ca77b4716139018026dc`, committed live on Oracle with strict readiness,
+`2bc276497ae28441762768911f34eb5e8e2fdd30`, committed live on Oracle with strict readiness,
 fresh scheduler, Garage restore/integrity/FK/schema verification, and a committed deploy receipt.
 Land through protected checks, then verify the exact Coolify production SHA plus one authenticated
 v2 ACK.
