@@ -8,9 +8,10 @@ verify (18/20 recent CI cancelled), and (2) **Security/gitleaks + pin-check + sm
 ran only suite jobs. Fixes: remove every workflow target for `trading-live`, with PR code on
 `socratic-ci` and trusted failure reporting on `socratic-deploy`; stop Playwright Smoke on every
 PR (main/nightly/manual only); preserve the active CI run while GitHub collapses superseded
-pending runs to the newest head. The first durable local gate also exposed six stale assertions on
-current `main`; this branch now carries the already-prepared isolation/expectation corrections from
-the #1856 lineage. Conflicts/comments were not the multi-day bottleneck.
+pending runs to the newest head. The first durable local gate also exposed a synthetic production
+enrichment fallback, cross-side bracket authorization, and stale/flaky outcome, budget, and
+notification assertions; this branch now fixes the production behavior and focused tests.
+Conflicts/comments were not the multi-day bottleneck.
 Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
 
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
