@@ -1,5 +1,11 @@
 # Phase 11 - Multi-user & API-key management (plan)
 
+## CI pin-check reliability (2026-07-22)
+
+The shared-package pin workflow runs on every pull request so the status cannot disappear for
+unrelated code changes. It installs the pinned Node 24 toolchain before the comparison script,
+which uses Node for GitHub API JSON parsing.
+
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and
 their own API keys**. With no connected broker account the app cannot place any

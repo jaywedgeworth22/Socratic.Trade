@@ -1,5 +1,12 @@
 # Current Status
 
+## 2026-07-22 — Shared-package pin check queue unblock (PR replacement for #1780)
+
+The pin check now emits a status on every pull request and installs Node 24 before its shell
+comparison invokes `node`. This replaces the stale #1780 branch, whose current workflow did not
+touch the pin workflow and whose hosted check failed with `node: command not found`. Rollout:
+`docs/rollouts/2026-07-22-shared-package-pin-check-queue-unblock.md`.
+
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
 Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.

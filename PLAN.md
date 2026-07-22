@@ -1,5 +1,10 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Shared-package pin check queue unblock (CODEX).** Keep the pin check non-required
+> until the coordinated consumers are stable, but make its signal reliable: remove the PR path
+> filter and install Node before the comparison step. Verify the workflow regression plus required
+> hosted gate, merge the replacement, then close superseded #1780.
+
 > **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
 > `codex/mobile-first-ios-20260721`).** Implementation and review remediation are complete in the
 > isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:

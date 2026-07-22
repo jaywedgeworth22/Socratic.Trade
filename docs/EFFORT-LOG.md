@@ -46,6 +46,8 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
+- **[Socratic.Trade][CODEX] Shared-package pin-check queue unblock (replacement PR for #1780, branch `codex/check-pin-always-on-fix`) — IN PROGRESS 2026-07-22.** Removed the pull-request path filter so every PR receives a pin-check status, and added Node 24 before the comparison script. Focused workflow-safety tests, ESLint, TypeScript, YAML parsing, and diff checks pass; replacement PR pending hosted verify. Close #1780 only after this replacement merges.
+
 - **[CODEX] Native iOS mobile-first product replacement — COMPLETED 2026-07-22 via PR #1859; secure OAuth handoff follow-up PR #1886 is open.** Phase 1 is merged to `main` with the five-tab shell, server-authoritative safety gates, canonical XcodeGen project, and verifier-bound opaque web-auth implementation. Follow-up #1886 completes the PKCE exchange hardening so session credentials never enter the custom callback URL; it remains pending protected merge. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
 - **[Socratic.Trade][CLAUDE] check-pin required-status-context merge deadlock fix (branch
   `claude/checkpin-always-on-prs`, worktree `/private/tmp/socratic-checkpin-work/repo`, claimed

@@ -46,4 +46,15 @@ describe("CI queue safety", () => {
     expect(triggers).not.toMatch(/^  pull_request:/m);
     expect(triggers).not.toMatch(/^  merge_group:/m);
   });
+
+  it("runs the shared-package pin check on every PR with Node available before comparison", () => {
+    const source = workflow("shared-package-pin-check.yml");
+    expect(source).toMatch(/^  pull_request:\s*$/m);
+    expect(source).not.toMatch(/^  pull_request:\n(?:^[ \t]+.*\n)*^[ \t]+paths:/m);
+
+    const nodeSetup = source.indexOf("uses: actions/setup-node@v4");
+    const comparison = source.indexOf("Compare shared-package version against the peer consumer");
+    expect(nodeSetup).toBeGreaterThan(-1);
+    expect(nodeSetup).toBeLessThan(comparison);
+  });
 });
