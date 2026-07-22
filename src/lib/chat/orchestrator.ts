@@ -344,10 +344,10 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
         content: JSON.stringify(sanitized)
       });
       const pack = createEvidencePack({ decisionKey: `${turnKey}:tool:${name}:${retrievedAt}`, evidence: [ref] });
-      // Tool results are serialized into the model's next turn. For KB search, derive the
-      // receipt from the sanitized rows actually returned to that tool loop, not from the broader
-      // retrieval candidate pool. The audit stays identifier/count-only.
-      const ragPromptConsumption = name === "kb_search" && kbChunks(sanitized).length > 0
+      // This proves only that KB rows were serialized into a tool result. The chat transport may
+      // still stop at MAX_STEPS or fail before a subsequent provider request includes that result,
+      // so do not call this model consumption. The audit stays identifier/count-only.
+      const ragToolResultAssembly = name === "kb_search" && kbChunks(sanitized).length > 0
         ? derivePromptRagConsumption(
             kbChunks(sanitized).flatMap((row) => {
               const text = typeof row.text === "string" ? row.text : "";
@@ -380,16 +380,16 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
           tool: name,
           packHash: pack.packHash,
           ref: { id: ref.id, contentHash: ref.contentHash, family: ref.source.family, status: ref.source.status },
-          ...(ragPromptConsumption
+          ...(ragToolResultAssembly
             ? {
-                ragPromptConsumption: {
-                  outcome: ragPromptConsumption.outcome,
-                  retrievedCandidateCount: ragPromptConsumption.retrievedCandidateCount,
-                  uniqueCandidateCount: ragPromptConsumption.uniqueCandidateCount,
-                  duplicateCandidateCount: ragPromptConsumption.duplicateCandidateCount,
-                  retrievalFailureCount: ragPromptConsumption.retrievalFailureCount,
-                  consumed: ragPromptConsumption.consumed,
-                  retrievedButNotConsumed: ragPromptConsumption.retrievedButNotConsumed
+                ragToolResultAssembly: {
+                  outcome: "assembled",
+                  retrievedCandidateCount: ragToolResultAssembly.retrievedCandidateCount,
+                  uniqueCandidateCount: ragToolResultAssembly.uniqueCandidateCount,
+                  duplicateCandidateCount: ragToolResultAssembly.duplicateCandidateCount,
+                  retrievalFailureCount: ragToolResultAssembly.retrievalFailureCount,
+                  serialized: ragToolResultAssembly.consumed,
+                  omitted: ragToolResultAssembly.retrievedButNotConsumed
                 }
               }
             : {}),

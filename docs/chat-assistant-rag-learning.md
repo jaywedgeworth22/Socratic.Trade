@@ -46,8 +46,10 @@ before enabling it.
 Retrieval is not evidence use. Strategy now derives decision-case RAG attribution only from chunks
 that survived containment and the final shared prompt budget into the Bull/Red payload. It retains
 the rejected retrieval candidates separately as identifier-only diagnostics, so later usefulness
-learning cannot award outcomes to a chunk the model never saw. Chat KB tool results use the same
-stable `rag_*` evidence references and propagate them into citations. New receipt/audit payloads
+learning cannot award outcomes to a chunk the model never saw. Truncated/header-only evidence stays
+diagnostic and never earns outcome credit. Chat KB tool results use the same stable `rag_*` evidence
+references and propagate them into citations, but are truthfully labeled tool-result assembly until
+a subsequent provider request actually uses them. New receipt/audit payloads
 contain identifiers, metadata, character counts, and text-free empty/error/deduplication counters
 only—never raw prompts, raw retrieval queries, or error strings.
 
@@ -186,12 +188,12 @@ default-off LLM judge); an offline **corpus coverage/freshness report** shipped 
 SQLite, no Pinecone key required) — a richer **dashboard UI** surfacing the same data is still open
 (note: `/api/admin/rag-coverage` + `app/admin/rag-coverage/` already exist as a related, separate
 live-API/UI capability — not touched by this pass, owned by the dashboard-redesign thread). A separate
-**production-path retrieval evaluator** now runs `retrieveContextDetailedWithStatus` against frozen JSON or
-DB-backed cases carrying authoritative availability timestamps and stable evidence provenance selectors (with
+**production-path retrieval evaluator** now runs `retrieveContextDetailedWithStatus` against required frozen,
+version-controlled JSON cases carrying authoritative availability timestamps and stable evidence provenance selectors (with
 vector ids retained only as diagnostics). It emits machine-readable
 recall/MRR/nDCG, future/undated-evidence, duplicate, source/section, latency, status, and usage receipts;
 live provider reads require an explicit `--allow-live`, and comparison labels never mutate production defaults.
-The DB golden set must be curated from frozen EDGAR evidence before it can select a model; typed
+The golden set must be curated from frozen EDGAR evidence before it can select a model; typed
 second gate on **BROKERAGE·LIVE** confirm only (keep paper/test one-click); persistent "what can I
 ask?" popover.
 
@@ -243,7 +245,9 @@ selectable rerank route/model plus default-off scout/deep/exact/general candidat
 text-free per-stage latency/candidate/drop receipts. The pure rerank-policy and stage-telemetry
 modules are now wired into `retrieveContextDetailed` on the integration lane. Corpus-wide FTS5
 recall is an independent source, unioned with dense results by RRF before one rerank; committed head
-or PIT-version receipts prevent stale generations from bypassing dense eligibility. The new paths
+or PIT-version receipts prevent stale generations from bypassing dense eligibility. Lexical recall
+also enforces authoritative tenant scopes, excludes sources whose rights metadata is not present in
+the filing FTS table, and hides legacy rows shadowed by a current/PIT managed version. The new paths
 remain default-off pending production evaluation. No local model service or sparse-vector API is
 assumed: BGE-M3 sparse capability counts only when the selected transport actually returns it.
 

@@ -51,7 +51,13 @@ describe("RAG shadow benchmarks", () => {
   });
 
   it("records timeouts without exposing provider error bodies or prompt text", async () => {
-    const never: ReadOnlyAssistantClient = { context: () => new Promise(() => {}) };
+    let observedSignal: AbortSignal | undefined;
+    const never: ReadOnlyAssistantClient = {
+      context: (_options, signal) => {
+        observedSignal = signal;
+        return new Promise(() => {});
+      }
+    };
     const receipt = await runPineconeAssistantShadow({
       liveEnabled: true,
       assistantName: "existing-assistant",
@@ -62,6 +68,7 @@ describe("RAG shadow benchmarks", () => {
     });
 
     expect(receipt.cases).toEqual([expect.objectContaining({ id: "case-timeout", status: "timeout", error: "timeout" })]);
+    expect(observedSignal?.aborted).toBe(true);
     expect(JSON.stringify(receipt)).not.toContain("do not retain this query");
   });
 

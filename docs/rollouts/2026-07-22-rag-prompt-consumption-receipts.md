@@ -2,10 +2,13 @@
 
 ## Summary
 
-- Added a pure RAG consumption helper that classifies retrieved chunks as consumed, truncated, or retrieved-but-not-consumed from the final serialized prompt fields.
+- Added a pure RAG consumption helper that classifies retrieved chunks as consumed, substantively truncated, or retrieved-but-not-consumed from the final serialized prompt fields.
 - Added text-free empty, failed, skipped, and duplicate-retrieval outcomes so an empty receipt is not misread as successful evidence use.
 - Moved strategy decision-case RAG attribution behind prompt containment and evidence budgeting.
 - Added stable `rag_*` evidence references to strategy attributions and chat KB tool/citation payloads.
+- Required a substantive body prefix before a prompt-tail fragment is called truncated; a metadata-header-only fragment is not consumed.
+- Restricted outcome/usefulness attribution to complete consumption. Chat KB results are recorded as tool-result assembly, not model consumption, until a later provider request actually uses them.
+- Expanded legacy evidence identity with immutable content/document coordinates and fixed sibling-parent dedupe to use parent rather than child identity.
 
 ## Why
 

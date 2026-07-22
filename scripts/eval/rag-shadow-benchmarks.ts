@@ -35,7 +35,10 @@ export interface AssistantContextResponse {
 }
 
 export interface ReadOnlyAssistantClient {
-  context(options: { query: string; topK: number; snippetSize: number; multimodal: false }): Promise<AssistantContextResponse>;
+  context(
+    options: { query: string; topK: number; snippetSize: number; multimodal: false },
+    signal: AbortSignal
+  ): Promise<AssistantContextResponse>;
 }
 
 export interface AssistantShadowReceipt {
@@ -98,18 +101,29 @@ function requestErrorKind(error: unknown): "timeout" | "assistant_request_failed
   return error instanceof Error && error.name === "TimeoutError" ? "timeout" : "assistant_request_failed";
 }
 
-async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const controller = new AbortController();
   const deadline = new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {
+      timedOut = true;
       const error = new Error("Pinecone Assistant context request exceeded configured timeout");
       error.name = "TimeoutError";
+      controller.abort(error);
       reject(error);
     }, timeoutMs);
     timeout.unref?.();
   });
   try {
-    return await Promise.race([operation, deadline]);
+    return await Promise.race([operation(controller.signal), deadline]);
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error("Pinecone Assistant context request exceeded configured timeout");
+      timeoutError.name = "TimeoutError";
+      throw timeoutError;
+    }
+    throw error;
   } finally {
     if (timeout) clearTimeout(timeout);
   }
@@ -117,10 +131,23 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise
 
 /** Only the Assistant `context` data-plane read is exposed to the benchmark. */
 export function createReadOnlyAssistantClient(apiKey: string, assistantName: string): ReadOnlyAssistantClient {
-  const pinecone = new Pinecone({ apiKey });
+  // The SDK's Assistant.context surface does not expose AbortSignal directly. Supply a scoped
+  // fetch implementation so the benchmark timeout cancels the underlying paid HTTP request.
+  let activeSignal: AbortSignal | undefined;
+  const pinecone = new Pinecone({
+    apiKey,
+    fetchApi: (input, init) => fetch(input, { ...init, signal: activeSignal ?? init?.signal })
+  });
   const assistant = pinecone.assistant({ name: assistantName });
   return {
-    context: ({ query, topK, snippetSize, multimodal }) => assistant.context({ query, topK, snippetSize, multimodal })
+    context: async ({ query, topK, snippetSize, multimodal }, signal) => {
+      activeSignal = signal;
+      try {
+        return await assistant.context({ query, topK, snippetSize, multimodal });
+      } finally {
+        activeSignal = undefined;
+      }
+    }
   };
 }
 
@@ -155,7 +182,10 @@ export async function runPineconeAssistantShadow(options: RunAssistantShadowOpti
     const startedAt = now();
     try {
       const response = await withTimeout(
-        client.context({ query: item.query, topK: 16, snippetSize: 512, multimodal: false }),
+        (signal) => client.context(
+          { query: item.query, topK: 16, snippetSize: 512, multimodal: false },
+          signal
+        ),
         timeoutMs
       );
       const citations = citationFingerprints(response.snippets);

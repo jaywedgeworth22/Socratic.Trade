@@ -106,7 +106,7 @@ describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
     // receipt propagates a stable ref and intentionally never persists the raw retrieval query or
     // prompt excerpt.
     const { listAudit } = await import("../src/lib/db");
-    const consumption = listAudit(200).findLast(
+    const consumption = [...listAudit(200)].reverse().find(
       (entry) => entry.kind === "strategy_rag_prompt_consumption" && (entry.payload as { runId?: string }).runId === result.runId
     );
     expect(consumption).toBeTruthy();

@@ -34,6 +34,17 @@ describe("RAG prompt-consumption receipts", () => {
     expect(receipt.retrievedButNotConsumed).toEqual([]);
   });
 
+  it("does not over-credit a prompt tail that contains only a chunk provenance header", () => {
+    const chunk = candidate({ serializedText: "[10-K · AAPL]\nMaterial agreement announced today." });
+    const headerOnly = "dossier\n[10-K · AAPL]\n";
+    const receipt = derivePromptRagConsumption([chunk], [headerOnly]);
+
+    expect(receipt.consumed).toEqual([]);
+    expect(receipt.retrievedButNotConsumed).toMatchObject([
+      { chunkId: "chunk-a", state: "not_consumed", consumedCharacters: 0 }
+    ]);
+  });
+
   it("deduplicates repeated retrieval rows by stable evidence ref", () => {
     const first = candidate();
     const duplicate = candidate({ score: 0.99, serializedText: first.serializedText });
@@ -47,6 +58,36 @@ describe("RAG prompt-consumption receipts", () => {
       uniqueCandidateCount: 1,
       duplicateCandidateCount: 1
     });
+  });
+
+  it("keeps distinct legacy chunks separate when broad fallback fields collide", () => {
+    const first = candidate({
+      chunkId: undefined,
+      accession: "0000123-26-000001",
+      section: "MD&A",
+      ordinal: 3,
+      contentHash: "content-hash-one",
+      vectorNamespace: "managed:public",
+      scope: "shared",
+      tenantScope: "shared:operator"
+    });
+    const second = candidate({
+      chunkId: undefined,
+      accession: "0000123-26-000001",
+      section: "MD&A",
+      ordinal: 4,
+      contentHash: "content-hash-two",
+      vectorNamespace: "managed:public",
+      scope: "shared",
+      tenantScope: "shared:operator",
+      serializedText: "[10-K · AAPL]\nA second distinct legacy chunk."
+    });
+
+    const receipt = derivePromptRagConsumption([first, second], [first.serializedText, second.serializedText]);
+
+    expect(stableRagEvidenceRef(first)).not.toBe(stableRagEvidenceRef(second));
+    expect(receipt).toMatchObject({ uniqueCandidateCount: 2, duplicateCandidateCount: 0 });
+    expect(receipt.consumed).toHaveLength(2);
   });
 
   it("makes empty, failed, and skipped retrieval outcomes explicit without persisting error text", () => {

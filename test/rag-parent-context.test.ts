@@ -43,6 +43,18 @@ describe("expandPostRerankParentContext", () => {
     expect(result.receipt).toMatchObject({ attachedParents: 1, skippedDuplicateParents: 1 });
   });
 
+  it("deduplicates a parent across sibling chunks with distinct child content hashes", () => {
+    const parent = "Parent section context shared by two separately embedded children.";
+    const result = expandPostRerankParentContext([
+      chunk("child-1", "first selected child", parent, { content_hash: "child-hash-one" }),
+      chunk("child-2", "second selected child", parent, { content_hash: "child-hash-two" })
+    ], { enabled: true });
+
+    expect(result.chunks[0]!.text).toContain(PARENT_CONTEXT_MARKER);
+    expect(result.chunks[1]!.text).toBe("second selected child");
+    expect(result.receipt).toMatchObject({ attachedParents: 1, skippedDuplicateParents: 1 });
+  });
+
   it("leaves a missing parent untouched and keeps disabled mode byte-identical", () => {
     const missing = chunk("missing", "child without parent");
     const source = [missing];

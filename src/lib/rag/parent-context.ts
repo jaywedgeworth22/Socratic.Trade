@@ -61,13 +61,17 @@ function parentText(metadata: Record<string, unknown> | undefined): string | und
 }
 
 function provenanceKey(metadata: Record<string, unknown> | undefined, parent: string): string {
+  // `content_hash` belongs to the selected CHILD, so including it makes every
+  // sibling appear to have a distinct parent. Use parent-specific coordinates
+  // when supplied, and always bind the key to the actual parent text. The exact
+  // text avoids hash-collision ambiguity and keeps this pure helper bundle-safe.
   const document = [
-    metadata?.document_key,
-    metadata?.accession,
-    metadata?.content_hash,
+    metadata?.parent_document_key ?? metadata?.document_key,
+    metadata?.parent_accession ?? metadata?.accession,
     metadata?.source,
     metadata?.symbol,
-    metadata?.section
+    metadata?.parent_section ?? metadata?.section,
+    metadata?.parent_ordinal ?? metadata?.parent_chunk_ordinal
   ]
     .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
     .join("|");

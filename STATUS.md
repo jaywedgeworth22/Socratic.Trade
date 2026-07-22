@@ -1,12 +1,16 @@
-## 2026-07-22 — Dense plus corpus-wide lexical retrieval integration (CODEX team)
+## 2026-07-22 — RAG strategic-performance integration (CODEX team)
 
-The production retrieval path now has a default-off `RAG_CORPUS_WIDE_LEXICAL` route that safely
-queries committed/current (or PIT-active) FTS5 filing occurrences independently of Pinecone, RRF
-unions them with dense matches, and sends the bounded union through at most one reranker. Explicit
-rerank routing is independent from embedding, missing authority records degraded behavior without
-fallback or fake scores, adaptive depth is default-off, and optional stage traces contain no query
-or document text. Five focused files / 45 tests pass; scoped lint has zero errors. Current-main
-reconciliation and the full ordered gate remain before PR. No provider/corpus/production writes.
+The full default-off program is integrated on current `main`: tenant-safe/current-or-PIT FTS5 recall
+beside dense Pinecone retrieval, one RRF union and rerank, decoupled adaptive rerank routing, text-free
+stage telemetry, strict production-path evaluation with runtime route receipts, Pinecone hosted-model
+comparison, bounded parent context, exact evidence-consumption/usefulness boundaries, declared
+structured-vs-narrative routing, and read-only Turso/Assistant probes. Independent review found and
+the branch fixed tenant bypass, stale legacy admission, mock-vector poisoning, weak golden selectors,
+PIT/reporting gaps, false truncated-evidence credit, sibling-parent duplication, and legacy evidence
+identity collisions. Focused integration verification passes 9 files / 72 tests plus TypeScript; the
+final ordered gate passes lint (0 errors / 615 warnings), TypeScript, 434 files / 5,015 tests, and the
+production build. Ready-PR publication, hosted verification, protected merge/auto-deploy, and live
+exact-SHA verification remain. No provider/corpus/config/production writes or flag changes.
 Rollout: `docs/rollouts/2026-07-22-rag-retrieval-integration.md`.
 
 ## 2026-07-21 — RAG rerank policy + retrieval-stage telemetry foundation (CODEX team, branch `codex/rag-strategy-program-20260721`)
@@ -38,7 +42,7 @@ then integrate it alongside dense recall in a separately reviewed retrieval PR. 
 
 ## 2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, `codex/rag-shadow-benchmarks-20260722`)
 
-Added a default-off, read-only evaluation harness. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second timeout cap. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
+Added a default-off, read-only capability/context probe. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second aborting timeout. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. It does not claim relevance/provider-selection evidence without a same-corpus golden citation mapping. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
 
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
@@ -158,12 +162,12 @@ protective-stop suite, affected synthetic-stop suite, lint, TypeScript, full Vit
 ## 2026-07-21 — Production-path RAG evaluation framework (CODEX, branch `codex/rag-production-eval-20260721`)
 
 Added a read-only corpus evaluator that exercises `retrieveContextDetailedWithStatus`, not the FTS-only
-search-fusion helper. It accepts frozen JSON or DB-backed cases with authoritative source-availability timestamps
-and stable evidence provenance selectors (with vector ids as diagnostics only), emits machine-readable relevance/PIT/coverage/latency/status/usage receipts, and
+search-fusion helper. It requires frozen JSON cases with authoritative source-availability timestamps
+and unique stable evidence provenance selectors (with vector ids as diagnostics only), forces strict PIT,
+hard-caps cases/results, records the actual runtime model/index route, emits machine-readable relevance/PIT/coverage/latency/status/usage receipts, and
 requires `--allow-live` before any provider read. No corpus or provider writes were run. Next: curate frozen
-EDGAR cases into `rag_production_eval_cases` using stable provenance selectors (not vector ids), then run labeled shadow comparisons before changing embed/rerank
-defaults. Focused tests, scoped lint, TypeScript, and CLI help are green; committed locally, with parent
-integration/PR still pending.
+EDGAR cases into a frozen, version-controlled JSON set using stable provenance selectors (not vector ids), then run labeled shadow comparisons before changing embed/rerank
+defaults. Focused tests and TypeScript are green; integrated locally, with the umbrella full gate/PR pending.
 
 **Follow-up:** added a second, bounded Pinecone hosted-inference benchmark for frozen candidate pools. It is
 separate from the production corpus evaluator, requires `--allow-live` for `/embed`, `/rerank`, or `/models`,

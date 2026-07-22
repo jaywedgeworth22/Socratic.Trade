@@ -81,8 +81,14 @@ function seedManaged(input: {
   acceptedAt: string;
   committedAt: string;
   text: string;
+  tenantScope?: string;
+  userId?: string;
+  source?: string;
 }): void {
   const attemptToken = `attempt-${input.commitId}`;
+  const tenantScope = input.tenantScope ?? "shared:operator";
+  const userId = input.userId ?? "local";
+  const source = input.source ?? "sec-edgar";
   insertSecFiling({
     accession: input.accession,
     cik: "0000320193",
@@ -95,9 +101,9 @@ function seedManaged(input: {
   });
   expect(beginVectorCommit({
     id: input.commitId,
-    tenantScope: "shared",
-    userId: "local",
-    source: "sec-edgar",
+    tenantScope,
+    userId,
+    source,
     accession: input.accession,
     documentKey: input.accession,
     contentVersion: input.contentVersion,
@@ -113,18 +119,18 @@ function seedManaged(input: {
     vectorId: input.vectorId,
     contentHash: input.hash,
     symbol: "AAPL",
-    source: "sec-edgar",
+    source,
     accession: input.accession,
     section: "Item 1.01",
     ordinal: 1,
     acceptedAt: input.acceptedAt,
-    tenantScope: "shared",
+    tenantScope,
     contentVersion: input.contentVersion,
     commitId: input.commitId,
     receiptState: "pending",
     createdAt: input.committedAt
   }]);
-  insertDocumentChunkFts(input.hash, "AAPL", "sec-edgar", input.accession, input.text);
+  insertDocumentChunkFts(input.hash, "AAPL", source, input.accession, input.text);
   markVectorCommitReceiptsPersisted(input.commitId, attemptToken, input.committedAt);
   markVectorCommitCommitted(input.commitId, attemptToken, input.committedAt);
 }
@@ -298,6 +304,77 @@ describe("searchCorpusWideLexicalCandidates", () => {
       .run("vec-pending");
 
     expect(searchCorpusWideLexicalCandidates({ symbol: "AAPL", query: "covenant evidence" })).toEqual([]);
+  });
+
+  it("only recalls visible shared filing occurrences, never another user's private or transcript source", () => {
+    seedManaged({
+      commitId: "commit-shared-visible",
+      vectorId: "vec-shared-visible",
+      hash: "hash-shared-visible",
+      accession: "0000320193-25-000199",
+      contentVersion: "shared-visible-v1",
+      acceptedAt: "2025-10-03T12:00:00.000Z",
+      committedAt: "2025-10-03T13:00:00.000Z",
+      text: "Visibility boundary evidence belongs to the shared filing corpus."
+    });
+    seedManaged({
+      commitId: "commit-private-other-user",
+      vectorId: "vec-private-other-user",
+      hash: "hash-private-other-user",
+      accession: "0000320193-25-000200",
+      contentVersion: "private-v1",
+      acceptedAt: "2025-10-03T12:00:00.000Z",
+      committedAt: "2025-10-03T13:00:00.000Z",
+      text: "Visibility boundary evidence must not cross user tenants.",
+      tenantScope: "private:other-user",
+      userId: "other-user"
+    });
+    seedManaged({
+      commitId: "commit-transcript-source",
+      vectorId: "vec-transcript-source",
+      hash: "hash-transcript-source",
+      accession: "0000320193-25-000201",
+      contentVersion: "transcript-v1",
+      acceptedAt: "2025-10-03T12:00:00.000Z",
+      committedAt: "2025-10-03T13:00:00.000Z",
+      text: "Visibility boundary evidence from a licensed transcript must not enter filing FTS.",
+      source: "fmp-earnings-transcript"
+    });
+
+    const rows = searchCorpusWideLexicalCandidates({
+      symbol: "AAPL",
+      query: "visibility boundary evidence",
+      visibleTenantScopes: ["shared:operator"]
+    });
+
+    expect(rows.map((row) => row.id)).toEqual(["vec-shared-visible"]);
+    expect(rows[0]!.metadata).toMatchObject({ tenant_scope: "shared:operator", scope: "shared" });
+  });
+
+  it("hides a legacy occurrence when a visible current managed head shadows the same filing", () => {
+    seed({
+      vectorId: "vec-legacy-shadowed",
+      hash: "hash-legacy-shadowed",
+      accession: "0000320193-25-000202",
+      acceptedAt: "2025-10-03T12:00:00.000Z",
+      text: "Shadowed covenant evidence from the legacy filing text."
+    });
+    seedManaged({
+      commitId: "commit-current-shadows-legacy",
+      vectorId: "vec-current-managed",
+      hash: "hash-current-managed",
+      accession: "0000320193-25-000202",
+      contentVersion: "current-v1",
+      acceptedAt: "2025-10-03T12:00:00.000Z",
+      committedAt: "2025-10-03T13:00:00.000Z",
+      text: "Current covenant evidence supersedes the legacy filing text."
+    });
+
+    expect(searchCorpusWideLexicalCandidates({
+      symbol: "AAPL",
+      query: "covenant evidence",
+      visibleTenantScopes: ["shared:operator"]
+    }).map((row) => row.id)).toEqual(["vec-current-managed"]);
   });
 
   it("uses the active managed head now and the historically active version for PIT", () => {

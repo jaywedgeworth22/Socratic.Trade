@@ -194,6 +194,44 @@ export function activeRerankModel(userId: string = "local"): string {
   return activeRerankRoute(userId).model;
 }
 
+export interface ResolvedRagRuntimeConfiguration {
+  embeddingProvider: string;
+  embeddingModel: string;
+  embeddingCredentialSource: ApiKeySource;
+  rerankProvider: string;
+  rerankModel: string;
+  rerankAvailable: boolean;
+  pineconeIndexName: string;
+  pineconeCredentialSource: ApiKeySource;
+  pineconeProviderAuthority?: string;
+  ledgerAuthority: string;
+}
+
+/** Non-secret runtime receipt for evaluation; values come from the same resolvers as retrieval. */
+export async function resolvedRagRuntimeConfiguration(
+  userId: string = "local"
+): Promise<ResolvedRagRuntimeConfiguration> {
+  const embeddingProvider = activeEmbeddingProvider(userId);
+  const embeddingCredential = resolveRagKeyWithSource(embeddingProvider, userId);
+  const rerankRoute = activeRerankRoute(userId);
+  const clients = await getClients(userId);
+  const providerAuthority = clients.initCacheKey
+    ? stableProviderAuthorityForInitKey(clients.initCacheKey)
+    : undefined;
+  return {
+    embeddingProvider,
+    embeddingModel: activeEmbeddingModel(userId),
+    embeddingCredentialSource: embeddingCredential.source,
+    rerankProvider: rerankRoute.provider,
+    rerankModel: rerankRoute.model,
+    rerankAvailable: rerankRoute.available,
+    pineconeIndexName: indexName(),
+    pineconeCredentialSource: clients.pineconeSource,
+    ...(providerAuthority ? { pineconeProviderAuthority: providerAuthority } : {}),
+    ledgerAuthority: managedVectorLedgerAuthority()
+  };
+}
+
 function providerCredentialAvailable(provider: RagRerankProvider, userId: string): boolean {
   const key = resolveApiKey(provider, userId);
   return Boolean(key && !key.startsWith("mock"));
@@ -1083,8 +1121,8 @@ function hasUnreachableCommittedManagedRecords(
   }
 }
 
-function resolveRagKeyWithSource(service: "pinecone" | "voyage", userId: string): { key?: string; source: ApiKeySource; envVar?: string; service: string } {
-  let sourceAwareResolver: ((service: "pinecone" | "voyage", userId?: string) => { key?: string; source: ApiKeySource; envVar?: string; service: string }) | undefined;
+function resolveRagKeyWithSource(service: "pinecone" | RagEmbedRerankProvider, userId: string): { key?: string; source: ApiKeySource; envVar?: string; service: string } {
+  let sourceAwareResolver: ((service: string, userId?: string) => { key?: string; source: ApiKeySource; envVar?: string; service: string }) | undefined;
   try {
     const candidate = (dbModule as Record<string, unknown>).resolveApiKeyWithSource;
     if (typeof candidate === "function") sourceAwareResolver = candidate as typeof sourceAwareResolver;
@@ -2092,12 +2130,18 @@ async function embedWithRetry(
 
   const useMockClient = !!voyage && typeof voyage.embed === "function";
 
-  if (!useMockClient && (!apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
+  // Hermetic tests intentionally avoid provider traffic. Production must never turn a missing or
+  // placeholder credential into deterministic fake vectors: those would look committed and poison
+  // the managed index irreversibly until reconciled.
+  if (!useMockClient && process.env.NODE_ENV === "test") {
     return {
       data: input.map((_, i) => ({
         embedding: Array.from({ length: 1024 }, (_, idx) => (i + idx) / 2048)
       }))
     };
+  }
+  if (!useMockClient && !embeddingCredentialIsUsable(apiKey, false)) {
+    throw new Error(`${provider} embedding credential is missing or is a mock placeholder.`);
   }
 
   for (let attempt = 0; ; attempt++) {
@@ -2159,6 +2203,15 @@ async function embedWithRetry(
       await sleep(delay, signal);
     }
   }
+}
+
+export function embeddingCredentialIsUsable(
+  value: string | null | undefined,
+  allowTestPlaceholder: boolean = process.env.NODE_ENV === "test"
+): boolean {
+  const credential = value?.trim();
+  if (!credential) return false;
+  return allowTestPlaceholder || !credential.toLowerCase().startsWith("mock");
 }
 
 async function embedDocumentsWithRetry(
@@ -3296,9 +3349,12 @@ async function storeDocumentImpl(
   // Voyage is intentionally test-only after the production BGE-M3 migration. A managed document
   // must therefore require the credential that will actually embed it, not the optional test
   // client returned by getClients(). Keep the Voyage client check for its explicit test provider.
+  const activeProviderCredential = activeProvider === "voyage"
+    ? undefined
+    : resolveApiKey(activeProvider, userId);
   const hasActiveEmbeddingAuthority = activeProvider === "voyage"
     ? Boolean(providerClients.voyage)
-    : Boolean(resolveApiKey(activeProvider, userId));
+    : embeddingCredentialIsUsable(activeProviderCredential);
   if (!providerClients.pc || !providerClients.initCacheKey || !hasActiveEmbeddingAuthority) {
     audit("vector_store", {
       ok: false,
@@ -5337,6 +5393,11 @@ export type RetrievalStatus = "ok" | "no_memory" | "lookup_failed" | "budget_ski
 export interface RetrieveOptions {
   /** Point-in-time guard: drop chunks whose acceptance_datetime is after this ISO date. */
   asOf?: string;
+  /**
+   * Per-call strict PIT contract. When true, an as-of query also rejects undated evidence across
+   * dense, lexical, and parent-context stages. Omitted preserves the VECTOR_ASOF_STRICT default.
+   */
+  strictAsOf?: boolean;
   /** The account being run, so the RAG budget guard resolves THAT account's ceiling (not the active
    *  account's) in a multi-account scheduler run. Omit for the active-account default (unchanged). */
   connectedAccountId?: string;
@@ -5825,7 +5886,7 @@ export async function retrieveContextDetailed(
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId);
   const activeProvider = activeEmbeddingProvider(userId);
-  const hasActiveKey = !!voyage || (resolveApiKey(activeProvider, userId) != null);
+  const hasActiveKey = !!voyage || embeddingCredentialIsUsable(resolveApiKey(activeProvider, userId));
   if (!pc || !hasActiveKey) {
     void captureRagSentryMessage("warning", `RAG retrieval skipped: missing Pinecone or ${activeProvider} key`, {
       provider: !pc ? "pinecone" : activeProvider,
@@ -5868,6 +5929,7 @@ export async function retrieveContextDetailed(
   }
   const wantHybrid = hybridRetrievalEnabled() && !budgetDegraded;
   const wantCorpusWideLexical = corpusWideLexicalRetrievalEnabled() && !budgetDegraded && !options?.matchAllSymbols;
+  const useAdaptiveRerank = adaptiveRerankEnabled();
   // Over-fetch when we'll post-filter (as-of), rerank, OR hybrid-fuse — so the final top-`limit` is
   // high quality. Hybrid must be included even when rerank is off: otherwise fetchK == limit and the
   // BM25/RRF step only reorders the dense top-N, so an exact ticker/accession hit at dense rank
@@ -5881,7 +5943,7 @@ export async function retrieveContextDetailed(
     limit,
     availableCandidates: RERANK_MAX_DOCUMENTS,
     enabled: wantRerank,
-    adaptiveEnabled: adaptiveRerankEnabled()
+    adaptiveEnabled: useAdaptiveRerank
   });
   const baseFetchK = wantRerank
     ? preRecallRerankPlan.candidateLimit
@@ -5904,7 +5966,8 @@ export async function retrieveContextDetailed(
   // filters below are then byte-identical to today. `mergeAsOfEpoch` AND-combines it with the
   // existing scope/symbol/docType filter (via `$and` when the base already carries a top-level `$or`,
   // so the fail-open epoch `$or` cannot collide with the scope-coexistence `$or`).
-  const asOfEpochFilter = buildAsOfEpochFilter(options?.asOf, asOfStrictEnabled());
+  const strictAsOf = options?.strictAsOf ?? asOfStrictEnabled();
+  const asOfEpochFilter = buildAsOfEpochFilter(options?.asOf, strictAsOf);
 
   try {
     if (!(await indexExists(pc, pineconeSource, userId))) {
@@ -6396,6 +6459,11 @@ export async function retrieveContextDetailed(
           symbol,
           query,
           limit: Math.min(baseFetchK, 100),
+          visibleTenantScopes: [
+            vectorTenantScope(userId, SHARED_SCOPE),
+            vectorTenantScope(userId, PRIVATE_SCOPE)
+          ],
+          strictUndated: strictAsOf,
           ...(options?.asOf ? { asOf: options.asOf } : {})
         }).filter((candidate) => lexicalCandidateMatchesOptions(candidate, options));
         endLexical?.({ candidatesOut: lexicalCandidates.length });
@@ -6422,6 +6490,11 @@ export async function retrieveContextDetailed(
         });
       }
     }
+
+    // Lexical candidates originate outside Pinecone's metadata filter, so reapply the same
+    // ownership boundary after fusion. The SQL adapter also restricts tenant scopes and excludes
+    // transcript sources; this post-fusion guard is defense in depth before rerank/prompt use.
+    matches = filterMatchesForTenantVisibility(matches, userId);
 
     // Broad coach/chat retrieval has no docType filter. Enforce transcript rights before any
     // candidate-pool persistence, reranking, or prompt injection while preserving legacy matches
@@ -6471,17 +6544,23 @@ export async function retrieveContextDetailed(
       limit,
       availableCandidates: matches.length,
       enabled: wantRerank,
-      adaptiveEnabled: adaptiveRerankEnabled(),
-      exactLexicalHit: usedCorpusWideLexical
+      adaptiveEnabled: useAdaptiveRerank
     });
+    // Before adaptive depth existed, multi-query reranked its full fair union. Preserve that
+    // default-off contract, and apply the same rule to the new independent lexical expansion so
+    // a candidate recalled specifically to close a dense gap is not truncated before reranking.
+    const rerankCandidateLimit = rerankPlan.shouldRerank && !useAdaptiveRerank &&
+      (fanOutQueries.length > 0 || usedCorpusWideLexical)
+      ? Math.min(matches.length, RERANK_MAX_DOCUMENTS)
+      : rerankPlan.candidateLimit;
     const ordered = await rankPool(matches, query, limit, {
       minScore: effectiveMinScore,
       asOf: options?.asOf,
       minRelevanceScore: options?.minRelevanceScore,
       hybrid: wantHybrid && !usedCorpusWideLexical,
       rerank: rerankPlan.shouldRerank ? (q, m, k) => rerankMatches(voyage, q, m, k, userId, voyageSource) : undefined,
-      rerankCandidateLimit: rerankPlan.candidateLimit,
-      strictAsOf: asOfStrictEnabled(),
+      rerankCandidateLimit,
+      strictAsOf,
       dedupeSimilarity: options?.dedupeSimilarity,
       userId,
       trace: stageTrace,
@@ -6669,7 +6748,7 @@ export async function retrieveContextDetailed(
       ? expandPostRerankParentContext(mappedFinalChunks, {
           enabled: true,
           asOf: options?.asOf,
-          strictAsOf: asOfStrictEnabled(),
+          strictAsOf,
           maxParentChars: parentContextMaxChars(),
           maxTotalParentChars: parentContextMaxTotalChars()
         }).chunks

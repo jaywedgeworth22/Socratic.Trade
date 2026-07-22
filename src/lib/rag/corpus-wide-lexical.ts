@@ -30,6 +30,11 @@ export interface CorpusWideLexicalSearchOptions {
    * to true because a financial backtest must not silently treat unknown availability as eligible.
    */
   strictUndated?: boolean;
+  /**
+   * Authoritative tenant scopes visible to the requesting user. The shared filing scope is the
+   * only default; callers must opt in to the requester's hashed private scope explicitly.
+   */
+  visibleTenantScopes?: readonly string[];
 }
 
 /**
@@ -65,6 +70,8 @@ type LexicalRow = {
   section: string;
   accepted_at: string | null;
   doc_type: string | null;
+  tenant_scope: string;
+  user_id: string | null;
   lexical_score: number;
 };
 
@@ -125,10 +132,35 @@ export function searchCorpusWideLexicalCandidates(
   const limit = normalizedLimit(options.limit);
   const rawLimit = Math.min(MAX_RAW_RESULTS, limit * RAW_RESULT_MULTIPLIER);
   const strictUndated = options.strictUndated !== false;
-  const params: unknown[] = [symbol, matchQuery, symbol];
+  const visibleTenantScopes = Array.from(new Set(
+    (options.visibleTenantScopes ?? ["shared:operator"])
+      .filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0)
+      .map((scope) => scope.trim())
+  )).slice(0, 8);
+  if (visibleTenantScopes.length === 0) return [];
+  const params: unknown[] = [symbol, matchQuery, symbol, ...visibleTenantScopes];
+  const tenantPlaceholders = visibleTenantScopes.map(() => "?").join(", ");
   const receiptClause = asOf
     ? `AND (
-        o.receipt_state = 'legacy_committed'
+        (
+          o.receipt_state = 'legacy_committed'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM vector_ingest_commits shadow_commit
+            JOIN vector_document_versions shadow_version
+              ON shadow_version.commit_id = shadow_commit.id
+              AND shadow_version.tenant_scope = shadow_commit.tenant_scope
+              AND shadow_version.source = shadow_commit.source
+              AND shadow_version.document_key = shadow_commit.document_key
+            WHERE shadow_commit.state = 'committed'
+              AND shadow_commit.lease_expires_at IS NULL
+              AND shadow_commit.source = o.source
+              AND shadow_commit.document_key = o.accession
+              AND shadow_commit.tenant_scope IN (${tenantPlaceholders})
+              AND shadow_version.valid_from <= ?
+              AND (shadow_version.valid_to IS NULL OR shadow_version.valid_to > ?)
+          )
+        )
         OR (
           o.receipt_state = 'committed'
           AND EXISTS (
@@ -150,7 +182,23 @@ export function searchCorpusWideLexicalCandidates(
         )
       )`
     : `AND (
-        o.receipt_state = 'legacy_committed'
+        (
+          o.receipt_state = 'legacy_committed'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM vector_ingest_commits shadow_commit
+            JOIN vector_document_heads shadow_head
+              ON shadow_head.commit_id = shadow_commit.id
+              AND shadow_head.tenant_scope = shadow_commit.tenant_scope
+              AND shadow_head.source = shadow_commit.source
+              AND shadow_head.accession = shadow_commit.document_key
+            WHERE shadow_commit.state = 'committed'
+              AND shadow_commit.lease_expires_at IS NULL
+              AND shadow_commit.source = o.source
+              AND shadow_commit.document_key = o.accession
+              AND shadow_commit.tenant_scope IN (${tenantPlaceholders})
+          )
+        )
         OR (
           o.receipt_state = 'committed'
           AND EXISTS (
@@ -169,7 +217,8 @@ export function searchCorpusWideLexicalCandidates(
           )
         )
       )`;
-  if (asOf) params.push(asOf, asOf);
+  params.push(...visibleTenantScopes);
+  if (asOf) params.push(asOf, asOf, asOf, asOf);
   let pitClause = "";
   if (asOf) {
     if (strictUndated) {
@@ -200,6 +249,8 @@ export function searchCorpusWideLexicalCandidates(
       o.section,
       o.accepted_at,
       sf.form AS doc_type,
+      o.tenant_scope,
+      owner_commit.user_id,
       bm25(document_chunks_fts) AS lexical_score
     FROM document_chunks_fts
     INNER JOIN chunk_occurrences o
@@ -208,9 +259,20 @@ export function searchCorpusWideLexicalCandidates(
       AND o.source = document_chunks_fts.source
       AND o.accession = document_chunks_fts.accession
     LEFT JOIN sec_filings sf ON sf.accession = o.accession
+    LEFT JOIN vector_ingest_commits owner_commit ON owner_commit.id = o.commit_id
     WHERE document_chunks_fts.symbol = ?
       AND document_chunks_fts MATCH ?
       AND o.symbol = ?
+      AND (
+        o.tenant_scope IN (${visibleTenantScopes.map(() => "?").join(", ")})
+        OR (
+          o.tenant_scope = 'legacy'
+          AND o.receipt_state = 'legacy_committed'
+        )
+      )
+      -- This index is a filing-text recall source. Licensed transcript and user-authored sources
+      -- require additional rights/ownership metadata that document_chunks_fts does not store.
+      AND o.source IN ('sec-edgar', 'sec-8k')
       ${receiptClause}
       ${pitClause}
     ORDER BY
@@ -247,6 +309,9 @@ export function searchCorpusWideLexicalCandidates(
         accession: row.accession,
         accepted_at: acceptedAt ?? null,
         section: row.section,
+        tenant_scope: row.tenant_scope === "legacy" ? "shared:operator" : row.tenant_scope,
+        scope: row.tenant_scope.startsWith("private:") ? "private" : "shared",
+        userId: row.user_id ?? "local",
         ...(docType ? { doc_type: docType } : {}),
         lexical_score: Number(row.lexical_score),
         retrieval_sources: ["lexical"],

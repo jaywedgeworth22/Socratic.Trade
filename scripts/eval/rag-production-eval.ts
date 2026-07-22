@@ -7,10 +7,14 @@
  * corpus data. The normal production retrieval path may emit its ordinary usage/audit receipts;
  * the evaluator reads those receipts after the run when available.
  */
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { RetrievedChunk, RetrievalStatus } from "../../src/lib/vector-db";
+
+export const MAX_PRODUCTION_EVAL_CASES = 100;
+export const MAX_PRODUCTION_EVAL_LIMIT = 100;
 
 export interface ProductionRagGoldenCase {
   id: string;
@@ -40,8 +44,14 @@ export interface EvaluationModelConfiguration {
   label: string;
   embeddingProvider: string;
   embeddingModel: string;
+  embeddingCredentialSource?: string;
   rerankProvider: string;
   rerankModel: string;
+  rerankAvailable?: boolean;
+  pineconeIndexName?: string;
+  pineconeCredentialSource?: string;
+  pineconeProviderAuthority?: string;
+  ledgerAuthority?: string;
 }
 
 export interface ProductionRetrievalAdapter {
@@ -50,8 +60,9 @@ export interface ProductionRetrievalAdapter {
     symbol: string,
     limit: number,
     userId: string,
-    options: { asOf: string }
+    options: { asOf: string; strictAsOf: true }
   ): Promise<{ chunks: RetrievedChunk[]; status: RetrievalStatus }>;
+  runtimeConfiguration?(userId: string): Promise<Omit<EvaluationModelConfiguration, "label">>;
 }
 
 export interface RagUsageReceipt {
@@ -77,7 +88,7 @@ export interface ProductionRagEvalOptions {
   userId?: string;
   configuration?: EvaluationModelConfiguration;
   retriever?: ProductionRetrievalAdapter;
-  usageReceipt?: (startedAt: string, userId: string) => RagUsageReceipt | undefined | Promise<RagUsageReceipt | undefined>;
+  usageReceipt?: (startedAt: string, endedAt: string, userId: string) => RagUsageReceipt | undefined | Promise<RagUsageReceipt | undefined>;
   now?: () => number;
 }
 
@@ -100,6 +111,7 @@ export interface ProductionRagEvalCaseResult {
   ndcgAtK: number;
   pitFutureEvidenceIds: string[];
   undatedEvidenceIds: string[];
+  pitValid: boolean;
   duplicateRate: number;
   sources: string[];
   sections: string[];
@@ -108,12 +120,17 @@ export interface ProductionRagEvalCaseResult {
 }
 
 export interface ProductionRagEvalReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   generatedAt: string;
   configuration: EvaluationModelConfiguration;
+  configurationSource: "runtime-resolved" | "injected-adapter";
   limit: number;
   userId: string;
   caseCount: number;
+  evaluationContract: {
+    strictAsOf: true;
+    serverAsOfFilterEnabled: boolean;
+  };
   statusCounts: Record<RetrievalStatus, number>;
   metrics: {
     recallAtK: number;
@@ -123,6 +140,8 @@ export interface ProductionRagEvalReport {
     pitFutureEvidenceRate: number;
     undatedEvidenceCount: number;
     undatedEvidenceRate: number;
+    pitValid: boolean;
+    pitInvalidCaseIds: string[];
     duplicateRate: number;
     latencyMs: { p50: number; p95: number; p99: number; mean: number };
   };
@@ -136,6 +155,10 @@ const PRODUCTION_RETRIEVER: ProductionRetrievalAdapter = {
   retrieve: async (query, symbol, limit, userId, options) => {
     const { retrieveContextDetailedWithStatus } = await import("../../src/lib/vector-db");
     return retrieveContextDetailedWithStatus(query, symbol, limit, userId, options);
+  },
+  runtimeConfiguration: async (userId) => {
+    const { resolvedRagRuntimeConfiguration } = await import("../../src/lib/vector-db");
+    return resolvedRagRuntimeConfiguration(userId);
   }
 };
 
@@ -155,29 +178,10 @@ export function loadFrozenProductionRagGoldenSet(path: string): ProductionRagGol
   const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
   const rows = Array.isArray(parsed) ? parsed : (parsed as { cases?: unknown })?.cases;
   if (!Array.isArray(rows)) throw new Error("Expected a JSON array or { cases: [...] }.");
+  if (rows.length > MAX_PRODUCTION_EVAL_CASES) {
+    throw new Error(`Production RAG evaluation is capped at ${MAX_PRODUCTION_EVAL_CASES} cases per run.`);
+  }
   return rows.map((row, index) => parseGoldenCase(row, `file row ${index + 1}`));
-}
-
-export async function loadDbProductionRagGoldenSet(): Promise<ProductionRagGoldenCase[]> {
-  const { getDb } = await import("../../src/lib/db");
-  const rows = getDb()
-    .prepare(
-      `SELECT id, query, symbol, authoritative_as_of, expected_evidence_refs,
-              category, expected_sources, expected_sections, notes
-       FROM rag_production_eval_cases WHERE enabled = 1 ORDER BY id`
-    )
-    .all() as Array<Record<string, unknown>>;
-  return rows.map((row) => parseGoldenCase({
-    id: row.id,
-    query: row.query,
-    symbol: row.symbol,
-    authoritativeAsOf: row.authoritative_as_of,
-    expectedEvidenceRefs: parseEvidenceRefs(row.expected_evidence_refs, "expected_evidence_refs"),
-    category: row.category,
-    expectedSources: parseOptionalJsonArray(row.expected_sources, "expected_sources"),
-    expectedSections: parseOptionalJsonArray(row.expected_sections, "expected_sections"),
-    notes: row.notes
-  }, `DB case ${String(row.id)}`));
 }
 
 export async function runProductionRagEvaluation(
@@ -185,8 +189,11 @@ export async function runProductionRagEvaluation(
   options: ProductionRagEvalOptions = {}
 ): Promise<ProductionRagEvalReport> {
   if (cases.length === 0) throw new Error("Production RAG evaluation refuses an empty golden set.");
-  const limit = positiveInteger(options.limit, 20);
-  const userId = options.userId ?? "local";
+  if (cases.length > MAX_PRODUCTION_EVAL_CASES) {
+    throw new Error(`Production RAG evaluation is capped at ${MAX_PRODUCTION_EVAL_CASES} cases per run.`);
+  }
+  const limit = strictPositiveInteger(options.limit, 20, "limit", MAX_PRODUCTION_EVAL_LIMIT);
+  const userId = options.userId?.trim() || `rag-eval:${randomUUID()}`;
   const now = options.now ?? Date.now;
   const startedAt = new Date(now()).toISOString();
   const retriever = options.retriever ?? PRODUCTION_RETRIEVER;
@@ -200,7 +207,7 @@ export async function runProductionRagEvaluation(
       evalCase.symbol,
       limit,
       userId,
-      { asOf: evalCase.authoritativeAsOf }
+      { asOf: evalCase.authoritativeAsOf, strictAsOf: true }
     );
     results.push(scoreProductionRagCase(evalCase, chunks, status, Math.max(0, now() - begin), limit));
   }
@@ -216,14 +223,25 @@ export async function runProductionRagEvaluation(
   const retrieved = results.flatMap((result) => ({ future: result.pitFutureEvidenceIds.length, undated: result.undatedEvidenceIds.length, count: result.returnedCount }));
   const returnedCount = retrieved.reduce((sum, item) => sum + item.count, 0);
   const latency = results.map((result) => result.latencyMs);
+  const pitInvalidCaseIds = results.filter((result) => !result.pitValid).map((result) => result.id);
+  const endedAt = new Date(now()).toISOString();
+  const declaredConfiguration = options.configuration ?? defaultEvaluationModelConfiguration();
+  const runtimeConfiguration = await retriever.runtimeConfiguration?.(userId);
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date(now()).toISOString(),
-    configuration: options.configuration ?? defaultEvaluationModelConfiguration(),
+    configuration: runtimeConfiguration
+      ? { label: declaredConfiguration.label, ...runtimeConfiguration }
+      : declaredConfiguration,
+    configurationSource: runtimeConfiguration ? "runtime-resolved" : "injected-adapter",
     limit,
     userId,
     caseCount: results.length,
+    evaluationContract: {
+      strictAsOf: true,
+      serverAsOfFilterEnabled: envFlagEnabled(process.env.VECTOR_ASOF_SERVER_FILTER)
+    },
     statusCounts,
     metrics: {
       recallAtK: average(results.map((result) => result.recallAtK)),
@@ -233,10 +251,12 @@ export async function runProductionRagEvaluation(
       pitFutureEvidenceRate: ratio(retrieved.reduce((sum, item) => sum + item.future, 0), returnedCount),
       undatedEvidenceCount: retrieved.reduce((sum, item) => sum + item.undated, 0),
       undatedEvidenceRate: ratio(retrieved.reduce((sum, item) => sum + item.undated, 0), returnedCount),
+      pitValid: pitInvalidCaseIds.length === 0,
+      pitInvalidCaseIds,
       duplicateRate: average(results.map((result) => result.duplicateRate)),
       latencyMs: { p50: percentile(latency, 0.5), p95: percentile(latency, 0.95), p99: percentile(latency, 0.99), mean: average(latency) }
     },
-    ...(options.usageReceipt ? { usageReceipt: await options.usageReceipt(startedAt, userId) } : {}),
+    ...(options.usageReceipt ? { usageReceipt: await options.usageReceipt(startedAt, endedAt, userId) } : {}),
     cases: results
   };
 }
@@ -297,6 +317,7 @@ export function scoreProductionRagCase(
     ndcgAtK: idealDcg === 0 ? 0 : dcg / idealDcg,
     pitFutureEvidenceIds: future,
     undatedEvidenceIds: undated,
+    pitValid: future.length === 0 && undated.length === 0,
     duplicateRate: duplicateRate(duplicateKeys),
     sources: [...sourceSet].sort(),
     sections: [...sectionSet].sort(),
@@ -305,7 +326,7 @@ export function scoreProductionRagCase(
   };
 }
 
-export async function readRagUsageReceipt(startedAt: string, userId: string): Promise<RagUsageReceipt | undefined> {
+export async function readRagUsageReceipt(startedAt: string, endedAt: string, userId: string): Promise<RagUsageReceipt | undefined> {
   try {
     const { getDb } = await import("../../src/lib/db");
     const rows = getDb().prepare(
@@ -314,9 +335,9 @@ export async function readRagUsageReceipt(startedAt: string, userId: string): Pr
               COALESCE(SUM(tokens_out), 0) AS tokens_out,
               COALESCE(SUM(batch_count), 0) AS batch_count,
               SUM(cost_est_usd) AS cost_est_usd
-       FROM rag_usage WHERE user_id = ? AND created_at >= ?
+       FROM rag_usage WHERE user_id = ? AND created_at >= ? AND created_at <= ?
        GROUP BY operation, provider, model ORDER BY operation, provider, model`
-    ).all(userId, startedAt) as Array<Record<string, unknown>>;
+    ).all(userId, startedAt, endedAt) as Array<Record<string, unknown>>;
     const byOperation = rows.map((row) => ({
       operation: String(row.operation), provider: String(row.provider), model: row.model == null ? null : String(row.model),
       calls: Number(row.calls), tokensIn: Number(row.tokens_in), tokensOut: Number(row.tokens_out),
@@ -362,15 +383,6 @@ function parseGoldenCase(value: unknown, label: string): ProductionRagGoldenCase
   return golden;
 }
 
-function parseJsonArray(value: unknown, field: string): string[] {
-  if (typeof value !== "string") throw new Error(`${field} must be JSON text.`);
-  const parsed = JSON.parse(value) as unknown;
-  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string" || !item.trim())) throw new Error(`${field} must be a JSON string array.`);
-  return parsed;
-}
-
-function parseOptionalJsonArray(value: unknown, field: string): string[] | undefined { return value == null ? undefined : parseJsonArray(value, field); }
-
 function parseEvidenceRefs(value: unknown, field: string): ExpectedEvidenceRef[] {
   const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error(`${field} must be a non-empty array.`);
@@ -388,8 +400,8 @@ function parseEvidenceRefs(value: unknown, field: string): ExpectedEvidenceRef[]
       if (typeof row.ordinal !== "number" || !Number.isInteger(row.ordinal) || row.ordinal < 0) throw new Error(`${field}[${index}].ordinal must be a non-negative integer.`);
       ref.ordinal = row.ordinal;
     }
-    if (!ref.source && !ref.accession && !ref.section && ref.ordinal == null && !ref.contentHash) {
-      throw new Error(`${field}[${index}] requires at least one stable selector (source, accession, section, ordinal, contentHash).`);
+    if (!ref.contentHash && !(ref.accession && (ref.section || ref.ordinal != null))) {
+      throw new Error(`${field}[${index}] requires contentHash or accession plus section/ordinal; broad source-only selectors are not stable chunk identities.`);
     }
     return ref;
   });
@@ -468,16 +480,23 @@ function percentile(values: number[], percentileValue: number): number {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * percentileValue) - 1))]!;
 }
 
-function positiveInteger(value: number | undefined, fallback: number): number {
-  const parsed = Math.floor(value ?? fallback);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+function strictPositiveInteger(value: number | undefined, fallback: number, label: string, max: number): number {
+  if (value == null) return fallback;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > max) {
+    throw new Error(`${label} must be an integer from 1 to ${max}.`);
+  }
+  return value;
+}
+
+function envFlagEnabled(value: string | undefined): boolean {
+  return ["1", "true", "on", "yes"].includes((value ?? "").trim().toLowerCase());
 }
 
 interface CliArgs {
-  source: "db" | "file";
-  input?: string;
+  input: string;
   output?: string;
   allowLive: boolean;
+  allowPitViolations: boolean;
   limit: number;
   userId: string;
   configuration: EvaluationModelConfiguration;
@@ -485,25 +504,27 @@ interface CliArgs {
 
 function parseArgs(argv: string[]): CliArgs {
   const configuration = defaultEvaluationModelConfiguration();
-  const args: CliArgs = { source: "db", allowLive: false, limit: 20, userId: "local", configuration };
+  const args: Omit<CliArgs, "input"> & { input?: string } = {
+    allowLive: false,
+    allowPitViolations: false,
+    limit: 20,
+    userId: `rag-eval:${randomUUID()}`,
+    configuration
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]; const next = argv[i + 1];
-    if (arg === "--source" && (next === "db" || next === "file")) args.source = next, i++;
-    else if (arg === "--input" && next) args.input = next, i++;
+    if (arg === "--input" && next) args.input = next, i++;
     else if (arg === "--output" && next) args.output = next, i++;
-    else if (arg === "--limit" && next) args.limit = positiveInteger(Number(next), args.limit), i++;
+    else if (arg === "--limit" && next) args.limit = strictPositiveInteger(Number(next), args.limit, "--limit", MAX_PRODUCTION_EVAL_LIMIT), i++;
     else if (arg === "--user" && next) args.userId = next, i++;
     else if (arg === "--profile" && next) args.configuration.label = next, i++;
-    else if (arg === "--embedding-provider" && next) args.configuration.embeddingProvider = next, i++;
-    else if (arg === "--embedding-model" && next) args.configuration.embeddingModel = next, i++;
-    else if (arg === "--rerank-provider" && next) args.configuration.rerankProvider = next, i++;
-    else if (arg === "--rerank-model" && next) args.configuration.rerankModel = next, i++;
     else if (arg === "--allow-live") args.allowLive = true;
+    else if (arg === "--allow-pit-violations") args.allowPitViolations = true;
     else if (arg === "--help" || arg === "-h") { printHelp(); process.exit(0); }
     else throw new Error(`Unknown or incomplete argument: ${arg}`);
   }
-  if (args.source === "file" && !args.input) throw new Error("--source file requires --input <cases.json>.");
-  return args;
+  if (!args.input) throw new Error("Production RAG evaluation requires --input <frozen-cases.json>.");
+  return args as CliArgs;
 }
 
 function printHelp(): void {
@@ -512,26 +533,20 @@ function printHelp(): void {
 Read-only against corpus: calls the production retrieveContextDetailed path only. The normal
 retrieval path may emit its usual usage/audit receipts. No embeddings or vectors are written.
 
-  --source db|file           Golden case source (default db)
-  --input cases.json         Frozen JSON cases when --source file
+  --input cases.json         Required frozen, version-controlled golden cases
   --output result.json       Write machine-readable JSON (stdout always prints JSON)
-  --limit N                  Retrieval limit (default 20)
-  --user ID                  Retrieval user id (default local)
+  --limit N                  Retrieval limit (default 20; hard maximum 100)
+  --user ID                  Retrieval user id (default isolated rag-eval UUID)
   --profile LABEL            Comparison label recorded in output
-  --embedding-provider NAME  Recorded configuration only; does not change runtime env
-  --embedding-model NAME     Recorded configuration only; does not change runtime env
-  --rerank-provider NAME     Recorded configuration only; does not change runtime env
-  --rerank-model NAME        Recorded configuration only; does not change runtime env
   --allow-live               Required: permits live read calls to configured RAG providers
+  --allow-pit-violations     Diagnostic only: do not fail the process on future/undated evidence
 `);
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.allowLive) throw new Error("Refusing live RAG retrieval without --allow-live.");
-  const cases = args.source === "db"
-    ? await loadDbProductionRagGoldenSet()
-    : loadFrozenProductionRagGoldenSet(resolve(args.input!));
+  const cases = loadFrozenProductionRagGoldenSet(resolve(args.input));
   const report = await runProductionRagEvaluation(cases, {
     limit: args.limit, userId: args.userId, configuration: args.configuration, usageReceipt: readRagUsageReceipt
   });
@@ -542,6 +557,10 @@ async function main(): Promise<void> {
     writeFileSync(output, json, "utf8");
   }
   process.stdout.write(json);
+  if (!report.metrics.pitValid && !args.allowPitViolations) {
+    console.error(`Production RAG evaluation failed PIT validity for: ${report.metrics.pitInvalidCaseIds.join(", ")}`);
+    process.exitCode = 3;
+  }
 }
 
 const invokedDirectly = (() => {

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 export type RetrievalStage =
   | "query_embed_cache"
   | "query_embed_api"
@@ -66,9 +64,24 @@ function errorKind(error: unknown): string {
   return "UnknownError";
 }
 
+function queryDigest(value: string): string {
+  // Two independently seeded 32-bit FNV-1a lanes provide a stable, text-free
+  // correlation key without importing Node crypto into Webpack-analyzed paths.
+  let high = 0x811c9dc5;
+  let low = 0x811c9dc5 ^ 0x9e3779b9;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    high = Math.imul(high ^ code, 0x01000193);
+    low = Math.imul(low ^ (code >>> 8), 0x01000193);
+    low = Math.imul(low ^ code, 0x01000193);
+  }
+  return `${(high >>> 0).toString(16).padStart(8, "0")}${(low >>> 0).toString(16).padStart(8, "0")}`;
+}
+
 /**
  * Per-retrieval trace collector. It stores no raw query or document text; the query is represented
- * only by a short SHA-256 digest so latency/cost rows can be grouped without leaking prompt data.
+ * only by a short deterministic digest so latency/cost rows can be grouped without retaining prompt
+ * data. This is a correlation key, not a security or authentication primitive.
  */
 export class RetrievalStageTrace {
   private readonly startedAt: number;
@@ -118,7 +131,7 @@ export class RetrievalStageTrace {
   snapshot(finalCandidates?: number): RetrievalTraceSnapshot {
     return Object.freeze({
       traceVersion: 1 as const,
-      queryHash: createHash("sha256").update(this.input.query.trim(), "utf8").digest("hex").slice(0, 16),
+      queryHash: queryDigest(this.input.query.trim()),
       symbol: this.input.symbol.trim().toUpperCase(),
       ...(this.input.route ? { route: this.input.route } : {}),
       wallDurationMs: Math.max(0, Number((this.now() - this.startedAt).toFixed(3))),

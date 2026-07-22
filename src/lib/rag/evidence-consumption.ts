@@ -10,6 +10,15 @@ export interface PromptRagCandidate {
   readonly symbol: string;
   readonly source?: string;
   readonly docType?: string;
+  /** Immutable corpus coordinates used when a legacy chunk lacks a vector id. */
+  readonly accession?: string;
+  readonly section?: string;
+  readonly ordinal?: number;
+  readonly contentHash?: string;
+  /** Distinguish otherwise-identical records in separate vector/tenant spaces. */
+  readonly vectorNamespace?: string;
+  readonly scope?: string;
+  readonly tenantScope?: string;
   readonly title?: string;
   readonly url?: string;
   readonly publishedAt?: string;
@@ -22,6 +31,9 @@ export interface PromptRagCandidate {
 
 export type PromptConsumptionState = "consumed" | "truncated" | "not_consumed";
 export type PromptRagRetrievalOutcome = "not_attempted" | "empty" | "retrieval_failed" | "assembled";
+
+/** A prompt tail containing only a provenance header is not useful evidence. */
+const MIN_TRUNCATED_BODY_CHARACTERS = 12;
 
 /** Safe, stable receipt: identifiers and counts only, never raw prompt/query text. */
 export interface PromptRagConsumptionReceipt {
@@ -57,7 +69,7 @@ export interface PromptRagConsumptionOptions {
   readonly retrievalFailureCount?: number;
 }
 
-function stableJson(value: Record<string, string | undefined>): string {
+function stableJson(value: Record<string, string | number | undefined>): string {
   return JSON.stringify(
     Object.fromEntries(
       Object.entries(value)
@@ -78,6 +90,13 @@ export function stableRagEvidenceRef(candidate: Omit<PromptRagCandidate, "serial
     : stableJson({
         source: candidate.source,
         docType: candidate.docType,
+        accession: candidate.accession,
+        section: candidate.section,
+        ordinal: candidate.ordinal,
+        contentHash: candidate.contentHash,
+        vectorNamespace: candidate.vectorNamespace,
+        scope: candidate.scope,
+        tenantScope: candidate.tenantScope,
         url: candidate.url,
         publishedAt: candidate.publishedAt,
         symbol: candidate.symbol
@@ -125,7 +144,17 @@ function consumedCharacters(candidateText: string, promptText: string): number {
     // A partial match is evidence only when the serialized prompt ends inside
     // this chunk. Otherwise containment changed it and the exact consumed span
     // cannot be proven from text alone, so fail closed to not-consumed.
-    if (matched > 0 && start + matched === promptText.length) return matched;
+    if (matched > 0 && start + matched === promptText.length) {
+      // `formatChunkWithProvenance` prefixes chunks with a short metadata header. Do not credit
+      // a tail that reaches only that header: it establishes neither the evidence body nor a
+      // useful partial quote. For short body-only serializations, require their whole body.
+      const firstLineEnd = candidateText.indexOf("\n");
+      const bodyOffset = firstLineEnd >= 0 ? firstLineEnd + 1 : 0;
+      const bodyLength = candidateText.length - bodyOffset;
+      const bodyMatched = Math.max(0, matched - bodyOffset);
+      const requiredBody = Math.min(MIN_TRUNCATED_BODY_CHARACTERS, bodyLength);
+      if (bodyMatched >= requiredBody) return matched;
+    }
     from = start + 1;
   }
   return 0;

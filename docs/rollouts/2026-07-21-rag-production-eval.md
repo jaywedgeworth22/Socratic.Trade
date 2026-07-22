@@ -2,8 +2,9 @@
 
 ## Summary
 
-Added `npm run eval:rag-production` and a versioned SQLite case table for evaluating the production
-`retrieveContextDetailedWithStatus` path. It does not use the evaluation-only FTS fusion helper.
+Added `npm run eval:rag-production` with required frozen JSON cases for evaluating the production
+`retrieveContextDetailedWithStatus` path. It does not use the evaluation-only FTS fusion helper or
+claim a production schema-migration number.
 
 ## Why
 
@@ -13,22 +14,27 @@ make relevance, leakage, duplicates, coverage, latency, status, and spend observ
 
 ## Design
 
-- Golden cases are either frozen JSON (`--source file --input cases.json`) or enabled rows in
-  `rag_production_eval_cases`.
-- Every case requires `authoritativeAsOf` and non-empty `expectedEvidenceRefs`. Each reference must carry at
-  least one stable source/accession/section/ordinal/content-hash selector; all supplied selectors must match.
-  The DB stores the equivalent fields as `authoritative_as_of` and JSON `expected_evidence_refs`. A vector id
-  can be retained only as an optional diagnostic: it never establishes relevance, so re-embedding or an index
+- Golden cases are required frozen, version-controlled JSON (`--input cases.json`). This keeps the
+  comparison set identical across model runs and avoids colliding with active migrations 55/56 on
+  other open branches.
+- Every case requires `authoritativeAsOf` and non-empty `expectedEvidenceRefs`. Each reference must carry
+  either a content hash or an accession plus section/ordinal; source is only a qualifier. All supplied
+  selectors must match.
+  A vector id can be retained only as an optional diagnostic: it never establishes relevance, so re-embedding or an index
   rebuild cannot alter the ground truth.
 - The CLI requires `--allow-live` before it imports and calls `retrieveContextDetailedWithStatus`. It performs
   retrieval reads only; it never writes embeddings or vectors. Native retrieval metering/audit receipts may still
   be emitted by the production function and are reported best-effort.
-- `--profile`, `--embedding-*`, and `--rerank-*` are output labels only. They do not alter environment or
-  production defaults, so shadow comparisons remain explicit and externally controlled.
+- The free-form `--profile` label does not alter runtime. Provider/model/index, credential-source,
+  provider-authority, and ledger-authority fields are resolved from the actual production route after
+  retrieval, so a comparison cannot be mislabeled by CLI model strings.
+- Runs force strict point-in-time retrieval, report server-filter state, and fail the CLI on any future
+  or undated result unless `--allow-pit-violations` is explicitly used for diagnosis.
+- Case count and retrieval depth are hard-capped at 100. A generated `rag-eval:*` user isolates normal
+  runs, and usage reads are bounded by both start and end timestamps.
 
 ## Files
 
-- `src/lib/db.ts` - migration 55: `rag_production_eval_cases`.
 - `scripts/eval/rag-production-eval.ts` - CLI, loaders, production adapter, machine-readable report/scoring.
 - `test/rag-production-eval.test.ts` - hermetic evaluator mechanics.
 - `package.json` - `eval:rag-production` script.
@@ -42,16 +48,16 @@ node node_modules/typescript/bin/tsc --noEmit
 git diff --check
 ```
 
-Focused tests passed (3/3), TypeScript passed, and diff check passed. No live provider, Pinecone, corpus, or
+Focused tests passed, TypeScript passed, and diff check passed. No live provider, Pinecone, corpus, or
 production calls were made.
 
 ## Follow-ups
 
-1. Curate source-anchored EDGAR cases with real committed vector ids; do not treat synthetic fixtures as model evidence.
+1. Curate source-anchored EDGAR cases with stable provenance; do not treat synthetic fixtures as model evidence.
 2. Run each candidate embedding/reranker configuration as a separately labeled, read-only shadow run and compare
    the emitted JSON receipts.
-3. Keep usage receipt interpretation scoped to the run window; concurrent same-user production retrieval can share
-   that ledger window.
+3. Do not override the generated evaluation user with an active production user unless shared traffic in
+   that bounded window is intentionally part of the receipt.
 4. The evaluator refuses an empty golden set rather than emitting misleading all-zero quality metrics.
 
 ## Follow-up - Pinecone hosted inference candidate

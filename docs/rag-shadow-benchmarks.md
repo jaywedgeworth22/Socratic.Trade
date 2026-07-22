@@ -1,6 +1,6 @@
 # RAG Shadow Benchmarks: Turso/libSQL and Pinecone Assistant
 
-`npm run eval:rag-shadow-benchmarks` is a read-only comparison harness. It is
+`npm run eval:rag-shadow-benchmarks` is a read-only capability/context probe. It is
 not part of production retrieval, ingestion, migration, or re-embedding.
 
 ## Safety boundary
@@ -15,7 +15,8 @@ not part of production retrieval, ingestion, migration, or re-embedding.
   It never creates/describes/updates/deletes Assistants, files, operations,
   indexes, vectors, or corpus data, and does not use generation/chat.
 - It runs serially, caps calls at 100, clamps per-call timeout to 30 seconds,
-  and requests text-only context (`topK: 16`, 512-token snippets).
+  aborts the underlying HTTP request at the deadline, and requests text-only
+  context (`topK: 16`, 512-token snippets).
 - JSON receipts retain only frozen case IDs, elapsed time, counts, token usage,
   and SHA-256-truncated provider-file fingerprints. They never print or write
   prompt text, snippets, answers, file names, raw provider errors, or keys.
@@ -50,7 +51,9 @@ it is not a claim about a remote Turso database. Add a dev-only benchmark
 adapter only after a measured decision to run the shadow test; do not add it to
 the production runtime by default.
 
-Pinecone Assistant is useful as a managed contextual-retrieval baseline and
+Pinecone Assistant is useful as a managed contextual-retrieval probe and
 for a scoped "ask this filing" workflow. It is not a replacement for the
 app-owned evidence ledger until it can meet the required immutable filing/PIT,
 exact prompt-consumption, and tenant-erasure receipts under our real corpus.
+Citation counts and hashed file IDs alone do not measure relevance; provider
+selection requires a frozen-golden mapping against the same approved corpus.

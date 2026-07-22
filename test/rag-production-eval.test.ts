@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_PRODUCTION_EVAL_CASES,
   loadFrozenProductionRagGoldenSet,
   runProductionRagEvaluation,
   scoreProductionRagCase,
@@ -44,6 +45,7 @@ describe("production RAG evaluator", () => {
     expect(result.ndcgAtK).toBe(1);
     expect(result.pitFutureEvidenceIds).toEqual(["future"]);
     expect(result.undatedEvidenceIds).toEqual(["undated"]);
+    expect(result.pitValid).toBe(false);
     expect(result.duplicateRate).toBe(0.25);
     expect(result.expectedSourceCoverage).toBe(1);
     expect(result.expectedSectionCoverage).toBe(1);
@@ -56,7 +58,8 @@ describe("production RAG evaluator", () => {
       now: () => (tick += 25),
       retriever: { retrieve: async (query, symbol, limit, userId, options) => {
         expect(query).toBe(golden.query); expect(symbol).toBe("AAPL"); expect(limit).toBe(2);
-        expect(userId).toBe("eval-user"); expect(options).toEqual({ asOf: golden.authoritativeAsOf });
+        expect(userId).toBe("eval-user");
+        expect(options).toEqual({ asOf: golden.authoritativeAsOf, strictAsOf: true });
         return { chunks: chunks.slice(0, 2), status: "degraded" };
       } },
       limit: 2, userId: "eval-user",
@@ -64,6 +67,9 @@ describe("production RAG evaluator", () => {
     });
     expect(report.statusCounts.degraded).toBe(1);
     expect(report.metrics.latencyMs.p50).toBe(25);
+    expect(report.metrics.pitValid).toBe(true);
+    expect(report.evaluationContract.strictAsOf).toBe(true);
+    expect(report.configurationSource).toBe("injected-adapter");
     expect(report.usageReceipt?.costEstUsd).toBe(0.001);
   });
 
@@ -79,6 +85,55 @@ describe("production RAG evaluator", () => {
     writeFileSync(path, JSON.stringify([{ ...golden, authoritativeAsOf: "not-a-date" }]));
     expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("authoritativeAsOf");
     writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ vectorId: "legacy-only" }] }]));
-    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("stable selector");
+    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("contentHash or accession");
+    writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ source: "sec-edgar", section: "MD&A" }] }]));
+    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("contentHash or accession");
+  });
+
+  it("hard-caps case count and per-query result depth", async () => {
+    const cases = Array.from({ length: MAX_PRODUCTION_EVAL_CASES + 1 }, (_, index) => ({
+      ...golden,
+      id: `case-${index}`
+    }));
+    await expect(runProductionRagEvaluation(cases, {
+      retriever: { retrieve: async () => ({ chunks: [], status: "no_memory" }) }
+    })).rejects.toThrow("capped at 100 cases");
+    await expect(runProductionRagEvaluation([golden], {
+      limit: 101,
+      retriever: { retrieve: async () => ({ chunks: [], status: "no_memory" }) }
+    })).rejects.toThrow("limit must be an integer from 1 to 100");
+  });
+
+  it("uses runtime-resolved model and index receipts instead of caller-supplied labels", async () => {
+    const report = await runProductionRagEvaluation([golden], {
+      configuration: {
+        label: "comparison-a",
+        embeddingProvider: "untrusted-label",
+        embeddingModel: "untrusted-label",
+        rerankProvider: "untrusted-label",
+        rerankModel: "untrusted-label"
+      },
+      retriever: {
+        retrieve: async () => ({ chunks: [], status: "no_memory" }),
+        runtimeConfiguration: async () => ({
+          embeddingProvider: "openrouter",
+          embeddingModel: "baai/bge-m3",
+          rerankProvider: "siliconflow",
+          rerankModel: "Qwen/Qwen3-Reranker-8B",
+          rerankAvailable: true,
+          pineconeIndexName: "actual-index",
+          pineconeCredentialSource: "env",
+          embeddingCredentialSource: "env",
+          ledgerAuthority: "ledger:v1:test"
+        })
+      }
+    });
+    expect(report.configuration).toMatchObject({
+      label: "comparison-a",
+      embeddingProvider: "openrouter",
+      embeddingModel: "baai/bge-m3",
+      pineconeIndexName: "actual-index"
+    });
+    expect(report.configurationSource).toBe("runtime-resolved");
   });
 });

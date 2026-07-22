@@ -180,7 +180,7 @@ describe("storeDocument: per-chunk char cap aligned with the token chunker (item
     const originalEmbeddingProvider = process.env.RAG_EMBED_PROVIDER;
     const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
     const originalVoyageApiKey = process.env.VOYAGE_API_KEY;
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     process.env.RAG_EMBED_PROVIDER = "openrouter";
     process.env.OPENROUTER_API_KEY = "openrouter-test";
     delete process.env.VOYAGE_API_KEY;
@@ -227,6 +227,7 @@ describe("storeDocument: per-chunk char cap aligned with the token chunker (item
       restoreEnv("OPENROUTER_API_KEY", originalOpenRouterApiKey);
       restoreEnv("VOYAGE_API_KEY", originalVoyageApiKey);
       vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
       vi.resetModules();
     }
   });

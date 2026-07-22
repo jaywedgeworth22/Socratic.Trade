@@ -2270,33 +2270,6 @@ const MIGRATIONS: Migration[] = [
            AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1`
       );
     }
-  },
-  {
-    // Production-path RAG evaluation cases intentionally keep authoritative query-time
-    // timestamps and stable source provenance selectors. Vector ids are embedding/index-specific
-    // diagnostics, never the primary model-comparison key.
-    version: 55,
-    name: "rag_production_eval_cases",
-    up: (database) => {
-      database.exec(`
-        CREATE TABLE IF NOT EXISTS rag_production_eval_cases (
-          id TEXT PRIMARY KEY,
-          query TEXT NOT NULL,
-          symbol TEXT NOT NULL,
-          authoritative_as_of TEXT NOT NULL,
-          expected_evidence_refs TEXT NOT NULL,
-          category TEXT NOT NULL DEFAULT 'uncategorized',
-          expected_sources TEXT,
-          expected_sections TEXT,
-          enabled INTEGER NOT NULL DEFAULT 1,
-          notes TEXT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_rag_production_eval_cases_enabled
-          ON rag_production_eval_cases (enabled, category);
-      `);
-    }
   }
 ];
 

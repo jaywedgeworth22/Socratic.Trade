@@ -1153,11 +1153,19 @@ export async function runStrategyOnce(
               const formattedChunks = context.chunks
                 .map((chunk) => {
                   const serializedText = formatChunkWithProvenance(chunk, context.sym);
+                  const metadata = chunk.metadata ?? {};
                   ragPromptCandidates.push({
                     ...(chunk.id ? { chunkId: chunk.id } : {}),
                     symbol: normalizeSymbol(context.sym),
                     ...(chunk.source ? { source: chunk.source } : {}),
                     ...(chunk.doc_type ? { docType: chunk.doc_type } : {}),
+                    ...(typeof metadata.accession === "string" ? { accession: metadata.accession } : {}),
+                    ...(chunk.section ? { section: chunk.section } : {}),
+                    ...(typeof metadata.chunk_ordinal === "number" ? { ordinal: metadata.chunk_ordinal } : typeof metadata.ordinal === "number" ? { ordinal: metadata.ordinal } : {}),
+                    ...(typeof metadata.content_hash === "string" ? { contentHash: metadata.content_hash } : {}),
+                    ...(typeof metadata.vector_namespace === "string" ? { vectorNamespace: metadata.vector_namespace } : {}),
+                    ...(chunk.scope ? { scope: chunk.scope } : {}),
+                    ...(typeof metadata.tenant_scope === "string" ? { tenantScope: metadata.tenant_scope } : {}),
                     ...(chunk.section ? { title: chunk.section } : {}),
                     ...(chunk.url ? { url: chunk.url } : {}),
                     ...(chunk.as_of ? { publishedAt: chunk.as_of } : {}),
@@ -1433,11 +1441,19 @@ export async function runStrategyOnce(
           const episodicChunks = [...episodic.analogChunks, ...episodic.coachingChunks];
           retrievedRagAttributions.push(...ragAttributionsFromChunks("PORTFOLIO", episodic.query, episodicChunks));
           for (const chunk of episodicChunks) {
+            const metadata = chunk.metadata ?? {};
             ragPromptCandidates.push({
               ...(chunk.id ? { chunkId: chunk.id } : {}),
               symbol: "PORTFOLIO",
               ...(chunk.source ? { source: chunk.source } : {}),
               ...(chunk.doc_type ? { docType: chunk.doc_type } : {}),
+              ...(typeof metadata.accession === "string" ? { accession: metadata.accession } : {}),
+              ...(chunk.section ? { section: chunk.section } : {}),
+              ...(typeof metadata.chunk_ordinal === "number" ? { ordinal: metadata.chunk_ordinal } : typeof metadata.ordinal === "number" ? { ordinal: metadata.ordinal } : {}),
+              ...(typeof metadata.content_hash === "string" ? { contentHash: metadata.content_hash } : {}),
+              ...(typeof metadata.vector_namespace === "string" ? { vectorNamespace: metadata.vector_namespace } : {}),
+              ...(chunk.scope ? { scope: chunk.scope } : {}),
+              ...(typeof metadata.tenant_scope === "string" ? { tenantScope: metadata.tenant_scope } : {}),
               ...(chunk.section ? { title: chunk.section } : {}),
               ...(chunk.url ? { url: chunk.url } : {}),
               ...(chunk.as_of ? { publishedAt: chunk.as_of } : {}),
@@ -1561,7 +1577,13 @@ export async function runStrategyOnce(
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
       adversaryContext = proposed.adversaryContext;
-      const consumedEvidenceRefs = new Set(proposed.ragPromptConsumption?.consumed.map((receipt) => receipt.evidenceRef) ?? []);
+      // Only complete prompt evidence earns outcome attribution/usefulness credit. Truncated rows
+      // remain valuable assembly telemetry, but must not be promoted into realized-return learning.
+      const consumedEvidenceRefs = new Set(
+        proposed.ragPromptConsumption?.consumed
+          .filter((receipt) => receipt.state === "consumed")
+          .map((receipt) => receipt.evidenceRef) ?? []
+      );
       socraticRagAttributions = retrievedRagAttributions.filter((attribution) =>
         attribution.evidenceRef ? consumedEvidenceRefs.has(attribution.evidenceRef) : false
       );

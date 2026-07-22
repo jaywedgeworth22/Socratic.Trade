@@ -2,7 +2,7 @@
 
 ## Summary
 
-Added a default-off, read-only benchmark harness for two provider questions:
+Added a default-off, read-only shadow-probe harness for two provider questions:
 
 1. Local Turso/libSQL vector capability inspection.
 2. Context retrieval from an already-configured Pinecone Assistant.
@@ -34,8 +34,8 @@ corpus/provider writes before measured retrieval evidence exists.
 - Pinecone Assistant: requires `RAG_SHADOW_BENCHMARK_LIVE=1`,
   `PINECONE_ASSISTANT_NAME`, `PINECONE_API_KEY`, and an external JSON case file.
   It invokes only `Assistant.context` (not chat or any file/control/index API),
-  runs serially, caps at 100 queries, and clamps individual timeouts to 30
-  seconds.
+  runs serially, caps at 100 queries, clamps individual timeouts to 30 seconds,
+  and aborts the underlying SDK fetch when a timeout fires.
 - Receipts contain only case IDs, latency, citation count and hashed file IDs,
   token usage, and normalized error kinds. Prompts, snippets, answers, file
   names, raw errors, and keys are neither written nor printed.
@@ -55,8 +55,9 @@ was run while creating or verifying this harness.
 
 ## Follow-ups
 
-Run the live Assistant comparison only with a pre-created assistant containing
+These are capability/context probes, not provider-selection evidence: Turso has no remote vector
+query here, and Assistant has no frozen-golden relevance mapping. Run the live Assistant probe only with a pre-created assistant containing
 an approved benchmark corpus and an external ephemeral case file. Add a
 dev-only libSQL adapter only if the local capability receipt and a defined
-remote shadow target justify that measurement. Production adoption requires the
+remote same-corpus shadow target justify that measurement. Production adoption requires the
 separate PIT/evidence/tenant-erasure acceptance gates.

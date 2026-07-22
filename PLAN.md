@@ -10,11 +10,15 @@
 > Rerank policy + telemetry modules are locally green on `codex/rag-strategy-program-20260721`;
 > ingestion, evaluator, and lexical modules are active parallel lanes. Production re-embed remains
 > externally owned; CODEX will not launch competing corpus writes.
-> **2026-07-22 integration update:** Steps 1-4 are implemented locally: provider-aware managed
-> ingestion, production-path/PIT evaluation, committed/current corpus-wide FTS recall, and one-pass
-> dense+lexical fusion with independently routed/adaptive reranking and stage telemetry. Remaining:
-> integrate exact prompt-consumption receipts, structured/narrative routing, bounded parent context,
-> Turso/Pinecone Assistant shadow harnesses, then run the full gate and land one reviewable PR.
+> **2026-07-22 integration update:** Steps 1-6 are implemented on the current-main integration tree:
+> provider-aware managed ingestion, strict production-path/PIT evaluation, committed/current
+> tenant-safe corpus-wide FTS recall, one-pass dense+lexical fusion, independently routed/default-off
+> adaptive reranking, stage telemetry, exact consumption, structured/narrative routing, bounded parent
+> context, Pinecone hosted-inference comparison, and Turso/Assistant capability probes. Independent
+> review findings are remediated, and the final ordered local gate is green: lint (0 errors / 615
+> warnings), TypeScript, 434 files / 5,015 tests, and production build. Remaining: one ready PR,
+> required hosted check, merge/auto-deploy receipt, and live exact-SHA verification. Production
+> activation stays off.
 > **2026-07-21 — Managed RAG ingestion authority repair (CODEX, branch `codex/rag-ingestion-gate-20260721`).**
 > Repair the stale `storeDocument` provider gate left by the Voyage SDK purge: require Pinecone
 > initialization plus the actual active embedding provider credential, while preserving the explicit
@@ -473,16 +477,16 @@ evidence-consumption receipt, without changing the trading verdict path.
   contexts, and footnotes; chunk against provider token budgets.
 - **[~] Wave C — structured and searchable evidence:** normalize XBRL, insider, ownership, offering, and event
   facts; add a true corpus-wide lexical index; fuse dense/lexical recall, rerank wide, diversify, and return
-  typed evidence packets with strict point-in-time filtering. The read-only FTS5 candidate foundation now lives in
-  `src/lib/rag/corpus-wide-lexical.ts` (2026-07-21): it is PIT-aware and intentionally not yet wired into strategy
-  retrieval, so dense/lexical fusion remains a separately gated follow-up.
+  typed evidence packets with strict point-in-time filtering. The read-only FTS5 source in
+  `src/lib/rag/corpus-wide-lexical.ts` is now wired default-off beside dense recall before one rerank,
+  with tenant, rights, committed-version, and stale-legacy guards.
 - **[ ] Wave D — evaluation and consumption:** build real-EDGAR parser/fact/retrieval/grounding fixtures and
   metrics; replace the generic three-chunk strategy blob with issuer-scoped scout/deep dossiers and verified
   evidence references.
   - **[~] Production-path retrieval evaluator (2026-07-21):** `eval:rag-production` calls
     `retrieveContextDetailedWithStatus` with immutable authoritative-as-of timestamps, real vector-id
     diagnostics plus stable provenance relevance selectors, machine-readable relevance/PIT/coverage/latency/usage receipts, and explicit comparison labels.
-    Curate DB cases from frozen EDGAR evidence and run controlled shadow comparisons before changing defaults.
+    Curate version-controlled JSON cases from frozen EDGAR evidence and run controlled shadow comparisons before changing defaults.
   - **[~] Hosted-inference candidate (2026-07-21):** benchmark Pinecone `/embed` and `/rerank` directly
     against frozen candidate pools before assuming self-hosted or routed BGE/Cohere is best. This is bounded
     by absolute CLI caps, read-only, account-availability-gated, and it never touches the production index.

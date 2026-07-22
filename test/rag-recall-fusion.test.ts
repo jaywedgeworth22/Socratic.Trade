@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fuseDenseAndLexicalRecall, hasLexicalRecall } from "../src/lib/rag/recall-fusion";
 import type { CorpusWideLexicalCandidate } from "../src/lib/rag/corpus-wide-lexical";
+import { rankPool } from "../src/lib/vector-db";
 
 function lexical(id: string, text = id): CorpusWideLexicalCandidate {
   return {
@@ -54,5 +55,27 @@ describe("dense plus corpus-wide lexical recall fusion", () => {
     );
     expect(result.matches).toHaveLength(2);
     expect(new Set(result.matches.map((match) => match.id)).size).toBe(2);
+  });
+
+  it("feeds one deduplicated dense-plus-lexical pool through exactly one rerank pass", async () => {
+    const dense = [
+      { id: "overlap", score: 0.9, metadata: { text: "dense overlap", userId: "local", scope: "shared" } },
+      { id: "dense-only", score: 0.8, metadata: { text: "dense only", userId: "local", scope: "shared" } }
+    ];
+    const fusion = fuseDenseAndLexicalRecall(dense, [lexical("overlap"), lexical("lexical-only")], 10);
+    const rerank = vi.fn(async (_query: string, matches: any[]) => matches);
+
+    const ranked = await rankPool(fusion.matches, "generic strategy evidence", 2, {
+      rerank,
+      rerankCandidateLimit: 10
+    });
+
+    expect(rerank).toHaveBeenCalledOnce();
+    expect(rerank.mock.calls[0]?.[1]).toHaveLength(3);
+    expect(ranked.map((match) => match.id)).toEqual(expect.arrayContaining([
+      "overlap",
+      "dense-only",
+      "lexical-only"
+    ]));
   });
 });
