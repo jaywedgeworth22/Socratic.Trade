@@ -340,10 +340,11 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // (Codex review, PR #1371). Permissive default — brackets should be encouraged when stop rules (or
   // an explicit per-position plan) are active.
   if (proposal.bracketTakeProfit != null || proposal.bracketStopLoss != null) {
+    const applicableStopLossPct =
+      proposal.side === "short" ? context.policy.riskRules?.shortStopLossPct : context.policy.riskRules?.stopLossPct;
     const bracketPermitted =
       context.policy.permittedOrderTypes.includes("bracket" as any) ||
-      (context.policy.riskRules?.stopLossPct != null && context.policy.riskRules.stopLossPct > 0) ||
-      (context.policy.riskRules?.shortStopLossPct != null && context.policy.riskRules.shortStopLossPct > 0) ||
+      (applicableStopLossPct != null && applicableStopLossPct > 0) ||
       proposal.stopPlan?.style === "fixed" ||
       proposal.stopPlan?.style === "atr";
     if (!bracketPermitted) {
