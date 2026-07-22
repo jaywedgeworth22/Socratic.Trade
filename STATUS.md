@@ -2789,3 +2789,26 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
 
 ## 2026-07-21 — Switch RAG Default Embedding Provider from Voyage to OpenRouter (BAAI bge-m3)
 Switched the default fallback RAG embedding and rerank provider in `src/lib/vector-db.ts` to OpenRouter using BAAI's `baai/bge-m3` embedding model and Cohere reranker. Updated tests in `test/rag-embed-provider-gate.test.ts` and `test/connection-health-routing.test.ts`.
+## 2026-07-21 — Native iOS mobile-first Phase 1 PR #1859 (CODEX, protected landing pending)
+
+The isolated iOS lane now has a buildable XcodeGen app/test project and a stable five-tab native
+shell (Home, Proposals, Markets, Activity, Coach). It selectively composes PR #1790's typed HTTP
+errors, frame-correct SSE/reload coalescing, and live-order confirmation while taking only the
+canonical `trade.socratic.app` identity, Sign in with Apple entitlement, and URL scheme from
+#1851; its JWT-in-query authentication and unrelated web/CI churn were rejected. The app decodes
+and presents positions, orders, alerts, daily stats, performance/benchmark/fills, connected
+accounts, market session, and scheduler state with explicit initial-loading, retryable-error,
+empty, refreshing, and stale states. Commands have per-operation busy state, so Stop remains
+available while unrelated work runs. Parent review added stale/readiness command gating, ordered
+snapshot refreshes, durable retry idempotency, a corrected deletion response contract, explicit
+live-account switching confirmation, Red Team/model provenance, and accessibility sizing/layout
+fixes. Review remediation adds read-only deletion preview with final admission fencing, terminal
+command reconciliation, immediate protective-state commands with a final broker-placement state
+re-read, explicit unknown execution-mode rendering, and an app icon. Release signing remains enabled and automatic for team
+`CC8UTF7ATG`. `ios/project.yml` is canonical; its generated checked-in `.xcodeproj` is kept
+in sync for direct Xcode builds. XcodeGen generation, direct-project, generic and Release simulator builds, and test-target
+`build-for-testing` are green under Xcode 27 beta; no simulator runtimes are installed, so XCTest
+execution is deferred. The only server change aligns the Apple identity-token audience fallback
+with `trade.socratic.app` and has 3/3 focused tests. Targeted Node tests (7/7), TypeScript, ESLint,
+plist/asset validation, and diff check pass. Rollout:
+`docs/rollouts/2026-07-21-native-ios-mobile-first-phase-1.md`.

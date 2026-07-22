@@ -1,5 +1,17 @@
 # Active Implementation Plan
 
+> **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
+> `codex/mobile-first-ios-20260721`).** Implementation and review remediation are complete in the
+> isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:
+> native Apple audience, read-only deletion preview/final deletion admission, immediate protective
+> mobile commands, and the final broker-placement state fence are server-side contract/safety work.
+> Release signing
+> is configured for team `CC8UTF7ATG`; the XcodeGen spec is canonical and its
+> generated, checked-in `.xcodeproj` is direct-buildable. Deferred after landing: device/simulator interaction QA
+> on a machine with an installed
+> iOS runtime, notification/background-refresh work, and any richer Coach conversation
+> contract that requires a new server API.
+
 > **2026-07-20 - Corpus re-embed scoped-purge gate fix (CURSOR, branch
 > `cursor/critical-bug-management-0770`).** Critical-bug sweep found that a symbol-scoped
 > corpus re-embed could persist a full-docType completion stamp and thereby authorize
@@ -1947,4 +1959,3 @@ scope, timeline, or approach changed.
 
 ## 2026-07-21 PR #1845
 LLM cooldown + draining purge safety — see rollout note.
-
