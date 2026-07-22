@@ -1231,16 +1231,12 @@ const RAG_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 };
 
 async function alertRagConnectionFailure(
-<<<<<<< HEAD
   // "voyage"/"voyage-rerank" remain valid inputs for back-compat (recordMissingRagKey's
   // missing-API-key path still reports under the literal "voyage" service, unrelated to this rename
   // — see its call site). "rag-embed"/"rag-rerank" are the provider-generic lanes withRagApiHealth
   // now uses for actual embed/rerank call failures (added 2026-07-19) — pass `activeProvider`
   // alongside them so the title/payload still say which vendor is actually behind the failure.
   service: "pinecone" | "voyage" | "voyage-rerank" | "rag-embed" | "rag-rerank",
-=======
-  service: "pinecone" | "voyage" | "voyage-rerank" | "openrouter" | "openrouter-rerank" | "siliconflow" | "siliconflow-rerank",
->>>>>>> origin/main
   source: ApiKeySource,
   targetUserId: string,
   operation: string,
@@ -1257,21 +1253,11 @@ async function alertRagConnectionFailure(
     assertVectorStoreLease(leaseGuard);
     setInternalSetting(key, new Date().toISOString());
 
-<<<<<<< HEAD
     const title =
       service === "pinecone" ? "Pinecone connection failed"
       : service === "voyage" ? "Voyage connection failed"
       : service === "voyage-rerank" ? "Voyage Rerank connection failed"
       : `${RAG_PROVIDER_DISPLAY_NAMES[activeProvider ?? ""] ?? "RAG"} ${service === "rag-rerank" ? "rerank" : "embed"} connection failed`;
-=======
-    const titleName = service === "pinecone" ? "Pinecone" :
-                      service === "voyage-rerank" ? "Voyage Rerank" :
-                      service === "voyage" ? "Voyage" :
-                      service === "openrouter-rerank" ? "OpenRouter Rerank" :
-                      service === "openrouter" ? "OpenRouter" :
-                      service === "siliconflow-rerank" ? "SiliconFlow Rerank" : "SiliconFlow";
-    const title = `${titleName} connection failed`;
->>>>>>> origin/main
     const body = `${operation}: ${message}`;
     // `provider` carries the ACTUAL active provider when known (rag-embed/rag-rerank), falling back
     // to the raw service identifier for pinecone/legacy voyage calls — unchanged shape for those.
@@ -1456,14 +1442,10 @@ async function withDurableRagProviderDispatch<T>(
 }
 
 async function withRagApiHealth<T>(
-<<<<<<< HEAD
   // Still what drives the durable-dispatch/credential path below (withDurableRagProviderDispatch) —
   // unchanged, a separate concern from health/alert labeling. Pinecone call sites pass "pinecone"
   // and nothing else changes for them.
   service: "pinecone" | "voyage" | "voyage-rerank",
-=======
-  service: "pinecone" | "voyage" | "voyage-rerank" | "openrouter" | "openrouter-rerank" | "siliconflow" | "siliconflow-rerank",
->>>>>>> origin/main
   source: ApiKeySource,
   userId: string,
   operation: string,
@@ -2286,16 +2268,12 @@ export async function rerankMatches(
         return res;
       },
       undefined,
-<<<<<<< HEAD
       { estimatedCostUsd: estimateVoyageDispatchCost([query, ...documents], "rerank", modelName, provider) },
       // Provider-generic health/alert lane (2026-07-19): `provider` here is the ACTUAL active
       // rerank provider (activeRerankProvider above) — carries correctly whether Voyage, OpenRouter,
       // or SiliconFlow is serving this call, instead of the hardcoded "voyage-rerank" service name
       // above (which still only drives the internal dispatch/credential path, unchanged).
       { lane: "rag-rerank", provider }
-=======
-      { estimatedCostUsd: estimateRagDispatchCost([query, ...documents], "rerank", modelName, provider) }
->>>>>>> origin/main
     );
     meterRerank(query, documents, modelName, userId, provider);
     recordRagOperation();
