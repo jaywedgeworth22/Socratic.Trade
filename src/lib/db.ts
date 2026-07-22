@@ -2298,6 +2298,7 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {t},
+  {t},
   {
     // ONE-SHOT owner-directed burst arm (docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md):
     // seed earningscalls_burst_pending=25 so the scheduler's NEXT daily EarningsCalls pass runs the
