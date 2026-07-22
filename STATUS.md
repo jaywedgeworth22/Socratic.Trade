@@ -55,9 +55,10 @@ verify (18/20 recent CI cancelled), and (2) **Security/gitleaks + pin-check + sm
 ran only suite jobs. Fixes: remove every workflow target for `trading-live`, with PR code on
 `socratic-ci` and trusted failure reporting on `socratic-deploy`; stop Playwright Smoke on every
 PR (main/nightly/manual only); preserve the active CI run while GitHub collapses superseded
-pending runs to the newest head. The first durable local gate also exposed six stale assertions on
-current `main`; this branch now carries the already-prepared isolation/expectation corrections from
-the #1856 lineage. Conflicts/comments were not the multi-day bottleneck.
+pending runs to the newest head. The first durable local gate also exposed a synthetic production
+enrichment fallback, cross-side bracket authorization, and stale/flaky outcome, budget, and
+notification assertions; this branch now fixes the production behavior and focused tests.
+Conflicts/comments were not the multi-day bottleneck.
 Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
 ## 2026-07-22 — Bounded post-rerank parent-context expansion (CODEX, local branch `codex/rag-parent-expansion-20260722`)
 
@@ -100,6 +101,9 @@ OpenRouter embeddings and Pinecone writes, with no live provider call. This lane
 purge vectors, change secrets, or alter production configuration. Scoped lint (0 errors, existing
 warnings only), the focused mocked OpenRouter test, and `tsc --noEmit` pass. Next: hand the isolated
 commit to the RAG implementation program for review/landing.
+## 2026-07-21 — Mac runner `trading-live-mac` retired & deleted (ANTIGRAVITY, branch `antigravity/openrouter-latest-alias`)
+
+Owner directive: permanently stopped, uninstalled, and deleted self-hosted runner `trading-live-mac` (ID 22 on Socratic.Trade, ID 687 on Congress.Trade). Updated all workflow files in `.github/workflows/` (`ci.yml`, `security.yml`, `cleanup-caches.yml`, `sentry-ci-report.yml`, `_merge-shepherd-impl.yml`, `shared-package-pin-check.yml`, `e2e.yml`, `codex-autofix.yml`, `effort-issues-sync.yml`) to route to `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`. Added explicit binding fleet directive in `AGENTS.md` prohibiting any future use or re-registration of Mac self-hosted runners. Rollout: `docs/rollouts/2026-07-21-retire-mac-runner.md`.
 ## 2026-07-20 — CI-load trim: Playwright Smoke off every PR (CLAUDE, worktree `ci-trim-smoke`, branch `claude/ci-trim-smoke-on-prs`)
 
 Owner-approved CI-load reduction ("trim smoke AND add one runner" — this covers ONLY the smoke
@@ -2889,3 +2893,27 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
 
 ## 2026-07-21 — Switch RAG Default Embedding Provider from Voyage to OpenRouter (BAAI bge-m3)
 Switched the default fallback RAG embedding and rerank provider in `src/lib/vector-db.ts` to OpenRouter using BAAI's `baai/bge-m3` embedding model and Cohere reranker. Updated tests in `test/rag-embed-provider-gate.test.ts` and `test/connection-health-routing.test.ts`.
+## 2026-07-21 — Native iOS mobile-first Phase 1 PR #1859 (CODEX, merged; secure web-auth follow-up #1886)
+
+The isolated iOS lane now has a buildable XcodeGen app/test project and a stable five-tab native
+shell (Home, Proposals, Markets, Activity, Coach). It selectively composes PR #1790's typed HTTP
+errors, frame-correct SSE/reload coalescing, and live-order confirmation while taking only the
+canonical `trade.socratic.app` identity, Sign in with Apple entitlement, and URL scheme from
+#1851; its JWT-in-query authentication and unrelated web/CI churn were rejected. The app decodes
+and presents positions, orders, alerts, daily stats, performance/benchmark/fills, connected
+accounts, market session, and scheduler state with explicit initial-loading, retryable-error,
+empty, refreshing, and stale states. Commands have per-operation busy state, so Stop remains
+available while unrelated work runs. Parent review added stale/readiness command gating, ordered
+snapshot refreshes, durable retry idempotency, a corrected deletion response contract, explicit
+live-account switching confirmation, Red Team/model provenance, and accessibility sizing/layout
+fixes. Review remediation adds read-only deletion preview with final admission fencing, terminal
+command reconciliation, immediate protective-state commands with a final broker-placement state
+re-read, explicit unknown execution-mode rendering, an app icon, and a verifier-bound opaque
+web-auth handoff so Google/GitHub callback URLs do not contain Auth.js session credentials. Release signing remains enabled and automatic for team
+`CC8UTF7ATG`. `ios/project.yml` is canonical; its generated checked-in `.xcodeproj` is kept
+in sync for direct Xcode builds. XcodeGen generation, direct-project, generic and Release simulator builds, and test-target
+`build-for-testing` are green under Xcode 27 beta; no simulator runtimes are installed, so XCTest
+execution is deferred. The only server change aligns the Apple identity-token audience fallback
+with `trade.socratic.app` and has 3/3 focused tests. Targeted Node tests (7/7), TypeScript, ESLint,
+plist/asset validation, and diff check pass. Rollout:
+`docs/rollouts/2026-07-21-native-ios-mobile-first-phase-1.md`.

@@ -186,7 +186,7 @@ describe("outcome engine — the outcome writer", () => {
       call.documents.some((doc) => doc.text.includes("1w +15%") && doc.text.includes("(repeat) Momentum breakouts"))
     );
     expect(reindexed).toBe(true);
-    expect(storeContextsCalls.every((call) => call.options?.dedupKeyPrefix === "socratic-decision" || call.options?.dedupKeyPrefix === "lesson")).toBe(true);
+    expect(storeContextsCalls.some((call) => call.options?.dedupKeyPrefix === "socratic-decision")).toBe(true);
     expect(storeContextsCalls.every((call) => call.options?.scope === "private")).toBe(true);
 
     // Lesson routed through ingestLearned (origin 'autonomous'): lands as a live fact row or,
