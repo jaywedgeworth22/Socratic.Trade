@@ -1,3 +1,4 @@
+- **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
 
 - **[Socratic.Trade/Congress.Trade][AG] Reconcile and sync 47 total pending PRs to stabilized main (branch `agent/antigravity-ci-fix-revert`) — COMPLETED 2026-07-21.** Synced 40 Socratic.Trade PRs and 6 Congress.Trade PRs with main. Rebased dependabot PRs and merged main cleanly into human/agent branches, resolving safe package-lock.json/EFFORT-LOG.md conflicts and forcing CI checks onto the newly stabilized Linux runners.
 # Trading Effort Log - canonical live cross-agent board

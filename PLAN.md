@@ -1,5 +1,11 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
+> `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
+> but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per
+> workflow/ref. Verify the workflow regression, open a ready PR, arm auto-merge, and monitor the
+> queue without interrupting the three active full suites.
+
 > **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
 > `codex/mobile-first-ios-20260721`).** Implementation and review remediation are complete in the
 > isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:
