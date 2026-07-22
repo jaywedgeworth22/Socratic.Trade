@@ -20,6 +20,7 @@ import {
   parseRobinhoodFundamentals,
   parseWebullUnofficialQuote,
   scoreHeadlines,
+  YahooFinanceEnrichmentProvider,
   type MarketEnrichmentProvider,
   type EnrichmentContext,
   type SymbolEnrichment
@@ -1270,23 +1271,31 @@ describe("Alpha Vantage Warning Detection", () => {
 });
 
 describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
-  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
-  const originalFmpKey = process.env.FMP_API_KEY;
-  const originalAlphaVantageKey = process.env.ALPHAVANTAGE_API_KEY;
+  // Isolate Yahoo: clear every other enrichment key so the cascade cannot fill PE from
+  // Fintech/Finnhub/FMP/etc. when Yahoo handshake fails (CI runners often have keys in env).
+  const KEYS = [
+    "FINNHUB_API_KEY",
+    "FMP_API_KEY",
+    "ALPHAVANTAGE_API_KEY",
+    "FINTECH_STUDIOS_API_KEY",
+    "RAPIDAPI_KEY",
+    "POLYGON_API_KEY",
+    "ALPACA_API_KEY",
+    "ALPACA_API_SECRET",
+  ] as const;
+  const originals: Partial<Record<(typeof KEYS)[number], string | undefined>> = {};
+  for (const k of KEYS) originals[k] = process.env[k];
 
   beforeEach(() => {
-    delete process.env.FINNHUB_API_KEY;
-    delete process.env.FMP_API_KEY;
-    delete process.env.ALPHAVANTAGE_API_KEY;
+    for (const k of KEYS) delete process.env[k];
   });
 
   afterEach(() => {
-    if (originalFinnhubKey) process.env.FINNHUB_API_KEY = originalFinnhubKey;
-    else delete process.env.FINNHUB_API_KEY;
-    if (originalFmpKey) process.env.FMP_API_KEY = originalFmpKey;
-    else delete process.env.FMP_API_KEY;
-    if (originalAlphaVantageKey) process.env.ALPHAVANTAGE_API_KEY = originalAlphaVantageKey;
-    else delete process.env.ALPHAVANTAGE_API_KEY;
+    for (const k of KEYS) {
+      const v = originals[k];
+      if (v) process.env[k] = v;
+      else delete process.env[k];
+    }
   });
 
   // Composite review (d): getCreds() used to be all-or-nothing — one failed handshake blanked
@@ -1318,12 +1327,8 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
       throw new Error(`unexpected fetch to ${url}`);
     });
 
-    const provider = getEnrichmentProvider();
-    // Not an exact-match: unrelated describe blocks in this file may leave a provider key set
-    // (e.g. FINTECH_STUDIOS_API_KEY) depending on run order — irrelevant to what's under test
-    // here (Yahoo's own handshake retry), and any such extra provider's fetch calls are caught
-    // by CascadingEnrichmentProvider without affecting Yahoo's result.
-    expect(provider.name).toContain("yahoo-finance");
+    const provider = new YahooFinanceEnrichmentProvider();
+    expect(provider.name).toBe("yahoo-finance");
 
     vi.useFakeTimers();
     try {
@@ -1340,7 +1345,9 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
   });
 
   it("still degrades to empty (never throws) when the retry also fails", async () => {
-    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    // Instantiate Yahoo directly — getEnrichmentProvider() is the full cascade, which fills
+    // missing fields from manual fallback after Yahoo returns {} (Codex P1 on #1857: ZZZZ got pe=10.5).
+    const { clearEnrichmentCache, YahooFinanceEnrichmentProvider } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
     vi.stubGlobal("fetch", async (url: string) => {
@@ -1348,7 +1355,7 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
       throw new Error(`unexpected fetch to ${url}`);
     });
 
-    const provider = getEnrichmentProvider();
+    const provider = new YahooFinanceEnrichmentProvider();
     vi.useFakeTimers();
     try {
       const resultPromise = provider.enrich(["AAPL"]);

@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   sync:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, socratic-ci]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
