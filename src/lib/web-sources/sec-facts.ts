@@ -100,13 +100,14 @@ export async function ingestCompanyFacts(cik: string): Promise<void> {
             if (!form || !["10-K", "10-Q", "20-F", "40-F"].includes(form)) {
               continue;
             }
-            if (typeof val !== "number" || !accession || !end) {
+            if (typeof val !== "number" || Number.isNaN(val) || !accession || !end) {
               continue;
             }
 
             const period = (entry as any).frame || `${(entry as any).fy || ""}-${(entry as any).fp || ""}`;
             const start = (entry as any).start || null;
-            const accepted = (entry as any).filed || new Date().toISOString();
+            const accepted = (entry as any).filed;
+            if (!accepted) continue;
             const segment = (entry as any).segment ? JSON.stringify((entry as any).segment) : null;
 
             // Generate deterministic ID
@@ -199,6 +200,8 @@ export function parseAndSaveForm4(xmlContent: string, cik: string, accession: st
 
       const shares = parseFloat(sharesVal);
       const price = priceVal ? parseFloat(priceVal) : 0;
+      if (Number.isNaN(shares) || shares <= 0) return;
+      if (Number.isNaN(price) || price < 0) return;
       const side = ad === "D" ? "sell" : "buy";
 
       for (const owner of owners) {
