@@ -292,23 +292,41 @@ export interface ApproveResult {
   reasons?: string[];
 }
 
+// Approval intentionally shares the per-account strategy lock. A long LLM run can therefore
+// overlap a click by several seconds; retry only the lock's side-effect-free Busy result so the
+// user does not have to guess when the run finished. The server remains authoritative on every
+// attempt and the total wait stays bounded.
+const APPROVAL_BUSY_RETRY_DELAYS_MS = [1_000, 2_000, 3_000, 5_000, 5_000, 5_000, 5_000];
+
+function waitForApprovalRetry(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function approveProposal(
   id: string,
   liveConfirmation?: LiveApprovalConfirmationBody
 ): Promise<ApproveResult> {
-  try {
-    return await request<ApproveResult>(`/api/proposals/${encodeURIComponent(id)}/approve`, {
-      method: "POST",
-      body: JSON.stringify(liveConfirmation ? { liveConfirmation } : {})
-    });
-  } catch (error) {
-    if (error instanceof ConsoleApiError && error.status === 409 && error.payload && typeof error.payload === "object") {
-      const p = error.payload as { error?: string; reasons?: string[]; expectedText?: string; message?: string };
-      if (p.error === "LIVE_CONFIRMATION_REQUIRED" && typeof p.expectedText === "string") {
-        throw new LiveConfirmationRequiredError(Array.isArray(p.reasons) ? p.reasons : [], p.expectedText);
+  const submit = async (): Promise<ApproveResult> => {
+    try {
+      return await request<ApproveResult>(`/api/proposals/${encodeURIComponent(id)}/approve`, {
+        method: "POST",
+        body: JSON.stringify(liveConfirmation ? { liveConfirmation } : {})
+      });
+    } catch (error) {
+      if (error instanceof ConsoleApiError && error.status === 409 && error.payload && typeof error.payload === "object") {
+        const p = error.payload as { error?: string; reasons?: string[]; expectedText?: string; message?: string };
+        if (p.error === "LIVE_CONFIRMATION_REQUIRED" && typeof p.expectedText === "string") {
+          throw new LiveConfirmationRequiredError(Array.isArray(p.reasons) ? p.reasons : [], p.expectedText);
+        }
       }
+      throw error;
     }
-    throw error;
+  };
+
+  for (let attempt = 0; ; attempt += 1) {
+    const result = await submit();
+    if (result.status !== "busy" || attempt >= APPROVAL_BUSY_RETRY_DELAYS_MS.length) return result;
+    await waitForApprovalRetry(APPROVAL_BUSY_RETRY_DELAYS_MS[attempt]!);
   }
 }
 

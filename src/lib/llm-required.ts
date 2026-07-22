@@ -29,6 +29,11 @@ export const LLM_MODEL_REQUIRED_STRATEGY_MESSAGE =
 export const LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE =
   "Rotation is selected, but no provider key resolves for any catalog model, so rotation has nothing to serve. Add a provider key under Connections → API keys (or choose a specific model) to run a strategy session.";
 
+/** Shown when the OpenRouter account model list could not be checked. Rotation fails closed rather
+ * than selecting a model that may be disabled in the user's OpenRouter account. */
+export const LLM_ROTATION_AVAILABILITY_UNAVAILABLE_STRATEGY_MESSAGE =
+  "Rotation could not verify the models available on your OpenRouter account. Try again shortly or choose a specific available model under Strategy → Models.";
+
 /**
  * Thrown deep in the strategy path (the old silent no-key fallback site) so the no-LLM-credential
  * state surfaces as a real failure rather than a fabricated rule-based proposal. The API/UI layers
