@@ -45,7 +45,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
-- **[Socratic.Trade][CODEX] Robinhood guardrail cap resilience (branch `codex/robinhood-cap-fix`, 2026-07-22) — In Progress / HANDOFF.** Implementation commits `9c208190` + `e943e9b9`; focused gates are green. Landing is blocked only by a Node 26-compiled `better-sqlite3` under the required Node 24 runtime; rebuild dependencies, rerun `scripts/land.sh`, then PR/merge/deploy/live-verify. Handoff: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+- **[Socratic.Trade][GROK] Robinhood guardrail cap resilience (branch `codex/robinhood-cap-fix`, worktree `/Users/jay/.codex/worktrees/socratic-robinhood-cap-fix`, 2026-07-22) — In Progress / LANDING.** Pickup from CODEX handoff. `better-sqlite3` rebuilt under Node 24 (modules=137); focused receipt 112/112 green (`washsale-modes`, `final-size-red-autonomous`, `console-live-data-derive`, `policy-caps`, `policy-save-resilience`). Next: `scripts/land.sh` → PR → merge → Coolify auto-deploy + live cap-save verify. Handoff: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
 
 - **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
 
