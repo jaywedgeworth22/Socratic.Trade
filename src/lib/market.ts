@@ -428,6 +428,15 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     // by enrichment; only the normal top-N boundary is allowed to move.
     const rescoredBySymbol = new Map(rescoredRanked.map((quote) => [quote.symbol, quote]));
     const finalTop = rescoredRanked.slice(0, candidateLimit);
+    const finalTopSymbols = new Set(finalTop.map((quote) => quote.symbol));
+    const eventExtraSymbols = new Set(eventExtra.map((quote) => quote.symbol));
+    // Honest decomposition (item 26): a held position forced additively into the candidate set,
+    // beyond the ranked cut AND beyond the already-counted outlier reserve. This is what actually
+    // lets topCandidates.length exceed candidateLimit — surfaced so the UI can say "50 ranked + 14
+    // held + 11 outliers" instead of a bare "75/50 candidates" that reads like the cap was ignored.
+    const heldCandidateCount = rescoredRanked.filter(
+      (quote) => heldSymbols.has(quote.symbol) && !finalTopSymbols.has(quote.symbol) && !eventExtraSymbols.has(quote.symbol)
+    ).length;
     let topCandidates = uniqueQuotesBySymbol([
       ...finalTop,
       ...eventExtra.map((quote) => rescoredBySymbol.get(quote.symbol) ?? quote),
@@ -562,6 +571,7 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
       candidateLimit,
       outlierReserve,
       outlierCandidateCount: eventExtra.length,
+      heldCandidateCount,
       breadthPct,
       topCandidates,
       sectorBySymbol: sectorBySymbol(mergedRanked),
