@@ -128,6 +128,15 @@ primary dataset-refresh lease is released, preserving the established non-blocki
 That detached tail does not currently acquire `rag-reindex`; making it fully exclusive requires a
 durable pending/retry job or awaiting it, and remains an explicit follow-up rather than a silent claim.
 
+### Corpus re-embed purge safety
+
+The bge-m3/Voyage embedding-space migration uses `POST /api/admin/reembed` to backfill locally
+held corpus rows into the active embedding space before any legacy vectors are deleted. A
+symbol-scoped run is useful for testing or targeted repair, but it is not proof that an entire
+docType has been backfilled. `purge-legacy` must remain blocked until an unscoped docType run
+records completion under the active embed revision; scoped runs deliberately do not write
+`completedForEmbedRevision`.
+
 ## Wiring into the app
 
 - **Scoring/UI/prompt** — `scanMarket` overlays `getSymbolWebSignals` onto the top
