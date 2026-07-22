@@ -1,5 +1,11 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Mobile auth exchange CSRF follow-up (CODEX, PR #1888).** Keep
+> `/api/mobile/auth/exchange` unauthenticated for the native client, but do not classify it as a
+> public-prefix early return: it must pass `checkSameOrigin` before the one-time code/verifier
+> handoff. Verify the focused middleware/route tests and required hosted gate, then merge and
+> verify the exact auto-deployed SHA.
+
 > **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
 > `codex/mobile-first-ios-20260721`).** Implementation and review remediation are complete in the
 > isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:

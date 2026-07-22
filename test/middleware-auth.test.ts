@@ -368,6 +368,17 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.headers.get("x-middleware-request-x-user-id")).toBeNull();
   });
 
+  it("blocks cross-site mobile auth exchange attempts before the one-time verifier gate", async () => {
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
+    const middleware = await loadMiddleware();
+    const res = await middleware(new NextRequest("https://trading.example.com/api/mobile/auth/exchange", {
+      method: "POST",
+      headers: { "sec-fetch-site": "cross-site" }
+    }));
+    expect(res.status).toBe(403);
+  });
+
   it("/login page is public (no redirect loop)", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "");

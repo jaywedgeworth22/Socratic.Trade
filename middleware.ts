@@ -68,9 +68,6 @@ const PUBLIC_PREFIXES = [
   "/privacy-policy",
   "/terms-and-conditions",
   "/api/mobile/auth/apple",
-  // The exchange is intentionally unauthenticated: its opaque, one-time code and
-  // device-created verifier are the authorization proof until it sets Auth.js cookie.
-  "/api/mobile/auth/exchange"
 ];
 const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",
@@ -177,6 +174,8 @@ function isEmailAllowed(email: string, fromCf: boolean): boolean {
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
 
+  const isMobileAuthExchangePath = pathname === "/api/mobile/auth/exchange";
+
   if (isPublicPath(pathname)) {
     // Public (no auth) — but still strip client-supplied identity headers so a forged
     // identity can never reach a handler that reads it.
@@ -204,6 +203,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
         })
       );
     }
+  }
+
+  // The mobile exchange is intentionally unauthenticated, but it must still pass
+  // the CSRF gate above. Its one-time code and device verifier authorize the
+  // session handoff; the browser-origin check prevents login CSRF/session fixation.
+  if (isMobileAuthExchangePath) {
+    const headers = stripClientIdentityHeaders(new Headers(req.headers));
+    return withSecurityHeaders(NextResponse.next({ request: { headers } }));
   }
 
   // --- Identity resolution ---

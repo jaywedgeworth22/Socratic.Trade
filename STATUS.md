@@ -1,5 +1,11 @@
 # Current Status
 
+## 2026-07-22 — Mobile auth exchange CSRF follow-up (PR #1888)
+
+The unauthenticated native exchange path now still passes the middleware same-origin CSRF guard;
+only the one-time code plus device verifier bypasses session identity. Added a cross-site rejection
+regression and refreshed the required handoff docs. Rollout: `docs/rollouts/2026-07-22-mobile-auth-exchange-csrf.md`.
+
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
 Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
