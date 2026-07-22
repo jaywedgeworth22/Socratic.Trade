@@ -1934,3 +1934,7 @@ scope, timeline, or approach changed.
 - Root-level manual probe artifacts such as screenshots, one-off UI scripts, and
   accidental shell-output files stay ignored so the integration worktree remains
   reserved for review and merges.
+
+## 2026-07-21 PR #1845
+LLM cooldown + draining purge safety — see rollout note.
+

@@ -266,10 +266,9 @@ export function planLlmProviderAttempts<T extends LlmAttemptLane>(
       return live;
     }
 
-    // EVERY lane is cooling: attempt transient failures anyway (least-recently-failed first) for a
-    // lucky recovery, but truly drop lanes with hard billing failures (they will not magically recover).
-    const retriable = cooling.filter((c) => c.record.kind !== "billing");
-    const ordered = [...retriable].sort((a, b) => a.record.failedAt - b.record.failedAt).map((c) => c.attempt);
+    // EVERY lane is cooling: still attempt the full chain (least-recently-failed first) so a
+    // manual billing/credit fix can recover immediately instead of waiting for the cooldown TTL.
+    const ordered = [...cooling].sort((a, b) => a.record.failedAt - b.record.failedAt).map((c) => c.attempt);
     const earliestExpiry = Math.min(...cooling.map((c) => c.record.until));
     const suppressUntil = exhaustionAlerts.get(userId) ?? 0;
     if (now >= suppressUntil) {

@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
+
+Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
 ## 2026-07-21 -- ST PR queue stuck for days: CI root-cause fixes (GROK, `monet/ci-runner-and-queue-fixes`)
 
 PRs were stuck ~2-3 days primarily because (1) **cancel-in-progress thrash** killed nearly every
