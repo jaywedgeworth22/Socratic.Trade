@@ -41,6 +41,11 @@
 > test-only Voyage path. Add a production-mode OpenRouter/Pinecone regression. This is a code-path
 > prerequisite only; no re-embed, purge, secret, or production operation is included.
 > **2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, branch `codex/rag-shadow-benchmarks-20260722`).** Land the default-off read-only harness only after focused test/lint/TypeScript checks. Do not add a libSQL runtime dependency or route production retrieval to Turso until an explicit shadow comparison has a configured remote target and measured recall/latency/cost receipt. Pinecone Assistant remains a pre-existing-assistant contextual-retrieval baseline; no file/corpus migration or production use follows from this work without evidence/PIT/tenant-erasure acceptance.
+> **2026-07-22 — Mobile auth exchange CSRF follow-up (CODEX, PR #1888).** Keep
+> `/api/mobile/auth/exchange` unauthenticated for the native client, but do not classify it as a
+> public-prefix early return: it must pass `checkSameOrigin` before the one-time code/verifier
+> handoff. Verify the focused middleware/route tests and required hosted gate, then merge and
+> verify the exact auto-deployed SHA.
 > **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
 > `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
 > but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per
