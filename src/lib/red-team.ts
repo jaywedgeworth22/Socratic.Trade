@@ -16,7 +16,7 @@
 
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { recordLlmUsage, extractLlmUsage, remapOpenRouterTelemetry } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import {
   interactiveStrategyReasoningEffort,
   LLM_OUTPUT_TOKEN_CAPS,
@@ -261,7 +261,11 @@ export async function debateProposal(
       reasoningEffort: interactiveStrategyReasoningEffort(model, resolveReviewerReasoningEffort(policy)),
       // Per-role sampling: non-zero adversary temperature so a re-run can surface a different
       // objection rather than always the identical (or absent) one. Ignored by reasoning models.
-      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
+      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "red-team"
     }
   );
 
@@ -289,7 +293,11 @@ export async function debateProposal(
           schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's three-way verdict on the finalized trade." },
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.adversaryReview,
           reasoningEffort: interactiveStrategyReasoningEffort(ep.model, resolveReviewerReasoningEffort(policy)),
-          temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
+          temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature,
+          userId,
+          keyRef: ep.keyRef,
+          service: "strategy",
+          feature: "red-team"
         }
       )
     });
@@ -398,6 +406,7 @@ export async function debateProposal(
               // Per-account usage attribution (PR #1030 coordination): the resolved run policy is
               // account-scoped, so the review's spend lands on the account it reviewed for.
               connectedAccountId: policy.connectedAccountId,
+              providerRequestId: providerRequestIdFromPayload(attempt.provider, payload),
               ...extractLlmUsage(payload)
             });
             const text = extractLlmText(payload);
