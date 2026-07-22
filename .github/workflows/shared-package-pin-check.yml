@@ -68,6 +68,11 @@ jobs:
         with:
           node-version: 24
 
+      # Keep the consumer manifest present even if cleanup from a prior job
+      # overlaps this long-lived runner workspace after the first checkout.
+      - name: Refresh checkout before reading package metadata
+        uses: actions/checkout@v4
+
       - name: Compare shared-package version against the peer consumer
         env:
           GH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
