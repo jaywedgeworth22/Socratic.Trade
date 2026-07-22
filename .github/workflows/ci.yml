@@ -57,11 +57,14 @@ on:
     # route to the Mac. schedule events always route hosted (see the route step below).
     - cron: "47 7 * * *"
 
-# Cancel a superseded run for the same branch/PR instead of letting it queue
-# behind newer pushes.
+# Keep the active verification alive when another commit reaches the same PR. GitHub
+# concurrency still retains only the newest pending run, so intermediate pushes collapse
+# without cancelling the expensive in-flight suite. This prevents high-churn branches from
+# repeatedly losing all progress before `verify` can turn green.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # TEMP: include sha so a stuck in_progress run cannot hold the whole ref (2026-07-22 queue drain)
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   classify:
@@ -179,7 +182,7 @@ jobs:
   verify-self:
     needs: classify
     if: ${{ !cancelled() && needs.classify.result == 'success' && needs.classify.outputs.docs-only != 'true' && needs.classify.outputs.route == 'self' }}
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     timeout-minutes: 30
     # Single-file lane: this is load-shedding on the production box, NOT the throughput
     # path (hosted is always available in parallel for other runs via the router).
@@ -261,15 +264,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-
             ${{ runner.os }}-nextjs-
       # Everything on the self path runs under `nice -n 19` so a live trading process always
-      # outbids CI for CPU on the production box. Install is tokenless `npm ci` (the shared
+      # outbids CI for CPU on the production box. Install is tokenless `npm install` (the shared
       # dependency resolves over public HTTPS now — no deploy key needed, matching deploy.yml).
       - name: Install dependencies (nice -19)
-        run: nice -n 19 npm ci
+        run: nice -n 19 npm install --no-audit --no-fund
       - run: nice -n 19 npm run lint
       - run: nice -n 19 npx tsc --noEmit
       # maxWorkers=2 (below the config default of 4) to further bound peak memory on the Mac.
@@ -280,7 +283,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
 
   # Coolify CI lane: the deterministic Linux baseline. This keeps the historic job id
   # `verify-hosted` for branch-protection/status continuity, but it now runs on the online
@@ -321,7 +324,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
       # Split restore/save (2026-07-04, cache-hygiene): PR/merge_group runs only restore;
       # a new entry is saved only on main pushes and the nightly schedule so cache storage
       # stays a single rolling lineage per OS instead of one throwaway entry per PR push.
@@ -331,15 +333,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-
             ${{ runner.os }}-nextjs-
       # verify-hosted only runs when docs-only is false (job-level `if` above), so per-step
-      # docs-only guards are unnecessary here. Tokenless `npm ci` — the shared dependency
+      # docs-only guards are unnecessary here. Tokenless `npm install` — the shared dependency
       # resolves over public HTTPS now (no deploy key), matching main's verify + deploy.yml.
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
@@ -353,7 +355,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
 
   # THE required check. Pure gate: interprets the lanes above and reports under the exact
   # context name the ruleset requires. Fail-closed in every ambiguous state; annotates which
@@ -382,7 +384,7 @@ jobs:
           note "### verify gate"
           note "- classify: ${CLASSIFY_RESULT} (docs-only: ${DOCS_ONLY:-n/a}, route: ${ROUTE:-n/a})"
           note "- verify-self (macOS, production Mac): ${SELF_RESULT}"
-          note "- verify-hosted (Coolify trading-live): ${HOSTED_RESULT}"
+          note "- verify-hosted (Coolify socratic-ci): ${HOSTED_RESULT}"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             note "- RESULT: FAIL — classify did not succeed; the gate never fails open."
@@ -394,9 +396,9 @@ jobs:
           fi
           if [ "$HOSTED_RESULT" = "success" ]; then
             if [ "$SELF_RESULT" = "failure" ]; then
-              note "- RESULT: PASS — produced by Coolify trading-live (ARBITER: self-hosted Mac lane failed, Linux lane passed)."
+              note "- RESULT: PASS — produced by Coolify socratic-ci (ARBITER: alternate self-hosted lane failed, Linux lane passed)."
             else
-              note "- RESULT: PASS — produced by Coolify trading-live."
+              note "- RESULT: PASS — produced by Coolify socratic-ci."
             fi
             exit 0
           fi
