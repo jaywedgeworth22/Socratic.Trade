@@ -20,8 +20,24 @@ const {
 const BASE_URL = "https://usage.example.test";
 
 interface CapturedRequest {
-  body: { events: Array<Record<string, unknown>> };
+  body: {
+    schemaVersion: number;
+    producerId: string;
+    events: Array<Record<string, unknown>>;
+  };
   rawBody: string;
+}
+
+function ack(received: number): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    schemaVersion: 2,
+    received,
+    persisted: received,
+    duplicates: 0,
+    pruned: 0,
+    rejected: 0,
+  }), { status: 202 });
 }
 
 function telemetryKey(kind: "llm" | "rag" | "provider-dispatch", sourceId: string): string {
@@ -37,7 +53,7 @@ function fetchStub(captured: CapturedRequest[], ok = true): typeof fetch {
     captured.push({ rawBody, body: JSON.parse(rawBody) });
     if (!ok) return new Response("unavailable", { status: 503 });
     const eventCount = captured.at(-1)?.body.events.length ?? 0;
-    return new Response(JSON.stringify({ ok: true, accepted: eventCount }), { status: 202 });
+    return ack(eventCount);
   }) as unknown as typeof fetch;
 }
 
@@ -144,15 +160,16 @@ describe("usage monitor durable replay", () => {
     });
     const events = captured.flatMap((request) => request.body.events);
     expect(events).toHaveLength(2);
+    expect(captured.every((request) => request.body.schemaVersion === 2)).toBe(true);
+    expect(captured.every((request) => request.body.producerId === "socratic-trade")).toBe(true);
     const llm = events.find((event) => event.service === "llm")!;
     expect(llm).toMatchObject({
-      sourceApp: "socratic-trade",
       project: "socratic-trade",
       provider: "gemini",
       costUsd: 0.42,
       metricType: "cost",
       occurredAt: "2026-07-10T12:00:00.000Z",
-      idempotencyKey: telemetryKey("llm", "llm-gemini-paid"),
+      eventId: telemetryKey("llm", "llm-gemini-paid"),
     });
     const rag = events.find((event) => event.service === "rag")!;
     expect(rag).toMatchObject({
@@ -160,7 +177,7 @@ describe("usage monitor durable replay", () => {
       provider: "voyage",
       costUsd: 0.003,
       occurredAt: "2026-07-10T12:01:00.000Z",
-      idempotencyKey: telemetryKey("rag", "rag-voyage-paid"),
+      eventId: telemetryKey("rag", "rag-voyage-paid"),
     });
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toEqual({
       createdAt: "2026-07-10T12:00:00.000Z",
@@ -181,13 +198,13 @@ describe("usage monitor durable replay", () => {
 
     const first = await replay.runUsageMonitorReplay({ pageSize: 1, maxPagesPerLedger: 1 });
     expect(first.llm).toEqual({ sent: 1, complete: false, failed: false });
-    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(telemetryKey("llm", "llm-a"));
+    expect(captured[0]!.body.events[0]!.eventId).toBe(telemetryKey("llm", "llm-a"));
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)?.id).toBe("llm-a");
 
     captured.length = 0;
     const second = await replay.runUsageMonitorReplay({ pageSize: 2, maxPagesPerLedger: 2 });
     expect(second.llm).toEqual({ sent: 2, complete: true, failed: false });
-    expect(captured[0]!.body.events.map((event) => event.idempotencyKey)).toEqual([
+    expect(captured[0]!.body.events.map((event) => event.eventId)).toEqual([
       telemetryKey("llm", "llm-a"),
       telemetryKey("llm", "llm-b"),
     ]);
@@ -196,7 +213,7 @@ describe("usage monitor durable replay", () => {
     captured.length = 0;
     const third = await replay.runUsageMonitorReplay();
     expect(third.llm).toEqual({ sent: 1, complete: true, failed: false });
-    expect(captured[0]!.body.events[0]!.idempotencyKey).toBe(telemetryKey("llm", "llm-b"));
+    expect(captured[0]!.body.events[0]!.eventId).toBe(telemetryKey("llm", "llm-b"));
   });
 
   it("does not advance a watermark on ambiguous failure and reconstructs the same payload", async () => {
@@ -245,7 +262,7 @@ describe("usage monitor durable replay", () => {
       requests: 1,
       confidence: "estimated",
       metadata: { outcome: "unknown", unknownOutcome: true, userId: "local" },
-      idempotencyKey: telemetryKey(
+      eventId: telemetryKey(
         "provider-dispatch",
         `provider-attempt:${reserved.attemptId}`
       )
@@ -281,7 +298,7 @@ describe("usage monitor durable replay", () => {
           JSON.stringify({ createdAt: newer, id: "llm-newer" }),
           new Date().toISOString()
         );
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), { status: 202 });
+      return ack(1);
     }) as unknown as typeof fetch);
 
     const result = await replay.runUsageMonitorReplay({ pageSize: 1, maxPagesPerLedger: 1 });
@@ -381,7 +398,6 @@ describe("usage monitor durable replay", () => {
     // An all-poison batch (Infinity quantity fails the shared schema's .finite()). client.send would
     // reject it before any fetch; sendUsageMonitorBatch must NOT read that as a receiver outage.
     const poison = {
-      sourceApp: "socratic-trade",
       environment: "test",
       provider: "poison-replay",
       service: "broker",
@@ -391,7 +407,7 @@ describe("usage monitor durable replay", () => {
       unit: "usd",
       confidence: "actual",
       occurredAt: "2026-07-10T18:00:00.000Z",
-      idempotencyKey: "socratic-trade:poison:replay-1",
+      eventId: "socratic-trade:poison:replay-1",
     };
 
     const ok = await push.sendUsageMonitorBatch(

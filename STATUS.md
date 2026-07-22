@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-22 — Usage telemetry v2 producer adoption (CODEX, `codex/usage-telemetry-v2-20260721`)
+
+Socratic now exact-pins shared `v2.0.0` over HTTPS and emits only strict v2 usage telemetry:
+batch-level `producerId`, event-level `eventId`, and `producerKeyRef`, with typed v2 ACK parsing.
+Fresh durable replay is rebuilt directly from the LLM/RAG/provider ledgers; pre-v2 in-memory HMR
+buffers are normalized once before retry, so there is no dual-write path. Cold tokenless install,
+TypeScript, lint (zero errors), production build, 83 broader focused tests, and the final 46-test
+producer/replay/FMP regression set pass. The receiver gate is cleared: Usage-Monitor exact main
+`335723775ef0f8114ee1ca77b4716139018026dc` is committed live on Oracle.
+
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
 Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
