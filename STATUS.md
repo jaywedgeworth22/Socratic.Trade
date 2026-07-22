@@ -1,5 +1,17 @@
 # Current Status
 
+## 2026-07-22 — Retired-provider Usage Monitor cleanup (CODEX, branch `codex/retired-provider-usage-cleanup`)
+
+Removed Usage Monitor emissions from the Alpaca, Tradier, and Robinhood broker adapters while
+preserving their trading, account-read, and API-health behavior. Removed the unused Intrinio
+implementation, API-key configuration, environment example, and current forward-looking docs;
+historical rollout/review/handoff evidence remains intact. A central provider-family policy
+suppresses the retired broker roots and their subproviders (including Alpaca news/snapshot), with
+paid-provider controls remaining eligible. Focused Node 24 verification is green (5 files / 209
+tests) plus TypeScript and diff checks. Final integration into `usage-monitor-push.ts`, ready-PR
+publication, and the authoritative post-integration gate wait for PR #1889's strict-v2 telemetry
+contract to merge. Rollout: `docs/rollouts/2026-07-22-retired-provider-usage-cleanup.md`.
+
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous

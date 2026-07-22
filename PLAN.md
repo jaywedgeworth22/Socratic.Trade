@@ -1,5 +1,14 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Retired-provider Usage Monitor cleanup (CODEX, branch
+> `codex/retired-provider-usage-cleanup`).** Keep Alpaca, Tradier, and Robinhood broker runtime
+> behavior and health logging intact, but remove their Usage Monitor emissions and the unused
+> balance-push helper. Suppress retired provider roots and subproviders centrally so Alpaca
+> news/snapshot cannot be reintroduced. Remove dead Intrinio implementation/config/current docs
+> while retaining historical evidence. After PR #1889 merges, adopt its strict-v2 direct-push
+> implementation, preserve partial-ACK/replay cutover semantics, run the Node 24 gate, and open a
+> ready review PR. Do not merge or deploy without owner instruction.
+
 > **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
 > `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
 > but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per

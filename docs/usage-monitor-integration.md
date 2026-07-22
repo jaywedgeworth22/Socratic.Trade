@@ -8,11 +8,10 @@ in `docs/reviews/2026-06-30-improvement-audit.md` (§6.9) and the work-split in
 ## Why
 
 The monitor's poll adapters are structurally **blind** to this app's biggest cost
-drivers: Anthropic (billing behind the Console), Voyage (no usage API), and
-Robinhood (no public retail API). App B already computes real per-call LLM/RAG
-cost locally (`recordLlmUsage`, `recordRagUsage`) and knows its market-data /
-broker call volume — but none of it left the box. This wires that data out, and
-adds a cost-aware feedback loop back in.
+drivers: Anthropic (billing behind the Console) and Voyage (no usage API). App B
+already computes real per-call LLM/RAG cost locally (`recordLlmUsage`,
+`recordRagUsage`) and knows paid market-data call volume. This wires that data
+out and adds a cost-aware feedback loop back in.
 
 ## Self-sufficiency (the hard rule)
 
@@ -46,8 +45,8 @@ integration is:
 
 ```
 recordLlmUsage / recordRagUsage ─┐
-fetchWithRetry (market-data)     ├─► usage-monitor-push.ts (queue + per-provider
-alpaca.trackHealth / robinhood   ─┘   call-volume aggregate; debounced batch flush)
+fetchWithRetry (paid providers)  ├─► usage-monitor-push.ts (queue + per-provider
+provider-dispatch outbox         ─┘   call-volume aggregate; debounced batch flush)
                                         │  POST /api/ingest/usage  (Bearer)
                                         ▼
                               API Usage Monitor → ExternalUsageEvent
@@ -94,17 +93,17 @@ runStrategyOnce entry ──► usage-budget.ts ──GET /api/budget-status─�
   zero in `usage-monitor-push.ts` is what actually prevents the receiver (which aggregates
   `ExternalUsageEvent.costUsd` by provider name, ignoring `service`) from double-counting the same
   spend the RAG ledger lane already reported.
-- **Call-volume** (market-data + broker): aggregated per provider per flush window as
+- **Call-volume** (paid API providers): aggregated per provider per flush window as
   a single `metricType:"usage"`, `unit:"request"`, `requests:<count>` event —
-  never one POST per call. Brokers are tagged `provider:"alpaca"|"robinhood"`,
-  `service:"broker"`; market-data providers use their `fetchWithRetry` service label
-  (finnhub, fmp, yahoo-finance, tradier, …).
+  never one POST per call. Market-data providers use their `fetchWithRetry` service
+  label. Broker-bundled activity is deliberately excluded: Alpaca (including
+  `alpaca-news`/`alpaca-snapshot`), Robinhood, and Tradier have no separate monitored
+  subscription or meaningful quota/cost record in this app.
 
 Every delivery now carries a fixed-length explicit idempotency key: SHA-256 over
 the event kind plus its source identity. LLM and RAG source identities and
-`occurredAt` values come from the same durable local ledger row; broker balance
-metrics share one snapshot identity with metric suffixes; each call-volume lane
-gets a UUID when its aggregate window opens. A failed or ambiguous POST is kept in
+`occurredAt` values come from the same durable local ledger row; each call-volume
+lane gets a UUID when its aggregate window opens. A failed or ambiguous POST is kept in
 memory and retried with the exact original payload (including key and timestamp),
 using bounded exponential backoff. This preserves transport retry deduplication
 and prevents distinct lanes in one flush from colliding just because they share
@@ -130,10 +129,10 @@ The event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
 
 ### Push-primary providers (item 3)
 
-No monitor code change is needed for Anthropic/Voyage/Robinhood to become
+No monitor code change is needed for Anthropic/Voyage to become
 "push-primary": items 1–2 simply set `provider` correctly so those events land in
 `ExternalUsageEvent`. The monitor keeps its poll adapters for providers where
-polling works (openai, alpaca, finnhub, …). The budget endpoint below combines
+polling works (openai, finnhub, …). The budget endpoint below combines
 both channels.
 
 ## Budget status (monitor)
@@ -210,7 +209,7 @@ length cap even if an upstream identifier is unexpectedly large.
 
 ## Operator setup notes
 
-- For a push-primary provider (Anthropic, Voyage, Robinhood) to appear in
+- For a push-primary provider (Anthropic, Voyage) to appear in
   `/api/budget-status` with a real budget, the monitor must have a **Provider row**
   named to match the pushed `provider` string (case-insensitive) **with a
   `monthlyBudgetUsd`** set. Pushed events for a provider that has no Provider row
