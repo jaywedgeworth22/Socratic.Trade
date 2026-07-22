@@ -106,6 +106,43 @@ if (isPurgeLegacy && targetTicker) {
   );
 }
 
+// Reject unknown flags before any mode default (Codex P2 on PR #1775). A typo like `--dryrun`
+// instead of `--dry-run` would otherwise fall through to a live re-embed under `--yes`.
+{
+  const valueTaking = new Set(["--ticker", "--max-texts", "--doc-types", "--purge-token"]);
+  const knownStandalone = new Set([
+    "--dry-run",
+    "--purge-legacy",
+    "--force",
+    "--yes",
+    "-y",
+    "--status",
+    ...RETIRED_FLAGS
+  ]);
+  const unknownFlags: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith("-")) continue;
+    if (valueTaking.has(a)) {
+      i += 1; // skip value
+      continue;
+    }
+    if (a.includes("=")) {
+      const flag = a.slice(0, a.indexOf("="));
+      if (!valueTaking.has(flag) && !knownStandalone.has(flag)) unknownFlags.push(a);
+      continue;
+    }
+    if (!knownStandalone.has(a)) unknownFlags.push(a);
+  }
+  if (unknownFlags.length > 0) {
+    fail(
+      `unknown flag(s): ${unknownFlags.join(", ")}.\n` +
+        `   Supported: --status | --dry-run | --purge-legacy [--purge-token <token>] | --ticker <SYM>\n` +
+        `   --doc-types <a,b> | --max-texts <n> | --force | --yes`
+    );
+  }
+}
+
 async function askConfirm(question: string): Promise<boolean> {
   if (autoYes) return true;
   const rl = readline.createInterface({
