@@ -4,6 +4,11 @@
 > until the coordinated consumers are stable, but make its signal reliable: remove the PR path
 > filter and install Node before the comparison step. Verify the workflow regression plus required
 > hosted gate, merge the replacement, then close superseded #1780.
+> **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
+> `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
+> but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per
+> workflow/ref. Verify the workflow regression, open a ready PR, arm auto-merge, and monitor the
+> queue without interrupting the three active full suites.
 
 > **2026-07-19 - Three new RapidAPI-backed enrichment providers (CLAUDE, branch
 > `claude/model-availability-session-handoff-362fd3`).** No roadmap scope change; market-data

@@ -18,6 +18,8 @@ describe("CI queue safety", () => {
     const concurrency = topLevelBlock(workflow("ci.yml"), "concurrency");
 
     expect(concurrency).toMatch(/^  cancel-in-progress:\s*false\s*$/m);
+    expect(concurrency).toMatch(/^  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\s*$/m);
+    expect(concurrency).not.toContain("github.sha");
   });
 
   it("routes PR-adjacent security, pin, and smoke work to the live CI pool", () => {
