@@ -62,6 +62,11 @@ export async function POST(request: Request) {
     if (error instanceof PayloadTooLargeError) {
       return NextResponse.json({ error: "Request body too large" }, { status: 413 });
     }
+    // readJsonWithLimit surfaces invalid JSON as SyntaxError — reject as 400 before any
+    // jwtVerify attempt (test/apple-auth-route.test.ts: rejects malformed JSON).
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Malformed JSON body" }, { status: 400 });
+    }
     console.error("Apple Sign-In Verification Error:", error);
     return NextResponse.json({ error: "Invalid identity token" }, { status: 401 });
   }
