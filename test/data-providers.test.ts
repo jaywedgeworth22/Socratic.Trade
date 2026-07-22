@@ -1345,17 +1345,20 @@ describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
 
     vi.stubGlobal("fetch", async (url: string) => {
       if (url === "https://fc.yahoo.com") throw new Error("network down");
+      // Any quoteSummary hit would be a bug — handshake never completed.
       throw new Error(`unexpected fetch to ${url}`);
     });
 
     const provider = getEnrichmentProvider();
+    // Unique symbol avoids cross-test cache bleed if a prior case left a shared entry.
+    const sym = "ZZZZ";
     vi.useFakeTimers();
     try {
-      const resultPromise = provider.enrich(["AAPL"]);
+      const resultPromise = provider.enrich([sym]);
       await vi.advanceTimersByTimeAsync(1000);
       const result = await resultPromise;
-      expect(result.AAPL?.peRatio).toBeUndefined();
-      expect(result.AAPL?.sector).toBeUndefined();
+      expect(result[sym]?.peRatio).toBeUndefined();
+      expect(result[sym]?.sector).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

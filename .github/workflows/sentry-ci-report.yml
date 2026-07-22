@@ -33,7 +33,7 @@ name: Sentry CI Report
 #   Cleanup Actions Caches   -> "5 3 * * *"   (cleanup-caches.yml)
 #   Effort Issues Sync       -> "12 6 * * *"  (effort-issues-sync.yml)
 #   Security                 -> "41 10 * * 1" (security.yml)
-#   Playwright Smoke         -> "17 9 * * 1"  (e2e.yml)
+#   Playwright Smoke         -> "17 9 * * *"  (e2e.yml nightly)
 #   Shared package pin check -> "0 13 * * 1"  (shared-package-pin-check.yml)
 
 on:
