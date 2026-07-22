@@ -41,13 +41,17 @@ rules text. No effort rows were changed.)_
 
 As of 2026-07-08 (assignment-rule update).
 
----
-
 ## In Progress
 
+- **[Socratic.Trade][CODEX] Shared-package pin-check queue unblock (original PR #1890, now subsumed into telemetry PR #1889) — SUBSUMED / COMBINED LANDING IN PROGRESS 2026-07-22.** The reviewed workflow fix removes the pull-request path filter and installs Node 24 before its comparison script. Its exact history is merged into #1889 so the workflow and telemetry changes consume one protected gate. PR #1890 is closed as superseded with its branch retained and reopenable; #1780 was already closed. Combined Node 24 verification passes 5 files / 71 tests, TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. Auto-merge remains off pending final-head hosted checks and zero-thread verification.
 - **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
 
 - **[CODEX] Native iOS mobile-first product replacement — COMPLETED 2026-07-22 via PR #1859; secure OAuth handoff follow-up PR #1886 is open.** Phase 1 is merged to `main` with the five-tab shell, server-authoritative safety gates, canonical XcodeGen project, and verifier-bound opaque web-auth implementation. Follow-up #1886 completes the PKCE exchange hardening so session credentials never enter the custom callback URL; it remains pending protected merge. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
+- **[Socratic.Trade][CODEX] Usage telemetry v2 producer adoption (branch `codex/usage-telemetry-v2-20260721`, worktree `/Users/jay/.codex/worktrees/socratic-telemetry-v2`, combined PR #1889) — IMPLEMENTED / RECEIVER GATE CLEARED / LOCAL GATE PASS 2026-07-22.** Exact-pins immutable shared `v2.0.0` over HTTPS; fresh and replay traffic use only strict v2 identities and typed ACKs. A schema-valid partial ACK is a failed delivery unless it covers the full sent batch with zero rejects, preserving live retries and durable replay watermarks. One synchronous `BEGIN IMMEDIATE` startup cutover seeds all three ledgers to current high-water, records skipped pre-v2 receipts, and prevents producer work before the boundary exists; no legacy sender remains. Owner-authorized tradeoff: the bounded pre-v2 remainder is not replayed, avoiding duplicate money at the cost of possible loss for any row not already live-pushed under v1. The #1890 workflow fix is subsumed into #1889; combined Node 24 verification passes 5 files / 71 tests, TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. Usage-Monitor exact main `2bc276497ae28441762768911f34eb5e8e2fdd30` is committed live on Oracle. Auto-merge is held pending final-head hosted checks and zero-thread verification; exact Coolify deploy and postdeploy ACK receipts follow. Rollout: `docs/rollouts/2026-07-22-usage-telemetry-v2-producer.md`.
+- **[CODEX] Native iOS mobile-first product replacement — IN PROGRESS 2026-07-22.** Phase 1 (#1859) and the verifier-bound opaque web-auth handoff (#1886) are merged to `main`; a narrow follow-up is in progress because post-merge review found middleware blocked the first unauthenticated code exchange. It will allow only `/api/mobile/auth/exchange`, whose one-time code and device verifier remain the authorization proof until the route sets the HTTP-only Auth.js cookie. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
+- **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+
+- **[CORRECTION 2026-07-22] Native iOS mobile-first product replacement — COMPLETED via PR #1859 and secure OAuth handoff PR #1886.** The prior row incorrectly said #1886 was open; it is merged. The active narrow middleware follow-up is tracked by the current row above as PR #1888. No production native distribution is claimed until TestFlight/App Store release.
 - **[Socratic.Trade][CLAUDE] check-pin required-status-context merge deadlock fix (branch
   `claude/checkpin-always-on-prs`, worktree `/private/tmp/socratic-checkpin-work/repo`, claimed
   2026-07-19) — IN PROGRESS.** Root cause: main's classic branch protection requires status contexts
@@ -123,6 +127,100 @@ As of 2026-07-08 (assignment-rule update).
   `.github/workflows/e2e.yml` triggers changed to push-to-`main` + nightly `schedule` (was weekly) +
   `workflow_dispatch`; `pull_request`/`merge_group` dropped (the latter was already inert). Details:
   `docs/rollouts/2026-07-20-ci-trim-smoke.md`.
+- **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
+  `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
+  Owner-triggered: the Connections key store is write-only, so there was no way to tell WHICH of
+  several provider keys is serving — the fallout of agents minting their own keys around the owner's
+  guardrailed key. (A) canonical `maskApiKeyPreview` (first-8/last-4) in `db-api-keys.ts`, with
+  `llm-usage.ts`'s `maskApiKey` delegating to it; (B) `GET /api/keys` returns `preview` of the key
+  that ACTUALLY resolves (operator env keys previewable to admins only); (C) Connections UI renders
+  it; (D) OWNER RULING codified in `AGENTS.md` "Don't" — no agent on any platform ever creates a
+  provider API key — and broadcast to #agent-sync.
+- **[Socratic.Trade][CLAUDE] Owner-directed open-PR merge sweep + prod auto-reboot watchdog (2026-07-19)
+  — BLOCKED ON A GITHUB ACTIONS OUTAGE, NOT ON OUR CODE.** 25+ PRs armed for auto-merge, zero real
+  conflicts (both AG-reported "conflicting" PRs were phantom/self-resolved), zero genuine head-sha CI
+  failures. Nothing merges because self-hosted EPHEMERAL runners cannot re-register:
+  `POST api.github.com/actions/runner-registration` -> HTTP 500 in a loop (114 failures/30min;
+  restarts socratic-ci=128 congress-ci=124 shared-ci=50 usage-ci=5; 70 queued runs, 0 in_progress).
+  githubstatus.com confirms "Incident with GitHub Actions". Box is IDLE (5.3Gi free, load 0.74) so
+  this is NOT capacity — do NOT scale runners or rerun jobs. Review-fix work landed on three PRs:
+  #1777 (2 P1s — pre-hardening completion stamps now rejected via `watermarkEmbedRevision`;
+  completion stamped only under the live embedding space), #1775 (5 CLI fail-fast guards; its
+  duplicate library fix REMOVED so it no longer conflicts with #1777), #1776 (exact-zero
+  `isHiddenStyle` — `opacity:0.5`/`font-size:0.875rem` were dropping whole subtrees of SEC evidence —
+  plus nested-table pipe escaping). Also shipped: `socratic-watchdog.service` on prod (tiered
+  container -> docker -> host-reboot auto-remediation, verified riding out a real 30s restart without
+  acting), and fixed the malformed `COOLIFY_API_TOKEN` quoting in the secrets file.
+  OWNER ACTIONS PENDING: (1) rotate the four `socratic-trade-prod` Coolify webhook secrets (leaked
+  into an agent transcript by a bad redaction on my part); (2) decide on #1773/#1774, whose commits
+  are authored `Codex <codex@openai.com>` instead of the required noreply address (needs history
+  rewrite + force-push on another lane's branches).
+
+- **[Socratic.Trade][CLAUDE] PR #1776 review-thread closeout: all 4 codex-connector findings fixed
+  (worktree `.claude/worktrees/fix-pr1776-sec-parser`, branch `agent/ag-sec-parser-hardening`, PR
+  #1776, claimed 2026-07-19) — READY TO LAND.** PR #1776 ("Hardening SEC/RAG parser and chunker",
+  originally ANTIGRAVITY) carried 4 open `chatgpt-codex-connector` P2 review threads; a prior
+  same-day session (commit `8918da21`) fixed 2 of the 4 and deferred the other 2 as
+  valid-but-broader-than-a-review-fix-pass. This pass re-investigated and fixed the remaining 2 —
+  none were false positives. `ChunkInput.published_at` (`src/lib/rag/chunk.ts`) made required
+  (was optional on the type while a runtime guard already threw when missing); grepped every
+  `chunkDocument`/`storeDocument` call site (production + ~14 test files) and confirmed zero
+  fallout (`npx tsc --noEmit` clean with no caller changes needed). Nested table headings inside
+  outer table cells (`src/lib/web-sources/sec-parser.ts`, `collectBlocks`) now emit real
+  section-break blocks instead of being flattened into cell prose, so `parseFilingHtml`'s
+  section-grouping loop correctly starts a new section instead of silently misattributing
+  following content to the prior one. 2 new tests added to `test/sec-parser.test.ts` (16/16
+  passing); 69/69 + 109/109 + 30/30 across the broader RAG/SEC ingestion test files; lint 0
+  errors; tsc clean. Full `npm test`/`npm run build` gate run via `scripts/land.sh`. Details:
+  `docs/rollouts/2026-07-19-pr1776-review-thread-closeout.md`.
+- **[Socratic.Trade][CLAUDE] Three new RapidAPI-backed enrichment providers: Mboum Finance, YH
+  Finance 15, Alpha Vantage RapidAPI transport (worktree
+  `model-availability-session-handoff-362fd3`, branch
+  `claude/model-availability-session-handoff-362fd3`, claimed 2026-07-19) — IN PROGRESS
+  (implementation + tests complete, FULL VERIFY GATE GREEN — tsc/lint/4927 tests/build — not yet landed).** Owner-directed
+  expansion of market enrichment redundancy against one shared RapidAPI subscription. New
+  `src/lib/rapidapi-quota.ts` (persisted daily budget, mirrors alpha-vantage-key-pool.ts's
+  tryReserve/refund pattern) enforces BOTH a per-provider cap (Mboum 16/day, YH Finance 15 3/day,
+  AV-RapidAPI 500/day — env-overridable via `PROVIDER_QUOTA_*_PER_DAY`) AND a combined 900/day
+  safety ceiling (`PROVIDER_QUOTA_RAPIDAPI_COMBINED_PER_DAY`) across all three, since Mboum/YHF's
+  real limits are MONTHLY (500/mo, 100/mo) and a naive per-scan dispatch could exhaust a month's
+  quota in one run. New `SteadyApiEnrichmentProvider` (shared by Mboum + YH Finance 15) +
+  `AlphaVantageRapidApiEnrichmentProvider` in `src/lib/data-providers.ts`, registered in
+  `getEnrichmentProvider` AFTER the free Yahoo scrape (deep failover tier — first-wins per field
+  means they only fill gaps the free scrape left empty), dormant unless `RAPIDAPI_KEY` is set. 33
+  new provider tests + 13 quota tests; full suite 420 files/4927 tests pass, build exit 0. Rollout:
+  `docs/rollouts/2026-07-19-rapidapi-yahoo-av-providers.md`.
+  *Correction (2026-07-19, in place per board rules): this work now lives on branch
+  `claude/rapidapi-yahoo-av-providers` (PR #1796), not
+  `claude/model-availability-session-handoff-362fd3` as the row originally read.*
+  **Update 2026-07-19 — per-symbol coverage-narrowing gate added (the deferred P0 is CLOSED).**
+  `CascadingEnrichmentProvider.enrich` now runs a TWO-WAVE dispatch: wave one is every provider that
+  has not opted in (unchanged — same single concurrent `Promise.all` over the full batch, so zero
+  latency/behavior regression for pre-existing providers), then wave two runs only the providers
+  that declare `quotaScarce` + `suppliesFields`, and only over the symbols where wave one left one
+  of their declared fields empty. A scarce provider with nothing to add is not called at all and so
+  reserves no quota. Declared on all three RapidAPI providers; results reassembled positionally so
+  first-wins merge precedence / attribution are identical; a wave-one provider that throws counts as
+  "did not cover" so it can never suppress the failover tier. Flag
+  `ENRICHMENT_SCARCE_TIER_GATE_ENABLED`, default ON, scoped only to opted-in providers. New
+  `test/enrichment-scarce-tier-gate.test.ts` (13 tests, incl. a real-provider zero-quota check).
+  tsc clean, lint 0 errors, 405 targeted tests green across every cascade-touching file; full
+  `npm test`/`npm run build` deferred to the landing gate.
+- **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
+  `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
+  Owner-triggered: `/console/connections` key store is write-only, so there was no way to tell WHICH
+  of several provider keys is serving — the fallout of agents minting their own keys around the
+  owner's guardrailed key. (A) canonical `maskApiKeyPreview` in `db-api-keys.ts` (first-8/last-4;
+  `llm-usage.ts`'s `maskApiKey` now delegates — de-duped); (B) `GET /api/keys` returns `preview` of
+  the key that ACTUALLY resolves, operator env keys previewable to admins only; (C) Connections UI
+  renders it; (D) owner ruling codified in `AGENTS.md` "Don't" — NO agent on ANY platform ever
+  creates a provider API key — and broadcast to #agent-sync. Diagnosis of the owner's
+  "no credits / API key failed" strategy-run error is in the rollout note.
+- **[Socratic.Trade][AG] Use OpenRouter "latest" Aliases for Anthropic Models (branch `agent/antigravity/openrouter-latest-alias`, claimed 2026-07-20) — IN PROGRESS.** Updated LLM catalogs to use `~anthropic/claude-sonnet-latest` and `~anthropic/claude-haiku-latest` to avoid OpenRouter 404s and correctly consolidate stats under the `latest` aliases per owner request.
+
+- **[Socratic.Trade+CT+UM][GROK] Resume all open Claude desktop sessions (claimed 2026-07-20) — IN PROGRESS.** Unstick conflicting PRs across ST/CT/UM; finish residual open session work; no-credits RCA (OpenRouter prepaid OK). Parallel subagents. Do not delete this row — update in place on completion.
+
+- **[Socratic.Trade][CLAUDE] Shared package bump to 904ea96a (Congress.Trade PR #626 compat, 2026-07-19) — IN PROGRESS.** Bumps shared pin to v1.10.0 to provide `callClassifier` exports; additive only. Branch `antigravity/bump-shared-904ea96a`, committed & pushed, PR opening. Gates Congress.Trade #626 merge & check-pin CI unblock.
 - **[Socratic.Trade][AG] CI package-lock fix + unblocking 38 open PRs (worktree `trading-antigravity`, branch `agent/antigravity-apple-auth-fix`, claimed 2026-07-21) — IN PROGRESS.** Root cause of 38 pending PRs identified: `package-lock.json` is untracked in Socratic.Trade; CI workflows using `cache: npm` and `npm ci` crashed setup-node and failed the `verify` gate check. Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`. Closed invalid PR #1849 (`socratic-ci` offline runner). Updating all PR branches and enabling auto-merge across Socratic.Trade and Congress.Trade.
 - **[Socratic.Trade][CLAUDE] Which-key visibility + "agents never create API keys" ruling (worktree
   `Socratic.Trade`, branch `claude/stop-intent-idempotency`, claimed 2026-07-20) — IN PROGRESS.**
@@ -255,6 +353,12 @@ As of 2026-07-08 (assignment-rule update).
   `chat/llm.ts`, `vector-db.ts`; bump shared pin to `904ea96a`. Empirical OpenRouter acceptance
   check (tiny paid probe, ~$0.01) included. Never merges own PR (auto-deploy on merge) — adversarial
   review lands it.
+- **[Socratic.Trade][AG] Monet-handoff §7 ports: coach-note archive + coach-note/lesson vector writers
+  (worktree `socratic-trade-agent-team-697845`, branch `claude/socratic-trade-agent-team-697845`, claimed
+  2026-07-18, HANDOFF to AG 2026-07-19) — IN PROGRESS.** From-scratch schema port of the two PARTIAL-verdicted w2 branches per
+  `docs/handoffs/2026-07-19-monet-session-closeout-handoff.md` §7 (fresh port, NOT a rebase): (1) kill the
+  silent coach-note `slice(-20)` truncation via append-only `socratic_coach_note_archive` + audit receipt +
+  `doc_type: 'coach-note'` vector writer; (2) a writer for the retrieved-but-never-written `lesson` doc-type
 - **[Socratic.Trade][CLAUDE] Monet-handoff §7 ports: coach-note archive + coach-note/lesson vector writers
   (worktree `socratic-trade-agent-team-697845`, branch `claude/socratic-trade-agent-team-697845`, claimed
   2026-07-18) — IN PROGRESS.** From-scratch schema port of the two PARTIAL-verdicted w2 branches per
@@ -3900,6 +4004,17 @@ brackets; effort S/M/L.
 
 - **2026-07-19 Four-handoff conquest (CLAUDE, worktree claude/model-availability-session-handoff-362fd3) — In Progress.** Owner-directed pickup of 4 handoff docs: (1) docs/rollouts/2026-07-18-model-availability-openrouter-unify.md is MISSING (404 on main, no branch has it) — reconciling what it was meant to cover vs what landed; (2) MONET 2026-07-19 handoff (PR #1773): bge-m3 corpus re-embed verification (top item, READ-ONLY, no purge-legacy), #1771 shepherd, alpha-vantage health, Codex thread triage; (3) ~/apps/mcp-servers/HANDOFF-2026-07-18-mcp-secrets-work.md: verify dual-workspace OpenRouter OAuth, surface owner rotation/restart checklist; (4) claude/mobile-view-spacing-oetyav handoff (PR #1774): reconcile PR-integration thread (largely overtaken by MONET sweep), land the docs PR. Team-of-agents; no product code planned.
 | 2026-07-19 | RAG/SEC-Filings | Provider-aware ingestion throttle fix (isFreeTier() now checks activeEmbeddingProvider before falling back to legacy VECTOR_EMBED_BATCH_DELAY_MS heuristic) | In Progress (landing) | Claude (branch claude/rag-ingestion-provider-aware-gate) |
+- **2026-07-19 RAG ingestion provider-aware gate fix (CLAUDE).** `isFreeTier()` in sec-filings.ts was keyed purely off the Voyage-era `VECTOR_EMBED_BATCH_DELAY_MS`, unaware of the `RAG_EMBED_PROVIDER` flip to bge-m3 - so ingestion could stay silently pinned to 1 filing/run post-migration regardless of the new provider's real capacity. Fixed to check `activeEmbeddingProvider()` first (openrouter/siliconflow always paid-tier). New regression test proves the exact failure mode; 45/45 sec-filings tests pass, tsc clean. Landing via land.sh; blocked only by shared CI runner queue depth (fleet-wide capacity issue, posted separately to #agent-sync), not by anything wrong with this change.
+- **2026-07-19 Mobile bottom tab bar safe-area fix — row restored to Completed/Deployed (CLAUDE, PR #1774 Codex-review triage).** This work's row (added at merge commit `2aa53e15`, "GATE GREEN, PR PENDING") was dropped — not flipped to Completed — by a later `docs(effort-log): sync repo mirror with live apps board` pass (`79803667`), leaving no entry describing PR #1726's actual state. Restoring it: PR **#1726** ("drop redundant safe-area band under mobile bottom tab bar") merged to `main` 2026-07-18T06:30:22Z as squash `2aa53e1`; confirmed an ancestor of both `origin/main` and the currently deployed production release SHA. **State: Completed (merged) + Deployed.** Rollout: `docs/rollouts/2026-07-18-mobile-tabbar-safe-area-band.md`.
+- **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
+- **Repo Hygiene (AG, S) — COMPLETED 2026-07-18.** Merged PR #1754 (deleted tracked lint artifacts) and deployed Socratic.Trade to production on Coolify.
+- **2026-07-18 Merged-worktree cleanup sweep + Voyage /api/health RCA (CLAUDE, branch `claude/cleanup-merged-worktrees-bdbc08`).** Removed 5 verified merged worktree checkouts (#1740-tmp/#1587/#1559/#1624/#1563; ancestry-verified, branches retained); kept `codex/reconcile-pr1745` (7 unlanded commits, NO PR — CODEX disposition), `socratic-admin-console-shell` (dirty), `trading-ag-rag` (standing lane). Voyage RCA: /api/health 200 ok; red `voyage` lane = prod bge-m3 embeds via OpenRouter failing 402 — OpenRouter account EXHAUSTED (25.00/25.31); Voyage key valid; RAG ingestion stalled pending owner credit top-up (or SiliconFlow key — RAG-embed-only; LLM paths still need OpenRouter credits). Rollout: `docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`. State: **PR #1765 open (docs) — landing via MONET cap-handoff; INCIDENT RESOLVED (OpenRouter topped up 75/25.31, voyage.ok=true, prod recovered — verified). Flip to Completed on merge.**
+
+- **2026-07-19 MONET cloud-session: PR sweep + SiliconFlow bge-m3 metering fix + handoff (MONET, branches `monet/fix-siliconflow-bge-m3-price` + `monet/session-handoff-2026-07-19`).** Owner-directed "all open PRs resolved/merged/deployed" sweep: #1745, #1736, #1735 (owner-merged), #1740, #1754 merged + auto-deployed (prod healthy throughout; #1727 merged earlier). PR **#1771** fixes the SiliconFlow bge-m3 embed price 10x undercount (regression-guard proven; auto-merge armed). PR **#1773** is the session handoff note — incl. the verified bge-m3-vs-voyage answer and the corpus re-embed-PENDING warning. State: **In Progress (#1771/#1773 auto-merge armed).** *(Ledger row appended by CLAUDE during owner-directed handoff execution — addresses the #1773 Codex protocol finding; MONET session had ended.)*
+- **2026-07-18 PR-queue closeout status (CLAUDE; corrected in place — first draft misattributed #1741/#1742 and misnamed #1735's branch).** PRs #1728, #1733, #1736, #1737, #1738 merged to `main` and auto-deployed via Coolify. CI required-check failures across all open PRs (GitHub hosted-runner billing block) resolved by CODEX PR #1739 (retarget to self-hosted Coolify runner) plus CODEX follow-ups #1741/#1742 (lightweight checkout + event-SHA pin). Remaining open: PR #1735 (`agent/ag-recovery-v48-migration`, SEC RAG table recovery migration v52 + companyName-casing and @opentelemetry lockfile fixes) and PR #1740 (`codex/admin-console-shell`) — both 0 unresolved threads, auto-merge armed, branch-updates in progress (CLAUDE sonnet agent). `agent/ag-reindex-bge-m3` first landing aborted on 12 test failures under fleet-contention load-60; retriage in progress (CLAUDE/Fable agent). Owner action open: GitHub Actions billing (Settings -> Billing & plans) if hosted runners are ever wanted again.
+- **2026-07-18 BGE-M3 reindex branch landing retry (CLAUDE).** `agent/ag-reindex-bge-m3` first land aborted at test gate (12 failures/6 files under load 60-67). Triage: 2 real fixes (reindex-all test DB isolation 73929f83; securities-import casing expectation superseded by #1735 preserve-case fix via merge 339676a5), remainder load-flakes clean on serial rerun. Branch synced to post-#1761 main (atop the landed bge-m3 metering/reembed/worker program 545da7c0). Re-landing via land.sh; PR + auto-merge to follow.
+
+- **2026-07-19 Four-handoff conquest (CLAUDE, worktree claude/model-availability-session-handoff-362fd3) — In Progress.** Owner-directed pickup of 4 handoff docs: (1) docs/rollouts/2026-07-18-model-availability-openrouter-unify.md is MISSING (404 on main, no branch has it) — reconciling what it was meant to cover vs what landed; (2) MONET 2026-07-19 handoff (PR #1773): bge-m3 corpus re-embed verification (top item, READ-ONLY, no purge-legacy), #1771 shepherd, alpha-vantage health, Codex thread triage; (3) ~/apps/mcp-servers/HANDOFF-2026-07-18-mcp-secrets-work.md: verify dual-workspace OpenRouter OAuth, surface owner rotation/restart checklist; (4) claude/mobile-view-spacing-oetyav handoff (PR #1774): reconcile PR-integration thread (largely overtaken by MONET sweep), land the docs PR. Team-of-agents; no product code planned.
 - **2026-07-19 RAG ingestion provider-aware gate fix (CLAUDE).** `isFreeTier()` in sec-filings.ts was keyed purely off the Voyage-era `VECTOR_EMBED_BATCH_DELAY_MS`, unaware of the `RAG_EMBED_PROVIDER` flip to bge-m3 - so ingestion could stay silently pinned to 1 filing/run post-migration regardless of the new provider's real capacity. Fixed to check `activeEmbeddingProvider()` first (openrouter/siliconflow always paid-tier). New regression test proves the exact failure mode; 45/45 sec-filings tests pass, tsc clean. Landing via land.sh; blocked only by shared CI runner queue depth (fleet-wide capacity issue, posted separately to #agent-sync), not by anything wrong with this change.
 - **2026-07-19 Mobile bottom tab bar safe-area fix — row restored to Completed/Deployed (CLAUDE, PR #1774 Codex-review triage).** This work's row (added at merge commit `2aa53e15`, "GATE GREEN, PR PENDING") was dropped — not flipped to Completed — by a later `docs(effort-log): sync repo mirror with live apps board` pass (`79803667`), leaving no entry describing PR #1726's actual state. Restoring it: PR **#1726** ("drop redundant safe-area band under mobile bottom tab bar") merged to `main` 2026-07-18T06:30:22Z as squash `2aa53e1`; confirmed an ancestor of both `origin/main` and the currently deployed production release SHA. **State: Completed (merged) + Deployed.** Rollout: `docs/rollouts/2026-07-18-mobile-tabbar-safe-area-band.md`.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.

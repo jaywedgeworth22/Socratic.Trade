@@ -119,13 +119,15 @@ watermark update is monotonic inside `BEGIN IMMEDIATE`, so an overlapping deploy
 The worker runs immediately at Node startup and every minute, bounded to ten 100-event pages per
 ledger per pass. It needs no schema migration or additional env variable.
 
-Every newly emitted event also carries top-level `project:"socratic-trade"`. The raw `provider`
+Every newly emitted event carries top-level `project:"socratic-trade"`. The raw `provider`
 value remains unchanged at the producer; canonical provider/project resolution belongs to the
 monitor receiver.
 
-The event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
-`UsageTelemetryEventSchema` and the monitor's server parser
-(`src/lib/usage-telemetry.ts`).
+The producer exact-pins immutable shared release `v2.0.0` and sends only the strict v2 envelope:
+`schemaVersion:2`, batch-level `producerId:"socratic-trade"`, and event-level `eventId` plus
+`producerKeyRef`. Deprecated v1 `sourceApp`, `idempotencyKey`, and `keyRef` fields never appear on
+the wire. An in-memory one-time normalizer preserves buffered pre-v2 events across hot reloads; the
+durable LLM/RAG/provider ledgers reconstruct fresh strict-v2 events from their source rows.
 
 ### Push-primary providers (item 3)
 
@@ -199,13 +201,11 @@ cost even if App B also pushes some events for them. Budget alerts reuse
 ## Shared client and idempotency contract
 
 `src/lib/usage-monitor-push.ts` uses `createUsageTelemetryClient` from
-`@jaywedgeworth22/congress-trading-shared`. The monitor persists explicit keys and
-deduplicates identical retries. Its deterministic five-field fallback is retained
-for producers that omit a key, but lane/detail fields are deliberately outside
-that compatibility basis. This producer therefore supplies explicit source IDs
-where it has stronger event identity instead of changing the shared algorithm.
-Source IDs are hashed before transmission, which keeps keys below the ingest
-length cap even if an upstream identifier is unexpectedly large.
+`@jaywedgeworth22/congress-trading-shared`. Every strict-v2 event has an explicit `eventId`;
+the receiver deduplicates on `(producerId,eventId)` and rejects conflicting replays. This producer
+derives IDs from durable source rows or one allocated aggregate-window ID, then hashes them before
+transmission so identity remains stable and below the ingest length cap. Provider credential
+identity is transmitted separately as `producerKeyRef` and never participates in replay identity.
 
 ## Operator setup notes
 
