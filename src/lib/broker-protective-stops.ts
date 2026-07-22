@@ -1289,10 +1289,12 @@ export async function reconcileBrokerProtectiveStops(args: {
     // new this tick (a live order this reconciler doesn't yet track would otherwise be miscounted as
     // "other" coverage below and short-circuit the qty check before ever reaching this adoption
     // logic). A live order carrying the intent's client_order_id means the earlier submission WAS
-    // accepted; adopt it instead of risking a duplicate. Clear the intent only on POSITIVE evidence
-    // (a real fetch, `ordersListed`, showing no match) — an unavailable order list stays ambiguous,
-    // so this symbol is skipped entirely rather than guessed at (the same evidentiary standard the
-    // rest of this reconciler already applies to coverage).
+    // accepted; adopt it instead of risking a duplicate. Clear the intent only on POSITIVE evidence:
+    // either a visible terminal zero-fill order, or absence from an order list that is explicitly
+    // authoritative for recently-terminal orders. A live-only/non-authoritative list (Robinhood) is
+    // still ambiguous: absence can mean "accepted, filled, and aged out", so a fresh stop could
+    // double-sell.
+    const priorRef = haltedRetryRefFor(sym);
     const priorIntent = getBrokerStopPlacementIntent(accountNumber, sym, userId);
     if (priorIntent) {
       const acceptedOrder = orders.find((o) => o.clientOrderId === priorIntent.clientOrderId);
@@ -1346,20 +1348,33 @@ export async function reconcileBrokerProtectiveStops(args: {
           continue;
         }
         deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
-      } else if (ordersListed) {
-        // A real fetch succeeded and shows no live order for this client_order_id — the earlier
-        // submission is confirmed dead (rejected, never reached the broker, or already terminal).
-        // Clear it; the placement below runs fresh with a new id.
+      } else if (ordersListed && gateway.ordersListIncludesTerminal === true) {
+        // An AUTHORITATIVE fetch succeeded and shows no order for this client_order_id — the earlier
+        // submission is confirmed dead (rejected or never reached the broker). Clear it; the
+        // placement below runs fresh with a new id.
         deleteBrokerStopPlacementIntent(accountNumber, sym, userId);
       } else {
-        // Order list unavailable this tick — genuinely unknown whether the earlier request landed.
-        // Skip this symbol entirely rather than guess: a fresh placement here could double up on an
-        // order that WAS accepted but simply isn't visible this tick.
-        audit("broker_protective_stop_skipped", {
-          symbol: sym, kind: priorIntent.kind,
-          note: "a prior placement's outcome is still unresolved and the order list is unavailable this tick — waiting rather than risking a duplicate"
-        }, userId, policy.connectedAccountId);
-        continue;
+        if (priorRef === priorIntent.clientOrderId) {
+          // Halted right-size retries keep a pending_replace marker with the same submitted client
+          // ref. Let section 4 reuse that ref, so broker idempotency can reject/adopt the ambiguous
+          // first placement without generating a NEW client id.
+          audit("broker_protective_stop_retrying", {
+            symbol: sym,
+            kind: priorIntent.kind,
+            note: "prior halted right-size placement is unresolved — retrying with the same client ref for broker idempotency when placement remains otherwise safe"
+          }, userId, policy.connectedAccountId);
+        } else {
+          // Order list unavailable OR non-authoritative this tick — genuinely unknown whether the
+          // earlier request landed. Skip this symbol entirely rather than guess: a fresh placement here
+          // could double up on an order that WAS accepted but simply isn't visible this tick.
+          audit("broker_protective_stop_skipped", {
+            symbol: sym, kind: priorIntent.kind,
+            note: ordersListed
+              ? "a prior placement's outcome is still unresolved and the broker order list is not authoritative for terminal orders — waiting rather than risking a duplicate"
+              : "a prior placement's outcome is still unresolved and the order list is unavailable this tick — waiting rather than risking a duplicate"
+          }, userId, policy.connectedAccountId);
+          continue;
+        }
       }
     }
     // A prior uncertain HALTED-right-size placement's client ref (its pending_replace marker held it
@@ -1370,7 +1385,6 @@ export async function reconcileBrokerProtectiveStops(args: {
     // rejects a duplicate if that order was accepted but not yet visible (Codex review, PR #1738).
     // Complementary to the placement-intent lane above: markers cover the halted right-size retry,
     // intents cover ordinary placement — both survive the 2026-07-18 merge by design.
-    const priorRef = haltedRetryRefFor(sym);
     // The uncovered remainder (coverage-aware — never stack exit quantity on top of a live bracket
     // leg / manual sell; the just-cancelled replacement's own order is pruned inside), floored to
     // whole shares on the native trailing lane. `null` means a real order-list fetch failed this
