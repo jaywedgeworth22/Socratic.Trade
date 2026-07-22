@@ -22,7 +22,22 @@ beforeAll(() => {
 // alert's own chain of `await import(...)` + setInternalSetting has a chance to land before the
 // test asserts on it.
 async function flushBackgroundAlert(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // A fixed 50ms nap raced the fire-and-forget alert chain when the FULL suite saturates every
+  // core (observed 2026-07-18 in two consecutive land.sh gates, while solo/pairwise runs always
+  // passed): the sendNotification spy had fired but the cooldown SETTING write behind it had not
+  // landed yet, so the "7h later" enrich saw no stored cooldown and double-alerted. Keep the
+  // 50ms real-event-loop yield as the floor, then poll (bounded ~5s of REAL time — counted in
+  // iterations because Date is faked) until the stored cooldown key exists. Second/subsequent
+  // calls see the key immediately and exit after the original single yield, preserving the old
+  // timing for the no-new-alert assertions.
+  const { getDb } = await import("../src/lib/db");
+  for (let i = 0; i < 100; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const row = getDb()
+      .prepare("SELECT 1 FROM settings WHERE key LIKE 'healthAlertSent:%' LIMIT 1")
+      .get();
+    if (row) return;
+  }
 }
 
 describe("Alpha Vantage quota exhaustion -> alertConnectionFailure cooldown plumbing", () => {

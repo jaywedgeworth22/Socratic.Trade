@@ -1,6 +1,21 @@
 ## 2026-07-20 — RAG & Database Ingestion Strategy & Document Summarizer Engine (ANTIGRAVITY, branch `agent/antigravity`)
 
 Designed and implemented Layer 3 (Derived Abstracts & Summaries) of the RAG data expansion architecture. Added database migration 55 (`document_abstracts`), created `src/lib/db-document-abstracts.ts` for CRUD operations, implemented `src/lib/rag/document-summarizer.ts` for generating cited abstracts linking back to Layer 1 raw `source_chunk_ids` and embedding them into the vector store, and added full unit test coverage in `test/document-summarizer.test.ts`.
+# Current Status
+
+## 2026-07-21 -- ST PR queue stuck for days: CI root-cause fixes (GROK, `monet/ci-runner-and-queue-fixes`)
+
+PRs were stuck ~2-3 days primarily because (1) **cancel-in-progress thrash** killed nearly every
+verify (18/20 recent CI cancelled), and (2) **Security/gitleaks + pin-check + smoke** targeted the
+**offline `trading-live` Mac**, so those checks never finished while the Coolify `socratic-ci` pool
+ran only suite jobs. Fixes: remove every workflow target for `trading-live`, with PR code on
+`socratic-ci` and trusted failure reporting on `socratic-deploy`; stop Playwright Smoke on every
+PR (main/nightly/manual only); preserve the active CI run while GitHub collapses superseded
+pending runs to the newest head. The first durable local gate also exposed six stale assertions on
+current `main`; this branch now carries the already-prepared isolation/expectation corrections from
+the #1856 lineage. Conflicts/comments were not the multi-day bottleneck.
+Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
+
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
 
 Purged the Voyage AI SDK and its dependencies, standardizing the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Dynamic imports and test-only shims maintain test suite compatibility while completely isolating Voyage from production. All 4,898 tests and the production Next.js build are fully green. Rollout: `docs/rollouts/2026-07-21-voyage-ai-purge.md`.
@@ -8,6 +23,20 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 ## 2026-07-21 — Mass PR CI Runner Synchronization (Antigravity)
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
+
+## 2026-07-21 — Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **iOS Google & GitHub Sign-In**: Used `ASWebAuthenticationSession` to pop a secure browser in-app and authenticate via the Next.js `socratictrade.com` backend, injecting the valid JWT into the native `HTTPCookieStorage` for seamless API usage.
+2. **Backend Authentication Token Exchange**: Added a new route at `app/api/mobile/auth-redirect/route.ts` that intercepts the Auth.js callback and natively redirects `socratictrade://` with the signed session JWT back to iOS.
+3. **Implicit Web Apple Sign-In support**: Web is fully set up, just awaiting the owner to configure `AUTH_APPLE_ID` and `AUTH_APPLE_SECRET`.
+4. **Verification**: Generated `SocraticTrade.xcodeproj` via `xcodegen` and successfully passed all Swift compilation and validation steps in `xcodebuild` without error.
+5. Rollout: `docs/rollouts/2026-07-21-unified-authentication.md`.
+
+## 2026-07-21 — Fix CI workflow package-lock.json dependency & Apple Sign-In audience (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **Root cause of 38 stuck PRs resolved**: Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` where `cache: npm` and `npm ci` were failing because `package-lock.json` is untracked/gitignored in Socratic.Trade. Updated setup steps to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`.
+2. **Apple Sign-In client ID fix**: Corrected hardcoded fallback audience in `app/api/mobile/auth-redirect/route.ts` with `await cookies()` for Next.js 15+ compatibility.
+3. Rollout: `docs/rollouts/2026-07-21-ci-package-lock-and-pr-unblock.md`.
 
 ## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
 
@@ -49,6 +78,35 @@ green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`
 Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
 
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
+## 2026-07-19 — PR #1776 review-thread closeout: all 4 codex-connector findings fixed (CLAUDE, branch `agent/ag-sec-parser-hardening`)
+
+Closed out the remaining two of four open `chatgpt-codex-connector` P2 review threads on PR #1776
+(a prior same-day session already fixed the other two, commit `8918da21`). All four are now real
+code fixes — none were false positives.
+
+- **`ChunkInput.published_at` made required** (`src/lib/rag/chunk.ts`): the runtime guard already
+  threw when it was missing, but the type stayed optional, so TypeScript callers could compile and
+  crash later. Grepped every `chunkDocument`/`storeDocument` call site (production + ~14 test
+  files) — every one already supplies `published_at`. Tightening the type had **zero** call-site
+  fallout (`npx tsc --noEmit` clean).
+- **Nested table headings now emit real section breaks** (`src/lib/web-sources/sec-parser.ts`,
+  `collectBlocks`): a heading like `Item 1A. Risk Factors` nested as a layout table inside an
+  outer table cell was previously flattened into plain cell prose, so the section never changed
+  and following content stayed misattributed. Heading sub-blocks discovered during nested-table
+  conversion now push directly into the real block stream instead of being folded into cell text.
+  Documented a known bounded limitation (content appearing *before* the nested heading in the same
+  outer table can now attach to the new section instead of the old one) in the rollout note —
+  net improvement over the pre-fix silent-drop behavior in the common case.
+- Verified findings #1 (hidden zero-style regex) and #4 (nested-table pipe escaping) were already
+  correctly fixed by the prior session; also verified #4's "escape newlines too" concern is already
+  structurally covered by the existing `\s+` whitespace collapse on cell text.
+
+Two new tests in `test/sec-parser.test.ts` (16/16 passing, plus 69/69 and 109/109 and 30/30 across
+the broader RAG/SEC ingestion suites — see rollout note for exact commands). `npx tsc --noEmit`
+clean, `npm run lint` 0 errors. Full `npm test`/`npm run build` gate run via `scripts/land.sh`.
+Details: `docs/rollouts/2026-07-19-pr1776-review-thread-closeout.md`.
+
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
 `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note):
@@ -142,6 +200,35 @@ completed full-corpus backfill for the 4 re-embed docTypes (`sec-filings`,
 gap and will drift as ingest continues — reread `describe-index-stats` or `GET
 /api/admin/reembed` before relying on the exact counts. Do NOT `purge-legacy` until the bge space
 is independently reverified full. Details: `docs/rollouts/2026-07-19-monet-session-handoff.md`.
+## 2026-07-19 — PR #1775 review-thread closeout: scoped re-embed progress isolation (CLAUDE, on AG's branch `agent/ag-reindex-bge-m3`)
+
+Owner-directed: resolve PR #1775's findings before merging rather than filing them as follow-ups.
+All six unresolved codex-connector threads (1 P1 + 5 P2) are fixed.
+
+The P1 — a `--ticker`-scoped run marking a docType "completed for this embedding revision", which
+authorizes `--purge-legacy` to delete legacy vectors corpus-wide — is real, and two things the
+report missed made it worse: the **admin API route also passes `symbols`** (so the suggested
+CLI-level guard would have left that path open), and the **shared per-docType `watermark`** is not
+symbol-keyed, so a scoped run advances it and a later FULL run silently skips other symbols'
+documents — which the purge then deletes. Both now closed at the library level: symbol-scoped runs
+persist nothing, exactly matching the dry-run contract already enforced in that file. Deliberate
+tradeoff: a scoped run started via the admin API's detached POST is no longer observable through the
+GET progress poll (follow-up filed in the rollout note).
+
+**Ownership correction before merge:** the library fix was removed from this PR — #1777
+(`claude/corpus-reembed-hardening`) already implements it as part of a broader hardening pass,
+independently arriving at the identical mechanism plus a `watermarkEmbedRevision` guard and
+adversarial tests. `src/lib/rag/corpus-reembed.ts` and `test/corpus-reembed.test.ts` are reverted to
+match `main`, so the two PRs no longer conflict. **#1777 is the PR to land for the library fix**;
+this one now carries only the CLI guards.
+
+Plus five CLI fail-fast guards on `scripts/reindex-all.ts` — a script that accepts `--yes` and drives
+destructive, budget-spending work, so a malformed flag must never fall back to a *broader* default.
+
+Verification: 9/9 corpus-reembed tests (2 new regression, one reproducing the exact P1 chain), 2/2
+reindex-all tests, eslint 0 errors, all six guards smoke-tested to exit 1 with the right message.
+Rollout: `docs/rollouts/2026-07-19-reindex-all-review-fixes.md`.
+NEXT: CI green → reply to and resolve the six threads → merge (auto-deploys).
 
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
@@ -213,6 +300,11 @@ passes lint (0 errors), TypeScript, 412 Vitest files / 4,837 tests, and the prod
 #1760 auto-merged as `b2f22ccf` while that gate ran; all four threads were then answered and
 resolved, and corrective PR #1761 carries the fixes. Its branch is merged with that exact new main;
 self-hosted checks, corrective merge, and exact production verification remain.
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
+
+Completed the SEC/RAG parser and chunker hardening by resolving outstanding structural and edge-case issues identified in recent parser reviews. Improved deterministic provenance by enforcing valid timestamps, prevented runaway token allocation by bounding maxTokens and tabular row/colspan iterations, handled XBRL structural anomalies securely (preventing NaN/null SQLite poisoning), fixed hidden content extraction poisoning, and secured nested table extraction. Verified via new regression tests in `test/rag-chunk.test.ts`. Full gate green (`npm run lint`, `npx tsc`, `npm test`, `npm run build`). Ready to land.
+
+
 ## 2026-07-18 — Remove tracked lint/verify artifacts from main (MONET, branch `monet/rm-tracked-lint-artifacts`)
 
 Repo-hygiene cleanup. PR #1735 accidentally merged ~9 MB of generated, machine-specific
@@ -2610,6 +2702,43 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - `src/lib/rag/document-summarizer.ts` implemented for generating cited abstracts and embedding them into Pinecone/Voyage under `doc_type: "document-summary"` or `"earnings-summary"`.
 - `test/document-summarizer.test.ts` passes 2/2 tests cleanly.
 - `npx tsc --noEmit` verified with 0 errors.
+
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
+
+Completed the SEC/RAG parser and chunker hardening by resolving outstanding structural and edge-case issues identified in recent parser reviews. Improved deterministic provenance by enforcing valid timestamps, prevented runaway token allocation by bounding maxTokens and tabular row/colspan iterations, handled XBRL structural anomalies securely (preventing NaN/null SQLite poisoning), fixed hidden content extraction poisoning, and secured nested table extraction. Verified via new regression tests in `test/rag-chunk.test.ts`. Full gate green (`npm run lint`, `npx tsc`, `npm test`, `npm run build`). Ready to land.
+
+
+- PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, #1589, #1593, #1594, #1604, and #1607 are merged.
+  Only draft PR #1586 remains open; it is the default-off FMP/RAG/privacy/account-risk consolidation.
+- #1586 is reconciled with `main@58de276e`. The final hostile-review fixes bind every licensed
+  private-memory vector receipt to its exact Pinecone provider plus SQLite ledger authority, reject
+  provider/manifest rotation, require consecutive clean provider observations before local erasure,
+  and preserve independent private/shared retrieval pools through reranking. Versioned migration 41
+  makes the derived-artifact/provider-work tables visible to account-deletion coverage and durable
+  user write-fence triggers.
+- The earlier Cloudflare Access `iat` approach is superseded: reusable Access application-token time
+  is not fresh IdP-login proof. A Cloudflare request may reopen a deleted identity generation only
+  when a matching signed Auth.js session carries a post-cutoff `loginAt`.
+- Current Node 24 focused verification is green: the final retrieval/provider subset is 6 files /
+  72 tests; the migration/deletion subset is 7 files / 74 tests; TypeScript and diff-check pass.
+  The latest review findings are fixed: no-op indexing settles as `no_provider_write` without
+  inventing an erasure obligation, while unknown writes stay purgeable; saturated tier unions retain
+  fair representation under Voyage's 1,000-document rerank ceiling. Managed receipt lookup is also
+  batched below SQLite's bind limit; a 60,000-candidate regression preserves the committed match.
+  The first full run passed 379 files / 4,362 tests, then the production build found transitive
+  `node:crypto` and `node:timers/promises` imports. Those are now replaced by edge-safe Web Crypto
+  SHA-256/global UUID and the existing abort-aware retry pause; 3 files / 20 tests, TypeScript, and a
+  production build with 32 static pages pass. After #1607 merged, the current branch is ahead of the remote
+  PR head and has final compatibility cleanup: `test/rag-doc-type-coverage.test.ts` now supplies deterministic
+  encryption, vector provider/ledger authority mocks, the required proposal regime field, and 75s timeout
+  headroom for the heavy strategy integration cases. `test/infisical-bootstrap.test.ts` now gives the
+  signal-forwarding fixture an explicit fake app identity/login path. Combined focused blocker verification
+  is green at 52/52. `docs/BRANCH-INTEGRATION-LEDGER.md` records branch/PR dispositions. A focused landing
+  review then found and this tree fixes the durable-rights retrieval gate, derived-memory dedup purge, and
+  unrelated-upsert purge blocker issues; `test/vector-db-retrieval.test.ts` plus
+  `test/fmp-rights-derived-artifacts.test.ts` pass 31/31. Clean ordered full rerun, push, hosted checks/review,
+  merge, and production verification remain; #1586 stays draft and no FMP flag/provider/corpus/Infisical
+  mutation has occurred.
 
 ## Next Action
 - Land branch `agent/antigravity` via `scripts/land.sh`.
