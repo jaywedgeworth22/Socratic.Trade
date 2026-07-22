@@ -5381,8 +5381,10 @@ export function formatChunkWithProvenance(chunk: RetrievedChunk, symbol?: string
  *  - "lookup_failed": missing Pinecone/Voyage keys, or the pipeline threw (outer catch).
  *  - "budget_skipped": skipped before any Voyage/Pinecone call because the daily LLM/RAG budget
  *    (isOverLlmBudget) was already exceeded.
- *  - "degraded": the per-run RAG budget (R16 shouldDegradeForBudget) tripped, so rerank/hybrid were
- *    skipped but core dense-cosine recall still ran — NON-empty, just lower quality.
+ *  - "degraded": quality path was reduced (R16 per-run budget, managed version crowding/authority,
+ *    or an explicit rerank route unavailable while non-empty candidates remained). Core dense
+ *    recall still ran — NON-empty, just lower quality. Clean zero-match after successful dense/
+ *    lexical recall is `no_memory` even when rerank credentials are missing.
  */
 export type RetrievalStatus = "ok" | "no_memory" | "lookup_failed" | "budget_skipped" | "degraded";
 
@@ -6759,10 +6761,19 @@ export async function retrieveContextDetailed(
     endFinalInjection?.({ candidatesOut: finalChunks.length, dropped: finalSlice.length - finalChunks.length });
     // Final status classification (receipt only — never changes `finalChunks`): a real zero-match
     // result is "no_memory" (pipeline ran cleanly, nothing relevant found); a non-empty result under
-    // the R16 per-run budget degrade is "degraded" (lower quality, not absent); everything else "ok".
+    // quality-path degrade (R16 budget, version crowding, authority mismatch, or explicit rerank
+    // route unavailable with candidates that could have been reordered) is "degraded"; else "ok".
+    //
+    // Rerank unavailability must NOT mask a clean empty lookup: dense/lexical already succeeded with
+    // zero matches, so there is nothing to rerank — report `no_memory` rather than `degraded`.
+    const qualityDegraded =
+      managedVersionCrowdingDegraded ||
+      managedAuthorityDegraded ||
+      budgetDegraded ||
+      (rerankUnavailable && finalChunks.length > 0);
     reportRetrievalStatus(
       options,
-      managedVersionCrowdingDegraded || managedAuthorityDegraded || budgetDegraded || rerankUnavailable
+      qualityDegraded
         ? "degraded"
         : finalChunks.length === 0
           ? "no_memory"

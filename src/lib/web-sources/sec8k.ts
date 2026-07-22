@@ -971,7 +971,34 @@ export async function ingestEightKBody(
 
   try {
     assertEightKIngestLease(leaseGuard);
+    const { chunkDocument } = await import("../rag/chunk");
+    const { insertDocumentChunkFts } = await import("../db");
+    // Same document shape as storeDocument above so FTS content_hash/accession identity matches the
+    // committed vectors (mirrors sec-filings.ts production filing-body FTS path).
+    const document = {
+      text,
+      doc_id: event.accession,
+      ticker: event.symbol,
+      title: `${event.symbol} 8-K (${event.filedAt})`,
+      doc_type: "8-k" as const,
+      published_at: event.filedAt,
+      acceptance_datetime: event.acceptedAt ?? event.filedAt,
+      source: "sec-8k" as const,
+      url
+    };
     runWithActiveVectorCommitProof(result.managedCommitProof, () => {
+      // Mirror committed 8-K body chunks into document_chunks_fts so corpus-wide lexical
+      // (RAG_CORPUS_WIDE_LEXICAL allowlist includes 'sec-8k') can recall them. Must run inside the
+      // commit-proof transaction so an FTS failure rolls back and the accession stays retryable.
+      for (const chunk of chunkDocument(document, {})) {
+        insertDocumentChunkFts(
+          chunk.content_hash,
+          chunk.ticker[0] ?? event.symbol,
+          "sec-8k",
+          event.accession,
+          chunk.text
+        );
+      }
       insertIngestedAccession(event.accession, "8-K-body", event.symbol, result.attempted);
     });
   } catch {
