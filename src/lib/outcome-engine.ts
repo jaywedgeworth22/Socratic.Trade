@@ -51,7 +51,7 @@ import { buildLlmRequestBody, extractLlmText, llmAuthHeaders } from "./llm-call"
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
+import { extractLlmUsage, providerRequestIdFromPayload, recordLlmUsage } from "./llm-usage";
 import { addTradingDays } from "./market-calendar";
 import { normalizeSymbol } from "./money";
 import { withLlmGeneration } from "./observability";
@@ -833,7 +833,11 @@ export async function callLessonLlm(userId: string, userContent: string): Promis
       systemPrompt: LESSON_SYSTEM_PROMPT,
       userContent,
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection,
-      reasoningEffort: policy.llmReasoningEffort
+      reasoningEffort: policy.llmReasoningEffort,
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "outcome-postmortem"
     }
   );
 
@@ -861,7 +865,7 @@ export async function callLessonLlm(userId: string, userContent: string): Promis
         return { text: undefined };
       }
       const payload = await response.json();
-      recordLlmUsage({ userId, provider, model, context: "outcome-postmortem", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "outcome-postmortem", keySource, keyRef, connectedAccountId: policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       return { text: typeof text === "string" ? text : undefined };
     }
