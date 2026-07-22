@@ -45,6 +45,13 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Corpus re-embed scoped-run purge gate fix (branch
+  `cursor/critical-bug-management-0770`, claimed 2026-07-20) — IN PROGRESS.**
+  Critical-bug automation found that a symbol-scoped `POST /api/admin/reembed` could persist a
+  full-docType `completedForEmbedRevision` stamp; the explicit `purge-legacy` action then trusted
+  that stamp and could delete all legacy vectors for the docType even though only the scoped symbols
+  were backfilled. Patch withholds full-corpus completion stamps on scoped runs and adds a focused
+  regression. Local gate passed: lint, TypeScript, 420-file/4,901-test Vitest suite, and build. PR pending.
 - **[Socratic.Trade][CURSOR] Stop placement intent authoritative-absence fix (branch
   `cursor/critical-bug-management-8edd`, claimed 2026-07-21) — IN PROGRESS.** Hourly
   high-severity scan found a money-path duplicate-stop risk: a durable broker stop placement intent

@@ -24,6 +24,18 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
+## 2026-07-20 — Corpus re-embed scoped-run purge gate fix (CURSOR, branch `cursor/critical-bug-management-0770`)
+
+Hourly critical-bug sweep found a concrete RAG data-loss path in `src/lib/rag/corpus-reembed.ts`:
+an admin symbol-scoped re-embed such as `{ "docTypes": ["sec-filings"], "symbols": ["AAPL"] }`
+could mark the whole docType `completedForEmbedRevision`; the separate `purge-legacy` action then
+trusted that stamp and would delete every legacy vector for the docType even though only the scoped
+symbol was backfilled into the active bge-m3 space. The fix keeps scoped runs resumable but withholds
+the full-corpus completion stamp, so purge remains blocked until an unscoped docType run completes.
+Added a focused regression in `test/corpus-reembed.test.ts`. Verification passed:
+`npm run lint`, `npx tsc --noEmit`, `npm test` (420 files / 4,901 tests), and
+`npm run build`. Rollout:
+`docs/rollouts/2026-07-20-corpus-reembed-scoped-purge-gate.md`.
 ## 2026-07-21 — Stop placement intent must require authoritative absence before retry (CURSOR, branch `cursor/critical-bug-management-8edd`)
 
 High-severity bug-finding automation found a money-path regression in the 2026-07-18 broker

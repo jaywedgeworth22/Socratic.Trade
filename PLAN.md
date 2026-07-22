@@ -1,5 +1,14 @@
 # Active Implementation Plan
 
+> **2026-07-20 - Corpus re-embed scoped-purge gate fix (CURSOR, branch
+> `cursor/critical-bug-management-0770`).** Critical-bug sweep found that a symbol-scoped
+> corpus re-embed could persist a full-docType completion stamp and thereby authorize
+> `purge-legacy` to delete all legacy vectors for that docType. Patch `corpus-reembed` so
+> scoped runs never stamp full-corpus completion; keep purge blocked until an unscoped run
+> completes under the active embedding revision. Focused regression added in
+> `test/corpus-reembed.test.ts`; run the ordered local gate, open PR, and do not run
+> production `purge-legacy` until this fix is live and full-corpus completion is independently
+> verified.
 > **2026-07-21 - Stop placement intent authoritative-absence fix (CURSOR,
 > branch `cursor/critical-bug-management-8edd`).** Narrow money-path repair from the hourly
 > high-severity bug scan: a broker protective-stop placement intent created before a timed-out broker
