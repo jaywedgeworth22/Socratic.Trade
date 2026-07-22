@@ -162,6 +162,14 @@ export async function PUT(request: Request) {
     policy.redTeamLlmModel !== current.redTeamLlmModel ||
     policy.llmReasoningEffort !== current.llmReasoningEffort ||
     policy.redTeamReasoningEffort !== current.redTeamReasoningEffort;
+  // Account verification is required when autonomy/account readiness changes, but a
+  // transient broker read must not strand an unrelated guardrail save. Robinhood's
+  // account-list MCP call can be briefly unavailable while its portfolio/order paths
+  // are otherwise usable; the next run still performs its own live account checks.
+  const accountReadinessChanged =
+    policy.systemState !== current.systemState ||
+    policy.accountNumber !== current.accountNumber ||
+    policy.activeBroker !== current.activeBroker;
   const validationError = await validatePolicy(policy, userId, {
     enforceInteractiveReasoningRule: reasoningConfigChanged,
     // Keyed-provider backstop gating mirrors the reasoning rule: validatePolicy runs against the
@@ -175,7 +183,8 @@ export async function PUT(request: Request) {
     // THIS request actually sets/changes it — otherwise a stored out-of-range value would 400 EVERY
     // unrelated save. A stale stored value is already safe at run time (validatedMarketableLimitBufferBps
     // defaults/clamps it); only a write that changes the field must pass the bound.
-    enforceMarketableLimitBufferRule: policy.tuning?.marketableLimitBufferBps !== current.tuning?.marketableLimitBufferBps
+    enforceMarketableLimitBufferRule: policy.tuning?.marketableLimitBufferBps !== current.tuning?.marketableLimitBufferBps,
+    verifySelectedAccount: accountReadinessChanged
   });
   if (validationError) return new NextResponse(validationError, { status: 400 });
   // Validation above is intentionally side-effect free. Apply the policy and optional prompt in one
@@ -208,6 +217,7 @@ async function validatePolicy(
     enforceKeyedGreenModelRule?: boolean;
     enforceKeyedRedModelRule?: boolean;
     enforceMarketableLimitBufferRule?: boolean;
+    verifySelectedAccount?: boolean;
   } = {}
 ): Promise<string | undefined> {
   // Invalid legacy watchlist / ignore-list symbols are sanitized out in the PUT handler above, so stale
@@ -395,7 +405,7 @@ async function validatePolicy(
   }
   if (policy.systemState === "active" && !policy.accountNumber) return "Select an account before enabling autonomy.";
   if (policy.systemState === "active" && policy.includedIndices.length === 0 && policy.additionalSymbols.length === 0) return "Select at least one base index or additional watchlist symbol before enabling autonomy.";
-  if (policy.systemState === "active" && policy.accountNumber) {
+  if ((options.verifySelectedAccount ?? true) && policy.systemState === "active" && policy.accountNumber) {
     // Don't let a transient broker/network failure here surface as an unhandled 500 (which renders as a
     // raw error page) — return a clean, actionable message instead.
     try {

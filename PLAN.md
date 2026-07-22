@@ -1,5 +1,15 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch
+> `codex/robinhood-cap-fix`).** Make policy saves independent of transient broker account-list
+> failures when account readiness is unchanged, while retaining verification for account selection
+> and autonomy activation. Resolve effective opening order/daily caps against current buying power
+> or NAV so oversized absolute settings cannot produce infeasible proposals; make percentage mode
+> the default for blank dual-mode settings while preserving explicit legacy dollar settings. Focused
+> regressions, lint, TypeScript, and production build are green. Full Vitest completion remains
+> pending because the repo config serializes the suite and the shared host was under concurrent load.
+> Next: land through the normal PR gate and verify the exact production SHA plus a Robinhood save.
+
 > **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
 > `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
 > but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per

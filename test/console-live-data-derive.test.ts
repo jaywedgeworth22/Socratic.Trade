@@ -62,7 +62,7 @@ describe("console live-data derivations", () => {
     });
 
     expect(deriveRiskUtilization(snapshot)).toEqual({
-      dailyNotional: { used: 2_500, limit: 5_000, pct: 50 },
+      dailyNotional: { used: 2_500, limit: 2_000, pct: 125 },
       dailyOrders: { used: 2, limit: 8, pct: 25 },
       investedCapital: { used: 1_200, limit: 2_000, pct: 60 }
     });
@@ -87,7 +87,7 @@ describe("console live-data derivations", () => {
     expect(deriveSpend(fixed)).toMatchObject({
       capMode: "dollar",
       capConfiguredValue: 1_000,
-      capNotional: 1_000,
+      capNotional: 100,
       capPctOfNav: 1_000
     });
   });

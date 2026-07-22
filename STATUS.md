@@ -1,5 +1,18 @@
 # Current Status
 
+## 2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch `codex/robinhood-cap-fix`)
+
+Implemented account-aware opening caps and save resilience. Unchanged-account guardrail saves no
+longer require a transient Robinhood account-list verification; account selection/readiness changes
+and autonomy activation still verify. Absolute opening caps are clamped to feasible account spend
+(buying power for buys, NAV fallback; NAV for daily opening capacity), while percentage mode is the
+default when both dual-mode fields are blank. Added policy-cap and save-resilience regressions.
+Focused policy, execution, wash-sale, and console derivation tests are green (102/102); lint has
+zero errors and the production build passes. The repository's full Vitest command is configured for
+one worker and remained in progress under concurrent fleet load, so it was stopped rather than
+claiming a full-suite receipt. No production account or deployment was touched. Next: review/land
+the branch, then verify the exact deployed SHA and a real Robinhood settings save.
+
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
