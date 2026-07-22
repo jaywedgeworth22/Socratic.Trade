@@ -9,8 +9,10 @@ the branch fixed tenant bypass, stale legacy admission, mock-vector poisoning, w
 PIT/reporting gaps, false truncated-evidence credit, sibling-parent duplication, and legacy evidence
 identity collisions. Focused integration verification passes 9 files / 72 tests plus TypeScript; the
 final ordered gate passes lint (0 errors / 615 warnings), TypeScript, 434 files / 5,015 tests, and the
-production build. Ready-PR publication, hosted verification, protected merge/auto-deploy, and live
-exact-SHA verification remain. No provider/corpus/config/production writes or flag changes.
+production build. After the current-main merge, Node 24 landing verification also passes TypeScript,
+439 files / 5,027 tests, and production build; ready PR #1892 is open with hosted checks queued.
+Protected merge/auto-deploy and live exact-SHA verification remain. No provider/corpus/config/
+production writes or flag changes.
 Rollout: `docs/rollouts/2026-07-22-rag-retrieval-integration.md`.
 
 ## 2026-07-21 — RAG rerank policy + retrieval-stage telemetry foundation (CODEX team, branch `codex/rag-strategy-program-20260721`)

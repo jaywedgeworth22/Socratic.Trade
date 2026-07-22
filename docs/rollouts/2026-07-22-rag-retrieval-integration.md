@@ -103,8 +103,14 @@ npm run build      -> passed, 34/34 static pages generated
 git diff --check   -> passed
 ```
 
+After manually reviewing and merging `origin/main@55e808d8`, `scripts/land.sh` ran under the
+required Node 24 runtime and passed TypeScript, the expanded 439-file / 5,027-test suite, and the
+production build. It pushed the branch and opened ready PR #1892. A first Node 24 attempt was
+discarded because the local `better-sqlite3` binary had been built for Node 26 ABI 147; rebuilding
+that untracked dependency for Node 24 ABI 137 eliminated the cascading database-load failures.
+
 ## Follow-ups
 
-- Publish through one ready PR, required hosted checks, protected merge, auto-deploy, and exact-SHA
+- Complete required hosted checks on ready PR #1892, protected merge/auto-deploy, and exact-SHA
   production verification.
 - Keep production flags unchanged until real-corpus PIT evaluation establishes promotion thresholds.

@@ -16,9 +16,10 @@
 > adaptive reranking, stage telemetry, exact consumption, structured/narrative routing, bounded parent
 > context, Pinecone hosted-inference comparison, and Turso/Assistant capability probes. Independent
 > review findings are remediated, and the final ordered local gate is green: lint (0 errors / 615
-> warnings), TypeScript, 434 files / 5,015 tests, and production build. Remaining: one ready PR,
-> required hosted check, merge/auto-deploy receipt, and live exact-SHA verification. Production
-> activation stays off.
+> warnings), TypeScript, 434 files / 5,015 tests, and production build. Current-main Node 24 landing
+> verification passes TypeScript, 439 files / 5,027 tests, and production build; ready PR #1892 is
+> open. Remaining: required hosted checks, merge/auto-deploy receipt, and live exact-SHA verification.
+> Production activation stays off.
 > **2026-07-21 — Managed RAG ingestion authority repair (CODEX, branch `codex/rag-ingestion-gate-20260721`).**
 > Repair the stale `storeDocument` provider gate left by the Voyage SDK purge: require Pinecone
 > initialization plus the actual active embedding provider credential, while preserving the explicit
