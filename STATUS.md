@@ -53,6 +53,18 @@ then integrate it alongside dense recall in a separately reviewed retrieval PR. 
 ## 2026-07-22 — RAG Turso/libSQL + Pinecone Assistant shadow benchmarks (CODEX, `codex/rag-shadow-benchmarks-20260722`)
 
 Added a default-off, read-only capability/context probe. The local Turso/libSQL probe reports installed-client and vector-SQL capability without a network/database write; this checkout has no direct `@libsql/client` dependency, so a real remote Turso benchmark is intentionally not attempted. The Pinecone path requires an explicit live flag, a named pre-existing Assistant, an API key, externally supplied frozen cases, a 100-query cap, and a 30-second aborting timeout. It calls only Assistant context retrieval and emits redacted latency/citation/usage/error receipts—never prompts, snippets, file names, answers, keys, or provider errors. It does not claim relevance/provider-selection evidence without a same-corpus golden citation mapping. No provider, corpus, index, file, broker, or production mutation was made. Rollout: `docs/rollouts/2026-07-22-rag-shadow-benchmarks.md`.
+## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
+
+The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
+temporary SHA suffix created a new concurrency group for every push, so `cancel-in-progress:
+false` could not collapse duplicate pending runs and the self-hosted pool accumulated a large
+queue. The non-cancelling policy remains: an active verify is preserved and only the newest
+pending run per ref remains eligible. Added a regression to `test/ci-workflow-queue-safety.test.ts`.
+Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+
+Review follow-up: moved the CI effort row under the `## In Progress` bucket so the effort-issues
+sync parser includes it. Focused workflow-safety tests remain green; hosted verification is still
+running on the pre-follow-up commit and will be replaced once this documentation-only fix lands.
 
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
