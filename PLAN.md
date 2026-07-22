@@ -1,9 +1,9 @@
 # Active Implementation Plan
 
 > **2026-07-22 — Shared-package pin-check review correction (PR #1890).** Keep the effort ledger
-> truthful across main synchronization: `verify-hosted` passed on `4748ce80`, then the PR advanced
-> to current head `0dfbc945`; replacement `gitleaks`, `check-pin`, and required `verify` checks are
-> queued. Merge only after the current head verifies.
+> truthful across main synchronization: `verify-hosted` passed on an earlier head, and later main
+> syncs advanced the branch again. Do not pin a supersedable SHA in the board; refresh PR #1890 and
+> merge only after its current-head required gate verifies.
 
 > **2026-07-22 — Shared-package pin check queue unblock (CODEX).** Keep the pin check non-required
 > until the coordinated consumers are stable, but make its signal reliable: remove the PR path

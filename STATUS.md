@@ -9,8 +9,9 @@ touch the pin workflow and whose hosted check failed with `node: command not fou
 
 Review follow-up: the rollout now records the exact focused test, lint, TypeScript, YAML, diff, and
 hosted verification commands/results, including the tracked effort-log mirror. The focused
-queue-safety test passes 5/5. The hosted `verify-hosted` gate passed on `4748ce80`; the current
-main-synchronized head is `0dfbc945` and its replacement `gitleaks`, `check-pin`, and required
+queue-safety test passes 5/5. The hosted `verify-hosted` gate passed on an earlier head; main
+synchronization has advanced the branch again, so this snapshot intentionally avoids pinning a
+supersedable SHA. Refresh PR #1890 before acting; current-head `gitleaks`, `check-pin`, and required
 `verify` checks are queued. Auto-merge is armed; the next action is current-head verification.
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
