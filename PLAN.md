@@ -6,6 +6,11 @@
 > `verify`, and zero-thread review. PRs #1890 and #1780 are closed as superseded; their branches are
 > retained. After #1889 merges, verify the exact Coolify release and one new authenticated strict-v2
 > ACK.
+> **2026-07-22 — Mobile auth exchange CSRF follow-up (CODEX, PR #1888).** Keep
+> `/api/mobile/auth/exchange` unauthenticated for the native client, but do not classify it as a
+> public-prefix early return: it must pass `checkSameOrigin` before the one-time code/verifier
+> handoff. Verify the focused middleware/route tests and required hosted gate, then merge and
+> verify the exact auto-deployed SHA.
 > **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
 > `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
 > but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per
