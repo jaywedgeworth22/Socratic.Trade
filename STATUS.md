@@ -28,6 +28,9 @@ Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with
 ## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
 
 Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
+## 2026-07-21 — Mac runner `trading-live-mac` retired & deleted (ANTIGRAVITY, branch `antigravity/openrouter-latest-alias`)
+
+Owner directive: permanently stopped, uninstalled, and deleted self-hosted runner `trading-live-mac` (ID 22 on Socratic.Trade, ID 687 on Congress.Trade). Updated all workflow files in `.github/workflows/` (`ci.yml`, `security.yml`, `cleanup-caches.yml`, `sentry-ci-report.yml`, `_merge-shepherd-impl.yml`, `shared-package-pin-check.yml`, `e2e.yml`, `codex-autofix.yml`, `effort-issues-sync.yml`) to route to `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`. Added explicit binding fleet directive in `AGENTS.md` prohibiting any future use or re-registration of Mac self-hosted runners. Rollout: `docs/rollouts/2026-07-21-retire-mac-runner.md`.
 ## 2026-07-20 — CI-load trim: Playwright Smoke off every PR (CLAUDE, worktree `ci-trim-smoke`, branch `claude/ci-trim-smoke-on-prs`)
 
 Owner-approved CI-load reduction ("trim smoke AND add one runner" — this covers ONLY the smoke
