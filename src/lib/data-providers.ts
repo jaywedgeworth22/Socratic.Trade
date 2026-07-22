@@ -2059,7 +2059,7 @@ const YF_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 // for every symbol this run — retry once after this short backoff before giving up.
 const YF_CREDS_RETRY_BACKOFF_MS = 500;
 
-class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
+export class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "yahoo-finance";
   readonly configured = true;
 
