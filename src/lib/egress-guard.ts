@@ -14,8 +14,11 @@
 // immediately before the outbound request — see src/lib/notify.ts and
 // src/lib/notifications.ts.
 
-import { promises as dns } from "node:dns";
-import net from "node:net";
+// Use bare "dns"/"net" (not "node:" scheme) so Next.js webpack can externalize them for
+// server bundles. The "node:" URI scheme fails client/edge compilation when this module
+// is pulled in transitively (notifications -> scheduler -> background-worker-startup).
+import { promises as dns } from "dns";
+import net from "net";
 
 export interface EgressCheckResult {
   ok: boolean;
