@@ -43,11 +43,13 @@ or state writes. There is no v1 sender or dual-write path in the final implement
   `sourceApp` assertion updated during that run. The final affected producer/replay/FMP regression
   set passed 3 files / 46 tests after the update.
 - Production build: `npm run build` under Node 24.
-- Direct-v2 cutover revalidation under Node 24: 3 files / 52 tests (push, replay, and background
-  startup), TypeScript, scoped ESLint, and diff-check pass. Coverage includes atomic all-ledger
+- Direct-v2 cutover revalidation under Node 24: 4 files / 64 tests (push, replay, background
+  startup, and FMP producer telemetry), TypeScript, scoped ESLint, and diff-check pass. Coverage includes atomic all-ledger
   seeding, skipped-row receipts, seeded-boundary exclusion, strict-v2 activation/overlap, malformed
   JSON and invalid-timestamp fail-closed behavior, no partial seed, replay-before-producer boot, and
-  stale-HMR timer replacement for the v3 direct-v2 replay state.
+  stale-HMR timer replacement for the v3 direct-v2 replay state. The FMP producer suite explicitly
+  establishes the same active cutover marker that production instrumentation creates before provider
+  workers start, preventing a test-only pre-v2 ordering from masking provider events.
 
 ## Promotion gate
 

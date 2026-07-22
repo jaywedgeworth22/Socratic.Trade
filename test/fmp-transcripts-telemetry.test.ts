@@ -36,8 +36,18 @@ function resetProviderQuotaState(provider: string): void {
   replay.__resetUsageMonitorReplayState();
   getDb().prepare("DELETE FROM provider_usage_outbox WHERE provider = ?").run(provider);
   getDb().prepare("DELETE FROM provider_dispatch_attempts WHERE provider = ?").run(provider);
-  getDb().prepare("DELETE FROM settings WHERE key = ?")
-    .run(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider);
+  const now = new Date().toISOString();
+  getDb().transaction(() => {
+    getDb().prepare("DELETE FROM settings WHERE key IN (?, ?, ?)").run(
+      replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider,
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider,
+      `${replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider}:pre_v2_rows_skipped`
+    );
+    // Production establishes the direct-v2 boundary synchronously during instrumentation startup,
+    // before FMP workers can dispatch. Preserve that ordering in these producer-focused tests.
+    getDb().prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?)")
+      .run(replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.provider, now);
+  }).immediate();
 }
 
 async function flushUsageTruth(): Promise<void> {
