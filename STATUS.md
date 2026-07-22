@@ -41,6 +41,9 @@ no RAPIDAPI_KEY usage — pure gating-logic fix on the existing EDGAR-direct ing
 45/45 tests pass. Blocked on landing only by the shared CI runner's queue depth (see
 #agent-sync — fleet-wide capacity issue, not specific to this branch).
 Rollout: `docs/rollouts/2026-07-19-rag-ingestion-provider-aware-gate.md`.
+## 2026-07-21 — Mac runner `trading-live-mac` retired & deleted (ANTIGRAVITY, branch `antigravity/openrouter-latest-alias`)
+
+Owner directive: permanently stopped, uninstalled, and deleted self-hosted runner `trading-live-mac` (ID 22 on Socratic.Trade, ID 687 on Congress.Trade). Updated all workflow files in `.github/workflows/` (`ci.yml`, `security.yml`, `cleanup-caches.yml`, `sentry-ci-report.yml`, `_merge-shepherd-impl.yml`, `shared-package-pin-check.yml`, `e2e.yml`, `codex-autofix.yml`, `effort-issues-sync.yml`) to route to `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`. Added explicit binding fleet directive in `AGENTS.md` prohibiting any future use or re-registration of Mac self-hosted runners. Rollout: `docs/rollouts/2026-07-21-retire-mac-runner.md`.
 ## 2026-07-20 — CI-load trim: Playwright Smoke off every PR (CLAUDE, worktree `ci-trim-smoke`, branch `claude/ci-trim-smoke-on-prs`)
 
 Owner-approved CI-load reduction ("trim smoke AND add one runner" — this covers ONLY the smoke
