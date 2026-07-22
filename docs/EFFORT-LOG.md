@@ -188,6 +188,49 @@ As of 2026-07-08 (assignment-rule update).
   `docs/handoffs/2026-07-19-monet-session-closeout-handoff.md` §7 (fresh port, NOT a rebase): (1) kill the
   silent coach-note `slice(-20)` truncation via append-only `socratic_coach_note_archive` + audit receipt +
   `doc_type: 'coach-note'` vector writer; (2) a writer for the retrieved-but-never-written `lesson` doc-type
+  (money-adjacent prompt path → frontier adversarial review). Team recipe: scouts → design → implementers →
+  multi-lens verify → land via land.sh. Old w2 branches marked superseded once landed.
+
+- **[Socratic.Trade][CLAUDE on AG's lane] PR #1775 review-thread closeout — scoped re-embed progress
+  isolation + reindex-all CLI fail-fast guards (branch `agent/ag-reindex-bge-m3`, worktree
+  `land-ag-reindex-bge-m3`, 2026-07-19, owner-directed: fix the findings before merging rather than
+  defer them) — FIXES PUSHED, AWAITING CI + THREAD RESOLUTION.** Resolved all 6 unresolved
+  codex-connector threads (1 P1 + 5 P2). The P1 was confirmed and is BROADER than reported: (a) the
+  admin API route also passes `symbols` (`app/api/admin/reembed/route.ts:94`), so the suggested
+  CLI-only guard would have left that path exposed — fixed in `src/lib/rag/corpus-reembed.ts`
+  instead; (b) a SECOND data-loss bug shares the root cause — `watermark` is a single shared
+  per-docType cursor, so a scoped run advances it and a later FULL run silently SKIPS other symbols'
+  documents, whose legacy vectors the purge then deletes. **Library fix REMOVED from this PR before
+  merge** — #1777 (`claude/corpus-reembed-hardening`) already implements it, independently reaching
+  the identical mechanism plus a `watermarkEmbedRevision` guard and adversarial tests; keeping both
+  only produced a conflict in `corpus-reembed.ts`. That file and `test/corpus-reembed.test.ts` are
+  reverted to match `main`, so #1775 and #1777 no longer conflict and may land in either order.
+  **#1777 is the PR that lands the library fix.** This row now covers the CLI guards only. Plus 5 CLI guards: unknown `--doc-types` no
+  longer selects ALL types, invalid `--max-texts` no longer means "no spend cap", retired flags abort,
+  a refused purge exits 1 instead of 0, `--purge-legacy` requires an explicit `--purge-token`, and
+  `--ticker`+`--purge-legacy` is refused. 9/9 corpus-reembed tests (2 new regression), 2/2
+  reindex-all, eslint 0 errors, all 6 guards smoke-tested. Rollout:
+  `docs/rollouts/2026-07-19-reindex-all-review-fixes.md`. _(AG owns the underlying PR; this row
+  covers only the review-fix pass.)_
+- **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
+  metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
+  claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
+  `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2: (A) close 3 unmetered paid-call gaps
+  (`market-signals/massive.ts` 3x fetch, `rag/query-deconstruct.ts` gpt-4o-mini,
+  `rag/search-fusion.ts` embedding fallback); (B) thread `buildCallClassifier`/
+  `openrouterRequestEnrichment` (flat `trace`, no `metadata` nesting — RESOLVED 2026-07-18 shape) +
+  OpenRouter generation-id capture (`providerRequestId`) across `llm-call.ts`, 11 call sites,
+  `chat/llm.ts`, `vector-db.ts`; bump shared pin to `904ea96a`. Empirical OpenRouter acceptance
+  check (tiny paid probe, ~$0.01) included. Never merges own PR (auto-deploy on merge) — adversarial
+  review lands it.
+- **[Socratic.Trade][CLAUDE] Monet-handoff §7 ports: coach-note archive + coach-note/lesson vector writers
+  (worktree `socratic-trade-agent-team-697845`, branch `claude/socratic-trade-agent-team-697845`, claimed
+  2026-07-18) — IN PROGRESS.** From-scratch schema port of the two PARTIAL-verdicted w2 branches per
+  `docs/handoffs/2026-07-19-monet-session-closeout-handoff.md` §7 (fresh port, NOT a rebase): (1) kill the
+  silent coach-note `slice(-20)` truncation via append-only `socratic_coach_note_archive` + audit receipt +
+  `doc_type: 'coach-note'` vector writer; (2) a writer for the retrieved-but-never-written `lesson` doc-type
+  (money-adjacent prompt path → frontier adversarial review). Team recipe: scouts → design → implementers →
+  multi-lens verify → land via land.sh. Old w2 branches marked superseded once landed.
   (money-adjacent prompt path → frontier adversarial review). Handoff: docs/handoffs/2026-07-18-claude-to-antigravity-monet-s7-ports.md.
   Cached recon available; resume wf_f2e1ca12-b41 or start fresh. Old w2 branches marked superseded once landed.
 
