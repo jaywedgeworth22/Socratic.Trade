@@ -78,29 +78,26 @@ beforeEach(() => {
   delete process.env.RAG_EMBED_PROVIDER;
   delete process.env.OPENROUTER_API_KEY;
   delete process.env.SILICONFLOW_API_KEY;
-  delete process.env.VOYAGE_API_KEY;
   mocks.resolveApiKey.mockImplementation((service: string) => {
     if (service === "openrouter") return process.env.OPENROUTER_API_KEY;
     if (service === "siliconflow") return process.env.SILICONFLOW_API_KEY;
-    if (service === "voyage") return process.env.VOYAGE_API_KEY;
     return undefined;
   });
 });
 
-describe("RAG_EMBED_PROVIDER unset: key-presence precedence unchanged (default, no behavior change)", () => {
-  it("defaults to voyage when no alternative-provider key is configured", async () => {
+describe("RAG_EMBED_PROVIDER unset: key-presence precedence (default OpenRouter BAAI bge-m3)", () => {
+  it("defaults to openrouter when no key is configured", async () => {
     const { activeEmbeddingProvider, activeRerankProvider, activeEmbeddingModel, activeRerankModel } =
       await import("../src/lib/vector-db");
-    expect(activeEmbeddingProvider()).toBe("voyage");
-    expect(activeRerankProvider()).toBe("voyage");
-    expect(activeEmbeddingModel()).toBe("voyage-finance-2");
-    expect(activeRerankModel()).toBe("rerank-2.5");
+    expect(activeEmbeddingProvider()).toBe("openrouter");
+    expect(activeRerankProvider()).toBe("openrouter");
+    expect(activeEmbeddingModel()).toBe("baai/bge-m3");
+    expect(activeRerankModel()).toBe("cohere/rerank-v3.5");
   });
 
-  it("prefers openrouter over siliconflow and voyage when its key is present", async () => {
+  it("prefers openrouter over siliconflow when its key is present", async () => {
     process.env.OPENROUTER_API_KEY = "or-key";
     process.env.SILICONFLOW_API_KEY = "sf-key";
-    process.env.VOYAGE_API_KEY = "voyage-key-real";
     const { activeEmbeddingProvider, activeEmbeddingModel, activeRerankModel } = await import("../src/lib/vector-db");
     expect(activeEmbeddingProvider()).toBe("openrouter");
     expect(activeEmbeddingModel()).toBe("baai/bge-m3");
@@ -114,23 +111,14 @@ describe("RAG_EMBED_PROVIDER unset: key-presence precedence unchanged (default, 
     expect(activeEmbeddingModel()).toBe("BAAI/bge-m3");
   });
 
-  it("treats a mock-prefixed key as absent, same as before", async () => {
+  it("treats a mock-prefixed key as absent and defaults to openrouter", async () => {
     process.env.OPENROUTER_API_KEY = "mock-openrouter-key";
     const { activeEmbeddingProvider } = await import("../src/lib/vector-db");
-    expect(activeEmbeddingProvider()).toBe("voyage");
+    expect(activeEmbeddingProvider()).toBe("openrouter");
   });
 });
 
 describe("RAG_EMBED_PROVIDER pinned: overrides key-presence precedence for BOTH embed and rerank", () => {
-  it("pins to voyage even when an openrouter key is ALSO present", async () => {
-    process.env.RAG_EMBED_PROVIDER = "voyage";
-    process.env.OPENROUTER_API_KEY = "or-key";
-    const { activeEmbeddingProvider, activeRerankProvider, activeEmbeddingModel } = await import("../src/lib/vector-db");
-    expect(activeEmbeddingProvider()).toBe("voyage");
-    expect(activeRerankProvider()).toBe("voyage");
-    expect(activeEmbeddingModel()).toBe("voyage-finance-2");
-  });
-
   it("pins to openrouter when its key is configured", async () => {
     process.env.RAG_EMBED_PROVIDER = "openrouter";
     process.env.OPENROUTER_API_KEY = "or-key";
@@ -161,7 +149,6 @@ describe("RAG_EMBED_PROVIDER pinned: overrides key-presence precedence for BOTH 
 describe("RAG_EMBED_PROVIDER pinned-but-keyless: loud error, never a silent fallback", () => {
   it("throws when pinned to openrouter but no key is configured", async () => {
     process.env.RAG_EMBED_PROVIDER = "openrouter";
-    // OPENROUTER_API_KEY intentionally left unset.
     const { activeEmbeddingProvider } = await import("../src/lib/vector-db");
     expect(() => activeEmbeddingProvider()).toThrow(/RAG_EMBED_PROVIDER is pinned to "openrouter"/);
   });
@@ -184,15 +171,6 @@ describe("RAG_EMBED_PROVIDER pinned-but-keyless: loud error, never a silent fall
     const { activeEmbeddingModel, activeRerankModel } = await import("../src/lib/vector-db");
     expect(() => activeEmbeddingModel()).toThrow(/RAG_EMBED_PROVIDER is pinned to "siliconflow"/);
     expect(() => activeRerankModel()).toThrow(/RAG_EMBED_PROVIDER is pinned to "siliconflow"/);
-  });
-
-  it("never falls back to voyage when pinned-but-keyless (the whole point of the pin)", async () => {
-    process.env.RAG_EMBED_PROVIDER = "openrouter";
-    process.env.VOYAGE_API_KEY = "voyage-key-real"; // present but irrelevant — pin excludes fallback
-    const { activeEmbeddingProvider } = await import("../src/lib/vector-db");
-    expect(() => activeEmbeddingProvider()).toThrow();
-    // If it didn't throw, a caller might silently read/write Voyage's embedding space while
-    // believing bge-m3 was pinned — assert there's no non-throwing path that returns "voyage" here.
   });
 });
 

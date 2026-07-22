@@ -1,25 +1,19 @@
 name: Playwright Smoke
 
-# The `smoke` job is a REQUIRED status check for merges to `main`. Like ci.yml's
-# `verify`, it uses a cheap `classify` job + conditional steps so a documentation-only
-# PR skips the heavy Playwright browser download + build + e2e and reports success
-# immediately, WITHOUT leaving the required check permanently pending (a naive
-# `paths-ignore:` on a required check strands it as "expected" forever). Keep the
-# `classify` job in sync with ci.yml's.
+# Playwright Smoke — NOT a required merge check (ruleset: verify only). PR trigger removed
+# 2026-07-21 to unclog the self-hosted runner queue; still runs on main / nightly / manual.
 
 on:
-  pull_request:
-  # Required for the GitHub merge queue: the `smoke` check must run on the
-  # queue's temporary merge_group branch, or queued PRs hang forever.
-  merge_group:
+  # smoke is NOT a required status check (ruleset requires only `verify`). Running it on
+  # every PR clogged the single socratic-ci pool (~35% of backlog was smoke). PR coverage
+  # removed 2026-07-21; smoke remains on main push, nightly schedule, and workflow_dispatch.
   push:
     branches:
       - main
-  # Cost note (2026-07-05): dropped the duplicate `agent/**` push trigger — agent
-  # branches run `smoke` via their PR (`pull_request`) already, so the `push` run was
-  # a duplicate of the PR run. Added the docs-only fast path (classify job) below.
   schedule:
-    - cron: "17 9 * * 1"
+    # Nightly full-browser baseline now that smoke no longer runs on every PR.
+    - cron: "17 9 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: e2e-${{ github.workflow }}-${{ github.ref }}
@@ -143,10 +137,9 @@ jobs:
         if: needs.classify.outputs.docs-only != 'true'
         with:
           node-version: 24
-          cache: npm
       - name: Install dependencies
         if: needs.classify.outputs.docs-only != 'true'
-        run: npm ci
+        run: npm install --no-audit --no-fund
       # Cache the Playwright browser download (chromium, ~130MB) keyed on the lockfile
       # (which pins the playwright version). On a hit, the install step below skips the
       # multi-minute download and only re-applies system deps.
@@ -155,7 +148,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package.json') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
       - name: Install Playwright browser
@@ -174,9 +167,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-${{ hashFiles('src/**', 'app/**') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package.json') }}-
             ${{ runner.os }}-nextjs-
       - name: Run smoke tests
         if: needs.classify.outputs.docs-only != 'true'

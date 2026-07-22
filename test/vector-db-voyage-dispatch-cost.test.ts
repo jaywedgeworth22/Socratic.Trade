@@ -89,23 +89,25 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   process.env.PINECONE_API_KEY = "pinecone-test";
+  process.env.OPENROUTER_API_KEY = "openrouter-test";
   process.env.VOYAGE_API_KEY = "voyage-test";
   process.env.PINECONE_INDEX_READY_WAIT_MS = "0";
   delete process.env.PINECONE_INDEX_NAME;
   mocks.resolveApiKey.mockImplementation((service: string) => {
     if (service === "pinecone") return process.env.PINECONE_API_KEY;
+    if (service === "openrouter") return process.env.OPENROUTER_API_KEY;
     if (service === "voyage") return process.env.VOYAGE_API_KEY;
     return undefined;
   });
   mocks.reserveProviderDispatch.mockReturnValue({
     admitted: true as const,
-    attemptId: "voyage-attempt",
+    attemptId: "openrouter-attempt",
     authorityId: "local"
   });
 });
 
-describe("Voyage LOCAL dispatch reservation keeps a real cost estimate (daily cost-cap fuse)", () => {
-  it("reserves the embed dispatch with a real, non-zero Voyage cost estimate", async () => {
+describe("OpenRouter LOCAL dispatch reservation keeps a real cost estimate (daily cost-cap fuse)", () => {
+  it("reserves the embed dispatch with a real, non-zero OpenRouter cost estimate", async () => {
     mocks.listIndexes.mockResolvedValue({ indexes: [] });
     mocks.createIndex.mockResolvedValue(undefined);
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
@@ -116,26 +118,26 @@ describe("Voyage LOCAL dispatch reservation keeps a real cost estimate (daily co
     ]);
 
     expect(mocks.reserveProviderDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      provider: "voyage"
+      provider: "openrouter"
     }));
     const call = mocks.reserveProviderDispatch.mock.calls.find(
-      ([input]) => input.provider === "voyage"
+      ([input]) => input.provider === "openrouter"
     );
     expect(call).toBeDefined();
     const [input] = call!;
-    // Must be a real cost estimate (matching estimateVoyageDispatchCost/estimateRagCost's pricing
+    // Must be a real cost estimate (matching estimateRagDispatchCost/estimateRagCost's pricing
     // table), not the flat 0 that would silently disable reserveProviderDispatch's
     // maxEstimatedCostUsdPer24h fuse.
     expect(typeof input.estimatedCostUsd).toBe("number");
     expect(input.estimatedCostUsd).toBeGreaterThan(0);
   });
 
-  it("reserves the rerank dispatch with a real, non-zero Voyage cost estimate", async () => {
+  it("reserves the rerank dispatch with a real, non-zero OpenRouter cost estimate", async () => {
     mocks.rerank.mockResolvedValue({ data: [{ index: 0, relevanceScore: 0.9 }] });
     const { rerankMatches } = await import("../src/lib/vector-db");
     const voyage = { rerank: mocks.rerank } as any;
 
-    // rerankMatches short-circuits (no dispatch) for a single match — needs ≥2 to reach Voyage.
+    // rerankMatches short-circuits (no dispatch) for a single match — needs ≥2 to reach OpenRouter.
     await rerankMatches(
       voyage,
       "AAPL guidance",
@@ -147,10 +149,10 @@ describe("Voyage LOCAL dispatch reservation keeps a real cost estimate (daily co
     );
 
     expect(mocks.reserveProviderDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      provider: "voyage"
+      provider: "openrouter"
     }));
     const call = mocks.reserveProviderDispatch.mock.calls.find(
-      ([input]) => input.provider === "voyage"
+      ([input]) => input.provider === "openrouter"
     );
     expect(call).toBeDefined();
     const [input] = call!;

@@ -33,7 +33,7 @@ name: Sentry CI Report
 #   Cleanup Actions Caches   -> "5 3 * * *"   (cleanup-caches.yml)
 #   Effort Issues Sync       -> "12 6 * * *"  (effort-issues-sync.yml)
 #   Security                 -> "41 10 * * 1" (security.yml)
-#   Playwright Smoke         -> "17 9 * * 1"  (e2e.yml)
+#   Playwright Smoke         -> "17 9 * * *"  (e2e.yml nightly)
 #   Shared package pin check -> "0 13 * * 1"  (shared-package-pin-check.yml)
 
 on:
@@ -93,5 +93,11 @@ jobs:
           WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}
           WORKFLOW_ACTOR: ${{ github.event.workflow_run.actor.login }}
           WORKFLOW_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: python3 scripts/sentry-ci-report.py
+
+      - name: Disable sparse checkout (prevent poisoning self-hosted runner workspace)
+        if: always()
+        shell: bash
+        run: |
+          git sparse-checkout disable || true

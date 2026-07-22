@@ -4,14 +4,16 @@
 // (sec8k.ts). The 8-K path writes 6-line summaries; this path chunks and embeds the full risk
 // sections, MD&A, and financial notes for RAG-grounded reasoning.
 //
-// KEY DESIGN DECISIONS (owner-resolved 2026-06-21):
-//  • Incremental ingest only: 1 filing per scheduler tick on free tier (VECTOR_EMBED_BATCH_DELAY_MS > 5000).
+// KEY DESIGN DECISIONS (owner-resolved 2026-06-21; gate made provider-aware 2026-07-19):
+//  • Incremental ingest only: 1 filing per scheduler tick on free tier (Voyage, unpaid key).
 //  • Recency window: 1 most-recent 10-K + 2 most-recent 10-Qs per symbol.
 //  • De-dup: ingested_accessions (accession + doc_type) is the sole gate — never re-embed.
 //  • All corpus writes use userId='local' (cleanMetadata → scope:'shared', app-funded).
 //  • CIK map: reused from sec8k.ts loadCikMap (named export).
-//  • Gate: only ingest bodies when VECTOR_EMBED_BATCH_DELAY_MS ≤ 5000 (paid-key signal).
-//    Free-tier keeps the existing 8-K-summary path UNCHANGED and skips body ingest.
+//  • Gate: paid-tier cap applies whenever the active embedding provider is openrouter/siliconflow
+//    (their rate limits are per-request, not the Voyage free-tier trickle this gate was written
+//    for) OR the legacy VECTOR_EMBED_BATCH_DELAY_MS ≤ 5000 signal is set for a paid Voyage key.
+//    Free-tier Voyage keeps the existing 8-K-summary path UNCHANGED and skips body ingest.
 //  • Errors: surface via returned error field and audit log — never swallowed silently.
 
 import {
@@ -33,6 +35,7 @@ import {
   type OperationLeaseClaim
 } from "../operation-lease";
 import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
+import { activeEmbeddingProvider } from "../vector-db";
 import { loadCikMap } from "./sec8k";
 import { parseFilingHtml } from "./sec-parser";
 import * as fs from "fs";
@@ -575,8 +578,16 @@ export async function ingestFiling(
 
 // ── Scheduler-facing refresh ─────────────────────────────────────────────────
 
-/** Whether the free-tier cap applies (VECTOR_EMBED_BATCH_DELAY_MS > 5000 = free/default). */
+/**
+ * Whether the free-tier cap applies. Provider-aware (2026-07-19): openrouter/siliconflow
+ * (bge-m3) are rate-limited per-request, not by the Voyage free-tier trickle this gate was
+ * originally written for, so they're always treated as paid-tier regardless of
+ * VECTOR_EMBED_BATCH_DELAY_MS — a Voyage-pricing knob nobody sets when migrating providers.
+ * Only when the active provider is voyage (the default) does the legacy env-var heuristic
+ * (VECTOR_EMBED_BATCH_DELAY_MS > 5000 = free/default) still apply.
+ */
 function isFreeTier(): boolean {
+  if (activeEmbeddingProvider("local") !== "voyage") return false;
   const delay = Number(process.env.VECTOR_EMBED_BATCH_DELAY_MS ?? 21_000);
   return !Number.isFinite(delay) || delay > PAID_KEY_THRESHOLD_MS;
 }

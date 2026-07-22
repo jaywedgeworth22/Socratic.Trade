@@ -15,22 +15,223 @@
 Rollout: `docs/rollouts/2026-07-21-fleet-watchdog-disk-followups.md`.
 
 ## 2026-07-20 — GROK4 multi-wave Wave A (+C partial) on `grok/multi-wave-a-onward`
+## 2026-07-22 — PR #1888 effort-log correction
 
-Owner-directed after multi-expert review. **Wave A:** strategy runs that skip for market/broker/budget
-finish as `status: "skipped"` (not green completed); early LLM budget admission before scan;
-Usage-Monitor enforce prefers `openrouter` under universal routing; SiliconFlow bge-m3 embed price
-10× fix; paper = broker-mediated (no "simulated"); first-run Needs-attention setup; circuit-breaker
-null-byte cleaned. **Wave C partial:** add-to-loser uses scan mark; short/cover UI labels; synthetic
-short trail from `shortStopLossPct`; brackets honor shortStopLossPct. Pushover already supported
-(`NOTIFY_PUSH_PROVIDER=pushover` + `PUSHOVER_APP_TOKEN`). Review:
-`docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md`. Rollout:
-`docs/rollouts/2026-07-20-grok4-wave-a-trust-spend-paper.md`. **Next:** Wave B bge re-embed + RAG
-expansion/summarization; coach plain-English doctrine ingest; Alpaca cover broker-held stops.
+Corrected the stale duplicate effort row in `docs/EFFORT-LOG.md`: PR #1886 is merged, and the
+active middleware follow-up is PR #1888 in the current row. No product or deployment state changed.
+
+## 2026-07-22 — Mobile auth exchange CSRF follow-up (PR #1888)
+
+The unauthenticated native exchange path now still passes the middleware same-origin CSRF guard;
+only the one-time code plus device verifier bypasses session identity. Added a cross-site rejection
+regression and refreshed the required handoff docs. Rollout: `docs/rollouts/2026-07-22-mobile-auth-exchange-csrf.md`.
+## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
+
+The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
+temporary SHA suffix created a new concurrency group for every push, so `cancel-in-progress:
+false` could not collapse duplicate pending runs and the self-hosted pool accumulated a large
+queue. The non-cancelling policy remains: an active verify is preserved and only the newest
+pending run per ref remains eligible. Added a regression to `test/ci-workflow-queue-safety.test.ts`.
+Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+
+Review follow-up: moved the CI effort row under the `## In Progress` bucket so the effort-issues
+sync parser includes it. Focused workflow-safety tests remain green; hosted verification is still
+running on the pre-follow-up commit and will be replaced once this documentation-only fix lands.
+
+## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
+
+Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
+## 2026-07-21 -- ST PR queue stuck for days: CI root-cause fixes (GROK, `monet/ci-runner-and-queue-fixes`)
+
+PRs were stuck ~2-3 days primarily because (1) **cancel-in-progress thrash** killed nearly every
+verify (18/20 recent CI cancelled), and (2) **Security/gitleaks + pin-check + smoke** targeted the
+**offline `trading-live` Mac**, so those checks never finished while the Coolify `socratic-ci` pool
+ran only suite jobs. Fixes: remove every workflow target for `trading-live`, with PR code on
+`socratic-ci` and trusted failure reporting on `socratic-deploy`; stop Playwright Smoke on every
+PR (main/nightly/manual only); preserve the active CI run while GitHub collapses superseded
+pending runs to the newest head. The first durable local gate also exposed a synthetic production
+enrichment fallback, cross-side bracket authorization, and stale/flaky outcome, budget, and
+notification assertions; this branch now fixes the production behavior and focused tests.
+Conflicts/comments were not the multi-day bottleneck.
+Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
+
+## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
+
+Purged the Voyage AI SDK and its dependencies, standardizing the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Dynamic imports and test-only shims maintain test suite compatibility while completely isolating Voyage from production. All 4,898 tests and the production Next.js build are fully green. Rollout: `docs/rollouts/2026-07-21-voyage-ai-purge.md`.
+
+## 2026-07-21 — Mass PR CI Runner Synchronization (Antigravity)
+Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
+# Current Status
+
+## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
+
+Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
+## 2026-07-19 — RAG SEC-filing ingestion throttle: provider-aware gate fix (CLAUDE, branch `claude/rag-ingestion-provider-aware-gate`)
+
+`isFreeTier()` in `src/lib/web-sources/sec-filings.ts` gated the 10-K/10-Q body-ingestion
+per-run cap (1 vs 200 filings) purely off `VECTOR_EMBED_BATCH_DELAY_MS`, a Voyage-pricing-era
+signal. It had no awareness of the `RAG_EMBED_PROVIDER` flip to bge-m3 (openrouter/siliconflow)
+landed earlier this program — so unless someone remembered to also zero out that unrelated env
+var during the provider migration, ingestion stayed silently pinned to 1 filing/run regardless
+of the new provider's real per-request-limited capacity. Fix: `isFreeTier()` now checks
+`activeEmbeddingProvider("local")` first — openrouter/siliconflow are always paid-tier
+unconditionally; only voyage (or unconfigured) falls back to the legacy env-var heuristic.
+New regression test in `test/sec-filings.test.ts` proves the exact failure mode (stale
+free-tier-looking env var + bge-m3 provider -> should NOT cap at 1). No new HTTP integrations,
+no RAPIDAPI_KEY usage — pure gating-logic fix on the existing EDGAR-direct ingestion path.
+45/45 tests pass. Blocked on landing only by the shared CI runner's queue depth (see
+#agent-sync — fleet-wide capacity issue, not specific to this branch).
+Rollout: `docs/rollouts/2026-07-19-rag-ingestion-provider-aware-gate.md`.
+## 2026-07-19 — Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier metadata (CLAUDE, branch `claude/usage-compliance-st`)
+
+Per `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2 (MONET-handoff credit). Closed the
+three unmetered paid-call gaps: `market-signals/massive.ts`'s 3 raw fetches now route through
+`fetchWithRetry` (circuit breaker + health rows + call-volume telemetry, `retries: 0` to keep the
+reserve-then-call budget truthful), `rag/query-deconstruct.ts` (gpt-4o-mini) now builds through
+`buildLlmRequestBody` + records `recordLlmUsage`, and `rag/search-fusion.ts`'s
+`fetchAlternativeEmbedding` meters via `meterEmbed`. Threaded the shared classifier enrichment
+(`openrouterRequestEnrichment` from congress-trading-shared v1.10.0, pin bumped `fee9937c`→`904ea96a`)
+into every OpenRouter request: flat `trace` (RESOLVED 2026-07-18 shape — no `metadata` nesting),
+`user` ≤128, fail-open wrapper so enrichment can never break a paid call. OpenRouter generation ids
+captured as `providerRequestId` on pushed telemetry events across all 11 LLM call sites + chat Path B
++ RAG embed/rerank; Voyage/SiliconFlow events carry classifier keys in event `metadata` (pushed-only,
+they bypass OR). Empirical acceptance probe (one $~0.0001 chat call + one embed): enrichment accepted
+(HTTP 200) on BOTH completions and embeddings; `GET /api/v1/generation` returns 200 with `total_cost`/
+`usage`/`cache_discount`/`upstream_inference_cost` + echoed `external_user`/`session_id`. 19 new tests
+(test/usage-compliance-classifier.test.ts) + 246 related existing tests green. PR open for adversarial
+review — NOT merged (auto-deploy). Rollout: `docs/rollouts/2026-07-19-usage-compliance-st-metadata.md`.
+## 2026-07-21 — Mac runner `trading-live-mac` retired & deleted (ANTIGRAVITY, branch `antigravity/openrouter-latest-alias`)
+
+Owner directive: permanently stopped, uninstalled, and deleted self-hosted runner `trading-live-mac` (ID 22 on Socratic.Trade, ID 687 on Congress.Trade). Updated all workflow files in `.github/workflows/` (`ci.yml`, `security.yml`, `cleanup-caches.yml`, `sentry-ci-report.yml`, `_merge-shepherd-impl.yml`, `shared-package-pin-check.yml`, `e2e.yml`, `codex-autofix.yml`, `effort-issues-sync.yml`) to route to `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`. Added explicit binding fleet directive in `AGENTS.md` prohibiting any future use or re-registration of Mac self-hosted runners. Rollout: `docs/rollouts/2026-07-21-retire-mac-runner.md`.
+## 2026-07-20 — CI-load trim: Playwright Smoke off every PR (CLAUDE, worktree `ci-trim-smoke`, branch `claude/ci-trim-smoke-on-prs`)
+
+Owner-approved CI-load reduction ("trim smoke AND add one runner" — this covers ONLY the smoke
+trim; adding a runner is separate, untouched work). The repo's single self-hosted `socratic-ci`
+runner was backlogged 71 queued runs, 25 (~35%) of them Playwright Smoke PR runs; smoke is also
+documented as flaky. `.github/workflows/e2e.yml` triggers changed from `pull_request` +
+`merge_group` + `push: main` + weekly `schedule` to `push: main` + nightly `schedule` (was
+weekly `17 9 * * 1`, now `17 9 * * *`) + `workflow_dispatch`. Verified live against both gate
+mechanisms (`gh api repos/.../rulesets/17945518` → required checks = `[verify]` only; `gh api
+repos/.../branches/main/protection` → required contexts = `[verify, gitleaks, check-pin]` only)
+that `smoke` is NOT a required status check and no GitHub merge queue is configured (so
+`merge_group` was already inert) — gating it off PRs cannot strand a required check or block
+merges, so no fake-success gate-job shim was needed. The `classify`/docs-only fast-path job body
+in `e2e.yml` was left in place (dormant, not deleted) so restoring PR coverage later is a
+one-line trigger re-add. Verification: YAML parses clean via both `python3 -c "import
+yaml..."` and Node's `js-yaml`; no source code changed so the full lint/tsc/test/build gate was
+not run locally for this change (PR's own `ci.yml` `verify` check covers it). Rollout:
+`docs/rollouts/2026-07-20-ci-trim-smoke.md`.
+## 2026-07-20 — Corpus re-embed scoped-run purge gate fix (CURSOR, branch `cursor/critical-bug-management-0770`)
+
+Hourly critical-bug sweep found a concrete RAG data-loss path in `src/lib/rag/corpus-reembed.ts`:
+an admin symbol-scoped re-embed such as `{ "docTypes": ["sec-filings"], "symbols": ["AAPL"] }`
+could mark the whole docType `completedForEmbedRevision`; the separate `purge-legacy` action then
+trusted that stamp and would delete every legacy vector for the docType even though only the scoped
+symbol was backfilled into the active bge-m3 space. The fix keeps scoped runs resumable but withholds
+the full-corpus completion stamp, so purge remains blocked until an unscoped docType run completes.
+Added a focused regression in `test/corpus-reembed.test.ts`. Verification passed:
+`npm run lint`, `npx tsc --noEmit`, `npm test` (420 files / 4,901 tests), and
+`npm run build`. Rollout:
+`docs/rollouts/2026-07-20-corpus-reembed-scoped-purge-gate.md`.
+## 2026-07-21 — Stop placement intent must require authoritative absence before retry (CURSOR, branch `cursor/critical-bug-management-8edd`)
+
+High-severity bug-finding automation found a money-path regression in the 2026-07-18 broker
+protective-stop intent lane: after a timeout/crash following broker acceptance, the next reconcile
+cleared the durable intent and placed a fresh stop whenever `getEquityOrders` returned successfully
+without the client ref. That is only safe for gateways whose order list is authoritative for
+recently-terminal orders. Robinhood-style/non-authoritative lists can omit accepted/filled/aged-out
+orders, so the old path could place a second full-size sell stop for the same shares.
+
+Fix in progress: `reconcileBrokerProtectiveStops` now clears absent intents only when
+`gateway.ordersListIncludesTerminal === true`; otherwise it keeps the intent and skips fresh
+placement for that symbol. Focused tests cover non-authoritative absence (no duplicate placement)
+and authoritative absence (fresh retry allowed). Rollout:
+`docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`. Verification: focused
+protective-stop suite, affected synthetic-stop suite, lint, TypeScript, full Vitest (420 files /
+4,901 tests), and production build all passed.
+## 2026-07-21 — Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **iOS Google & GitHub Sign-In**: Used `ASWebAuthenticationSession` to pop a secure browser in-app and authenticate via the Next.js `socratictrade.com` backend, injecting the valid JWT into the native `HTTPCookieStorage` for seamless API usage.
+2. **Backend Authentication Token Exchange**: Added a new route at `app/api/mobile/auth-redirect/route.ts` that intercepts the Auth.js callback and natively redirects `socratictrade://` with the signed session JWT back to iOS.
+3. **Implicit Web Apple Sign-In support**: Web is fully set up, just awaiting the owner to configure `AUTH_APPLE_ID` and `AUTH_APPLE_SECRET`.
+4. **Verification**: Generated `SocraticTrade.xcodeproj` via `xcodegen` and successfully passed all Swift compilation and validation steps in `xcodebuild` without error.
+5. Rollout: `docs/rollouts/2026-07-21-unified-authentication.md`.
+
+## 2026-07-21 — Fix CI workflow package-lock.json dependency & Apple Sign-In audience (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **Root cause of 38 stuck PRs resolved**: Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` where `cache: npm` and `npm ci` were failing because `package-lock.json` is untracked/gitignored in Socratic.Trade. Updated setup steps to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`.
+2. **Apple Sign-In client ID fix**: Corrected hardcoded fallback audience in `app/api/mobile/auth-redirect/route.ts` with `await cookies()` for Next.js 15+ compatibility.
+3. Rollout: `docs/rollouts/2026-07-21-ci-package-lock-and-pr-unblock.md`.
+
+## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
+
+All four owner-linked handoff docs executed/dispositioned: missing model-availability rollout
+authored as a stamped reconstruction (underlying work verified landed via #1703-#1737);
+bge-m3 corpus re-embed verified INCOMPLETE (legacy 8,688 vs managed 1,418 vectors; voyage
+space intact) with the gating `claude/corpus-reembed-hardening` branch found unpushed and
+landed (PR auto-merge armed — 2026-07-18 fleet hold lifts on merge+deploy); AG's concurrent
+"prod reindex triggered" flagged as a hold conflict in #agent-sync; PRs #1771/#1773/#1774
+shepherded (Codex threads triaged, 2 real #1773 findings fixed via `b3f05425`); dual-workspace
+OpenRouter MCP OAuth verified broken (both on Socratic workspace — owner re-auth needed);
+alpha-vantage health red confirmed deliberate (deregistered lane, not a dead key). Owner
+ruling codified fleet-wide: OpenRouter MCP is research-only. Details:
+`docs/rollouts/2026-07-19-four-handoff-conquest.md`.
+## 2026-07-19 — Handoff: CLAUDE seat -> Antigravity (owner-directed)
+
+Full session handoff note: `docs/rollouts/2026-07-19-claude-to-antigravity-handoff.md`. Short
+version: PR queue cleared, MCP servers verified, disk-janitor upgraded (worktree retirement was
+silently broken for months — fixed). One PR still in-flight (**#1775**, `agent/ag-reindex-bge-m3`
+— check its state before touching it, a CLAUDE-seat background agent may still be shepherding it).
+Two owner-blocked items: Coolify API token is dead (401s), and the prod deploy pipeline is wedged
+(`main` hasn't deployed in hours; prod itself is healthy, this only blocks *new* code). Read the
+rollout note before starting new work in this repo.
+## 2026-07-21 — CI Runner Migration to ubuntu-latest (ANTIGRAVITY, branch `agent/antigravity-ci-fix`)
+
+Migrated all CI workflows back to `ubuntu-latest` from the self-hosted `trading-live` runner. The Mac runner environment was corrupted after the failure of the Hetzner runner, leading to broken CI across `main` due to `setup-node` lock file errors. Moving to `ubuntu-latest` restores a stable CI baseline on GitHub-hosted infrastructure so that pending PRs can be unblocked. Rollout: `docs/rollouts/2026-07-21-ci-runner-migration.md`.
+## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
+
+Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
+`0.00001 / 10` (= 0.000001), 10x smaller than its own comment / the parallel confirmed OpenRouter
+`baai/bge-m3` rate (0.00001 = $0.01/1M tokens). Undercounted SiliconFlow bge-m3 embed spend in
+`rag_usage.cost_est_usd` + the $/day dispatch fuse whenever SiliconFlow is the active embed provider.
+Removed the `/ 10`; strengthened the SiliconFlow embed test to pin the exact cost (was `> 0` only) —
+regression proven (buggy value fails the pinned assertion). No live impact yet: OpenRouter, not
+SiliconFlow, is prod's active embed provider since the 2026-07-18 bge-m3 flip. tsc/targeted-tests/lint
+green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`.
 ## 2026-07-20 — OpenRouter UptimeRobot low-credit threshold $10 → $3 (GROK, branch `monet/openrouter-low-credit-threshold-3`)
 
 Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
 
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
+## 2026-07-19 — PR #1776 review-thread closeout: all 4 codex-connector findings fixed (CLAUDE, branch `agent/ag-sec-parser-hardening`)
+
+Closed out the remaining two of four open `chatgpt-codex-connector` P2 review threads on PR #1776
+(a prior same-day session already fixed the other two, commit `8918da21`). All four are now real
+code fixes — none were false positives.
+
+- **`ChunkInput.published_at` made required** (`src/lib/rag/chunk.ts`): the runtime guard already
+  threw when it was missing, but the type stayed optional, so TypeScript callers could compile and
+  crash later. Grepped every `chunkDocument`/`storeDocument` call site (production + ~14 test
+  files) — every one already supplies `published_at`. Tightening the type had **zero** call-site
+  fallout (`npx tsc --noEmit` clean).
+- **Nested table headings now emit real section breaks** (`src/lib/web-sources/sec-parser.ts`,
+  `collectBlocks`): a heading like `Item 1A. Risk Factors` nested as a layout table inside an
+  outer table cell was previously flattened into plain cell prose, so the section never changed
+  and following content stayed misattributed. Heading sub-blocks discovered during nested-table
+  conversion now push directly into the real block stream instead of being folded into cell text.
+  Documented a known bounded limitation (content appearing *before* the nested heading in the same
+  outer table can now attach to the new section instead of the old one) in the rollout note —
+  net improvement over the pre-fix silent-drop behavior in the common case.
+- Verified findings #1 (hidden zero-style regex) and #4 (nested-table pipe escaping) were already
+  correctly fixed by the prior session; also verified #4's "escape newlines too" concern is already
+  structurally covered by the existing `\s+` whitespace collapse on cell text.
+
+Two new tests in `test/sec-parser.test.ts` (16/16 passing, plus 69/69 and 109/109 and 30/30 across
+the broader RAG/SEC ingestion suites — see rollout note for exact commands). `npx tsc --noEmit`
+clean, `npm run lint` 0 errors. Full `npm test`/`npm run build` gate run via `scripts/land.sh`.
+Details: `docs/rollouts/2026-07-19-pr1776-review-thread-closeout.md`.
+
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
 `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note):
@@ -56,35 +257,20 @@ Docs-only; no product code changed. Full local gate (tsc/test/build) run via `sc
 before pushing. Rollout: addendum on
 `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 ## 2026-07-20 — Which-key visibility on Connections + owner ruling: agents never create API keys (CLAUDE, branch `claude/stop-intent-idempotency`)
+## 2026-07-20 — Use OpenRouter "latest" Aliases for Anthropic Models (AG, branch `agent/antigravity/openrouter-latest-alias`)
 
-The per-user key store is write-only, which made "WHICH of several provider keys is serving me?"
-unanswerable — the fallout of agents minting their own OpenRouter keys for both apps instead of
-using the one key the owner had put spend caps on. `GET /api/keys` now returns a `preview` (the
-canonical `maskApiKeyPreview`: first 8 + `...` + last 4) of the key that ACTUALLY resolves, and
-`/console/connections#api-keys` renders it; the operator's env key is previewable to admins only.
-`llm-usage.ts`'s duplicate `maskApiKey` now delegates to the same helper. Owner ruling — **no agent
-on any platform ever creates a provider API key** — codified in `AGENTS.md` "Don't" and broadcast to
-#agent-sync.
+Updated the app to use `~anthropic/claude-sonnet-latest` and `~anthropic/claude-haiku-latest` for OpenRouter models. This fixes the issue where `sonnet 3.5` was unavailable and consolidates usage stats under the `claude-sonnet-latest` bare name logic, fulfilling the owner's request. Rollout note: `docs/rollouts/2026-07-20-openrouter-latest-alias.md`. Next: land.sh, PR, auto-merge.
 
-Diagnosis of the owner's "no credits / API key failed" strategy-run error is in the rollout note:
-prod `/api/health` shows OpenRouter healthy with $33.71 credit, so the leading suspects are the
-app-internal budget caps (Usage-Monitor monthly budget; `llmDailyCostBudgetUsd`) that skip a run
-with `status: "completed"` and therefore surface as an ordinary toast. **Blocker: needs the owner's
-exact on-screen wording (or the admin `/admin/llm-usage` view) to close.** Also confirmed:
-`migrateLocalEnvCredentials` + DB-before-env resolution means a stored key permanently shadows a
-rotated `OPENROUTER_API_KEY`. Next: land.sh, PR, auto-merge. Rollout:
-`docs/rollouts/2026-07-20-which-key-visibility-and-no-new-keys-ruling.md`.
+## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
 
-## 2026-07-18 — Stop-placement intent + atomic recovered fills landing (CLAUDE, branch `claude/stop-intent-idempotency`, lane 6/final of a serial landing train)
-
-Codex findings 5/6 (money path): durable pre-network placement-intent rows (v53) make a lost
-broker reply reconcile-and-adopt instead of double-placing a full-size stop; all recovered
-stop-fill delete+book pairs are one transaction, with a v54 partial UNIQUE index +
-idempotent-replay handling for proposal-less protective-stop fills. Adversarially verified; the
-filled-order fill-loss must-fix (visible-but-terminal WITH fills) applied + regression-tested;
-8 suites / 250 tests green on the merged tree (contains main `b4dd8a54`, #1738 both-mechanisms
-merge). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
-`docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
+Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
+`0.00001 / 10` (= 0.000001), 10x smaller than its own comment / the parallel confirmed OpenRouter
+`baai/bge-m3` rate (0.00001 = $0.01/1M tokens). Undercounted SiliconFlow bge-m3 embed spend in
+`rag_usage.cost_est_usd` + the $/day dispatch fuse whenever SiliconFlow is the active embed provider.
+Removed the `/ 10`; strengthened the SiliconFlow embed test to pin the exact cost (was `> 0` only) —
+regression proven (buggy value fails the pinned assertion). No live impact yet: OpenRouter, not
+SiliconFlow, is prod's active embed provider since the 2026-07-18 bge-m3 flip. tsc/targeted-tests/lint
+green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`.
 ## 2026-07-19 — PR #1773 Codex-review fix pass: 6 real findings fixed, verified individually (CLAUDE, on branch `monet/session-handoff-2026-07-19`)
 
 Owner-directed fix of 6 Codex P2 findings on PR #1773 (docs-only), each checked against live
@@ -124,6 +310,35 @@ completed full-corpus backfill for the 4 re-embed docTypes (`sec-filings`,
 gap and will drift as ingest continues — reread `describe-index-stats` or `GET
 /api/admin/reembed` before relying on the exact counts. Do NOT `purge-legacy` until the bge space
 is independently reverified full. Details: `docs/rollouts/2026-07-19-monet-session-handoff.md`.
+## 2026-07-19 — PR #1775 review-thread closeout: scoped re-embed progress isolation (CLAUDE, on AG's branch `agent/ag-reindex-bge-m3`)
+
+Owner-directed: resolve PR #1775's findings before merging rather than filing them as follow-ups.
+All six unresolved codex-connector threads (1 P1 + 5 P2) are fixed.
+
+The P1 — a `--ticker`-scoped run marking a docType "completed for this embedding revision", which
+authorizes `--purge-legacy` to delete legacy vectors corpus-wide — is real, and two things the
+report missed made it worse: the **admin API route also passes `symbols`** (so the suggested
+CLI-level guard would have left that path open), and the **shared per-docType `watermark`** is not
+symbol-keyed, so a scoped run advances it and a later FULL run silently skips other symbols'
+documents — which the purge then deletes. Both now closed at the library level: symbol-scoped runs
+persist nothing, exactly matching the dry-run contract already enforced in that file. Deliberate
+tradeoff: a scoped run started via the admin API's detached POST is no longer observable through the
+GET progress poll (follow-up filed in the rollout note).
+
+**Ownership correction before merge:** the library fix was removed from this PR — #1777
+(`claude/corpus-reembed-hardening`) already implements it as part of a broader hardening pass,
+independently arriving at the identical mechanism plus a `watermarkEmbedRevision` guard and
+adversarial tests. `src/lib/rag/corpus-reembed.ts` and `test/corpus-reembed.test.ts` are reverted to
+match `main`, so the two PRs no longer conflict. **#1777 is the PR to land for the library fix**;
+this one now carries only the CLI guards.
+
+Plus five CLI fail-fast guards on `scripts/reindex-all.ts` — a script that accepts `--yes` and drives
+destructive, budget-spending work, so a malformed flag must never fall back to a *broader* default.
+
+Verification: 9/9 corpus-reembed tests (2 new regression, one reproducing the exact P1 chain), 2/2
+reindex-all tests, eslint 0 errors, all six guards smoke-tested to exit 1 with the right message.
+Rollout: `docs/rollouts/2026-07-19-reindex-all-review-fixes.md`.
+NEXT: CI green → reply to and resolve the six threads → merge (auto-deploys).
 
 ## 2026-07-18 — OpenRouter credit signal on /api/health for external monitoring (MONET, branch `monet/openrouter-credit-health`)
 
@@ -195,6 +410,11 @@ passes lint (0 errors), TypeScript, 412 Vitest files / 4,837 tests, and the prod
 #1760 auto-merged as `b2f22ccf` while that gate ran; all four threads were then answered and
 resolved, and corrective PR #1761 carries the fixes. Its branch is merged with that exact new main;
 self-hosted checks, corrective merge, and exact production verification remain.
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
+
+Completed the SEC/RAG parser and chunker hardening by resolving outstanding structural and edge-case issues identified in recent parser reviews. Improved deterministic provenance by enforcing valid timestamps, prevented runaway token allocation by bounding maxTokens and tabular row/colspan iterations, handled XBRL structural anomalies securely (preventing NaN/null SQLite poisoning), fixed hidden content extraction poisoning, and secured nested table extraction. Verified via new regression tests in `test/rag-chunk.test.ts`. Full gate green (`npm run lint`, `npx tsc`, `npm test`, `npm run build`). Ready to land.
+
+
 ## 2026-07-18 — Remove tracked lint/verify artifacts from main (MONET, branch `monet/rm-tracked-lint-artifacts`)
 
 Repo-hygiene cleanup. PR #1735 accidentally merged ~9 MB of generated, machine-specific
@@ -2588,6 +2808,11 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 
 ## Current Status
 
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
+
+Completed the SEC/RAG parser and chunker hardening by resolving outstanding structural and edge-case issues identified in recent parser reviews. Improved deterministic provenance by enforcing valid timestamps, prevented runaway token allocation by bounding maxTokens and tabular row/colspan iterations, handled XBRL structural anomalies securely (preventing NaN/null SQLite poisoning), fixed hidden content extraction poisoning, and secured nested table extraction. Verified via new regression tests in `test/rag-chunk.test.ts`. Full gate green (`npm run lint`, `npx tsc`, `npm test`, `npm run build`). Ready to land.
+
+
 - PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, #1589, #1593, #1594, #1604, and #1607 are merged.
   Only draft PR #1586 remains open; it is the default-off FMP/RAG/privacy/account-risk consolidation.
 - #1586 is reconciled with `main@58de276e`. The final hostile-review fixes bind every licensed
@@ -2624,3 +2849,30 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
 - Run the ordered full gate, push #1586 through `scripts/land.sh`, mark the PR ready, resolve hosted
   checks/review, merge it, require zero open PRs, then verify the exact final `main` SHA through production
   health/readiness and Coolify runtime surfaces.
+
+## 2026-07-21 — Switch RAG Default Embedding Provider from Voyage to OpenRouter (BAAI bge-m3)
+Switched the default fallback RAG embedding and rerank provider in `src/lib/vector-db.ts` to OpenRouter using BAAI's `baai/bge-m3` embedding model and Cohere reranker. Updated tests in `test/rag-embed-provider-gate.test.ts` and `test/connection-health-routing.test.ts`.
+## 2026-07-21 — Native iOS mobile-first Phase 1 PR #1859 (CODEX, merged; secure web-auth follow-up #1886)
+
+The isolated iOS lane now has a buildable XcodeGen app/test project and a stable five-tab native
+shell (Home, Proposals, Markets, Activity, Coach). It selectively composes PR #1790's typed HTTP
+errors, frame-correct SSE/reload coalescing, and live-order confirmation while taking only the
+canonical `trade.socratic.app` identity, Sign in with Apple entitlement, and URL scheme from
+#1851; its JWT-in-query authentication and unrelated web/CI churn were rejected. The app decodes
+and presents positions, orders, alerts, daily stats, performance/benchmark/fills, connected
+accounts, market session, and scheduler state with explicit initial-loading, retryable-error,
+empty, refreshing, and stale states. Commands have per-operation busy state, so Stop remains
+available while unrelated work runs. Parent review added stale/readiness command gating, ordered
+snapshot refreshes, durable retry idempotency, a corrected deletion response contract, explicit
+live-account switching confirmation, Red Team/model provenance, and accessibility sizing/layout
+fixes. Review remediation adds read-only deletion preview with final admission fencing, terminal
+command reconciliation, immediate protective-state commands with a final broker-placement state
+re-read, explicit unknown execution-mode rendering, an app icon, and a verifier-bound opaque
+web-auth handoff so Google/GitHub callback URLs do not contain Auth.js session credentials. Release signing remains enabled and automatic for team
+`CC8UTF7ATG`. `ios/project.yml` is canonical; its generated checked-in `.xcodeproj` is kept
+in sync for direct Xcode builds. XcodeGen generation, direct-project, generic and Release simulator builds, and test-target
+`build-for-testing` are green under Xcode 27 beta; no simulator runtimes are installed, so XCTest
+execution is deferred. The only server change aligns the Apple identity-token audience fallback
+with `trade.socratic.app` and has 3/3 focused tests. Targeted Node tests (7/7), TypeScript, ESLint,
+plist/asset validation, and diff check pass. Rollout:
+`docs/rollouts/2026-07-21-native-ios-mobile-first-phase-1.md`.

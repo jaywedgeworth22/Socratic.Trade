@@ -1,5 +1,13 @@
 # 2026-07-18 — Corpus re-embed into the active embedding space (bge-m3 recovery path)
 
+> **2026-07-18 (later) — ADVERSARIAL HARDENING UPDATE.** The first cut of this module (commit
+> `1d206d4a`, absorbed onto `main` via PR #1764 and live in prod) carried three defects found by
+> adversarial verification; the hardening commit on top fixes all three. See the "Adversarial
+> hardening" section below. **Until the hardening lands in prod: do NOT run symbol-scoped
+> re-embeds and do NOT invoke `purge-legacy` at all** (a fleet HOLD to this effect is posted in
+> #agent-sync) — a symbol-scoped run could stamp a completion receipt that unlocks a purge
+> deleting the only copy of un-re-embedded content.
+
 ## URGENT — run-me-now sequencing (read this first)
 
 **Production deployed current `main` this morning with the bge-m3 embed flip LIVE, and prod
@@ -10,7 +18,7 @@ rank bge queries against Voyage vectors — so every dense-retrieval consumer (f
 episodic experience memory, insider/disclosure context) is degraded to sparse/no-match until the
 corpus is backfilled into the new space.
 
-**This branch is the recovery step.** As soon as it lands, the operator sequence is:
+**The recovery sequence — FULL-CORPUS RUNS ONLY (no `symbols` param):**
 
 ```bash
 # 1. Optional but recommended: see scope without spending anything
@@ -18,11 +26,12 @@ curl -X POST https://socratictrade.com/api/admin/reembed \
   -H "x-admin-token: $ADMIN_REINDEX_TOKEN" -H "content-type: application/json" \
   -d '{"dryRun": true}'
 
-# 2. Kick the real run (fire-and-forget; returns immediately)
+# 2. Kick the real run (fire-and-forget; returns immediately). NO symbols param — only a
+#    full-corpus run advances watermarks and (eventually) the completion receipts.
 curl -X POST https://socratictrade.com/api/admin/reembed \
   -H "x-admin-token: $ADMIN_REINDEX_TOKEN" -H "content-type: application/json" -d '{}'
 
-# 3. Poll progress until every docType shows status "completed"
+# 3. Poll progress until every docType shows status "completed" with failed: 0
 curl https://socratictrade.com/api/admin/reembed -H "x-admin-token: $ADMIN_REINDEX_TOKEN"
 ```
 
@@ -31,11 +40,14 @@ Scale expectation: ~8.5k existing vectors in the corpus, so a server-side run is
 `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` 200k — one calendar day of headroom covers the whole
 corpus; the pacing knob that actually dominates wall-clock is `VECTOR_EMBED_BATCH_DELAY_MS`). If a
 run stops with `stopped-budget`, re-POST after the 24h window rolls — the watermark resumes where
-it left off and already-committed content is skipped for free.
+it left off and already-committed content is skipped for free. Symbol-scoped runs are supported
+only as stateless targeted top-ups AFTER the full run completes — they persist no watermarks and
+can never satisfy the purge gate.
 
-**Do NOT purge Voyage vectors yet.** The purge action exists (below) but is deliberately gated on
-per-docType completion receipts, and it is never automatic. Leave the old space in place until the
-new one is verified filled (it's invisible to bge-m3 queries either way; it costs only storage).
+**Purge stays OFF until a full clean run has completed for every covered docType.** The purge
+action (below) is never automatic, requires its confirm token, and refuses unless the CURRENT
+space shows a completed, zero-failure, full-corpus scan per docType. Even then there is no
+urgency: the old space is invisible to bge-m3 queries either way; it costs only storage.
 
 ## Summary
 
@@ -140,6 +152,61 @@ and the deferred item embeds on resume; dry run returns counts with zero embeds/
 persisted state; dry run classifies already-committed current-space content as reused; purge
 refuses on incomplete coverage, on a wrong confirm token, and while Voyage is still active.
 
+## Adversarial hardening (2026-07-18, follow-up commit)
+
+Adversarial verification of `1d206d4a` (already live on main via PR #1764) found three MUST-FIX
+defects, all fixed in the hardening commit. Exploit + fix are proven by
+`test/corpus-reembed-adversarial.test.ts` (originally written to EXHIBIT the bug; assertions now
+inverted to prove the fix).
+
+**MUST-FIX 1 — the purge gate was satisfiable by partial runs.** Exploit: a symbol-scoped bge run
+stamped `completedForEmbedRevision`, unlocking a purge that deleted the ONLY copy of every symbol
+the scoped run never touched. Fixes:
+- Symbol-scoped runs are now fully **stateless**: no watermarks, no cumulative counts, no
+  completion stamps (they'd also have corrupted full-run coverage — a scoped scan's watermark
+  skips unrequested symbols forever). Idempotency for scoped reruns rides on committed-receipt
+  reuse instead.
+- Watermarks are **namespaced by embedding-space revision** (`watermarkEmbedRevision`): a stale
+  watermark from another space is discarded and the corpus rescans. Without this, the NEXT model
+  flip would resume an end-of-corpus watermark, instantly "complete" with zero embeds, and let
+  the purge delete the whole previous corpus (since "legacy" = every non-current space).
+- Counts (incl. `failed`) are **cumulative across the resume chain**, so a failure in run 1 still
+  blocks the purge after run 2 resumes past it. Recovery flow: `{action:"reset-watermarks"}` →
+  fresh full scan (committed content reuses free; failures retry) → gate re-evaluates.
+- The run **aborts on mid-run active-model drift** (checked at every item boundary; status
+  `error`), so a mid-run key change can't silently split one run across two spaces.
+- The purge **retires the purged commits' ledger receipts** in the same operation (commits →
+  `aborted`, `chunk_occurrences` + `vector_document_heads` rows removed, only after the provider
+  delete succeeded per docType). Otherwise drift reports would flag receipt-without-vector ghosts
+  forever, and a voyage flip-back would `reusedCommitted` against deleted vectors.
+- Docs/messages now state the true scope: the purge removes **ALL non-current embedding spaces**
+  for the covered docTypes, not just voyage-finance-2's (the confirm token keeps its historical
+  name for runbook continuity).
+
+**MUST-FIX 2 — identity mismatch with live ingest paths (post-flip double-embedding).**
+- `earningscalls-transcripts`: now byte-identical to the live `ingestCachedTranscript` document
+  INCLUDING the url (which feeds `retrievalMetadataVersion` → the commit id), so backfill and
+  live path dedup onto the same commit in both directions.
+- `sec-filings`: the live whole-document identity (doc_id `ticker:accession:docType`, sections,
+  url) cannot be reconstructed from FTS chunk rows, so instead the backfill **skips any accession
+  the live path already committed into the current space** (probing `vector_ingest_commits` for
+  the live doc_id shape, counted as `reusedInSpace`). The earlier in-code comment claiming
+  same-commit dedup with the live path was wrong and is corrected.
+- `insider-form4`: see MUST-FIX 3 — removed from default docTypes; when explicitly run, its
+  identity remains backfill-specific (the live disclosure path is a differently-shaped
+  `storeContexts` write, flag-gated off by default), documented as an accepted limitation.
+
+**MUST-FIX 3 — insider Form-4 PIT lookahead.** Chosen option: **both** halves of the suggested
+fix. (a) `insider-form4` is dropped from `DEFAULT_CORPUS_REEMBED_DOC_TYPES` (explicit opt-in
+only) until a real filed-at source exists; (b) when explicitly run, availability is stamped at
+`period_of_report + 2 business days` (`insiderForm4AvailabilityFloor`, weekend-aware) — the far
+end of the SEC §16 filing window, so backtests see the vector no earlier than the public could
+have seen the filing. Residual accepted risk: a deadline crossing a market HOLIDAY could make the
+true filing later than the stamp (holidays not modeled); one more reason it's off by default.
+
+Also added: `POST {action:"reset-watermarks", docTypes?}` on the admin route (operator recovery),
+lease-serialized like every other action.
+
 ## Follow-ups / risks
 
 - **Insider Form-4 `filedAt` approximation:** `sec_insider_transactions` has no accepted-at
@@ -157,3 +224,45 @@ refuses on incomplete coverage, on a wrong confirm token, and while Voyage is st
 - The bare FTS join means any historical FTS rows whose accession is missing from `sec_filings`
   still re-embed (form defaults to 10-K, dates fall back) — acceptable; the text + accession are
   what retrieval needs.
+
+## 2026-07-19 review follow-up (CLAUDE): two P1s fixed, one P2 deliberately deferred
+
+Three unresolved `chatgpt-codex-connector` threads on PR #1777 were triaged.
+
+**Fixed — P1 "Reject pre-fix completion stamps".** The purge gate trusted any persisted
+`completedForEmbedRevision`, including a row written *before* this hardening, when a symbol-scoped
+run could still stamp completion. Such a row carries `status: "completed"`, a matching revision, and
+`failed: 0` — satisfying every prior gate condition — while covering only the symbols that one
+scoped run visited. This is not hypothetical: production already runs bge-m3, so a poisoned stamp
+may already exist in the settings table. The gate now additionally requires
+`watermarkEmbedRevision === embedRevision`; that field did not exist pre-hardening, so its absence
+forces one fresh full scan before any purge is authorized. Regression test:
+*"purge refuses a PRE-HARDENING completion stamp (no watermarkEmbedRevision), even though it looks
+complete"* in `test/corpus-reembed-adversarial.test.ts`, which seeds a legacy-shaped progress row
+directly and asserts refusal with zero provider deletes.
+
+**Fixed — P1 "Re-check active revision after vector writes".** The per-item drift guard runs
+*before* each write, so a model flip landing during the **final** item's async write had no later
+boundary to trip: the loop ended normally with `completed: true` and stamped completion naming a
+space the run was no longer writing into. Completion is now stamped only if the active model still
+matches at persist time (`stampCompletion`). Counts and the watermark still persist — they carry
+`watermarkEmbedRevision`, so a later run under a different space discards rather than resumes them —
+and only the delete-authorizing flag is withheld.
+
+**Deferred with cause — P2 "Refuse to retire receipts from another provider authority".** The
+finding is valid: `legacyReceiptsFor` selects by `source` + `embed_revision` only, so after a
+Pinecone key/index authority change the purge would delete ids through the *current* provider and
+retire local receipts for vectors still living in the *old* one. It is **not** fixed here because
+the obvious fix does not work from this module: the write path stamps
+`providerAuthorityForInitKey` (which falls back to a synthetic `fallback|<initKey>` hash when the
+index host is unresolved) while `getCurrentVectorProviderAuthority` uses
+`stableProviderAuthorityForInitKey`, which has no fallback — so the two disagree whenever the
+authority map was populated differently between write and purge. Adding the filter made the
+adversarial purge delete **0 of 2** legitimately-purgeable vectors, i.e. it would silently disable
+the purge rather than harden it. The real fix is to reconcile that fallback-vs-stable asymmetry
+inside `vector-db.ts` (and likely backfill `provider_authority` on existing commits) — a separate
+change with its own blast radius. Recorded in-module at `legacyReceiptsFor`.
+
+**Follow-up (open):** reconcile `providerAuthorityForInitKey` vs `stableProviderAuthorityForInitKey`
+in `vector-db.ts`, then re-apply the authority filter to `legacyReceiptsFor` with coverage for the
+changed-authority case.
