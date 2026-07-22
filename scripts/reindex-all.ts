@@ -20,7 +20,17 @@ function fail(message: string): never {
 }
 
 // Parse CLI arguments
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+// Normalize `--flag=value` to `--flag value` so equals-form CLI usage works (Codex P2 #1775).
+const args: string[] = [];
+for (const a of rawArgs) {
+  if (a.startsWith("--") && a.includes("=") && !a.startsWith("--=")) {
+    const eq = a.indexOf("=");
+    args.push(a.slice(0, eq), a.slice(eq + 1));
+  } else {
+    args.push(a);
+  }
+}
 const isDryRun = args.includes("--dry-run");
 const isPurgeLegacy = args.includes("--purge-legacy");
 const force = args.includes("--force");
