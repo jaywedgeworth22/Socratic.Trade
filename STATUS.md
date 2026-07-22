@@ -38,6 +38,22 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
+## 2026-07-19 — RAG SEC-filing ingestion throttle: provider-aware gate fix (CLAUDE, branch `claude/rag-ingestion-provider-aware-gate`)
+
+`isFreeTier()` in `src/lib/web-sources/sec-filings.ts` gated the 10-K/10-Q body-ingestion
+per-run cap (1 vs 200 filings) purely off `VECTOR_EMBED_BATCH_DELAY_MS`, a Voyage-pricing-era
+signal. It had no awareness of the `RAG_EMBED_PROVIDER` flip to bge-m3 (openrouter/siliconflow)
+landed earlier this program — so unless someone remembered to also zero out that unrelated env
+var during the provider migration, ingestion stayed silently pinned to 1 filing/run regardless
+of the new provider's real per-request-limited capacity. Fix: `isFreeTier()` now checks
+`activeEmbeddingProvider("local")` first — openrouter/siliconflow are always paid-tier
+unconditionally; only voyage (or unconfigured) falls back to the legacy env-var heuristic.
+New regression test in `test/sec-filings.test.ts` proves the exact failure mode (stale
+free-tier-looking env var + bge-m3 provider -> should NOT cap at 1). No new HTTP integrations,
+no RAPIDAPI_KEY usage — pure gating-logic fix on the existing EDGAR-direct ingestion path.
+45/45 tests pass. Blocked on landing only by the shared CI runner's queue depth (see
+#agent-sync — fleet-wide capacity issue, not specific to this branch).
+Rollout: `docs/rollouts/2026-07-19-rag-ingestion-provider-aware-gate.md`.
 ## 2026-07-19 — Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier metadata (CLAUDE, branch `claude/usage-compliance-st`)
 
 Per `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2 (MONET-handoff credit). Closed the
