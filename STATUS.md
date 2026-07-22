@@ -41,6 +41,24 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
+## 2026-07-19 — Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier metadata (CLAUDE, branch `claude/usage-compliance-st`)
+
+Per `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2 (MONET-handoff credit). Closed the
+three unmetered paid-call gaps: `market-signals/massive.ts`'s 3 raw fetches now route through
+`fetchWithRetry` (circuit breaker + health rows + call-volume telemetry, `retries: 0` to keep the
+reserve-then-call budget truthful), `rag/query-deconstruct.ts` (gpt-4o-mini) now builds through
+`buildLlmRequestBody` + records `recordLlmUsage`, and `rag/search-fusion.ts`'s
+`fetchAlternativeEmbedding` meters via `meterEmbed`. Threaded the shared classifier enrichment
+(`openrouterRequestEnrichment` from congress-trading-shared v1.10.0, pin bumped `fee9937c`→`904ea96a`)
+into every OpenRouter request: flat `trace` (RESOLVED 2026-07-18 shape — no `metadata` nesting),
+`user` ≤128, fail-open wrapper so enrichment can never break a paid call. OpenRouter generation ids
+captured as `providerRequestId` on pushed telemetry events across all 11 LLM call sites + chat Path B
++ RAG embed/rerank; Voyage/SiliconFlow events carry classifier keys in event `metadata` (pushed-only,
+they bypass OR). Empirical acceptance probe (one $~0.0001 chat call + one embed): enrichment accepted
+(HTTP 200) on BOTH completions and embeddings; `GET /api/v1/generation` returns 200 with `total_cost`/
+`usage`/`cache_discount`/`upstream_inference_cost` + echoed `external_user`/`session_id`. 19 new tests
+(test/usage-compliance-classifier.test.ts) + 246 related existing tests green. PR open for adversarial
+review — NOT merged (auto-deploy). Rollout: `docs/rollouts/2026-07-19-usage-compliance-st-metadata.md`.
 ## 2026-07-21 — Mac runner `trading-live-mac` retired & deleted (ANTIGRAVITY, branch `antigravity/openrouter-latest-alias`)
 
 Owner directive: permanently stopped, uninstalled, and deleted self-hosted runner `trading-live-mac` (ID 22 on Socratic.Trade, ID 687 on Congress.Trade). Updated all workflow files in `.github/workflows/` (`ci.yml`, `security.yml`, `cleanup-caches.yml`, `sentry-ci-report.yml`, `_merge-shepherd-impl.yml`, `shared-package-pin-check.yml`, `e2e.yml`, `codex-autofix.yml`, `effort-issues-sync.yml`) to route to `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`. Added explicit binding fleet directive in `AGENTS.md` prohibiting any future use or re-registration of Mac self-hosted runners. Rollout: `docs/rollouts/2026-07-21-retire-mac-runner.md`.

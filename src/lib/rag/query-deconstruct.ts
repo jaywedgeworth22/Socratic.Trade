@@ -1,9 +1,19 @@
 import { resolveLlmEndpoint } from "../llm-provider";
-import { llmAuthHeaders } from "../llm-call";
+import { buildLlmRequestBody, extractLlmText, llmAuthHeaders } from "../llm-call";
+import { extractLlmUsage, providerRequestIdFromPayload, recordLlmUsage } from "../llm-usage";
+import { LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS } from "../llm-request";
+
+const SYSTEM_PROMPT =
+  "You are a financial analyst. Decompose a complex search query into 2 to 3 simple, specific sub-queries (each targeted at specific parts of a financial filing, like balance sheets, income statements, or footnotes). Respond ONLY with a JSON object containing a 'queries' array of strings. Example: { \"queries\": [\"subquery 1\", \"subquery 2\"] }";
 
 /**
  * Decomposes a single complex user query into 2-3 specific, targeted sub-queries.
  * Falls back to a heuristic conjunction split on any failure.
+ *
+ * Metered like every other paid LLM path (usage-compliance WS1 gap #2): the request body is built
+ * through `buildLlmRequestBody` (which also injects the OpenRouter classifier enrichment when the
+ * endpoint routes there), and each successful response records a `recordLlmUsage` row mirroring
+ * `memory/salience-llm.ts` — including the OpenRouter generation id as `providerRequestId`.
  */
 export async function deconstructQuery(query: string, userId: string = "local"): Promise<string[]> {
   const originalClean = query.trim();
@@ -20,35 +30,51 @@ export async function deconstructQuery(query: string, userId: string = "local"):
       return fallbackDeconstruct(originalClean);
     }
 
+    const body = buildLlmRequestBody(
+      { provider: endpoint.provider, transport: endpoint.transport },
+      {
+        model: endpoint.model,
+        systemPrompt: SYSTEM_PROMPT,
+        userContent: `Decompose this query: "${originalClean}"`,
+        openAiJsonObject: true,
+        maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.queryDeconstruct,
+        userId,
+        keyRef: endpoint.keyRef,
+        service: "rag",
+        feature: "rag-query-deconstruct"
+      }
+    );
+
     const response = await fetch(endpoint.url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...llmAuthHeaders({ provider: endpoint.provider, key: endpoint.key })
-      },
-      body: JSON.stringify({
-        model: endpoint.model,
-        messages: [
-          {
-            role: "system",
-            content: "You are a financial analyst. Decompose a complex search query into 2 to 3 simple, specific sub-queries (each targeted at specific parts of a financial filing, like balance sheets, income statements, or footnotes). Respond ONLY with a JSON object containing a 'queries' array of strings. Example: { \"queries\": [\"subquery 1\", \"subquery 2\"] }"
-          },
-          {
-            role: "user",
-            content: `Decompose this query: "${originalClean}"`
-          }
-        ],
-        response_format: { type: "json_object" }
-      })
+      headers: llmAuthHeaders(endpoint),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS)
     });
 
     if (response.ok) {
       const result = await response.json();
-      const text = result.choices?.[0]?.message?.content || "";
+      // Usage ledger + external telemetry (owner directive: every paid LLM call is metered).
+      // recordLlmUsage never throws, but keep it isolated so accounting can never break retrieval.
+      try {
+        recordLlmUsage({
+          userId,
+          provider: endpoint.provider,
+          model: endpoint.model,
+          context: "rag-query-deconstruct",
+          keySource: endpoint.keySource,
+          keyRef: endpoint.keyRef,
+          providerRequestId: providerRequestIdFromPayload(endpoint.provider, result),
+          ...extractLlmUsage(result)
+        });
+      } catch {
+        /* usage ledger is best-effort; never break query deconstruction */
+      }
+      const text = extractLlmText(result) || "";
       const parsed = JSON.parse(text);
       const queries = Array.isArray(parsed) ? parsed : (parsed.queries || parsed.subQueries || []);
       if (Array.isArray(queries) && queries.length > 0) {
-        return queries.map((q: any) => String(q).trim()).filter(Boolean);
+        return queries.map((q: unknown) => String(q).trim()).filter(Boolean);
       }
     }
   } catch (err) {
