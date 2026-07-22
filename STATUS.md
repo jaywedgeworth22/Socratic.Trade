@@ -3,6 +3,19 @@
 Designed and implemented Layer 3 (Derived Abstracts & Summaries) of the RAG data expansion architecture. Added database migration 55 (`document_abstracts`), created `src/lib/db-document-abstracts.ts` for CRUD operations, implemented `src/lib/rag/document-summarizer.ts` for generating cited abstracts linking back to Layer 1 raw `source_chunk_ids` and embedding them into the vector store, and added full unit test coverage in `test/document-summarizer.test.ts`.
 # Current Status
 
+## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
+
+The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
+temporary SHA suffix created a new concurrency group for every push, so `cancel-in-progress:
+false` could not collapse duplicate pending runs and the self-hosted pool accumulated a large
+queue. The non-cancelling policy remains: an active verify is preserved and only the newest
+pending run per ref remains eligible. Added a regression to `test/ci-workflow-queue-safety.test.ts`.
+Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+
+Review follow-up: moved the CI effort row under the `## In Progress` bucket so the effort-issues
+sync parser includes it. Focused workflow-safety tests remain green; hosted verification is still
+running on the pre-follow-up commit and will be replaced once this documentation-only fix lands.
+
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
 Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
