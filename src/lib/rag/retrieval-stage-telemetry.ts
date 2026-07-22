@@ -6,6 +6,7 @@ export type RetrievalStage =
   | "dense_query"
   | "lexical_query"
   | "fusion"
+  | "score_floor"
   | "rerank"
   | "asof_filter"
   | "relevance_floor"

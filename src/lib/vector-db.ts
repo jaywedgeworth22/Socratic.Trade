@@ -8,6 +8,10 @@ import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocu
 import { EARNINGSCALLS_TRANSCRIPT_SOURCE, earningsCallsTranscriptsEnabled } from "./earningscalls-gate";
 import { envFlagOn } from "./rag/env-flag";
 import { fuseHybrid, rrfFuse } from "./rag/hybrid";
+import { searchCorpusWideLexicalCandidates, type CorpusWideLexicalCandidate } from "./rag/corpus-wide-lexical";
+import { fuseDenseAndLexicalRecall, hasLexicalRecall } from "./rag/recall-fusion";
+import { adaptiveRerankEnabled, planRerank, resolveRerankRoute, type RagRerankProvider } from "./rag/rerank-policy";
+import { RetrievalStageTrace, type RetrievalTraceSnapshot } from "./rag/retrieval-stage-telemetry";
 import { dedupeSimilar, type DedupeSimilarReport } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
@@ -152,7 +156,7 @@ export function activeEmbeddingProvider(userId: string = "local"): RagEmbedReran
 }
 
 export function activeRerankProvider(userId: string = "local"): RagEmbedRerankProvider {
-  return resolveActiveRagProvider(userId);
+  return activeRerankRoute(userId).provider;
 }
 
 export function activeEmbeddingModel(userId: string = "local"): string {
@@ -186,14 +190,20 @@ function buildEmbedSpaceFilter(userId: string): Record<string, unknown> {
 }
 
 export function activeRerankModel(userId: string = "local"): string {
-  const provider = activeRerankProvider(userId);
-  if (provider === "siliconflow") {
-    return process.env.SILICONFLOW_RERANK_MODEL || "Qwen/Qwen3-Reranker-8B";
-  }
-  if (provider === ("voyage" as any)) {
-    return process.env.VOYAGE_RERANK_MODEL || "rerank-2.5";
-  }
-  return process.env.OPENROUTER_RERANK_MODEL || "cohere/rerank-v3.5";
+  return activeRerankRoute(userId).model;
+}
+
+function providerCredentialAvailable(provider: RagRerankProvider, userId: string): boolean {
+  const key = resolveApiKey(provider, userId);
+  return Boolean(key && !key.startsWith("mock"));
+}
+
+function activeRerankRoute(userId: string, allowMockClient = false) {
+  const embeddingProvider = activeEmbeddingProvider(userId);
+  return resolveRerankRoute({
+    embeddingProvider: embeddingProvider === "siliconflow" ? "siliconflow" : "openrouter",
+    hasCredential: (provider) => allowMockClient || providerCredentialAvailable(provider, userId)
+  });
 }
 /**
  * Embedding representation revision (2026-07-04 RAG quick-wins, builds on the composite review's
@@ -542,10 +552,8 @@ function erasureVerifyDelayMs(): number {
   );
 }
 
-// Voyage reranking: the single biggest retrieval-quality lever. We over-fetch from Pinecone (cheap
-// cosine recall) then have Voyage's cross-encoder reranker reorder by true query relevance. ON by
-// default; set VECTOR_ENABLE_RERANK=off to disable. Fails safe to cosine order on any error.
-const DEFAULT_RERANK_MODEL = "Qwen/Qwen3-Reranker-8B";
+// Cross-encoder reranking is the largest post-recall quality lever. It remains opt-out for backward
+// compatibility, while route/model selection and candidate depth are resolved independently.
 function rerankEnabled(): boolean {
   // Rerank is opt-OUT (default true), unlike every other RAG flag which is opt-in (default
   // false) — so this can't route through envFlagOn's truthy-set/default_ shape directly. Keep
@@ -554,25 +562,12 @@ function rerankEnabled(): boolean {
   const v = String(process.env.VECTOR_ENABLE_RERANK ?? "true").trim().toLowerCase();
   return !["0", "false", "off", "no"].includes(v);
 }
-function rerankModel(): string {
-  return process.env.VOYAGE_RERANK_MODEL || DEFAULT_RERANK_MODEL;
-}
 /** How many candidates to pull from Pinecone before as-of filtering (non-rerank path) down to `limit`. */
 function overFetchK(limit: number): number {
   return Math.min(Math.max(limit * 5, limit), 50);
 }
 
-/**
- * Rerank-path candidate-pool cap (2026-07-04 RAG quick-wins, composite review "raise the rerank
- * candidate-pool cap"). `overFetchK` hard-capped every over-fetch path (rerank, hybrid, as-of) at
- * 50, but `rerank-2.5` can cross-encode hundreds-to-1000 candidates cheaply — for a mega-cap with a
- * full 10-K plus many 8-Ks, the flip-the-decision chunk at dense rank 51+ never reached the
- * reranker. Env-tunable via VECTOR_RERANK_OVERFETCH_K (default 150); ONLY widens the pool actually
- * handed to reranking. The non-rerank overfetch paths (as-of-only, hybrid-without-rerank) keep the
- * existing modest `overFetchK` cap — this does not change their Pinecone topK.
- */
-const DEFAULT_RERANK_OVERFETCH_K = 150;
-const VOYAGE_RERANK_MAX_DOCUMENTS = 1_000;
+const RERANK_MAX_DOCUMENTS = 1_000;
 
 interface CandidatePoolObservability {
   providerCandidateCount: number;
@@ -580,11 +575,6 @@ interface CandidatePoolObservability {
   receiptEligibleCount: number;
   receiptCrowdingDegraded: boolean;
   tierByCandidateIdentity: Map<any, number>;
-}
-
-function rerankOverFetchK(limit: number): number {
-  const cap = Math.floor(numericEnv("VECTOR_RERANK_OVERFETCH_K", DEFAULT_RERANK_OVERFETCH_K, 1));
-  return Math.max(limit, cap);
 }
 
 function uniqueTierCandidateCount(tiers: any[][]): number {
@@ -667,6 +657,15 @@ function boundedTierCandidateUnion(
  *  When OFF, the retrieval path is byte-for-byte the current dense-only flow. */
 function hybridRetrievalEnabled(): boolean {
   return envFlagOn("HYBRID_RETRIEVAL", false);
+}
+
+/** Independent FTS5 recall across the persisted filing corpus. Default off until eval promotion. */
+function corpusWideLexicalRetrievalEnabled(): boolean {
+  return envFlagOn("RAG_CORPUS_WIDE_LEXICAL", false);
+}
+
+function retrievalStageTelemetryEnabled(): boolean {
+  return envFlagOn("RAG_RETRIEVAL_STAGE_TELEMETRY", false);
 }
 
 /**
@@ -2159,7 +2158,7 @@ async function embedDocumentsWithRetry(
 }
 
 /**
- * Reorder Pinecone matches by Voyage cross-encoder relevance and keep the top `topK`. Pure
+ * Reorder recalled matches by the configured cross-encoder relevance and keep the top `topK`. Pure
  * best-effort: on any error (rate limit, unsupported model, empty docs) returns the input order
  * unchanged so retrieval never breaks — reranking is a quality boost, not a dependency.
  *
@@ -2177,15 +2176,17 @@ export async function rerankMatches(
   source: ApiKeySource = "env"
 ): Promise<any[]> {
   if (matches.length <= 1) return matches;
-  const rerankableMatches = matches.slice(0, VOYAGE_RERANK_MAX_DOCUMENTS);
+  const rerankableMatches = matches.slice(0, RERANK_MAX_DOCUMENTS);
   const documents = rerankableMatches.map((m) => {
     const t = (m?.metadata as Record<string, unknown> | undefined)?.text;
     return typeof t === "string" ? t : "";
   });
   if (documents.every((d) => !d)) return rerankableMatches;
   
-  const provider = activeRerankProvider(userId);
-  const modelName = activeRerankModel(userId);
+  const useMockClient = !!voyage && typeof voyage.rerank === "function";
+  const route = activeRerankRoute(userId, useMockClient);
+  const provider = route.provider;
+  const modelName = route.model;
 
   const openrouterKey = resolveApiKey("openrouter", userId);
   const siliconflowKey = resolveApiKey("siliconflow", userId);
@@ -2194,13 +2195,10 @@ export async function rerankMatches(
   const isSiliconFlow = provider === "siliconflow";
   const apiKey = isOpenRouter ? (openrouterKey || "") : (siliconflowKey || "");
 
-  const useMockClient = !!voyage && typeof voyage.rerank === "function";
-
-  if (!useMockClient && (!apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
-    return rerankableMatches.map((match, idx) => ({
-      ...match,
-      _rerankScore: 0.9 - idx * 0.05
-    }));
+  // An explicit rerank route never silently spends against a different provider. Missing authority
+  // is a truthful no-op: retain the deterministic fused/cosine order and emit no fabricated score.
+  if (!useMockClient && (!route.available || !apiKey || apiKey.startsWith("mock") || process.env.NODE_ENV === "test")) {
+    return rerankableMatches;
   }
 
   try {
@@ -2262,7 +2260,7 @@ export async function rerankMatches(
     }
     return reordered.length > 0 ? reordered : rerankableMatches;
   } catch (err) {
-    console.warn("[vector-db] rerank failed; falling back to cosine order:", err instanceof Error ? err.message : String(err));
+    console.warn("[vector-db] rerank failed; retaining fused recall order:", err instanceof Error ? err.message : String(err));
     return rerankableMatches;
   }
 }
@@ -5392,6 +5390,11 @@ export interface RetrieveOptions {
    * byte-for-byte unchanged (no callback invoked, no extra work performed).
    */
   onStatus?: (status: RetrievalStatus) => void;
+  /**
+   * Optional text-free, per-stage latency/candidate receipt. The same snapshot is persisted as an
+   * audit row only when RAG_RETRIEVAL_STAGE_TELEMETRY is enabled; a callback alone stays in-memory.
+   */
+  onTrace?: (trace: RetrievalTraceSnapshot) => void;
 }
 
 /** Invoke `options?.onStatus` best-effort; a throwing callback must never affect retrieval. */
@@ -5402,6 +5405,39 @@ function reportRetrievalStatus(options: RetrieveOptions | undefined, status: Ret
   } catch {
     // advisory receipt only — never let a callback failure affect retrieval
   }
+}
+
+function reportRetrievalTrace(
+  trace: RetrievalStageTrace | undefined,
+  options: RetrieveOptions | undefined,
+  finalCandidates: number,
+  userId: string
+): void {
+  if (!trace) return;
+  try {
+    const snapshot = trace.snapshot(finalCandidates);
+    try {
+      options?.onTrace?.(snapshot);
+    } catch {
+      // advisory callback only
+    }
+    if (retrievalStageTelemetryEnabled()) audit("rag_retrieval_stage_trace", snapshot, userId);
+  } catch {
+    // observability must never affect retrieval
+  }
+}
+
+function lexicalCandidateMatchesOptions(
+  candidate: CorpusWideLexicalCandidate,
+  options: RetrieveOptions | undefined
+): boolean {
+  if (options?.source && candidate.source !== options.source) return false;
+  if (options?.section && candidate.section !== options.section) return false;
+  if (options?.docType?.length) {
+    const candidateType = candidate.doc_type?.toLowerCase();
+    if (!candidateType || !options.docType.some((value) => value.toLowerCase() === candidateType)) return false;
+  }
+  return true;
 }
 
 const DEFAULT_MANAGED_VERSION_TOP_K_CAP = 1_000;
@@ -5743,6 +5779,13 @@ export async function retrieveContextDetailed(
   userId: string = "local",
   options?: RetrieveOptions
 ): Promise<RetrievedChunk[]> {
+  const stageTrace = options?.onTrace || retrievalStageTelemetryEnabled()
+    ? new RetrievalStageTrace({ query, symbol })
+    : undefined;
+  const finish = (chunks: RetrievedChunk[]): RetrievedChunk[] => {
+    reportRetrievalTrace(stageTrace, options, chunks.length, userId);
+    return chunks;
+  };
   // Budget guard (durable spend primitive): when the user is over their daily LLM/RAG budget, skip
   // retrieval entirely — no Voyage embed, no Pinecone query, no metered spend. Returns empty like the
   // no-client case, so every caller degrades gracefully. Default OFF (no ceiling) → no-op.
@@ -5754,7 +5797,7 @@ export async function retrieveContextDetailed(
       connectedAccountId: options?.connectedAccountId ?? null
     });
     reportRetrievalStatus(options, "budget_skipped");
-    return [];
+    return finish([]);
   }
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = await getClients(userId);
@@ -5767,7 +5810,7 @@ export async function retrieveContextDetailed(
       source: userId === "local" ? "operator" : "user"
     });
     reportRetrievalStatus(options, "lookup_failed");
-    return [];
+    return finish([]);
   }
   // R16 (2026-07-01 RAG backlog): default-off, very-high-ceiling per-run budget check. When
   // tripped, DEGRADE by skipping rerank/hybrid only — never core dense-cosine recall. A no-op
@@ -5780,8 +5823,28 @@ export async function retrieveContextDetailed(
       source: userId === "local" ? "operator" : "user"
     });
   }
-  const wantRerank = rerankEnabled() && !budgetDegraded;
+  const rerankRoute = activeRerankRoute(userId, Boolean(voyage && typeof voyage.rerank === "function"));
+  const rerankRequested = rerankEnabled() && !budgetDegraded;
+  const rerankUnavailable = rerankRequested && !rerankRoute.available;
+  const wantRerank = rerankRequested && rerankRoute.available;
+  if (rerankUnavailable) {
+    const endUnavailableRerank = stageTrace?.start("rerank", {
+      provider: rerankRoute.provider,
+      model: rerankRoute.model,
+      route: "unavailable",
+      candidatesIn: 0
+    });
+    endUnavailableRerank?.({ error: new Error(rerankRoute.reason ?? "unavailable") });
+    void captureRagSentryMessage("warning", "RAG rerank route unavailable; preserving recall order", {
+      provider: rerankRoute.provider,
+      model: rerankRoute.model,
+      operation: "rerank",
+      source: userId === "local" ? "operator" : "user",
+      reason: rerankRoute.reason ?? "unavailable"
+    });
+  }
   const wantHybrid = hybridRetrievalEnabled() && !budgetDegraded;
+  const wantCorpusWideLexical = corpusWideLexicalRetrievalEnabled() && !budgetDegraded && !options?.matchAllSymbols;
   // Over-fetch when we'll post-filter (as-of), rerank, OR hybrid-fuse — so the final top-`limit` is
   // high quality. Hybrid must be included even when rerank is off: otherwise fetchK == limit and the
   // BM25/RRF step only reorders the dense top-N, so an exact ticker/accession hit at dense rank
@@ -5790,7 +5853,18 @@ export async function retrieveContextDetailed(
   // cross-encoder is cheap to run over hundreds of candidates and a modest-50 cap otherwise hides a
   // flip-the-decision chunk at dense rank 51+ from ever reaching it. Non-rerank over-fetch (as-of or
   // hybrid alone) keeps the existing modest `overFetchK` cap — this does not change their Pinecone topK.
-  const baseFetchK = wantRerank ? rerankOverFetchK(limit) : options?.asOf || wantHybrid ? overFetchK(limit) : limit;
+  const preRecallRerankPlan = planRerank({
+    query,
+    limit,
+    availableCandidates: RERANK_MAX_DOCUMENTS,
+    enabled: wantRerank,
+    adaptiveEnabled: adaptiveRerankEnabled()
+  });
+  const baseFetchK = wantRerank
+    ? preRecallRerankPlan.candidateLimit
+    : options?.asOf || wantHybrid || wantCorpusWideLexical
+      ? overFetchK(limit)
+      : limit;
   const rejectedVersionUpperBound = managedVersionRejectedUpperBound(symbol, userId, options);
   const managedTopKCap = managedVersionTopKCap(limit);
   const requestedManagedFetchK = Math.max(baseFetchK, limit + rejectedVersionUpperBound);
@@ -5812,7 +5886,7 @@ export async function retrieveContextDetailed(
   try {
     if (!(await indexExists(pc, pineconeSource, userId))) {
       reportRetrievalStatus(options, "lookup_failed");
-      return [];
+      return finish([]);
     }
     await assertIndexMetric(pc, initCacheKey, pineconeSource, userId);
     const stableProviderAuthority = stableProviderAuthorityForInitKey(initCacheKey);
@@ -5878,17 +5952,34 @@ export async function retrieveContextDetailed(
     // byte-for-byte identical to pre-multi-query behavior (one embed, one match round-trip).
     const embedAndMatchOneQuery = async (q: string): Promise<any[] | null> => {
       const activeModel = activeEmbeddingModel(userId);
+      const endCacheLookup = stageTrace?.start("query_embed_cache", {
+        provider: activeEmbeddingProvider(userId),
+        model: activeModel
+      });
       let embedding = getCachedQueryEmbedding(activeModel, q);
+      endCacheLookup?.({ cacheHit: embedding != null });
       if (embedding == null) {
-        const response = await withRagApiHealth(
-          "voyage",
-          voyageSource,
-          userId,
-          "embed query",
-          () => embedWithRetry(voyage, [q], "query", undefined, voyageSource, userId),
-          undefined,
-          { durablyTrackedInside: true }
-        );
+        const endEmbed = stageTrace?.start("query_embed_api", {
+          provider: activeEmbeddingProvider(userId),
+          model: activeModel,
+          candidatesIn: 1
+        });
+        let response: any;
+        try {
+          response = await withRagApiHealth(
+            "voyage",
+            voyageSource,
+            userId,
+            "embed query",
+            () => embedWithRetry(voyage, [q], "query", undefined, voyageSource, userId),
+            undefined,
+            { durablyTrackedInside: true }
+          );
+          endEmbed?.({ candidatesOut: response.data?.[0]?.embedding ? 1 : 0 });
+        } catch (error) {
+          endEmbed?.({ error });
+          throw error;
+        }
         meterEmbed([q], activeModel, userId, activeEmbeddingProvider(userId)); // count only on a cache MISS; book under the requesting userId
         recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
         embedding = response.data?.[0]?.embedding;
@@ -5956,7 +6047,14 @@ export async function retrieveContextDetailed(
       // can fill topK entirely from one high-scoring tier and starve the other before reranking.
       // The dedicated private namespace is queried only when its durable manifest proves it exists
       // under the current physical provider authority.
-      const [userResults, privateResults, localResults, managedUserResults, managedLocalResults, fmpResults] = await Promise.all([
+      const endDenseQuery = stageTrace?.start("dense_query", {
+        provider: "pinecone",
+        model: activeModel,
+        candidatesIn: fetchK
+      });
+      let denseResults: any[];
+      try {
+        denseResults = await Promise.all([
         withRagApiHealth("pinecone", pineconeSource, userId, "query user tier", () =>
           defaultIndex.query({
             vector: embedding,
@@ -6013,7 +6111,15 @@ export async function retrieveContextDetailed(
               })
             )
           : Promise.resolve({ matches: [] })
-      ]);
+        ]);
+        endDenseQuery?.({
+          candidatesOut: denseResults.reduce((total, result) => total + (result.matches?.length ?? 0), 0)
+        });
+      } catch (error) {
+        endDenseQuery?.({ error });
+        throw error;
+      }
+      const [userResults, privateResults, localResults, managedUserResults, managedLocalResults, fmpResults] = denseResults;
       meterPineconeQuery(
         pineconeReadUnits(userResults, 1) +
           pineconeReadUnits(privateResults, privateIndex ? 1 : 0) +
@@ -6073,7 +6179,7 @@ export async function retrieveContextDetailed(
       // while keeping the combined rerank request within Voyage's documented 1,000-document ceiling.
       const eligiblePool = boundedTierCandidateUnion(
         eligibleTiers,
-        wantRerank ? VOYAGE_RERANK_MAX_DOCUMENTS : Number.MAX_SAFE_INTEGER
+        wantRerank ? RERANK_MAX_DOCUMENTS : Number.MAX_SAFE_INTEGER
       );
       candidatePoolObservability.set(eligiblePool, {
         providerCandidateCount,
@@ -6125,7 +6231,7 @@ export async function retrieveContextDetailed(
         const single = await embedAndMatchOneQuery(query);
         if (single == null) {
           reportRetrievalStatus(options, "lookup_failed");
-          return [];
+          return finish([]);
         }
         matches = single;
       } else {
@@ -6177,7 +6283,7 @@ export async function retrieveContextDetailed(
           });
           matches = boundedTierCandidateUnion(
             fusedTiers,
-            VOYAGE_RERANK_MAX_DOCUMENTS,
+            RERANK_MAX_DOCUMENTS,
             (match) => -(fusedRank.get(candidatePoolIdentity(match)) ?? Number.MAX_SAFE_INTEGER)
           );
         } else {
@@ -6209,7 +6315,7 @@ export async function retrieveContextDetailed(
       const single = await embedAndMatchOneQuery(query);
       if (single == null) {
         reportRetrievalStatus(options, "lookup_failed");
-        return [];
+        return finish([]);
       }
       matches = single;
     }
@@ -6249,6 +6355,49 @@ export async function retrieveContextDetailed(
         receiptRejectedCount: beforeReceiptCount - receiptEligibleCount,
         receiptEligibleCount
       }, userId);
+    }
+
+    // Independently recall exact terms from the persisted filing FTS index, then RRF-union them
+    // with dense recall. This is the actual recall expansion: unlike the legacy HYBRID_RETRIEVAL
+    // pass, it can surface a filing occurrence that Pinecone did not return at all. The flag is
+    // default-off until the production eval gate promotes it.
+    let usedCorpusWideLexical = false;
+    if (wantCorpusWideLexical) {
+      const endLexical = stageTrace?.start("lexical_query", {
+        provider: "sqlite-fts5",
+        candidatesIn: Math.min(baseFetchK, 100)
+      });
+      let lexicalCandidates: CorpusWideLexicalCandidate[] = [];
+      try {
+        lexicalCandidates = searchCorpusWideLexicalCandidates({
+          symbol,
+          query,
+          limit: Math.min(baseFetchK, 100),
+          ...(options?.asOf ? { asOf: options.asOf } : {})
+        }).filter((candidate) => lexicalCandidateMatchesOptions(candidate, options));
+        endLexical?.({ candidatesOut: lexicalCandidates.length });
+      } catch (error) {
+        endLexical?.({ error, candidatesOut: 0 });
+        console.warn("[vector-db] corpus-wide lexical recall failed; retaining dense recall:", error instanceof Error ? error.message : String(error));
+      }
+
+      if (lexicalCandidates.length > 0) {
+        const endFusion = stageTrace?.start("fusion", {
+          route: "rrf:dense+sqlite-fts5",
+          candidatesIn: matches.length + lexicalCandidates.length
+        });
+        const fusion = fuseDenseAndLexicalRecall(
+          matches,
+          lexicalCandidates,
+          wantRerank ? RERANK_MAX_DOCUMENTS : fetchK
+        );
+        matches = fusion.matches;
+        usedCorpusWideLexical = true;
+        endFusion?.({
+          candidatesOut: matches.length,
+          dropped: fusion.denseCandidates + fusion.lexicalCandidates - matches.length
+        });
+      }
     }
 
     // Broad coach/chat retrieval has no docType filter. Enforce transcript rights before any
@@ -6294,15 +6443,25 @@ export async function retrieveContextDetailed(
     // rerank → post-rerank floor → top-limit. Factored into the pure `rankPool` helper (R4,
     // 2026-07-01 expert-review follow-up) so a network-free regression test can drive the exact
     // same post-recall logic this call site uses, instead of re-implementing it in test code.
+    const rerankPlan = planRerank({
+      query,
+      limit,
+      availableCandidates: matches.length,
+      enabled: wantRerank,
+      adaptiveEnabled: adaptiveRerankEnabled(),
+      exactLexicalHit: usedCorpusWideLexical
+    });
     const ordered = await rankPool(matches, query, limit, {
       minScore: effectiveMinScore,
       asOf: options?.asOf,
       minRelevanceScore: options?.minRelevanceScore,
-      hybrid: wantHybrid,
-      rerank: wantRerank ? (q, m, k) => rerankMatches(voyage, q, m, k, userId, voyageSource) : undefined,
+      hybrid: wantHybrid && !usedCorpusWideLexical,
+      rerank: rerankPlan.shouldRerank ? (q, m, k) => rerankMatches(voyage, q, m, k, userId, voyageSource) : undefined,
+      rerankCandidateLimit: rerankPlan.candidateLimit,
       strictAsOf: asOfStrictEnabled(),
       dedupeSimilarity: options?.dedupeSimilarity,
       userId,
+      trace: stageTrace,
       onDispositions: wantFullPool ? (d) => { capturedDispositions = d; } : undefined
     });
     const finalSlice = ordered.slice(0, limit);
@@ -6474,21 +6633,23 @@ export async function retrieveContextDetailed(
       // re-thrown.
       console.warn("[vector-db] candidate-pool v2 capture failed (ignored, retrieval unaffected):", captureErr instanceof Error ? captureErr.message : String(captureErr));
     }
+    const endFinalInjection = stageTrace?.start("final_injection", { candidatesIn: finalSlice.length });
     const finalChunks = finalSlice
       .map(matchToChunk)
       .filter((c) => c.text);
+    endFinalInjection?.({ candidatesOut: finalChunks.length, dropped: finalSlice.length - finalChunks.length });
     // Final status classification (receipt only — never changes `finalChunks`): a real zero-match
     // result is "no_memory" (pipeline ran cleanly, nothing relevant found); a non-empty result under
     // the R16 per-run budget degrade is "degraded" (lower quality, not absent); everything else "ok".
     reportRetrievalStatus(
       options,
-      managedVersionCrowdingDegraded || managedAuthorityDegraded || budgetDegraded
+      managedVersionCrowdingDegraded || managedAuthorityDegraded || budgetDegraded || rerankUnavailable
         ? "degraded"
         : finalChunks.length === 0
           ? "no_memory"
           : "ok"
     );
-    return finalChunks;
+    return finish(finalChunks);
   } catch (err) {
     console.error("[vector-db] Error retrieving context:", err);
     if (!wasRagSentryCaptured(err)) {
@@ -6501,7 +6662,7 @@ export async function retrieveContextDetailed(
       });
     }
     reportRetrievalStatus(options, "lookup_failed");
-    return [];
+    return finish([]);
   }
 }
 
@@ -6551,10 +6712,14 @@ export interface RankPoolOptions {
   hybrid?: boolean;
   /** Injectable reranker; omit (or pass undefined) to skip reranking entirely (matches `wantRerank=false`). */
   rerank?: RankPoolRerankFn;
+  /** Maximum fused candidates sent to the reranker; omitted means the full pool. */
+  rerankCandidateLimit?: number;
   /** R1 strict as-of mode (caller resolves `VECTOR_ASOF_STRICT`) — only has an effect when `asOf` is set. */
   strictAsOf?: boolean;
   /** userId for the strict-mode drop-count audit record; defaults to "local". */
   userId?: string;
+  /** Optional text-free stage collector. */
+  trace?: RetrievalStageTrace;
   /**
    * R14 (2026-07-01 RAG backlog): opt-in near-duplicate suppression, applied AFTER the
    * post-rerank relevance floor but BEFORE the final slice-to-limit. A 0-1 Jaccard-shingle
@@ -6657,16 +6822,21 @@ export async function rankPool(
   let pool = matches;
   let droppedByMinScore = 0;
   if (options.minScore != null) {
+    const endScoreFloor = options.trace?.start("score_floor", { candidatesIn: pool.length });
     const before = pool.length;
     pool = pool.filter((match) => {
-      const kept = (typeof match?.score === "number" ? match.score : 0) >= options.minScore!;
+      // Independently-recalled lexical candidates carry score=0 by design because FTS BM25 and
+      // cosine are incomparable. Never erase real recall by applying a dense-only floor to them.
+      const kept = hasLexicalRecall(match) || (typeof match?.score === "number" ? match.score : 0) >= options.minScore!;
       if (!kept) trackDrop(match, "dropped_minscore");
       return kept;
     });
     droppedByMinScore = before - pool.length;
+    endScoreFloor?.({ candidatesOut: pool.length, dropped: droppedByMinScore });
   }
   let droppedByAsOf = 0;
   if (options.asOf) {
+    const endAsOf = options.trace?.start("asof_filter", { candidatesIn: pool.length });
     const strict = Boolean(options.strictAsOf);
     let droppedUndated = 0;
     const before = pool.length;
@@ -6680,6 +6850,7 @@ export async function rankPool(
       return kept;
     });
     droppedByAsOf = before - pool.length;
+    endAsOf?.({ candidatesOut: pool.length, dropped: droppedByAsOf });
     // R1 strict-mode drop-count (2026-07-01 expert-review follow-up): observability only, so the
     // ingest-dating gap ("how much of the corpus has no resolvable stamp") is visible to an
     // operator instead of silently shrinking results. Never throws; a logging failure must not
@@ -6695,9 +6866,26 @@ export async function rankPool(
   // Hybrid BM25 fusion (flag-gated): reorder the candidate pool by RRF(dense, BM25) before
   // cross-encoder rerank. Falls back to dense order when off or on error. Does not change
   // overFetchK or the Pinecone query — purely a post-retrieval reordering step. Never drops.
+  const endFusion = options.hybrid && pool.length > 1
+    ? options.trace?.start("fusion", { route: "rrf:dense-pool-bm25", candidatesIn: pool.length })
+    : undefined;
   const fusedPool = options.hybrid && pool.length > 1 ? fuseHybrid(query, pool) : pool;
+  endFusion?.({ candidatesOut: fusedPool.length });
   const rerankRan = Boolean(options.rerank) && fusedPool.length > limit;
-  const ordered = rerankRan ? await options.rerank!(query, fusedPool, limit) : fusedPool;
+  const rerankPool = rerankRan && options.rerankCandidateLimit != null
+    ? fusedPool.slice(0, Math.max(limit, options.rerankCandidateLimit))
+    : fusedPool;
+  const endRerank = rerankRan
+    ? options.trace?.start("rerank", { candidatesIn: rerankPool.length })
+    : undefined;
+  let ordered: any[];
+  try {
+    ordered = rerankRan ? await options.rerank!(query, rerankPool, limit) : fusedPool;
+    endRerank?.({ candidatesOut: ordered.length, dropped: rerankPool.length - ordered.length });
+  } catch (error) {
+    endRerank?.({ error });
+    throw error;
+  }
   if (wantDispositions && rerankRan) {
     // Voyage's rerank call is itself invoked with `topK: Math.min(limit, fusedPool.length)`
     // (see `rerankMatches`), so any candidate in `fusedPool` that did NOT come back in `ordered`
@@ -6715,6 +6903,9 @@ export async function rankPool(
   // rerankMatches fall back to cosine order with no scores) must not empty every result. The floor
   // can legitimately return fewer than `limit` chunks; callers (strategy.ts advisory context,
   // orchestrator.ts citations) already tolerate short lists. No-op unless set.
+  const endRelevanceFloor = options.minRelevanceScore != null
+    ? options.trace?.start("relevance_floor", { candidatesIn: ordered.length })
+    : undefined;
   const floored = options.minRelevanceScore != null
     ? ordered.filter((match) => {
         const s = (match as { _rerankScore?: unknown } | undefined)?._rerankScore;
@@ -6723,6 +6914,7 @@ export async function rankPool(
         return kept;
       })
     : ordered;
+  endRelevanceFloor?.({ candidatesOut: floored.length, dropped: ordered.length - floored.length });
 
   // R14 (2026-07-01 RAG backlog): opt-in near-duplicate suppression, applied AFTER the
   // post-rerank relevance floor but BEFORE the final slice-to-limit (callers `.slice(0, limit)`
@@ -6734,8 +6926,12 @@ export async function rankPool(
   // `CandidateDisposition` doc comment in rag/candidate-pool.ts). Only ask for the (otherwise-free)
   // `report` out-param when a disposition hook is actually attached, so every existing caller pays
   // zero extra cost.
+  const endDedupe = options.dedupeSimilarity != null
+    ? options.trace?.start("dedupe", { candidatesIn: floored.length })
+    : undefined;
   const dedupeReport: DedupeSimilarReport | undefined = wantDispositions && options.dedupeSimilarity != null ? { genuineDuplicateIndices: [], neverReachedIndices: [] } : undefined;
   const deduped = options.dedupeSimilarity != null ? dedupeSimilar(floored, limit, options.dedupeSimilarity, dedupeReport) : floored;
+  endDedupe?.({ candidatesOut: deduped.length, dropped: floored.length - deduped.length });
   if (wantDispositions && options.dedupeSimilarity != null && dedupeReport) {
     for (const idx of dedupeReport.genuineDuplicateIndices) {
       trackDrop(floored[idx]!, "dropped_dedupe");

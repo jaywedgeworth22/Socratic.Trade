@@ -190,14 +190,16 @@ already shipped in earlier passes (#297/#299) and were verified, not re-implemen
 default-off/opt-in and proven byte-identical when unset — see the rollout note for the full
 item-by-item detail and verify-quartet results.
 
-**Strategic-performance follow-on, 2026-07-21:** the 28-case mocked fixture remains a regression
+**Strategic-performance follow-on, updated 2026-07-22:** the 28-case mocked fixture remains a regression
 net, not evidence that one embedding/reranker wins on the live financial corpus. The active program
 therefore separates four concerns before changing production defaults: a production-path PIT
 evaluator; corpus-wide FTS5 candidates unioned with dense recall before one rerank; independently
 selectable rerank route/model plus default-off scout/deep/exact/general candidate depths; and
 text-free per-stage latency/candidate/drop receipts. The pure rerank-policy and stage-telemetry
-modules are implemented on `codex/rag-strategy-program-20260721`; production wiring remains gated on
-the parallel ingestion, evaluator, and lexical lanes. No local model service or sparse-vector API is
+modules are now wired into `retrieveContextDetailed` on the integration lane. Corpus-wide FTS5
+recall is an independent source, unioned with dense results by RRF before one rerank; committed head
+or PIT-version receipts prevent stale generations from bypassing dense eligibility. The new paths
+remain default-off pending production evaluation. No local model service or sparse-vector API is
 assumed: BGE-M3 sparse capability counts only when the selected transport actually returns it.
 
 ## 6. User-guidance design ("how to advise users to interact")

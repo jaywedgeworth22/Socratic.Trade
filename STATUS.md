@@ -1,3 +1,14 @@
+## 2026-07-22 — Dense plus corpus-wide lexical retrieval integration (CODEX team)
+
+The production retrieval path now has a default-off `RAG_CORPUS_WIDE_LEXICAL` route that safely
+queries committed/current (or PIT-active) FTS5 filing occurrences independently of Pinecone, RRF
+unions them with dense matches, and sends the bounded union through at most one reranker. Explicit
+rerank routing is independent from embedding, missing authority records degraded behavior without
+fallback or fake scores, adaptive depth is default-off, and optional stage traces contain no query
+or document text. Five focused files / 45 tests pass; scoped lint has zero errors. Current-main
+reconciliation and the full ordered gate remain before PR. No provider/corpus/production writes.
+Rollout: `docs/rollouts/2026-07-22-rag-retrieval-integration.md`.
+
 ## 2026-07-21 — RAG rerank policy + retrieval-stage telemetry foundation (CODEX team, branch `codex/rag-strategy-program-20260721`)
 
 The first non-overlapping foundation for the owner-directed RAG strategic-performance program is

@@ -10,6 +10,11 @@
 > Rerank policy + telemetry modules are locally green on `codex/rag-strategy-program-20260721`;
 > ingestion, evaluator, and lexical modules are active parallel lanes. Production re-embed remains
 > externally owned; CODEX will not launch competing corpus writes.
+> **2026-07-22 integration update:** Steps 1-4 are implemented locally: provider-aware managed
+> ingestion, production-path/PIT evaluation, committed/current corpus-wide FTS recall, and one-pass
+> dense+lexical fusion with independently routed/adaptive reranking and stage telemetry. Remaining:
+> integrate exact prompt-consumption receipts, structured/narrative routing, bounded parent context,
+> Turso/Pinecone Assistant shadow harnesses, then run the full gate and land one reviewable PR.
 > **2026-07-21 — Managed RAG ingestion authority repair (CODEX, branch `codex/rag-ingestion-gate-20260721`).**
 > Repair the stale `storeDocument` provider gate left by the Voyage SDK purge: require Pinecone
 > initialization plus the actual active embedding provider credential, while preserving the explicit

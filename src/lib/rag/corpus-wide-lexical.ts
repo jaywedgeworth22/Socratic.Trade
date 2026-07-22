@@ -126,6 +126,50 @@ export function searchCorpusWideLexicalCandidates(
   const rawLimit = Math.min(MAX_RAW_RESULTS, limit * RAW_RESULT_MULTIPLIER);
   const strictUndated = options.strictUndated !== false;
   const params: unknown[] = [symbol, matchQuery, symbol];
+  const receiptClause = asOf
+    ? `AND (
+        o.receipt_state = 'legacy_committed'
+        OR (
+          o.receipt_state = 'committed'
+          AND EXISTS (
+            SELECT 1
+            FROM vector_ingest_commits c
+            JOIN vector_document_versions v
+              ON v.commit_id = c.id
+              AND v.tenant_scope = c.tenant_scope
+              AND v.source = c.source
+              AND v.document_key = c.document_key
+            WHERE c.id = o.commit_id
+              AND c.state = 'committed'
+              AND c.lease_expires_at IS NULL
+              AND o.tenant_scope = c.tenant_scope
+              AND o.content_version = c.content_version
+              AND v.valid_from <= ?
+              AND (v.valid_to IS NULL OR v.valid_to > ?)
+          )
+        )
+      )`
+    : `AND (
+        o.receipt_state = 'legacy_committed'
+        OR (
+          o.receipt_state = 'committed'
+          AND EXISTS (
+            SELECT 1
+            FROM vector_ingest_commits c
+            JOIN vector_document_heads h
+              ON h.commit_id = c.id
+              AND h.tenant_scope = c.tenant_scope
+              AND h.source = c.source
+              AND h.accession = c.document_key
+            WHERE c.id = o.commit_id
+              AND c.state = 'committed'
+              AND c.lease_expires_at IS NULL
+              AND o.tenant_scope = c.tenant_scope
+              AND o.content_version = c.content_version
+          )
+        )
+      )`;
+  if (asOf) params.push(asOf, asOf);
   let pitClause = "";
   if (asOf) {
     if (strictUndated) {
@@ -167,6 +211,7 @@ export function searchCorpusWideLexicalCandidates(
     WHERE document_chunks_fts.symbol = ?
       AND document_chunks_fts MATCH ?
       AND o.symbol = ?
+      ${receiptClause}
       ${pitClause}
     ORDER BY
       lexical_score ASC,

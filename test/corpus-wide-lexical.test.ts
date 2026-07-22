@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { applyVersionedMigrations, getDb } from "../src/lib/db";
+import {
+  applyVersionedMigrations,
+  beginVectorCommit,
+  getDb,
+  insertManagedChunkOccurrences,
+  markVectorCommitCommitted,
+  markVectorCommitReceiptsPersisted
+} from "../src/lib/db";
 import { insertChunkOccurrences, insertDocumentChunkFts, insertSecFiling } from "../src/lib/db-learning";
 import {
   compileCorpusWideLexicalQuery,
@@ -18,7 +25,14 @@ beforeAll(() => {
 
 beforeEach(() => {
   const db = getDb();
-  db.exec("DELETE FROM document_chunks_fts; DELETE FROM chunk_occurrences; DELETE FROM sec_filings;");
+  db.exec(`
+    DELETE FROM document_chunks_fts;
+    DELETE FROM vector_document_heads;
+    DELETE FROM vector_document_versions;
+    DELETE FROM chunk_occurrences;
+    DELETE FROM vector_ingest_commits;
+    DELETE FROM sec_filings;
+  `);
 });
 
 function seed(input: {
@@ -56,6 +70,63 @@ function seed(input: {
     createdAt: NOW
   }]);
   insertDocumentChunkFts(input.hash, symbol, source, input.accession, input.text);
+}
+
+function seedManaged(input: {
+  commitId: string;
+  vectorId: string;
+  hash: string;
+  accession: string;
+  contentVersion: string;
+  acceptedAt: string;
+  committedAt: string;
+  text: string;
+}): void {
+  const attemptToken = `attempt-${input.commitId}`;
+  insertSecFiling({
+    accession: input.accession,
+    cik: "0000320193",
+    ticker: "AAPL",
+    form: "10-K",
+    filedAt: input.acceptedAt,
+    acceptedAt: input.acceptedAt,
+    status: "complete",
+    chunkCount: 1
+  });
+  expect(beginVectorCommit({
+    id: input.commitId,
+    tenantScope: "shared",
+    userId: "local",
+    source: "sec-edgar",
+    accession: input.accession,
+    documentKey: input.accession,
+    contentVersion: input.contentVersion,
+    retrievalMetadataVersion: "metadata-v1",
+    parserRevision: "parser-v1",
+    embedRevision: "embed-v1",
+    expectedVectors: 1,
+    attemptToken,
+    leaseExpiresAt: "2027-01-01T00:00:00.000Z",
+    now: input.committedAt
+  })).toBe("started");
+  insertManagedChunkOccurrences([{
+    vectorId: input.vectorId,
+    contentHash: input.hash,
+    symbol: "AAPL",
+    source: "sec-edgar",
+    accession: input.accession,
+    section: "Item 1.01",
+    ordinal: 1,
+    acceptedAt: input.acceptedAt,
+    tenantScope: "shared",
+    contentVersion: input.contentVersion,
+    commitId: input.commitId,
+    receiptState: "pending",
+    createdAt: input.committedAt
+  }]);
+  insertDocumentChunkFts(input.hash, "AAPL", "sec-edgar", input.accession, input.text);
+  markVectorCommitReceiptsPersisted(input.commitId, attemptToken, input.committedAt);
+  markVectorCommitCommitted(input.commitId, attemptToken, input.committedAt);
 }
 
 describe("compileCorpusWideLexicalQuery", () => {
@@ -213,5 +284,50 @@ describe("searchCorpusWideLexicalCandidates", () => {
     const rows = searchCorpusWideLexicalCandidates({ symbol: "AAPL", query: "dividends", limit: 10 });
     expect(rows.map((row) => row.id)).toEqual(["vec-strong", "vec-weak"]);
     expect(rows[0]!.lexicalScore).toBeLessThan(rows[1]!.lexicalScore);
+  });
+
+  it("never recalls a pending managed occurrence before its provider receipt commits", () => {
+    seed({
+      vectorId: "vec-pending",
+      hash: "hash-pending",
+      accession: "0000320193-25-000097",
+      acceptedAt: "2025-10-03T12:00:00.000Z",
+      text: "Pending covenant evidence must remain invisible."
+    });
+    getDb().prepare("UPDATE chunk_occurrences SET receipt_state = 'pending' WHERE vector_id = ?")
+      .run("vec-pending");
+
+    expect(searchCorpusWideLexicalCandidates({ symbol: "AAPL", query: "covenant evidence" })).toEqual([]);
+  });
+
+  it("uses the active managed head now and the historically active version for PIT", () => {
+    seedManaged({
+      commitId: "commit-old",
+      vectorId: "vec-old-version",
+      hash: "hash-old-version",
+      accession: "0000320193-25-000098",
+      contentVersion: "version-old",
+      acceptedAt: "2025-05-01T12:00:00.000Z",
+      committedAt: "2025-05-01T13:00:00.000Z",
+      text: "Covenant evidence from the original filing generation."
+    });
+    seedManaged({
+      commitId: "commit-new",
+      vectorId: "vec-new-version",
+      hash: "hash-new-version",
+      accession: "0000320193-25-000098",
+      contentVersion: "version-new",
+      acceptedAt: "2025-06-01T12:00:00.000Z",
+      committedAt: "2025-06-01T13:00:00.000Z",
+      text: "Covenant evidence from the corrected filing generation."
+    });
+
+    expect(searchCorpusWideLexicalCandidates({ symbol: "AAPL", query: "covenant evidence" })
+      .map((row) => row.id)).toEqual(["vec-new-version"]);
+    expect(searchCorpusWideLexicalCandidates({
+      symbol: "AAPL",
+      query: "covenant evidence",
+      asOf: "2025-05-15T00:00:00.000Z"
+    }).map((row) => row.id)).toEqual(["vec-old-version"]);
   });
 });
