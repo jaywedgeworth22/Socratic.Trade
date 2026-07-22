@@ -45,6 +45,22 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+
+- **[CODEX] Native iOS mobile-first product replacement — COMPLETED 2026-07-22 via PR #1859; secure OAuth handoff follow-up PR #1886 is open.** Phase 1 is merged to `main` with the five-tab shell, server-authoritative safety gates, canonical XcodeGen project, and verifier-bound opaque web-auth implementation. Follow-up #1886 completes the PKCE exchange hardening so session credentials never enter the custom callback URL; it remains pending protected merge. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
+- **[Socratic.Trade][CLAUDE] check-pin required-status-context merge deadlock fix (branch
+  `claude/checkpin-always-on-prs`, worktree `/private/tmp/socratic-checkpin-work/repo`, claimed
+  2026-07-19) — IN PROGRESS.** Root cause: main's classic branch protection requires status contexts
+  `verify`, `gitleaks`, `check-pin` (strict + `enforce_admins` + required conversation resolution),
+  but `.github/workflows/shared-package-pin-check.yml`'s `pull_request` trigger carried a `paths:`
+  filter (`package.json`, `package-lock.json`, the workflow file itself) — any PR that doesn't touch
+  those paths never produces a `check-pin` check-run and sits permanently BLOCKED despite every other
+  check green. This froze PR #1771 (`monet/fix-siliconflow-bge-m3-price`) on 2026-07-19; a manual
+  `gh workflow run shared-package-pin-check.yml --ref <branch>` is a stopgap, not a fix. Fix: remove
+  the `paths:` filter under `pull_request` only (`push`/`schedule`/`workflow_dispatch` untouched) so
+  `check-pin` runs — and no-ops in seconds, self-hosted, effectively $0 — on every PR going forward.
+  Dropping `check-pin` from required contexts instead is an owner branch-protection decision; not
+  taken here. Holding merge until PR #1771 is MERGED (strict mode would otherwise knock it behind
+  again).
 - **[Socratic.Trade][CURSOR] Corpus re-embed scoped-run purge gate fix (branch
   `cursor/critical-bug-management-0770`, claimed 2026-07-20) — IN PROGRESS.**
   Critical-bug automation found that a symbol-scoped `POST /api/admin/reembed` could persist a
@@ -3865,6 +3881,8 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
 
 | 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
+
+- **2026-07-20 CI deadlock + package-pin update (AG, branch `claude/checkpin-always-on-prs`) — Completed.** Restored the stalled check-pin fixes after a server restart. Diagnosed that the Hetzner runner `socratic-deploy` was disconnecting/failing jobs. Re-routed PR 1771 CI workflows to the online `trading-live-mac` runner, allowing PR 1771 to auto-merge. For PR 1780, `check-pin` failed because `Congress.Trade` was recently bumped to `v1.11.1` while `Socratic.Trade` lagged behind; bumped Socratic.Trade's shared package to `v1.11.1` to resolve the divergence. PR 1780 is now armed for auto-merge on the Mac runner.
 | 2026-07-21 | ANTIGRAVITY | Completed | Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) | agent/antigravity-apple-auth-fix |
 | 2026-07-20 | GROK | In Progress | ST: 32/32 open PRs MERGEABLE (phantom main merges pushed; CI queue drain residual) (ST/CT/UM unstick + residual) | multi-app |
 | 2026-07-20 | Integrate 5 RapidAPI/FilingAPI/ROIC Providers | Completed | Added FMP, Insiders, TwelveData, FilingAPI, and ROIC.ai into the enrichment cascade with tests and quotas | AG |
@@ -3875,4 +3893,4 @@ brackets; effort S/M/L.
 | 2026-07-20 | GROK | In Progress | Claude Desktop residual: ST 0 conflicts (phantoms cleared), CT #650/#665 unstuck, UM #583 merged; CI queue drain (smoke cancelled); #1841 OR $3 threshold auto-merge armed | multi |
 | 2026-07-20 | Document Summarizer & Abstracts DB Migration | Completed | Added migration 55 for document_abstracts, db-document-abstracts CRUD, document-summarizer engine, and vitest unit tests | AG |
 
-| 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs while collapsing stale pending heads; remove every workflow target for absent trading-live; keep observer reporting on socratic-deploy; stop smoke-on-PR; align six stale main assertions | monet/ci-runner-and-queue-fixes |
+| 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs; remove absent trading-live targets; keep observer reporting on socratic-deploy; stop smoke-on-PR; remove synthetic enrichment fallback; make bracket permission side-specific; stabilize focused tests | monet/ci-runner-and-queue-fixes |
