@@ -55,13 +55,25 @@ export interface EvaluationModelConfiguration {
   ledgerAuthority?: string;
 }
 
+export type ProductionRetrievalOptions = {
+  asOf: string;
+  strictAsOf: true;
+  /** Cosine floor applied like strategy/chat production callers. */
+  minScore?: number;
+  /** Post-rerank relevance floor applied like strategy/chat production callers. */
+  minRelevanceScore?: number;
+  /** Near-duplicate suppression threshold applied like strategy/chat production callers. */
+  dedupeSimilarity?: number;
+  applyDefaultFloors?: boolean;
+};
+
 export interface ProductionRetrievalAdapter {
   retrieve(
     query: string,
     symbol: string,
     limit: number,
     userId: string,
-    options: { asOf: string; strictAsOf: true }
+    options: ProductionRetrievalOptions
   ): Promise<{ chunks: RetrievedChunk[]; status: RetrievalStatus }>;
   runtimeConfiguration?(userId: string): Promise<Omit<EvaluationModelConfiguration, "label">>;
 }
@@ -135,6 +147,8 @@ export interface ProductionRagEvalReport {
   evaluationContract: {
     strictAsOf: true;
     serverAsOfFilterEnabled: boolean;
+    /** Production-like cosine/relevance/dedupe floors applied by the default retriever. */
+    productionRetrievalFloors: true;
   };
   statusCounts: Record<RetrievalStatus, number>;
   metrics: {
@@ -158,8 +172,21 @@ const PRODUCTION_RETRIEVER: ProductionRetrievalAdapter = {
   // Dynamic import keeps fixture/unit evaluation hermetic. The CLI still invokes the actual
   // production function, rather than a parallel search-fusion implementation.
   retrieve: async (query, symbol, limit, userId, options) => {
-    const { retrieveContextDetailedWithStatus } = await import("../../src/lib/vector-db");
-    return retrieveContextDetailedWithStatus(query, symbol, limit, userId, options);
+    const {
+      retrieveContextDetailedWithStatus,
+      defaultMinScore,
+      defaultRelevanceFloor,
+      defaultDedupeSimilarity
+    } = await import("../../src/lib/vector-db");
+    // Match strategy filings + chat kb_search floors so promotion metrics cannot credit
+    // low-score / near-duplicate chunks that production would drop before prompt injection.
+    return retrieveContextDetailedWithStatus(query, symbol, limit, userId, {
+      ...options,
+      minScore: options.minScore ?? defaultMinScore(),
+      minRelevanceScore: options.minRelevanceScore ?? defaultRelevanceFloor(),
+      dedupeSimilarity: options.dedupeSimilarity ?? defaultDedupeSimilarity(),
+      applyDefaultFloors: options.applyDefaultFloors ?? true
+    });
   },
   runtimeConfiguration: async (userId) => {
     const { resolvedRagRuntimeConfiguration } = await import("../../src/lib/vector-db");
@@ -213,7 +240,13 @@ export async function runProductionRagEvaluation(
       evalCase.symbol,
       limit,
       userId,
-      { asOf: evalCase.authoritativeAsOf, strictAsOf: true }
+      {
+        asOf: evalCase.authoritativeAsOf,
+        strictAsOf: true,
+        // Injected/test retrievers may ignore these; PRODUCTION_RETRIEVER applies the same
+        // cosine/relevance/dedupe floors as strategy filings + chat kb_search.
+        applyDefaultFloors: true
+      }
     );
     results.push(scoreProductionRagCase(evalCase, chunks, status, Math.max(0, now() - begin), limit));
   }
@@ -247,7 +280,8 @@ export async function runProductionRagEvaluation(
     caseCount: results.length,
     evaluationContract: {
       strictAsOf: true,
-      serverAsOfFilterEnabled: envFlagEnabled(process.env.VECTOR_ASOF_SERVER_FILTER)
+      serverAsOfFilterEnabled: envFlagEnabled(process.env.VECTOR_ASOF_SERVER_FILTER),
+      productionRetrievalFloors: true
     },
     statusCounts,
     metrics: {
@@ -407,8 +441,16 @@ function parseEvidenceRefs(value: unknown, field: string): ExpectedEvidenceRef[]
       if (typeof row.ordinal !== "number" || !Number.isInteger(row.ordinal) || row.ordinal < 0) throw new Error(`${field}[${index}].ordinal must be a non-negative integer.`);
       ref.ordinal = row.ordinal;
     }
-    if (!(ref.vectorId || (ref.accession && (ref.section || ref.ordinal != null)))) {
-      throw new Error(`${field}[${index}] requires vectorId or accession plus section/ordinal; contentHash must be paired with occurrence coordinates.`);
+    // Scoring never compares ref.vectorId to chunk.id (vectorId is diagnostic-only). Reject
+    // vectorId-only golden refs so they cannot vacuously match every returned chunk.
+    const hasStableCoords = Boolean(ref.accession && (ref.section || ref.ordinal != null));
+    const hasContentHashCoords = Boolean(
+      ref.contentHash && (ref.accession || ref.section || ref.ordinal != null || ref.source)
+    );
+    if (!hasStableCoords && !hasContentHashCoords) {
+      throw new Error(
+        `${field}[${index}] requires accession plus section/ordinal (or contentHash with occurrence coordinates); vectorId-only refs are rejected because scoring does not compare vectorId.`
+      );
     }
     return ref;
   });

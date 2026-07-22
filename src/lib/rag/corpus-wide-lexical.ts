@@ -72,6 +72,7 @@ type LexicalRow = {
   accession: string;
   text: string;
   section: string;
+  ordinal: number | null;
   accepted_at: string | null;
   doc_type: string | null;
   tenant_scope: string;
@@ -274,6 +275,7 @@ export function searchCorpusWideLexicalCandidates(
       document_chunks_fts.accession,
       document_chunks_fts.text,
       o.section,
+      o.ordinal,
       o.accepted_at,
       sf.form AS doc_type,
       o.tenant_scope,
@@ -318,6 +320,10 @@ export function searchCorpusWideLexicalCandidates(
     seenOccurrenceIds.add(row.vector_id);
     const acceptedAt = canonicalAcceptedAt(row.accepted_at);
     const docType = row.doc_type?.trim().toLowerCase() || undefined;
+    const ordinal =
+      typeof row.ordinal === "number" && Number.isFinite(row.ordinal)
+        ? Math.trunc(row.ordinal)
+        : undefined;
     candidates.push({
       id: row.vector_id,
       text: row.text,
@@ -337,6 +343,9 @@ export function searchCorpusWideLexicalCandidates(
         accession: row.accession,
         accepted_at: acceptedAt ?? null,
         section: row.section,
+        // Preserve occurrence ordinal so production-eval golden refs keyed by
+        // accession+ordinal can credit lexical-only recall wins.
+        ...(ordinal != null ? { chunk_ordinal: ordinal, ordinal } : {}),
         tenant_scope: row.tenant_scope === "legacy" ? "shared:operator" : row.tenant_scope,
         scope: row.tenant_scope.startsWith("private:") ? "private" : "shared",
         userId: row.user_id ?? "local",

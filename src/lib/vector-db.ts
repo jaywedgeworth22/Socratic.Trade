@@ -6453,6 +6453,9 @@ export async function retrieveContextDetailed(
     // pass, it can surface a filing occurrence that Pinecone did not return at all. The flag is
     // default-off until the production eval gate promotes it.
     let usedCorpusWideLexical = false;
+    // When the enabled FTS stage throws, fall back to dense but mark the run degraded so
+    // empty final results are not mis-labeled `no_memory` (failed stage vs clean empty corpus).
+    let corpusWideLexicalFailed = false;
     if (wantCorpusWideLexical) {
       const endLexical = stageTrace?.start("lexical_query", {
         provider: "sqlite-fts5",
@@ -6476,6 +6479,7 @@ export async function retrieveContextDetailed(
         }).filter((candidate) => lexicalCandidateMatchesOptions(candidate, options));
         endLexical?.({ candidatesOut: lexicalCandidates.length });
       } catch (error) {
+        corpusWideLexicalFailed = true;
         endLexical?.({ error, candidatesOut: 0 });
         console.warn("[vector-db] corpus-wide lexical recall failed; retaining dense recall:", error instanceof Error ? error.message : String(error));
       }
@@ -6773,6 +6777,7 @@ export async function retrieveContextDetailed(
       managedVersionCrowdingDegraded ||
       managedAuthorityDegraded ||
       budgetDegraded ||
+      corpusWideLexicalFailed ||
       (rerankUnavailable && finalChunks.length > 0);
     reportRetrievalStatus(
       options,
