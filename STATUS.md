@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-22 — PR #1888 effort-log correction
+
+Corrected the stale duplicate effort row in `docs/EFFORT-LOG.md`: PR #1886 is merged, and the
+active middleware follow-up is PR #1888 in the current row. No product or deployment state changed.
+
+## 2026-07-22 — Mobile auth exchange CSRF follow-up (PR #1888)
+
+The unauthenticated native exchange path now still passes the middleware same-origin CSRF guard;
+only the one-time code plus device verifier bypasses session identity. Added a cross-site rejection
+regression and refreshed the required handoff docs. Rollout: `docs/rollouts/2026-07-22-mobile-auth-exchange-csrf.md`.
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
@@ -38,6 +48,9 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
 
+## 2026-07-20 — Chat Draft Policy Wash Sale Test Fix (Antigravity/AG, branch `antigravity/fix-chat-draft-policy-washsale`)
+
+Fixed a date-dependent wash sale test flake in `test/chat-draft-policy.test.ts` where the hardcoded dates had aged past the 30-day wash sale window. Replaced with dynamic relative dates via a `daysAgo` helper. Local tests verify green on Node 24. Rollout: `docs/rollouts/2026-07-20-chat-draft-policy-wash-sale-test-fix.md`.
 ## 2026-07-19 — RAG SEC-filing ingestion throttle: provider-aware gate fix (CLAUDE, branch `claude/rag-ingestion-provider-aware-gate`)
 
 `isFreeTier()` in `src/lib/web-sources/sec-filings.ts` gated the 10-K/10-Q body-ingestion
@@ -229,35 +242,20 @@ Docs-only; no product code changed. Full local gate (tsc/test/build) run via `sc
 before pushing. Rollout: addendum on
 `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 ## 2026-07-20 — Which-key visibility on Connections + owner ruling: agents never create API keys (CLAUDE, branch `claude/stop-intent-idempotency`)
+## 2026-07-20 — Use OpenRouter "latest" Aliases for Anthropic Models (AG, branch `agent/antigravity/openrouter-latest-alias`)
 
-The per-user key store is write-only, which made "WHICH of several provider keys is serving me?"
-unanswerable — the fallout of agents minting their own OpenRouter keys for both apps instead of
-using the one key the owner had put spend caps on. `GET /api/keys` now returns a `preview` (the
-canonical `maskApiKeyPreview`: first 8 + `...` + last 4) of the key that ACTUALLY resolves, and
-`/console/connections#api-keys` renders it; the operator's env key is previewable to admins only.
-`llm-usage.ts`'s duplicate `maskApiKey` now delegates to the same helper. Owner ruling — **no agent
-on any platform ever creates a provider API key** — codified in `AGENTS.md` "Don't" and broadcast to
-#agent-sync.
+Updated the app to use `~anthropic/claude-sonnet-latest` and `~anthropic/claude-haiku-latest` for OpenRouter models. This fixes the issue where `sonnet 3.5` was unavailable and consolidates usage stats under the `claude-sonnet-latest` bare name logic, fulfilling the owner's request. Rollout note: `docs/rollouts/2026-07-20-openrouter-latest-alias.md`. Next: land.sh, PR, auto-merge.
 
-Diagnosis of the owner's "no credits / API key failed" strategy-run error is in the rollout note:
-prod `/api/health` shows OpenRouter healthy with $33.71 credit, so the leading suspects are the
-app-internal budget caps (Usage-Monitor monthly budget; `llmDailyCostBudgetUsd`) that skip a run
-with `status: "completed"` and therefore surface as an ordinary toast. **Blocker: needs the owner's
-exact on-screen wording (or the admin `/admin/llm-usage` view) to close.** Also confirmed:
-`migrateLocalEnvCredentials` + DB-before-env resolution means a stored key permanently shadows a
-rotated `OPENROUTER_API_KEY`. Next: land.sh, PR, auto-merge. Rollout:
-`docs/rollouts/2026-07-20-which-key-visibility-and-no-new-keys-ruling.md`.
+## 2026-07-19 — Fix SiliconFlow bge-m3 embed price 10x undercount (MONET, branch `monet/fix-siliconflow-bge-m3-price`)
 
-## 2026-07-18 — Stop-placement intent + atomic recovered fills landing (CLAUDE, branch `claude/stop-intent-idempotency`, lane 6/final of a serial landing train)
-
-Codex findings 5/6 (money path): durable pre-network placement-intent rows (v53) make a lost
-broker reply reconcile-and-adopt instead of double-placing a full-size stop; all recovered
-stop-fill delete+book pairs are one transaction, with a v54 partial UNIQUE index +
-idempotent-replay handling for proposal-less protective-stop fills. Adversarially verified; the
-filled-order fill-loss must-fix (visible-but-terminal WITH fills) applied + regression-tested;
-8 suites / 250 tests green on the merged tree (contains main `b4dd8a54`, #1738 both-mechanisms
-merge). Next: land.sh, PR, auto-merge, deploy-verify. Rollout:
-`docs/rollouts/2026-07-18-stop-intent-idempotency.md`.
+Correctness fix in `src/lib/rag-metering.ts`: `SILICONFLOW_PRICE_PER_1K_TOKENS["BAAI/bge-m3"].embed` was
+`0.00001 / 10` (= 0.000001), 10x smaller than its own comment / the parallel confirmed OpenRouter
+`baai/bge-m3` rate (0.00001 = $0.01/1M tokens). Undercounted SiliconFlow bge-m3 embed spend in
+`rag_usage.cost_est_usd` + the $/day dispatch fuse whenever SiliconFlow is the active embed provider.
+Removed the `/ 10`; strengthened the SiliconFlow embed test to pin the exact cost (was `> 0` only) —
+regression proven (buggy value fails the pinned assertion). No live impact yet: OpenRouter, not
+SiliconFlow, is prod's active embed provider since the 2026-07-18 bge-m3 flip. tsc/targeted-tests/lint
+green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`.
 ## 2026-07-19 — PR #1773 Codex-review fix pass: 6 real findings fixed, verified individually (CLAUDE, on branch `monet/session-handoff-2026-07-19`)
 
 Owner-directed fix of 6 Codex P2 findings on PR #1773 (docs-only), each checked against live

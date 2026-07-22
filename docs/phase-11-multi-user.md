@@ -1,5 +1,13 @@
 # Phase 11 - Multi-user & API-key management (plan)
 
+## Native auth exchange CSRF boundary (2026-07-22)
+
+The native mobile auth exchange is unauthenticated only with respect to session identity. It is
+not a public-prefix bypass: middleware runs `checkSameOrigin` for the state-changing exchange
+before allowing the route to validate its one-time code and device verifier. This prevents a
+cross-site browser from forcing a session cookie while preserving server-to-server/native calls
+without browser-origin headers.
+
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and
 their own API keys**. With no connected broker account the app cannot place any
