@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     const { payload } = await jwtVerify(identityToken, JWKS, {
       issuer: "https://appleid.apple.com",
       // We accept the iOS App Bundle ID. You must set APPLE_CLIENT_ID or we use the known app id.
-      audience: process.env.APPLE_CLIENT_ID || "com.jays.SocraticTrade"
+      audience: process.env.APPLE_CLIENT_ID || "trade.socratic.app"
     });
 
     const email = payload.email as string | undefined;
