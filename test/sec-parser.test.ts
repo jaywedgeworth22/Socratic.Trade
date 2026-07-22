@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseFilingHtml } from "../src/lib/web-sources/sec-parser";
+import { parseFilingHtml, isHiddenStyle } from "../src/lib/web-sources/sec-parser";
 import { chunkDocument, countTokens } from "../src/lib/rag/chunk";
 
 describe("SEC Parser and Chunker (Phase 3)", () => {
@@ -289,5 +289,117 @@ describe("SEC Parser and Chunker (Phase 3)", () => {
     expect(parsed.text).toContain("| Spanned Header | Col B |");
     expect(parsed.text).toContain("| Spanned Header | Row 1 B |");
     expect(parsed.text).toContain("| Row 2 A | Row 2 B |");
+  });
+
+  it("only treats an EXACT zero opacity/font-size as hidden (decimal styles stay visible)", () => {
+    // Hidden — genuine zero in its various spellings.
+    expect(isHiddenStyle("display:none")).toBe(true);
+    expect(isHiddenStyle("visibility: hidden")).toBe(true);
+    expect(isHiddenStyle("opacity:0")).toBe(true);
+    expect(isHiddenStyle("opacity: 0.0")).toBe(true);
+    expect(isHiddenStyle("font-size:0")).toBe(true);
+    expect(isHiddenStyle("font-size: 0px")).toBe(true);
+
+    // NOT hidden — these are ordinary visible styling. A `0`-prefix regex matched all of them,
+    // and since collectBlocks returns on a hidden node, each false positive dropped the element's
+    // entire subtree from parsed evidence.
+    expect(isHiddenStyle("opacity:0.5")).toBe(false);
+    expect(isHiddenStyle("opacity: 0.875")).toBe(false);
+    expect(isHiddenStyle("font-size:0.875rem")).toBe(false);
+    expect(isHiddenStyle("font-size: 0.9em")).toBe(false);
+  });
+
+  it("keeps content that is merely styled with a decimal opacity/font-size", () => {
+    const html = `
+      <html><body>
+        <div style="opacity:0.5">Half opacity risk disclosure that must survive parsing.</div>
+        <div style="font-size:0.875rem">Small-print revenue commentary that must survive parsing.</div>
+        <div style="opacity:0">Truly invisible marker text.</div>
+      </body></html>`;
+    const parsed = parseFilingHtml(html);
+    expect(parsed.text).toContain("Half opacity risk disclosure");
+    expect(parsed.text).toContain("Small-print revenue commentary");
+    expect(parsed.text).not.toContain("Truly invisible marker text");
+  });
+
+  it("escapes pipes from a nested table so the outer row keeps its column count", () => {
+    // The nested table's own `|` delimiters land inside ONE outer cell; unescaped they split that
+    // cell into extra columns and destroy the row's alignment.
+    const html = `
+      <html><body>
+        <table>
+          <tr><th>Outer A</th><th>Outer B</th></tr>
+          <tr>
+            <td>Before <table><tr><td>Inner1</td><td>Inner2</td></tr></table> After</td>
+            <td>Plain</td>
+          </tr>
+        </table>
+      </body></html>`;
+    const parsed = parseFilingHtml(html);
+    const dataRow = parsed.text
+      .split("\n")
+      .find((line) => line.includes("Before") && line.includes("Plain"));
+    expect(dataRow).toBeDefined();
+    // Unescaped pipes are what break the row; every pipe from the nested table must be escaped.
+    expect(dataRow).not.toMatch(/(?<!\\)\|\s*Inner1/);
+    expect(dataRow).toContain("Plain");
+  });
+
+  it("preserves an Item heading nested inside an outer table cell as a real section break", () => {
+    // EDGAR sometimes encodes an Item heading as a single-cell layout table nested inside a
+    // wrapper <table> cell. Before this fix, collectBlocks classified the nested table as a
+    // heading ParsedBlock but the enclosing conversion path only folded `b.text` back into the
+    // outer cell's prose — the heading never reached the block stream, so the section never
+    // changed and everything stayed misattributed to the prior section (here, "1. Business").
+    const html = `
+      <html><body>
+        <div>Item 1. Business</div>
+        <p>Business overview text.</p>
+        <table>
+          <tr>
+            <td>
+              <table><tr><td>Item 1A. Risk Factors</td></tr></table>
+              <p>Our principal risks include market volatility and competition.</p>
+            </td>
+          </tr>
+        </table>
+        <div>Item 2. Properties</div>
+        <p>Properties details.</p>
+      </body></html>`;
+    const parsed = parseFilingHtml(html, { formType: "10-K" });
+
+    const business = parsed.sections.find((s) => s.itemCode === "1");
+    const riskFactors = parsed.sections.find((s) => s.itemCode === "1A");
+    const properties = parsed.sections.find((s) => s.itemCode === "2");
+
+    // The nested heading must produce its own section entry with the standard 10-K title...
+    expect(riskFactors).toBeDefined();
+    expect(riskFactors?.itemTitle).toBe("Risk Factors");
+    // ...and the content that followed the nested heading (inside the same outer cell) must be
+    // attributed to THAT section, not stay stuck under "1. Business".
+    expect(riskFactors?.text).toContain("Our principal risks include market volatility and competition.");
+    expect(business?.text).not.toContain("Our principal risks include market volatility and competition.");
+    expect(business?.text).toContain("Business overview text.");
+    // Sections after the nested-table heading must still parse normally.
+    expect(properties?.text).toContain("Properties details.");
+  });
+
+  it("does not leave the nested heading's own marker text duplicated as stray table prose", () => {
+    const html = `
+      <html><body>
+        <table>
+          <tr>
+            <td>
+              <table><tr><td>Item 1A. Risk Factors</td></tr></table>
+              <p>Risk factor commentary.</p>
+            </td>
+          </tr>
+        </table>
+      </body></html>`;
+    const parsed = parseFilingHtml(html, { formType: "10-K" });
+    // "Item 1A. Risk Factors" should appear exactly once, as the section header line
+    // ("## Item 1A. Risk Factors"), not a second time folded into the table cell body.
+    const occurrences = parsed.text.split("Item 1A. Risk Factors").length - 1;
+    expect(occurrences).toBe(1);
   });
 });
