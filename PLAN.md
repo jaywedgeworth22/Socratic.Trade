@@ -24,7 +24,10 @@
 > consumption and Socratic attribution use identical accession/section/ordinal/content/namespace/
 > tenant coordinates. Focused tests, TypeScript, scoped lint, and the final Node 24 ordered gate are
 > green (lint 0 errors / 613 warnings, TypeScript, 439 files / 5,028 tests, production build); push
-> the remediation to PR #1892 and resolve its review thread.
+> the remediation to PR #1892 and resolve its review thread. Follow-up review now moves lexical
+> metadata predicates ahead of the bounded FTS cap, matches filing text only, and separates the
+> credentialed retrieval user from the generated isolated evaluation run id; rerun focused checks,
+> push, and resolve all three new review threads.
 > **2026-07-21 — Managed RAG ingestion authority repair (CODEX, branch `codex/rag-ingestion-gate-20260721`).**
 > Repair the stale `storeDocument` provider gate left by the Voyage SDK purge: require Pinecone
 > initialization plus the actual active embedding provider credential, while preserving the explicit

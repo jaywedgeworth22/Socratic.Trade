@@ -54,8 +54,9 @@ available as a single safe receipt.
 - Missing/mock production embedding credentials cannot synthesize managed vectors; deterministic
   vectors remain a test-only fixture.
 - Evaluation is capped at 100 cases/results, forces strict PIT, rejects broad relevance selectors,
-  records the actual runtime provider/model/index/authority route, and uses an isolated run user plus
-  a bounded usage window. Future or undated evidence makes the CLI fail unless explicitly diagnostic.
+  records the actual runtime provider/model/index/authority route, and uses the credentialed
+  `RAG_EVAL_USER_ID`/`local` retrieval user separately from an isolated `rag-eval:*` run id plus a
+  bounded usage window. Future or undated evidence makes the CLI fail unless explicitly diagnostic.
 - Complete prompt evidence alone can enter outcome usefulness attribution. Header-only/truncated
   assembly stays diagnostic, and chat tool-result assembly is not mislabeled as model consumption.
 - No provider, corpus, re-embed, purge, secret, or production mutation occurred.
@@ -117,6 +118,20 @@ regression covering accession, section, ordinal, content hash, namespace, scope,
 Focused verification passes 2 files / 4 tests, standalone TypeScript, and scoped ESLint with no
 errors. The final Node 24 gate then passed in order: lint with 0 errors / 613 warnings, TypeScript,
 439 files / 5,028 tests, and production build.
+
+Connector review follow-up added metadata predicates before the bounded lexical candidate cap and
+changed FTS matching to filing chunk text only, preventing symbol/source/accession metadata from
+consuming recall slots. The production evaluator now uses a credentialed retrieval user (explicit
+`--user`, `RAG_EVAL_USER_ID`, or the normal `local` account) while keeping the report/run id isolated.
+
+Follow-up verification:
+
+```text
+npx vitest run --maxWorkers=1 test/corpus-wide-lexical.test.ts test/rag-production-eval.test.ts -> 18 tests passed
+npx eslint src/lib/rag/corpus-wide-lexical.ts src/lib/vector-db.ts scripts/eval/rag-production-eval.ts test/corpus-wide-lexical.test.ts test/rag-production-eval.test.ts -> 0 errors / 71 warnings
+npx tsc --noEmit -> passed
+git diff --check -> passed
+```
 
 ## Follow-ups
 

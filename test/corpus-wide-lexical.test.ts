@@ -217,6 +217,35 @@ describe("searchCorpusWideLexicalCandidates", () => {
     expect(rows.map((row) => row.id)).toContain("vec-dividend-policy");
   });
 
+  it("applies metadata filters before the lexical cap and searches filing text only", () => {
+    seed({
+      vectorId: "vec-filtered-10k",
+      hash: "hash-filtered-10k",
+      accession: "0000320193-25-000098",
+      acceptedAt: "2025-11-01T18:00:00.000Z",
+      text: "Revenue guidance from the annual filing."
+    });
+    seed({
+      vectorId: "vec-filtered-10q",
+      hash: "hash-filtered-10q",
+      accession: "0000320193-25-000099",
+      acceptedAt: "2025-11-01T18:00:00.000Z",
+      form: "10-Q",
+      section: "Management Discussion",
+      text: "Revenue guidance from the quarterly filing."
+    });
+
+    const filtered = searchCorpusWideLexicalCandidates({
+      symbol: "AAPL",
+      query: "revenue guidance",
+      limit: 1,
+      docTypes: ["10-q"],
+      section: "Management Discussion"
+    });
+    expect(filtered.map((row) => row.id)).toEqual(["vec-filtered-10q"]);
+    expect(searchCorpusWideLexicalCandidates({ symbol: "AAPL", query: "AAPL" })).toEqual([]);
+  });
+
   it("uses occurrence accepted_at for PIT and makes strict-undated explicit", () => {
     seed({
       vectorId: "vec-old",

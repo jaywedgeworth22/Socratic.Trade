@@ -15,6 +15,7 @@ import type { RetrievedChunk, RetrievalStatus } from "../../src/lib/vector-db";
 
 export const MAX_PRODUCTION_EVAL_CASES = 100;
 export const MAX_PRODUCTION_EVAL_LIMIT = 100;
+export const DEFAULT_PRODUCTION_RAG_EVAL_USER_ID = "local";
 
 export interface ProductionRagGoldenCase {
   id: string;
@@ -85,7 +86,10 @@ export interface RagUsageReceipt {
 
 export interface ProductionRagEvalOptions {
   limit?: number;
+  /** Credentialed user whose provider keys and usage receipts are exercised. */
   userId?: string;
+  /** Isolated run identity kept separate from the credentialed retrieval user. */
+  runId?: string;
   configuration?: EvaluationModelConfiguration;
   retriever?: ProductionRetrievalAdapter;
   usageReceipt?: (startedAt: string, endedAt: string, userId: string) => RagUsageReceipt | undefined | Promise<RagUsageReceipt | undefined>;
@@ -126,6 +130,7 @@ export interface ProductionRagEvalReport {
   configurationSource: "runtime-resolved" | "injected-adapter";
   limit: number;
   userId: string;
+  runId: string;
   caseCount: number;
   evaluationContract: {
     strictAsOf: true;
@@ -193,7 +198,8 @@ export async function runProductionRagEvaluation(
     throw new Error(`Production RAG evaluation is capped at ${MAX_PRODUCTION_EVAL_CASES} cases per run.`);
   }
   const limit = strictPositiveInteger(options.limit, 20, "limit", MAX_PRODUCTION_EVAL_LIMIT);
-  const userId = options.userId?.trim() || `rag-eval:${randomUUID()}`;
+  const userId = options.userId?.trim() || process.env.RAG_EVAL_USER_ID?.trim() || DEFAULT_PRODUCTION_RAG_EVAL_USER_ID;
+  const runId = options.runId?.trim() || `rag-eval:${randomUUID()}`;
   const now = options.now ?? Date.now;
   const startedAt = new Date(now()).toISOString();
   const retriever = options.retriever ?? PRODUCTION_RETRIEVER;
@@ -237,6 +243,7 @@ export async function runProductionRagEvaluation(
     configurationSource: runtimeConfiguration ? "runtime-resolved" : "injected-adapter",
     limit,
     userId,
+    runId,
     caseCount: results.length,
     evaluationContract: {
       strictAsOf: true,
@@ -498,7 +505,8 @@ interface CliArgs {
   allowLive: boolean;
   allowPitViolations: boolean;
   limit: number;
-  userId: string;
+  userId?: string;
+  runId?: string;
   configuration: EvaluationModelConfiguration;
 }
 
@@ -508,7 +516,7 @@ function parseArgs(argv: string[]): CliArgs {
     allowLive: false,
     allowPitViolations: false,
     limit: 20,
-    userId: `rag-eval:${randomUUID()}`,
+    userId: process.env.RAG_EVAL_USER_ID?.trim() || DEFAULT_PRODUCTION_RAG_EVAL_USER_ID,
     configuration
   };
   for (let i = 0; i < argv.length; i++) {
@@ -517,6 +525,7 @@ function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--output" && next) args.output = next, i++;
     else if (arg === "--limit" && next) args.limit = strictPositiveInteger(Number(next), args.limit, "--limit", MAX_PRODUCTION_EVAL_LIMIT), i++;
     else if (arg === "--user" && next) args.userId = next, i++;
+    else if (arg === "--run-id" && next) args.runId = next, i++;
     else if (arg === "--profile" && next) args.configuration.label = next, i++;
     else if (arg === "--allow-live") args.allowLive = true;
     else if (arg === "--allow-pit-violations") args.allowPitViolations = true;
@@ -536,7 +545,8 @@ retrieval path may emit its usual usage/audit receipts. No embeddings or vectors
   --input cases.json         Required frozen, version-controlled golden cases
   --output result.json       Write machine-readable JSON (stdout always prints JSON)
   --limit N                  Retrieval limit (default 20; hard maximum 100)
-  --user ID                  Retrieval user id (default isolated rag-eval UUID)
+  --user ID                  Credentialed retrieval user id (default RAG_EVAL_USER_ID or local)
+  --run-id ID                Isolated report/run id (default generated rag-eval UUID)
   --profile LABEL            Comparison label recorded in output
   --allow-live               Required: permits live read calls to configured RAG providers
   --allow-pit-violations     Diagnostic only: do not fail the process on future/undated evidence
@@ -548,7 +558,7 @@ async function main(): Promise<void> {
   if (!args.allowLive) throw new Error("Refusing live RAG retrieval without --allow-live.");
   const cases = loadFrozenProductionRagGoldenSet(resolve(args.input));
   const report = await runProductionRagEvaluation(cases, {
-    limit: args.limit, userId: args.userId, configuration: args.configuration, usageReceipt: readRagUsageReceipt
+    limit: args.limit, userId: args.userId, runId: args.runId, configuration: args.configuration, usageReceipt: readRagUsageReceipt
   });
   const json = `${JSON.stringify(report, null, 2)}\n`;
   if (args.output) {

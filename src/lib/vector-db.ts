@@ -6463,6 +6463,9 @@ export async function retrieveContextDetailed(
             vectorTenantScope(userId, SHARED_SCOPE),
             vectorTenantScope(userId, PRIVATE_SCOPE)
           ],
+          ...(options?.docType?.length ? { docTypes: options.docType } : {}),
+          ...(options?.source ? { source: options.source } : {}),
+          ...(options?.section ? { section: options.section } : {}),
           strictUndated: strictAsOf,
           ...(options?.asOf ? { asOf: options.asOf } : {})
         }).filter((candidate) => lexicalCandidateMatchesOptions(candidate, options));

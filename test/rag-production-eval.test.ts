@@ -71,6 +71,29 @@ describe("production RAG evaluator", () => {
     expect(report.evaluationContract.strictAsOf).toBe(true);
     expect(report.configurationSource).toBe("injected-adapter");
     expect(report.usageReceipt?.costEstUsd).toBe(0.001);
+    expect(report.runId).toMatch(/^rag-eval:/);
+  });
+
+  it("uses the credentialed local user by default while keeping an isolated run id", async () => {
+    const previous = process.env.RAG_EVAL_USER_ID;
+    delete process.env.RAG_EVAL_USER_ID;
+    try {
+      let retrievedUserId: string | undefined;
+      const report = await runProductionRagEvaluation([golden], {
+        retriever: {
+          retrieve: async (_query, _symbol, _limit, userId) => {
+            retrievedUserId = userId;
+            return { chunks: [], status: "no_memory" };
+          }
+        }
+      });
+      expect(retrievedUserId).toBe("local");
+      expect(report.userId).toBe("local");
+      expect(report.runId).toMatch(/^rag-eval:/);
+    } finally {
+      if (previous === undefined) delete process.env.RAG_EVAL_USER_ID;
+      else process.env.RAG_EVAL_USER_ID = previous;
+    }
   });
 
   it("refuses an empty golden set instead of producing all-zero metrics", async () => {

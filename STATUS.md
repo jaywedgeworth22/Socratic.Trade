@@ -17,6 +17,10 @@ TypeScript, and scoped lint green. Its final Node 24 gate passes lint (0 errors 
 TypeScript, 439 files / 5,028 tests, and production build. Push/hosted checks, protected merge/
 auto-deploy, and live exact-SHA verification remain. No provider/corpus/config/production writes or
 flag changes.
+Follow-up review fixes now push lexical metadata predicates before the SQL candidate cap, constrain
+FTS matching to filing chunk text, and separate the credentialed retrieval user (`--user`,
+`RAG_EVAL_USER_ID`, or `local`) from the generated isolated evaluation run id. Focused verification
+is in progress before pushing the updated PR head.
 Rollout: `docs/rollouts/2026-07-22-rag-retrieval-integration.md`.
 
 ## 2026-07-21 — RAG rerank policy + retrieval-stage telemetry foundation (CODEX team, branch `codex/rag-strategy-program-20260721`)

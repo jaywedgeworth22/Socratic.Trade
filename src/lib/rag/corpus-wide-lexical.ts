@@ -33,8 +33,12 @@ export interface CorpusWideLexicalSearchOptions {
   /**
    * Authoritative tenant scopes visible to the requesting user. The shared filing scope is the
    * only default; callers must opt in to the requester's hashed private scope explicitly.
-   */
+  */
   visibleTenantScopes?: readonly string[];
+  /** Apply retrieval metadata filters before the FTS result cap is consumed. */
+  docTypes?: readonly string[];
+  source?: string;
+  section?: string;
 }
 
 /**
@@ -139,6 +143,26 @@ export function searchCorpusWideLexicalCandidates(
   )).slice(0, 8);
   if (visibleTenantScopes.length === 0) return [];
   const params: unknown[] = [symbol, matchQuery, symbol, ...visibleTenantScopes];
+  const metadataFilters: string[] = [];
+  const metadataFilterParams: string[] = [];
+  const docTypes = Array.from(new Set(
+    (options.docTypes ?? [])
+      .filter((docType): docType is string => typeof docType === "string" && docType.trim().length > 0)
+      .map((docType) => docType.trim().toLowerCase())
+  ));
+  if (docTypes.length > 0) {
+    metadataFilters.push(`LOWER(TRIM(sf.form)) IN (${docTypes.map(() => "?").join(", ")})`);
+    metadataFilterParams.push(...docTypes);
+  }
+  if (options.source?.trim()) {
+    metadataFilters.push("o.source = ?");
+    metadataFilterParams.push(options.source.trim());
+  }
+  if (options.section?.trim()) {
+    metadataFilters.push("o.section = ?");
+    metadataFilterParams.push(options.section.trim());
+  }
+  params.push(...metadataFilterParams);
   const tenantPlaceholders = visibleTenantScopes.map(() => "?").join(", ");
   const receiptClause = asOf
     ? `AND (
@@ -261,7 +285,7 @@ export function searchCorpusWideLexicalCandidates(
     LEFT JOIN sec_filings sf ON sf.accession = o.accession
     LEFT JOIN vector_ingest_commits owner_commit ON owner_commit.id = o.commit_id
     WHERE document_chunks_fts.symbol = ?
-      AND document_chunks_fts MATCH ?
+      AND document_chunks_fts.text MATCH ?
       AND o.symbol = ?
       AND (
         o.tenant_scope IN (${visibleTenantScopes.map(() => "?").join(", ")})
@@ -273,6 +297,7 @@ export function searchCorpusWideLexicalCandidates(
       -- This index is a filing-text recall source. Licensed transcript and user-authored sources
       -- require additional rights/ownership metadata that document_chunks_fts does not store.
       AND o.source IN ('sec-edgar', 'sec-8k')
+      ${metadataFilters.length > 0 ? `AND ${metadataFilters.join(" AND ")}` : ""}
       ${receiptClause}
       ${pitClause}
     ORDER BY
