@@ -92,11 +92,11 @@ export type MobileSnapshot = {
   recentCommands?: MobileCommand[];
 };
 type DeletionRequest = {
-  requestId: string;
+  requestId?: string;
   email?: string;
   userId: string;
   requiredText: string;
-  expiresAt: string;
+  expiresAt?: string;
   steps: string[];
 };
 
@@ -473,7 +473,7 @@ export function MobilePwaClient() {
     setDeleteBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/mobile/account-deletion/request", { method: "POST" });
+      const response = await fetch("/api/mobile/account-deletion/request");
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not start deletion.");
       setDeletionRequest(body.deletionRequest);
@@ -495,7 +495,6 @@ export function MobilePwaClient() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          requestId: deletionRequest.requestId,
           typedIdentity: deleteIdentity,
           typedText: deletePhrase
         })
