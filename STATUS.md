@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
+
+Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
 ## 2026-07-21 -- ST PR queue stuck for days: CI root-cause fixes (GROK, `monet/ci-runner-and-queue-fixes`)
 
 PRs were stuck ~2-3 days primarily because (1) **cancel-in-progress thrash** killed nearly every
@@ -8,9 +11,10 @@ verify (18/20 recent CI cancelled), and (2) **Security/gitleaks + pin-check + sm
 ran only suite jobs. Fixes: remove every workflow target for `trading-live`, with PR code on
 `socratic-ci` and trusted failure reporting on `socratic-deploy`; stop Playwright Smoke on every
 PR (main/nightly/manual only); preserve the active CI run while GitHub collapses superseded
-pending runs to the newest head. The first durable local gate also exposed six stale assertions on
-current `main`; this branch now carries the already-prepared isolation/expectation corrections from
-the #1856 lineage. Conflicts/comments were not the multi-day bottleneck.
+pending runs to the newest head. The first durable local gate also exposed a synthetic production
+enrichment fallback, cross-side bracket authorization, and stale/flaky outcome, budget, and
+notification assertions; this branch now fixes the production behavior and focused tests.
+Conflicts/comments were not the multi-day bottleneck.
 Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
 
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
@@ -20,6 +24,66 @@ Purged the Voyage AI SDK and its dependencies, standardizing the production RAG 
 ## 2026-07-21 — Mass PR CI Runner Synchronization (Antigravity)
 Synchronized 40 pending Socratic.Trade PRs and 6 pending Congress.Trade PRs with the stabilized main branches to propagate the Linux X64 Coolify CI runner configuration fix. All Dependabot PRs were triggered to rebase via comments, and human/agent PRs had main cleanly merged to force CI runs on the operational runner pool, unlocking the merge backlog.
 # Current Status
+
+## 2026-07-20 — CI-load trim: Playwright Smoke off every PR (CLAUDE, worktree `ci-trim-smoke`, branch `claude/ci-trim-smoke-on-prs`)
+
+Owner-approved CI-load reduction ("trim smoke AND add one runner" — this covers ONLY the smoke
+trim; adding a runner is separate, untouched work). The repo's single self-hosted `socratic-ci`
+runner was backlogged 71 queued runs, 25 (~35%) of them Playwright Smoke PR runs; smoke is also
+documented as flaky. `.github/workflows/e2e.yml` triggers changed from `pull_request` +
+`merge_group` + `push: main` + weekly `schedule` to `push: main` + nightly `schedule` (was
+weekly `17 9 * * 1`, now `17 9 * * *`) + `workflow_dispatch`. Verified live against both gate
+mechanisms (`gh api repos/.../rulesets/17945518` → required checks = `[verify]` only; `gh api
+repos/.../branches/main/protection` → required contexts = `[verify, gitleaks, check-pin]` only)
+that `smoke` is NOT a required status check and no GitHub merge queue is configured (so
+`merge_group` was already inert) — gating it off PRs cannot strand a required check or block
+merges, so no fake-success gate-job shim was needed. The `classify`/docs-only fast-path job body
+in `e2e.yml` was left in place (dormant, not deleted) so restoring PR coverage later is a
+one-line trigger re-add. Verification: YAML parses clean via both `python3 -c "import
+yaml..."` and Node's `js-yaml`; no source code changed so the full lint/tsc/test/build gate was
+not run locally for this change (PR's own `ci.yml` `verify` check covers it). Rollout:
+`docs/rollouts/2026-07-20-ci-trim-smoke.md`.
+## 2026-07-20 — Corpus re-embed scoped-run purge gate fix (CURSOR, branch `cursor/critical-bug-management-0770`)
+
+Hourly critical-bug sweep found a concrete RAG data-loss path in `src/lib/rag/corpus-reembed.ts`:
+an admin symbol-scoped re-embed such as `{ "docTypes": ["sec-filings"], "symbols": ["AAPL"] }`
+could mark the whole docType `completedForEmbedRevision`; the separate `purge-legacy` action then
+trusted that stamp and would delete every legacy vector for the docType even though only the scoped
+symbol was backfilled into the active bge-m3 space. The fix keeps scoped runs resumable but withholds
+the full-corpus completion stamp, so purge remains blocked until an unscoped docType run completes.
+Added a focused regression in `test/corpus-reembed.test.ts`. Verification passed:
+`npm run lint`, `npx tsc --noEmit`, `npm test` (420 files / 4,901 tests), and
+`npm run build`. Rollout:
+`docs/rollouts/2026-07-20-corpus-reembed-scoped-purge-gate.md`.
+## 2026-07-21 — Stop placement intent must require authoritative absence before retry (CURSOR, branch `cursor/critical-bug-management-8edd`)
+
+High-severity bug-finding automation found a money-path regression in the 2026-07-18 broker
+protective-stop intent lane: after a timeout/crash following broker acceptance, the next reconcile
+cleared the durable intent and placed a fresh stop whenever `getEquityOrders` returned successfully
+without the client ref. That is only safe for gateways whose order list is authoritative for
+recently-terminal orders. Robinhood-style/non-authoritative lists can omit accepted/filled/aged-out
+orders, so the old path could place a second full-size sell stop for the same shares.
+
+Fix in progress: `reconcileBrokerProtectiveStops` now clears absent intents only when
+`gateway.ordersListIncludesTerminal === true`; otherwise it keeps the intent and skips fresh
+placement for that symbol. Focused tests cover non-authoritative absence (no duplicate placement)
+and authoritative absence (fresh retry allowed). Rollout:
+`docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`. Verification: focused
+protective-stop suite, affected synthetic-stop suite, lint, TypeScript, full Vitest (420 files /
+4,901 tests), and production build all passed.
+## 2026-07-21 — Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **iOS Google & GitHub Sign-In**: Used `ASWebAuthenticationSession` to pop a secure browser in-app and authenticate via the Next.js `socratictrade.com` backend, injecting the valid JWT into the native `HTTPCookieStorage` for seamless API usage.
+2. **Backend Authentication Token Exchange**: Added a new route at `app/api/mobile/auth-redirect/route.ts` that intercepts the Auth.js callback and natively redirects `socratictrade://` with the signed session JWT back to iOS.
+3. **Implicit Web Apple Sign-In support**: Web is fully set up, just awaiting the owner to configure `AUTH_APPLE_ID` and `AUTH_APPLE_SECRET`.
+4. **Verification**: Generated `SocraticTrade.xcodeproj` via `xcodegen` and successfully passed all Swift compilation and validation steps in `xcodebuild` without error.
+5. Rollout: `docs/rollouts/2026-07-21-unified-authentication.md`.
+
+## 2026-07-21 — Fix CI workflow package-lock.json dependency & Apple Sign-In audience (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
+
+1. **Root cause of 38 stuck PRs resolved**: Fixed `.github/workflows/ci.yml`, `e2e.yml`, and `shared-package-pin-check.yml` where `cache: npm` and `npm ci` were failing because `package-lock.json` is untracked/gitignored in Socratic.Trade. Updated setup steps to use `npm install --no-audit --no-fund` and `hashFiles('package.json')`.
+2. **Apple Sign-In client ID fix**: Corrected hardcoded fallback audience in `app/api/mobile/auth-redirect/route.ts` with `await cookies()` for Next.js 15+ compatibility.
+3. Rollout: `docs/rollouts/2026-07-21-ci-package-lock-and-pr-unblock.md`.
 
 ## 2026-07-19 — Four-handoff conquest: reconciliation + shepherding + hardening landed (CLAUDE, branch `claude/model-availability-session-handoff-362fd3`)
 
@@ -2725,3 +2789,27 @@ Completed the SEC/RAG parser and chunker hardening by resolving outstanding stru
 
 ## 2026-07-21 — Switch RAG Default Embedding Provider from Voyage to OpenRouter (BAAI bge-m3)
 Switched the default fallback RAG embedding and rerank provider in `src/lib/vector-db.ts` to OpenRouter using BAAI's `baai/bge-m3` embedding model and Cohere reranker. Updated tests in `test/rag-embed-provider-gate.test.ts` and `test/connection-health-routing.test.ts`.
+## 2026-07-21 — Native iOS mobile-first Phase 1 PR #1859 (CODEX, merged; secure web-auth follow-up #1886)
+
+The isolated iOS lane now has a buildable XcodeGen app/test project and a stable five-tab native
+shell (Home, Proposals, Markets, Activity, Coach). It selectively composes PR #1790's typed HTTP
+errors, frame-correct SSE/reload coalescing, and live-order confirmation while taking only the
+canonical `trade.socratic.app` identity, Sign in with Apple entitlement, and URL scheme from
+#1851; its JWT-in-query authentication and unrelated web/CI churn were rejected. The app decodes
+and presents positions, orders, alerts, daily stats, performance/benchmark/fills, connected
+accounts, market session, and scheduler state with explicit initial-loading, retryable-error,
+empty, refreshing, and stale states. Commands have per-operation busy state, so Stop remains
+available while unrelated work runs. Parent review added stale/readiness command gating, ordered
+snapshot refreshes, durable retry idempotency, a corrected deletion response contract, explicit
+live-account switching confirmation, Red Team/model provenance, and accessibility sizing/layout
+fixes. Review remediation adds read-only deletion preview with final admission fencing, terminal
+command reconciliation, immediate protective-state commands with a final broker-placement state
+re-read, explicit unknown execution-mode rendering, an app icon, and a verifier-bound opaque
+web-auth handoff so Google/GitHub callback URLs do not contain Auth.js session credentials. Release signing remains enabled and automatic for team
+`CC8UTF7ATG`. `ios/project.yml` is canonical; its generated checked-in `.xcodeproj` is kept
+in sync for direct Xcode builds. XcodeGen generation, direct-project, generic and Release simulator builds, and test-target
+`build-for-testing` are green under Xcode 27 beta; no simulator runtimes are installed, so XCTest
+execution is deferred. The only server change aligns the Apple identity-token audience fallback
+with `trade.socratic.app` and has 3/3 focused tests. Targeted Node tests (7/7), TypeScript, ESLint,
+plist/asset validation, and diff check pass. Rollout:
+`docs/rollouts/2026-07-21-native-ios-mobile-first-phase-1.md`.

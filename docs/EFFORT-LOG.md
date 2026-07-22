@@ -45,6 +45,37 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+
+- **[CODEX] Native iOS mobile-first product replacement — COMPLETED 2026-07-22 via PR #1859; secure OAuth handoff follow-up PR #1886 is open.** Phase 1 is merged to `main` with the five-tab shell, server-authoritative safety gates, canonical XcodeGen project, and verifier-bound opaque web-auth implementation. Follow-up #1886 completes the PKCE exchange hardening so session credentials never enter the custom callback URL; it remains pending protected merge. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
+- **[Socratic.Trade][CLAUDE] check-pin required-status-context merge deadlock fix (branch
+  `claude/checkpin-always-on-prs`, worktree `/private/tmp/socratic-checkpin-work/repo`, claimed
+  2026-07-19) — IN PROGRESS.** Root cause: main's classic branch protection requires status contexts
+  `verify`, `gitleaks`, `check-pin` (strict + `enforce_admins` + required conversation resolution),
+  but `.github/workflows/shared-package-pin-check.yml`'s `pull_request` trigger carried a `paths:`
+  filter (`package.json`, `package-lock.json`, the workflow file itself) — any PR that doesn't touch
+  those paths never produces a `check-pin` check-run and sits permanently BLOCKED despite every other
+  check green. This froze PR #1771 (`monet/fix-siliconflow-bge-m3-price`) on 2026-07-19; a manual
+  `gh workflow run shared-package-pin-check.yml --ref <branch>` is a stopgap, not a fix. Fix: remove
+  the `paths:` filter under `pull_request` only (`push`/`schedule`/`workflow_dispatch` untouched) so
+  `check-pin` runs — and no-ops in seconds, self-hosted, effectively $0 — on every PR going forward.
+  Dropping `check-pin` from required contexts instead is an owner branch-protection decision; not
+  taken here. Holding merge until PR #1771 is MERGED (strict mode would otherwise knock it behind
+  again).
+- **[Socratic.Trade][CURSOR] Corpus re-embed scoped-run purge gate fix (branch
+  `cursor/critical-bug-management-0770`, claimed 2026-07-20) — IN PROGRESS.**
+  Critical-bug automation found that a symbol-scoped `POST /api/admin/reembed` could persist a
+  full-docType `completedForEmbedRevision` stamp; the explicit `purge-legacy` action then trusted
+  that stamp and could delete all legacy vectors for the docType even though only the scoped symbols
+  were backfilled. Patch withholds full-corpus completion stamps on scoped runs and adds a focused
+  regression. Local gate passed: lint, TypeScript, 420-file/4,901-test Vitest suite, and build. PR pending.
+- **[Socratic.Trade][CURSOR] Stop placement intent authoritative-absence fix (branch
+  `cursor/critical-bug-management-8edd`, claimed 2026-07-21) — IN PROGRESS.** Hourly
+  high-severity scan found a money-path duplicate-stop risk: a durable broker stop placement intent
+  was cleared on absent `clientOrderId` after any successful order-list fetch, even for
+  non-authoritative/live-only broker lists. Fix requires `ordersListIncludesTerminal === true` before
+  absence authorizes a fresh placement; non-authoritative lists keep the intent and skip the symbol.
+  Local gates passed; PR publication/hosted checks next. Rollout:
+  `docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`.
 - **[Socratic.Trade][AG] Purge Voyage AI SDK and standardize RAG on OpenRouter BAAI bge-m3 / Cohere reranker (branch `agent/antigravity-docs-update`) — COMPLETED 2026-07-21.** Purged Voyage AI SDK and standardized the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Isolated Voyage client instantiation to test mode via dynamic imports, ensuring complete isolation from production while maintaining compatibility with the unit test suite. Verified green via `tsc`, `lint`, the 4,898 vitest suite, and a production Next.js build.
 - **[Socratic.Trade][GROK4] Multi-wave expert-review implementation (claimed 2026-07-20) — IN PROGRESS.** PR #1847. Waves A/C partial + coach/lesson writers + **Wave D partial** (chat directives/URLs → learned_context). Prod bge-m3 re-embed running (sec-filings in progress after dry-run 2644 candidates).
 - **[Socratic.Trade][GROK4] Full multi-expert app review (claimed 2026-07-20) — DONE (read-only).** 12-specialist panel complete. Deliverable: `docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md`. Headline P0s: (1) budget skips as status=completed (2) Usage-Monitor enforce mis-keyed vs openrouter (3) incomplete bge-m3 re-embed (4) iOS SIWA/live-confirm/deletion broken (5) shorts no continuous cover stops (6) CF Access header / SSRF class (7) coach-note slice(-20)+missing lesson writers (8) api-circuit-breaker null byte in worktree. No code landed. Read-only panel: UI/UX, iOS, mobile/desktop web, LLM cost/OpenRouter, API budgets, alert storms/cross-app coordination, Hetzner/Coolify, RAG/embeddings, trading/broker/signals, ML learning loops, cascading data APIs. Deliverable: docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md. No code edits, no prod mutations. Worktree: code-socratictrade/grok.
@@ -455,6 +486,9 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+
+- **[Socratic.Trade][CURSOR] LLM cooldown + draining-account purge safety (PR #1845, branch `cursor/critical-bug-management-2b05`) — IN PROGRESS → landing.** Code + rollout present; STATUS/EFFORT-LOG filled for handoff gate. Commit author identity: subsequent commits use noreply; squash-merge lands under PR merge identity.
+
 
 - **[Socratic.Trade][CLAUDE] Merged-worktree cleanup sweep + Voyage `/api/health` RCA (branch `claude/cleanup-merged-worktrees-bdbc08`) — COMPLETED 2026-07-18 (docs PR auto-merge armed).** Cleanup: 5 verified-clean merged lanes removed via `git worktree remove` (PR #1740 tmp checkout, #1587 `socratic-account-relative-risk`, #1559 `socratic-sec-rag-program`, #1624 `socratic-st-primary-bridge-writer`, #1563 `socratic-usage-telemetry-replay`; squash-merge verified via PR mergeCommit ancestry, branches/commits retained). KEPT: `socratic-pr1745.O3KoVh` (`codex/reconcile-pr1745` = 7 unlanded commits, NO PR — CODEX disposition needed), `socratic-admin-console-shell` (4 dirty files), `trading-ag-rag` (standing lane). 4 listed paths already gone; PRs #1441/#1451/#1728 have no worktrees. Voyage RCA: `/api/health` is 200/ok (provider-aware criticality fix already live); `dependencies.voyage.ok=false` is the legacy-named embed lane — prod embeds bge-m3 via OpenRouter and the OpenRouter account is EXHAUSTED (25.00 credits / 25.31 used → every embed 402s, RAG ingestion stalled incl. SEC backfill). Voyage key itself verified VALID (live embed OK). OWNER ACTION: top up OpenRouter credits (or add a SiliconFlow key — same `BAAI/bge-m3` space). Mid-session collision with the live `agent/ag-reindex-bge-m3` landing session recorded + retracted on #agent-sync (sync-2); that landing stays with its original session. Rollout: `docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
 - **[Socratic.Trade][CLAUDE] iOS client fixes — typed live-approval confirmation, SSE frame parsing + reload coalescing, 401/403-only logout (Codex findings 30-32; branch `claude/ios-client-fixes`) — COMPLETED 2026-07-18.** Swift-only changes to `ios/SocraticTrade/` (no web-app surface). Rollout: `docs/rollouts/2026-07-18-ios-client-fixes.md`. CAVEAT: Swift verification was by parse + macOS-SDK typecheck only — no Xcode/simulator build was possible in the landing environment, so the owner should run one manual Xcode build before relying on the iOS client.
@@ -3845,6 +3879,10 @@ brackets; effort S/M/L.
 - **2026-07-19 PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`) — Completed.** Fixed 3 Codex findings on the `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note: (1) P1 commit-identity flag re-verified as already correct on the branch (the flagged short hash `bbe7fe3` isn't reachable; both live commits carry the correct noreply identity) — no rebase performed; (2) P2 stale STATUS.md/EFFORT-LOG.md mobile tab-bar status — corrected (see row above); (3) P2 stale open-PR inventory (#1728/#1733/#1735/#1736/#1737/#1738 documented as open) — all 6 re-verified MERGED via `gh pr view --json state,mergedAt`, addendum added to the rollout note with exact timestamps/SHAs. Docs-only. Rollout: addendum on `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md`.
 - **2026-07-19 PR #1773 Codex-review fix pass (CLAUDE, branch `monet/session-handoff-2026-07-19`) — Completed (pending merge).** Owner-directed fix of 6 real Codex P2 findings on PR #1773 (docs-only), each independently verified against live repo/git state (not rubber-stamped — see `docs/rollouts/2026-07-19-monet-session-handoff.md` for the reworded guidance and the `STATUS.md`/`PLAN.md` entries this session added). Summary: (1) reworded the rollout note's "recurring Codex false positive" guidance to require per-instance `git cat-file -t <sha>` verification instead of blanket dismissal — the re-cited SHA `a14df5f8...` still doesn't exist in this repo (independently reconfirmed) and this branch's own commits already carry the correct noreply identity, so no amend was needed; (2) added the missing PLAN.md next-action entry (#1771→#1773→#1777 landing order + re-embed); (3) reworded STATUS's re-embed claim from unbacked to live-verified via a Pinecone `describe-index-stats` check performed this session (legacy namespace ~8.7k intact, managed namespace ~1.6k — genuinely incomplete); (4)+(6) qualified `scripts/reindex-all.ts`/`reindex-10k` as SEC-10-K/10-Q-only and added the existing `POST /api/admin/reindex-8k` backfill path to the rollout note; (5) added a reconciliation banner (not a rewrite) to `docs/prod-config-voyage.md` noting prod runs bge-m3 via OpenRouter now, not the Voyage default the doc's body describes. Land via `scripts/land.sh`; shared CI runner reported severely backlogged (30+ jobs queued) — pushed once per instruction, no manual reruns.
 
+| 2026-07-20 | GROK | In Progress | OpenRouter UptimeRobot low-credit threshold $10→$3 (account prepaid; not weekly key limit) | monet/openrouter-low-credit-threshold-3 |
+
+- **2026-07-20 CI deadlock + package-pin update (AG, branch `claude/checkpin-always-on-prs`) — Completed.** Restored the stalled check-pin fixes after a server restart. Diagnosed that the Hetzner runner `socratic-deploy` was disconnecting/failing jobs. Re-routed PR 1771 CI workflows to the online `trading-live-mac` runner, allowing PR 1771 to auto-merge. For PR 1780, `check-pin` failed because `Congress.Trade` was recently bumped to `v1.11.1` while `Socratic.Trade` lagged behind; bumped Socratic.Trade's shared package to `v1.11.1` to resolve the divergence. PR 1780 is now armed for auto-merge on the Mac runner.
+| 2026-07-21 | ANTIGRAVITY | Completed | Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) | agent/antigravity-apple-auth-fix |
 | 2026-07-20 | GROK | In Progress | ST: 32/32 open PRs MERGEABLE (phantom main merges pushed; CI queue drain residual) (ST/CT/UM unstick + residual) | multi-app |
 | 2026-07-20 | Integrate 5 RapidAPI/FilingAPI/ROIC Providers | Completed | Added FMP, Insiders, TwelveData, FilingAPI, and ROIC.ai into the enrichment cascade with tests and quotas | AG |
 
@@ -3854,4 +3892,4 @@ brackets; effort S/M/L.
 | 2026-07-20 | GROK | In Progress | Claude Desktop residual: ST 0 conflicts (phantoms cleared), CT #650/#665 unstuck, UM #583 merged; CI queue drain (smoke cancelled); #1841 OR $3 threshold auto-merge armed | multi |
 | 2026-07-20 | Document Summarizer & Abstracts DB Migration | Completed | Added migration 55 for document_abstracts, db-document-abstracts CRUD, document-summarizer engine, and vitest unit tests | AG |
 
-| 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs while collapsing stale pending heads; remove every workflow target for absent trading-live; keep observer reporting on socratic-deploy; stop smoke-on-PR; align six stale main assertions | monet/ci-runner-and-queue-fixes |
+| 2026-07-21 | GROK + CODEX | In Progress | ST multi-day PR stuck: preserve active verify runs; remove absent trading-live targets; keep observer reporting on socratic-deploy; stop smoke-on-PR; remove synthetic enrichment fallback; make bracket permission side-specific; stabilize focused tests | monet/ci-runner-and-queue-fixes |

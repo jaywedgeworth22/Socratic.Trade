@@ -33,6 +33,7 @@ import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } f
 import { describeRedTeamFailureKind } from "./red-team-routing";
 import { buildSocraticDecisionCase } from "./socratic-runtime";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
+import { freshPlacementBlockReason } from "./system-state-placement-guard";
 import { getUserWashSaleLockProvenance } from "./tax";
 import { ExecutionMode, FillEvent, PolicyDecision, BrokerGateway, TradeProposal, ReviewedOrder, MarketScan, EquityOrder, EquityPosition, FillSource } from "./types";
 import { applyRedTeamHalfSize, approvedEscalationsFromDecision, isRiskAddingOpening, shouldEscalateDecision } from "./strategy-risk";
@@ -1129,6 +1130,49 @@ export async function executeProposal(
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
+
+    // Stop/close-only/liquidating is authoritative even for an approval that was already in
+    // flight. Re-read durable state after the placing claim and immediately before the broker call;
+    // the claim itself must never become a bypass around the final placement fence.
+    const protectiveStateBlock = freshPlacementBlockReason({
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      side: proposal.side
+    });
+    if (protectiveStateBlock) {
+      const blockedDecision: PolicyDecision = {
+        ...decision,
+        approved: false,
+        reasons: [...decision.reasons, protectiveStateBlock]
+      };
+      updateProposalStatus(
+        proposalId,
+        "blocked",
+        undefined,
+        review,
+        review.estimatedNotional,
+        userId,
+        undefined,
+        protectiveStateBlock,
+        blockedDecision
+      );
+      audit(
+        "order_blocked_protective_state",
+        { proposalId, symbol: proposal.symbol, side: proposal.side, reason: protectiveStateBlock, path: "approval" },
+        userId,
+        policy.connectedAccountId
+      );
+      await sendNotification(
+        {
+          type: "block",
+          title: `${proposal.symbol} order blocked by protective state`,
+          payload: { proposalId, proposal, reason: protectiveStateBlock, decision: blockedDecision }
+        },
+        { policy, userId }
+      );
+      return { status: "blocked", reasons: [protectiveStateBlock] };
+    }
+
     let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
     try {
       execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
