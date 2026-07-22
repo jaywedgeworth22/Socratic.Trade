@@ -5,9 +5,11 @@
 Socratic now exact-pins shared `v2.0.0` over HTTPS and emits only strict v2 usage telemetry:
 batch-level `producerId`, event-level `eventId`, and `producerKeyRef`, with typed v2 ACK parsing.
 Fresh durable replay is rebuilt directly from the LLM/RAG/provider ledgers; pre-v2 in-memory HMR
-buffers are normalized once before retry, so there is no dual-write path. Cold tokenless install,
-TypeScript, lint (zero errors), production build, 83 broader focused tests, and the final 46-test
-producer/replay/FMP regression set pass. The receiver gate is cleared: Usage-Monitor exact main
+buffers are normalized once before retry. Existing replay cursors now freeze a high-water mark and
+drain the bounded pre-v2 window through the legacy idempotency path before strict-v2 cutover, so
+live-pushed rows cannot be recounted. Cold tokenless install, TypeScript, lint (zero errors),
+production build, 83 broader focused tests, and the final 46-test producer/replay/FMP regression set
+pass; the focused replay regression is 10/10. The receiver gate is cleared: Usage-Monitor exact main
 `335723775ef0f8114ee1ca77b4716139018026dc` is committed live on Oracle.
 
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)

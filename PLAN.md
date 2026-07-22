@@ -15,10 +15,11 @@
 > contract that requires a new server API.
 > **2026-07-22 - Usage telemetry v2 producer adoption (CODEX, branch
 > `codex/usage-telemetry-v2-20260721`).** Exact-pin shared `v2.0.0`, replace v1 wire fields with the
-> strict v2 batch/event contract, preserve durable replay identity and old in-memory buffer recovery,
-> verify cold HTTPS install plus focused/full Node 24 gates, then land only after the receiver's
-> current Oracle revision has a committed exact-SHA receipt. After merge, require Coolify exact-SHA
-> health and an authenticated receiver ACK before closing.
+> strict v2 batch/event contract, freeze and legacy-drain each existing replay watermark through a
+> high-water mark before strict-v2 cutover, preserve durable replay identity and old in-memory
+> buffer recovery, verify cold HTTPS install plus focused/full Node 24 gates, then land only after
+> the receiver's current Oracle revision has a committed exact-SHA receipt. After merge, require
+> Coolify exact-SHA health and an authenticated receiver ACK before closing.
 
 > **2026-07-20 - Corpus re-embed scoped-purge gate fix (CURSOR, branch
 > `cursor/critical-bug-management-0770`).** Critical-bug sweep found that a symbol-scoped

@@ -13,16 +13,16 @@
 
 ## Backlog safety
 
-Durable LLM, RAG, and provider-dispatch rows are not serialized v1 envelopes. Replay reconstructs
-them from source rows, so it now produces strict-v2 payloads directly. A process-local version bump
-normalizes any pre-v2 HMR buffer once (`sourceApp` removed, `idempotencyKey` to `eventId`, `keyRef`
-to `producerKeyRef`) before validation and retry. There is no dual-write path.
+Durable LLM, RAG, and provider-dispatch rows are reconstructed from source rows. A process-local
+version bump normalizes any pre-v2 HMR buffer once (`sourceApp` removed, `idempotencyKey` to
+`eventId`, `keyRef` to `producerKeyRef`) before validation and retry.
 
-Existing replay cursors were ACKed under v1's explicit persistence key. A durable per-ledger cutover
-marker therefore keeps the first v2 pass strict (`>` the v1 cursor), preventing the old boundary row
-from being inserted again under v2's derived `(producerId,eventId)` key. The marker is written in the
-same transaction that advances the first v2-ACKed cursor; inclusive crash-safe overlap resumes only
-after that point.
+Existing replay cursors were ACKed under v1's explicit persistence key, while live pushes did not
+advance those cursors. Before switching a ledger to strict-v2 identities, replay freezes a durable
+high-water mark and drains that bounded window through `sendLegacyOutbox`, preserving the old
+idempotency key so already-live-pushed rows dedupe. Only after that ACKed catch-up does it record the
+cutover marker; rows created after the snapshot use strict-v2 identities and cannot be double-counted
+by the migration. Normal inclusive overlap remains crash-safe after cutover.
 
 ## Verification
 
@@ -36,8 +36,9 @@ after that point.
   `sourceApp` assertion updated during that run. The final affected producer/replay/FMP regression
   set passed 3 files / 46 tests after the update.
 - Production build: `npm run build` under Node 24.
-- Cutover regression: push + durable replay suites passed 2 files / 35 tests under Node 24,
-  including a seeded v1 watermark that sends only the following v2 row before overlap resumes.
+- Cutover regression: `npx vitest run --maxWorkers=1 test/usage-monitor-replay.test.ts` — 10/10
+  tests passed after rebuilding `better-sqlite3` for the active Node ABI; the suite covers the
+  bounded legacy catch-up and post-cutover strict-v2 overlap.
 
 ## Promotion gate
 

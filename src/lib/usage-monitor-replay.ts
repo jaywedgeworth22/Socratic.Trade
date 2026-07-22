@@ -17,6 +17,7 @@ import {
   createLlmUsageMonitorEvent,
   createProviderDispatchUsageMonitorEvent,
   createRagUsageMonitorEvent,
+  sendLegacyUsageMonitorBatch,
   sendUsageMonitorBatch,
   usageMonitorEnabled,
   type UsageMonitorEvent,
@@ -156,11 +157,22 @@ function hasCompletedV2Cutover(key: string): boolean {
   return Boolean(getDb().prepare("SELECT 1 FROM settings WHERE key = ?").get(key));
 }
 
+/** Mark the v2 identity cutover only after the bounded legacy catch-up is fully acknowledged. */
+function completeV2Cutover(key: string): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, 'complete', ?)"
+    )
+    .run(key, now);
+}
+
 /** Monotonic BEGIN IMMEDIATE update prevents overlapping app processes from regressing a cursor. */
 function advanceWatermark(
   key: string,
   v2CutoverKey: string,
-  candidate: ReplayCursor
+  candidate: ReplayCursor,
+  markCutover = true
 ): ReplayCursor {
   const database = getDb();
   const advance = database.transaction((): ReplayCursor => {
@@ -177,11 +189,13 @@ function advanceWatermark(
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
       )
       .run(key, JSON.stringify(candidate), now);
-    database
-      .prepare(
-        "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, 'complete', ?)"
-      )
-      .run(v2CutoverKey, now);
+    if (markCutover) {
+      database
+        .prepare(
+          "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, 'complete', ?)"
+        )
+        .run(v2CutoverKey, now);
+    }
     return candidate;
   });
   return advance.immediate() as ReplayCursor;
@@ -193,46 +207,68 @@ function cursorClause(inclusive: boolean): string {
     : "created_at > ? OR (created_at = ? AND id > ?)";
 }
 
+function upperBoundClause(): string {
+  return "created_at < ? OR (created_at = ? AND id <= ?)";
+}
+
+function latestCursor(table: string): ReplayCursor | null {
+  const row = getDb()
+    .prepare(
+      `SELECT id, created_at AS createdAt FROM ${table} ` +
+        "ORDER BY created_at DESC, id DESC LIMIT 1"
+    )
+    .get() as ReplayCursor | undefined;
+  return row ?? null;
+}
+
 function readLlmRows(
   cursor: ReplayCursor | null,
   inclusive: boolean,
-  limit: number
+  limit: number,
+  upperBound: ReplayCursor | null = null
 ): LlmUsageLedgerRow[] {
   const columns =
     "id, user_id, provider, model, context, key_source, key_ref, prompt_tokens, " +
     "completion_tokens, total_tokens, cost_usd, created_at";
-  if (!cursor) {
-    return getDb()
-      .prepare(`SELECT ${columns} FROM llm_usage ORDER BY created_at ASC, id ASC LIMIT ?`)
-      .all(limit) as LlmUsageLedgerRow[];
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
+  if (cursor) {
+    clauses.push(`(${cursorClause(inclusive)})`);
+    params.push(cursor.createdAt, cursor.createdAt, cursor.id);
   }
+  if (upperBound) {
+    clauses.push(`(${upperBoundClause()})`);
+    params.push(upperBound.createdAt, upperBound.createdAt, upperBound.id);
+  }
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   return getDb()
-    .prepare(
-      `SELECT ${columns} FROM llm_usage WHERE ${cursorClause(inclusive)} ` +
-      "ORDER BY created_at ASC, id ASC LIMIT ?"
-    )
-    .all(cursor.createdAt, cursor.createdAt, cursor.id, limit) as LlmUsageLedgerRow[];
+    .prepare(`SELECT ${columns} FROM llm_usage${where} ORDER BY created_at ASC, id ASC LIMIT ?`)
+    .all(...params, limit) as LlmUsageLedgerRow[];
 }
 
 function readRagRows(
   cursor: ReplayCursor | null,
   inclusive: boolean,
-  limit: number
+  limit: number,
+  upperBound: ReplayCursor | null = null
 ): RagUsageLedgerRow[] {
   const columns =
     "id, user_id, operation, provider, model, tokens_in, tokens_out, batch_count, " +
     "cost_est_usd, created_at";
-  if (!cursor) {
-    return getDb()
-      .prepare(`SELECT ${columns} FROM rag_usage ORDER BY created_at ASC, id ASC LIMIT ?`)
-      .all(limit) as RagUsageLedgerRow[];
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
+  if (cursor) {
+    clauses.push(`(${cursorClause(inclusive)})`);
+    params.push(cursor.createdAt, cursor.createdAt, cursor.id);
   }
+  if (upperBound) {
+    clauses.push(`(${upperBoundClause()})`);
+    params.push(upperBound.createdAt, upperBound.createdAt, upperBound.id);
+  }
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   return getDb()
-    .prepare(
-      `SELECT ${columns} FROM rag_usage WHERE ${cursorClause(inclusive)} ` +
-      "ORDER BY created_at ASC, id ASC LIMIT ?"
-    )
-    .all(cursor.createdAt, cursor.createdAt, cursor.id, limit) as RagUsageLedgerRow[];
+    .prepare(`SELECT ${columns} FROM rag_usage${where} ORDER BY created_at ASC, id ASC LIMIT ?`)
+    .all(...params, limit) as RagUsageLedgerRow[];
 }
 
 function optionalFinite(value: number | null): number | undefined {
@@ -282,13 +318,13 @@ async function ragEvents(rows: RagUsageLedgerRow[]): Promise<UsageMonitorEvent[]
 function readProviderRows(
   cursor: ReplayCursor | null,
   inclusive: boolean,
-  limit: number
+  limit: number,
+  upperBound: ReplayCursor | null = null
 ): ProviderUsageOutboxRow[] {
-  return listProviderUsageOutboxRows({
-    after: cursor,
-    inclusive,
-    limit,
-  });
+  const rows = listProviderUsageOutboxRows({ after: cursor, inclusive, limit });
+  return upperBound
+    ? rows.filter((row) => compareCursors({ createdAt: row.created_at, id: row.id }, upperBound) <= 0)
+    : rows;
 }
 
 async function providerEvents(rows: ProviderUsageOutboxRow[]): Promise<UsageMonitorEvent[]> {
@@ -311,25 +347,48 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
   v2CutoverKey: string;
   pageSize: number;
   maxPages: number;
-  readRows: (cursor: ReplayCursor | null, inclusive: boolean, limit: number) => Row[];
+  readRows: (
+    cursor: ReplayCursor | null,
+    inclusive: boolean,
+    limit: number,
+    upperBound?: ReplayCursor | null
+  ) => Row[];
+  readHighWatermark: () => ReplayCursor | null;
   toEvents: (rows: Row[]) => Promise<UsageMonitorEvent[]>;
 }): Promise<LedgerReplayResult> {
   let sent = 0;
   try {
     let cursor = readWatermark(input.watermarkKey);
-    // A pre-v2 cursor points at a row ACKed under the old explicit idempotency key. Strict v2
-    // derives a different receiver key from (producerId,eventId), so inclusively replaying that
-    // boundary row would count it twice. Keep the first v2 pass strict until a v2 ACK advances the
-    // cursor and atomically records the cutover marker; normal crash-safe overlap resumes after it.
-    let inclusive = cursor !== null && hasCompletedV2Cutover(input.v2CutoverKey);
+    const cutoverComplete = hasCompletedV2Cutover(input.v2CutoverKey);
+    // A pre-v2 cursor does not include rows that were live-pushed after the last replay pass.
+    // Freeze a high-water mark and drain that bounded window through the legacy idempotency path
+    // before switching the ledger to strict v2 identities; rows arriving after the mark are left
+    // for the normal v2 pass and can never be double-counted by the cutover.
+    const legacyHighWatermark = cutoverComplete ? null : input.readHighWatermark();
+    const legacyCatchup = !cutoverComplete && legacyHighWatermark !== null;
+    // Legacy replay may safely include the boundary because its durable v1 identity is exactly the
+    // key the receiver already deduped. Once cutover is complete, the same overlap uses strict-v2
+    // event IDs and remains crash-safe as before.
+    let inclusive = cursor !== null;
 
     for (let page = 0; page < input.maxPages; page += 1) {
-      const rows = input.readRows(cursor, inclusive, input.pageSize);
+      const rows = input.readRows(
+        cursor,
+        inclusive,
+        input.pageSize,
+        legacyCatchup ? legacyHighWatermark : null
+      );
       inclusive = false;
-      if (rows.length === 0) return { sent, complete: true, failed: false };
+      if (rows.length === 0) {
+        if (!cutoverComplete) completeV2Cutover(input.v2CutoverKey);
+        return { sent, complete: true, failed: false };
+      }
 
       const events = await input.toEvents(rows);
-      if (!(await sendUsageMonitorBatch(events))) {
+      const acknowledged = legacyCatchup
+        ? await sendLegacyUsageMonitorBatch(events)
+        : await sendUsageMonitorBatch(events);
+      if (!acknowledged) {
         return { sent, complete: false, failed: true };
       }
 
@@ -337,12 +396,16 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
       cursor = advanceWatermark(input.watermarkKey, input.v2CutoverKey, {
         createdAt: last.created_at,
         id: last.id,
-      });
+      }, !legacyCatchup);
       sent += rows.length;
 
       if (rows.length < input.pageSize) {
+        if (!cutoverComplete) completeV2Cutover(input.v2CutoverKey);
         return { sent, complete: true, failed: false };
       }
+    }
+    if (legacyCatchup && cursor && legacyHighWatermark && compareCursors(cursor, legacyHighWatermark) >= 0) {
+      completeV2Cutover(input.v2CutoverKey);
     }
     return { sent, complete: false, failed: false };
   } catch {
@@ -375,6 +438,7 @@ async function executeUsageMonitorReplay(
     pageSize,
     maxPages,
     readRows: readLlmRows,
+    readHighWatermark: () => latestCursor("llm_usage"),
     toEvents: llmEvents,
   });
   const rag = await replayLedger<RagUsageLedgerRow>({
@@ -383,6 +447,7 @@ async function executeUsageMonitorReplay(
     pageSize,
     maxPages,
     readRows: readRagRows,
+    readHighWatermark: () => latestCursor("rag_usage"),
     toEvents: ragEvents,
   });
   const provider = await replayLedger<ProviderUsageOutboxRow>({
@@ -391,6 +456,7 @@ async function executeUsageMonitorReplay(
     pageSize,
     maxPages,
     readRows: readProviderRows,
+    readHighWatermark: () => latestCursor("provider_usage_outbox"),
     toEvents: providerEvents,
   });
   return { configured: true, llm, rag, provider };

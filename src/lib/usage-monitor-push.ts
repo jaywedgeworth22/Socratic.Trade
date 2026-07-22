@@ -971,8 +971,9 @@ const REPLAY_SEND_TIMEOUT_MS = 30_000;
  * Applies an AbortSignal timeout so that a connection stall cannot permanently block the caller
  * (the replay worker's inFlight guard is never cleared if the POST promise never settles).
  */
-export async function sendUsageMonitorBatch(
-  events: UsageMonitorEvent[]
+async function sendReplayBatch(
+  events: UsageMonitorEvent[],
+  legacy: boolean
 ): Promise<boolean> {
   if (events.length === 0) return true;
   if (!usageMonitorEnabled()) return false;
@@ -987,7 +988,7 @@ export async function sendUsageMonitorBatch(
   // valid remains) lets the durable caller advance its watermark past the bad row instead of
   // re-failing it forever.
   const deliverable = events.filter(isDeliverableEvent);
-  warnPoisonDropped(events.length - deliverable.length, "replay");
+  warnPoisonDropped(events.length - deliverable.length, legacy ? "legacy-replay" : "replay");
   if (deliverable.length === 0) return true;
 
   // Shares the live-push breaker: the replay interval fires every 60s regardless, but while the
@@ -1008,7 +1009,20 @@ export async function sendUsageMonitorBatch(
       fetchImpl: (input, init) =>
         fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    await client.send(deliverable);
+    if (legacy) {
+      // The durable rows were written before the strict-v2 cutover. Preserve the exact v1
+      // delivery identity as the legacy outbox idempotencyKey so rows already live-pushed under
+      // v1 dedupe instead of becoming a second v2 measurement.
+      await client.sendLegacyOutbox(
+        deliverable.map(({ eventId, ...event }) => ({
+          ...event,
+          sourceApp: SOURCE_APP,
+          idempotencyKey: eventId,
+        }))
+      );
+    } else {
+      await client.send(deliverable);
+    }
     // Record health from the replay lane too — if replay is the first/only lane talking to a down
     // monitor, this is what keeps the admin health row truthful instead of stale-healthy while the
     // shared breaker (below) suppresses the live-push lane's own health writes.
@@ -1030,6 +1044,19 @@ export async function sendUsageMonitorBatch(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Send the bounded pre-v2 catch-up using the receiver's legacy idempotency contract. */
+export async function sendLegacyUsageMonitorBatch(
+  events: UsageMonitorEvent[]
+): Promise<boolean> {
+  return sendReplayBatch(events, true);
+}
+
+export async function sendUsageMonitorBatch(
+  events: UsageMonitorEvent[]
+): Promise<boolean> {
+  return sendReplayBatch(events, false);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

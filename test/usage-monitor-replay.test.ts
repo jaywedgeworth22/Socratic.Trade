@@ -219,7 +219,7 @@ describe("usage monitor durable replay", () => {
     expect(captured[0]!.body.events[0]!.eventId).toBe(telemetryKey("llm", "llm-b"));
   });
 
-  it("does not duplicate the prior v1 watermark row when strict v2 first takes over", async () => {
+  it("drains the prior v1 window before strict v2 first takes over", async () => {
     const oldAt = "2026-07-10T13:30:00.000Z";
     const newAt = "2026-07-10T13:31:00.000Z";
     insertLlm({ id: "llm-v1-boundary", createdAt: oldAt, costUsd: 0.01 });
@@ -236,8 +236,9 @@ describe("usage monitor durable replay", () => {
 
     const first = await replay.runUsageMonitorReplay();
 
-    expect(first.llm).toEqual({ sent: 1, complete: true, failed: false });
+    expect(first.llm).toEqual({ sent: 2, complete: true, failed: false });
     expect(captured[0]!.body.events.map((event) => event.eventId)).toEqual([
+      telemetryKey("llm", "llm-v1-boundary"),
       telemetryKey("llm", "llm-first-v2"),
     ]);
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)?.id).toBe(
