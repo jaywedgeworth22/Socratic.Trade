@@ -3486,6 +3486,17 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN suspect_count INTEGER NOT NULL DEFAULT 0");
   }
 
+  // Fixed/ATR tick-cadence backstop (Codex review, item 7): fixed/atr stop plans previously had NO
+  // protection between strategy runs (excluded from this table entirely — see synthetic-stops.ts).
+  // `kind` discriminates a 'trailing' row (extreme ratchets with the high/low-water mark, unchanged
+  // behavior) from a 'fixed' row (a static trigger price — the monitor pins extreme_price back to
+  // entry_price every tick instead of persisting the ratchet, so the same evaluateStop/fire
+  // machinery yields a fixed distance instead of a trail). Defaults existing/legacy rows to
+  // 'trailing' (their only prior meaning) so this is purely additive.
+  if (!syntheticStopCols.some((c) => c.name === "kind")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN kind TEXT NOT NULL DEFAULT 'trailing'");
+  }
+
   const now = new Date().toISOString();
   // NOTE: We no longer seed global settings rows for 'policy' and 'strategyPrompt'.
   // These global rows are never read at runtime (all reads go through user_settings and
