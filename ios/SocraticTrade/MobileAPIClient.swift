@@ -1,51 +1,87 @@
 import Foundation
 
+enum MobileAPIError: Error, LocalizedError {
+    case unauthorized(statusCode: Int)
+    case serverError(statusCode: Int, message: String?)
+    case network(Error)
+    case decoding(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .unauthorized:
+            return "Your session expired. Sign in again."
+        case .serverError(let statusCode, let message):
+            if let message, !message.isEmpty {
+                return "\(message) (\(statusCode))"
+            }
+            return "The server returned an error (\(statusCode)). Try again."
+        case .network(let error):
+            return "Network error: \(error.localizedDescription)"
+        case .decoding:
+            return "The app could not read the latest server response."
+        }
+    }
+}
+
+struct SSEFrameAccumulator {
+    private var frameHasPayload = false
+
+    mutating func consume(line: String) -> Bool {
+        if line.isEmpty {
+            defer { frameHasPayload = false }
+            return frameHasPayload
+        }
+        guard !line.hasPrefix(":") else { return false }
+        if line.hasPrefix("event:") || line.hasPrefix("data:") {
+            frameHasPayload = true
+        }
+        return false
+    }
+}
+
 struct MobileAPIClient {
     let baseURL: URL
     var session: URLSession = .shared
 
     func snapshot() async throws -> MobileSnapshot {
-        let envelope: SnapshotEnvelope = try await get("/api/mobile/snapshot")
-        return MobileSnapshot(
-            currentUser: envelope.currentUser,
-            readiness: envelope.readiness,
-            policy: envelope.policy,
-            portfolio: envelope.portfolio,
-            positions: envelope.positions,
-            pendingProposals: envelope.pendingProposals,
-            watchlist: envelope.watchlist,
-            alerts: envelope.alerts,
-            recentCommands: envelope.recentCommands
-        )
+        try await get("/api/mobile/snapshot")
     }
 
-    func submit(commandType: String, payload: [String: Any] = [:]) async throws -> MobileCommand {
-        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/commands"))
-        request.httpMethod = "POST"
+    func submit(
+        commandType: String,
+        payload: [String: Any] = [:],
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> MobileCommand {
+        var request = request(path: "/api/mobile/commands", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue("\(commandType):\(UUID().uuidString)", forHTTPHeaderField: "idempotency-key")
+        request.setValue("\(commandType):\(idempotencyKey)", forHTTPHeaderField: "idempotency-key")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "commandType": commandType,
             "payload": payload,
-            "client": ["platform": "ios", "appVersion": Bundle.main.appVersion]
+            "client": [
+                "platform": "ios",
+                "appVersion": Bundle.main.appVersion,
+                "buildNumber": Bundle.main.buildNumber
+            ]
         ])
         let envelope: CommandEnvelope = try await send(request)
         return envelope.command
     }
 
     func startAccountDeletion() async throws -> AccountDeletionRequest {
-        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/account-deletion/request"))
-        request.httpMethod = "POST"
-        let envelope: DeletionRequestEnvelope = try await send(request)
+        let envelope: DeletionRequestEnvelope = try await send(
+            request(path: "/api/mobile/account-deletion/request", method: "POST")
+        )
         return envelope.deletionRequest
     }
 
-    func confirmAccountDeletion(requestId: String, typedIdentity: String, typedText: String) async throws -> AccountDeletionResult {
-        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/account-deletion/confirm"))
-        request.httpMethod = "POST"
+    func confirmAccountDeletion(
+        typedIdentity: String,
+        typedText: String
+    ) async throws -> AccountDeletionResult {
+        var request = request(path: "/api/mobile/account-deletion/confirm", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "requestId": requestId,
             "typedIdentity": typedIdentity,
             "typedText": typedText
         ])
@@ -53,42 +89,118 @@ struct MobileAPIClient {
     }
 
     func loginWithApple(identityToken: String, name: String?) async throws -> AppleLoginResponse {
-        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/auth/apple"))
-        request.httpMethod = "POST"
+        var request = request(path: "/api/mobile/auth/apple", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        var bodyParams: [String: Any] = ["identityToken": identityToken]
-        if let name = name {
-            bodyParams["name"] = name
+        var body: [String: Any] = ["identityToken": identityToken]
+        if let name, !name.isEmpty {
+            body["name"] = name
         }
-        request.httpBody = try JSONSerialization.data(withJSONObject: bodyParams)
-        // URLSession will automatically store the set-cookie header in its HTTPCookieStorage.
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await send(request)
     }
 
     func events(onEvent: @escaping () -> Void) async throws {
-        let request = URLRequest(url: baseURL.appending(path: "/api/mobile/events"))
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
-            throw URLError(.badServerResponse)
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request(path: "/api/mobile/events"))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MobileAPIError.network(error)
         }
-        for try await line in bytes.lines {
-            if line.hasPrefix("event: ") || line.hasPrefix("data: ") {
-                onEvent()
+        try Self.requireSuccess(response, body: nil)
+
+        var parser = SSEFrameAccumulator()
+        do {
+            for try await line in bytes.lines {
+                try Task.checkCancellation()
+                if parser.consume(line: line) {
+                    onEvent()
+                }
             }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MobileAPIError.network(error)
         }
+    }
+
+    func resolvedURL(_ pathOrURL: String) -> URL? {
+        if let absolute = URL(string: pathOrURL), absolute.scheme != nil {
+            guard
+                absolute.scheme?.lowercased() == "https",
+                absolute.host?.lowercased() == baseURL.host?.lowercased(),
+                absolute.port == baseURL.port
+            else {
+                return nil
+            }
+            return absolute
+        }
+        return baseURL.appending(path: pathOrURL)
+    }
+
+    func ownsCookie(_ cookie: HTTPCookie) -> Bool {
+        guard let host = baseURL.host?.lowercased() else { return false }
+        let domain = cookie.domain
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .lowercased()
+        return host == domain || host.hasSuffix(".\(domain)")
+    }
+
+    private func request(path: String, method: String = "GET") -> URLRequest {
+        var request = URLRequest(url: baseURL.appending(path: path))
+        request.httpMethod = method
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "accept")
+        return request
     }
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
-        let request = URLRequest(url: baseURL.appending(path: path))
-        return try await send(request)
+        try await send(request(path: path))
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
-            throw URLError(.badServerResponse)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MobileAPIError.network(error)
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        try Self.requireSuccess(response, body: data)
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw MobileAPIError.decoding(error)
+        }
+    }
+
+    private static func requireSuccess(_ response: URLResponse, body: Data?) throws {
+        guard let response = response as? HTTPURLResponse else {
+            throw MobileAPIError.network(URLError(.badServerResponse))
+        }
+        guard 200..<300 ~= response.statusCode else {
+            if response.statusCode == 401 || response.statusCode == 403 {
+                throw MobileAPIError.unauthorized(statusCode: response.statusCode)
+            }
+            throw MobileAPIError.serverError(
+                statusCode: response.statusCode,
+                message: serverMessage(from: body)
+            )
+        }
+    }
+
+    private static func serverMessage(from data: Data?) -> String? {
+        guard
+            let data,
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        return object["error"] as? String ?? object["message"] as? String
     }
 }
 
@@ -100,5 +212,9 @@ struct AppleLoginResponse: Decodable {
 private extension Bundle {
     var appVersion: String {
         object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+    }
+
+    var buildNumber: String {
+        object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
     }
 }

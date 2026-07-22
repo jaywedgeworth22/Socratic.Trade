@@ -1,5 +1,17 @@
 # Active Implementation Plan
 
+> **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
+> `codex/mobile-first-ios-20260721`).** Implementation is complete and simulator-build verified in
+> the isolated worktree. Parent safety review is complete; next is commit/push/PR through the normal
+> protected landing flow. Phase 1 intentionally keeps the backend authoritative; its only server
+> change aligns the native Apple audience fallback and adds a focused contract test. Release signing
+> is configured for team `CC8UTF7ATG`; the XcodeGen spec is canonical and
+> the generated `.xcodeproj` is ephemeral. Deferred after landing: device/simulator interaction QA
+> on a machine with an installed
+> iOS runtime, app-icon/notification/background-refresh work, and any richer Coach conversation
+> contract that requires a new server API.
+
+
 > **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
 > **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
 > (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**
