@@ -14,6 +14,15 @@ when rerun alone, while six deterministic failures remain in unrelated pre-exist
 (`data-providers`, `outcome-engine`, `policy`, and two budget-status fixtures). No
 provider key, corpus, Pinecone, re-embed, purge, or production state changed. Rollout:
 `docs/rollouts/2026-07-21-rag-rerank-policy-telemetry.md`.
+## 2026-07-21 — Corpus-wide lexical candidate foundation (CODEX, locally verified)
+
+Added `src/lib/rag/corpus-wide-lexical.ts`: a read-only FTS5 adapter that joins filing-text
+occurrences to authoritative `accepted_at`, safely compiles untrusted terms, returns stable
+provenance-rich lexical candidates, and defaults to strict exclusion of undated rows under an
+`asOf` cutoff. This branch deliberately does **not** wire retrieval fusion, reranking, corpus
+writes, re-embedding, or purge operations. Next: land after current ingestion/re-embed work,
+then integrate it alongside dense recall in a separately reviewed retrieval PR. Rollout:
+`docs/rollouts/2026-07-21-corpus-wide-lexical-candidates.md`.
 
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
 
