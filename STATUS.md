@@ -1,5 +1,8 @@
 # Current Status
 
+## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
+
+Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
 ## 2026-07-21 -- ST PR queue stuck for days: CI root-cause fixes (GROK, `monet/ci-runner-and-queue-fixes`)
 
 PRs were stuck ~2-3 days primarily because (1) **cancel-in-progress thrash** killed nearly every
@@ -33,6 +36,22 @@ Added a focused regression in `test/corpus-reembed.test.ts`. Verification passed
 `npm run lint`, `npx tsc --noEmit`, `npm test` (420 files / 4,901 tests), and
 `npm run build`. Rollout:
 `docs/rollouts/2026-07-20-corpus-reembed-scoped-purge-gate.md`.
+## 2026-07-21 — Stop placement intent must require authoritative absence before retry (CURSOR, branch `cursor/critical-bug-management-8edd`)
+
+High-severity bug-finding automation found a money-path regression in the 2026-07-18 broker
+protective-stop intent lane: after a timeout/crash following broker acceptance, the next reconcile
+cleared the durable intent and placed a fresh stop whenever `getEquityOrders` returned successfully
+without the client ref. That is only safe for gateways whose order list is authoritative for
+recently-terminal orders. Robinhood-style/non-authoritative lists can omit accepted/filled/aged-out
+orders, so the old path could place a second full-size sell stop for the same shares.
+
+Fix in progress: `reconcileBrokerProtectiveStops` now clears absent intents only when
+`gateway.ordersListIncludesTerminal === true`; otherwise it keeps the intent and skips fresh
+placement for that symbol. Focused tests cover non-authoritative absence (no duplicate placement)
+and authoritative absence (fresh retry allowed). Rollout:
+`docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`. Verification: focused
+protective-stop suite, affected synthetic-stop suite, lint, TypeScript, full Vitest (420 files /
+4,901 tests), and production build all passed.
 ## 2026-07-21 — Unified Authentication Rollout (iOS OAuth Google/GitHub, Web Apple, Email JWT Linking) (ANTIGRAVITY, branch `agent/antigravity-apple-auth-fix`)
 
 1. **iOS Google & GitHub Sign-In**: Used `ASWebAuthenticationSession` to pop a secure browser in-app and authenticate via the Next.js `socratictrade.com` backend, injecting the valid JWT into the native `HTTPCookieStorage` for seamless API usage.

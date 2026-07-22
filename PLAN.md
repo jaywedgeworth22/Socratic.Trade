@@ -9,6 +9,13 @@
 > `test/corpus-reembed.test.ts`; run the ordered local gate, open PR, and do not run
 > production `purge-legacy` until this fix is live and full-corpus completion is independently
 > verified.
+> **2026-07-21 - Stop placement intent authoritative-absence fix (CURSOR,
+> branch `cursor/critical-bug-management-8edd`).** Narrow money-path repair from the hourly
+> high-severity bug scan: a broker protective-stop placement intent created before a timed-out broker
+> call must not be cleared just because a non-authoritative/live-only order list lacks the
+> `clientOrderId`. Only gateways with `ordersListIncludesTerminal === true` may treat absence as
+> confirmed-dead and place fresh; Robinhood-style lists keep the intent and skip the symbol to avoid
+> duplicate sell stops. Focused and full gates passed; PR publication/hosted checks next.
 
 > **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
 > **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; and repair the six stale current-main test assertions that would otherwise fail the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
@@ -1936,3 +1943,7 @@ scope, timeline, or approach changed.
 - Root-level manual probe artifacts such as screenshots, one-off UI scripts, and
   accidental shell-output files stay ignored so the integration worktree remains
   reserved for review and merges.
+
+## 2026-07-21 PR #1845
+LLM cooldown + draining purge safety — see rollout note.
+

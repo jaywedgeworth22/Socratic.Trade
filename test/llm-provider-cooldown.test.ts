@@ -137,6 +137,29 @@ describe("llm-provider-cooldown unit behavior", () => {
     ).toHaveLength(1);
   });
 
+  it("all-billing cooldowns still return the full chain so manual credit fixes recover immediately", async () => {
+    const { recordLlmProviderFailure, planLlmProviderAttempts } = await import("../src/lib/llm-provider-cooldown");
+
+    recordLlmProviderFailure({
+      provider: "gemini",
+      keySource: "user",
+      status: 429,
+      detail: "You exceeded your current quota, please check your plan and billing details."
+    });
+    await sleep(10);
+    recordLlmProviderFailure({
+      provider: "openai",
+      keySource: "user",
+      status: 429,
+      detail: "insufficient_quota"
+    });
+
+    expect(planLlmProviderAttempts([OPENAI_ATTEMPT, GEMINI_ATTEMPT], { step: "bull" })).toEqual([
+      GEMINI_ATTEMPT,
+      OPENAI_ATTEMPT
+    ]);
+  });
+
   it("account boundary: user A's PERSONAL-key cooldown never cools user B's lane; operator lane stays shared", async () => {
     const { recordLlmProviderFailure, planLlmProviderAttempts, getLlmProviderCooldown } = await import("../src/lib/llm-provider-cooldown");
 
