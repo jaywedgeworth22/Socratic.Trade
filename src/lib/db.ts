@@ -89,8 +89,13 @@ export function getDb(): Database.Database {
   db.function("account_setting_matches_subject", { deterministic: true }, accountSettingMatchesSubject);
   db.pragma("journal_mode = WAL");
   // With WAL, a concurrent writer otherwise throws SQLITE_BUSY immediately; wait
-  // up to 30s for the lock instead. NORMAL durability is the WAL-recommended pairing.
-  db.pragma("busy_timeout = 30000");
+  // up to 60s for the lock instead. NORMAL durability is the WAL-recommended pairing.
+  // Raised from 30s (2026-07-18, PR #1728) after "database is locked" kept surfacing
+  // in prod under heavy concurrent write load (bulk RAG backfill/reindex + scheduler
+  // + burst ingest all writing the same file); WAL already lets readers proceed
+  // during a writer, so a longer wait here only affects genuinely-contended writers,
+  // not the common read path.
+  db.pragma("busy_timeout = 60000");
   db.pragma("synchronous = NORMAL");
   // Larger page cache + memory-mapped I/O: the dashboard replays fill/proposal history on every
   // request, so a ~20MB page cache (negative = KB) and 256MB mmap keep those hot reads off the
@@ -3505,6 +3510,17 @@ function migrate(database: Database.Database): void {
   }
   if (!syntheticStopCols.some((c) => c.name === "suspect_count")) {
     database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN suspect_count INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Fixed/ATR tick-cadence backstop (Codex review, item 7): fixed/atr stop plans previously had NO
+  // protection between strategy runs (excluded from this table entirely — see synthetic-stops.ts).
+  // `kind` discriminates a 'trailing' row (extreme ratchets with the high/low-water mark, unchanged
+  // behavior) from a 'fixed' row (a static trigger price — the monitor pins extreme_price back to
+  // entry_price every tick instead of persisting the ratchet, so the same evaluateStop/fire
+  // machinery yields a fixed distance instead of a trail). Defaults existing/legacy rows to
+  // 'trailing' (their only prior meaning) so this is purely additive.
+  if (!syntheticStopCols.some((c) => c.name === "kind")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN kind TEXT NOT NULL DEFAULT 'trailing'");
   }
 
   const now = new Date().toISOString();

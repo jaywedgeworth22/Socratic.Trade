@@ -21,9 +21,21 @@ dbs:
       retention: 720h # 30 days of snapshot history
     replicas:
       - type: s3
+        # Throttles the R2 request rate. Litestream 0.5.x opens a NEW connection per
+        # request to R2 and abandons the response without draining or closing it, so
+        # every sync tick permanently pins a socket (measured: 100% ESTABLISHED,
+        # keepalive-timer, frozen non-empty Recv-Q, ~34KB each). At the 1s default that
+        # leaked ~15k sockets/hr, blew past net.ipv4.tcp_mem, and wedged every deploy at
+        # git-clone via receive-window clamping. 10s cuts the leak rate 10x.
+        # TRADEOFF: replica RPO 1s -> 10s. NOT a fix for the leak itself — see
+        # docs/rollouts/2026-07-19-deploy-wedge-diagnosis.md.
+        sync-interval: 10s
         bucket: ${LITESTREAM_S3_BUCKET}
         path: trading-live/app.db
-        region: ${LITESTREAM_S3_REGION:-auto}
+        # Literal, not ${LITESTREAM_S3_REGION:-auto}: litestream does its own ${VAR}
+        # substitution and does NOT support bash `:-` defaults, so that form resolved to
+        # an EMPTY region (confirmed in the startup banner: `region=""`). R2 wants "auto".
+        region: auto
         endpoint: ${LITESTREAM_S3_ENDPOINT}
         access-key-id: ${LITESTREAM_S3_ACCESS_KEY_ID}
         secret-access-key: ${LITESTREAM_S3_SECRET_ACCESS_KEY}

@@ -38,7 +38,15 @@ export interface ChunkInput {
   doc_id?: string;
   title?: string;
   ticker?: string | string[];
-  published_at?: string | number | Date;
+  /**
+   * Required, not optional: chunkDocument throws synchronously ("doc.published_at is required
+   * for provenance") when this is missing, so leaving it optional on the type let a caller
+   * compile clean and then crash at runtime. Every production call site (sec-filings.ts,
+   * sec-ingest-worker.ts, sec8k.ts, fmp-transcripts.ts, earningscalls-transcripts.ts,
+   * corpus-reembed.ts) already always supplies it — the runtime guard was defensive, not load
+   * -bearing for real callers. Making the field required moves that guarantee to compile time.
+   */
+  published_at: string | number | Date;
   acceptance_datetime?: string | number | Date;
   doc_type?: string;
   source?: string;
@@ -82,10 +90,11 @@ function normalizeTickerList(ticker: string | string[] | undefined): string[] {
   return raw.map((t) => canonicalTicker(t)).filter(Boolean);
 }
 
-function normalizeDate(value: string | number | Date | undefined, fallback: string): string {
-  if (!value) return fallback;
+function normalizeDate(value: string | number | Date | undefined): string {
+  if (!value) throw new Error("A deterministic date value is required for provenance.");
   const d = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(d.getTime()) ? fallback : d.toISOString();
+  if (Number.isNaN(d.getTime())) throw new Error(`Invalid date value: ${value}`);
+  return d.toISOString();
 }
 
 /** Token count helper using calibrated character-level ratio. */
@@ -254,15 +263,19 @@ function blockDocument(text: string): Block[] {
  */
 export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): DocumentChunk[] {
   if (!doc?.text || typeof doc.text !== "string") throw new Error("doc.text required");
-  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+  // Enforce bounds to prevent mutable payload-unbound eligibility
+  const maxTokens = Math.min(options.maxTokens ?? DEFAULT_MAX_TOKENS, 2048);
   const childMaxTokens = Math.max(80, Math.floor(maxTokens / 3)); // target child size: ~120-130 tokens
-  const overlapRatio = options.overlapRatio ?? DEFAULT_OVERLAP_RATIO;
+  const overlapRatio = Math.max(0, Math.min(options.overlapRatio ?? DEFAULT_OVERLAP_RATIO, 0.5));
 
   const doc_id = doc.doc_id || randomUUID();
   const title = doc.title || doc_id;
   const ticker = normalizeTickerList(doc.ticker);
-  const published_at = normalizeDate(doc.published_at, new Date().toISOString());
-  const acceptance_datetime = normalizeDate(doc.acceptance_datetime, published_at);
+  
+  if (!doc.published_at) throw new Error("doc.published_at is required for provenance");
+  const published_at = normalizeDate(doc.published_at);
+  const acceptance_datetime = normalizeDate(doc.acceptance_datetime ?? doc.published_at);
+  
   const doc_type = doc.doc_type || "note";
   const source = doc.source || "sec-edgar";
   const url = doc.url || "";
