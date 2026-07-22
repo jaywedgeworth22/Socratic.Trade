@@ -29,13 +29,17 @@
      conversation resolution still blocks #1856, #1855, #1845, #1844, #1840, #1777, #1776, and
      #1775. Those findings are being repaired and landed separately after this dependency.
 
-5. **Current-main test drift (hidden until a verification survived long enough to run)**
-   - Six assertions on `main` no longer matched intentional production behavior: Yahoo retry tests
-     used the global configured cascade, the bare-policy fixture retained the new short-stop default,
-     lesson indexing added a second valid dedup prefix, and two budget-gated runs now truthfully
-     report `skipped` instead of `completed`.
-   - The fixes existed as an otherwise-unlanded commit on the #1856 lineage; this PR applies the
-     same scoped corrections so its first durable verification can complete.
+5. **Current-main product/test failures (hidden until a verification survived long enough to run)**
+   - The enrichment cascade still injected synthetic `manual-fallback` metrics when every real
+     provider returned no data, violating the repository's real-data-only rule. The fallback loop
+     is removed; missing values now remain missing.
+   - Bracket authorization treated `shortStopLossPct` as permission for a long/buy bracket. Stop
+     permission is now side-specific.
+   - Outcome indexing legitimately emits both decision and lesson writes; the regression now
+     requires the decision write without rejecting the lesson write.
+   - Budget-admission exits now truthfully report `skipped`; only the two enforcement-skip
+     assertions change. Notification delivery is mocked in two execution suites where it is not
+     under test, removing external-I/O timeout flakes.
 
 6. **Whole runner-service restart during the first durable run**
    - #1857's first `verify-hosted` reached the test suite, then was cancelled at
@@ -55,7 +59,7 @@
 | `codex-autofix.yml`, `effort-issues-sync.yml`, `cleanup-caches.yml`, `_merge-shepherd-impl.yml`, `ci.yml` | remove every remaining workflow job target for the retired `trading-live` runner |
 | `sentry-ci-report.yml`, `scripts/sentry-ci-report.py` | use the separate `socratic-deploy` observer lane and keep the Sentry monitor mirror aligned with the new nightly smoke cron |
 | `test/ci-workflow-queue-safety.test.ts` | prevent cancellation, dead-runner routing, and smoke-on-PR regressions |
-| `src/lib/data-providers.ts`, five existing test files | isolate Yahoo retry tests and align stale assertions with current short-stop, lesson-index, and budget-status behavior |
+| `src/lib/data-providers.ts`, `src/lib/policy.ts`, existing test files | remove synthetic production fallback data, make bracket permission side-specific, and align focused outcome/budget/notification regressions |
 | `PLAN.md`, `STATUS.md`, `docs/EFFORT-LOG.md` | record the actual runner and queue-recovery plan instead of the superseded hosted-runner proposal |
 
 ## Ops follow-ups (not in this PR)
@@ -73,6 +77,10 @@
 - `npx tsc --noEmit` — passed.
 - `npx vitest run --maxWorkers=1 test/ci-workflow-queue-safety.test.ts test/sentry-ci-report-workflows.test.ts`
   — 2 files, 6 tests passed.
+- `npx vitest run --maxWorkers=1 test/data-providers.test.ts test/policy.test.ts test/outcome-engine.test.ts test/usage-budget-strategy-integration.test.ts test/strategy-money-path-f-g.test.ts test/order-confirmation-status.test.ts`
+  — 6 files, 190 tests passed after the production-correct fallback/bracket fixes.
+- Scoped ESLint over the two source files and six affected tests — passed with no output.
+- Final `npx tsc --noEmit` after the production-correct fixes — passed.
 - The exact pre-existing assertion-fix set was independently run on the #1856 lineage:
   `npx vitest run test/data-providers.test.ts test/policy.test.ts test/outcome-engine.test.ts test/usage-budget-strategy-integration.test.ts test/strategy-money-path-f-g.test.ts`
   — 5 files, 184 tests passed.
