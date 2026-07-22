@@ -2272,7 +2272,34 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    // Append-only archive for coach notes aged off the live `socratic_decisions.coach_notes`
+    // window (kept at COACH_NOTES_LIVE_CAP entries in db-socratic.ts). Before this migration, the
+    // 21st note appended to a decision silently deleted the 1st with zero trace. `note_seq` is a
+    // dense 0-based per-(user, decision) archive ordinal — an ordering/uniqueness device, not an
+    // all-time index (pre-port history is unrecoverable). See db-socratic.ts applyCoachNoteAppend.
+    // NOTE (numbering): renumbered from branch v53->v55 when merging origin/main (which claimed
+    // v53 broker_stop_placement_intents and v54 fill_events_no_proposal_broker_order_unique_index).
     version: 55,
+    name: "socratic_coach_note_archive",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS socratic_coach_note_archive (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          decision_id TEXT NOT NULL,
+          connected_account_id TEXT,
+          note TEXT NOT NULL,
+          note_seq INTEGER NOT NULL,
+          archived_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_socratic_coach_note_archive_user_decision
+          ON socratic_coach_note_archive (user_id, decision_id, note_seq);
+      `);
+    }
+  },
+  {
+    // NOTE: renumbered to v56 so main's v55 socratic_coach_note_archive stays intact.
+    version: 56,
     name: "document_abstracts",
     up: (database) => {
       database.exec(`
