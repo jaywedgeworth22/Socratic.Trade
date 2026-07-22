@@ -14,7 +14,7 @@ import { buildLlmRequestBody, extractLlmText, llmAuthHeaders } from "./llm-call"
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { isModelRotationSentinel, llmFetch, resolveReviewerReasoningEffort } from "./llm-request";
-import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
+import { extractLlmUsage, providerRequestIdFromPayload, recordLlmUsage } from "./llm-usage";
 import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import { applyEvidenceBudget } from "./evidence-budget";
@@ -227,7 +227,11 @@ export async function reviewPendingFrameworkProposals(
       // Structured output for BOTH transports: a JSON schema drives OpenAI's json_schema AND
       // Anthropic's forced tool-use, so the reviewer can't return prose that parseReviewResponse
       // would drop (openAiJsonObject alone is ignored by the Anthropic Messages path).
-      schema: { name: "framework_review", schema: reviewSchema(), description: "Per-proposal advisory verdicts keyed by proposal id." }
+      schema: { name: "framework_review", schema: reviewSchema(), description: "Per-proposal advisory verdicts keyed by proposal id." },
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "framework-review"
     }
   );
 
@@ -260,7 +264,7 @@ export async function reviewPendingFrameworkProposals(
           return { text: undefined };
         }
         const payload = await response.json();
-        recordLlmUsage({ userId, provider, model, context: "framework-review", keySource, keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "framework-review", keySource, keyRef, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
         return { text: typeof text === "string" ? text : undefined };
       }

@@ -62,7 +62,7 @@ import { buildLlmRequestBody, extractLlmText, llmAuthHeaders, type LlmJsonSchema
 import { humanizeLlmError } from "./llm-errors";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, normalizeReasoningEffortForModel } from "./llm-request";
-import { extractLlmUsage, recordLlmUsage } from "./llm-usage";
+import { extractLlmUsage, providerRequestIdFromPayload, recordLlmUsage } from "./llm-usage";
 import { recommendedReasoningEffortForModel } from "./model-reasoning-recommendations";
 import { sendNotification } from "./notifications";
 import { withLlmGeneration } from "./observability";
@@ -797,7 +797,11 @@ export async function runDailyLearningReview(
           userContent,
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.learningReview,
           reasoningEffort,
-          schema: LEARNING_REVIEW_SCHEMA
+          schema: LEARNING_REVIEW_SCHEMA,
+          userId,
+          keyRef,
+          service: "strategy",
+          feature: "learning-review"
         }
       );
       const traced = await withLlmGeneration(
@@ -829,6 +833,7 @@ export async function runDailyLearningReview(
             keySource,
             keyRef,
             connectedAccountId: policy.connectedAccountId,
+            providerRequestId: providerRequestIdFromPayload(provider, payload),
             ...extractLlmUsage(payload)
           });
           return { text: extractLlmText(payload) };

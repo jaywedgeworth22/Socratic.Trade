@@ -24,7 +24,7 @@ import { buildLlmRequestBody, extractLlmText, llmAuthHeaders, type LlmJsonSchema
 import { isOverLlmBudget } from "../llm-budget";
 import { resolveLlmEndpoint } from "../llm-provider";
 import { LLM_TIMEOUT_MS } from "../llm-request";
-import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "../llm-usage";
 import { getPolicy } from "../db";
 import { envFlagOn } from "./env-flag";
 
@@ -223,7 +223,11 @@ export async function generateHydePassages(
         systemPrompt: HYDE_SYSTEM_PROMPT,
         userContent,
         schema: HYDE_SCHEMA,
-        maxOutputTokens: HYDE_MAX_OUTPUT_TOKENS
+        maxOutputTokens: HYDE_MAX_OUTPUT_TOKENS,
+        userId,
+        keyRef: endpoint.keyRef,
+        service: "rag",
+        feature: "rag-hyde"
       }
     );
 
@@ -255,6 +259,7 @@ export async function generateHydePassages(
         keySource: endpoint.keySource,
         keyRef: endpoint.keyRef,
         connectedAccountId: opts.connectedAccountId,
+        providerRequestId: providerRequestIdFromPayload(endpoint.provider, payload),
         ...extractLlmUsage(payload)
       });
     } catch {

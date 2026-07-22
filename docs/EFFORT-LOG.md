@@ -1,4 +1,3 @@
-
 - **[Socratic.Trade/Congress.Trade][AG] Reconcile and sync 47 total pending PRs to stabilized main (branch `agent/antigravity-ci-fix-revert`) — COMPLETED 2026-07-21.** Synced 40 Socratic.Trade PRs and 6 Congress.Trade PRs with main. Rebased dependabot PRs and merged main cleanly into human/agent branches, resolving safe package-lock.json/EFFORT-LOG.md conflicts and forcing CI checks onto the newly stabilized Linux runners.
 # Trading Effort Log - canonical live cross-agent board
 
@@ -47,6 +46,9 @@ As of 2026-07-08 (assignment-rule update).
 ## In Progress
 
 - **[CODEX] Native iOS mobile-first product replacement — IN PROGRESS 2026-07-22.** Phase 1 (#1859) and the verifier-bound opaque web-auth handoff (#1886) are merged to `main`; a narrow follow-up is in progress because post-merge review found middleware blocked the first unauthenticated code exchange. It will allow only `/api/mobile/auth/exchange`, whose one-time code and device verifier remain the authorization proof until the route sets the HTTP-only Auth.js cookie. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
+- **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
+
+- **[CODEX] Native iOS mobile-first product replacement — COMPLETED 2026-07-22 via PR #1859; secure OAuth handoff follow-up PR #1886 is open.** Phase 1 is merged to `main` with the five-tab shell, server-authoritative safety gates, canonical XcodeGen project, and verifier-bound opaque web-auth implementation. Follow-up #1886 completes the PKCE exchange hardening so session credentials never enter the custom callback URL; it remains pending protected merge. Worktree `/Users/jay/apps/socratic-mobile-first-ios`; no production native distribution is claimed until TestFlight/App Store release.
 - **[Socratic.Trade][CLAUDE] check-pin required-status-context merge deadlock fix (branch
   `claude/checkpin-always-on-prs`, worktree `/private/tmp/socratic-checkpin-work/repo`, claimed
   2026-07-19) — IN PROGRESS.** Root cause: main's classic branch protection requires status contexts
@@ -265,6 +267,30 @@ As of 2026-07-08 (assignment-rule update).
   (money-adjacent prompt path → frontier adversarial review). Handoff: docs/handoffs/2026-07-18-claude-to-antigravity-monet-s7-ports.md.
   Cached recon available; resume wf_f2e1ca12-b41 or start fresh. Old w2 branches marked superseded once landed.
 
+- **[Socratic.Trade][CLAUDE] Usage-compliance Wave 2 (ST lane): telemetry gaps + OpenRouter classifier
+  metadata (worktree `socratic-trade-claude-usage-compliance`, branch `claude/usage-compliance-st`,
+  claimed 2026-07-18, MONET-handoff credit) — IN PROGRESS.** Per
+  `/Users/jay/apps/DESIGN-usage-compliance-classifier.md` §1/§2: (A) close 3 unmetered paid-call gaps
+  (`market-signals/massive.ts` 3x fetch, `rag/query-deconstruct.ts` gpt-4o-mini,
+  `rag/search-fusion.ts` embedding fallback); (B) thread `buildCallClassifier`/
+  `openrouterRequestEnrichment` (flat `trace`, no `metadata` nesting — RESOLVED 2026-07-18 shape) +
+  OpenRouter generation-id capture (`providerRequestId`) across `llm-call.ts`, 11 call sites,
+  `chat/llm.ts`, `vector-db.ts`; bump shared pin to `904ea96a`. Empirical OpenRouter acceptance
+  check (tiny paid probe, ~$0.01) included. Never merges own PR (auto-deploy on merge) — adversarial
+  review lands it.
+- **[Socratic.Trade][MONET] OpenRouter credit signal on /api/health (branch `monet/openrouter-credit-health`,
+  2026-07-18, owner-directed) — LANDING.** Universal routing (#1703) makes OpenRouter the single point of
+  failure for all LLM+RAG; `/api/health` now exposes prepaid-credit balance (`dependencies.openrouter.ok`
+  + `checks.openrouterCredits`) so an EXTERNAL monitor (Uptime Robot) alerts on low balance — owner-directed:
+  NO in-app alert, NO provider fallback. New `src/lib/openrouter-credits.ts` (free /credits query, cached,
+  fail-open, threshold `OPENROUTER_LOW_CREDIT_USD` default $10; DEGRADE-not-503). UR keyword monitor on
+  `"openrouterCredits":{"ok":false` → mail@jays.services. tsc clean, 5/5 tests, full gate via land.sh.
+  NEXT: create the UR monitor (needs UR API key via secret handoff, or owner does it in the dashboard).
+- **[Socratic.Trade][CODEX] PR #1760 review/comment/conflict closeout (branch `codex/pr1760-review-fixes`, worktree `/Users/jay/.codex/worktrees/socratic-pr-queue-closeout-20260718`, 2026-07-18) — IN PROGRESS / CORRECTIVE PR #1761 READY.** PR #1760 raced to auto-merge as `b2f22ccf` while its review-fix gate ran. All four threads are answered/resolved; #1761 restores bearer compatibility, aligns policy-namespace attribution tests, removes unsafe one-off artifacts, and is merged with that exact main. Local Node 24 gates pass lint, TypeScript, 412 files / 4,837 tests, and build. Await self-hosted checks, corrective merge, and exact production verification.
+
+- **[Socratic.Trade][CODEX] PR #1735 proposed-model attribution display contract (branch `codex/pr1735-proposal-attribution`, worktree `/Users/jay/.codex/worktrees/socratic-pr1735-proposal-attribution`, 2026-07-18) — LOCAL VERIFIED / UNPUSHED.** `TradeProposal.proposedByModel` now preserves the exact configured primary/fallback identifier while telemetry remains canonical for usage statistics. Regression coverage passes for `openrouter/openai/...` primary and `openrouter/google/...` fallback identity; TypeScript and scoped lint pass. Commit is intentionally local-only pending owner direction.
+
+---
 - **[Socratic.Trade][CLAUDE] Serial 6-lane landing train (operator session, 2026-07-18) — IN PROGRESS.**
   Landing, in order, each merge deploy-verified before the next: (1) `claude/bge-m3-metering-gate`
   (provider-aware RAG metering + health gate; discovered already absorbed byte-identical into main via
