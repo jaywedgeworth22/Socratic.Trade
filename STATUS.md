@@ -61,6 +61,35 @@ green. Rollout: `docs/rollouts/2026-07-19-siliconflow-bge-m3-embed-price-fix.md`
 Uptime Robot watches `openrouterCredits.ok` on public `/api/health` — **account prepaid remaining**, not the ST key's weekly $10 limit and not Usage-Monitor. Default floor was $10 (`OPENROUTER_LOW_CREDIT_USD`); owner wants "nearly out" ≈ **$3**. Code default + `.env.example` updated; Uptime Robot keyword unchanged. If prod env pins `OPENROUTER_LOW_CREDIT_USD=10`, set it to `3` or remove the pin. Rollout: `docs/rollouts/2026-07-20-openrouter-low-credit-threshold-3.md`.
 
 ## 2026-07-19 — PR #1774 Codex-review triage: commit-identity verify + stale handoff-doc corrections (CLAUDE, branch `claude/mobile-view-spacing-oetyav`)
+## 2026-07-19 — PR #1776 review-thread closeout: all 4 codex-connector findings fixed (CLAUDE, branch `agent/ag-sec-parser-hardening`)
+
+Closed out the remaining two of four open `chatgpt-codex-connector` P2 review threads on PR #1776
+(a prior same-day session already fixed the other two, commit `8918da21`). All four are now real
+code fixes — none were false positives.
+
+- **`ChunkInput.published_at` made required** (`src/lib/rag/chunk.ts`): the runtime guard already
+  threw when it was missing, but the type stayed optional, so TypeScript callers could compile and
+  crash later. Grepped every `chunkDocument`/`storeDocument` call site (production + ~14 test
+  files) — every one already supplies `published_at`. Tightening the type had **zero** call-site
+  fallout (`npx tsc --noEmit` clean).
+- **Nested table headings now emit real section breaks** (`src/lib/web-sources/sec-parser.ts`,
+  `collectBlocks`): a heading like `Item 1A. Risk Factors` nested as a layout table inside an
+  outer table cell was previously flattened into plain cell prose, so the section never changed
+  and following content stayed misattributed. Heading sub-blocks discovered during nested-table
+  conversion now push directly into the real block stream instead of being folded into cell text.
+  Documented a known bounded limitation (content appearing *before* the nested heading in the same
+  outer table can now attach to the new section instead of the old one) in the rollout note —
+  net improvement over the pre-fix silent-drop behavior in the common case.
+- Verified findings #1 (hidden zero-style regex) and #4 (nested-table pipe escaping) were already
+  correctly fixed by the prior session; also verified #4's "escape newlines too" concern is already
+  structurally covered by the existing `\s+` whitespace collapse on cell text.
+
+Two new tests in `test/sec-parser.test.ts` (16/16 passing, plus 69/69 and 109/109 and 30/30 across
+the broader RAG/SEC ingestion suites — see rollout note for exact commands). `npx tsc --noEmit`
+clean, `npm run lint` 0 errors. Full `npm test`/`npm run build` gate run via `scripts/land.sh`.
+Details: `docs/rollouts/2026-07-19-pr1776-review-thread-closeout.md`.
+
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
 
 Docs-only fix for 3 Codex review findings on PR #1774 (the
 `docs/rollouts/2026-07-18-session-handoff-mobile-fix-and-pr-integration.md` handoff note):
@@ -225,6 +254,11 @@ passes lint (0 errors), TypeScript, 412 Vitest files / 4,837 tests, and the prod
 #1760 auto-merged as `b2f22ccf` while that gate ran; all four threads were then answered and
 resolved, and corrective PR #1761 carries the fixes. Its branch is merged with that exact new main;
 self-hosted checks, corrective merge, and exact production verification remain.
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
+
+Completed the SEC/RAG parser and chunker hardening by resolving outstanding structural and edge-case issues identified in recent parser reviews. Improved deterministic provenance by enforcing valid timestamps, prevented runaway token allocation by bounding maxTokens and tabular row/colspan iterations, handled XBRL structural anomalies securely (preventing NaN/null SQLite poisoning), fixed hidden content extraction poisoning, and secured nested table extraction. Verified via new regression tests in `test/rag-chunk.test.ts`. Full gate green (`npm run lint`, `npx tsc`, `npm test`, `npm run build`). Ready to land.
+
+
 ## 2026-07-18 — Remove tracked lint/verify artifacts from main (MONET, branch `monet/rm-tracked-lint-artifacts`)
 
 Repo-hygiene cleanup. PR #1735 accidentally merged ~9 MB of generated, machine-specific
@@ -2617,6 +2651,11 @@ The full-gate test suite has now cleanly passed: `npm run lint` (0 errors / 402 
   there is no pending branch handoff to land from either PR.
 
 ## Current Status
+
+## 2026-07-18 — SEC/RAG parser/chunker hardening (ANTIGRAVITY, branch `agent/ag-sec-parser-hardening`)
+
+Completed the SEC/RAG parser and chunker hardening by resolving outstanding structural and edge-case issues identified in recent parser reviews. Improved deterministic provenance by enforcing valid timestamps, prevented runaway token allocation by bounding maxTokens and tabular row/colspan iterations, handled XBRL structural anomalies securely (preventing NaN/null SQLite poisoning), fixed hidden content extraction poisoning, and secured nested table extraction. Verified via new regression tests in `test/rag-chunk.test.ts`. Full gate green (`npm run lint`, `npx tsc`, `npm test`, `npm run build`). Ready to land.
+
 
 - PRs #1584, #1583, #1580, #1582, #1575, #1578, #1587, #1589, #1593, #1594, #1604, and #1607 are merged.
   Only draft PR #1586 remains open; it is the default-off FMP/RAG/privacy/account-risk consolidation.
