@@ -9,6 +9,17 @@
 > monitoring. Verify the dedicated branch with the ordered lint/tsc/test/build gate, then land via
 > `scripts/land.sh` if the owner wants deployment.
 
+> **2026-07-22 — Usage telemetry v2 + shared-package pin-check combined landing (PR #1889).** The
+> reviewed #1890 workflow correction is subsumed into #1889 to avoid two serialized full CI cycles.
+> Keep auto-merge off until the combined final head passes hosted `gitleaks`, `check-pin`, required
+> `verify`, and zero-thread review. PRs #1890 and #1780 are closed as superseded; their branches are
+> retained. After #1889 merges, verify the exact Coolify release and one new authenticated strict-v2
+> ACK.
+> **2026-07-22 — Mobile auth exchange CSRF follow-up (CODEX, PR #1888).** Keep
+> `/api/mobile/auth/exchange` unauthenticated for the native client, but do not classify it as a
+> public-prefix early return: it must pass `checkSameOrigin` before the one-time code/verifier
+> handoff. Verify the focused middleware/route tests and required hosted gate, then merge and
+> verify the exact auto-deployed SHA.
 > **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
 > `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
 > but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per
@@ -38,6 +49,13 @@
 > on a machine with an installed
 > iOS runtime, notification/background-refresh work, and any richer Coach conversation
 > contract that requires a new server API.
+> **2026-07-22 - Usage telemetry v2 producer adoption (CODEX, branch
+> `codex/usage-telemetry-v2-20260721`).** Exact-pin shared `v2.0.0`, replace v1 wire fields with the
+> strict v2 batch/event contract, freeze and legacy-drain each existing replay watermark through a
+> high-water mark before strict-v2 cutover, preserve durable replay identity and old in-memory
+> buffer recovery, verify cold HTTPS install plus focused/full Node 24 gates, then land only after
+> the receiver's current Oracle revision has a committed exact-SHA receipt. After merge, require
+> Coolify exact-SHA health and an authenticated receiver ACK before closing.
 
 > **2026-07-20 - Corpus re-embed scoped-purge gate fix (CURSOR, branch
 > `cursor/critical-bug-management-0770`).** Critical-bug sweep found that a symbol-scoped

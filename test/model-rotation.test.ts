@@ -153,7 +153,7 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
     expect(pool).toContain("gpt-5.4-mini");
     expect(pool).toContain("claude-opus-4-8");
     expect(pool).toContain("openrouter/openai/gpt-4o");
-    expect(pool).toContain("openrouter/anthropic/claude-3.5-sonnet");
+    expect(pool).toContain("openrouter/~anthropic/claude-sonnet-latest");
     
     // Gemini and DeepSeek models should be skipped since gemini/deepseek keys are missing
     expect(skipped).toContain("gemini-3.5-flash");

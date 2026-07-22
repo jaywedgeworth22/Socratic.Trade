@@ -420,23 +420,40 @@ describe("Socratic decision persistence", () => {
     expect(coached?.sizingSnapshot?.estimatedPctOfNav).toBe(4.6);
 
     // Re-indexing is fire-and-forget (a dynamic import + .then()/.catch()), so poll until the mocked
-    // storeContexts call lands rather than assuming a fixed number of microtask flushes.
+    // storeContexts call lands rather than assuming a fixed number of microtask flushes. A standalone
+    // coach-note vector now ALSO embeds the note text, so this call also lands one more storeContexts
+    // call carrying it — wait for both before asserting.
     await vi.waitFor(() => {
       const hasCoachCall = storeContextsCalls.some((call) =>
         call.documents.some((doc) => doc.text.includes("Favor broader crash baskets next time."))
       );
+      const hasCoachNoteVector = storeContextsCalls.some(
+        (call) =>
+          call.options?.dedupKeyPrefix === "coach-note" &&
+          call.documents.some((doc) => doc.text.includes("Favor broader crash baskets next time."))
+      );
       expect(hasCoachCall).toBe(true);
+      expect(hasCoachNoteVector).toBe(true);
     });
 
     // The re-indexed vector-memory doc's TEXT contains the coach note (not frozen at "coach_notes:
     // none" the way it was written at creation) — same contextId/dedupKeyPrefix, so this is an
-    // in-place upsert, not a duplicate vector.
-    const coachCalls = storeContextsCalls.filter((call) =>
-      call.documents.some((doc) => doc.text.includes("Favor broader crash baskets next time."))
+    // in-place upsert, not a duplicate vector. Tightened to dedupKeyPrefix === "socratic-decision"
+    // because the standalone coach-note vector (dedupKeyPrefix "coach-note", asserted separately
+    // below) ALSO embeds the note text and would otherwise match this same filter.
+    const coachCalls = storeContextsCalls.filter(
+      (call) => call.options?.dedupKeyPrefix === "socratic-decision" && call.documents.some((doc) => doc.text.includes("Favor broader crash baskets next time."))
     );
     expect(coachCalls.length).toBeGreaterThanOrEqual(1);
     expect(coachCalls[coachCalls.length - 1].options?.dedupKeyPrefix).toBe("socratic-decision");
     expect(coachCalls[coachCalls.length - 1].options?.scope).toBe("private");
+
+    // Sibling assertion: a standalone dedupKeyPrefix === "coach-note" vector also landed.
+    const coachNoteVectorCalls = storeContextsCalls.filter(
+      (call) => call.options?.dedupKeyPrefix === "coach-note" && call.documents.some((doc) => doc.text.includes("Favor broader crash baskets next time."))
+    );
+    expect(coachNoteVectorCalls.length).toBeGreaterThanOrEqual(1);
+    expect(coachNoteVectorCalls[coachNoteVectorCalls.length - 1].options?.scope).toBe("private");
 
     const promoted = await attachSocraticDecisionCoachPrimitives(
       decisionId,
