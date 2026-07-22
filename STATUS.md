@@ -1,5 +1,15 @@
 # Current Status
 
+## 2026-07-22 — PR #1888 effort-log correction
+
+Corrected the stale duplicate effort row in `docs/EFFORT-LOG.md`: PR #1886 is merged, and the
+active middleware follow-up is PR #1888 in the current row. No product or deployment state changed.
+
+## 2026-07-22 — Mobile auth exchange CSRF follow-up (PR #1888)
+
+The unauthenticated native exchange path now still passes the middleware same-origin CSRF guard;
+only the one-time code plus device verifier bypasses session identity. Added a cross-site rejection
+regression and refreshed the required handoff docs. Rollout: `docs/rollouts/2026-07-22-mobile-auth-exchange-csrf.md`.
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous
