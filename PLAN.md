@@ -36,6 +36,13 @@
 > `clientOrderId`. Only gateways with `ordersListIncludesTerminal === true` may treat absence as
 > confirmed-dead and place fresh; Robinhood-style lists keep the intent and skip the symbol to avoid
 > duplicate sell stops. Focused and full gates passed; PR publication/hosted checks next.
+> **2026-07-22 - RAG parent-context expansion (CODEX, branch `codex/rag-parent-expansion-20260722`).**
+> Keep child chunks as the only dense/lexical/rerank candidates. Default-off
+> `RAG_PARENT_CONTEXT_EXPANSION` maps final survivors back to their bounded parent context only
+> after ranking, deduping sibling parents deterministically and preserving child id, score, metadata,
+> and strict point-in-time semantics. The local helper and retrieval wiring are focused-test/TS/lint
+> verified; tune only after the production-path evaluator shows an evidence gain within the global
+> prompt budget. Do not alter the external corpus/re-embed train for this work.
 
 > **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
 > **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; and repair the six stale current-main test assertions that would otherwise fail the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.

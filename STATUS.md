@@ -51,6 +51,18 @@ pending runs to the newest head. The first durable local gate also exposed six s
 current `main`; this branch now carries the already-prepared isolation/expectation corrections from
 the #1856 lineage. Conflicts/comments were not the multi-day bottleneck.
 Rollout: `docs/rollouts/2026-07-21-ci-queue-stuck-root-cause-fixes.md`.
+## 2026-07-22 — Bounded post-rerank parent-context expansion (CODEX, local branch `codex/rag-parent-expansion-20260722`)
+
+Locally verified a default-off parent-context attachment stage for final RAG survivors. It preserves legacy output
+when disabled; when `RAG_PARENT_CONTEXT_EXPANSION=true`, reranking still sees child chunks only, then
+the selected result list receives at most one bounded parent attachment per document/provenance key.
+Per-parent and total caps are configurable; repeated siblings, missing parents, future/undated strict-PIT
+parents, and exhausted budgets are all handled without changing candidate ids, scores, order, or metadata.
+The attachment removes an exact selected-child passage from the parent context, so activation cannot
+duplicate that passage in a prompt. Focused tests: 7/7; scoped ESLint: 0 errors (64 pre-existing
+`vector-db.ts` warnings); TypeScript and diff check pass. No chunking, ingestion, re-embed, corpus,
+provider, or production operation was performed. Rollout:
+`docs/rollouts/2026-07-22-rag-parent-context-expansion.md`.
 
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
 
