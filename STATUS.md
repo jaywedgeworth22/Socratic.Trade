@@ -6,7 +6,7 @@ Socratic now exact-pins shared `v2.0.0` over HTTPS and emits only strict v2 usag
 batch-level `producerId`, event-level `eventId`, and `producerKeyRef`, with typed v2 ACK parsing.
 Fresh durable replay is rebuilt directly from the LLM/RAG/provider ledgers; pre-v2 in-memory HMR
 buffers are normalized once before retry. Existing replay cursors now freeze a high-water mark and
-drain the bounded pre-v2 window through the legacy idempotency path before strict-v2 cutover, so
+drain the bounded pre-v2 window through the actual accepted v1 envelope before strict-v2 cutover, so
 live-pushed rows cannot be recounted. Cold tokenless install, TypeScript, lint (zero errors),
 production build, 83 broader focused tests, and the final 46-test producer/replay/FMP regression set
 pass; the focused replay regression is 10/10. The receiver gate is cleared: Usage-Monitor exact main

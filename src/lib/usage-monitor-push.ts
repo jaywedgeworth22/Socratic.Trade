@@ -24,6 +24,7 @@
 import { logApiHealth } from "./db-health";
 import {
   createUsageTelemetryClient,
+  usageMonitorIngestUrl,
   UsageTelemetryV2EventSchema,
   type UsageTelemetryV2Event,
   type UsageTelemetryMetricType,
@@ -1002,25 +1003,55 @@ async function sendReplayBatch(
   const start = Date.now();
 
   try {
-    const client = createUsageTelemetryClient({
-      baseUrl,
-      token,
-      producerId: SOURCE_APP,
-      fetchImpl: (input, init) =>
-        fetchImpl(input, { ...init, signal: controller.signal }),
-    });
     if (legacy) {
-      // The durable rows were written before the strict-v2 cutover. Preserve the exact v1
-      // delivery identity as the legacy outbox idempotencyKey so rows already live-pushed under
-      // v1 dedupe instead of becoming a second v2 measurement.
-      await client.sendLegacyOutbox(
-        deliverable.map(({ eventId, ...event }) => ({
+      // This is the one bounded exception to the fresh-v2-only wire rule: these source rows were
+      // created before cutover and may already exist at the receiver under their explicit v1
+      // idempotencyKey. The shared sendLegacyOutbox adapter promotes that key to a v2 eventId,
+      // which intentionally derives a NEW receiver key and therefore cannot dedupe the old row.
+      // Post the actual v1 envelope here (no v2 header/schemaVersion), then retire this path as
+      // soon as the durable cutover marker advances beyond the frozen high-water mark.
+      const legacyEvents = deliverable.map((event) => {
+        const legacyEvent: Record<string, unknown> = {
           ...event,
           sourceApp: SOURCE_APP,
-          idempotencyKey: eventId,
-        }))
-      );
+          ...(event.producerKeyRef ? { keyRef: event.producerKeyRef } : {}),
+          idempotencyKey: event.eventId,
+        };
+        delete legacyEvent.eventId;
+        delete legacyEvent.producerKeyRef;
+        delete legacyEvent.providerConnectionRef;
+        delete legacyEvent.billingAccountRef;
+        delete legacyEvent.coverage;
+        return legacyEvent;
+      });
+      const response = await fetchImpl(usageMonitorIngestUrl(baseUrl), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ events: legacyEvents }),
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => null) as {
+        ok?: unknown;
+        accepted?: unknown;
+        ignoredPruned?: unknown;
+      } | null;
+      if (
+        !response.ok || payload?.ok !== true ||
+        !Number.isInteger(payload.accepted) || !Number.isInteger(payload.ignoredPruned)
+      ) {
+        throw new Error(`Usage Monitor legacy replay returned HTTP ${response.status}`);
+      }
     } else {
+      const client = createUsageTelemetryClient({
+        baseUrl,
+        token,
+        producerId: SOURCE_APP,
+        fetchImpl: (input, init) =>
+          fetchImpl(input, { ...init, signal: controller.signal }),
+      });
       await client.send(deliverable);
     }
     // Record health from the replay lane too — if replay is the first/only lane talking to a down

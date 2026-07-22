@@ -153,8 +153,13 @@ function readWatermark(key: string): ReplayCursor | null {
   return parseCursor(row?.value);
 }
 
-function hasCompletedV2Cutover(key: string): boolean {
-  return Boolean(getDb().prepare("SELECT 1 FROM settings WHERE key = ?").get(key));
+type V2CutoverState = "legacy-drained" | "v2-active";
+
+function readV2CutoverState(key: string): V2CutoverState | null {
+  const row = getDb()
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(key) as { value: string } | undefined;
+  return row?.value === "v2-active" ? "v2-active" : row ? "legacy-drained" : null;
 }
 
 /** Mark the v2 identity cutover only after the bounded legacy catch-up is fully acknowledged. */
@@ -162,7 +167,7 @@ function completeV2Cutover(key: string): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, 'complete', ?)"
+      "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, 'legacy-drained', ?)"
     )
     .run(key, now);
 }
@@ -192,7 +197,8 @@ function advanceWatermark(
     if (markCutover) {
       database
         .prepare(
-          "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, 'complete', ?)"
+          "INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?) " +
+          "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
         )
         .run(v2CutoverKey, now);
     }
@@ -359,7 +365,8 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
   let sent = 0;
   try {
     let cursor = readWatermark(input.watermarkKey);
-    const cutoverComplete = hasCompletedV2Cutover(input.v2CutoverKey);
+    const cutoverState = readV2CutoverState(input.v2CutoverKey);
+    const cutoverComplete = cutoverState !== null;
     // A pre-v2 cursor does not include rows that were live-pushed after the last replay pass.
     // Freeze a high-water mark and drain that bounded window through the legacy idempotency path
     // before switching the ledger to strict v2 identities; rows arriving after the mark are left
@@ -369,7 +376,10 @@ async function replayLedger<Row extends { id: string; created_at: string }>(inpu
     // Legacy replay may safely include the boundary because its durable v1 identity is exactly the
     // key the receiver already deduped. Once cutover is complete, the same overlap uses strict-v2
     // event IDs and remains crash-safe as before.
-    let inclusive = cursor !== null;
+    // The row at a legacy-drained cursor was ACKed under v1 identity. Keep that boundary strict
+    // until a later v2 row is ACKed and advances the marker to v2-active; only v2-active cursors
+    // are safe to resend inclusively under the derived v2 persistence key.
+    let inclusive = cursor !== null && (legacyCatchup || cutoverState === "v2-active");
 
     for (let page = 0; page < input.maxPages; page += 1) {
       const rows = input.readRows(

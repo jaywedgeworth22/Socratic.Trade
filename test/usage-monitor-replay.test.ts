@@ -21,8 +21,8 @@ const BASE_URL = "https://usage.example.test";
 
 interface CapturedRequest {
   body: {
-    schemaVersion: number;
-    producerId: string;
+    schemaVersion?: number;
+    producerId?: string;
     events: Array<Record<string, unknown>>;
   };
   rawBody: string;
@@ -53,7 +53,11 @@ function fetchStub(captured: CapturedRequest[], ok = true): typeof fetch {
     captured.push({ rawBody, body: JSON.parse(rawBody) });
     if (!ok) return new Response("unavailable", { status: 503 });
     const eventCount = captured.at(-1)?.body.events.length ?? 0;
-    return ack(eventCount);
+    return captured.at(-1)?.body.schemaVersion === 2
+      ? ack(eventCount)
+      : new Response(JSON.stringify({ ok: true, accepted: eventCount, ignoredPruned: 0 }), {
+          status: 202,
+        });
   }) as unknown as typeof fetch;
 }
 
@@ -163,8 +167,8 @@ describe("usage monitor durable replay", () => {
     });
     const events = captured.flatMap((request) => request.body.events);
     expect(events).toHaveLength(2);
-    expect(captured.every((request) => request.body.schemaVersion === 2)).toBe(true);
-    expect(captured.every((request) => request.body.producerId === "socratic-trade")).toBe(true);
+    expect(captured.every((request) => request.body.schemaVersion === undefined)).toBe(true);
+    expect(captured.every((request) => request.body.producerId === undefined)).toBe(true);
     const llm = events.find((event) => event.service === "llm")!;
     expect(llm).toMatchObject({
       project: "socratic-trade",
@@ -172,7 +176,7 @@ describe("usage monitor durable replay", () => {
       costUsd: 0.42,
       metricType: "cost",
       occurredAt: "2026-07-10T12:00:00.000Z",
-      eventId: telemetryKey("llm", "llm-gemini-paid"),
+      idempotencyKey: telemetryKey("llm", "llm-gemini-paid"),
     });
     const rag = events.find((event) => event.service === "rag")!;
     expect(rag).toMatchObject({
@@ -180,7 +184,7 @@ describe("usage monitor durable replay", () => {
       provider: "voyage",
       costUsd: 0.003,
       occurredAt: "2026-07-10T12:01:00.000Z",
-      eventId: telemetryKey("rag", "rag-voyage-paid"),
+      idempotencyKey: telemetryKey("rag", "rag-voyage-paid"),
     });
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toEqual({
       createdAt: "2026-07-10T12:00:00.000Z",
@@ -196,6 +200,9 @@ describe("usage monitor durable replay", () => {
     const occurredAt = "2026-07-10T13:00:00.000Z";
     insertLlm({ id: "llm-b", createdAt: occurredAt, costUsd: 0.02 });
     insertLlm({ id: "llm-a", createdAt: occurredAt, costUsd: 0.01 });
+    getDb()
+      .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?)")
+      .run(replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm, new Date().toISOString());
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(fetchStub(captured));
 
@@ -237,22 +244,50 @@ describe("usage monitor durable replay", () => {
     const first = await replay.runUsageMonitorReplay();
 
     expect(first.llm).toEqual({ sent: 2, complete: true, failed: false });
-    expect(captured[0]!.body.events.map((event) => event.eventId)).toEqual([
+    expect(captured[0]!.body.schemaVersion).toBeUndefined();
+    expect(captured[0]!.body.producerId).toBeUndefined();
+    expect(captured[0]!.body.events.map((event) => event.idempotencyKey)).toEqual([
       telemetryKey("llm", "llm-v1-boundary"),
       telemetryKey("llm", "llm-first-v2"),
     ]);
+    expect(captured[0]!.body.events.every((event) => event.sourceApp === "socratic-trade"))
+      .toBe(true);
+    expect(captured[0]!.body.events.every((event) => event.eventId === undefined)).toBe(true);
+    expect(captured[0]!.body.events[0]!.keyRef).toBe("key-ref");
+    expect(captured[0]!.body.events[0]!.producerKeyRef).toBeUndefined();
     expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)?.id).toBe(
       "llm-first-v2"
     );
     expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
       replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm
-    )).toEqual({ value: "complete" });
+    )).toEqual({ value: "legacy-drained" });
 
     captured.length = 0;
     const second = await replay.runUsageMonitorReplay();
-    expect(second.llm).toEqual({ sent: 1, complete: true, failed: false });
+    expect(second.llm).toEqual({ sent: 0, complete: true, failed: false });
+    expect(captured).toHaveLength(0);
+
+    insertLlm({
+      id: "llm-second-v2",
+      createdAt: "2026-07-10T13:32:00.000Z",
+      costUsd: 0.03,
+    });
+    const third = await replay.runUsageMonitorReplay();
+    expect(third.llm).toEqual({ sent: 1, complete: true, failed: false });
+    expect(captured[0]!.body.schemaVersion).toBe(2);
+    expect(captured[0]!.body.producerId).toBe("socratic-trade");
+    expect(captured[0]!.body.events.map((event) => event.eventId)).toEqual([
+      telemetryKey("llm", "llm-second-v2"),
+    ]);
+    expect(getDb().prepare("SELECT value FROM settings WHERE key = ?").get(
+      replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm
+    )).toEqual({ value: "v2-active" });
+
+    captured.length = 0;
+    const fourth = await replay.runUsageMonitorReplay();
+    expect(fourth.llm).toEqual({ sent: 1, complete: true, failed: false });
     expect(captured[0]!.body.events[0]!.eventId).toBe(
-      telemetryKey("llm", "llm-first-v2")
+      telemetryKey("llm", "llm-second-v2")
     );
   });
 
@@ -302,7 +337,7 @@ describe("usage monitor durable replay", () => {
       requests: 1,
       confidence: "estimated",
       metadata: { outcome: "unknown", unknownOutcome: true, userId: "local" },
-      eventId: telemetryKey(
+      idempotencyKey: telemetryKey(
         "provider-dispatch",
         `provider-attempt:${reserved.attemptId}`
       )
@@ -317,8 +352,12 @@ describe("usage monitor durable replay", () => {
     const firstRaw = captured[0]!.rawBody;
     captured.length = 0;
     const second = await replay.runUsageMonitorReplay();
-    expect(second.provider).toEqual({ sent: 1, complete: true, failed: false });
-    expect(captured[0]!.rawBody).toBe(firstRaw);
+    expect(firstRaw).toContain(telemetryKey(
+      "provider-dispatch",
+      `provider-attempt:${reserved.attemptId}`
+    ));
+    expect(second.provider).toEqual({ sent: 0, complete: true, failed: false });
+    expect(captured).toHaveLength(0);
   });
 
   it("does not regress a watermark advanced by an overlapping process", async () => {
@@ -326,6 +365,9 @@ describe("usage monitor durable replay", () => {
     const newer = "2026-07-10T14:31:00.000Z";
     insertLlm({ id: "llm-older", createdAt: older, costUsd: 0.1 });
     insertLlm({ id: "llm-newer", createdAt: newer, costUsd: 0.2 });
+    getDb()
+      .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, 'v2-active', ?)")
+      .run(replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm, new Date().toISOString());
     push.__setUsageMonitorFetch((async () => {
       // Simulate a second process ACKing the newer row while this process is awaiting its POST.
       getDb()
@@ -336,12 +378,6 @@ describe("usage monitor durable replay", () => {
         .run(
           replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm,
           JSON.stringify({ createdAt: newer, id: "llm-newer" }),
-          new Date().toISOString()
-        );
-      getDb()
-        .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, 'complete', ?)")
-        .run(
-          replay.USAGE_MONITOR_REPLAY_V2_CUTOVER_KEYS.llm,
           new Date().toISOString()
         );
       return ack(1);

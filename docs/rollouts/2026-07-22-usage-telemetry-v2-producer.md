@@ -19,10 +19,13 @@ version bump normalizes any pre-v2 HMR buffer once (`sourceApp` removed, `idempo
 
 Existing replay cursors were ACKed under v1's explicit persistence key, while live pushes did not
 advance those cursors. Before switching a ledger to strict-v2 identities, replay freezes a durable
-high-water mark and drains that bounded window through `sendLegacyOutbox`, preserving the old
-idempotency key so already-live-pushed rows dedupe. Only after that ACKed catch-up does it record the
-cutover marker; rows created after the snapshot use strict-v2 identities and cannot be double-counted
-by the migration. Normal inclusive overlap remains crash-safe after cutover.
+high-water mark and drains that bounded window through the actual accepted v1 envelope, preserving
+the receiver's old explicit `idempotencyKey`. The shared `sendLegacyOutbox` adapter is intentionally
+not used here because it promotes the old key to a v2 `eventId`, which derives a new receiver identity.
+After the bounded window is acknowledged, replay records `legacy-drained`; its boundary remains
+exclusive until a later strict-v2 row is acknowledged and advances the marker to `v2-active`.
+Rows created after the snapshot therefore use strict-v2 identities without double-counting the
+migration boundary, while normal inclusive overlap remains crash-safe once v2 is active.
 
 ## Verification
 
@@ -38,7 +41,7 @@ by the migration. Normal inclusive overlap remains crash-safe after cutover.
 - Production build: `npm run build` under Node 24.
 - Cutover regression: `npx vitest run --maxWorkers=1 test/usage-monitor-replay.test.ts` — 10/10
   tests passed after rebuilding `better-sqlite3` for the active Node ABI; the suite covers the
-  bounded legacy catch-up and post-cutover strict-v2 overlap.
+  actual-v1 bounded catch-up, boundary exclusion, and transition to post-cutover strict-v2 overlap.
 
 ## Promotion gate
 
