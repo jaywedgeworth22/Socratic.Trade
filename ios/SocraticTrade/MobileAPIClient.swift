@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import Security
 
 enum MobileAPIError: Error, LocalizedError {
     case unauthorized(statusCode: Int)
@@ -103,39 +105,14 @@ struct MobileAPIClient {
         return try await send(request)
     }
 
-    /// Install an Auth.js session token returned by the native OAuth callback. The web OAuth flow
-    /// remains server-authoritative; this only bridges the browser session into URLSession's
-    /// cookie jar so Google/GitHub accounts can use the same mobile API as Apple accounts.
-    @discardableResult
-    func installSessionToken(_ token: String) -> Bool {
-        guard
-            !token.isEmpty,
-            let host = baseURL.host,
-            let cookie = HTTPCookie(properties: [
-                .domain: host,
-                .path: "/",
-                .name: "__Secure-authjs.session-token",
-                .value: token,
-                .secure: "TRUE",
-                .expires: NSDate(timeIntervalSinceNow: 30 * 24 * 60 * 60)
-            ])
-        else {
-            return false
-        }
-        HTTPCookieStorage.shared.setCookie(cookie)
-        // Development deployments use the unprefixed Auth.js cookie name. Setting both is safe
-        // because the backend selects the appropriate name for its current HTTPS mode.
-        if let fallbackCookie = HTTPCookie(properties: [
-            .domain: host,
-            .path: "/",
-            .name: "authjs.session-token",
-            .value: token,
-            .secure: "TRUE",
-            .expires: NSDate(timeIntervalSinceNow: 30 * 24 * 60 * 60)
-        ]) {
-            HTTPCookieStorage.shared.setCookie(fallbackCookie)
-        }
-        return true
+    func exchangeWebAuthCode(_ code: String, verifier: String) async throws {
+        var request = request(path: "/api/mobile/auth/exchange", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "code": code,
+            "codeVerifier": verifier
+        ])
+        let _: WebAuthExchangeResponse = try await send(request)
     }
 
     func events(onEvent: @escaping () -> Void) async throws {
@@ -251,6 +228,35 @@ struct MobileAPIClient {
 struct AppleLoginResponse: Decodable {
     let success: Bool
     let email: String?
+}
+
+private struct WebAuthExchangeResponse: Decodable {
+    let success: Bool
+}
+
+struct WebAuthCodeVerifier {
+    let value: String
+
+    static func make() -> WebAuthCodeVerifier? {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        return WebAuthCodeVerifier(value: Data(bytes).base64URLEncodedString())
+    }
+
+    var challenge: String {
+        Data(SHA256.hash(data: Data(value.utf8))).base64URLEncodedString()
+    }
+}
+
+private extension Data {
+    func base64URLEncodedString() -> String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
 }
 
 private extension Bundle {

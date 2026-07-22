@@ -868,11 +868,11 @@ export function mobileCommandBacklog(): { queued: number; running: number } {
 
 export function mobileControlCatalog() {
   return {
-    version: 1,
+    version: 2,
     auth: {
       mode: "server-session",
       supported: ["Cloudflare Access", "Auth.js session"],
-      phoneStores: "session token only; provider and broker secrets stay server-side"
+      phoneStores: "server session cookie only; provider and broker secrets stay server-side"
     },
     realtime: {
       sse: "/api/mobile/events",

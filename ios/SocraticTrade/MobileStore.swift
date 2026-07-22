@@ -293,19 +293,21 @@ final class MobileStore: ObservableObject {
         }
     }
 
-    func loginWithToken(jwt: String) async {
+    func loginWithWebAuthCode(_ code: String, verifier: String) async {
         guard !isSigningIn else { return }
-        guard client.installSessionToken(jwt) else {
-            error = "The web sign-in callback did not contain a valid session. Try again."
-            return
-        }
         isSigningIn = true
         defer { isSigningIn = false }
-        await load()
-        if isAuthenticated {
-            startEvents()
-        } else if error == nil {
-            error = "Authentication failed after web sign-in. Try again."
+        do {
+            try await client.exchangeWebAuthCode(code, verifier: verifier)
+            await load()
+            if isAuthenticated {
+                startEvents()
+            } else if error == nil {
+                error = "Authentication failed after web sign-in. Try again."
+            }
+        } catch {
+            applyAuthAwareError(error)
+            self.error = "Web sign-in could not be completed. Try again."
         }
     }
 
