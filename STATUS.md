@@ -1,3 +1,9 @@
+# Current Status
+
+## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
+
+Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
+
 ## 2026-07-21 — Voyage AI Purge and OpenRouter Standardization (ANTIGRAVITY, branch `agent/antigravity-docs-update`)
 
 Purged the Voyage AI SDK and its dependencies, standardizing the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Dynamic imports and test-only shims maintain test suite compatibility while completely isolating Voyage from production. All 4,898 tests and the production Next.js build are fully green. Rollout: `docs/rollouts/2026-07-21-voyage-ai-purge.md`.
