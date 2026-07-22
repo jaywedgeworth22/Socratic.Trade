@@ -17,6 +17,7 @@ with `node: command not found`; unrelated PRs could also be stranded with no pin
 - `test/ci-workflow-queue-safety.test.ts`
 - `STATUS.md`
 - `PLAN.md`
+- `docs/EFFORT-LOG.md`
 - `docs/phase-11-multi-user.md`
 - `docs/rollouts/2026-07-22-shared-package-pin-check-queue-unblock.md`
 

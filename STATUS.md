@@ -8,7 +8,8 @@ touch the pin workflow and whose hosted check failed with `node: command not fou
 `docs/rollouts/2026-07-22-shared-package-pin-check-queue-unblock.md`.
 
 Review follow-up: the rollout now records the exact focused test, lint, TypeScript, YAML, diff, and
-hosted verification commands/results. The focused queue-safety test passes 5/5.
+hosted verification commands/results, including the tracked effort-log mirror. The focused
+queue-safety test passes 5/5.
 
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
