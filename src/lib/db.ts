@@ -2275,34 +2275,33 @@ const MIGRATIONS: Migration[] = [
     // EarningsCalls.dev (symbol, fiscal_year, fiscal_quarter) -> provider earnings-call id map
     // (burst/smart-daily program, docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md).
     // Populated by the id-resolution engine (GET /transcripts/recent listing pages + GET
-    // /companies/ticker/{t} full call history), independent of whether a transcript was ever
-    // FETCHED for that period. This is deliberately a SEPARATE table from
-    // earningscalls_transcripts: a row here means "the provider told us this call's id exists",
-    // not "we have (or tried to fetch) its content" — overloading the transcripts table's
-    // content-NULL negative-cache semantics for this would incorrectly TTL-gate a plain id
-    // lookup (recon memo finding). GLOBAL market data, no user_id column, same class as
-    // earningscalls_transcripts/economic_events.
+    // /companies/ticker/{
+    // Append-only archive for coach notes aged off the live `socratic_decisions.coach_notes`
+    // window (kept at COACH_NOTES_LIVE_CAP entries in db-socratic.ts). Before this migration, the
+    // 21st note appended to a decision silently deleted the 1st with zero trace. `note_seq` is a
+    // dense 0-based per-(user, decision) archive ordinal — an ordering/uniqueness device, not an
+    // all-time index (pre-port history is unrecoverable). See db-socratic.ts applyCoachNoteAppend.
     // NOTE (numbering): renumbered from branch v53->v55 when merging origin/main (which claimed
     // v53 broker_stop_placement_intents and v54 fill_events_no_proposal_broker_order_unique_index).
     version: 55,
-    name: "earningscalls_event_index",
+    name: "socratic_coach_note_archive",
     up: (database) => {
       database.exec(`
-        CREATE TABLE IF NOT EXISTS earningscalls_event_index (
-          symbol TEXT NOT NULL,
-          fiscal_year INTEGER NOT NULL,
-          fiscal_quarter INTEGER NOT NULL,
-          event_id INTEGER NOT NULL,
-          event_date TEXT,
-          source TEXT NOT NULL,
-          discovered_at TEXT NOT NULL,
-          PRIMARY KEY (symbol, fiscal_year, fiscal_quarter)
+        CREATE TABLE IF NOT EXISTS socratic_coach_note_archive (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          decision_id TEXT NOT NULL,
+          connected_account_id TEXT,
+          note TEXT NOT NULL,
+          note_seq INTEGER NOT NULL,
+          archived_at TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_earningscalls_event_index_symbol
-          ON earningscalls_event_index (symbol, fiscal_year DESC, fiscal_quarter DESC);
+        CREATE INDEX IF NOT EXISTS idx_socratic_coach_note_archive_user_decision
+          ON socratic_coach_note_archive (user_id, decision_id, note_seq);
       `);
     }
   },
+  {t},
   {
     // ONE-SHOT owner-directed burst arm (docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md):
     // seed earningscalls_burst_pending=25 so the scheduler's NEXT daily EarningsCalls pass runs the
@@ -2313,7 +2312,7 @@ const MIGRATIONS: Migration[] = [
     // row before (a fresh deploy), never overwriting a later admin re-arm or the app's own
     // post-consume zero on every subsequent migration run/restart.
     // NOTE (numbering): renumbered from branch v54->v56 when merging origin/main.
-    version: 56,
+    version: 57,
     name: "earningscalls_burst_seed",
     up: (database) => {
       database
