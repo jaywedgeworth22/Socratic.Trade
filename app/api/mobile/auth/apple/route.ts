@@ -5,26 +5,22 @@ import { encodeSessionToken } from "../../../../../src/lib/auth/session-token";
 import { resolveAppleClientId } from "../../../../../src/lib/auth/apple-client-id";
 import { APPLE_AUTH_MAX_BYTES, PayloadTooLargeError, readJsonWithLimit } from "../../../../../src/lib/bounded-body";
 
-// Module-scope, not per-request: createRemoteJWKSet builds a caching key-fetcher (jose caches
-// the fetched JWKS response and its own in-flight fetch across calls to the SAME resolver
-// instance). Re-creating it inside the request handler threw that cache away every request,
-// so every sign-in re-fetched https://appleid.apple.com/auth/keys instead of reusing it.
-// APPLE_JWKS is module-scope (see above)
-
+// Module-scope JWKS: jose caches keys per resolver instance; recreate-per-request
+// re-fetches https://appleid.apple.com/auth/keys on every sign-in.
+const APPLE_JWKS = createRemoteJWKSet(new URL("https://appleid.apple.com/auth/keys"));
 
 export async function POST(request: Request) {
   try {
-    const { identityToken, name } = await request.json();
+    const body = await readJsonWithLimit(request, APPLE_AUTH_MAX_BYTES);
+    const identityToken = (body as { identityToken?: unknown })?.identityToken;
+    const name = (body as { name?: unknown })?.name;
 
     if (!identityToken || typeof identityToken !== "string") {
       return NextResponse.json({ error: "Missing or invalid identityToken" }, { status: 400 });
     }
 
-    // 1. Verify the Apple identity token
-    const JWKS = createRemoteJWKSet(new URL("https://appleid.apple.com/auth/keys"));
     const { payload } = await jwtVerify(identityToken, APPLE_JWKS, {
       issuer: "https://appleid.apple.com",
-      // We accept the iOS App Bundle ID. You must set APPLE_CLIENT_ID or we use the known app id.
       audience: resolveAppleClientId()
     });
 
@@ -33,12 +29,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Apple token did not contain an email address." }, { status: 400 });
     }
 
-    // 2. Authorize the user (allowed list check)
     if (!isEmailAllowed(email)) {
       return NextResponse.json({ error: "Access denied." }, { status: 403 });
     }
 
-    // 3. Mint a session token
     const authSecret = process.env.AUTH_SECRET;
     if (!authSecret) {
       console.error("AUTH_SECRET is missing");
@@ -46,19 +40,15 @@ export async function POST(request: Request) {
     }
 
     const salt = process.env.NODE_ENV === "production" ? "__Secure-authjs.session-token" : "authjs.session-token";
-    
-    // Pass the same fields Auth.js would typically pack in the JWT
+
     const sessionJwt = await encodeSessionToken({
-      // Explicit provider-login time is preserved across rolling JWT refreshes. Request identity
-      // uses it to select a post-deletion account generation without freeing older mobile tokens.
-      token: { email, name: name ?? payload.email, loginAt: Date.now() },
+      token: { email, name: (typeof name === "string" ? name : undefined) ?? payload.email, loginAt: Date.now() },
       secret: authSecret,
       salt
     });
 
-    // 4. Return the session cookie
     const response = NextResponse.json({ success: true, email });
-    const maxAge = 30 * 24 * 60 * 60; // 30 days
+    const maxAge = 30 * 24 * 60 * 60;
     response.cookies.set(salt, sessionJwt, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -69,6 +59,9 @@ export async function POST(request: Request) {
 
     return response;
   } catch (error) {
+    if (error instanceof PayloadTooLargeError) {
+      return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+    }
     console.error("Apple Sign-In Verification Error:", error);
     return NextResponse.json({ error: "Invalid identity token" }, { status: 401 });
   }
