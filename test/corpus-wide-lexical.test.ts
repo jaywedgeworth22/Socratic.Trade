@@ -264,6 +264,51 @@ describe("searchCorpusWideLexicalCandidates", () => {
       docTypes: ["8-k"]
     });
     expect(rows.map((row) => row.id)).toEqual(["vec-8k-body"]);
+    expect(rows[0]?.doc_type).toBe("8-k");
+    expect(rows[0]?.metadata.doc_type).toBe("8-k");
+  });
+
+  it("joins bare-SEC FTS accessions to managed composite occurrence keys", () => {
+    const bareAccession = "0000320193-25-000301";
+    const managedAccession = `AAPL:${bareAccession}:10-K`;
+    insertSecFiling({
+      accession: bareAccession,
+      cik: "0000320193",
+      ticker: "AAPL",
+      form: "10-K",
+      filedAt: "2025-10-01T12:00:00.000Z",
+      acceptedAt: "2025-10-01T12:00:00.000Z",
+      status: "complete",
+      chunkCount: 1
+    });
+    insertChunkOccurrences([{
+      vectorId: "vec-managed-key",
+      contentHash: "hash-managed-key",
+      symbol: "AAPL",
+      source: "sec-edgar",
+      accession: managedAccession,
+      section: "Item 1A",
+      ordinal: 1,
+      acceptedAt: "2025-10-01T12:00:00.000Z",
+      createdAt: NOW
+    }]);
+    // Historical FTS mirror wrote the bare SEC accession while storeDocument used doc_id.
+    insertDocumentChunkFts(
+      "hash-managed-key",
+      "AAPL",
+      "sec-edgar",
+      bareAccession,
+      "Cybersecurity risk disclosures in the annual report."
+    );
+
+    const rows = searchCorpusWideLexicalCandidates({
+      symbol: "AAPL",
+      query: "cybersecurity risk",
+      docTypes: ["10-k"]
+    });
+    expect(rows.map((row) => row.id)).toEqual(["vec-managed-key"]);
+    expect(rows[0]?.accession).toBe(managedAccession);
+    expect(rows[0]?.doc_type).toBe("10-k");
   });
 
   it("uses occurrence accepted_at for PIT and makes strict-undated explicit", () => {

@@ -15,7 +15,7 @@ export interface RerankRoute {
   model: string;
   available: boolean;
   source: "explicit" | "embedding-provider";
-  reason?: "missing_credential";
+  reason?: "missing_credential" | "invalid_configuration";
 }
 
 export interface RerankPlanInput {
@@ -72,10 +72,26 @@ function modelFor(provider: RagRerankProvider, env: EnvSource): string {
  * Resolve reranking independently from embedding. An explicit route never silently falls back to
  * another provider when its credential is absent: the retrieval pipeline can truthfully record the
  * unavailable route and retain its deterministic cosine/fusion order.
+ *
+ * Invalid explicit provider names are also non-fatal: rerank is an optional quality stage, so a
+ * typo must not abort dense/lexical recall. The receipt marks the route unavailable instead.
  */
 export function resolveRerankRoute(input: RerankRouteInput): RerankRoute {
   const env = input.env ?? process.env;
-  const explicit = parseProvider(input.configuredProvider ?? env.RAG_RERANK_PROVIDER);
+  const configuredProvider = input.configuredProvider ?? env.RAG_RERANK_PROVIDER;
+  let explicit: RagRerankProvider | undefined;
+  try {
+    explicit = parseProvider(configuredProvider);
+  } catch {
+    const provider = input.embeddingProvider;
+    return {
+      provider,
+      model: modelFor(provider, env),
+      available: false,
+      source: "explicit",
+      reason: "invalid_configuration"
+    };
+  }
   const provider = explicit ?? input.embeddingProvider;
   const available = input.hasCredential(provider);
   return {

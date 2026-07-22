@@ -1168,6 +1168,7 @@ export async function runStrategyOnce(
                   const serializedText = formatChunkWithProvenance(chunk, context.sym);
                   ragPromptCandidates.push({
                     ...ragEvidenceIdentityFromChunk(context.sym, chunk),
+                    promptSource: "rag",
                     text: chunk.text,
                     serializedText
                   });
@@ -1440,6 +1441,7 @@ export async function runStrategyOnce(
           for (const chunk of episodicChunks) {
             ragPromptCandidates.push({
               ...ragEvidenceIdentityFromChunk("PORTFOLIO", chunk),
+              promptSource: "learned",
               text: chunk.text,
               serializedText: chunk.text
             });
@@ -4384,7 +4386,17 @@ async function proposeTrades(input: {
   // This is the sole point at which "used RAG" is determined. Retrieval can return candidates
   // that containment or the shared evidence budget subsequently removes; those stay in the
   // retrieved-but-not-consumed receipt and must never enter decision attribution/usefulness.
-  const ragPromptConsumption = derivePromptRagConsumption(input.ragPromptCandidates ?? [], [
+  // Containment runs on the assembled family text below. Apply the same deterministic transform
+  // to each candidate before matching so a quarantined/truncated chunk is compared against the
+  // exact safe representation that can reach the model, never its raw pre-containment text.
+  const containedRagPromptCandidates = (input.ragPromptCandidates ?? []).map((candidate) => ({
+    ...candidate,
+    serializedText: containPromptText({
+      source: candidate.promptSource ?? "rag",
+      text: candidate.serializedText
+    }).sanitizedText
+  }));
+  const ragPromptConsumption = derivePromptRagConsumption(containedRagPromptCandidates, [
     budgetedRagContext,
     budgetedExperienceAnalogs,
     budgetedOwnerCoaching

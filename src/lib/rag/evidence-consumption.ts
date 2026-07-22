@@ -24,6 +24,12 @@ export interface PromptRagCandidate {
   readonly publishedAt?: string;
   readonly score?: number;
   readonly relevanceScore?: number;
+  /**
+   * Containment family used when deriving the exact sanitized serialization that can
+   * reach the model (`rag` vs `learned`). Matching consumption against pre-containment
+   * text would miss genuinely injected evidence after quarantine/truncation.
+   */
+  readonly promptSource?: "rag" | "learned";
   readonly text: string;
   /** Exact chunk serialization before the enclosing prompt budget is applied. */
   readonly serializedText: string;
@@ -73,7 +79,9 @@ function stableJson(value: Record<string, string | number | undefined>): string 
   return JSON.stringify(
     Object.fromEntries(
       Object.entries(value)
-        .filter(([, field]) => field)
+        // Preserve numeric zero (e.g. ordinal: 0 for the first occurrence). Only drop
+        // absent/empty fields so fallback evidence refs stay distinct per coordinate.
+        .filter(([, field]) => field !== undefined && field !== null && field !== "")
         .sort(([left], [right]) => left.localeCompare(right))
     )
   );

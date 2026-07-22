@@ -62,6 +62,7 @@ describe("production RAG evaluator", () => {
         expect(options).toEqual({
           asOf: golden.authoritativeAsOf,
           strictAsOf: true,
+          runId: expect.stringMatching(/^rag-eval:/),
           applyDefaultFloors: true
         });
         return { chunks: chunks.slice(0, 2), status: "degraded" };
@@ -115,9 +116,9 @@ describe("production RAG evaluator", () => {
     writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ vectorId: "stable-vector-id" }] }]));
     expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("vectorId-only");
     writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ source: "sec-edgar", contentHash: "hash-only" }] }]));
-    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("contentHash with occurrence coordinates");
+    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("contentHash must be paired");
     writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ source: "sec-edgar", section: "MD&A" }] }]));
-    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("accession plus section/ordinal");
+    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("requires accession");
     // contentHash + accession is valid stable provenance.
     writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ accession: "0001", contentHash: "hash-ok" }] }]));
     expect(loadFrozenProductionRagGoldenSet(path)[0]!.expectedEvidenceRefs[0]!.contentHash).toBe("hash-ok");

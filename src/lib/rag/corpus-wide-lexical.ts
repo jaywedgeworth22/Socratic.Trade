@@ -266,13 +266,31 @@ export function searchCorpusWideLexicalCandidates(
   }
   params.push(rawLimit);
 
+  // Accession identity: production filing writers store managed document keys on
+  // chunk_occurrences (e.g. `AAPL:000...:10-K` or `000...:1:main.html`) while some FTS
+  // mirrors historically wrote the bare SEC accession. Accept equality OR a managed key that
+  // embeds the bare FTS accession so lexical recall actually joins. Prefer o.accession in the
+  // projection so returned candidates match dense-path receipt identity.
+  const accessionJoin = `
+      (
+        o.accession = document_chunks_fts.accession
+        OR o.accession GLOB ('*:' || document_chunks_fts.accession || ':*')
+        OR o.accession GLOB (document_chunks_fts.accession || ':*')
+      )`;
+  const secFilingJoin = `
+      (
+        sf.accession = o.accession
+        OR o.accession GLOB ('*:' || sf.accession || ':*')
+        OR o.accession GLOB (sf.accession || ':*')
+      )`;
+
   const rows = getDb().prepare(`
     SELECT
       o.vector_id,
       document_chunks_fts.content_hash,
       document_chunks_fts.symbol,
       document_chunks_fts.source,
-      document_chunks_fts.accession,
+      o.accession,
       document_chunks_fts.text,
       o.section,
       o.ordinal,
@@ -286,8 +304,8 @@ export function searchCorpusWideLexicalCandidates(
       ON o.content_hash = document_chunks_fts.content_hash
       AND o.symbol = document_chunks_fts.symbol
       AND o.source = document_chunks_fts.source
-      AND o.accession = document_chunks_fts.accession
-    LEFT JOIN sec_filings sf ON sf.accession = o.accession
+      AND ${accessionJoin}
+    LEFT JOIN sec_filings sf ON ${secFilingJoin}
     LEFT JOIN vector_ingest_commits owner_commit ON owner_commit.id = o.commit_id
     WHERE document_chunks_fts.symbol = ?
       AND document_chunks_fts.text MATCH ?
@@ -319,7 +337,11 @@ export function searchCorpusWideLexicalCandidates(
     if (!row.vector_id || seenOccurrenceIds.has(row.vector_id)) continue;
     seenOccurrenceIds.add(row.vector_id);
     const acceptedAt = canonicalAcceptedAt(row.accepted_at);
-    const docType = row.doc_type?.trim().toLowerCase() || undefined;
+    // Full-body 8-K rows have no sec_filings form; classify them as 8-k so the strategy path's
+    // post-retrieval docType revalidation does not drop lexical-only hits.
+    const docType = row.source === "sec-8k"
+      ? "8-k"
+      : row.doc_type?.trim().toLowerCase() || undefined;
     const ordinal =
       typeof row.ordinal === "number" && Number.isFinite(row.ordinal)
         ? Math.trunc(row.ordinal)

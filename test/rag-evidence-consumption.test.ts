@@ -130,4 +130,22 @@ describe("RAG prompt-consumption receipts", () => {
     expect(stableRagEvidenceRef(first)).toBe(stableRagEvidenceRef(changedPrompt));
     expect(stableRagEvidenceRef(first)).not.toContain("Revenue");
   });
+
+  it("preserves ordinal zero in fallback evidence refs", () => {
+    const zero = candidate({
+      chunkId: undefined,
+      accession: "0000123-26-000001",
+      section: "MD&A",
+      ordinal: 0,
+      contentHash: "hash-zero"
+    });
+    const missing = candidate({
+      chunkId: undefined,
+      accession: "0000123-26-000001",
+      section: "MD&A",
+      ordinal: undefined,
+      contentHash: "hash-zero"
+    });
+    expect(stableRagEvidenceRef(zero)).not.toBe(stableRagEvidenceRef(missing));
+  });
 });

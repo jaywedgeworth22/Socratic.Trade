@@ -1,11 +1,12 @@
-## 2026-07-22 — RAG review remediation (PR #1892)
+## 2026-07-22 — RAG review remediation round 2 (PR #1892, GROK)
 
-Addressed the latest connector findings: local FTS recall remains enabled during paid-stage budget
-degradation; sec-8k occurrences classify as 8-K without requiring a `sec_filings` row; chat citation
-refs include accession/section/ordinal/content-hash coordinates; golden eval selectors reject
-content-hash-only identities; and prompt-consumption receipts allocate identical serialized text to
-at most one occurrence. Focused verification: 5 files / 60 tests green. Full ordered gate and hosted
-verification remain before merge; all RAG activation flags remain off.
+Closed the remaining open connector threads on PR #1892 without enabling any RAG flags: invalid
+`RAG_RERANK_PROVIDER` no longer aborts dense/lexical recall; eval threads `runId` into retrieval
+receipts; content-hash golden refs require real occurrence coordinates; 8-K lexical rows expose
+`doc_type: 8-k` for strategy revalidation; FTS writers use managed document keys and the join accepts
+legacy bare-SEC accessions; ordinal `0` is preserved in fallback evidence refs; prompt-consumption
+matching uses post-containment sanitized text. Focused verification (Node 24): 4 files / 37 tests
+green. Hosted `verify` + thread resolution remain before auto-merge.
 
 ## 2026-07-22 — RAG strategic-performance integration (CODEX team)
 

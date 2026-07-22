@@ -30,13 +30,19 @@ describe("RAG rerank route", () => {
     });
   });
 
-  it("rejects an unknown explicit provider", () => {
-    expect(() => resolveRerankRoute({
+  it("keeps recall available and reports an invalid explicit provider", () => {
+    expect(resolveRerankRoute({
       embeddingProvider: "openrouter",
       configuredProvider: "voyage",
       hasCredential: () => true,
       env: {}
-    })).toThrow(/RAG_RERANK_PROVIDER/);
+    })).toEqual({
+      provider: "openrouter",
+      model: "cohere/rerank-v3.5",
+      available: false,
+      source: "explicit",
+      reason: "invalid_configuration"
+    });
   });
 });
 

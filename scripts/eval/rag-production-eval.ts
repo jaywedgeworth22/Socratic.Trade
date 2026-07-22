@@ -58,6 +58,8 @@ export interface EvaluationModelConfiguration {
 export type ProductionRetrievalOptions = {
   asOf: string;
   strictAsOf: true;
+  /** Isolated evaluator run identity for candidate-pool/telemetry receipts. */
+  runId?: string;
   /** Cosine floor applied like strategy/chat production callers. */
   minScore?: number;
   /** Post-rerank relevance floor applied like strategy/chat production callers. */
@@ -243,6 +245,7 @@ export async function runProductionRagEvaluation(
       {
         asOf: evalCase.authoritativeAsOf,
         strictAsOf: true,
+        runId,
         // Injected/test retrievers may ignore these; PRODUCTION_RETRIEVER applies the same
         // cosine/relevance/dedupe floors as strategy filings + chat kb_search.
         applyDefaultFloors: true
@@ -450,6 +453,9 @@ function parseEvidenceRefs(value: unknown, field: string): ExpectedEvidenceRef[]
       ref.contentHash && (ref.accession || ref.section || ref.ordinal != null)
     );
     if (!hasStableCoords && !hasContentHashCoords) {
+      if (ref.contentHash) {
+        throw new Error(`${field}[${index}] contentHash must be paired with accession, section, or ordinal.`);
+      }
       throw new Error(
         `${field}[${index}] requires accession plus section/ordinal (or contentHash with occurrence coordinates); vectorId-only refs are rejected because scoring does not compare vectorId.`
       );
