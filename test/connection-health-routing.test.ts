@@ -164,7 +164,7 @@ describe("Connection Health & Failure Routing", () => {
     
     // Seed some successful health logs
     db.logApiHealth({ service: "pinecone", ok: true, keySource: "env" });
-    db.logApiHealth({ service: "voyage", ok: true, keySource: "env" });
+    db.logApiHealth({ service: "rag-embed", ok: true, keySource: "env" });
 
     // Seed lastTick so scheduler is not stale
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
@@ -175,7 +175,7 @@ describe("Connection Health & Failure Routing", () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.checks.dependencies.pinecone.ok).toBe(true);
-    expect(body.checks.dependencies.voyage.ok).toBe(true);
+    expect(body.checks.dependencies["rag-embed"].ok).toBe(true);
   });
 
   it("/api/health returns 503 when a critical global dependency fails, but stays 200 for user failures", async () => {
@@ -206,34 +206,41 @@ describe("Connection Health & Failure Routing", () => {
     expect(body.checks.dependencies.pinecone.ok).toBe(false);
   });
 
-  // Provider-aware RAG criticality (bge-m3-metering-gate, 2026-07-18): the active embed /
-  // rerank lanes fail liveness ONLY while that provider is the ACTIVE embed provider.
-  it("/api/health stays 200 on a hard-stopped openrouter-rerank lane when SiliconFlow is the active embed provider", async () => {
+  // rag-embed/rag-rerank criticality (bge-m3-metering-gate 2026-07-18; lane rename 2026-07-19 —
+  // see docs/rollouts/2026-07-19-advisory-cleanup-batch.md). The lanes are now provider-generic:
+  // whichever embed/rerank provider is ACTUALLY active (Voyage, OpenRouter, SiliconFlow) logs
+  // under "rag-embed"/"rag-rerank", so they are UNCONDITIONALLY critical — fixing the prior gap
+  // where "voyage"/"voyage-rerank" only gated liveness while Voyage itself was the active provider,
+  // meaning a dead OpenRouter/bge-m3 lane never failed liveness at all.
+  it("/api/health 503s on a hard-stopped rag-embed/rag-rerank lane when OpenRouter is the active embed provider", async () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
     db.upsertUserApiKey("local", "siliconflow", "sf-test-key");
 
     for (let i = 0; i < 5; i++) {
-      db.logApiHealth({ service: "openrouter-rerank", ok: false, errorText: "OpenRouter down", keySource: "env" });
+      db.logApiHealth({ service: "rag-embed", ok: false, errorText: "OpenRouter down", keySource: "env" });
+      db.logApiHealth({ service: "rag-rerank", ok: false, errorText: "OpenRouter down", keySource: "env" });
     }
 
     const response = await healthRoute.GET();
-    expect(response.status).toBe(200); // openrouter-rerank is not active -> not critical
+    expect(response.status).toBe(503); // now correctly critical regardless of which provider is active
 
     const body = await response.json();
-    expect(body.ok).toBe(true);
-    expect(body.checks.ragEmbedProvider).toBe("siliconflow");
+    expect(body.ok).toBe(false);
+    expect(body.checks.ragEmbedProvider).toBe("openrouter");
+    expect(body.checks.dependencies["rag-embed"].ok).toBe(false);
+    expect(body.checks.dependencies["rag-rerank"].ok).toBe(false);
   });
 
-  it("/api/health still 503s on a hard-stopped openrouter lane when OpenRouter IS the active embed provider", async () => {
+  it("/api/health still 503s on a hard-stopped rag-embed lane when Voyage IS the active embed provider", async () => {
     const { healthRoute, db } = await load();
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
     db.upsertUserApiKey("local", "openrouter", "sk-or-test-key");
 
     for (let i = 0; i < 5; i++) {
-      db.logApiHealth({ service: "openrouter", ok: false, errorText: "OpenRouter down", keySource: "env" });
+      db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
     }
 
     const response = await healthRoute.GET();
@@ -241,8 +248,29 @@ describe("Connection Health & Failure Routing", () => {
 
     const body = await response.json();
     expect(body.ok).toBe(false);
-    expect(body.checks.ragEmbedProvider).toBe("openrouter");
-    expect(body.checks.dependencies.openrouter.ok).toBe(false);
+    expect(body.checks.ragEmbedProvider).toBe("voyage");
+    expect(body.checks.dependencies["rag-embed"].ok).toBe(false);
+  });
+
+  it("/api/health does not fail liveness on a hard-stopped legacy 'voyage' lane (pre-rename/back-compat rows are no longer critical)", async () => {
+    const { healthRoute, db } = await load();
+
+    db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
+
+    // The literal "voyage" service name is no longer written by withRagApiHealth's embed/rerank
+    // call sites (see vector-db.ts), but recordMissingRagKey's missing-API-key path and historical
+    // rows still use it — it must not gate liveness now that rag-embed/rag-rerank are the real lanes.
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "voyage", ok: false, errorText: "Voyage down", keySource: "env" });
+    }
+
+    const response = await healthRoute.GET();
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    // Still REPORTED (visibility unaffected), just not in criticalServices.
+    expect(body.checks.dependencies.voyage.ok).toBe(false);
   });
 
   it("/api/health survives a pinned-but-keyless RAG_EMBED_PROVIDER (reports the config error, no 503 loop)", async () => {
@@ -250,6 +278,12 @@ describe("Connection Health & Failure Routing", () => {
 
     db.setInternalSetting("scheduler:lastTick", new Date().toISOString());
     process.env.RAG_EMBED_PROVIDER = "openrouter"; // pinned, but no openrouter key configured
+
+    // Even with a hard-stopped rag-embed lane, the pin misconfiguration must not 503 the container
+    // into a restart loop — it is surfaced as ragEmbedProviderError/ragConfigured:false instead.
+    for (let i = 0; i < 5; i++) {
+      db.logApiHealth({ service: "rag-embed", ok: false, errorText: "Voyage down", keySource: "env" });
+    }
 
     const response = await healthRoute.GET();
     expect(response.status).toBe(200);
