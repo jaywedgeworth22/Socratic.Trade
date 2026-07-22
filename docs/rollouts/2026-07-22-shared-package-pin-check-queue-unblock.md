@@ -22,7 +22,12 @@ with `node: command not found`; unrelated PRs could also be stranded with no pin
 
 ## Verification
 
-Run the focused workflow-safety test, then the required hosted `verify` check before merge.
+- `npx vitest run --maxWorkers=1 test/ci-workflow-queue-safety.test.ts` — 5 tests passed.
+- `npx eslint test/ci-workflow-queue-safety.test.ts` — passed.
+- `npx tsc --noEmit` — passed.
+- `node -e "const fs=require('node:fs'); const yaml=require('js-yaml'); yaml.load(fs.readFileSync('.github/workflows/shared-package-pin-check.yml','utf8'));"` — YAML parsed successfully.
+- `git diff --check` — passed.
+- Hosted `CI / verify-hosted` run `29941083303` — passed 2026-07-22 17:46 UTC; the required `CI / verify` gate was queued immediately afterward.
 
 ## Follow-ups
 

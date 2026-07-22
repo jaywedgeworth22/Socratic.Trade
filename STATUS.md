@@ -7,6 +7,9 @@ comparison invokes `node`. This replaces the stale #1780 branch, whose current w
 touch the pin workflow and whose hosted check failed with `node: command not found`. Rollout:
 `docs/rollouts/2026-07-22-shared-package-pin-check-queue-unblock.md`.
 
+Review follow-up: the rollout now records the exact focused test, lint, TypeScript, YAML, diff, and
+hosted verification commands/results. The focused queue-safety test passes 5/5.
+
 ## 2026-07-21 — LLM cooldown + draining-account purge safety (cursor/critical-bug-management-2b05, PR #1845)
 
 Fixes: durable LLM provider cooldown bookkeeping; safe purge path when an account is draining so we do not wipe live state incorrectly. Handoff docs (this file + `docs/EFFORT-LOG.md`) updated to satisfy Pre-Commit protocol. Rollout: `docs/rollouts/2026-07-21-critical-cooldown-draining-fixes.md`.
