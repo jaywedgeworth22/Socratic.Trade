@@ -173,6 +173,8 @@ function normalizeItemCode(text: string, formType?: string): { code: string; tit
 }
 
 function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): string[] {
+  // Prevent runaway amplification on degenerate table layouts
+  rows = rows.slice(0, 5000).map(r => r.slice(0, 500));
   if (rows.length <= 1) {
     return [rows.map((row) => `| ${row.join(" | ")} |`).join("\n")];
   }
@@ -235,6 +237,29 @@ function splitTableRows(rows: string[][], firstRowHasHeaders: boolean = false): 
   return tables;
 }
 
+/**
+ * True only for styles that genuinely hide an element.
+ *
+ * `opacity` and `font-size` MUST be compared as parsed numbers, not matched as a `0` prefix: a
+ * regex like `/opacity\s*:\s*0/` also matches the very common `opacity:0.5` and
+ * `font-size:0.875rem`. Because `collectBlocks` returns immediately on a hidden node, a false
+ * positive silently drops that element's ENTIRE subtree — and filings routinely wrap real prose and
+ * tables in inline-styled elements, so whole sections could vanish from parsed evidence with no
+ * error anywhere. Only an exact zero (`0`, `0.0`, `.0`, `0px`, …) means hidden.
+ */
+export function isHiddenStyle(style: string): boolean {
+  if (/display\s*:\s*none/i.test(style)) return true;
+  if (/visibility\s*:\s*hidden/i.test(style)) return true;
+  // Capture the numeric value (with optional unit) and test it as a number.
+  const zeroValued = (property: string): boolean => {
+    const match = new RegExp(`${property}\\s*:\\s*(-?[0-9]*\\.?[0-9]+)\\s*[a-z%]*`, "i").exec(style);
+    if (!match) return false;
+    const value = Number.parseFloat(match[1]!);
+    return Number.isFinite(value) && value === 0;
+  };
+  return zeroValued("opacity") || zeroValued("font-size");
+}
+
 function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: string) {
   if (node.type !== "tag") return;
 
@@ -246,8 +271,7 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
   // Remove display: none or visibility: hidden elements
   const style = $(node).attr("style");
   if (style) {
-    const isHidden = /display\s*:\s*none/i.test(style) || /visibility\s*:\s*hidden/i.test(style);
-    if (isHidden) return;
+    if (isHiddenStyle(style)) return;
   }
 
   // If table, convert and do not recurse into rows/cells
@@ -281,18 +305,42 @@ function collectBlocks($: any, node: any, blocks: ParsedBlock[], formType?: stri
           c++;
         }
 
-        // Process nested tables in this cell FIRST (blocks are emitted before
-        // we strip them from outer cell text)
+        // Process nested tables in this cell FIRST, converting them to markdown
+        // directly in the cell to preserve reading order and nested structure
         $(cell).find("table").each((__: any, nestedTable: any) => {
-          collectBlocks($, nestedTable, blocks, formType);
+          const nestedBlocks: ParsedBlock[] = [];
+          collectBlocks($, nestedTable, nestedBlocks, formType);
+
+          // A nested table can itself resolve to a heading block (e.g. EDGAR encodes
+          // "Item 1A. Risk Factors" as a single-cell layout table inside an outer wrapper
+          // cell — the `name === "table"` branch above returns exactly that as a heading
+          // ParsedBlock). Folding it into inline cell prose along with everything else would
+          // silently destroy the section break: parseFilingHtml only starts a new section on a
+          // block with `type === "heading" && itemCode`, so every block that follows would stay
+          // misattributed to the previous section (often GENERAL). Emit heading sub-blocks as
+          // real section-break blocks in the enclosing stream instead, and fold only the
+          // remaining (non-heading) nested content into the cell's own text.
+          const proseBlocks: ParsedBlock[] = [];
+          for (const nested of nestedBlocks) {
+            if (nested.type === "heading" && nested.itemCode) {
+              blocks.push(nested);
+            } else {
+              proseBlocks.push(nested);
+            }
+          }
+          const md = proseBlocks.map((b: ParsedBlock) => b.text).join("\n\n");
+          // The nested table's Markdown carries its own `|` delimiters, and this text is about to
+          // become ONE cell of the outer table — whose renderer wraps it in `|` again without
+          // escaping. Unescaped, a single outer cell silently splits into extra columns and the
+          // row's alignment (and therefore every value's column meaning) is destroyed. GFM escapes
+          // a literal pipe inside a cell as `\|`.
+          $(nestedTable).replaceWith(md ? `\n\n${md.replace(/\|/g, "\\|")}\n\n` : "");
         });
-        // Remove nested tables from cell text now that content is preserved
-        $(cell).find("table").remove();
         // Replace <br> with space so concatenated text nodes stay separated
         $(cell).find("br").replaceWith(" ");
 
-        const colspan = parseInt($(cell).attr("colspan") || "1", 10);
-        const rowspan = parseInt($(cell).attr("rowspan") || "1", 10);
+        const colspan = Math.max(1, Math.min(parseInt($(cell).attr("colspan") || "1", 10) || 1, 50));
+        const rowspan = Math.max(1, Math.min(parseInt($(cell).attr("rowspan") || "1", 10) || 1, 50));
         const cellText = $(cell).text().replace(/\s+/g, " ").trim();
 
         for (let rs = 0; rs < rowspan; rs++) {
