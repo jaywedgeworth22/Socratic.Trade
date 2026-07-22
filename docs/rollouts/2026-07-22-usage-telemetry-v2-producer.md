@@ -9,7 +9,9 @@
   stable across ambiguous retries.
 - Credential attribution: legacy `keyRef` maps to `producerKeyRef`; producer identity is never
   duplicated inside events.
-- ACKs and errors are parsed through the shared v2 schemas, including retryability metadata.
+- ACKs and errors are parsed through the shared v2 schemas, including retryability metadata. A
+  schema-valid partial ACK is still a failed delivery unless `received` equals the sent batch and
+  `rejected` is zero; live events retry unchanged and durable replay leaves its watermark unmoved.
 
 ## Backlog safety
 
@@ -43,7 +45,7 @@ or state writes. There is no v1 sender or dual-write path in the final implement
   `sourceApp` assertion updated during that run. The final affected producer/replay/FMP regression
   set passed 3 files / 46 tests after the update.
 - Production build: `npm run build` under Node 24.
-- Direct-v2 cutover revalidation under Node 24: 4 files / 64 tests (push, replay, background
+- Direct-v2 cutover revalidation under Node 24: 4 files / 66 tests (push, replay, background
   startup, and FMP producer telemetry), TypeScript, scoped ESLint, and diff-check pass. Coverage includes atomic all-ledger
   seeding, skipped-row receipts, seeded-boundary exclusion, strict-v2 activation/overlap, malformed
   JSON and invalid-timestamp fail-closed behavior, no partial seed, replay-before-producer boot, and

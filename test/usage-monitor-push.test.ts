@@ -232,6 +232,30 @@ describe("usage-monitor-push", () => {
     expect(getLlmUsageSummary().length).toBeGreaterThan(0);
   });
 
+  it("retries the exact live batch when a valid v2 ACK under-reports acceptance", async () => {
+    const attempts: string[] = [];
+    push.__setUsageMonitorFetch((async (_url: unknown, init?: RequestInit) => {
+      const rawBody = String(init?.body ?? "{}");
+      attempts.push(rawBody);
+      const sent = (JSON.parse(rawBody) as { events: unknown[] }).events.length;
+      return attempts.length === 1 ? ack(sent - 1) : ack(sent);
+    }) as unknown as typeof fetch);
+    push.pushLlmUsage({
+      sourceEventId: "partial-live-ack",
+      provider: "openai",
+      userId: "local",
+      keySource: "operator",
+      totalTokens: 1,
+    });
+
+    await push.flushUsageMonitor();
+    expect(attempts).toHaveLength(1);
+    await push.flushUsageMonitor();
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toBe(attempts[0]);
+  });
+
   it("uses one durable LLM ledger identity and timestamp for persistence and delivery", async () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));

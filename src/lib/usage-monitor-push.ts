@@ -965,6 +965,19 @@ function warnPoisonDropped(count: number, lane: string): void {
   }
 }
 
+/** A schema-valid v2 ACK can still report a partial batch; never treat that as durable success. */
+function requireCompleteAck(
+  ack: { received: number; rejected: number },
+  expectedCount: number
+): void {
+  if (ack.received !== expectedCount || ack.rejected !== 0) {
+    throw new Error(
+      `Usage monitor acknowledged only part of the batch ` +
+        `(sent=${expectedCount}, received=${ack.received}, rejected=${ack.rejected})`
+    );
+  }
+}
+
 async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   const baseUrl = usageMonitorBaseUrl();
   const token = usageMonitorToken();
@@ -986,7 +999,8 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
       producerId: SOURCE_APP,
       fetchImpl: (input, init) => fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    await client.send(events);
+    const ack = await client.send(events);
+    requireCompleteAck(ack, events.length);
     recordUsageMonitorHealth(true, start);
     breakerRecordResult(true, Date.now());
     return true;
@@ -1056,7 +1070,8 @@ async function sendReplayBatch(events: UsageMonitorEvent[]): Promise<boolean> {
       fetchImpl: (input, init) =>
         fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    await client.send(deliverable);
+    const ack = await client.send(deliverable);
+    requireCompleteAck(ack, deliverable.length);
     // Record health from the replay lane too — if replay is the first/only lane talking to a down
     // monitor, this is what keeps the admin health row truthful instead of stale-healthy while the
     // shared breaker (below) suppresses the live-push lane's own health writes.

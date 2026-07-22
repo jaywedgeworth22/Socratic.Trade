@@ -575,6 +575,28 @@ describe("usage monitor durable replay", () => {
     expect(afterOk[0]!.ok).toBe(1); // recovery recorded from the replay lane
   });
 
+  it("does not advance a durable watermark when a valid v2 ACK rejects an event", async () => {
+    insertLlm({
+      id: "llm-partial-ack",
+      createdAt: "2026-07-10T17:30:00.000Z",
+      costUsd: 0.05,
+    });
+    push.__setUsageMonitorFetch((async () => new Response(JSON.stringify({
+      ok: true,
+      schemaVersion: 2,
+      received: 1,
+      persisted: 0,
+      duplicates: 0,
+      pruned: 0,
+      rejected: 1,
+    }), { status: 202 })) as unknown as typeof fetch);
+
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.llm).toEqual({ sent: 0, complete: false, failed: true });
+    expect(storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.llm)).toBeNull();
+  });
+
   it("drops a schema-invalid replay event without tripping the breaker and acks it (quarantine, not receiver-down)", async () => {
     process.env.USAGE_MONITOR_BREAKER_THRESHOLD = "1";
     const captured: CapturedRequest[] = [];
