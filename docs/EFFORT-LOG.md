@@ -45,7 +45,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 
-- **[Socratic.Trade][CODEX] Robinhood guardrail cap resilience (branch `codex/robinhood-cap-fix`, 2026-07-22) — In Progress.** Make guardrail saves independent of transient broker account-read failures when account readiness is unchanged; keep activation/account-selection verification intact; clamp infeasible absolute opening caps to the account's current feasible spend; default dual-mode caps to percentage settings. Add focused regressions and run the full verification quartet.
+- **[Socratic.Trade][CODEX] Robinhood guardrail cap resilience (branch `codex/robinhood-cap-fix`, 2026-07-22) — In Progress / HANDOFF.** Implementation commits `9c208190` + `e943e9b9`; focused gates are green. Landing is blocked only by a Node 26-compiled `better-sqlite3` under the required Node 24 runtime; rebuild dependencies, rerun `scripts/land.sh`, then PR/merge/deploy/live-verify. Handoff: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
 
 - **[Socratic.Trade][CODEX] CI pending-run collapse (branch `codex/ci-queue-collapse`, 2026-07-22) — IN PROGRESS.** Removed `github.sha` from the required CI concurrency group while retaining `cancel-in-progress: false`; every SHA had previously created a distinct group and accumulated duplicate queued verifies. Added a workflow regression. Verification and landing are next; active runs are not being cancelled. Rollout: `docs/rollouts/2026-07-22-ci-pending-collapse.md`.
 

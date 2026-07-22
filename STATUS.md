@@ -1,5 +1,13 @@
 # Current Status
 
+## 2026-07-22 — Robinhood cap deployment handoff (CODEX, branch `codex/robinhood-cap-fix`)
+
+Implementation is committed as `9c208190`; latest `origin/main` was merged as `e943e9b9`. The first
+Node 24 landing attempt passed TypeScript but the full suite hit an environment-only native-module
+mismatch (`better-sqlite3` built for Node 26 module 147; Node 24 requires 137). Rebuild dependencies
+under Node 24, rerun `scripts/land.sh`, then open/merge the PR and verify the exact Coolify SHA plus
+the real Robinhood settings-save path. Handoff details: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+
 ## 2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch `codex/robinhood-cap-fix`)
 
 Implemented account-aware opening caps and save resilience. Unchanged-account guardrail saves no

@@ -1,5 +1,12 @@
 # Active Implementation Plan
 
+> **Handoff 2026-07-22 — Robinhood cap resilience deployment.** The implementation is committed
+> (`9c208190`) and latest `origin/main` is merged (`e943e9b9`), but landing stopped in the full
+> Vitest gate because `better-sqlite3` was compiled under Node 26 while the required Node 24 runtime
+> loaded it. Rebuild dependencies under Node 24, rerun `scripts/land.sh`, then complete PR checks,
+> protected merge, Coolify SHA verification, and live Robinhood save/proposal verification. Full
+> command sequence: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+
 > **2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch
 > `codex/robinhood-cap-fix`).** Make policy saves independent of transient broker account-list
 > failures when account readiness is unchanged, while retaining verification for account selection
