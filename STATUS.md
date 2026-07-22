@@ -27,9 +27,10 @@ touch the pin workflow and whose hosted check failed with `node: command not fou
 
 The workflow correction is now subsumed into telemetry PR #1889 so one protected gate can verify the
 combined change. Its focused queue-safety test passes 5/5; the combined Node 24 gate passes 5 files /
-71 tests plus TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. Standalone PR #1890
-remains held only as a rollback/reference vehicle until #1889 lands. Auto-merge on #1889 is held off
-until final-head hosted checks and review-thread verification pass.
+71 tests plus TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. PR #1890 is closed as
+superseded after its exact reviewed history was subsumed into #1889; its branch is retained and
+reopenable. Auto-merge on #1889 is held off until final-head hosted checks and review-thread
+verification pass.
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous

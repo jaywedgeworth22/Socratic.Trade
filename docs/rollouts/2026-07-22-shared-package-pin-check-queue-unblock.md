@@ -33,9 +33,8 @@ with `node: command not found`; unrelated PRs could also be stranded with no pin
 ## Combined landing
 
 The reviewed workflow correction is subsumed into telemetry PR #1889 so both changes consume one
-protected gate. Standalone PR #1890 stays open only as a held rollback/reference vehicle until the
-combined PR lands. The combined Node 24 local gate passes 5 files / 71 tests, TypeScript, scoped
-ESLint, workflow YAML parsing, and diff-check. Auto-merge remains off until the final combined head
-passes hosted checks and zero-thread verification. After #1889 lands, close #1890 and #1780 as
-superseded; do not restore `check-pin` as a required context until both consumers' shared-package
-pins are coordinated.
+protected gate. PR #1890 is closed as superseded after subsumption, with its branch retained and
+reopenable; #1780 was already closed. The combined Node 24 local gate passes 5 files / 71 tests,
+TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. Auto-merge remains off until the
+final combined head passes hosted checks and zero-thread verification. Do not restore `check-pin` as
+a required context until both consumers' shared-package pins are coordinated.

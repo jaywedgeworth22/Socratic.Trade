@@ -3,8 +3,9 @@
 > **2026-07-22 — Usage telemetry v2 + shared-package pin-check combined landing (PR #1889).** The
 > reviewed #1890 workflow correction is subsumed into #1889 to avoid two serialized full CI cycles.
 > Keep auto-merge off until the combined final head passes hosted `gitleaks`, `check-pin`, required
-> `verify`, and zero-thread review. After #1889 merges and deploys, close #1890 and #1780 as
-> superseded, then verify the exact Coolify release and one new authenticated strict-v2 ACK.
+> `verify`, and zero-thread review. PRs #1890 and #1780 are closed as superseded; their branches are
+> retained. After #1889 merges, verify the exact Coolify release and one new authenticated strict-v2
+> ACK.
 > **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
 > `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
 > but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per
