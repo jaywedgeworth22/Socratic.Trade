@@ -45,6 +45,21 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Corpus re-embed scoped-run purge gate fix (branch
+  `cursor/critical-bug-management-0770`, claimed 2026-07-20) — IN PROGRESS.**
+  Critical-bug automation found that a symbol-scoped `POST /api/admin/reembed` could persist a
+  full-docType `completedForEmbedRevision` stamp; the explicit `purge-legacy` action then trusted
+  that stamp and could delete all legacy vectors for the docType even though only the scoped symbols
+  were backfilled. Patch withholds full-corpus completion stamps on scoped runs and adds a focused
+  regression. Local gate passed: lint, TypeScript, 420-file/4,901-test Vitest suite, and build. PR pending.
+- **[Socratic.Trade][CURSOR] Stop placement intent authoritative-absence fix (branch
+  `cursor/critical-bug-management-8edd`, claimed 2026-07-21) — IN PROGRESS.** Hourly
+  high-severity scan found a money-path duplicate-stop risk: a durable broker stop placement intent
+  was cleared on absent `clientOrderId` after any successful order-list fetch, even for
+  non-authoritative/live-only broker lists. Fix requires `ordersListIncludesTerminal === true` before
+  absence authorizes a fresh placement; non-authoritative lists keep the intent and skip the symbol.
+  Local gates passed; PR publication/hosted checks next. Rollout:
+  `docs/rollouts/2026-07-21-stop-intent-authoritative-absence.md`.
 - **[Socratic.Trade][AG] Purge Voyage AI SDK and standardize RAG on OpenRouter BAAI bge-m3 / Cohere reranker (branch `agent/antigravity-docs-update`) — COMPLETED 2026-07-21.** Purged Voyage AI SDK and standardized the production RAG engine on OpenRouter BAAI bge-m3 / Cohere reranker. Isolated Voyage client instantiation to test mode via dynamic imports, ensuring complete isolation from production while maintaining compatibility with the unit test suite. Verified green via `tsc`, `lint`, the 4,898 vitest suite, and a production Next.js build.
 - **[Socratic.Trade][GROK4] Multi-wave expert-review implementation (claimed 2026-07-20) — IN PROGRESS.** PR #1847. Waves A/C partial + coach/lesson writers + **Wave D partial** (chat directives/URLs → learned_context). Prod bge-m3 re-embed running (sec-filings in progress after dry-run 2644 candidates).
 - **[Socratic.Trade][GROK4] Full multi-expert app review (claimed 2026-07-20) — DONE (read-only).** 12-specialist panel complete. Deliverable: `docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md`. Headline P0s: (1) budget skips as status=completed (2) Usage-Monitor enforce mis-keyed vs openrouter (3) incomplete bge-m3 re-embed (4) iOS SIWA/live-confirm/deletion broken (5) shorts no continuous cover stops (6) CF Access header / SSRF class (7) coach-note slice(-20)+missing lesson writers (8) api-circuit-breaker null byte in worktree. No code landed. Read-only panel: UI/UX, iOS, mobile/desktop web, LLM cost/OpenRouter, API budgets, alert storms/cross-app coordination, Hetzner/Coolify, RAG/embeddings, trading/broker/signals, ML learning loops, cascading data APIs. Deliverable: docs/reviews/2026-07-20-grok4-multi-expert-full-app-review.md. No code edits, no prod mutations. Worktree: code-socratictrade/grok.
@@ -479,6 +494,9 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+
+- **[Socratic.Trade][CURSOR] LLM cooldown + draining-account purge safety (PR #1845, branch `cursor/critical-bug-management-2b05`) — IN PROGRESS → landing.** Code + rollout present; STATUS/EFFORT-LOG filled for handoff gate. Commit author identity: subsequent commits use noreply; squash-merge lands under PR merge identity.
+
 
 - **[Socratic.Trade][CLAUDE] Merged-worktree cleanup sweep + Voyage `/api/health` RCA (branch `claude/cleanup-merged-worktrees-bdbc08`) — COMPLETED 2026-07-18 (docs PR auto-merge armed).** Cleanup: 5 verified-clean merged lanes removed via `git worktree remove` (PR #1740 tmp checkout, #1587 `socratic-account-relative-risk`, #1559 `socratic-sec-rag-program`, #1624 `socratic-st-primary-bridge-writer`, #1563 `socratic-usage-telemetry-replay`; squash-merge verified via PR mergeCommit ancestry, branches/commits retained). KEPT: `socratic-pr1745.O3KoVh` (`codex/reconcile-pr1745` = 7 unlanded commits, NO PR — CODEX disposition needed), `socratic-admin-console-shell` (4 dirty files), `trading-ag-rag` (standing lane). 4 listed paths already gone; PRs #1441/#1451/#1728 have no worktrees. Voyage RCA: `/api/health` is 200/ok (provider-aware criticality fix already live); `dependencies.voyage.ok=false` is the legacy-named embed lane — prod embeds bge-m3 via OpenRouter and the OpenRouter account is EXHAUSTED (25.00 credits / 25.31 used → every embed 402s, RAG ingestion stalled incl. SEC backfill). Voyage key itself verified VALID (live embed OK). OWNER ACTION: top up OpenRouter credits (or add a SiliconFlow key — same `BAAI/bge-m3` space). Mid-session collision with the live `agent/ag-reindex-bge-m3` landing session recorded + retracted on #agent-sync (sync-2); that landing stays with its original session. Rollout: `docs/rollouts/2026-07-18-worktree-cleanup-voyage-rca.md`.
 - **[Socratic.Trade][CLAUDE] iOS client fixes — typed live-approval confirmation, SSE frame parsing + reload coalescing, 401/403-only logout (Codex findings 30-32; branch `claude/ios-client-fixes`) — COMPLETED 2026-07-18.** Swift-only changes to `ios/SocraticTrade/` (no web-app surface). Rollout: `docs/rollouts/2026-07-18-ios-client-fixes.md`. CAVEAT: Swift verification was by parse + macOS-SDK typecheck only — no Xcode/simulator build was possible in the landing environment, so the owner should run one manual Xcode build before relying on the iOS client.
