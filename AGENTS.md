@@ -148,6 +148,7 @@ script calling `https://jays.services/api/v1/...` must use
 `https://host.jays.services/api/v1/...` instead.** The box hosts
 `socratic-trade-prod` (= `socratictrade.com`, see the production stanza below) plus the
 `github-runner` service (two GitHub Actions deploy runners).
+**MAC RUNNER RETIRED & DELETED (OWNER DIRECTIVE, 2026-07-21):** The Mac host self-hosted runner `trading-live-mac` is permanently stopped, uninstalled, and deleted from GitHub settings. **DO NOT EVER START, RE-REGISTER, OR REFERENCE `trading-live-mac` OR `trading-live` RUNNER LABELS AGAIN.** All CI/CD jobs must target `[self-hosted, Linux, X64]` (Coolify runners) or `ubuntu-latest`.
 **Build caveats:** the box's `concurrent_builds` is
 pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
 console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker
