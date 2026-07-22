@@ -16,8 +16,8 @@
 //   - Health is reported via `logApiHealth({ service: "usage-monitor" })` so the operator sees the
 //     connection status without the push ever affecting trading.
 //
-// CONTRACT: the event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
-// `UsageTelemetryEventSchema` and the monitor's server-side parser
+// CONTRACT: fresh outbound events use `@jaywedgeworth22/congress-trading-shared`'s strict
+// `UsageTelemetryV2EventSchema`; producer identity lives only on the v2 batch envelope.
 // (`API-usage-monitor/src/lib/usage-telemetry.ts`).
 // MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
@@ -26,8 +26,8 @@ import { getGitSha } from "./git-sha";
 import {
   createUsageTelemetryClient,
   telemetryEventClassifier,
-  UsageTelemetryEventSchema,
-  type UsageTelemetryEvent,
+  UsageTelemetryV2EventSchema,
+  type UsageTelemetryV2Event,
   type UsageTelemetryMetricType,
   type UsageTelemetryUnit,
   type UsageTelemetryBillingMode,
@@ -39,7 +39,8 @@ export type UsageMetricType = UsageTelemetryMetricType;
 export type UsageUnit = UsageTelemetryUnit;
 export type UsageBillingMode = UsageTelemetryBillingMode;
 export type UsageConfidence = UsageTelemetryConfidence;
-export type UsageMonitorEvent = UsageTelemetryEvent;
+export type UsageMonitorEvent = UsageTelemetryV2Event;
+type UsageMonitorDraft = Omit<UsageMonitorEvent, "eventId"> & { eventId?: string };
 
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
@@ -275,7 +276,7 @@ interface CallVolumeEntry {
 }
 
 interface PendingUsageEvent {
-  event: UsageMonitorEvent;
+  event: UsageMonitorDraft;
   kind: string;
   sourceId: string;
   /** Wall-clock arrival time in this buffer; see isStaleBuffered(). */
@@ -309,11 +310,9 @@ interface PushState {
 }
 
 const host = globalThis as unknown as { __usageMonitorPush?: PushState };
-// v4: `queue` entries changed from raw UsageMonitorEvent to the { event, receivedAt } wrapper and
-// `pendingQueue` entries gained `receivedAt`. Bumping forces the stale-timer cancellation below and
-// pairs with normalizeRetainedQueues() so an HMR reload from a pre-v4 module can't feed old-shape
-// entries into the new flush path.
-const STATE_VERSION = 4;
+// v5: buffered v1 events are normalized once in memory to strict v2 fields before any retry.
+// Bumping forces stale-timer cancellation and prevents an old module from sending v1 wire data.
+const STATE_VERSION = 5;
 const priorState = host.__usageMonitorPush;
 const staleState = priorState !== undefined && priorState.version !== STATE_VERSION;
 if (staleState && priorState.flushTimer) {
@@ -359,21 +358,46 @@ if (
  * would throw or send a shapeless payload on hot-reload. Dev-only concern, but cheap to make safe.
  * A raw event is discriminated by the absence of a nested `.event` object.
  */
+function normalizeRetainedEvent(value: unknown): UsageMonitorDraft {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value as UsageMonitorDraft;
+  const retained = { ...(value as Record<string, unknown>) };
+  if (retained.sourceApp !== undefined && retained.sourceApp !== SOURCE_APP) {
+    return retained as UsageMonitorDraft;
+  }
+  delete retained.sourceApp;
+  if (retained.producerKeyRef === undefined && retained.keyRef !== undefined) {
+    retained.producerKeyRef = retained.keyRef;
+  }
+  delete retained.keyRef;
+  if (retained.eventId === undefined && retained.idempotencyKey !== undefined) {
+    retained.eventId = retained.idempotencyKey;
+  }
+  delete retained.idempotencyKey;
+  return retained as UsageMonitorDraft;
+}
+
 function normalizeRetainedQueues(prior: PushState): void {
   const now = Date.now();
   if (Array.isArray(prior.queue)) {
     prior.queue = prior.queue.map((entry) => {
       const wrapper = entry as Partial<QueuedUsageEvent>;
       if (wrapper && typeof wrapper.event === "object" && wrapper.event !== null) {
-        return { event: wrapper.event, receivedAt: typeof wrapper.receivedAt === "number" ? wrapper.receivedAt : now };
+        return {
+          event: normalizeRetainedEvent(wrapper.event) as UsageMonitorEvent,
+          receivedAt: typeof wrapper.receivedAt === "number" ? wrapper.receivedAt : now,
+        };
       }
       // Old shape: `entry` IS the raw event.
-      return { event: entry as unknown as UsageMonitorEvent, receivedAt: now };
+      return {
+        event: normalizeRetainedEvent(entry) as UsageMonitorEvent,
+        receivedAt: now,
+      };
     });
   }
   if (Array.isArray(prior.pendingQueue)) {
     prior.pendingQueue = prior.pendingQueue.map((entry) => ({
       ...entry,
+      event: normalizeRetainedEvent(entry.event),
       receivedAt: typeof entry.receivedAt === "number" ? entry.receivedAt : now,
     }));
   }
@@ -406,16 +430,15 @@ export interface LlmUsageMonitorEntry {
   providerRequestId?: string;
 }
 
-function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorEvent {
+function llmUsageEvent(entry: LlmUsageMonitorEntry): UsageMonitorDraft {
   const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "llm",
     project: PROJECT,
     label: entry.context,
-    keyRef: entry.keyRef,
+    producerKeyRef: entry.keyRef,
     billingMode: "estimated",
     metricType: hasCost ? "cost" : "usage",
     quantity: entry.totalTokens,
@@ -452,7 +475,7 @@ export async function createLlmUsageMonitorEvent(
 ): Promise<UsageMonitorEvent> {
   return {
     ...llmUsageEvent(entry),
-    idempotencyKey: await telemetryIdempotencyKey("llm", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("llm", entry.sourceEventId),
   };
 }
 
@@ -478,7 +501,7 @@ export interface RagUsageMonitorEntry {
   providerRequestId?: string;
 }
 
-function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
+function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorDraft {
   const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
   const isPinecone = entry.provider === "pinecone";
   const quantity = isPinecone
@@ -488,13 +511,12 @@ function ragUsageEvent(entry: RagUsageMonitorEntry): UsageMonitorEvent {
   // Read/Write Units in tokensIn, with records kept separately in metadata.
   const unit: UsageUnit = isPinecone ? "credit" : "token";
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "rag",
     project: PROJECT,
     label: entry.operation,
-    keyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
+    producerKeyRef: undefined, // RAG keys are app-funded; no per-attached-key fingerprint today
     billingMode: "estimated",
     metricType: hasCost ? "cost" : "usage",
     quantity: quantity > 0 ? quantity : undefined,
@@ -533,7 +555,7 @@ export async function createRagUsageMonitorEvent(
 ): Promise<UsageMonitorEvent> {
   return {
     ...ragUsageEvent(entry),
-    idempotencyKey: await telemetryIdempotencyKey("rag", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("rag", entry.sourceEventId),
   };
 }
 
@@ -559,13 +581,12 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
   // The monitor's receiver sums cost by provider name only (it ignores `service`), so a non-zero
   // costUsd here would double-count spend the ledger lane already reported for the same call.
   return {
-    sourceApp: SOURCE_APP,
     environment: usageMonitorEnv(),
     provider: entry.provider,
     service: "provider-dispatch",
     project: PROJECT,
     label: entry.operation,
-    keyRef: entry.credentialRef,
+    producerKeyRef: entry.credentialRef,
     billingMode: "estimated",
     metricType: "usage",
     unit: "request",
@@ -578,7 +599,7 @@ export async function createProviderDispatchUsageMonitorEvent(entry: {
       outcome: entry.outcome,
       unknownOutcome: entry.outcome === "unknown",
     }),
-    idempotencyKey: await telemetryIdempotencyKey("provider-dispatch", entry.sourceEventId),
+    eventId: await telemetryIdempotencyKey("provider-dispatch", entry.sourceEventId),
   };
 }
 
@@ -605,16 +626,15 @@ export function pushBrokerBalance(entry: {
     const snapshotId = randomDeliveryId();
     const maskedAcc = maskAccountNumber(entry.accountNumber);
     // Number.isFinite (not typeof === "number") at admission: NaN and Infinity are both typeof
-    // "number" but the shared UsageTelemetryEvent schema rejects them (.finite()), so a NaN balance
+    // "number" but the shared v2 event schema rejects them (.finite()), so a NaN balance
     // would poison the batch. Reject it here so the bad reading never enters the buffer.
     if (Number.isFinite(entry.cash)) {
       enqueuePending({
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
         project: PROJECT,
-        keyRef: `${maskedAcc}:cash`,
+        producerKeyRef: `${maskedAcc}:cash`,
         billingMode: "actual",
         metricType: "balance",
         quantity: entry.cash,
@@ -630,12 +650,11 @@ export function pushBrokerBalance(entry: {
     }
     if (Number.isFinite(entry.buyingPower)) {
       enqueuePending({
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
         project: PROJECT,
-        keyRef: `${maskedAcc}:buyingPower`,
+        producerKeyRef: `${maskedAcc}:buyingPower`,
         billingMode: "actual",
         metricType: "limit",
         quantity: entry.buyingPower,
@@ -651,12 +670,11 @@ export function pushBrokerBalance(entry: {
     }
     if (Number.isFinite(entry.equity)) {
       enqueuePending({
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
         project: PROJECT,
-        keyRef: `${maskedAcc}:equity`,
+        producerKeyRef: `${maskedAcc}:equity`,
         billingMode: "actual",
         metricType: "balance",
         quantity: entry.equity,
@@ -733,7 +751,7 @@ export function recordProviderCall(
 // ── Queue / flush plumbing ─────────────────────────────────────────────────────
 
 function enqueuePending(
-  event: UsageMonitorEvent,
+  event: UsageMonitorDraft,
   kind: string,
   sourceId?: string
 ): void {
@@ -768,7 +786,6 @@ function drainCallVolume(now: string): PendingUsageEvent[] {
       sourceId: entry.windowId || randomDeliveryId(),
       receivedAt: Date.now(),
       event: {
-        sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: entry.service,
@@ -799,7 +816,7 @@ async function resolvePendingEvents(
     pending.map(async ({ event, kind, sourceId, receivedAt }) => ({
       event: {
         ...event,
-        idempotencyKey: await telemetryIdempotencyKey(kind, sourceId),
+        eventId: await telemetryIdempotencyKey(kind, sourceId),
       },
       receivedAt,
     }))
@@ -925,14 +942,14 @@ function recordUsageMonitorHealth(ok: boolean, startedAt: number, err?: unknown)
 }
 
 /**
- * True when an event passes the shared UsageTelemetryEvent schema — i.e. it is safe to hand to
+ * True when an event passes the strict shared v2 event schema — i.e. it is safe to hand to
  * `client.send`, which parses the batch BEFORE any fetch. An event that fails here (e.g. a NaN /
  * Infinity `quantity` that slipped past an admission guard) would throw a ZodError before the
  * network is ever touched. That is a LOCAL data bug, not a receiver outage, so we must never let it
  * reach the send path where its throw would be misread as a delivery failure and trip the breaker.
  */
 function isDeliverableEvent(event: UsageMonitorEvent): boolean {
-  return UsageTelemetryEventSchema.safeParse(event).success;
+  return UsageTelemetryV2EventSchema.safeParse(event).success;
 }
 
 /** Best-effort visibility for dropped poison events; never throws. */
@@ -945,6 +962,19 @@ function warnPoisonDropped(count: number, lane: string): void {
     );
   } catch {
     /* logging is best-effort */
+  }
+}
+
+/** A schema-valid v2 ACK can still report a partial batch; never treat that as durable success. */
+function requireCompleteAck(
+  ack: { received: number; rejected: number },
+  expectedCount: number
+): void {
+  if (ack.received !== expectedCount || ack.rejected !== 0) {
+    throw new Error(
+      `Usage monitor acknowledged only part of the batch ` +
+        `(sent=${expectedCount}, received=${ack.received}, rejected=${ack.rejected})`
+    );
   }
 }
 
@@ -966,9 +996,11 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<boolean> {
     const client = createUsageTelemetryClient({
       baseUrl,
       token,
+      producerId: SOURCE_APP,
       fetchImpl: (input, init) => fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    await client.send(events);
+    const ack = await client.send(events);
+    requireCompleteAck(ack, events.length);
     recordUsageMonitorHealth(true, start);
     breakerRecordResult(true, Date.now());
     return true;
@@ -1003,9 +1035,7 @@ const REPLAY_SEND_TIMEOUT_MS = 30_000;
  * Applies an AbortSignal timeout so that a connection stall cannot permanently block the caller
  * (the replay worker's inFlight guard is never cleared if the POST promise never settles).
  */
-export async function sendUsageMonitorBatch(
-  events: UsageMonitorEvent[]
-): Promise<boolean> {
+async function sendReplayBatch(events: UsageMonitorEvent[]): Promise<boolean> {
   if (events.length === 0) return true;
   if (!usageMonitorEnabled()) return false;
 
@@ -1036,10 +1066,12 @@ export async function sendUsageMonitorBatch(
     const client = createUsageTelemetryClient({
       baseUrl,
       token,
+      producerId: SOURCE_APP,
       fetchImpl: (input, init) =>
         fetchImpl(input, { ...init, signal: controller.signal }),
     });
-    await client.send(deliverable);
+    const ack = await client.send(deliverable);
+    requireCompleteAck(ack, deliverable.length);
     // Record health from the replay lane too — if replay is the first/only lane talking to a down
     // monitor, this is what keeps the admin health row truthful instead of stale-healthy while the
     // shared breaker (below) suppresses the live-push lane's own health writes.
@@ -1061,6 +1093,12 @@ export async function sendUsageMonitorBatch(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function sendUsageMonitorBatch(
+  events: UsageMonitorEvent[]
+): Promise<boolean> {
+  return sendReplayBatch(events);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

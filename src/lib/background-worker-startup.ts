@@ -87,8 +87,10 @@ export async function startServerBackgroundWorkers(
 
   log(`[background-workers] enabled (${decision.environment}; ${decision.reason})`);
   const starters = options.starters ?? await loadDefaultStarters();
-  starters.startScheduler();
+  // startUsageMonitorReplay synchronously establishes the atomic all-ledger v2 boundary before
+  // launching its first async send. It must precede every producer family, especially scheduler.
   starters.startUsageMonitorReplay();
+  starters.startScheduler();
   starters.startStreams();
   starters.startSecIngestWorker(); // opt-in (SEC_INGEST_WORKER_ENABLED); self-gated, no-ops otherwise
   return decision;
