@@ -38,6 +38,9 @@ export interface RagUsageEntry {
   tokensOut?: number;
   /** Number of items in the batch (texts / records). */
   batchCount?: number;
+  /** OpenRouter's generation id for this call (embed/rerank via `baai/bge-m3`/`cohere/rerank-v3.5`).
+   *  Undefined for Voyage/SiliconFlow/Pinecone. */
+  providerRequestId?: string;
 }
 
 export interface RagUsageRow {
@@ -186,6 +189,7 @@ export function recordRagUsage(entry: RagUsageEntry): void {
       tokensOut,
       batchCount,
       costUsd: cost,
+      providerRequestId: entry.providerRequestId,
     });
   } catch {
     /* ledger is best-effort; never break the caller */
@@ -204,7 +208,8 @@ export function meterEmbed(
   texts: string[],
   model?: string,
   userId?: string,
-  provider: RagEmbedRerankProvider = "openrouter"
+  provider: RagEmbedRerankProvider = "openrouter",
+  providerRequestId?: string
 ): void {
   const tokens = approxTokens(texts);
   recordRagUsage({
@@ -215,7 +220,8 @@ export function meterEmbed(
       model ||
       (provider === "openrouter" ? "baai/bge-m3" : "BAAI/bge-m3"),
     tokensIn: tokens,
-    batchCount: texts.length
+    batchCount: texts.length,
+    providerRequestId
   });
 }
 
@@ -229,7 +235,8 @@ export function meterRerank(
   documents: string[],
   model?: string,
   userId?: string,
-  provider: RagEmbedRerankProvider = "openrouter"
+  provider: RagEmbedRerankProvider = "openrouter",
+  providerRequestId?: string
 ): void {
   const tokens = approxTokens([query, ...documents]);
   recordRagUsage({
@@ -242,7 +249,8 @@ export function meterRerank(
         ? "cohere/rerank-v3.5"
         : "Qwen/Qwen3-Reranker-8B"),
     tokensIn: tokens,
-    batchCount: documents.length
+    batchCount: documents.length,
+    providerRequestId
   });
 }
 
