@@ -23,8 +23,22 @@ prove that the current browser intended to accept the login.
 
 ## Verification
 
-Run the focused middleware and mobile auth exchange tests, then run the required hosted `verify`
-workflow before merge.
+Completed locally on the final middleware shape:
+
+```sh
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx vitest run \
+  test/middleware-auth.test.ts \
+  test/mobile-auth-handoff.test.ts \
+  test/mobile-auth-exchange-route.test.ts
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit
+PATH=/opt/homebrew/opt/node@24/bin:$PATH npx eslint middleware.ts test/middleware-auth.test.ts
+```
+
+The focused Vitest command passed 3 files / 34 tests; TypeScript and ESLint also passed. Hosted
+`verify-hosted` is the required merge gate. Its initial run is queued at the time of this note; a
+separate Security `gitleaks` run was canceled and re-queued. The unrelated `autofix` check failed
+before PR code ran because its self-hosted runner did not have `unzip`, preventing Bun installation
+(exit 127); that runner issue was escalated separately.
 
 ## Follow-ups
 
