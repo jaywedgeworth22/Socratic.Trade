@@ -169,15 +169,22 @@ struct LoginView: View {
             store.error = "Could not securely start web sign-in. Try again."
             return
         }
-        var callbackComponents = URLComponents(string: "https://socratictrade.com/api/mobile/auth-redirect")
-        callbackComponents?.queryItems = [
+        guard var callbackComponents = URLComponents(string: "https://socratictrade.com/api/mobile/auth-redirect") else {
+            store.error = "Could not prepare web sign-in."
+            return
+        }
+        callbackComponents.queryItems = [
             URLQueryItem(name: "code_challenge", value: verifier.challenge)
         ]
-        var components = URLComponents(string: "https://socratictrade.com/api/auth/signin/\(provider)")
-        components?.queryItems = [
-            URLQueryItem(name: "callbackUrl", value: callbackComponents?.url?.absoluteString)
+        guard let callbackURL = callbackComponents.url,
+              var components = URLComponents(string: "https://socratictrade.com/api/auth/signin/\(provider)") else {
+            store.error = "Could not prepare web sign-in."
+            return
+        }
+        components.queryItems = [
+            URLQueryItem(name: "callbackUrl", value: callbackURL.absoluteString)
         ]
-        guard let url = components?.url else {
+        guard let url = components.url else {
             store.error = "Could not start web sign-in."
             return
         }
