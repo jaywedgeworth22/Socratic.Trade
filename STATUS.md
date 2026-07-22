@@ -8,7 +8,10 @@ candidate depths for scout/deep/exact/general retrieval. `src/lib/rag/retrieval-
 adds text-free, per-stage duration/candidate/provider/model/route receipts suitable for p50/p95
 aggregation. These modules deliberately do not touch `vector-db.ts` yet: the production integration
 waits for the managed-ingestion fix, corpus-wide lexical candidate module, and production-path PIT
-evaluator being built in parallel. Focused tests 28/28, scoped ESLint, and TypeScript are green. No
+evaluator being built in parallel. Focused tests 28/28, full lint (0 errors), TypeScript, and the
+production build are green. The full suite completed 4,923/4,931: two load-related timeouts passed
+when rerun alone, while six deterministic failures remain in unrelated pre-existing test areas
+(`data-providers`, `outcome-engine`, `policy`, and two budget-status fixtures). No
 provider key, corpus, Pinecone, re-embed, purge, or production state changed. Rollout:
 `docs/rollouts/2026-07-21-rag-rerank-policy-telemetry.md`.
 

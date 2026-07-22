@@ -42,10 +42,21 @@ Executed:
 npx vitest run test/rag-env-flag.test.ts test/rag-rerank-policy.test.ts test/rag-retrieval-stage-telemetry.test.ts
 npx eslint src/lib/rag/env-flag.ts src/lib/rag/rerank-policy.ts src/lib/rag/retrieval-stage-telemetry.ts test/rag-env-flag.test.ts test/rag-rerank-policy.test.ts test/rag-retrieval-stage-telemetry.test.ts
 npx tsc --noEmit
+npm run lint
+npx tsc --noEmit
+npm test
+npx vitest run test/data-providers.test.ts test/order-confirmation-status.test.ts test/outcome-engine.test.ts test/policy.test.ts test/strategy-active-protection-wiring.test.ts test/strategy-money-path-f-g.test.ts test/usage-budget-strategy-integration.test.ts --reporter=verbose --pool=forks --maxWorkers=1
+npm run build
 ```
 
 Results: 3 files / 28 tests passed; scoped ESLint returned zero errors; TypeScript returned zero
-errors.
+errors. Full lint returned zero errors (597 grandfathered warnings); the ordered TypeScript check
+passed; the production build passed. The full suite completed 4,923/4,931 tests across 423 files.
+Two timeouts (`order-confirmation-status`, `strategy-active-protection-wiring`) passed in the focused
+rerun. Six deterministic failures remained in unrelated existing areas: one Yahoo fixture, one
+outcome re-index fixture, two bracket-policy fixtures, and two budget-status fixtures that expect
+`completed` while current runtime returns `skipped`. The seven-file isolated rerun was 186/192 and
+confirmed those six; none of the failing files or their production modules changed in this commit.
 
 ## Follow-ups
 
