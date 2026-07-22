@@ -444,8 +444,10 @@ function parseEvidenceRefs(value: unknown, field: string): ExpectedEvidenceRef[]
     // Scoring never compares ref.vectorId to chunk.id (vectorId is diagnostic-only). Reject
     // vectorId-only golden refs so they cannot vacuously match every returned chunk.
     const hasStableCoords = Boolean(ref.accession && (ref.section || ref.ordinal != null));
+    // contentHash alone (or with only source) is not occurrence coordinates — require accession,
+    // section, or ordinal so the match cannot float across filings.
     const hasContentHashCoords = Boolean(
-      ref.contentHash && (ref.accession || ref.section || ref.ordinal != null || ref.source)
+      ref.contentHash && (ref.accession || ref.section || ref.ordinal != null)
     );
     if (!hasStableCoords && !hasContentHashCoords) {
       throw new Error(

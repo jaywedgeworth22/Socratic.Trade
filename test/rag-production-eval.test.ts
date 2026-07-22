@@ -59,7 +59,11 @@ describe("production RAG evaluator", () => {
       retriever: { retrieve: async (query, symbol, limit, userId, options) => {
         expect(query).toBe(golden.query); expect(symbol).toBe("AAPL"); expect(limit).toBe(2);
         expect(userId).toBe("eval-user");
-        expect(options).toEqual({ asOf: golden.authoritativeAsOf, strictAsOf: true });
+        expect(options).toEqual({
+          asOf: golden.authoritativeAsOf,
+          strictAsOf: true,
+          applyDefaultFloors: true
+        });
         return { chunks: chunks.slice(0, 2), status: "degraded" };
       } },
       limit: 2, userId: "eval-user",
@@ -107,12 +111,16 @@ describe("production RAG evaluator", () => {
     expect(loadFrozenProductionRagGoldenSet(path)).toEqual([golden]);
     writeFileSync(path, JSON.stringify([{ ...golden, authoritativeAsOf: "not-a-date" }]));
     expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("authoritativeAsOf");
+    // vectorId is diagnostic-only and must not be the sole scorer (vacuous match risk).
     writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ vectorId: "stable-vector-id" }] }]));
-    expect(loadFrozenProductionRagGoldenSet(path)[0]!.expectedEvidenceRefs[0]!.vectorId).toBe("stable-vector-id");
+    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("vectorId-only");
     writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ source: "sec-edgar", contentHash: "hash-only" }] }]));
-    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("contentHash must be paired");
+    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("contentHash with occurrence coordinates");
     writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ source: "sec-edgar", section: "MD&A" }] }]));
-    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("vectorId or accession");
+    expect(() => loadFrozenProductionRagGoldenSet(path)).toThrow("accession plus section/ordinal");
+    // contentHash + accession is valid stable provenance.
+    writeFileSync(path, JSON.stringify([{ ...golden, expectedEvidenceRefs: [{ accession: "0001", contentHash: "hash-ok" }] }]));
+    expect(loadFrozenProductionRagGoldenSet(path)[0]!.expectedEvidenceRefs[0]!.contentHash).toBe("hash-ok");
   });
 
   it("hard-caps case count and per-query result depth", async () => {
