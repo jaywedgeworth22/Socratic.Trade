@@ -67,7 +67,10 @@ const PUBLIC_PREFIXES = [
   "/design/socratic-trade",
   "/privacy-policy",
   "/terms-and-conditions",
-  "/api/mobile/auth/apple"
+  "/api/mobile/auth/apple",
+  // The exchange is intentionally unauthenticated: its opaque, one-time code and
+  // device-created verifier are the authorization proof until it sets Auth.js cookie.
+  "/api/mobile/auth/exchange"
 ];
 const AUTHJS_PUBLIC_PATHS = new Set([
   "/api/auth/csrf",
