@@ -2272,10 +2272,6 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
-    // EarningsCalls.dev (symbol, fiscal_year, fiscal_quarter) -> provider earnings-call id map
-    // (burst/smart-daily program, docs/rollouts/2026-07-19-earningscalls-burst-smart-daily.md).
-    // Populated by the id-resolution engine (GET /transcripts/recent listing pages + GET
-    // /companies/ticker/{
     // Append-only archive for coach notes aged off the live `socratic_decisions.coach_notes`
     // window (kept at COACH_NOTES_LIVE_CAP entries in db-socratic.ts). Before this migration, the
     // 21st note appended to a decision silently deleted the 1st with zero trace. `note_seq` is a
