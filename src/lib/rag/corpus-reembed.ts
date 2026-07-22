@@ -786,6 +786,7 @@ async function runCorpusReembedLocked(
   const priorProgress = readProgress();
   const results: CorpusReembedDocTypeResult[] = [];
   let stoppedForBudget = false;
+  const isSymbolScopedRun = Boolean(symbols?.length);
 
   const persistRunning = (docType: CorpusReembedDocType, docState: DocTypeRunState) => {
     // Dry runs are strictly read-only: counts come back in the response, and neither watermarks
@@ -801,7 +802,9 @@ async function runCorpusReembedLocked(
       embedded: docState.embedded,
       reusedInSpace: docState.reusedInSpace,
       failed: docState.failed,
-      ...(docState.completed ? { completedForEmbedRevision: embedRevision } : {}),
+      // A symbol-filtered run only proves the requested symbols were backfilled. Do not stamp
+      // full-docType completion, because purge-legacy deletes every old vector for the docType.
+      ...(docState.completed && !isSymbolScopedRun ? { completedForEmbedRevision: embedRevision } : {}),
       lastRunAt: now
     };
     writeProgress({

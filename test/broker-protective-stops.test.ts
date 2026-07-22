@@ -1227,7 +1227,35 @@ describe("reconcileBrokerProtectiveStops — round-9 (Codex review, PR #1331)", 
     expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeUndefined(); // intent cleared
   });
 
-  it("Item 5: clears a confirmed-dead intent and places fresh (does not adopt on rejected/absent evidence)", async () => {
+  it("Item 5: keeps an unresolved intent on non-authoritative absence instead of double-placing", async () => {
+    let placeCallCount = 0;
+    let throwOnPlace = true;
+    (gw as unknown as { placeEquityOrder: (order: Record<string, unknown>) => Promise<unknown> }).placeEquityOrder = async (order: Record<string, unknown>) => {
+      placeCallCount++;
+      if (throwOnPlace) throw new Error("simulated network timeout after broker accept");
+      return { orderId: gw.nextOrderId, refId: order.refId, state: gw.placeState, raw: {} };
+    };
+    const account = "PS-CRASH-NONAUTH";
+    const args = {
+      userId: "local", policy: rhPolicy(account), accountNumber: account, gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live" as const, running: true
+    };
+    await reconcileBrokerProtectiveStops(args); // tick 1: throws, leaves an intent
+    const { getBrokerStopPlacementIntent } = await import("../src/lib/db");
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeTruthy();
+
+    // Tick 2: Robinhood-style/non-authoritative lists cannot prove that an absent client ref never
+    // landed. The intent must stay in place and section 4 must not submit a second full-size stop.
+    throwOnPlace = false;
+    gw.nextOrderId = "ord-duplicate";
+    const r2 = await reconcileBrokerProtectiveStops({ ...args, orders: [], ordersListed: true });
+    expect(r2.placed).toBe(0);
+    expect(placeCallCount).toBe(1);
+    expect(listBrokerProtectiveStops(account, "local")).toHaveLength(0);
+    expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeTruthy();
+  });
+
+  it("Item 5: clears a confirmed-dead intent and places fresh on authoritative absent evidence", async () => {
     let placeCallCount = 0;
     let throwOnPlace = true;
     (gw as unknown as { placeEquityOrder: (order: Record<string, unknown>) => Promise<unknown> }).placeEquityOrder = async (order: Record<string, unknown>) => {
@@ -1244,10 +1272,11 @@ describe("reconcileBrokerProtectiveStops — round-9 (Codex review, PR #1331)", 
     const { getBrokerStopPlacementIntent } = await import("../src/lib/db");
     expect(getBrokerStopPlacementIntent(account, "AAPL", "local")).toBeTruthy();
 
-    // Tick 2: a REAL fetch (ordersListed defaults true) shows nothing matching the intent's client
+    // Tick 2: an AUTHORITATIVE fetch shows nothing matching the intent's client
     // ref at all — positive evidence the earlier submission never landed. The stale intent must be
     // cleared and a fresh placement attempted (not stuck waiting forever).
     throwOnPlace = false;
+    Object.defineProperty(gw, "ordersListIncludesTerminal", { value: true });
     gw.nextOrderId = "ord-fresh";
     const r2 = await reconcileBrokerProtectiveStops({ ...args, orders: [] });
     expect(r2.placed).toBe(1);
