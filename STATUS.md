@@ -12,7 +12,8 @@ hosted verification commands/results, including the tracked effort-log mirror. T
 queue-safety test passes 5/5. The hosted `verify-hosted` gate passed on an earlier head; main
 synchronization has advanced the branch again, so this snapshot intentionally avoids pinning a
 supersedable SHA. Refresh PR #1890 before acting; current-head `gitleaks`, `check-pin`, and required
-`verify` checks are queued. Auto-merge is armed; the next action is current-head verification.
+`verify` checks are queued. Auto-merge is intentionally held off until current-head verification
+passes and every review thread is resolved.
 ## 2026-07-22 — CI pending-run collapse (CODEX, branch `codex/ci-queue-collapse`)
 
 The required `ci.yml` concurrency group now keys on workflow + ref only. The previous

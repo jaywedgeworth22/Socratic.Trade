@@ -35,6 +35,7 @@ with `node: command not found`; unrelated PRs could also be stranded with no pin
 The hosted `verify-hosted` gate passed on an earlier head; subsequent main synchronizations have
 advanced the PR again, so this note does not pin a supersedable SHA. Refresh PR #1890 before acting;
 current-head replacement `gitleaks`, `check-pin`, and required `verify` checks are queued and must
-pass before merge. Auto-merge is armed. Close #1780 as
+pass before merge. Auto-merge is intentionally held off until current-head verification passes and
+every review thread is resolved. Close #1780 as
 superseded after this replacement merges; do not restore `check-pin` as a required context until
 both consumers' shared-package pins are coordinated.
