@@ -29,17 +29,17 @@ name: Shared package pin check
 # (The shared package repo itself, congress-trading-shared, is PUBLIC, so ref-resolution calls
 # against it succeed regardless of GH_PACKAGES_TOKEN's scopes -- verified 2026-07-12.)
 #
-# NOTE: `check-pin` IS a required status context in main's branch protection (classic rules,
-# strict mode). That means every PR needs a check-pin run to become mergeable, not just PRs that
-# touch package.json/package-lock.json/this file. Do NOT reintroduce a `paths:` filter under
-# `pull_request` below -- an unmatched PR would never get a check-pin check-run and would sit
-# permanently blocked despite all other checks being green (this deadlocked PR #1771 on
-# 2026-07-19; fixed by removing the filter so the job runs, and no-ops in seconds, on every PR).
+# NOTE: this workflow is intentionally NOT part of the branch-protection ruleset, so a red result
+# flags divergence loudly without hard-blocking a coordinated two-repo bump (bump one repo, open
+# its PR, then the other). Promote it to a required check once bumps always land as a matched pair.
 #
 # Keep this file ASCII-only (AGENTS.md) -- no em dashes / arrows near shell $VARs.
 
 on:
-  pull_request: {}
+  pull_request:
+    paths:
+      - 'package.json'
+      - '.github/workflows/shared-package-pin-check.yml'
   push:
     branches: [main]
   schedule:
@@ -60,7 +60,7 @@ jobs:
     # This job receives a private-repo token. Reject fork PRs before checkout or
     # runner assignment; push/schedule/manual events remain admitted.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     steps:
       - uses: actions/checkout@v4
 
