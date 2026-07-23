@@ -126,15 +126,15 @@ describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
     // mistral-small-2603 / mistral-medium-3-5 were re-added 2026-07-10 (owner directive, after
     // the keyed re-benchmark proved both complete real calls) — only grok-build-0.1 (coding
     // specialist, soft-timeouts as a Green strategist) stays excluded.
-    const excluded = ["grok-build-latest"];
+    const excluded = ["grok-build-0.1"];
     for (const model of excluded) expect(MODEL_ROTATION_POOL).not.toContain(model);
     // Keep-in-sync check: the pool is exactly the curated catalog minus the exclusions.
     expect(new Set(MODEL_ROTATION_POOL)).toEqual(new Set(CURATED_LLM_MODEL_IDS.filter((id) => !excluded.includes(id))));
     expect(MODEL_ROTATION_POOL).toContain("gpt-mini-latest");
     expect(MODEL_ROTATION_POOL).toContain("claude-fable-latest");
     expect(MODEL_ROTATION_POOL).toContain("grok-latest");
-    expect(MODEL_ROTATION_POOL).toContain("mistral-small-latest");
-    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-latest");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-small-2603");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3.5");
   });
 });
 
