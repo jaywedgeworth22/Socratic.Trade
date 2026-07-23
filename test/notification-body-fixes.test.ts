@@ -61,6 +61,11 @@ async function directBody(
   return bodies[0];
 }
 
+// The legacy webhook path now re-validates its target with a real DNS lookup on every send
+// (SSRF/rebinding hardening — src/lib/egress-guard.ts). Stub it so this test doesn't depend
+// on real network/DNS access even though discord.com is a real, resolvable host.
+const resolveWebhookHost = async () => ["8.8.8.8"];
+
 async function discordEmbed(type: NotificationEventType, title: string, payload: unknown): Promise<{ description?: string; fields?: Array<{ name: string; value: string }> }> {
   let capturedBody: any = null;
   const fetcher = async (_url: string | URL | Request, init?: RequestInit) => {
@@ -69,7 +74,12 @@ async function discordEmbed(type: NotificationEventType, title: string, payload:
   };
   await sendNotification(
     { type, title, payload },
-    { policy: policyFor(type, "https://discord.com/api/webhooks/12345/abcde"), userId: randomUUID(), fetcher: fetcher as unknown as typeof fetch }
+    {
+      policy: policyFor(type, "https://discord.com/api/webhooks/12345/abcde"),
+      userId: randomUUID(),
+      fetcher: fetcher as unknown as typeof fetch,
+      resolveWebhookHost
+    }
   );
   expect(capturedBody?.embeds).toHaveLength(1);
   return capturedBody.embeds[0];

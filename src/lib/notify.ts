@@ -6,6 +6,7 @@
 // an injectable `fetchImpl` so tests stay offline. Ported from reference/atlas-public-src/bff/notify.
 
 import { audit, getNotifyPrefs } from "./db";
+import { validateWebhookUrl, type HostResolver } from "./egress-guard";
 import type {
   NotifyChannelDescriptor,
   NotifyChannelId,
@@ -36,6 +37,10 @@ export interface NotifyDispatchDeps {
   assertActive?: () => void;
   /** Aborts an in-flight request or retry wait when the caller's durable ownership moves. */
   signal?: AbortSignal;
+  /** Injectable DNS resolver for the webhook channel's egress guard (SSRF hardening — see
+   *  src/lib/egress-guard.ts). Defaults to real DNS; tests inject a stub so they never
+   *  depend on real network/DNS and can simulate rebinding. */
+  resolveHost?: HostResolver;
 }
 
 /** Admin-side delivery config from env. End-user secrets never live here — only in notification_prefs. */
@@ -73,7 +78,7 @@ interface ChannelDef {
   send(
     target: string,
     msg: NotifyMessage,
-    ctx: { cfg: NotifyConfig; fetchImpl: typeof fetch; timeoutMs: number; signal?: AbortSignal }
+    ctx: { cfg: NotifyConfig; fetchImpl: typeof fetch; timeoutMs: number; signal?: AbortSignal; resolveHost?: HostResolver }
   ): Promise<void>;
 }
 
@@ -177,8 +182,13 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
       placeholder: "https://example.com/hooks/alerts",
       hint: "We POST a JSON payload here when an alert fires."
     }),
-    async send(url, msg, { fetchImpl, timeoutMs, signal }) {
-      if (!/^https:\/\//i.test(url)) throw new Error("webhook URL must be https");
+    async send(url, msg, { fetchImpl, timeoutMs, signal, resolveHost }) {
+      // Re-validate on every send (not just when the URL was saved) so a target that has
+      // since been re-pointed at a private/internal address (DNS rebinding, or a stale
+      // saved value) is still caught immediately before the outbound request. See
+      // src/lib/egress-guard.ts.
+      const check = await validateWebhookUrl(url, { resolveHost });
+      if (!check.ok) throw new Error(check.error ?? "webhook URL is not allowed");
       await postOrThrow(
         fetchImpl,
         url,
@@ -192,7 +202,10 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
             body: msg.body,
             data: msg.data ?? null,
             sent_at: new Date().toISOString()
-          })
+          }),
+          // Never transparently follow a redirect to an unvalidated target — a 3xx response is
+          // surfaced as an opaque, non-ok response instead (postOrThrow then throws normally).
+          redirect: "manual"
         },
         timeoutMs,
         signal
@@ -360,7 +373,8 @@ export async function notify(
           cfg,
           fetchImpl,
           timeoutMs: cfg.timeoutMs,
-          signal: deps.signal
+          signal: deps.signal,
+          resolveHost: deps.resolveHost
         });
         assertNotifyActive(deps);
         delivered = true;

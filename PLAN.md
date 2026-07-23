@@ -1,5 +1,72 @@
 # Active Implementation Plan
 
+> **2026-07-22 — Usage telemetry v2 + shared-package pin-check combined landing (PR #1889).** The
+> reviewed #1890 workflow correction is subsumed into #1889 to avoid two serialized full CI cycles.
+> Keep auto-merge off until the combined final head passes hosted `gitleaks`, `check-pin`, required
+> `verify`, and zero-thread review. PRs #1890 and #1780 are closed as superseded; their branches are
+> retained. After #1889 merges, verify the exact Coolify release and one new authenticated strict-v2
+> ACK.
+> **2026-07-22 — Mobile auth exchange CSRF follow-up (CODEX, PR #1888).** Keep
+> `/api/mobile/auth/exchange` unauthenticated for the native client, but do not classify it as a
+> public-prefix early return: it must pass `checkSameOrigin` before the one-time code/verifier
+> handoff. Verify the focused middleware/route tests and required hosted gate, then merge and
+> verify the exact auto-deployed SHA.
+> **2026-07-22 — Collapse duplicate pending CI verifies (CODEX, branch
+> `codex/ci-queue-collapse`).** Keep `cancel-in-progress: false` so an active suite can finish,
+> but remove the per-SHA concurrency suffix so GitHub retains only the newest pending run per
+> workflow/ref. Verify the workflow regression, open a ready PR, arm auto-merge, and monitor the
+> queue without interrupting the three active full suites.
+
+> **2026-07-19 - Three new RapidAPI-backed enrichment providers (CLAUDE, branch
+> `claude/model-availability-session-handoff-362fd3`).** No roadmap scope change; market-data
+> redundancy only. Owner-directed: add Mboum Finance, YH Finance 15, and an Alpha Vantage
+> RapidAPI transport (OVERVIEW fundamentals) as a dormant-unless-`RAPIDAPI_KEY`-set, quota-safe
+> failover tier registered AFTER the free Yahoo scrape in `getEnrichmentProvider`. New
+> `src/lib/rapidapi-quota.ts` enforces a per-provider daily cap (Mboum 16/day, YH Finance 15
+> 3/day, AV-RapidAPI 500/day) AND a combined 900/day ceiling across all three, mirroring
+> `alpha-vantage-key-pool.ts`'s persisted budget pattern. tsc clean, lint 0 new warnings, 33 + 13
+> new tests green. Not yet landed — `scripts/land.sh` is a separate phase. Details:
+> `docs/rollouts/2026-07-19-rapidapi-yahoo-av-providers.md`.
+> **2026-07-21 - Native iOS mobile-first Phase 1 (CODEX, branch
+> `codex/mobile-first-ios-20260721`).** Implementation and review remediation are complete in the
+> isolated worktree; PR #1859 is open for protected landing. Phase 1 keeps the backend authoritative:
+> native Apple audience, read-only deletion preview/final deletion admission, immediate protective
+> mobile commands, and the final broker-placement state fence are server-side contract/safety work.
+> Google/GitHub browser authentication uses a short-lived verifier-bound opaque handoff rather
+> than a session credential in the custom callback URL.
+> Release signing
+> is configured for team `CC8UTF7ATG`; the XcodeGen spec is canonical and its
+> generated, checked-in `.xcodeproj` is direct-buildable. Deferred after landing: device/simulator interaction QA
+> on a machine with an installed
+> iOS runtime, notification/background-refresh work, and any richer Coach conversation
+> contract that requires a new server API.
+> **2026-07-22 - Usage telemetry v2 producer adoption (CODEX, branch
+> `codex/usage-telemetry-v2-20260721`).** Exact-pin shared `v2.0.0`, replace v1 wire fields with the
+> strict v2 batch/event contract, freeze and legacy-drain each existing replay watermark through a
+> high-water mark before strict-v2 cutover, preserve durable replay identity and old in-memory
+> buffer recovery, verify cold HTTPS install plus focused/full Node 24 gates, then land only after
+> the receiver's current Oracle revision has a committed exact-SHA receipt. After merge, require
+> Coolify exact-SHA health and an authenticated receiver ACK before closing.
+
+> **2026-07-20 - Corpus re-embed scoped-purge gate fix (CURSOR, branch
+> `cursor/critical-bug-management-0770`).** Critical-bug sweep found that a symbol-scoped
+> corpus re-embed could persist a full-docType completion stamp and thereby authorize
+> `purge-legacy` to delete all legacy vectors for that docType. Patch `corpus-reembed` so
+> scoped runs never stamp full-corpus completion; keep purge blocked until an unscoped run
+> completes under the active embedding revision. Focused regression added in
+> `test/corpus-reembed.test.ts`; run the ordered local gate, open PR, and do not run
+> production `purge-legacy` until this fix is live and full-corpus completion is independently
+> verified.
+> **2026-07-21 - Stop placement intent authoritative-absence fix (CURSOR,
+> branch `cursor/critical-bug-management-8edd`).** Narrow money-path repair from the hourly
+> high-severity bug scan: a broker protective-stop placement intent created before a timed-out broker
+> call must not be cleared just because a non-authoritative/live-only order list lacks the
+> `clientOrderId`. Only gateways with `ordersListIncludesTerminal === true` may treat absence as
+> confirmed-dead and place fresh; Robinhood-style lists keep the intent and skip the symbol to avoid
+> duplicate sell stops. Focused and full gates passed; PR publication/hosted checks next.
+
+> **2026-07-21 - CI Runner Migration (Antigravity, branch `agent/antigravity-ci-fix`).** Replaced failing self-hosted runner `trading-live` with `ubuntu-latest` across all CI workflows (`.github/workflows/*.yml`) in Socratic.Trade. The Mac self-hosted runner environment was corrupted after Hetzner failure. Scheduled to land via `scripts/land.sh` to unblock 38 pending PRs.
+> **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; and repair the six stale current-main test assertions that would otherwise fail the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
 > **2026-07-21 - CI queue recovery (GROK + CODEX, branch `monet/ci-runner-and-queue-fixes`).** Remove all workflow targets for absent `trading-live`; keep PR code on the two Coolify `socratic-ci` runners and trusted CI-failure reporting on `socratic-deploy`; remove smoke from PR events; keep an active required verification alive while GitHub collapses superseded pending heads; remove synthetic production enrichment fallback data; make bracket permission side-specific; and repair the focused tests exposed by the first durable run. Land this dependency first, verify its exact production SHA, then drain PRs serially in review/dependency order without runner-service restarts.
 > **2026-07-19 - Land the #1771/#1773/#1777 chain, then run the corpus re-embed to completion
 > (owner-directed pickup, multiple lanes).** Next actions, in order: (1) land **#1771**
@@ -1925,3 +1992,6 @@ scope, timeline, or approach changed.
 - Root-level manual probe artifacts such as screenshots, one-off UI scripts, and
   accidental shell-output files stay ignored so the integration worktree remains
   reserved for review and merges.
+
+## 2026-07-21 PR #1845
+LLM cooldown + draining purge safety — see rollout note.

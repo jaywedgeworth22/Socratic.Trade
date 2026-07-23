@@ -4,6 +4,7 @@ import { audit } from "@/lib/db";
 import { applyCongressEvent, applyCongressEvents, type CongressEvent } from "@/lib/congress-trade-events";
 import { verifyCongressWebhookSignature } from "@jaywedgeworth22/congress-trading-shared";
 import { logApiHealth } from "@/lib/db-health";
+import { CONGRESS_WEBHOOK_MAX_BYTES, PayloadTooLargeError, readBodyWithLimit } from "@/lib/bounded-body";
 
 export const dynamic = "force-dynamic";
 
@@ -33,18 +34,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const contentLengthStr = req.headers.get("content-length");
-  if (contentLengthStr) {
-    const contentLength = Number(contentLengthStr);
-    if (Number.isFinite(contentLength) && contentLength > 5 * 1024 * 1024) {
-      return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
-    }
-  }
-
+  // A declared content-length is a client CLAIM, not a guarantee (absent under chunked
+  // transfer, or simply wrong) — readBodyWithLimit fast-paths an honest oversized header but
+  // also aborts mid-stream the moment the ACTUAL byte count exceeds the cap, so a missing or
+  // understated header can't bypass the limit.
   let text: string;
   try {
-    text = await req.text();
-  } catch {
+    text = await readBodyWithLimit(req, CONGRESS_WEBHOOK_MAX_BYTES);
+  } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
+    }
     return NextResponse.json({ ok: false, error: "invalid body" }, { status: 400 });
   }
 
