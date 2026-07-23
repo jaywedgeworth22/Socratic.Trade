@@ -1,6 +1,7 @@
 import { normalizeSymbol } from "./money";
 import { deriveMetrics } from "./derived-metrics";
-import type { CandidateEvidence, MarketQuote, OrderSide } from "./types";
+import { buildSourceAblations } from "./source-value";
+import type { CandidateEvidence, MarketQuote, OrderSide, ScoringWeights } from "./types";
 
 /** Max web-source bulletins to keep per candidate in the persisted digest. */
 const MAX_BULLETINS = 3;
@@ -21,6 +22,7 @@ export function buildCandidateEvidence(
     side?: OrderSide;
     status?: string;
     thesisTag?: string;
+    scoringWeights?: ScoringWeights;
   }
 ): CandidateEvidence {
   const q = quote;
@@ -47,9 +49,20 @@ export function buildCandidateEvidence(
     technicalScore: q?.technicalScore,
     technicalDirection: q?.technicalDirection,
     technicalSignals: q?.technicalSignals,
+    congressCompositeScore: q?.congressCompositeScore,
+    congressCompositeSignedScore: q?.congressCompositeSignedScore,
+    congressCompositeDirection: q?.congressCompositeDirection,
+    congressCompositeConfidence: q?.congressCompositeConfidence,
+    congressCompositeComponents: q?.congressCompositeComponents,
+    congressCompositeProvenance: q?.congressCompositeProvenance,
+    congressCompositeVersion: q?.congressCompositeVersion,
+    congressCompositeWeights: q?.congressCompositeWeights,
+    preCongressScore: q?.preCongressScore,
     asOf: q?.asOf,
     provider: q?.provider,
     sources: q?.sources,
+    ...(q ? { sourceAblations: buildSourceAblations(q, opts.scoringWeights) } : {}),
+    providerFailures: q?.providerFailures,
     bulletins: q?.evidenceBulletins?.slice(0, MAX_BULLETINS),
     ...(derived && Object.keys(derived).length > 0 ? { derived } : {})
   };

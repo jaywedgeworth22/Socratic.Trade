@@ -1,0 +1,105 @@
+/**
+ * 2026-07-04 RAG quick-wins — strategy.ts wiring integration test.
+ *
+ * `RetrieveOptions.minRelevanceScore` (post-rerank relevance floor) and `dedupeSimilarity`
+ * (near-duplicate suppression) have existed in vector-db.ts's `retrieveContextDetailed`/`rankPool`
+ * since the 2026-07-01 RAG backlog, but no caller ever passed them — strategy.ts's advisory RAG
+ * context (`ragContext`) only ever set `docType`/`minScore`/`connectedAccountId`. This test asserts
+ * strategy.ts now wires the dormant relevance-floor + dedupe stages, and that each retrieved chunk
+ * is prefixed with a provenance header before being joined into the prompt's `ragContext`.
+ */
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+process.env.OPENROUTER_API_KEY = "test-key";
+import { DEFAULT_POLICY } from "../src/lib/defaults";
+
+const mocks = vi.hoisted(() => ({ retrieveContextDetailed: vi.fn() }));
+
+vi.mock("../src/lib/vector-db", () => ({
+  managedVectorLedgerAuthority: vi.fn(),
+  getCurrentVectorProviderAuthority: vi.fn(),
+  findRelevantExperiences: async () => [],
+  upsertExperiences: async () => {},
+  retrieveContext: async () => [],
+  retrieveContextDetailed: mocks.retrieveContextDetailed,
+  defaultMinScore: () => 0.3,
+  defaultRelevanceFloor: () => 0.35,
+  defaultDedupeSimilarity: () => 0.6,
+  formatChunkWithProvenance: (chunk: { text: string }, symbol?: string) =>
+    `[10-K · risk-factors · ${symbol ?? ""} · 2026-02-01 · rel 0.80]\n${chunk.text}`,
+  storeContext: async () => {},
+  storeContexts: async () => {}
+}));
+
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-rag-wiring-${randomUUID()}.db`)}`;
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  mocks.retrieveContextDetailed.mockReset();
+});
+
+function nasdaqRow(): Response {
+  return new Response(
+    JSON.stringify({
+      data: {
+        asof: "2026-06-15",
+        table: { rows: [{ symbol: "AAPL", lastsale: "$200", pctchange: "1%", volume: "1000000", marketCap: "3000000000000", sector: "Technology", industry: "Consumer Electronics" }] }
+      }
+    }),
+    { status: 200, headers: { "content-type": "application/json" } }
+  );
+}
+
+describe("strategy.ts RAG retrieval wiring (2026-07-04 quick-wins)", () => {
+  it("passes minRelevanceScore and dedupeSimilarity to retrieveContextDetailed, and joins provenance-prefixed chunk text into the prompt", async () => {
+    mocks.retrieveContextDetailed.mockResolvedValue([
+      { id: "c1", text: "Apple faces supply-chain risk.", score: 0.9, source: "sec", as_of: "2026-02-01", doc_type: "10-k", section: "risk-factors" }
+    ]);
+
+    process.env.OPENROUTER_API_KEY = "test-openai-key";
+    const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if ((href.includes("openrouter.ai") || href.includes("api.openai.com"))) {
+        openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ proposals: [] }) } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (href.includes("nasdaq.com")) return nasdaqRow();
+      return new Response("not found", { status: 404 });
+    });
+
+    const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey("local", "openrouter", "test-openai-key", "test fixture");
+    const accountId = randomUUID();
+    upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "RAG Wiring Test", isActive: true });
+    setActiveConnectedAccount(accountId);
+    setPolicy({
+      ...DEFAULT_POLICY,
+      systemState: "active",
+      llmModel: "openai/gpt-4.1-mini",
+      includedIndices: [],
+      additionalSymbols: ["AAPL"],
+      strategyAuthority: "decide"
+    });
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    await runStrategyOnce();
+
+    expect(mocks.retrieveContextDetailed).toHaveBeenCalled();
+    const [, , , , options] = mocks.retrieveContextDetailed.mock.calls[0]!;
+    expect(options).toMatchObject({ minRelevanceScore: 0.35, dedupeSimilarity: 0.6 });
+
+    const bullBody = openAiBodies[0]!;
+    const userContent = JSON.parse(bullBody.input!.find((item) => item.role === "user")?.content ?? "{}");
+    expect(userContent.retrievedFinancialContext).toContain("[10-K · risk-factors · AAPL · 2026-02-01 · rel 0.80]");
+    expect(userContent.retrievedFinancialContext).toContain("Apple faces supply-chain risk.");
+  }, 30_000);
+});

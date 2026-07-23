@@ -1,0 +1,76 @@
+name: SocraticTrade
+
+options:
+  bundleIdPrefix: trade.socratic
+  deploymentTarget:
+    iOS: "26.0"
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  SocraticTrade:
+    type: application
+    platform: iOS
+    sources:
+      - path: SocraticTrade
+        excludes:
+          - README.md
+          - Info.plist
+          - SocraticTrade.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: trade.socratic.app
+        DEVELOPMENT_TEAM: CC8UTF7ATG
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: SocraticTrade/SocraticTrade.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: SocraticTrade/Info.plist
+      properties:
+        CFBundleDisplayName: Socratic.Trade
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleURLTypes:
+          - CFBundleURLName: trade.socratic.app
+            CFBundleURLSchemes:
+              - socratictrade
+    entitlements:
+      path: SocraticTrade/SocraticTrade.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
+
+  SocraticTradeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SocraticTradeTests
+    dependencies:
+      - target: SocraticTrade
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: trade.socratic.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  SocraticTrade:
+    build:
+      targets:
+        SocraticTrade: all
+        SocraticTradeTests: [test]
+    test:
+      targets:
+        - SocraticTradeTests

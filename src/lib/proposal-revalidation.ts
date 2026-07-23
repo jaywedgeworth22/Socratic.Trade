@@ -16,9 +16,13 @@
 // Both are no-ops when there is nothing to act on, and the LLM pass degrades to a skip
 // (deterministic expiry still applies) when OPENAI_API_KEY is not configured.
 
-import { audit, listPendingProposals, markProposalRevalidated, resolveApiKey, updateProposalStatus } from "./db";
+import { audit, listPendingProposals, markProposalRevalidated, updateProposalStatus } from "./db";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
+import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { determineMarketRegime, fetchMacroData } from "./macro";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
@@ -74,6 +78,8 @@ export async function expireStalePendingProposals(input: {
   policy: TradingPolicy;
   accountNumber?: string;
   now?: number;
+  /** Strategy-run ownership proof. Scheduler-only hygiene callers intentionally omit it. */
+  assertOwned?: () => void;
 }): Promise<ExpiryResult> {
   const { userId, policy } = input;
   const accountNumber = input.accountNumber ?? policy.accountNumber;
@@ -85,6 +91,7 @@ export async function expireStalePendingProposals(input: {
   if (stale.length === 0) return { expired: 0 };
 
   for (const pending of stale) {
+    input.assertOwned?.();
     const age = ageMinutes(pending.createdAt, now);
     updateProposalStatus(pending.id, "expired", undefined, undefined, undefined, userId);
     audit(
@@ -105,6 +112,7 @@ export async function expireStalePendingProposals(input: {
       },
       { policy, userId }
     );
+    input.assertOwned?.();
     emitDashboardEvent({ type: "proposal", userId, at: new Date(now).toISOString(), detail: { proposalId: pending.id, status: "expired" } });
   }
   return { expired: stale.length };
@@ -139,20 +147,6 @@ function quoteForSymbol(scan: MarketScan | undefined, symbol: string): Record<st
   return undefined;
 }
 
-function extractText(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const root = payload as {
-    output_text?: unknown;
-    choices?: Array<{ message?: { content?: unknown } }>;
-    output?: Array<{ content?: Array<{ text?: unknown }> }>;
-  };
-  if (typeof root.output_text === "string") return root.output_text;
-  const chatText = root.choices?.[0]?.message?.content;
-  if (typeof chatText === "string") return chatText;
-  const responseText = root.output?.flatMap((item) => item.content ?? []).find((item) => typeof item.text === "string")?.text;
-  return typeof responseText === "string" ? responseText : undefined;
-}
-
 /**
  * Supplemental run task: ask the LLM whether each old, still-pending proposal still stands
  * against the fresh scan, withdrawing the ones it no longer advises and stamping the rest.
@@ -165,6 +159,8 @@ export async function revalidatePendingProposals(input: {
   now?: number;
   /** Override the market-hours gate (defaults to "is the regular US session open now"). */
   marketOpen?: boolean;
+  /** Strategy-run ownership proof. Scheduler-only hygiene callers intentionally omit it. */
+  assertOwned?: () => void;
 }): Promise<RevalidationResult> {
   const { userId, policy } = input;
   const accountNumber = input.accountNumber ?? policy.accountNumber;
@@ -188,10 +184,11 @@ export async function revalidatePendingProposals(input: {
   );
   if (pending.length === 0) return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: false };
 
-  const openaiKey = resolveApiKey("openai", userId);
+  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId);
   if (!openaiKey) return { checked: pending.length, reaffirmed: 0, withdrawn: 0, skipped: true };
 
   const currentMarketRegime = determineMarketRegime(await fetchMacroData(userId));
+  input.assertOwned?.();
 
   const reviewItems = pending.map((p) => ({
     proposalId: p.id,
@@ -246,31 +243,24 @@ export async function revalidatePendingProposals(input: {
     }
   };
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
-
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: JSON.stringify(userContent) }
-          ],
-          response_format: { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
-        }
-      : {
-          model,
-          input: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: JSON.stringify(userContent) }
-          ],
-          text: { format: { type: "json_schema", name: "proposal_revalidation", schema } }
-        },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation }
+  const body = buildLlmRequestBody(
+    { provider, transport },
+    {
+      model,
+      systemPrompt,
+      userContent: JSON.stringify(userContent),
+      schema: { name: "proposal_revalidation", schema, description: "Reaffirm-or-withdraw verdicts for each pending proposal." },
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation,
+      // Pending-proposal revalidation runs first in a strategy run while the per-user lock is held
+      // (strategy.ts), so it must use the SAME interactive-reasoning clamp as the Green/Bear/debate
+      // steps — otherwise a stored gpt-5.5/high policy sends a high-reasoning call here and can hit
+      // the timeout/run-lock this guardrail prevents. (Review: PR #278 follow-up.)
+      reasoningEffort: interactiveStrategyReasoningEffort(model, policy.llmReasoningEffort),
+      userId,
+      keyRef,
+      service: "strategy",
+      feature: "proposal-revalidation"
+    }
   );
 
   let assessments: RevalidationAssessment[] = [];
@@ -286,23 +276,32 @@ export async function revalidatePendingProposals(input: {
         output: (result) => ({ ...summarizeOpenAiResponseText(result.text), assessmentCount: result.assessments.length })
       },
       async () => {
-        const response = await fetch(url, {
+        const response = await llmFetch(url, {
           method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${openaiKey}` },
+          headers: llmAuthHeaders({ provider, key: openaiKey }),
           body: JSON.stringify(body)
         });
         if (!response.ok) {
-          console.warn("[revalidation] LLM call failed", await response.text());
+          console.warn("[revalidation] LLM call failed:", humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status }));
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
-        const text = extractText(await response.json());
+        const payload = await response.json();
+        recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, connectedAccountId: policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(provider, payload), ...extractLlmUsage(payload) });
+        const text = extractLlmText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
-        const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };
+        // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.
+        // STRICT parse — no jsonrepair (Codex P2, PR #1696): a truncated response repaired into a
+        // syntactically valid `withdraw` assessment would withdraw a pending proposal on garbage.
+        // Malformed output takes the catch path below, which leaves the queue untouched.
+        const parsed = JSON.parse(extractJsonPayload(text)) as { assessments?: RevalidationAssessment[] };
         return { text, assessments: parsed.assessments ?? [] };
       }
     );
+    input.assertOwned?.();
     assessments = result.assessments;
   } catch (error) {
+    // Never let the best-effort LLM fallback swallow a strategy lease loss.
+    input.assertOwned?.();
     console.error("[revalidation] error:", error);
     // On any failure, keep the queue untouched rather than risk withdrawing good ideas.
     return { checked: pending.length, reaffirmed: 0, withdrawn: 0, skipped: true };
@@ -317,6 +316,7 @@ export async function revalidatePendingProposals(input: {
   for (const action of actions) {
     const p = pendingById.get(action.id);
     if (!p) continue;
+    input.assertOwned?.();
     if (action.action === "withdraw") {
       withdrawn++;
       updateProposalStatus(action.id, "withdrawn", undefined, undefined, undefined, userId);
@@ -338,6 +338,7 @@ export async function revalidatePendingProposals(input: {
         },
         { policy, userId }
       );
+      input.assertOwned?.();
       emitDashboardEvent({ type: "proposal", userId, at: nowIso, detail: { proposalId: action.id, status: "withdrawn" } });
     } else {
       reaffirmed++;
