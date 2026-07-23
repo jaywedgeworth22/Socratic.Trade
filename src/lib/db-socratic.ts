@@ -1,6 +1,7 @@
 // db-socratic.ts — durable Socratic decision case files, coaching, and framework proposals.
 import crypto from "crypto";
 import { audit, getDb } from "./db";
+import { mergeHorizonRows } from "./outcome-horizons";
 import type {
   OrderSide,
   PolicyDecision,
@@ -8,6 +9,8 @@ import type {
   SocraticDecisionStatus,
   SocraticEvidenceItem,
   SocraticFrameworkProposal,
+  SocraticFrameworkAiReview,
+  SocraticFrameworkOwnerVerb,
   SocraticFrameworkProposalStatus,
   SocraticRagAttribution,
   StrategyAuthority,
@@ -33,6 +36,8 @@ type DecisionRow = {
   authority: string;
   thesis: string;
   rationale: string;
+  green_team_rationale: string | null;
+  sizing_snapshot: string | null;
   action: string;
   thesis_tag: string | null;
   regime: string | null;
@@ -65,7 +70,9 @@ type FrameworkRow = {
   rationale: string;
   proposed_change: string;
   evidence: string;
+  owner_verb: string | null;
   owner_response: string | null;
+  ai_review: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -166,6 +173,10 @@ function rowToDecision(row: DecisionRow): SocraticDecisionCase {
     authority: row.authority as StrategyAuthority,
     thesis: row.thesis,
     rationale: row.rationale,
+    ...(row.green_team_rationale ? { greenTeamRationale: row.green_team_rationale } : {}),
+    ...(row.sizing_snapshot
+      ? { sizingSnapshot: parseJson<SocraticDecisionCase["sizingSnapshot"] | undefined>(row.sizing_snapshot, undefined) }
+      : {}),
     action: row.action,
     ...(row.thesis_tag ? { thesisTag: row.thesis_tag } : {}),
     ...(row.regime ? { regime: row.regime } : {}),
@@ -202,8 +213,108 @@ function rowToFramework(row: FrameworkRow): SocraticFrameworkProposal {
     rationale: row.rationale,
     proposedChange: row.proposed_change,
     evidence: parseJson<SocraticEvidenceItem[]>(row.evidence, []),
-    ...(row.owner_response ? { ownerResponse: row.owner_response } : {})
+    ...(row.owner_verb ? { ownerVerb: row.owner_verb as SocraticFrameworkOwnerVerb } : {}),
+    ...(row.owner_response ? { ownerResponse: row.owner_response } : {}),
+    ...(row.ai_review ? { aiReview: parseJson<SocraticFrameworkAiReview | undefined>(row.ai_review, undefined) } : {})
   };
+}
+
+function updateDecisionLifecycle(
+  existing: SocraticDecisionCase,
+  userId: string,
+  patch: Partial<Pick<SocraticDecisionCase, "coachNotes" | "lessons">>
+): SocraticDecisionCase | undefined {
+  upsertSocraticDecisionCase({
+    ...existing,
+    userId,
+    coachNotes: patch.coachNotes ?? existing.coachNotes,
+    lessons: patch.lessons ?? existing.lessons
+  });
+  return getSocraticDecisionCase(existing.id, userId);
+}
+
+// Live in-row coach-note window. Notes beyond this cap age off into
+// socratic_coach_note_archive (migration 53) instead of being silently dropped.
+const COACH_NOTES_LIVE_CAP = 20;
+
+/**
+ * Shared core for both coach-note append paths (appendSocraticDecisionCoachNote and
+ * attachSocraticDecisionCoachPrimitives). Archives any note(s) that age off the live window and
+ * persists the live row in ONE db.transaction so a crash between the two writes can never lose a
+ * note — it either has not yet aged off (still in the live row) or has already been archived
+ * (row committed) before the live row commits alongside it. `extraPatch.lessons`, when supplied,
+ * is written atomically with the coach-note update (used by attachSocraticDecisionCoachPrimitives'
+ * lesson-promotion path) so that path performs exactly one write instead of two.
+ *
+ * `noteOrdinal` is a unique, monotone-going-forward per-decision ordinal used only to give the
+ * new note's vector doc a stable, collision-free accession — NOT a historical index (pre-port
+ * note history is unknowable, per the migration-53 comment in db.ts).
+ */
+function applyCoachNoteAppend(
+  existing: SocraticDecisionCase,
+  cleanedNote: string,
+  userId: string,
+  extraPatch: Partial<Pick<SocraticDecisionCase, "lessons">> = {}
+): {
+  coachNotes: string[];
+  archivedCount: number;
+  noteOrdinal: number;
+  appendedAt: string;
+  firstArchivedSeq?: number;
+  lastArchivedSeq?: number;
+} {
+  const database = getDb();
+  const appendedAt = new Date().toISOString();
+  return database.transaction(() => {
+    const archiveCountBefore = (
+      database
+        .prepare("SELECT COUNT(*) AS count FROM socratic_coach_note_archive WHERE user_id = ? AND decision_id = ?")
+        .get(userId, existing.id) as { count: number }
+    ).count;
+    const noteOrdinal = archiveCountBefore + existing.coachNotes.length;
+    const nextAll = [...existing.coachNotes, cleanedNote].filter(Boolean);
+    const overflowCount = Math.max(0, nextAll.length - COACH_NOTES_LIVE_CAP);
+    const overflow = nextAll.slice(0, overflowCount);
+    const coachNotes = nextAll.slice(-COACH_NOTES_LIVE_CAP);
+
+    let firstArchivedSeq: number | undefined;
+    let lastArchivedSeq: number | undefined;
+    const insertArchive = database.prepare(
+      `INSERT INTO socratic_coach_note_archive (id, user_id, decision_id, connected_account_id, note, note_seq, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    overflow.forEach((noteText, index) => {
+      const seq = archiveCountBefore + index;
+      if (firstArchivedSeq === undefined) firstArchivedSeq = seq;
+      lastArchivedSeq = seq;
+      insertArchive.run(crypto.randomUUID(), userId, existing.id, existing.connectedAccountId ?? null, noteText, seq, appendedAt);
+    });
+
+    // Same transaction as the archive inserts above — see function doc comment.
+    upsertSocraticDecisionCase({
+      ...existing,
+      userId,
+      coachNotes,
+      lessons: extraPatch.lessons ?? existing.lessons
+    });
+
+    return { coachNotes, archivedCount: overflow.length, noteOrdinal, appendedAt, firstArchivedSeq, lastArchivedSeq };
+  })();
+}
+
+function reindexDecisionMemory(updated: SocraticDecisionCase, mode: "await" | "fire-and-forget"): Promise<void> | void {
+  const run = async () => {
+    const { indexSocraticDecisionMemory } = await import("./socratic-memory");
+    await indexSocraticDecisionMemory(updated);
+  };
+  if (mode === "await") {
+    return run().catch((err) => {
+      console.warn("[db-socratic] lifecycle re-index failed:", err instanceof Error ? err.message : String(err));
+    });
+  }
+  void run().catch((err) => {
+    console.warn("[db-socratic] lifecycle re-index failed:", err instanceof Error ? err.message : String(err));
+  });
 }
 
 export function upsertSocraticDecisionCase(input: {
@@ -219,6 +330,8 @@ export function upsertSocraticDecisionCase(input: {
   authority: StrategyAuthority;
   thesis: string;
   rationale: string;
+  greenTeamRationale?: string;
+  sizingSnapshot?: SocraticDecisionCase["sizingSnapshot"];
   action: string;
   thesisTag?: string;
   regime?: string;
@@ -241,10 +354,10 @@ export function upsertSocraticDecisionCase(input: {
     .prepare(
       `INSERT INTO socratic_decisions (
         id, user_id, connected_account_id, run_id, proposal_id, account_number, symbol, side, status,
-        authority, thesis, rationale, action, thesis_tag, regime, confidence_score, notional, model,
-        red_team, policy_decision, evidence, rag_attributions, dissent, outcome, autonomy_override,
-        lessons, coach_notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        authority, thesis, rationale, green_team_rationale, sizing_snapshot, action, thesis_tag, regime,
+        confidence_score, notional, model, red_team, policy_decision, evidence, rag_attributions,
+        dissent, outcome, autonomy_override, lessons, coach_notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         connected_account_id = excluded.connected_account_id,
         run_id = excluded.run_id,
@@ -256,6 +369,8 @@ export function upsertSocraticDecisionCase(input: {
         authority = excluded.authority,
         thesis = excluded.thesis,
         rationale = excluded.rationale,
+        green_team_rationale = excluded.green_team_rationale,
+        sizing_snapshot = excluded.sizing_snapshot,
         action = excluded.action,
         thesis_tag = excluded.thesis_tag,
         regime = excluded.regime,
@@ -286,6 +401,8 @@ export function upsertSocraticDecisionCase(input: {
       input.authority,
       input.thesis,
       input.rationale,
+      input.greenTeamRationale ?? null,
+      input.sizingSnapshot ? JSON.stringify(input.sizingSnapshot) : null,
       input.action,
       input.thesisTag ?? null,
       input.regime ?? null,
@@ -324,7 +441,7 @@ export function listSocraticDecisionCases(
   }
   args.push(limit);
   const rows = getDb()
-    .prepare(`SELECT * FROM socratic_decisions WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC LIMIT ?`)
+    .prepare(`SELECT * FROM socratic_decisions WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
     .all(...args) as DecisionRow[];
   return rows.map(rowToDecision);
 }
@@ -513,7 +630,7 @@ export function createSocraticFrameworkProposal(input: {
 
 export function listSocraticFrameworkProposals(
   userId: string = "local",
-  opts: { limit?: number; status?: SocraticFrameworkProposalStatus; connectedAccountId?: string } = {}
+  opts: { limit?: number; status?: SocraticFrameworkProposalStatus; connectedAccountId?: string; unreviewedOnly?: boolean } = {}
 ): SocraticFrameworkProposal[] {
   const limit = Math.max(1, Math.min(100, Math.floor(opts.limit ?? 25)));
   const clauses = ["user_id = ?"];
@@ -526,28 +643,54 @@ export function listSocraticFrameworkProposals(
     clauses.push("connected_account_id = ?");
     args.push(opts.connectedAccountId);
   }
+  // Only rows the batched reviewer hasn't touched yet — lets it page through a backlog
+  // larger than any single fetch window instead of re-loading the newest already-reviewed rows.
+  if (opts.unreviewedOnly) {
+    clauses.push("ai_review IS NULL");
+  }
   args.push(limit);
   const rows = getDb()
-    .prepare(`SELECT * FROM socratic_framework_proposals WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC LIMIT ?`)
+    .prepare(`SELECT * FROM socratic_framework_proposals WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
     .all(...args) as FrameworkRow[];
   return rows.map(rowToFramework);
+}
+
+export function getSocraticFrameworkProposal(id: string, userId: string = "local"): SocraticFrameworkProposal | undefined {
+  const row = getDb().prepare("SELECT * FROM socratic_framework_proposals WHERE id = ? AND user_id = ?").get(id, userId) as FrameworkRow | undefined;
+  return row ? rowToFramework(row) : undefined;
 }
 
 export function updateSocraticFrameworkProposalStatus(
   id: string,
   status: SocraticFrameworkProposalStatus,
   userId: string = "local",
-  ownerResponse?: string
+  ownerResponse?: string,
+  ownerVerb?: SocraticFrameworkOwnerVerb
 ): SocraticFrameworkProposal | undefined {
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      "UPDATE socratic_framework_proposals SET status = ?, owner_response = COALESCE(?, owner_response), updated_at = ? WHERE id = ? AND user_id = ?"
+      "UPDATE socratic_framework_proposals SET status = ?, owner_verb = COALESCE(?, owner_verb), owner_response = COALESCE(?, owner_response), updated_at = ? WHERE id = ? AND user_id = ?"
     )
-    .run(status, ownerResponse ?? null, now, id, userId);
+    .run(status, ownerVerb ?? null, ownerResponse ?? null, now, id, userId);
   const row = getDb().prepare("SELECT * FROM socratic_framework_proposals WHERE id = ? AND user_id = ?").get(id, userId) as FrameworkRow | undefined;
   if (!row) return undefined;
   const framework = rowToFramework(row);
-  audit("socratic_framework_proposal_resolved", { id, status, ownerResponse }, userId, framework.connectedAccountId);
+  audit("socratic_framework_proposal_resolved", { id, status, ownerVerb, ownerResponse }, userId, framework.connectedAccountId);
   return framework;
+}
+
+/** Attach (or clear) the advisory AI review on a proposal. Does NOT change status or
+ *  owner verb — the owner still decides. Pass `null` to clear. Scoped to the user. */
+export function setSocraticFrameworkProposalAiReview(
+  id: string,
+  userId: string,
+  review: SocraticFrameworkAiReview | null
+): SocraticFrameworkProposal | undefined {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare("UPDATE socratic_framework_proposals SET ai_review = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(review ? JSON.stringify(review) : null, now, id, userId);
+  const row = getDb().prepare("SELECT * FROM socratic_framework_proposals WHERE id = ? AND user_id = ?").get(id, userId) as FrameworkRow | undefined;
+  return row ? rowToFramework(row) : undefined;
 }

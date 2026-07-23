@@ -7,6 +7,7 @@
 import {
   type CongressEvent,
   type CongressEventType,
+  CONGRESS_EVENT_TYPES,
   CongressEventSchema,
   parseSafe,
 } from "@jaywedgeworth22/congress-trading-shared";
@@ -18,6 +19,7 @@ import {
   type InsiderFiling
 } from "./web-sources/sec";
 import type { CongressTrade } from "./web-sources/types";
+import { getDb } from "./db";
 
 export type { CongressEventType, CongressEvent };
 
@@ -35,8 +37,31 @@ const DEDUPE_CAP = 5000;
 const dedupeHost = globalThis as unknown as { __congressEventIds?: Set<string> };
 const seenIds: Set<string> = dedupeHost.__congressEventIds ?? (dedupeHost.__congressEventIds = new Set());
 
-function markSeen(id: string): boolean {
-  if (seenIds.has(id)) return false;
+function isDuplicate(id: string): boolean {
+  if (seenIds.has(id)) return true;
+  try {
+    const db = getDb();
+    const existing = db.prepare("SELECT id FROM processed_webhooks WHERE id = ?").get(id);
+    if (existing) {
+      seenIds.add(id); // backfill memory cache
+      return true;
+    }
+  } catch (err) {
+    console.error("[congress-events] dedupe check db error:", err);
+  }
+  return false;
+}
+
+function commitSeen(id: string): boolean {
+  let inserted = false;
+  try {
+    const db = getDb();
+    const result = db.prepare("INSERT OR IGNORE INTO processed_webhooks (id, processed_at) VALUES (?, ?)").run(id, new Date().toISOString());
+    inserted = result.changes > 0;
+  } catch (err) {
+    console.error("[congress-events] dedupe commit db error:", err);
+  }
+
   if (seenIds.size >= DEDUPE_CAP) {
     // Evict ~half (oldest-ish: Set preserves insertion order) to bound memory.
     let toDrop = Math.floor(DEDUPE_CAP / 2);
@@ -46,7 +71,7 @@ function markSeen(id: string): boolean {
     }
   }
   seenIds.add(id);
-  return true;
+  return inserted;
 }
 
 /** Test seam: clear the event-id dedupe set. */
@@ -88,7 +113,7 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
       console.warn("[congress-events] event validation failed, using raw event");
     }
     const id = typeof raw.id === "string" ? raw.id : undefined;
-    if (id && !markSeen(id)) {
+    if (id && isDuplicate(id)) {
       return { ok: true, type, applied: 0, duplicate: true };
     }
     const data = asRecord(raw.data);
@@ -118,6 +143,7 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
         candidates.push(bareTx);
       }
       const trades = candidates.map(coerceCongressTrade).filter((t): t is CongressTrade => t !== null);
+      if (id) commitSeen(id);
       if (trades.length === 0) return { ok: true, type, applied: 0, reason: "no-trades" };
       const { added } = upsertCongressTrades(trades);
       return { ok: true, type, applied: added };
@@ -135,6 +161,7 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
         );
         if (marker) filings = [marker];
       }
+      if (id) commitSeen(id);
       if (filings.length === 0) return { ok: true, type, applied: 0, reason: "no-filings" };
       const { total } = upsertInsiderFilings(filings);
       return { ok: true, type, applied: filings.length, reason: `dataset=${total}` };
@@ -142,6 +169,7 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
 
     if (type === "ref.upsert" || type === "price.eod" || type === "spx.eod") {
       // Informational: App B pulls refs/prices/spx lazily via the read client on next fetch.
+      if (id) commitSeen(id);
       return { ok: true, type, applied: 0, reason: "accepted-noop" };
     }
 
@@ -159,10 +187,7 @@ export function applyCongressEvents(events: unknown): ApplyResult[] {
 }
 
 function isCongressEventType(value: string): boolean {
-  return value === "congress.trade" ||
-    value === "trade.new" ||
-    value === "insider.update" ||
-    value === "ref.upsert" ||
-    value === "price.eod" ||
-    value === "spx.eod";
+  // Canonical types come from the shared package; `trade.new` is App A's legacy
+  // alias and is remapped to `congress.trade` by applyCongressEvent.
+  return (CONGRESS_EVENT_TYPES as readonly string[]).includes(value) || value === "trade.new";
 }

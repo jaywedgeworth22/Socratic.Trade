@@ -11,6 +11,11 @@ in `src/lib/market-hours.ts` (the Phase 1 documented limitation is resolved).
 Scheduler behavior is local single-process, and any dev-server `EMFILE` watcher
 issue is operational rather than a strategy-loop feature gap.
 
+2026-07-21 hardening note: the LLM provider cooldown planner preserves the invariant that a
+non-empty Green/Red failover chain never becomes empty when every lane is cooling, including
+all-billing cooldowns. A manual billing/credit fix can therefore recover on the next run instead
+of waiting out the cooldown TTL.
+
 ## Objective
 
 Make `policy.enabled` actually drive autonomous strategy runs on a schedule, safely:

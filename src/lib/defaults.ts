@@ -4,13 +4,19 @@ import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT, DEFAULT_MARKET_SCAN_OUTLIER_RESERV
 
 export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   washSaleGuard: true,
-  // "block" preserves the original behavior: a wash-sale-locked rebuy is refused outright.
-  // "ask" routes it to a priced pending-approval card; "auto" lets the deterministic
-  // edge-vs-tax-cost guard decide (see policy.ts).
-  washSaleHandling: "block",
-  // IRA-replacement rebuys proceed annotated by default for IRA accounts. Owner rationale:
-  // brokers don't report cross-account IRA wash sales to the IRS, so blocking those buys by
-  // default is not appropriate for this app; the stricter "block" choice remains available.
+  // Owner decision (2026-07-03): the wash-sale gate is advisory, not a hard block, by default.
+  // "auto" always proceeds — an earlier deterministic edge-vs-tax-cost veto was removed because it
+  // re-arithmetized the LLM's own outputs (confidenceScore, bracketTakeProfit) rather than adding
+  // independent judgment. The priced tax cost still rides the decision as receipt telemetry and is
+  // threaded into the strategist prompt so the model weighs it against conviction itself. "block"
+  // and "ask" remain valid, stricter opt-ins (see policy.ts) for anyone who wants the old hard-stop
+  // or a priced approval prompt.
+  washSaleHandling: "auto",
+  // IRA-replacement rebuys (Rev. Rul. 2008-5) default to "disregard" for the same reason: brokers
+  // do not report cross-account IRA wash sales to the IRS, so the permanent-loss-forfeiture rule
+  // only bites under audit — the owner treats that as their call, not a hard system stop. Every
+  // disregarded purchase is still annotated + audited ("Wash Sale (Technically, but IRA purchase
+  // unreported to IRS)"); "block" remains available as a stricter per-account opt-in.
   iraWashSaleHandling: "disregard",
   shortTermRatePct: 24,
   longTermRatePct: 15
@@ -32,7 +38,10 @@ export const DEFAULT_RISK_RULES: RiskRules = {
   takeProfitPct: 20,
   // Take partial profit at the target and let the rest ride (laddered per take-profit band).
   takeProfitTrimPct: 50,
-  trailingStopPct: 0
+  trailingStopPct: 0,
+  // Mandatory for any short (see policy.ts's short-selling gate) — mirrors the long stopLossPct
+  // default so a short-enabled policy isn't rejected out of the box for lacking a stop.
+  shortStopLossPct: 8
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -50,14 +59,38 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // broadened to other indexes / the wider screener. Tunable in settings.
   universeFloor: { minPrice: 5, minMarketCapUsd: 100_000_000, minDollarVolume: 1_000_000 },
   strategyAuthority: "propose",
+  // Typed confirmation for high-impact live actions is ON by default; the owner can switch it off in
+  // Settings → Advanced action confirmation (an adjustable preference, not a hard gate).
+  requireTypedConfirmation: true,
   socraticOverrideMode: "execute",
   socraticOverrideMaxPctOfNav: 100,
   sellToFundBuy: "off",
-  llmModel: "gpt-5.4-mini",
+  // NO llmModel / redTeamLlmModel here (owner directive 2026-07-07: no model default for anything,
+  // ever). A seeded default here would resurrect the exact silent-default the model layer removed —
+  // every new policy would "choose" gpt-5.4-mini without the user ever picking it. Both team models
+  // are REQUIRED explicit picks in Strategy → Models; unset fails closed with an actionable
+  // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
+  // The PROPOSER's reasoning effort (per-team split 2026-07-10). NO redTeamReasoningEffort default
+  // on purpose: absent means "inherit the proposer's" (resolveReviewerReasoningEffort) — seeding a
+  // value here would silently break that fallback for every policy.
   llmReasoningEffort: "medium",
+  // Daily LLM learning review — default OFF (nothing runs until enabled). When enabled the
+  // default mode is "decide" (apply verdicts — remove/expire facts, resolve pending items,
+  // each audited; owner-chosen 2026-07-09); "annotate" (audit + notify only, no mutation) is
+  // the opt-out. The reviewer model defaults to a real, explicit "claude-fable-5" value —
+  // never a blank that silently means Fable (owner: no hidden model defaults; require a chosen
+  // model). User-level (see USER_LEVEL_POLICY_FIELDS): one config for the whole login.
+  learningReviewEnabled: false,
+  learningReviewMode: "decide",
+  learningReviewModel: "claude-fable-5",
+  // Trigger: run when >= 5 new lessons pile up, OR the oldest un-reviewed one is >= 7 days old.
+  learningReviewMinNewLessons: 5,
+  learningReviewMaxWaitDays: 7,
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
-  maxDailyNotional: 500,
+  // Account-relative by default: four full-sized 5%-of-NAV openings can fit in one day. A user can
+  // switch this to a fixed dollar ceiling in Guardrails when that better matches the mandate.
+  maxDailyPctOfNav: 20,
   maxSymbolExposurePct: 25,
   maxGrossExposurePct: 80,  // keep ≥20% cash buffer by default; users can raise in policy settings
   maxNetExposurePct: 80,    // consistent with gross; net > gross is impossible for long-only anyway
@@ -69,6 +102,18 @@ export const DEFAULT_POLICY: TradingPolicy = {
   volPanicSkewThreshold: 160,
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   robinhoodBrokerStops: false, // opt-in: true broker-held resting stop on live Robinhood (verify RH MCP stop semantics first)
+  // Broker-held trailing stops (inert until riskRules.trailingStopPct > 0): native Alpaca
+  // trailing_stop orders; on live Robinhood a tick-ratcheted stop-market, additionally gated on the
+  // robinhoodBrokerStops opt-in above. The synthetic monitor stays the always-on fallback.
+  brokerTrailingStops: true,
+  // Per-symbol stop intelligence ON by default (owner decision 2026-07-07 — no more one-size-fits-all
+  // stops). ATR stops scale the protective stop DISTANCE to each name's realized volatility
+  // (atrStopMultiple × ATR as a % of entry); beta-scaling widens the stop for high-beta names and
+  // tightens it for low-beta. ATR takes precedence over beta for the stop distance when both apply;
+  // each falls back to the flat riskRules.stopLossPct when its per-symbol input is unavailable. Both
+  // are owner-tunable off-switches in Settings — preferences, not cages.
+  atrStops: true,
+  betaScaledStops: true,
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
   marketScanCandidateLimit: DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
@@ -76,6 +121,8 @@ export const DEFAULT_POLICY: TradingPolicy = {
   proposalExpiryMinutes: 2880,
   proposalRevalidateCadenceHours: 0,
   staleLimitOrderMinutes: 15,
+  autoRemediateStaleExits: true, // cancel-replace a stale EXIT limit with a market order so a stop can't strand the position (MU deadlock); owner-tunable, defers to human typed-confirm on live
+  brokerMinimumHandling: "bump", // sub-minimum orders are raised TO the broker floor and placed (owner ruling 2026-07-09: bump, not skip); "skip" restores pre-flight blocking
   permittedOrderTypes: ["market", "limit"],
   permitExtendedHours: false,
   runCadenceMinutes: 60,
@@ -84,7 +131,11 @@ export const DEFAULT_POLICY: TradingPolicy = {
   sectorCaps: {},
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
-  taxSettings: DEFAULT_TAX_SETTINGS
+  taxSettings: DEFAULT_TAX_SETTINGS,
+  fmpRealTimeDataEnabled: true,
+  fmpMacroDataEnabled: true,
+  fmpEventsDataEnabled: true,
+  fmpFundamentalsDataEnabled: true
   // No default broker: a fresh policy is broker-neutral. activeBroker is set when a real broker is
   // connected (see db-profiles.ts). With no connected account the app cannot place orders — there is
   // no local-sim fallback.

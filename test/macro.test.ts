@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { determineMarketRegime, evaluateVolatilityBrake, pruneMacro } from "../src/lib/macro";
+import { determineMarketRegime, evaluateVolatilityBrake, MARKET_REGIME_LABELS, pruneMacro } from "../src/lib/macro";
 import type { MacroData } from "../src/lib/macro";
 
 const base: MacroData = {
@@ -72,6 +72,63 @@ describe("determineMarketRegime — VIX fallback light-macro", () => {
   it("returns Unknown when asOf is 'unavailable' (no FRED key AND VIX fetch failed)", () => {
     const noMacro: MacroData = { ...base, asOf: "unavailable" };
     expect(determineMarketRegime(noMacro)).toBe("Unknown (no macro feed)");
+  });
+});
+
+// The six regime labels below are a PERSISTED CONTRACT: determineMarketRegime's output is
+// stamped verbatim into TradeProposal.entryMarketRegime and later joined on by exact string
+// equality (src/lib/strategy.ts's selectThesisStat, src/lib/performance.ts's
+// getFactorScorecard regime filter, and the regime-scorecard lookup in
+// app/console/macro/page.tsx). Renaming a label here is NOT a safe find/replace — it silently
+// orphans every already-persisted proposal/fill row still carrying the old string. A rename
+// requires either a one-time data migration that rewrites entryMarketRegime on existing rows,
+// or an old-label -> new-label alias map consulted at every join site. These toBe() assertions
+// (not toContain()) exist so a label edit fails CI loudly instead of quietly breaking historical
+// joins.
+describe("determineMarketRegime — regime label set is a persisted contract", () => {
+  it("vix > 30 -> Crisis (Extreme Volatility)", () => {
+    expect(determineMarketRegime({ ...base, vix: "35.00" })).toBe(MARKET_REGIME_LABELS.crisis);
+    expect(MARKET_REGIME_LABELS.crisis).toBe("Crisis (Extreme Volatility)");
+  });
+
+  it("vix > 20 -> Risk-Off (High Volatility)", () => {
+    expect(determineMarketRegime({ ...base, vix: "24.00", fedFundsRate: "2.00%", dgs10Treasury: "4.00%" })).toBe(
+      MARKET_REGIME_LABELS["risk-off"]
+    );
+    expect(MARKET_REGIME_LABELS["risk-off"]).toBe("Risk-Off (High Volatility)");
+  });
+
+  it("inverted curve && vix > 17 -> Risk-Off (High Volatility)", () => {
+    // Calm-ish VIX (17 < vix <= 20) that would otherwise read Neutral, tipped by inversion.
+    expect(determineMarketRegime({ ...base, vix: "18.00", fedFundsRate: "5.25%", dgs10Treasury: "4.20%" })).toBe(
+      MARKET_REGIME_LABELS["risk-off"]
+    );
+  });
+
+  it("vix < 13 && !inverted -> Risk-On (Low Volatility)", () => {
+    expect(determineMarketRegime({ ...base, vix: "11.00", fedFundsRate: "2.00%", dgs10Treasury: "4.00%" })).toBe(
+      MARKET_REGIME_LABELS["risk-on"]
+    );
+    expect(MARKET_REGIME_LABELS["risk-on"]).toBe("Risk-On (Low Volatility)");
+  });
+
+  it("neutral (calm VIX, no inversion) -> Neutral (Normal Volatility)", () => {
+    expect(determineMarketRegime({ ...base, vix: "16.00", fedFundsRate: "2.00%", dgs10Treasury: "4.00%" })).toBe(
+      MARKET_REGIME_LABELS.neutral
+    );
+    expect(MARKET_REGIME_LABELS.neutral).toBe("Neutral (Normal Volatility)");
+  });
+
+  it("inverted-calm (inverted curve, VIX not high enough to escalate) -> Cautious (Inverted Curve)", () => {
+    expect(determineMarketRegime({ ...base, vix: "12.00", fedFundsRate: "5.25%", dgs10Treasury: "4.20%" })).toBe(
+      MARKET_REGIME_LABELS["cautious-inverted"]
+    );
+    expect(MARKET_REGIME_LABELS["cautious-inverted"]).toBe("Cautious (Inverted Curve)");
+  });
+
+  it("asOf === 'unavailable' -> Unknown (no macro feed)", () => {
+    expect(determineMarketRegime({ ...base, asOf: "unavailable" })).toBe(MARKET_REGIME_LABELS.unknown);
+    expect(MARKET_REGIME_LABELS.unknown).toBe("Unknown (no macro feed)");
   });
 });
 

@@ -53,6 +53,7 @@ import {
 import { scoreCongressSignal } from "../congress-score";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
 import { disclosureRagEnabled, embedDisclosures } from "./disclosure-rag";
+import { getFmpTranscriptStatus, type FmpTranscriptStatus } from "./fmp-transcripts";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
 export type { CongressAnalytics, CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
@@ -65,6 +66,7 @@ export {
   getTechnicalDataset,
   getTechnicalSignals,
   getTechnicalStatus,
+  getTechnicalWatchlist,
   recordTradingViewSignal,
   refreshTechnical,
   setTechnicalWatchlist,
@@ -75,6 +77,23 @@ export {
 export type { TechnicalSignal, TechnicalSource, TradingViewWebhookPayload } from "./technical";
 export { refreshFilingBodies, isFilingIngestDue } from "./sec-filings";
 export type { FilingRef, IngestResult, RefreshFilingBodiesResult } from "./sec-filings";
+export {
+  fmpTranscriptStorageRightsConfirmed,
+  fmpTranscriptsEnabled,
+  getFmpTranscriptCapability,
+  getFmpTranscriptStatus,
+  isFmpTranscriptRefreshDue,
+  refreshFmpTranscripts
+} from "./fmp-transcripts";
+export type {
+  FmpTranscriptCapability,
+  FmpTranscriptCapabilityObservation,
+  FmpTranscriptBody,
+  FmpTranscriptObservation,
+  FmpTranscriptRef,
+  FmpTranscriptStatus,
+  RefreshFmpTranscriptsResult
+} from "./fmp-transcripts";
 
 /** Whether the congress connector is enabled (default on; disable with WEB_SOURCE_CONGRESS=off). */
 function congressEnabled(): boolean {
@@ -268,6 +287,7 @@ export function getWebSourcesStatus(): {
   insider: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
   finra: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number; asOf?: string };
   sec8k: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
+  earningsTranscripts: FmpTranscriptStatus;
   technical: { enabled: boolean; source: "tradingview" | "computed"; fetchedAt?: string; recordCount: number; due: boolean; ttlMs: number; secretConfigured: boolean };
 } {
   const congress = getCongressDataset();
@@ -308,6 +328,7 @@ export function getWebSourcesStatus(): {
       due: isEightKRefreshDue(),
       ttlMs: eightKTtlMs()
     },
+    earningsTranscripts: getFmpTranscriptStatus(),
     technical: getTechnicalStatus()
   };
 }

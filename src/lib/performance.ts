@@ -1,7 +1,9 @@
-import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, recordTakeProfitTrimBand } from "./db";
+import { clearStopPlans, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listRecentMaturedSkippedCounterfactuals, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
+import { aggregateSourceValue, type SourceValueObservation } from "./source-value";
 import type {
+  CandidateEvidence,
   EquityPosition,
   ExecutedOrder,
   ExecutionMode,
@@ -14,6 +16,7 @@ import type {
   Portfolio,
   ReviewedOrder,
   RunAttribution,
+  SourceValueStat,
   OrderSide,
   TradeProposal
 } from "./types";
@@ -62,6 +65,12 @@ export interface ClosedLot {
   mae?: number;
   /** Max Favorable Excursion (% from entry price, typically positive for longs) persisted after post-mortem. */
   mfe?: number;
+  /** Model that proposed the ENTRY (proposedByModel stamped on the opening proposal), for the
+   * per-model realized-performance rollup behind the model pickers (src/lib/model-stats.ts). */
+  entryModel?: string;
+  /** Model that reviewed the ENTRY (reviewedByModel stamped on the opening proposal), for the
+   * per-model realized-performance rollup behind the model pickers (src/lib/model-stats.ts). */
+  reviewedByModel?: string;
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */
@@ -77,6 +86,20 @@ export interface ThesisStat {
   avgDaysHeld?: number;
   /** % of lots held < 365 days (short-term capital gains); undefined when no timestamp data. */
   shortTermPct?: number;
+  /** Mean returnPct over WINNING lots only (returnPct > 0); undefined when the bucket has no winners. */
+  avgWinPct?: number;
+  /** Mean |returnPct| over LOSING lots only (returnPct < 0), reported POSITIVE; undefined when no losers. */
+  avgLossPct?: number;
+  /**
+   * Downside deviation (%): sqrt(mean(min(returnPct, 0)^2)) over ALL lots in the bucket — the
+   * root-mean-square of negative-clamped returns, i.e. the sigma_down of a 0%-MAR Sortino ratio.
+   * Always defined when trades > 0 (0 when there are no losing lots).
+   */
+  downsideDeviationPct?: number;
+  /** Count of lots with returnPct > 0. */
+  winCount?: number;
+  /** Count of lots with returnPct < 0. */
+  lossCount?: number;
 }
 
 /** Realized-outcome stats grouped by the market regime a position was opened in. */
@@ -134,6 +157,7 @@ export function recordPortfolioSnapshot(input: {
 
 export function recordFillFromProposal(input: {
   userId?: string;
+  connectedAccountId?: string;
   accountNumber: string;
   proposalId?: string;
   runId?: string;
@@ -144,22 +168,46 @@ export function recordFillFromProposal(input: {
   execution?: ExecutedOrder;
   marketScan?: MarketScan;
   status?: string;
+  /**
+   * The position's PRE-fill state (average cost + quantity), when the caller has it, for blending a
+   * stop plan's recorded basis on a SCALE-IN. Without this, an opening fill's `price` (this ONE
+   * fill's execution price) gets recorded as the plan's `avgCost` even when the position already had
+   * shares — the very next run's `filterStopPlansByLiveBasis` then compares that single-fill price
+   * against the position's true BLENDED averageCost, sees a mismatch beyond tolerance, and discards
+   * the just-recorded plan as stale (Codex review, PR #1371). Omit for a fresh open (no prior
+   * position) — blended cost then correctly reduces to the fill price itself.
+   */
+  existingPosition?: { averageCost: number; quantity: number };
+  /**
+   * Explicit, already-known stop-plan basis that bypasses the pre-fill blend math entirely — for a
+   * caller that already looked up the LIVE (post-fill) position average cost directly (e.g. a
+   * crash-recovery sweep reconciling an order that already executed at the broker, where the broker's
+   * own current averageCost IS the correct blended basis with no arithmetic needed). Takes precedence
+   * over `existingPosition` when both are supplied.
+   */
+  stopPlanBasisOverride?: number;
 }): FillEvent {
   const symbol = normalizeSymbol(input.proposal.symbol);
   const marketPrice = input.marketScan?.quotesBySymbol[symbol]?.price;
   const executionPrice = input.execution?.averagePrice;
+  const fillStatus = input.status ?? (input.source === "paper" ? "filled" : "pending_reconciliation");
+  const awaitingBrokerPrice = fillStatus === "pending_reconciliation"
+    && Boolean(input.execution)
+    && (input.source === "live" || input.executionMode === "broker/live" || input.executionMode === "broker/paper")
+    && positiveNumber(executionPrice) === undefined;
   const proposedPrice = input.proposal.limitPrice ?? input.proposal.stopPrice;
   const notional = input.review?.estimatedNotional ?? input.proposal.dollarAmount ?? 0;
   const quantityInput = positiveNumber(input.execution?.filledQuantity) ?? positiveNumber(input.proposal.quantity);
   const impliedPrice = quantityInput && notional > 0 ? notional / quantityInput : undefined;
   const reviewPrice = priceFromReview(input.review?.raw);
-  const basePrice =
-    positiveNumber(executionPrice) ??
-    positiveNumber(proposedPrice) ??
-    positiveNumber(marketPrice) ??
-    positiveNumber(reviewPrice) ??
-    positiveNumber(impliedPrice) ??
-    0;
+  const basePrice = awaitingBrokerPrice
+    ? 0
+    : positiveNumber(executionPrice) ??
+      positiveNumber(proposedPrice) ??
+      positiveNumber(marketPrice) ??
+      positiveNumber(reviewPrice) ??
+      positiveNumber(impliedPrice) ??
+      0;
   // Deterministic execution-cost model for SIMULATED fills (default ON). Real broker (live) fills
   // already carry their realized price, so only paper fills are adjusted — this makes the learning
   // loop net-of-cost rather than certifying a frictionless edge that won't survive a live fill.
@@ -191,10 +239,14 @@ export function recordFillFromProposal(input: {
   }
   const quantity =
     quantityInput ?? (price > 0 && notional > 0 ? notional / price : 0);
-  const finalNotional =
-    quantity > 0 && price > 0
+  const finalNotional = awaitingBrokerPrice
+    ? 0
+    : quantity > 0 && price > 0
       ? quantity * price
       : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
+
+  // The symbol's full scan candidate at fill time (factor breakdown source for the entry stamps below).
+  const entryCandidate = input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
 
   const fill = insertFillEvent({
     userId: input.userId,
@@ -208,7 +260,7 @@ export function recordFillFromProposal(input: {
     quantity,
     price,
     notional: Math.abs(finalNotional),
-    status: input.status ?? (input.source === "paper" ? "filled" : "pending_reconciliation"),
+    status: fillStatus,
     brokerOrderId: input.execution?.orderId,
     // Stamp the symbol's sector at fill time so closed lots can be grouped by sector
     // for the sector learning dimension (sector isn't on the proposal itself).
@@ -221,7 +273,15 @@ export function recordFillFromProposal(input: {
       execution: input.execution,
       sector: input.marketScan?.quotesBySymbol[symbol]?.sector,
       ...((input.proposal.side === "buy" || input.proposal.side === "short")
-        ? { dominantFactor: dominantFactor(input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.factorBreakdown) }
+        ? {
+            dominantFactor: dominantFactor(entryCandidate?.factorBreakdown),
+            // Episodic experience memory (2026-07-04 composite review A1): also stamp the FULL
+            // 8-factor breakdown + scan breadth at ENTRY, so the closed-lot experience vector can
+            // embed the entry-time state instead of a lookahead reconstruction at exit. Additive
+            // raw fields only — existing readers (thesisMetaFromFill) are unaffected.
+            ...(entryCandidate?.factorBreakdown ? { factorBreakdown: entryCandidate.factorBreakdown } : {}),
+            ...(typeof input.marketScan?.breadthPct === "number" ? { scanBreadthPct: input.marketScan.breadthPct } : {})
+          }
         : {})
     }
   });
@@ -235,6 +295,92 @@ export function recordFillFromProposal(input: {
     } catch {
       // ratchet bookkeeping must never break fill recording
     }
+  }
+
+  // Persist the LLM's chosen stop plan for this position, set ONLY on an OPENING (buy/short) fill —
+  // an exit fill closing (or trimming) the position has nothing to set a forward-looking plan for.
+  // No stopPlan at all is a true no-op (the LLM never touched this field this run — whatever's
+  // already on record, if anything, keeps governing). An EXPLICIT "default" is different: it CLEARS
+  // any existing override, since that's the only way a scale-in can ever deliberately reset a
+  // position back to the account's own precedence after an earlier "none"/"trailing"/"fixed"/"atr"
+  // choice (Codex review, PR #1371) — collapsing "default" to a no-op here would make an existing
+  // override permanent for the life of the position, impossible to ever undo.
+  if (
+    input.proposal.stopPlan &&
+    (input.proposal.side === "buy" || input.proposal.side === "short") &&
+    // Only an ACTUALLY EXECUTED fill commits the plan — a live broker order still
+    // `pending_reconciliation` may yet cancel/expire without ever opening the position, and a plan
+    // recorded (or cleared) now would then govern a lot that never existed (Codex review, PR #1371).
+    (fill.status === "filled" || fill.status === "partially_filled")
+  ) {
+    try {
+      if (input.proposal.stopPlan.style === "default") {
+        clearStopPlans(input.accountNumber, [symbol], input.userId ?? "local");
+      } else {
+        // On a scale-in, `basePrice` is THIS fill's execution price — the plan must record the
+        // resulting BLENDED position basis (what the next run's `position.averageCost` will actually
+        // be), or `filterStopPlansByLiveBasis` discards the plan as stale on the very next run
+        // (Codex review, PR #1371). No prior position (fresh open) reduces to `basePrice` unchanged.
+        // Deliberately `basePrice`, NOT `price` — `price` is net of the paper execution-cost model
+        // (source: "paper" gets ~1bp of synthetic slippage deducted for learning/P&L purposes), but
+        // the BROKER's own reported `position.averageCost` reflects the raw fill, not our synthetic
+        // cost deduction. Using the cost-adjusted `price` here made a paper fill's plan basis drift a
+        // fraction of a cent from what the live-basis filter compares against next run, tripping its
+        // 0.5-cent tolerance and dropping the just-recorded plan as stale (Codex review, PR #1371).
+        const existing = input.existingPosition;
+        const blendedAvgCost =
+          input.stopPlanBasisOverride ??
+          (existing && Math.abs(existing.quantity) > 0.000001
+            ? (existing.averageCost * Math.abs(existing.quantity) + basePrice * quantity) / (Math.abs(existing.quantity) + quantity)
+            : basePrice);
+        // A "fixed"/"atr" plan's bracket fields survive on the proposal only when a broker-native
+        // bracket was (or was meant to be) attached at placement — enrichOpeningProposal strips them
+        // unconditionally for "trailing"/"none" — so this naturally scopes to exactly the plans a
+        // bracket teardown could ever need later. Recording the execution's own order ID even when
+        // the broker silently couldn't attach a bracket (e.g. a Tradier market-type entry) is
+        // harmless: cancelBracketSiblingLegs simply finds no sibling legs and no-ops.
+        const openingOrderId =
+          (input.proposal.bracketStopLoss != null || input.proposal.bracketTakeProfit != null)
+            ? input.execution?.orderId
+            : undefined;
+        recordStopPlan(
+          input.accountNumber,
+          symbol,
+          input.proposal.stopPlan.style,
+          input.proposal.stopPlan.rationale,
+          blendedAvgCost,
+          input.userId,
+          undefined,
+          input.proposal.side === "short" ? "short" : "long",
+          openingOrderId
+        );
+      }
+    } catch {
+      // plan bookkeeping must never break fill recording
+    }
+  }
+
+  // Episodic experience memory write hook (2026-07-04 composite review A1): a sell/cover fill may
+  // have just CLOSED one or more lots — embed each closed lot's entry state + realized outcome into
+  // the experience-memory vector namespace, keyed by the entry proposalId. Strictly fire-and-forget:
+  // the dynamic import + async body keep this sync function's signature and money-path behavior
+  // untouched, and any failure (no vector keys, no matched lot, provider error) degrades to a
+  // console warning inside recordClosedLotExperience (which never throws).
+  if (input.proposal.side === "sell" || input.proposal.side === "cover") {
+    void import("./experience-memory")
+      .then((experienceMemory) =>
+        experienceMemory.recordClosedLotExperience({
+          userId: input.userId,
+          connectedAccountId: input.connectedAccountId,
+          accountNumber: input.accountNumber,
+          source: input.source,
+          closingFill: fill,
+          closingProposal: input.proposal
+        })
+      )
+      .catch((err) => {
+        console.warn("[performance] experience-memory hook failed:", err instanceof Error ? err.message : String(err));
+      });
   }
   return fill;
 }
@@ -323,6 +469,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       sector?: string;
       dominantFactor?: MarketFactor;
       entryAt?: string;
+      entryModel?: string;
+      reviewedByModel?: string;
     }>
   >();
   const closedLots: ClosedLot[] = [];
@@ -345,7 +493,9 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         confidence: meta.confidence,
         sector: meta.sector,
         dominantFactor: meta.dominantFactor,
-        entryAt: fill.filledAt
+        entryAt: fill.filledAt,
+        entryModel: meta.entryModel,
+        reviewedByModel: meta.reviewedByModel
       });
       addAttribution(attribution, fill, 0);
       continue;
@@ -387,7 +537,9 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         sector: lot.sector,
         dominantFactor: lot.dominantFactor,
         mae: fill.mae,
-        mfe: fill.mfe
+        mfe: fill.mfe,
+        entryModel: lot.entryModel,
+        reviewedByModel: lot.reviewedByModel
       });
       addAttribution(attribution, fill, pnl);
       // Change A: dual-sided credit — also credit the ENTRY run (the run that opened this lot).
@@ -483,9 +635,10 @@ export function getSectorScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): SectorStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.sector && lot.sector.trim() ? lot.sector.trim() : "Unknown"),
@@ -521,6 +674,16 @@ export interface ThesisRegimeStat {
   shrunkAvgReturnPct: number;
   avgDaysHeld?: number;
   shortTermPct?: number;
+  /** Mean returnPct over WINNING lots only (returnPct > 0); undefined when the bucket has no winners. */
+  avgWinPct?: number;
+  /** Mean |returnPct| over LOSING lots only (returnPct < 0), reported POSITIVE; undefined when no losers. */
+  avgLossPct?: number;
+  /** Downside deviation (%): sqrt(mean(min(returnPct, 0)^2)) over ALL lots — see ThesisStat for detail. */
+  downsideDeviationPct?: number;
+  /** Count of lots with returnPct > 0. */
+  winCount?: number;
+  /** Count of lots with returnPct < 0. */
+  lossCount?: number;
 }
 
 const THESIS_REGIME_SEP = " @ ";
@@ -529,9 +692,10 @@ export function getThesisRegimeScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): ThesisRegimeStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(closedLots, (lot) => {
     const thesis = lot.thesisTag?.trim() || "Untagged";
     const regime = lot.regime?.trim() || "Unspecified";
@@ -543,8 +707,13 @@ export function getThesisRegimeScorecard(
 }
 
 /** Number of closed (realized) lots — the sample size that gates learned weight shifts. */
-export function getClosedLotCount(accountNumber: string, source?: FillSource, userId: string = "local"): number {
-  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).closedLots.length;
+export function getClosedLotCount(
+  accountNumber: string,
+  source?: FillSource,
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): number {
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).closedLots.length;
 }
 
 /**
@@ -565,9 +734,10 @@ export function getSignalEfficacy(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): SignalEfficacyStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   if (closedLots.length === 0) return [];
 
   // runId|symbol -> entry signals, from the signal_snapshot audit trail. The snapshot
@@ -627,6 +797,67 @@ export function getSignalEfficacy(
     .sort((a, b) => b.trades - a.trades);
 }
 
+/**
+ * Provider-level outcome scorecard built from decision-time source-ablation receipts. Closed lots
+ * and skipped-candidate counterfactuals are joined to the exact signal snapshot by run+symbol.
+ * Results remain observational/selection-biased and are disclosed as such in SourceValueStat;
+ * automatic weight mutation is deliberately out of scope.
+ */
+export function getSourceValueScorecard(
+  accountNumber: string,
+  source?: FillSource,
+  currentPrices: Record<string, number> = {},
+  userId: string = "local",
+  prefetched?: PrefetchedFills,
+  options: { connectedAccountId?: string; auditLimit?: number; counterfactualLimit?: number } = {}
+): SourceValueStat[] {
+  const snapshots = new Map<string, CandidateEvidence>();
+  for (const event of listAuditByKind("signal_snapshot", options.auditLimit ?? 2_000, userId, options.connectedAccountId)) {
+    const payload = event.payload as { runId?: string; signals?: CandidateEvidence[] } | undefined;
+    if (!payload?.runId || !Array.isArray(payload.signals)) continue;
+    for (const signal of payload.signals) {
+      if (!signal?.symbol) continue;
+      const key = `${payload.runId}|${normalizeSymbol(signal.symbol)}`;
+      if (!snapshots.has(key)) snapshots.set(key, signal);
+    }
+  }
+
+  const observations: SourceValueObservation[] = [];
+  const add = (candidate: CandidateEvidence | undefined, returnPct: number, chosen: boolean) => {
+    if (!candidate || !Number.isFinite(returnPct)) return;
+    for (const ablation of candidate.sourceAblations ?? []) {
+      observations.push({
+        provider: ablation.provider,
+        fields: ablation.affectedFields,
+        scoreDelta: ablation.scoreDelta,
+        returnPct,
+        chosen
+      });
+    }
+  };
+
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
+  for (const lot of closedLots) {
+    if (!lot.entryRunId || !lot.symbol) continue;
+    add(snapshots.get(`${lot.entryRunId}|${normalizeSymbol(lot.symbol)}`), lot.returnPct, true);
+  }
+
+  const seenSkipped = new Set<string>();
+  for (const row of listRecentMaturedSkippedCounterfactuals(
+    userId,
+    options.counterfactualLimit ?? 1_000,
+    options.connectedAccountId
+  )) {
+    if (row.returnPct === undefined) continue;
+    const key = `${row.runId}|${normalizeSymbol(row.symbol)}`;
+    if (seenSkipped.has(key)) continue;
+    seenSkipped.add(key); // rows are horizon-ascending within newest decision time
+    add(snapshots.get(key), row.returnPct, false);
+  }
+
+  return aggregateSourceValue(observations);
+}
+
 /** Realized-outcome stats grouped by the dominant deterministic factor at entry. */
 export interface FactorScorecardStat {
   factor: MarketFactor;
@@ -657,10 +888,14 @@ export function getFactorScorecard(
   source?: FillSource,
   currentPrices: Record<string, number> = {},
   userId: string = "local",
-  options?: FactorScorecardOptions
+  options?: FactorScorecardOptions,
+  prefetched?: PrefetchedFills
 ): FactorScorecardStat[] {
-  const { closedLots: allLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots: allLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   // Optional regime filter — default (no option) preserves the original all-lots behavior.
+  // Exact-string join: `lot.regime` is the `entryMarketRegime` stamped from one of the
+  // MARKET_REGIME_LABELS values (src/lib/macro.ts) — a persisted contract. See that const's
+  // doc comment before renaming a label; existing rows would silently stop matching.
   const closedLots = options?.regime
     ? allLots.filter((lot) => lot.regime?.trim() === options.regime?.trim())
     : allLots;
@@ -1045,9 +1280,10 @@ export function getConfidenceCalibration(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): ConfidenceCalibrationStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots.filter((lot) => lot.side === "long" && typeof lot.confidence === "number"),
     (lot) => confidenceBandOf(lot.confidence as number),
@@ -1101,6 +1337,16 @@ function aggregateClosedLots(
   avgDaysHeld: number | undefined;
   /** Percentage of lots held < 365 days (short-term for tax purposes). */
   shortTermPct: number | undefined;
+  /** Mean returnPct over lots with returnPct > 0; undefined when the bucket has no winners (never fabricated). */
+  avgWinPct: number | undefined;
+  /** Mean |returnPct| over lots with returnPct < 0, reported POSITIVE; undefined when the bucket has no losers. */
+  avgLossPct: number | undefined;
+  /** Downside deviation (%): sqrt(mean(min(returnPct, 0)^2)) over ALL lots — sigma_down of a 0%-MAR Sortino. */
+  downsideDeviationPct: number | undefined;
+  /** Count of lots with returnPct > 0. */
+  winCount: number | undefined;
+  /** Count of lots with returnPct < 0. */
+  lossCount: number | undefined;
 }> {
   const prior = resolveShrinkPrior(userId);
   const byKey = new Map<string, {
@@ -1111,10 +1357,18 @@ function aggregateClosedLots(
     daysHeldSum: number;
     daysHeldCount: number;
     shortTermCount: number;
+    winReturnSum: number;
+    winCount: number;
+    lossReturnAbsSum: number;
+    lossCount: number;
+    downsideSqSum: number;
   }>();
   for (const lot of closedLots) {
     const key = keyFn(lot);
-    const cur = byKey.get(key) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0, daysHeldSum: 0, daysHeldCount: 0, shortTermCount: 0 };
+    const cur = byKey.get(key) ?? {
+      pnl: 0, returnSum: 0, wins: 0, trades: 0, daysHeldSum: 0, daysHeldCount: 0, shortTermCount: 0,
+      winReturnSum: 0, winCount: 0, lossReturnAbsSum: 0, lossCount: 0, downsideSqSum: 0
+    };
     cur.pnl += lot.pnl;
     cur.returnSum += lot.returnPct;
     cur.wins += lot.pnl > 0 ? 1 : 0;
@@ -1130,6 +1384,17 @@ function aggregateClosedLots(
         if (daysHeld < 365) cur.shortTermCount += 1;
       }
     }
+    // Payoff-split fields (Fractional-Kelly advisory input; read-only, never fabricated): win/loss
+    // classification here uses returnPct (not pnl) so the split lines up with the % Kelly math needs.
+    if (lot.returnPct > 0) {
+      cur.winReturnSum += lot.returnPct;
+      cur.winCount += 1;
+    } else if (lot.returnPct < 0) {
+      cur.lossReturnAbsSum += Math.abs(lot.returnPct);
+      cur.lossCount += 1;
+    }
+    const downsideClamped = Math.min(lot.returnPct, 0);
+    cur.downsideSqSum += downsideClamped * downsideClamped;
     byKey.set(key, cur);
   }
   return Array.from(byKey.entries())
@@ -1144,7 +1409,13 @@ function aggregateClosedLots(
       shrunkAvgReturnPct: Number((s.returnSum / (s.trades + prior)).toFixed(2)),
       // Holding-period fields: undefined when no lots in this bucket have entryAt/exitAt data.
       avgDaysHeld: s.daysHeldCount > 0 ? Number((s.daysHeldSum / s.daysHeldCount).toFixed(1)) : undefined,
-      shortTermPct: s.daysHeldCount > 0 ? Number(((s.shortTermCount / s.daysHeldCount) * 100).toFixed(1)) : undefined
+      shortTermPct: s.daysHeldCount > 0 ? Number(((s.shortTermCount / s.daysHeldCount) * 100).toFixed(1)) : undefined,
+      // Payoff-split fields: undefined (never a fabricated 0) when the bucket has no winners/losers.
+      avgWinPct: s.winCount > 0 ? Number((s.winReturnSum / s.winCount).toFixed(2)) : undefined,
+      avgLossPct: s.lossCount > 0 ? Number((s.lossReturnAbsSum / s.lossCount).toFixed(2)) : undefined,
+      downsideDeviationPct: s.trades > 0 ? Number(Math.sqrt(s.downsideSqSum / s.trades).toFixed(2)) : undefined,
+      winCount: s.trades > 0 ? s.winCount : undefined,
+      lossCount: s.trades > 0 ? s.lossCount : undefined
     }))
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }
@@ -1165,7 +1436,7 @@ const MARKET_FACTOR_KEYS = new Set<string>([
   "liquidity", "momentum", "value", "quality", "volatility", "sentiment", "positioning", "diversification"
 ]);
 
-function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string; dominantFactor?: MarketFactor } {
+function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string; dominantFactor?: MarketFactor; entryModel?: string; reviewedByModel?: string } {
   const raw = fill.raw;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const r = raw as Record<string, unknown>;
@@ -1183,12 +1454,16 @@ function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: str
     regime: typeof p.entryMarketRegime === "string" ? p.entryMarketRegime : undefined,
     confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined,
     sector,
-    dominantFactor
+    dominantFactor,
+    entryModel: typeof p.proposedByModel === "string" && p.proposedByModel ? p.proposedByModel : undefined,
+    reviewedByModel: typeof p.reviewedByModel === "string" && p.reviewedByModel ? p.reviewedByModel : undefined
   };
 }
 
 function isAccountingFill(fill: FillEvent): boolean {
-  if (fill.status === "filled") return true;
+  // A working partial fill is already real broker exposure. The same receipt is updated in place as
+  // more shares execute, so counting its current quantity cannot double-book subsequent polls.
+  if (fill.status === "filled" || fill.status === "partially_filled") return true;
   if (fill.source !== "paper") return false;
   // Legacy/local Test rows used source=paper before executionMode existed, or carried the now-removed
   // "test/local" executionMode value (the local-simulation execution path was deleted; the string can
