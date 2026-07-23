@@ -130,20 +130,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           >
             {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
-          <Link href="/console" className="flex shrink-0 items-center gap-2" title="Back to the trading console">
+          <Link href="/console" className="flex shrink-0 items-center gap-1.5 text-[color:var(--con-muted)] hover:text-[color:var(--con-fg)] transition-colors" title="Back to the trading console">
+            <ArrowLeft size={14} />
+            <span className="text-[length:var(--con-fs-sm)] font-medium">Go Back</span>
+          </Link>
+          <div className="flex min-w-0 items-center gap-2">
             <span className="hidden sm:block">
               <HeaderLogo height={18} />
             </span>
-            <span className="con-card-title hidden sm:inline">Socratic Trade</span>
-            <ArrowLeft size={14} className="text-[color:var(--con-muted)]" />
-          </Link>
-          <div className="flex min-w-0 items-center gap-2">
             <span className="con-card-title">Admin</span>
             <span className="hidden truncate text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] sm:block">
               {activeItem?.label ?? "Overview"}
             </span>
           </div>
           <div className="flex-1" />
+          <Link href="/console" className="con-btn con-btn-outline hidden shrink-0 h-8 mr-2 sm:inline-flex">
+            Back to Console
+          </Link>
           <AdminProfileMenu theme={theme} setTheme={setTheme} />
         </div>
       </header>
@@ -182,12 +185,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
 function AdminProfileMenu({ theme, setTheme }: { theme: ConsoleTheme; setTheme: (theme: ConsoleTheme) => void }) {
   const [open, setOpen] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string>();
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const close = () => {
     setOpen(false);
     requestAnimationFrame(() => triggerRef.current?.focus());
   };
+
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((res) => res.json())
+      .then((s) => setImageUrl(s?.user?.image))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -210,7 +221,12 @@ function AdminProfileMenu({ theme, setTheme }: { theme: ConsoleTheme; setTheme: 
         aria-haspopup="menu"
         className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-control border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
       >
-        <UserRound size={15} />
+        {imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- external avatar host
+          <img src={imageUrl} alt="" referrerPolicy="no-referrer" className="h-full w-full rounded-[inherit] object-cover" />
+        ) : (
+          <UserRound size={15} />
+        )}
       </button>
       {open && (
         <>
@@ -249,8 +265,8 @@ function AdminProfileMenu({ theme, setTheme }: { theme: ConsoleTheme; setTheme: 
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Link href="/console/settings" className="con-btn con-btn-outline" onClick={close}>
-                  Profile & Settings
+                <Link href="/console" className="con-btn con-btn-outline" onClick={close}>
+                  Back to Console
                 </Link>
                 <a href="/logout" className="con-btn con-btn-outline" onClick={close}>
                   Sign Out

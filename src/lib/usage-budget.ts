@@ -284,7 +284,6 @@ function providerForModel(model: string | null | undefined): string {
   return "openai";
 }
 
-// Cost-ordered downgrade within a provider family (keys/values exist in MODEL_PRICE_PER_M).
 const CHEAPER_MODEL: Record<string, string> = {
   // OpenAI
   "gpt-5.6": "gpt-5.6-terra",
@@ -294,28 +293,42 @@ const CHEAPER_MODEL: Record<string, string> = {
   "gpt-5.5": "gpt-5.4-mini",
   "gpt-5.4": "gpt-5.4-mini",
   "gpt-5.4-mini": "gpt-5.4-nano",
+  "gpt-sol-latest": "gpt-terra-latest",
+  "gpt-terra-latest": "gpt-luna-latest",
+  "gpt-luna-latest": "gpt-mini-latest",
+  "gpt-mini-latest": "gpt-nano-latest",
+  "gpt-4o-latest": "gpt-mini-latest",
   "gpt-4o": "gpt-4o-mini",
   "gpt-4.1": "gpt-4.1-mini",
   "o1": "o1-mini",
   "o1-preview": "o1-mini",
   // (no o3-mini → o4-mini: identically priced in MODEL_PRICE_PER_M, so it saves nothing)
   // Anthropic
+  "claude-fable-latest": "claude-sonnet-latest",
+  "claude-opus-latest": "claude-sonnet-latest",
+  "claude-sonnet-latest": "claude-haiku-latest",
   "claude-fable-5": "claude-sonnet-4-6",
   "claude-opus-4-8": "claude-sonnet-4-6",
   "claude-sonnet-4-6": "claude-haiku-4-5",
   // xAI
+  "grok-latest": "grok-build-latest",
   "grok-4.3": "grok-build-0.1",
   // Gemini
+  "gemini-pro-latest": "gemini-flash-latest",
+  "gemini-flash-latest": "gemini-flash-lite-latest",
   "gemini-3.1-pro-preview": "gemini-3.5-flash",
   "gemini-3.5-flash": "gemini-3.1-flash-lite",
   "gemini-2.5-pro": "gemini-2.5-flash",
   "gemini-2.5-flash": "gemini-2.5-flash-lite",
   // Mistral
+  "mistral-medium-latest": "mistral-small-latest",
   "mistral-large-2512": "mistral-medium-3-5",
   "mistral-medium-3-5": "mistral-small-2603",
   "mistral-large": "mistral-medium",
   "mistral-medium": "mistral-small",
   // DeepSeek
+  "deepseek-pro-latest": "deepseek-flash-latest",
+  "deepseek-r1-latest": "deepseek-flash-latest",
   "deepseek-reasoner": "deepseek-chat",
   "deepseek-v4-pro": "deepseek-v4-flash",
 };
