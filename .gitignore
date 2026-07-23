@@ -97,3 +97,4 @@ xcuserdata/
 *.xcuserdata
 .build/
 DerivedData/
+.worktrees/
