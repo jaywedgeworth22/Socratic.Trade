@@ -716,7 +716,7 @@ export function maskApiKeyPreview(key: string | undefined | null): string | unde
  * caller can attribute usage/cost PER ATTACHED key. A non-`local` tenant only reaches the env key
  * when the failover is enabled.
  */
-export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
+export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
@@ -724,7 +724,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
 
     if (process.env.NODE_ENV === "test") {
       if (canonical === "openrouter") {
-        const services: LlmProviderService[] = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"];
+        const services: LlmProviderService[] = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "meta"];
         for (const svc of services) {
           const fallbackKey = getUserApiKey(userId, svc);
           if (fallbackKey?.apiKey) {
@@ -748,7 +748,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
 
   if (process.env.NODE_ENV === "test" && !envKey) {
     if (canonical === "openrouter") {
-      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
+      const fallbacks = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "META_API_KEY"];
       for (const f of fallbacks) {
         if (process.env[f]) {
           envKey = process.env[f];
@@ -766,7 +766,7 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
 }
 
 /** Every LLM provider `resolveLlmCredential` understands. The single source of truth for "is an LLM connected". */
-export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "openrouter"] as const;
+export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "meta", "openrouter"] as const;
 export type LlmProviderService = (typeof LLM_PROVIDER_SERVICES)[number];
 
 /**

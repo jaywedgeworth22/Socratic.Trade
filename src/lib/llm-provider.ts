@@ -2,10 +2,10 @@ import { resolveLlmCredential } from "./db";
 import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
-export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
+export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
 
 export interface LlmEndpoint {
-  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "openrouter";
+  provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "meta" | "openrouter";
   url: string;
   key?: string;
   model: string;
@@ -28,6 +28,7 @@ export function llmModelFamily(model: string | undefined): LlmModelFamily {
   if (/gemini/i.test(normalized)) return "gemini";
   if (/(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(normalized)) return "mistral";
   if (/deepseek/i.test(normalized)) return "deepseek";
+  if (/llama/i.test(normalized)) return "meta";
   return "openai";
 }
 
@@ -96,6 +97,8 @@ export function resolveLlmEndpoint(
       model = `mistralai/${model}`;
     } else if (/^deepseek/i.test(model)) {
       model = `deepseek/${model}`;
+    } else if (/^llama/i.test(model)) {
+      model = `meta-llama/${model}`;
     } else if (/^(gpt|o1|o3)/i.test(model)) {
       model = `openai/${model}`;
     }

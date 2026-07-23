@@ -25,9 +25,52 @@
  *  match case, so this must not lowercase. */
 export function canonicalModelId(model: string | null | undefined): string {
   if (!model) return "";
-  const name = model.trim();
+  let name = model.trim();
+
+  // Strip any vendor routing prefix (e.g. "openrouter/", "anthropic/", "x-ai/", "google/", "meta-llama/", etc.)
   if (name.includes("/")) {
-    return name.split("/").pop() || name;
+    name = name.split("/").pop() || name;
   }
+  name = name.replace(/^~anthropic\//i, "").replace(/^xai\//i, "").replace(/^meta-llama\//i, "");
+
+  const lower = name.toLowerCase();
+
+  // Anthropic family
+  if (/sonnet/i.test(lower)) return "claude-sonnet-latest";
+  if (/haiku/i.test(lower)) return "claude-haiku-latest";
+  if (/opus/i.test(lower)) return "claude-opus-latest";
+  if (/fable/i.test(lower)) return "claude-fable-latest";
+
+  // xAI family
+  if (/grok.*build|build/i.test(lower) && /grok/i.test(lower)) return "grok-build-latest";
+  if (/grok/i.test(lower)) return "grok-latest";
+
+  // Google Gemini family
+  if (/gemini.*flash.*lite|flash.*lite/i.test(lower)) return "gemini-flash-lite-latest";
+  if (/gemini.*flash|flash/i.test(lower)) return "gemini-flash-latest";
+  if (/gemini.*pro|pro/i.test(lower)) return "gemini-pro-latest";
+
+  // DeepSeek family
+  if (/deepseek.*r1|r1|reasoner/i.test(lower)) return "deepseek-r1-latest";
+  if (/deepseek.*flash|v4-flash|chat/i.test(lower)) return "deepseek-flash-latest";
+  if (/deepseek.*pro|v4-pro/i.test(lower)) return "deepseek-pro-latest";
+
+  // Mistral family
+  if (/mistral.*small|small/i.test(lower)) return "mistral-small-latest";
+  if (/mistral.*medium|medium/i.test(lower)) return "mistral-medium-latest";
+  if (/mistral.*large|large/i.test(lower)) return "mistral-large-latest";
+
+  // Meta family
+  if (/llama/i.test(lower)) return "llama-70b-latest";
+
+  // OpenAI family
+  if (/sol/i.test(lower)) return "gpt-sol-latest";
+  if (/terra/i.test(lower)) return "gpt-terra-latest";
+  if (/luna/i.test(lower)) return "gpt-luna-latest";
+  if (/mini/i.test(lower) && !/gpt-4o/i.test(lower)) return "gpt-mini-latest";
+  if (/nano/i.test(lower)) return "gpt-nano-latest";
+  if (/gpt-4o-mini/i.test(lower)) return "gpt-mini-latest";
+  if (/gpt-4o/i.test(lower)) return "gpt-4o-latest";
+
   return name;
 }
