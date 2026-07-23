@@ -62,3 +62,11 @@ The receiver gate cleared on exact Usage-Monitor main
 fresh scheduler, Garage restore/integrity/FK/schema verification, and a committed deploy receipt.
 Land through protected checks, then verify the exact Coolify production SHA plus one authenticated
 v2 ACK.
+
+## Provider-family exclusions (post-merge)
+
+After this producer lands, the retired-provider cleanup lane filters Alpaca (including
+`alpaca-news` / `alpaca-snapshot`), Tradier, and Robinhood out of live call-volume and durable
+provider-dispatch replay admission. Strict-v2 event IDs, complete/partial ACK rules, replay
+watermarks, and cutover seeding are unchanged; those families simply never enter the monitor feed.
+See `docs/rollouts/2026-07-22-retired-provider-usage-cleanup.md`.

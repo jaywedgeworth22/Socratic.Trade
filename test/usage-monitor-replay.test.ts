@@ -436,6 +436,85 @@ describe("usage monitor durable replay", () => {
     expect(captured[0]!.rawBody).toBe(firstRaw);
   });
 
+  it("advances the provider watermark past an all-retired page without posting", async () => {
+    const reserved = reserveProviderDispatch({
+      provider: "alpaca",
+      operation: "get-portfolio",
+      credentialRef: "alpaca-key:test",
+      userId: "local",
+      now: "2026-07-22T15:00:00.000Z",
+    });
+    expect(reserved.admitted).toBe(true);
+    if (!reserved.admitted) throw new Error("Expected alpaca reservation admission.");
+    markProviderDispatchStarted(reserved.attemptId, "2026-07-22T15:00:01.000Z");
+
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+    const result = await replay.runUsageMonitorReplay();
+
+    // Rows are counted as progressed for observability, but null events never hit the network.
+    expect(result.provider).toEqual({ sent: 1, complete: true, failed: false });
+    expect(captured).toHaveLength(0);
+    const watermark = storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider);
+    expect(watermark?.id).toBe(`provider-attempt:${reserved.attemptId}`);
+    expect(watermark?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("replays mixed retired+paid provider pages with only paid events on the wire", async () => {
+    const retired = reserveProviderDispatch({
+      provider: "robinhood",
+      operation: "get-portfolio",
+      credentialRef: "rh-key:test",
+      userId: "local",
+      now: "2026-07-22T15:10:00.000Z",
+    });
+    const paid = reserveProviderDispatch({
+      provider: "fmp",
+      operation: "income-statement",
+      credentialRef: "fmp-key:test",
+      userId: "local",
+      now: "2026-07-22T15:10:01.000Z",
+    });
+    expect(retired.admitted).toBe(true);
+    expect(paid.admitted).toBe(true);
+    if (!retired.admitted || !paid.admitted) {
+      throw new Error("Expected mixed provider reservation admission.");
+    }
+    markProviderDispatchStarted(retired.attemptId, "2026-07-22T15:10:00.500Z");
+    markProviderDispatchStarted(paid.attemptId, "2026-07-22T15:10:01.500Z");
+
+    const captured: CapturedRequest[] = [];
+    push.__setUsageMonitorFetch(fetchStub(captured));
+    const result = await replay.runUsageMonitorReplay();
+
+    expect(result.provider).toEqual({ sent: 2, complete: true, failed: false });
+    const providers = captured.flatMap((request) => request.body.events).map((e) => e.provider);
+    expect(providers).toEqual(["fmp"]);
+    expect(captured[0]!.body.schemaVersion).toBe(2);
+    expect(captured[0]!.body.events[0]).toMatchObject({
+      provider: "fmp",
+      service: "provider-dispatch",
+      eventId: telemetryKey("provider-dispatch", `provider-attempt:${paid.attemptId}`),
+    });
+    // Watermark advances past BOTH rows (order is (created_at, id); UUID order is not load-bearing).
+    const watermarkId = storedWatermark(replay.USAGE_MONITOR_REPLAY_WATERMARK_KEYS.provider)?.id;
+    expect([
+      `provider-attempt:${retired.attemptId}`,
+      `provider-attempt:${paid.attemptId}`,
+    ]).toContain(watermarkId);
+
+    // Crash-safe inclusive overlap may re-touch the last row; retired families still never ship.
+    captured.length = 0;
+    const second = await replay.runUsageMonitorReplay();
+    expect(second.provider.complete).toBe(true);
+    expect(second.provider.failed).toBe(false);
+    const secondProviders = captured
+      .flatMap((request) => request.body.events)
+      .map((event) => event.provider);
+    expect(secondProviders.every((provider) => provider === "fmp")).toBe(true);
+    expect(secondProviders).not.toContain("robinhood");
+  });
+
   it("does not regress a watermark advanced by an overlapping process", async () => {
     const older = "2026-07-10T14:30:00.000Z";
     const newer = "2026-07-10T14:31:00.000Z";
