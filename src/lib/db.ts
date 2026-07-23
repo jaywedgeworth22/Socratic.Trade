@@ -2341,6 +2341,15 @@ const MIGRATIONS: Migration[] = [
     version: 57,
     name: "earningscalls_burst_seed",
     up: (database) => {
+      // Partial-schema unit tests (and any legacy file that somehow lacks settings)
+      // must still be able to run this one-shot seed without "no such table: settings".
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
       database
         .prepare(
           `INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`
