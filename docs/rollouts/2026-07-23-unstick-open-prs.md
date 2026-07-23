@@ -54,3 +54,10 @@ Auto-merge: `gh pr merge <n> --squash --auto` armed on all five; checks re-queue
 - RAG feature enablement remains Planned (`docs/FEATURE-ENABLEMENT-BACKLOG.md`) — do not flip flags without re-embed proof.
 - GitHub Issues: needs a token with Issues read/write; this session could not access them.
 - Stale In Progress rows older than 2026-07-20 still need a later board pass (check-pin restore, smoke trim, which-key UI, etc.) once their PR status is confirmed.
+
+## Follow-up during CI (same session)
+
+- `#1819` hosted verify failed once: `persistence-hardening` expected a frozen settings key set
+  after migrations through v57, but v57 seeds `earningscalls_burst_pending`. Fixed on the PR
+  branch (`30f5c793`) to assert purge of the legacy cooldown key without freezing the key set.
+- `#1842`/`#1901`/`#1902`/`#1792` still waiting on hosted verify queue at time of writing.
