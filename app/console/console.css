@@ -243,47 +243,16 @@
 }
 
 /* ── Autonomy desk home ── */
-.con-thesis-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
-  gap: 16px;
-  align-items: stretch;
+.con-strategy-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
   border: 1px solid var(--con-line);
-  /* Flat surface + accent left-rule, not a gradient wash (2026-07-08 UI-audit,
-     Package G item 4) — the gradient read as decoration without meaning. */
   border-left: 3px solid var(--con-accent);
   border-radius: var(--con-radius);
   background: var(--con-surface);
-  box-shadow: var(--con-shadow);
-  padding: 18px;
-}
-.con-thesis-hero h1 {
-  margin-top: 8px;
-  max-width: 760px;
-  font-size: var(--con-fs-xxl);
-  line-height: 1.12;
-  font-weight: 750;
-  color: var(--con-fg);
-}
-.con-thesis-hero p {
-  margin-top: 10px;
-  max-width: 820px;
-  color: var(--con-muted);
-  font-size: var(--con-fs-md);
-  line-height: 1.55;
-}
-.con-autonomy-card {
-  min-width: 0;
-  border: 1px solid var(--con-accent-border);
-  border-radius: var(--con-radius-sm);
-  background: color-mix(in oklab, var(--con-accent) 8%, var(--con-surface));
-  padding: 14px;
-}
-.con-autonomy-card p {
-  margin-top: 4px;
-  color: var(--con-muted);
-  font-size: var(--con-fs-sm);
-  line-height: 1.45;
+  padding: 10px 14px;
 }
 .con-decision-list {
   display: flex;
@@ -369,20 +338,14 @@
 }
 
 @media (max-width: 900px) {
-  .con-thesis-hero {
-    grid-template-columns: 1fr;
+  .con-strategy-bar {
+    /* Allow wrapping to stack naturally on narrow screens */
   }
 }
 
 @media (max-width: 640px) {
-  .con-thesis-hero {
-    padding: 14px;
-  }
-  .con-thesis-hero h1 {
-    font-size: var(--con-fs-xl);
-  }
-  .con-thesis-hero p {
-    font-size: var(--con-fs-base);
+  .con-strategy-bar {
+    padding: 8px 10px;
   }
   .con-decision-row {
     grid-template-columns: 1fr;

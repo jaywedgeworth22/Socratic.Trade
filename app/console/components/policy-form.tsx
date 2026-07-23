@@ -183,7 +183,10 @@ export function PolicyDualModeRow({
   const pctTouched = pctDef.path in draft.values;
   const moneyValue = moneyTouched ? draft.values[moneyDef.path] : getAtPath(policy, moneyDef.path);
   const pctValue = pctTouched ? draft.values[pctDef.path] : getAtPath(policy, pctDef.path);
-  const policyMode: "money" | "pct" = !isBlank(getAtPath(policy, pctDef.path)) ? "pct" : "money";
+  // Percentage is the safe, account-relative default. Preserve an explicit
+  // dollar mode for legacy/custom policies, but never default a blank pair to
+  // an arbitrary dollar field.
+  const policyMode: "money" | "pct" = !isBlank(getAtPath(policy, pctDef.path)) || isBlank(getAtPath(policy, moneyDef.path)) ? "pct" : "money";
   const [draftMode, setDraftMode] = useState<"money" | "pct">(policyMode);
   const [editText, setEditText] = useState<string | null>(null);
   // Sync draft mode when the policy mode changes (e.g. account switch) so the first

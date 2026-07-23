@@ -26,6 +26,8 @@ import {
   type FundamentalRow,
   type AnalystRow,
   type SharePayload,
+  classifyTickerAlias,
+  resolveContinuousTicker,
   resolveTickerAlias,
   SecurityRefInputSchema,
   PriceSeriesSchema,
@@ -201,13 +203,35 @@ export interface CongressShareResult {
 // ── Mappers (pure, unit-testable) ──────────────────────────────────────────────
 
 /**
- * Canonicalize a symbol for OUTBOUND rows: normalize (trim+upper) then resolve corporate-action
- * aliases via the shared map (FB->META, SQ->XYZ, ATVI->MSFT, ...). Applied to the `ticker` field of
- * every row App B sends to App A so a renamed ticker never fragments into a dead-symbol row on App A's
- * side. Well-formed non-aliased symbols (incl. share-class hyphens like BRK-B) pass through unchanged.
+ * Canonicalize a symbol for OUTBOUND IDENTITY / company-ref rows: normalize (trim+upper) then
+ * resolve corporate-action aliases via the shared map (FB->META, SQ->XYZ, ATVI->MSFT, ...). This is
+ * display/identity resolution — acquisitions fold onto the acquirer so App A does not keep a dead
+ * securities_ref row. For MARKET DATA (prices/fundamentals/analyst/insider/short-vol) use
+ * `canonicalMarketDataSymbol` instead, which drops acquisition sources so their history is never
+ * relabeled onto the acquirer. Well-formed non-aliased symbols (incl. share-class hyphens like
+ * BRK-B) pass through unchanged.
  */
 export function canonicalOutboundSymbol(symbol: string): string {
   return resolveTickerAlias(normalizeSymbol(symbol));
+}
+
+/**
+ * Canonicalize a symbol for MARKET-DATA rows (price / fundamentals / analyst / insider /
+ * short-volume). Uses the shared package's rename-vs-acquisition classification
+ * (`classifyTickerAlias` / `resolveContinuousTicker` / curated `TICKER_RENAMES` +
+ * `TICKER_ACQUISITIONS`) — do NOT hand-roll a local acquisition set.
+ *
+ * - RENAMES (FB->META, SQ->XYZ, …): fold to the current ticker (continuous series).
+ * - ACQUISITIONS (ATVI, TWX, RHT, …): return `null` so the caller DROPS the row — an acquired
+ *   ticker's numbers must never be relabeled onto the acquirer.
+ * - Non-aliased well-formed symbols pass through unchanged.
+ */
+export function canonicalMarketDataSymbol(symbol: string): string | null {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return null;
+  const classified = classifyTickerAlias(normalized);
+  if (classified?.class === "acquisition") return null;
+  return resolveContinuousTicker(normalized);
 }
 
 /**
@@ -244,7 +268,7 @@ export function marketQuoteToFundamentals(
   q: Pick<MarketQuote, "symbol" | "peRatio" | "eps" | "beta" | "dividendYield" | "fiftyTwoWeekHigh" | "fiftyTwoWeekLow" | "fcfYield" | "debtToEquity" | "epsGrowth">,
   date: string
 ): CongressFundamental | null {
-  const ticker = canonicalOutboundSymbol(q.symbol);
+  const ticker = canonicalMarketDataSymbol(q.symbol); // renames only; drops acquired tickers
   if (!ticker) return null;
   const row: CongressFundamental = { ticker, date };
   const pe = numOrUndef(q.peRatio); if (pe !== undefined) row.peRatio = pe;
@@ -269,7 +293,7 @@ export function marketQuoteToAnalyst(
   q: Pick<MarketQuote, "symbol" | "analystRating" | "analystBySource" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian">,
   date: string
 ): CongressAnalyst | null {
-  const ticker = canonicalOutboundSymbol(q.symbol);
+  const ticker = canonicalMarketDataSymbol(q.symbol); // renames only; drops acquired tickers
   if (!ticker) return null;
   const counts = { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
   let haveCounts = false;
@@ -315,7 +339,7 @@ export function ohlcBarsToCloses(bars: OHLCBar[] | null | undefined): CongressCl
 
 /** Build a per-ticker price entry from OHLC bars. currentPrice/currentPriceDate = most recent close. */
 export function ohlcBarsToPriceEntry(symbol: string, bars: OHLCBar[] | null | undefined): CongressPrice | null {
-  const ticker = canonicalOutboundSymbol(symbol);
+  const ticker = canonicalMarketDataSymbol(symbol); // renames only; drops acquired tickers (never relabel bars onto the acquirer)
   if (!ticker) return null;
   const closes = ohlcBarsToCloses(bars);
   if (closes.length === 0) return null;
@@ -346,8 +370,10 @@ export function buildInsiderImport(): CongressInsider[] {
     const sig = signals[sym];
     const a = agg.get(sym);
     if (!sig || !a) continue;
+    const ticker = canonicalMarketDataSymbol(sym);
+    if (!ticker) continue; // acquired ticker — drop rather than relabel onto the acquirer
     out.push({
-      ticker: canonicalOutboundSymbol(sym),
+      ticker,
       date: a.date,
       sentiment: sig.insiderSentiment,
       buyFilings: sig.buyFilings,
@@ -372,7 +398,9 @@ export function buildShortVolumeImport(): CongressShortVol[] {
     if (!sig) continue;
     const date = sig.asOf ?? ds?.asOf;
     if (!date) continue;
-    out.push({ ticker: canonicalOutboundSymbol(sym), date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
+    const ticker = canonicalMarketDataSymbol(sym);
+    if (!ticker) continue; // acquired ticker — drop rather than relabel onto the acquirer
+    out.push({ ticker, date, ratio: sig.shortVolumeRatio, elevated: sig.elevated });
   }
   return out.slice(0, maxDailyTickers());
 }
@@ -451,6 +479,13 @@ export async function shareWithCongressTrade(payload: CongressSharePayload): Pro
   if (!token) return { ok: false, skipped: true, reason: "no-token", sent };
   const total = sent.refs + sent.spx + sent.prices + sent.insider + sent.shortVolume + sent.fundamentals + sent.analyst;
   if (total === 0) {
+    // Distinguish a genuinely-empty input (nothing to send → legitimate skip) from a payload whose
+    // rows were ALL rejected by the shared schema. The latter is a real failure: counting it as a
+    // skip would let the daily-run marker advance and silently swallow schema/API drift until the
+    // next day. Returning skipped:false makes runCongressDailyShare count it in failedPosts.
+    if (Object.keys(dropped).length > 0) {
+      return { ok: false, skipped: false, reason: "all-rows-dropped", sent };
+    }
     return { ok: false, skipped: true, reason: "empty", sent };
   }
 
