@@ -21,11 +21,26 @@
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { stripClientIdentityHeaders } from "./src/lib/auth/strip-identity";
+import { createRemoteJWKSet } from "jose/jwks/remote";
+import { jwtVerify } from "jose/jwt/verify";
+import {
+  AUTHENTICATED_IDENTITY_SOURCE_HEADER,
+  AUTHENTICATED_SESSION_ISSUED_AT_HEADER,
+  AUTHENTICATED_IDENTITY_SOURCES,
+  stripClientIdentityHeaders,
+  type AuthenticatedIdentitySource
+} from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
 import { getSessionEmail } from "./src/lib/auth/session-edge";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
+// The primary operator's aliases — additional addresses that map to the same primary account. Kept in sync
+// with src/lib/auth/identity.ts (which does the email→userId mapping in the Node runtime).
+const PRIMARY_SET = new Set(
+  [PRIMARY_EMAIL, ...(process.env.PRIMARY_USER_EMAIL_ALIASES || "").split(",")]
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
 const ALLOWED = (process.env.ALLOWED_EMAILS || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
@@ -61,7 +76,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     // Public (no auth) — but still strip client-supplied identity headers so a forged
     // identity can never reach a handler that reads it.
     const headers = stripClientIdentityHeaders(new Headers(req.headers));
-    return NextResponse.next({ request: { headers } });
+    return withSecurityHeaders(NextResponse.next({ request: { headers } }));
   }
 
   // CSRF: reject cross-site state-changing requests to /api/*
@@ -77,10 +92,12 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       host: req.headers.get("host")
     });
     if (!csrf.ok) {
-      return new NextResponse(JSON.stringify({ ok: false, error: "Cross-site request blocked (CSRF)." }), {
-        status: 403,
-        headers: { "content-type": "application/json" }
-      });
+      return withSecurityHeaders(
+        new NextResponse(JSON.stringify({ ok: false, error: "Cross-site request blocked (CSRF)." }), {
+          status: 403,
+          headers: { "content-type": "application/json" }
+        })
+      );
     }
   }
 
@@ -116,10 +133,39 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       : NextResponse.redirect(new URL("/login", req.url));
   }
 
-  // Strip any spoofable client-supplied identity hints, then forward the VERIFIED identity.
+  // --- Authorization ---
+
+  if (trustedEmail) {
+    if (!isEmailAllowed(trustedEmail, fromCf)) {
+      // Authenticated upstream, but not permitted in this app.
+      return withSecurityHeaders(
+        pathname.startsWith("/api/")
+          ? new NextResponse("Forbidden", { status: 403 })
+          : NextResponse.redirect(new URL("/access-denied", req.url))
+      );
+    }
+  } else if (pathname.startsWith("/api/admin/") && (req.headers.has("x-admin-token") || (req.headers.get("authorization") ?? "").trim().toLowerCase().startsWith("bearer "))) {
+    // Allow unauthenticated requests with an x-admin-token or bearer token to reach the admin route handlers.
+    // The middleware does NOT validate the token; the route handler's `requireAdmin()` or custom auth (like verifySecuritiesImportToken) will strictly validate it.
+  } else {
+    // No verified identity and auth is configured (or armed) → FAIL CLOSED.
+    return withSecurityHeaders(
+      pathname.startsWith("/api/")
+        ? new NextResponse("Unauthorized", { status: 401 })
+        : NextResponse.redirect(new URL("/login", req.url))
+    );
+  }
+
+  // Strip spoofable client-supplied identity hints, then forward the resolved identity + provenance.
   const headers = stripClientIdentityHeaders(new Headers(req.headers));
-  headers.set("x-authenticated-user-email", trustedEmail);
-  return NextResponse.next({ request: { headers } });
+  headers.set("x-authenticated-user-email", trustedEmail || "");
+  // Preserve provenance separately from the email. Node handlers use this trusted middleware-set
+  // marker to distinguish verified identities from the auth-unconfigured local fallback.
+  if (identitySource) headers.set(AUTHENTICATED_IDENTITY_SOURCE_HEADER, identitySource);
+  if (sessionIssuedAt !== null) {
+    headers.set(AUTHENTICATED_SESSION_ISSUED_AT_HEADER, new Date(sessionIssuedAt).toISOString());
+  }
+  return withSecurityHeaders(NextResponse.next({ request: { headers } }));
 }
 
 export const config = {
