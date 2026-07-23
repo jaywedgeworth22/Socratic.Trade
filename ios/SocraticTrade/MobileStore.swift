@@ -1,14 +1,89 @@
 import Foundation
-import SwiftUI
+import Combine
+
+struct CommandAttemptTracker {
+    private struct PendingAttempt {
+        let fingerprint: String
+        let idempotencyKey: String
+        var commandID: String?
+    }
+
+    struct Resolution: Equatable {
+        let operationID: String
+        let status: String
+        let error: String?
+    }
+
+    private var attempts: [String: PendingAttempt] = [:]
+
+    mutating func idempotencyKey(
+        operationID: String,
+        commandType: String,
+        payload: [String: Any]
+    ) -> String {
+        let object: [String: Any] = ["commandType": commandType, "payload": payload]
+        let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let fingerprint = data?.base64EncodedString() ?? "\(commandType):\(operationID)"
+        if let pending = attempts[operationID], pending.fingerprint == fingerprint {
+            return pending.idempotencyKey
+        }
+        let key = UUID().uuidString
+        attempts[operationID] = PendingAttempt(
+            fingerprint: fingerprint,
+            idempotencyKey: key,
+            commandID: nil
+        )
+        return key
+    }
+
+    mutating func track(_ command: MobileCommand, operationID: String) {
+        guard var attempt = attempts[operationID] else { return }
+        attempt.commandID = command.id
+        attempts[operationID] = attempt
+    }
+
+    mutating func reconcile(_ commands: [MobileCommand]) -> [Resolution] {
+        let commandsByID = Dictionary(uniqueKeysWithValues: commands.map { ($0.id, $0) })
+        var resolutions: [Resolution] = []
+        for (operationID, attempt) in Array(attempts) {
+            guard
+                let commandID = attempt.commandID,
+                let command = commandsByID[commandID],
+                command.isTerminal
+            else {
+                continue
+            }
+            attempts.removeValue(forKey: operationID)
+            resolutions.append(
+                Resolution(operationID: operationID, status: command.status, error: command.error)
+            )
+        }
+        return resolutions
+    }
+
+    mutating func release(operationID: String) {
+        attempts.removeValue(forKey: operationID)
+    }
+
+    mutating func removeAll() {
+        attempts = [:]
+    }
+}
 
 @MainActor
 final class MobileStore: ObservableObject {
-    @Published var snapshot: MobileSnapshot?
+    @Published private(set) var snapshot: MobileSnapshot?
     @Published var error: String?
-    @Published var busy = false
-    @Published var deletionRequest: AccountDeletionRequest?
-    @Published var isAuthenticated = false
-    @Published var hasInitialized = false
+    @Published private(set) var isAuthenticated = false
+    @Published private(set) var hasInitialized = false
+    @Published private(set) var isRefreshing = false
+    @Published private(set) var lastUpdatedAt: Date?
+    @Published private(set) var isStreamConnected = false
+    @Published private(set) var busyOperations: Set<String> = []
+    @Published private(set) var deletionRequest: AccountDeletionRequest?
+    @Published private(set) var isDeletingAccount = false
+    @Published private(set) var isSigningIn = false
+    @Published private(set) var snapshotLoadFailed = false
 
     private let client: MobileAPIClient
     private var eventTask: Task<Void, Never>?
@@ -19,8 +94,40 @@ final class MobileStore: ObservableObject {
     private var reloadInFlight = false
     private var reloadPending = false
 
-    init(client: MobileAPIClient) {
+    init(client: MobileAPIClient, previewSnapshot: MobileSnapshot? = nil) {
         self.client = client
+        snapshot = previewSnapshot
+        isAuthenticated = previewSnapshot != nil
+        hasInitialized = previewSnapshot != nil
+        lastUpdatedAt = previewSnapshot == nil ? nil : Date()
+    }
+
+    var isInitialLoading: Bool {
+        !hasInitialized && snapshot == nil
+    }
+
+    var hasActiveCommandWork: Bool {
+        !busyOperations.isEmpty
+    }
+
+    func isBusy(_ operationID: String) -> Bool {
+        busyOperations.contains(operationID)
+    }
+
+    func isSnapshotStale(at now: Date = Date()) -> Bool {
+        guard let lastUpdatedAt else { return snapshot != nil }
+        return snapshotLoadFailed || now.timeIntervalSince(lastUpdatedAt) > 180
+    }
+
+    func canSubmit(_ commandType: String, at now: Date = Date()) -> Bool {
+        if Self.protectiveCommands.contains(commandType) {
+            return true
+        }
+        guard let snapshot, !isSnapshotStale(at: now) else { return false }
+        if Self.readinessDependentCommands.contains(commandType) {
+            return snapshot.readiness.hasAccount && snapshot.readiness.hasUniverse
+        }
+        return true
     }
 
     func load() async {
@@ -69,36 +176,47 @@ final class MobileStore: ObservableObject {
         busy = true
         defer { busy = false }
         do {
-            _ = try await client.submit(commandType: commandType, payload: payload)
+            let command = try await client.submit(
+                commandType: commandType,
+                payload: payload,
+                idempotencyKey: idempotencyKey
+            )
+            commandAttemptTracker.track(command, operationID: operationID)
             await load()
         } catch {
             applyAuthAwareError(error)
         }
     }
 
-    func startAccountDeletion() async {
-        busy = true
-        defer { busy = false }
+    func loadAccountDeletionPreview() async {
+        guard !isDeletingAccount else { return }
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
         do {
-            deletionRequest = try await client.startAccountDeletion()
+            deletionRequest = try await client.accountDeletionPreview()
             error = nil
         } catch {
             applyAuthAwareError(error)
         }
     }
 
-    func confirmAccountDeletion(typedIdentity: String, typedText: String) async -> AccountDeletionResult? {
-        guard let request = deletionRequest else { return nil }
-        busy = true
-        defer { busy = false }
+    func clearAccountDeletionPreview() {
+        deletionRequest = nil
+    }
+
+    func confirmAccountDeletion(typedIdentity: String, typedText: String) async -> URL? {
+        guard deletionRequest != nil, !isDeletingAccount else { return nil }
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
         do {
             let result = try await client.confirmAccountDeletion(
-                requestId: request.requestId,
                 typedIdentity: typedIdentity,
                 typedText: typedText
             )
-            error = nil
-            return result
+            // The HTTP success is authoritative. Clear cookies and all in-memory account state
+            // before inspecting optional receipt fields so response drift cannot preserve access.
+            clearLocalSession()
+            return client.resolvedURL(result.logoutUrl ?? "/logout")
         } catch {
             applyAuthAwareError(error)
             return nil
@@ -106,15 +224,19 @@ final class MobileStore: ObservableObject {
     }
 
     func loginWithApple(identityToken: String, name: String?) async {
-        busy = true
-        defer { busy = false }
+        guard !isSigningIn else { return }
+        isSigningIn = true
+        defer { isSigningIn = false }
         do {
             _ = try await client.loginWithApple(identityToken: identityToken, name: name)
-            error = nil
             isAuthenticated = true
+            error = nil
             await load()
-            startEvents()
+            if isAuthenticated {
+                startEvents()
+            }
         } catch {
+            applyAuthAwareError(error)
             self.error = "Apple Sign-In failed: \(error.localizedDescription)"
         }
     }

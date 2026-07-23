@@ -56,6 +56,7 @@ import { LlmCredentialRequiredError, LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_RE
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
+import { freshPlacementBlockReason } from "./system-state-placement-guard";
 import { OrderValidationError } from "./types";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
@@ -124,7 +125,7 @@ import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
 import { clearStopPlans, clearTakeProfitTrimBands, filterStopPlansByLiveBasis, getStopPlans, getTakeProfitTrimBands, recordStopPlan, listSyntheticStops } from "./db";
 import type { TakeProfitTrimBand } from "./db";
-import { recordLlmUsage, extractLlmUsage, remapOpenRouterTelemetry } from "./llm-usage";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload, remapOpenRouterTelemetry } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import {
@@ -267,6 +268,17 @@ export function liveApprovalText(symbol: string): string {
 
 export function liveBatchApprovalText(count: number): string {
   return `APPROVE ${count} LIVE ${count === 1 ? "ORDER" : "ORDERS"}`;
+}
+
+/** Appends `next` after `sentence` with exactly one separating period — never two. Red Team
+ *  unavailable/error reasons (red-team.ts's `unavailable(...)` helper) always end their own
+ *  message with a period, so templating a hard-coded "." right after one produced a doubled
+ *  "..' in the "Why your approval is required" card (e.g. "...key in Connections.. No model
+ *  critiqued..."). Trims `sentence` first so trailing whitespace before the period doesn't slip
+ *  through the endsWith check. */
+function appendSentence(sentence: string, next: string): string {
+  const trimmed = sentence.trim();
+  return `${trimmed}${/[.!?]$/.test(trimmed) ? "" : "."} ${next}`;
 }
 
 /**
@@ -1951,7 +1963,10 @@ export async function runStrategyOnce(
             requireHumanReview(proposal, {
               code: "initial_red_team",
               title: "Red Team review unavailable",
-              summary: `The adversarial review could not run (${describeRedTeamFailureKind(redTeamResult.failureKind)}): ${redTeamResult.reason}. No model critiqued this opening, so it requires your review.`
+              summary: appendSentence(
+                `The adversarial review could not run (${describeRedTeamFailureKind(redTeamResult.failureKind)}): ${redTeamResult.reason}`,
+                "No model critiqued this opening, so it requires your review."
+              )
             });
           }
           audit(
@@ -3138,6 +3153,44 @@ export async function runStrategyOnce(
       }
 
       let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
+      const protectiveStateBlock = freshPlacementBlockReason({
+        userId,
+        connectedAccountId,
+        side: normalizedProposal.side
+      });
+      if (protectiveStateBlock) {
+        const blockedDecision: PolicyDecision = {
+          ...decision,
+          approved: false,
+          reasons: [...decision.reasons, protectiveStateBlock]
+        };
+        updateProposalStatus(
+          proposalId,
+          "blocked",
+          undefined,
+          review,
+          review.estimatedNotional,
+          userId,
+          undefined,
+          protectiveStateBlock,
+          blockedDecision
+        );
+        audit(
+          "order_blocked_fresh_protective_state",
+          {
+            runId,
+            proposalId,
+            refId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            reason: protectiveStateBlock
+          },
+          userId,
+          connectedAccountId
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [protectiveStateBlock] });
+        continue;
+      }
       try {
         execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal, refId });
       } catch (placeError) {
@@ -4834,7 +4887,11 @@ async function proposeTrades(input: {
       userContent: JSON.stringify(userContent),
       schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-      reasoningEffort: bullReasoningEffort
+      reasoningEffort: bullReasoningEffort,
+      userId: input.userId,
+      keyRef: llmKeyRef,
+      service: "strategy",
+      feature: "strategy"
     }
   );
 
@@ -4878,7 +4935,11 @@ async function proposeTrades(input: {
           userContent: JSON.stringify(userContent),
           schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
           maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort)
+          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort),
+          userId: input.userId,
+          keyRef: ep.keyRef,
+          service: "strategy",
+          feature: "strategy"
         }
       )
     });
@@ -5006,7 +5067,7 @@ async function proposeTrades(input: {
               throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
             }
             const payload = await response.json();
-            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(payload) });
+            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, providerRequestId: providerRequestIdFromPayload(attempt.provider, payload), ...extractLlmUsage(payload) });
             bullServedProposalModel = attempt.proposalModel;
             // Served-by-fallback detection compares the ATTEMPT to the configured primary (not
             // `i > 0`): cooldown planning can drop the primary from the chain entirely, making a

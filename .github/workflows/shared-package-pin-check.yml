@@ -36,11 +36,9 @@ name: Shared package pin check
 # Keep this file ASCII-only (AGENTS.md) -- no em dashes / arrows near shell $VARs.
 
 on:
+  # The check must emit a status on every PR. A path filter leaves untouched PRs
+  # without a check-run, which can strand required-context merges indefinitely.
   pull_request:
-    paths:
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/shared-package-pin-check.yml'
   push:
     branches: [main]
   schedule:
@@ -61,9 +59,19 @@ jobs:
     # This job receives a private-repo token. Reject fork PRs before checkout or
     # runner assignment; push/schedule/manual events remain admitted.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, trading-live]
+    runs-on: [self-hosted, socratic-ci]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Keep the consumer manifest present even if cleanup from a prior job
+      # overlaps this long-lived runner workspace after the first checkout.
+      - name: Refresh checkout before reading package metadata
+        uses: actions/checkout@v4
 
       - name: Compare shared-package version against the peer consumer
         env:

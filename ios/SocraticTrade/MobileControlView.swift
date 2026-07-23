@@ -27,9 +27,11 @@ struct MobileControlView: View {
                 recentCommandsSection
                 deletionSection
             }
-            .navigationTitle("Trading")
-            .toolbar {
-                Button("Refresh") { Task { await store.load() } }
+            .tabItem { AppTab.home.label }
+            .tag(AppTab.home)
+
+            NavigationStack {
+                ProposalsView()
             }
             // Item 30: typed-confirmation prompt for approving a broker/live proposal. Parity with
             // app/mobile/mobile-pwa-client.tsx's inline live-approval field and
@@ -276,3 +278,36 @@ private struct ProposalApprovalRow: View {
         }
     }
 }
+
+private enum AppTab: String, CaseIterable, Identifiable {
+    case home
+    case proposals
+    case markets
+    case activity
+    case coach
+
+    var id: String { rawValue }
+
+    @ViewBuilder
+    var label: some View {
+        switch self {
+        case .home:
+            Label("Home", systemImage: "house.fill")
+        case .proposals:
+            Label("Proposals", systemImage: "checklist")
+        case .markets:
+            Label("Markets", systemImage: "chart.line.uptrend.xyaxis")
+        case .activity:
+            Label("Activity", systemImage: "clock.arrow.circlepath")
+        case .coach:
+            Label("Coach", systemImage: "bubble.left.and.text.bubble.right.fill")
+        }
+    }
+}
+
+#if DEBUG
+#Preview("Five-tab shell") {
+    MobileControlView()
+        .environmentObject(MobileStore.preview)
+}
+#endif

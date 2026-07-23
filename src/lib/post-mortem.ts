@@ -1,8 +1,10 @@
 import { getDb, getUserSetting, setUserSetting, deleteUserSetting, audit, getInternalSetting, setInternalSetting, deleteInternalSetting, getPolicy, listConnectedAccounts, upsertFillExcursionsByKey } from "./db";
-import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from "./performance";
+import { recordLlmUsage, extractLlmUsage, providerRequestIdFromPayload } from "./llm-usage";
+import { getRegimeScorecard, getThesisScorecard, getThesisRegimeScorecard, getClosedLotsDetailed } from "./performance";
 import { ingestLearned } from "./learned-context/store";
-import type { ThesisStat } from "./performance";
+import type { ThesisStat, ThesisRegimeStat } from "./performance";
+import { storeContexts } from "./vector-db";
+import type { ContextDocument } from "./vector-db";
 import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
@@ -207,6 +209,16 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         connectedAccount.id,
         connectedAccount.environment
       );
+      // Deterministic thesis x regime "conditioned lesson" vectors — one living, overwrite-in-place
+      // doc per well-sampled bucket. Rides this function's existing signature-dedup gate (stats can't
+      // change without new fills) and inherits the existing budget/no-key early returns above.
+      const comboStats = getThesisRegimeScorecard(accountNumber, source, {}, userId);
+      await writeThesisRegimeLessonVectors(
+        comboStats,
+        userId,
+        connectedAccount.id,
+        connectedAccount.environment
+      );
       await validatePaperToLiveThesisTransfers(userId);
     }
   } catch (error) {
@@ -269,6 +281,25 @@ function truncate(value: unknown, max: number): string | undefined {
 
 // Minimum closed lots before a thesis's realized record is durable enough to record as a fact.
 const MIN_LOTS_FOR_TRACK_RECORD_FACT = 5;
+// Same threshold for the thesis x regime lesson vectors — a bucket is only "well-sampled" once
+// it clears the same sample-size bar as the 1-D thesis fact.
+const MIN_LOTS_FOR_LESSON_VECTOR = MIN_LOTS_FOR_TRACK_RECORD_FACT;
+
+/** Shared realized-track-record verdict ladder (thesis-only fact AND thesis x regime lesson vector). */
+function realizedTrackRecordVerdict(shrunkAvgReturnPct: number): string {
+  return shrunkAvgReturnPct > 0.5
+    ? "has a positive realized track record"
+    : shrunkAvgReturnPct < -0.5
+      ? "has repeatedly lost on a realized basis"
+      : "has a roughly break-even realized track record";
+}
+
+/** Round to 1 decimal so immaterial stat drift between reflection passes doesn't change the text
+ * (and therefore doesn't force a re-embed) — the stable `vector_id` still makes a real stat change
+ * an overwrite-in-place, never a new sibling. */
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
 
 /**
  * Emit durable, QUALITATIVE track-record facts per well-sampled thesis into learned_context
@@ -286,11 +317,7 @@ async function writeThesisTrackRecordFacts(
   for (const stat of outcomesByThesis) {
     if (!stat.thesisTag || stat.thesisTag === "Untagged") continue;
     if (stat.trades < MIN_LOTS_FOR_TRACK_RECORD_FACT) continue;
-    const verdict = stat.shrunkAvgReturnPct > 0.5
-      ? "has a positive realized track record"
-      : stat.shrunkAvgReturnPct < -0.5
-        ? "has repeatedly lost on a realized basis"
-        : "has a roughly break-even realized track record";
+    const verdict = realizedTrackRecordVerdict(stat.shrunkAvgReturnPct);
     try {
       await ingestLearned(
         userId,
@@ -308,4 +335,79 @@ async function writeThesisTrackRecordFacts(
       console.error("Failed to write thesis track-record fact:", error);
     }
   }
+}
+
+/**
+ * One LIVING (overwrite-in-place) `doc_type: "lesson"` vector per well-sampled (thesisTag, regime)
+ * bucket — the "conditioned lessons" heart of the Port-2 design: a thesis's realized edge often
+ * differs by regime, and this makes the RELEVANT bucket retrievable via similarity search even when
+ * the per-run `comboOutcomes` prompt injection (top-8-by-|PnL|, strategy.ts) doesn't surface it this
+ * run. `vector_id` is stable per (connectedAccountId, thesisTag, regime), so a stats refresh between
+ * reflection passes is a Pinecone overwrite-in-place, never a new sibling. Numbers embedded in `text`
+ * are advisory prompt prose — identical in kind to the already-landed `comboOutcomes` injection —
+ * never parsed back into sizing/policy math. Best-effort, per-bucket isolated: one bucket's
+ * `storeContexts` failure never blocks the remaining buckets, the reflection LLM write, or
+ * `persistExcursionsBackground`.
+ */
+export async function writeThesisRegimeLessonVectors(
+  stats: ThesisRegimeStat[],
+  userId: string,
+  connectedAccountId: string,
+  accountEnvironment: "paper" | "live"
+): Promise<void> {
+  let written = 0;
+  let skippedThin = 0;
+  let failed = 0;
+  for (const stat of stats) {
+    if (!stat.thesisTag || stat.thesisTag === "Untagged" || stat.trades < MIN_LOTS_FOR_LESSON_VECTOR) {
+      skippedThin += 1;
+      continue;
+    }
+    const subjectKey = `${stat.thesisTag} @ ${stat.regime}`;
+    const verdict = realizedTrackRecordVerdict(stat.shrunkAvgReturnPct);
+    const timestamp = new Date().toISOString();
+    const text = [
+      "Reflection lesson (realized thesis x regime track record)",
+      `account_environment: ${accountEnvironment}`,
+      `thesis_tag: ${stat.thesisTag}`,
+      `entry_market_regime: ${stat.regime}`,
+      `sample: ${stat.trades} closed lots`,
+      `realized: win_rate ${round1(stat.winRate)}% (shrunk ${round1(stat.shrunkWinRate)}%), avg_return ${round1(stat.avgReturnPct)}% (shrunk ${round1(stat.shrunkAvgReturnPct)}%), total_pnl_usd ${round1(stat.totalPnl)}`,
+      `guidance: The "${stat.thesisTag}" thesis ${verdict} in ${stat.regime} conditions.`
+    ].join("\n");
+    const doc: ContextDocument = {
+      text,
+      metadata: {
+        symbol: "PORTFOLIO",
+        source: "reflection-lesson",
+        timestamp,
+        accession: `${connectedAccountId}:${stat.thesisTag}:${stat.regime}`,
+        vector_id: `reflection-lesson:${connectedAccountId}:${stat.thesisTag}:${stat.regime}`,
+        doc_type: "lesson",
+        memory_scope: "account",
+        thesis_tag: stat.thesisTag,
+        entry_market_regime: stat.regime,
+        connected_account_id: connectedAccountId,
+        account_environment: accountEnvironment
+      }
+    };
+    try {
+      const result = await storeContexts([doc], userId, { dedupKeyPrefix: "lesson", scope: "private" });
+      if (result.skipped || (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0) {
+        console.warn("[post-mortem] thesis x regime lesson vector write skipped:", JSON.stringify({ bucket: subjectKey, connectedAccountId, result }));
+      } else {
+        written += 1;
+      }
+    } catch (error) {
+      failed += 1;
+      console.error("Failed to write thesis x regime lesson vector:", error);
+      audit(
+        "socratic_vector_write_degraded",
+        { docType: "lesson", bucket: subjectKey, reason: error instanceof Error ? error.message : String(error) },
+        userId,
+        connectedAccountId
+      );
+    }
+  }
+  audit("reflection_lesson_vectors_written", { buckets: written, skippedThin, failed }, userId, connectedAccountId);
 }

@@ -5,7 +5,7 @@ import { Toaster } from "sonner";
 import { GlobalErrorToasts } from "./ui/global-error-toasts";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://socratictrade.com"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://socratictrade.com"),
   title: {
     default: "Socratic Trade",
     template: "%s · Socratic Trade"

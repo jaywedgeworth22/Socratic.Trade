@@ -1,4 +1,45 @@
+import CryptoKit
 import Foundation
+import Security
+
+enum MobileAPIError: Error, LocalizedError {
+    case unauthorized(statusCode: Int)
+    case serverError(statusCode: Int, message: String?)
+    case network(Error)
+    case decoding(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .unauthorized:
+            return "Your session expired. Sign in again."
+        case .serverError(let statusCode, let message):
+            if let message, !message.isEmpty {
+                return "\(message) (\(statusCode))"
+            }
+            return "The server returned an error (\(statusCode)). Try again."
+        case .network(let error):
+            return "Network error: \(error.localizedDescription)"
+        case .decoding:
+            return "The app could not read the latest server response."
+        }
+    }
+}
+
+struct SSEFrameAccumulator {
+    private var frameHasPayload = false
+
+    mutating func consume(line: String) -> Bool {
+        if line.isEmpty {
+            defer { frameHasPayload = false }
+            return frameHasPayload
+        }
+        guard !line.hasPrefix(":") else { return false }
+        if line.hasPrefix("event:") || line.hasPrefix("data:") {
+            frameHasPayload = true
+        }
+        return false
+    }
+}
 
 /// Networking-layer errors for mobile API calls. Distinguishes a genuinely dead session (401/403 --
 /// the only case that should sign the user out, see `MobileStore.applyAuthAwareError`) from
@@ -42,63 +83,62 @@ struct MobileAPIClient {
     var session: URLSession = .shared
 
     func snapshot() async throws -> MobileSnapshot {
-        let envelope: SnapshotEnvelope = try await get("/api/mobile/snapshot")
-        return MobileSnapshot(
-            currentUser: envelope.currentUser,
-            readiness: envelope.readiness,
-            policy: envelope.policy,
-            portfolio: envelope.portfolio,
-            positions: envelope.positions,
-            pendingProposals: envelope.pendingProposals,
-            watchlist: envelope.watchlist,
-            alerts: envelope.alerts,
-            recentCommands: envelope.recentCommands
-        )
+        try await get("/api/mobile/snapshot")
     }
 
-    func submit(commandType: String, payload: [String: Any] = [:]) async throws -> MobileCommand {
-        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/commands"))
-        request.httpMethod = "POST"
+    func submit(
+        commandType: String,
+        payload: [String: Any] = [:],
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> MobileCommand {
+        var request = request(path: "/api/mobile/commands", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue("\(commandType):\(UUID().uuidString)", forHTTPHeaderField: "idempotency-key")
+        request.setValue("\(commandType):\(idempotencyKey)", forHTTPHeaderField: "idempotency-key")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "commandType": commandType,
             "payload": payload,
-            "client": ["platform": "ios", "appVersion": Bundle.main.appVersion]
+            "client": [
+                "platform": "ios",
+                "appVersion": Bundle.main.appVersion,
+                "buildNumber": Bundle.main.buildNumber
+            ]
         ])
         let envelope: CommandEnvelope = try await send(request)
         return envelope.command
     }
 
-    func startAccountDeletion() async throws -> AccountDeletionRequest {
-        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/account-deletion/request"))
-        request.httpMethod = "POST"
-        let envelope: DeletionRequestEnvelope = try await send(request)
+    func accountDeletionPreview() async throws -> AccountDeletionRequest {
+        let envelope: DeletionRequestEnvelope = try await send(
+            request(path: "/api/mobile/account-deletion/request")
+        )
         return envelope.deletionRequest
     }
 
-    func confirmAccountDeletion(requestId: String, typedIdentity: String, typedText: String) async throws -> AccountDeletionResult {
-        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/account-deletion/confirm"))
-        request.httpMethod = "POST"
+    func confirmAccountDeletion(
+        typedIdentity: String,
+        typedText: String
+    ) async throws -> AccountDeletionResult {
+        var request = request(path: "/api/mobile/account-deletion/confirm", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "requestId": requestId,
             "typedIdentity": typedIdentity,
             "typedText": typedText
         ])
-        return try await send(request)
+        let data = try await successfulResponseData(for: request)
+        // A 2xx from this endpoint means the backend completed account deletion. Optional receipt
+        // fields must never strand a locally-authenticated session if the response evolves or is
+        // empty after the destructive server transaction has committed.
+        return (try? JSONDecoder().decode(AccountDeletionResult.self, from: data)) ?? .successfulHTTP
     }
 
     func loginWithApple(identityToken: String, name: String?) async throws -> AppleLoginResponse {
-        var request = URLRequest(url: baseURL.appending(path: "/api/mobile/auth/apple"))
-        request.httpMethod = "POST"
+        var request = request(path: "/api/mobile/auth/apple", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        var bodyParams: [String: Any] = ["identityToken": identityToken]
-        if let name = name {
-            bodyParams["name"] = name
+        var body: [String: Any] = ["identityToken": identityToken]
+        if let name, !name.isEmpty {
+            body["name"] = name
         }
-        request.httpBody = try JSONSerialization.data(withJSONObject: bodyParams)
-        // URLSession will automatically store the set-cookie header in its HTTPCookieStorage.
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await send(request)
     }
 
@@ -136,12 +176,45 @@ struct MobileAPIClient {
             if line.hasPrefix("event:") || line.hasPrefix("data:") {
                 frameHasPayload = true
             }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MobileAPIError.network(error)
         }
     }
 
+    func resolvedURL(_ pathOrURL: String) -> URL? {
+        if let absolute = URL(string: pathOrURL), absolute.scheme != nil {
+            guard
+                absolute.scheme?.lowercased() == "https",
+                absolute.host?.lowercased() == baseURL.host?.lowercased(),
+                absolute.port == baseURL.port
+            else {
+                return nil
+            }
+            return absolute
+        }
+        return baseURL.appending(path: pathOrURL)
+    }
+
+    func ownsCookie(_ cookie: HTTPCookie) -> Bool {
+        guard let host = baseURL.host?.lowercased() else { return false }
+        let domain = cookie.domain
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .lowercased()
+        return host == domain || host.hasSuffix(".\(domain)")
+    }
+
+    private func request(path: String, method: String = "GET") -> URLRequest {
+        var request = URLRequest(url: baseURL.appending(path: path))
+        request.httpMethod = method
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "accept")
+        return request
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
-        let request = URLRequest(url: baseURL.appending(path: path))
-        return try await send(request)
+        try await send(request(path: path))
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
@@ -184,8 +257,41 @@ struct AppleLoginResponse: Decodable {
     let email: String?
 }
 
+private struct WebAuthExchangeResponse: Decodable {
+    let success: Bool
+}
+
+struct WebAuthCodeVerifier {
+    let value: String
+
+    static func make() -> WebAuthCodeVerifier? {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        return WebAuthCodeVerifier(value: Data(bytes).base64URLEncodedString())
+    }
+
+    var challenge: String {
+        Data(SHA256.hash(data: Data(value.utf8))).base64URLEncodedString()
+    }
+}
+
+private extension Data {
+    func base64URLEncodedString() -> String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+}
+
 private extension Bundle {
     var appVersion: String {
         object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+    }
+
+    var buildNumber: String {
+        object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
     }
 }

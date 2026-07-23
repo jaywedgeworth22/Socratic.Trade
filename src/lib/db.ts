@@ -89,8 +89,13 @@ export function getDb(): Database.Database {
   db.function("account_setting_matches_subject", { deterministic: true }, accountSettingMatchesSubject);
   db.pragma("journal_mode = WAL");
   // With WAL, a concurrent writer otherwise throws SQLITE_BUSY immediately; wait
-  // up to 30s for the lock instead. NORMAL durability is the WAL-recommended pairing.
-  db.pragma("busy_timeout = 30000");
+  // up to 60s for the lock instead. NORMAL durability is the WAL-recommended pairing.
+  // Raised from 30s (2026-07-18, PR #1728) after "database is locked" kept surfacing
+  // in prod under heavy concurrent write load (bulk RAG backfill/reindex + scheduler
+  // + burst ingest all writing the same file); WAL already lets readers proceed
+  // during a writer, so a longer wait here only affects genuinely-contended writers,
+  // not the common read path.
+  db.pragma("busy_timeout = 60000");
   db.pragma("synchronous = NORMAL");
   // Larger page cache + memory-mapped I/O: the dashboard replays fill/proposal history on every
   // request, so a ~20MB page cache (negative = KB) and 256MB mmap keep those hot reads off the
@@ -2265,8 +2270,35 @@ const MIGRATIONS: Migration[] = [
            AND json_extract(raw, '$.brokerHeldProtectiveStop') = 1`
       );
     }
+  },
+  {
+    // Append-only archive for coach notes aged off the live `socratic_decisions.coach_notes`
+    // window (kept at COACH_NOTES_LIVE_CAP entries in db-socratic.ts). Before this migration, the
+    // 21st note appended to a decision silently deleted the 1st with zero trace. `note_seq` is a
+    // dense 0-based per-(user, decision) archive ordinal — an ordering/uniqueness device, not an
+    // all-time index (pre-port history is unrecoverable). See db-socratic.ts applyCoachNoteAppend.
+    // NOTE (numbering): renumbered from branch v53->v55 when merging origin/main (which claimed
+    // v53 broker_stop_placement_intents and v54 fill_events_no_proposal_broker_order_unique_index).
+    version: 55,
+    name: "socratic_coach_note_archive",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS socratic_coach_note_archive (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          decision_id TEXT NOT NULL,
+          connected_account_id TEXT,
+          note TEXT NOT NULL,
+          note_seq INTEGER NOT NULL,
+          archived_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_socratic_coach_note_archive_user_decision
+          ON socratic_coach_note_archive (user_id, decision_id, note_seq);
+      `);
+    }
   }
 ];
+
 
 /**
  * ONE-TIME migration (v7): PR #267 moved llmModel/redTeamLlmModel/llmReasoningEffort
@@ -2401,8 +2433,10 @@ export function hasEncryptedCredentials(database: Database.Database): boolean {
     .get() as { n: number };
   if (row.n > 0) return true;
   // Robinhood OAuth token blobs are JSON in settings; the JSON itself contains colons, so match the
-  // SECRET fields against the iv:tag:ct hex envelope rather than GLOB-ing the whole value.
-  const envelope = /^[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$/i;
+  // SECRET fields against the iv:tag:ct hex envelope rather than GLOB-ing the whole value. The
+  // optional "v1:" prefix covers the versioned envelope format (see db-api-keys.ts's
+  // CIPHERTEXT_VERSION_PREFIX) alongside the pre-versioning bare envelope still on disk.
+  const envelope = /^(?:v1:)?[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$/i;
   const oauthRows = database
     .prepare("SELECT value FROM settings WHERE key GLOB 'robinhood_mcp_oauth_token:*'")
     .all() as { value: string }[];
@@ -3452,6 +3486,17 @@ function migrate(database: Database.Database): void {
   }
   if (!syntheticStopCols.some((c) => c.name === "suspect_count")) {
     database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN suspect_count INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Fixed/ATR tick-cadence backstop (Codex review, item 7): fixed/atr stop plans previously had NO
+  // protection between strategy runs (excluded from this table entirely — see synthetic-stops.ts).
+  // `kind` discriminates a 'trailing' row (extreme ratchets with the high/low-water mark, unchanged
+  // behavior) from a 'fixed' row (a static trigger price — the monitor pins extreme_price back to
+  // entry_price every tick instead of persisting the ratchet, so the same evaluateStop/fire
+  // machinery yields a fixed distance instead of a trail). Defaults existing/legacy rows to
+  // 'trailing' (their only prior meaning) so this is purely additive.
+  if (!syntheticStopCols.some((c) => c.name === "kind")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN kind TEXT NOT NULL DEFAULT 'trailing'");
   }
 
   const now = new Date().toISOString();
