@@ -253,7 +253,8 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       toast.push(
         "warn",
         "Approval is still busy",
-        (result.reasons ?? []).join(" ") || "A strategy run is still in progress. Try again after it finishes."
+        (result.reasons ?? []).join(" ") ||
+          "A strategy run is still in progress after waiting. Wait for the run to finish (or for its lock to expire, up to ~5 minutes), then Approve again."
       );
     } else {
       toast.push("info", `Result: ${feedStatusLabel(result.status)}`, (result.reasons ?? []).join(" ") || undefined);
