@@ -1,3 +1,11 @@
+## 2026-07-22 — Congress market-data alias split via shared package (CURSOR)
+
+Salvaged #1906 kernel only: `canonicalMarketDataSymbol` drops acquisition tickers for market-data
+outbound rows using shared v2 `classifyTickerAlias` / `resolveContinuousTicker` (keeps
+`@jaywedgeworth22/congress-trading-shared#v2.0.0`). Identity refs still fold via
+`resolveTickerAlias`. #1914 not landed — main already bumps below-min exits (owner: bump/fix,
+not block). Rollout: `docs/rollouts/2026-07-22-congress-market-data-alias-split.md`.
+
 ## 2026-07-22 — Grok forgotten-PR audit (CURSOR)
 
 Multi-agent review of Grok combined/forgotten lands vs current main. **Closed #1952** (congress

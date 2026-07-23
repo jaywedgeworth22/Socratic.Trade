@@ -42,6 +42,7 @@ rules text. No effort rows were changed.)_
 As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
+- **[Socratic.Trade][CURSOR] Salvage #1906 market-data rename-vs-acquisition via shared pkg — IN PROGRESS / landing.** Uses classifyTickerAlias/resolveContinuousTicker; no v2 downgrade. #1914 skipped (main already bumps). Rollout: `docs/rollouts/2026-07-22-congress-market-data-alias-split.md`.
 - **[Socratic.Trade][CURSOR] Grok forgotten-PR audit — DONE 2026-07-22.** Closed #1952 + 18 stale reopens; KEEP #1892/#1901/#1902/#1903 (fix then solo) + #1792/#1819/#1842. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
 
 - **[Socratic.Trade][CODEX] Shared-package pin-check queue unblock (original PR #1890, now subsumed into telemetry PR #1889) — SUBSUMED / COMBINED LANDING IN PROGRESS 2026-07-22.** The reviewed workflow fix removes the pull-request path filter and installs Node 24 before its comparison script. Its exact history is merged into #1889 so the workflow and telemetry changes consume one protected gate. PR #1890 is closed as superseded with its branch retained and reopenable; #1780 was already closed. Combined Node 24 verification passes 5 files / 71 tests, TypeScript, scoped ESLint, workflow YAML parsing, and diff-check. Auto-merge remains off pending final-head hosted checks and zero-thread verification.
