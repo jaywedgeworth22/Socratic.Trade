@@ -1,3 +1,19 @@
+## 2026-07-22 — Congress market-data alias split via shared package (CURSOR)
+
+Salvaged #1906 kernel only: `canonicalMarketDataSymbol` drops acquisition tickers for market-data
+outbound rows using shared v2 `classifyTickerAlias` / `resolveContinuousTicker` (keeps
+`@jaywedgeworth22/congress-trading-shared#v2.0.0`). Identity refs still fold via
+`resolveTickerAlias`. #1914 not landed — main already bumps below-min exits (owner: bump/fix,
+not block). Rollout: `docs/rollouts/2026-07-22-congress-market-data-alias-split.md`.
+
+## 2026-07-22 — Grok forgotten-PR audit (CURSOR)
+
+Multi-agent review of Grok combined/forgotten lands vs current main. **Closed #1952** (congress
+re-land undoes shared-package + bounded-body hardenings; real verify tsc failure) and **18 stale
+reopens** that were already on main or fought newer main. **Kept open:** fragments #1892 / #1901 /
+#1902 / #1903 (fix then solo-land) and independent #1792 / #1819 / #1842. No product merge/deploy
+from this audit. Rollout: `docs/rollouts/2026-07-22-grok-pr-audit.md`.
+
 # Current Status
 
 ## 2026-07-22 — Admin UI Polish (ANTIGRAVITY, branch `fix/admin-ui-polish`)
@@ -9,6 +25,25 @@ Fixed Admin panel UI bugs:
 4. Cleaned up API Connections mapping in `route.ts`: aliased legacy `earningscall` rows into the `earningscalls-dev-rapidapi` environment block and formatted `congress.trade` as 'Congress.Trade (Public API)'. Profile photo extraction for the Admin Header was investigated but deemed too resource-heavy since the Admin layout intentionally excludes the `ConsoleDataProvider` that wraps the trading shell.
 
 All 420 files / 4,901 tests and the Next.js build verified green. Rollout: `docs/rollouts/2026-07-22-admin-ui-polish.md`.
+## 2026-07-22 — Robinhood cap resilience landing (GROK pickup, branch `codex/robinhood-cap-fix`)
+
+Pickup from CODEX handoff. Node 24 confirmed (`24.18.0` modules=137); `npm rebuild better-sqlite3`
+succeeded. Focused receipt 112/112 green. Landing via `scripts/land.sh` next (merge `origin/main`,
+full tsc/test/build, PR, arm auto-merge). After Coolify auto-deploy, verify exact SHA and a real
+Robinhood cap-only settings save. Handoff: `docs/rollouts/2026-07-22-robinhood-cap-resilience-handoff.md`.
+
+## 2026-07-22 — Robinhood guardrail cap resilience (CODEX, branch `codex/robinhood-cap-fix`)
+
+Implemented account-aware opening caps and save resilience. Unchanged-account guardrail saves no
+longer require a transient Robinhood account-list verification; account selection/readiness changes
+and autonomy activation still verify. Absolute opening caps are clamped to feasible account spend
+(buying power for buys, NAV fallback; NAV for daily opening capacity), while percentage mode is the
+default when both dual-mode fields are blank. Added policy-cap and save-resilience regressions.
+Focused policy, execution, wash-sale, and console derivation tests are green (102/102); lint has
+zero errors and the production build passes. The repository's full Vitest command is configured for
+one worker and remained in progress under concurrent fleet load, so it was stopped rather than
+claiming a full-suite receipt. No production account or deployment was touched. Next: review/land
+the branch, then verify the exact deployed SHA and a real Robinhood settings save.
 
 ## 2026-07-21 — Fleet multi-app watchdog + disk follow-ups (GROK4, ops on Hetzner)
 
